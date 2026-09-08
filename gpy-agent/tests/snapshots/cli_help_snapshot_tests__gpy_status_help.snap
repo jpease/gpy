@@ -1,0 +1,11 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy status
+expression: help
+---
+Show agent status and diagnostics
+
+Usage: gpy status
+
+Options:
+  -h, --help  Print help

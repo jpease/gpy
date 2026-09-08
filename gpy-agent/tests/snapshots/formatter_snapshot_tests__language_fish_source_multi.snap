@@ -1,0 +1,8 @@
+---
+source: tests/formatter_snapshot_tests.rs
+description: Multiple languages in Fish source format
+expression: output
+---
+set -g __gpy_lang_names "Rust" "TypeScript"
+set -g __gpy_lang_versions "1.75.0" "5.3.3"
+set -g __gpy_lang_colors "#dea584" "#3178c6"

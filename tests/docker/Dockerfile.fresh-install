@@ -1,0 +1,67 @@
+# tests/docker/Dockerfile.fresh-install
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# A stock Linux image, an empty $HOME, the release archive, one prompt per
+# shell (#652). Nothing else in the repository installs GPY into a machine
+# that has never seen it: the installer tests run in the developer's own
+# environment and fresh_install.test.fish sources the checkout.
+#
+# Stage 1 builds the two binaries with the pinned toolchain (the rust image
+# tag must match gpy-agent/rust-toolchain.toml). Stage 2 lays the archive
+# out exactly as scripts/package-release.sh does for the native asset, then
+# runs scripts/smoke-release.sh as an unprivileged user: install.sh from the
+# archive, both `--version`s, a oneshot render, a responding agent, and a
+# prompt from fish, zsh and bash through their rc files.
+#
+# Run it with scripts/test-fresh-install.sh.
+
+ARG RUST_IMAGE=rust:1.98.0-bookworm
+FROM ${RUST_IMAGE} AS builder
+WORKDIR /src
+# The crate embeds config/palettes and config/themes with include_str!.
+COPY config /src/config
+COPY gpy-agent /src/gpy-agent
+RUN cd gpy-agent && cargo build --release --locked --bin gpy-agent --bin gpy
+
+FROM ubuntu:24.04 AS runtime
+ARG TARGETARCH
+# socat is the IPC transport docs/INSTALL.md requires for Fish and Bash
+# (Zsh has a builtin); without it a fresh machine gets the documented
+# degraded oneshot prompt, which is exactly what this image proved first.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends fish zsh bash git curl ca-certificates python3 socat \
+    && rm -rf /var/lib/apt/lists/*
+
+# The archive layout install.sh expects (bin/<asset> plus its .sha256
+# sidecar, the three shell trees, the installer and uninstallers).
+COPY install.sh /opt/gpy-release/install.sh
+COPY fish /opt/gpy-release/fish
+COPY zsh /opt/gpy-release/zsh
+COPY bash /opt/gpy-release/bash
+COPY scripts/uninstall.fish scripts/uninstall.sh /opt/gpy-release/scripts/
+COPY --from=builder /src/gpy-agent/target/release/gpy-agent /opt/build/gpy-agent
+COPY --from=builder /src/gpy-agent/target/release/gpy /opt/build/gpy
+RUN set -eu; \
+    case "$TARGETARCH" in \
+        amd64) arch=x86_64 ;; \
+        arm64) arch=aarch64 ;; \
+        *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    mkdir -p /opt/gpy-release/bin /opt/payload; \
+    cp /opt/build/gpy-agent "/opt/gpy-release/bin/gpy-agent-linux-$arch"; \
+    cp /opt/build/gpy "/opt/gpy-release/bin/gpy-linux-$arch"; \
+    chmod +x /opt/gpy-release/install.sh /opt/gpy-release/bin/*; \
+    cd /opt/gpy-release/bin; \
+    for f in gpy-agent-linux-$arch gpy-linux-$arch; do sha256sum "$f" >"$f.sha256"; done; \
+    tar -czf /opt/payload/gpy-release.tar.gz -C /opt gpy-release; \
+    rm -rf /opt/build
+
+COPY scripts/smoke-release.sh /opt/smoke-release.sh
+# An unprivileged user with a fresh, empty home directory.
+RUN useradd -m -s /bin/bash gpy && chmod 0755 /opt/smoke-release.sh
+USER gpy
+WORKDIR /tmp
+ENV GPY_RELEASE_VERSION=""
+# GPY_RELEASE_VERSION is supplied at run time by scripts/test-fresh-install.sh
+# (read from gpy-agent/Cargo.toml), so the image never hard-codes a version.
+CMD ["sh", "-c", "exec bash /opt/smoke-release.sh --package /opt/payload --version \"$GPY_RELEASE_VERSION\""]

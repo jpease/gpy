@@ -1,0 +1,11 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy restart
+expression: help
+---
+Restart the background agent
+
+Usage: gpy restart
+
+Options:
+  -h, --help  Print help

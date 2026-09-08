@@ -1,0 +1,124 @@
+# GPY Default Theme Configuration
+# Colors and icons for each prompt segment grouped under `[segments.*]`
+
+[ui]
+prompt_icon = "❯"
+prompt_color = "white"
+root_prompt_icon = "!❯!"
+root_prompt_color = "red"
+
+[ui.prompt_open]
+icon = ""
+icon_color = "transparent"
+bg_color = "transparent"
+
+[ui.prompt_close]
+icon = ""
+icon_color = "match_bg"
+bg_color = "black"
+
+[ui.segment_open]
+icon = ""
+icon_color = "match_bg"
+bg_color = "transparent"
+
+[ui.segment_close]
+icon = ""
+icon_color = "match_bg"
+bg_color = "transparent"
+
+# Built-in defaults, so `gpy theme use default --force` restores GPY's
+# stock layout/display after another preset changed `config.ui` (round-trip).
+# Advisory only: never exported to shells; applied solely via --force.
+[ui.recommended]
+enabled_segments = ["clock", "duration", "language", "directory", "git"]
+show_icons = true
+# Stock GPY behavior: content-scan detection (clean round-trip from markers presets).
+language_detection = "content"
+
+[ui.recommended.directory]
+display = "basename"
+# Stock GPY behavior: no repo anchoring (clean round-trip from other presets).
+truncate_to_repo = false
+
+[segments.clock]
+text_color = "white"
+bg_color = "black"
+time_format = "12"
+show_leading_zero = false
+show_seconds = false
+
+[segments.clock.open]
+icon = ""
+
+[segments.clock.close]
+icon = ""
+
+[segments.duration]
+format = "([$sep_open](fg:$bg bg:default))[ $duration]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+icon = "󰑧"
+text_color = "white"
+bg_color = "black"
+show_if_exceeds_ms = 100
+
+[segments.directory]
+format = "([$sep_open](fg:$bg bg:default))[ $path]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+text_color = "white"
+bg_color = "black"
+
+[segments.status]
+ok_icon = ""
+ok_text_color = "black"
+ok_bg_color = "green"
+fail_icon = ""
+fail_text_color = "black"
+fail_bg_color = "red"
+
+# The agent renders the final prompt symbol via the `character` segment
+# (Response::Character). `[segments.status]` above feeds the shell-side status box.
+[segments.character]
+format = "[ ](fg:prev_bg)[$symbol]($style) "
+
+[segments.git]
+format = "([$sep_open](fg:$bg bg:default))[ $symbol $branch]($style)([ $state]($style))([ $ahead_behind]($style))([ $status]($style))([ $stash]($style))([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+text_color = "black"
+bg_color = "white"
+clean_text_color = "black"
+clean_bg_color = "green"
+dirty_text_color = "black"
+dirty_bg_color = "red"
+ahead_behind_text_color = "black"
+ahead_behind_bg_color = "yellow"
+conflicts_text_color = "black"
+conflicts_bg_color = "red"
+# Distinct from dirty_*/clean_* so untracked-only and in-progress repos are
+# visually distinguishable out of the box, not just via fallback (#246).
+untracked_only_text_color = "black"
+untracked_only_bg_color = "cyan"
+in_progress_text_color = "white"
+in_progress_bg_color = "magenta"
+
+[segments.hostname]
+bg_color = "black"
+text_color = "white"
+# icon, trim_at, show_always: defaults
+
+# Username (#252): root/sudo warning prefix. Opt-in — not in the default
+# enabled_segments; add "username" to config.ui.enabled_segments to show it.
+# Hidden for normal users (show_always defaults to false); a red pill flags
+# elevated (root/sudo) sessions, mirroring Starship's bold-red `username`.
+[segments.username]
+bg_color = "red"
+text_color = "white"
+# icon, show_always: defaults
+
+[segments.language]
+format = "([$sep_open](fg:$bg bg:default))[ $symbol]($style)([ $version]($style))([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+text_color = "black"
+bg_color = "white"
+rust_bg_color = "red"
+python_bg_color = "blue"
+node_bg_color = "green"
+go_bg_color = "cyan"
+java_bg_color = "blue"
+ruby_bg_color = "red"

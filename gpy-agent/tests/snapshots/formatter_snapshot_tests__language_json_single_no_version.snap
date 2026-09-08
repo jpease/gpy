@@ -1,0 +1,6 @@
+---
+source: tests/formatter_snapshot_tests.rs
+description: Single language without version in JSON format
+expression: output
+---
+{"languages":[{"color":"#3776ab","name":"Python","version":null}]}

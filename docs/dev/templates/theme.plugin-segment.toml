@@ -1,0 +1,45 @@
+# GPY theme template with plugin segment styling
+[ui]
+prompt_icon = "❯"
+root_prompt_icon = "❯"
+prompt_color = "white"
+root_prompt_color = "red"
+
+[segments.clock]
+bg_color = "blue"
+text_color = "white"
+
+[segments.duration]
+icon = "⏱"
+bg_color = "yellow"
+text_color = "black"
+
+[segments.directory]
+bg_color = "cyan"
+text_color = "black"
+
+[segments.status]
+ok_icon = "✓"
+ok_bg_color = "green"
+ok_text_color = "black"
+fail_icon = "✗"
+fail_bg_color = "red"
+fail_text_color = "white"
+
+[segments.git]
+bg_color = "white"
+text_color = "black"
+
+[segments.language]
+bg_color = "magenta"
+text_color = "white"
+
+# Plugin segment style block:
+# Use your segment ID as the table name under [segments].
+[segments.acme-tools]
+icon = "⚙"
+bg_color = "#1d3557"
+text_color = "#f1faee"
+health_color = "#2a9d8f"
+warning_color = "#e9c46a"
+error_color = "#e76f51"

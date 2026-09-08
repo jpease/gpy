@@ -1,0 +1,421 @@
+name: Release
+
+# Rebuilt in #492 for the current repository layout. The previous version
+# validated root-level `core/`, `segments/`, and `themes/` Fish paths that
+# moved under `fish/` long ago, apt-installed a nonexistent `timeout` package,
+# computed a Cargo version it never compared against the tag, packaged every
+# file with `2>/dev/null || echo "... may be missing"` so an empty archive
+# still went green, and published notes linking three deleted files plus four
+# install methods this project does not ship.
+#
+# The packaging and release-note logic now lives in scripts/package-release.sh
+# and scripts/release-notes.sh so both are exercised by
+# tests/bash/release_packaging.test.bash on every quality-check run, rather
+# than only when a tag is pushed.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: ""
+
+jobs:
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Resolved once and passed downstream as a job output so the package and
+      # release jobs cannot disagree with the version this job validated.
+      - name: Resolve and validate version
+        id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION="$REF_NAME"
+          fi
+          echo "Release version: $VERSION"
+
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format: $VERSION (expected v1.2.3)"
+            exit 1
+          fi
+          BARE="${VERSION#v}"
+
+          # Every place the version is declared must already agree with the
+          # tag. The old job read Cargo.toml's version and then never compared
+          # it, so a tag could ship binaries reporting a different version.
+          CARGO_VERSION="$(grep -m1 '^version = ' gpy-agent/Cargo.toml | sed 's/version = "\(.*\)"/\1/')"
+          if [ "$CARGO_VERSION" != "$BARE" ]; then
+            echo "::error::gpy-agent/Cargo.toml declares $CARGO_VERSION but the tag is $VERSION"
+            exit 1
+          fi
+
+          FISHER_VERSION="$(grep -m1 '"version"' fish/fisher.json | sed 's/.*"version": *"\([^"]*\)".*/\1/')"
+          if [ "$FISHER_VERSION" != "$BARE" ]; then
+            echo "::error::fish/fisher.json declares $FISHER_VERSION but the tag is $VERSION"
+            exit 1
+          fi
+
+          if ! grep -q "^## \[$BARE\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [$BARE]' section; release notes are generated from it"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >>"$GITHUB_OUTPUT"
+          echo "Version metadata is consistent across Cargo.toml, fisher.json, and CHANGELOG.md"
+
+      - name: Install Rust toolchain
+        # No `toolchain:` input: the action resolves the pin from
+        # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
+        # See that file for why CI must not install @stable (#189, #518).
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rust-src-dir: gpy-agent
+          cache: false
+          components: clippy, rustfmt
+
+      - name: Verify the pinned toolchain is active
+        shell: bash
+        run: ./scripts/check-active-toolchain.sh
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gpy-agent
+
+      - name: Install Rust tooling (nextest, audit, deny)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,cargo-audit,cargo-deny,just
+
+      # socat and netcat back the IPC partial-response and protocol-mismatch
+      # suites. The old job also apt-installed "timeout", which is not a
+      # package (it ships in coreutils), so this step failed on every run.
+      - name: Install moon
+        # `just lint` is `moon run gpy-agent:clippy` (#584).
+        uses: moonrepo/setup-toolchain@v0
+        with:
+          auto-install: false
+
+      - name: Install shells and shell-suite prerequisites
+        # The same list pr-gate.yml installs (#650): under CI a missing
+        # prerequisite fails the test that needs it instead of skipping.
+        run: |
+          sudo add-apt-repository -y ppa:fish-shell/release-4
+          sudo apt-get update
+          sudo apt-get install -y fish zsh socat netcat-openbsd python3 jq hyperfine
+          curl -sS https://starship.rs/install.sh | sh -s -- -y
+
+      # The same gate a PR runs (pr-gate.yml), so a tag cannot ship something
+      # that would not have merged. `just lint` was missing here until #651,
+      # so a tag could ship code the PR gate would have rejected.
+      - name: Rust toolchain gate
+        run: just check-rust
+
+      - name: Moon lint gate (#584)
+        run: just lint
+
+      - name: Shell integration gate
+        run: just check-shell
+
+      # tests/performance-baselines.json is enforced by nothing else in a
+      # hook or workflow (the pre-push canary only warns); a tag is the one
+      # place the budgets must hold (#652).
+      - name: Performance budgets
+        run: just bench-ci
+
+  build:
+    name: Build Release Binaries
+    needs: validate
+    strategy:
+      matrix:
+        include:
+          # `cargo build --profile release-dist` produces BOTH binaries in a
+          # single invocation, so each row builds once and uploads two
+          # artifacts: the agent daemon (artifact_name/asset_name) and the
+          # user-facing CLI (cli_artifact_name/cli_asset_name). No extra
+          # matrix rows -- that would recompile the whole workspace a second
+          # time per target (#327).
+          #
+          # The asset_name values are the contract with the installers:
+          # install-oneline.sh downloads them straight from the release, and
+          # scripts/package-release.sh renames each artifact to its asset name
+          # under bin/ because install.sh resolves bin/<asset_name>. Adding or
+          # renaming a row here means updating EXPECTED_ASSETS in that script
+          # and the platform `case` blocks in install.sh / install-oneline.sh:
+          # tests/bash/release_asset_contract.test.bash derives each row's
+          # asset names from its target triple and diffs the matrix against
+          # both consumers, so a half-finished rename fails the gate (#493).
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: gpy-agent
+            asset_name: gpy-agent-linux-x86_64
+            cli_artifact_name: gpy
+            cli_asset_name: gpy-linux-x86_64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact_name: gpy-agent
+            asset_name: gpy-agent-linux-aarch64
+            cli_artifact_name: gpy
+            cli_asset_name: gpy-linux-aarch64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: gpy-agent
+            asset_name: gpy-agent-macos-x86_64
+            cli_artifact_name: gpy
+            cli_asset_name: gpy-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: gpy-agent
+            asset_name: gpy-agent-macos-aarch64
+            cli_artifact_name: gpy
+            cli_asset_name: gpy-macos-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: gpy-agent.exe
+            asset_name: gpy-agent-windows-x86_64.exe
+            cli_artifact_name: gpy.exe
+            cli_asset_name: gpy-windows-x86_64.exe
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        # No `toolchain:` input: the action resolves the pin from
+        # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
+        # See that file for why CI must not install @stable (#189, #518).
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rust-src-dir: gpy-agent
+          # No Swatinem step in this job, so keep the action's own cache.
+          target: ${{ matrix.target }}
+
+      - name: Verify the pinned toolchain is active
+        shell: bash
+        run: ./scripts/check-active-toolchain.sh
+
+      - name: Install cross-compilation dependencies
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build release binary
+        working-directory: gpy-agent
+        # --locked: Cargo.lock is committed, so a release build is reproducible
+        # and fails loudly if the lock has drifted from Cargo.toml.
+        run: |
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+          fi
+          cargo build --locked --profile release-dist --target ${{ matrix.target }}
+        shell: bash
+
+      - name: Upload agent binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: gpy-agent/target/${{ matrix.target }}/release-dist/${{ matrix.artifact_name }}
+          if-no-files-found: error
+
+      - name: Upload CLI binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.cli_asset_name }}
+          path: gpy-agent/target/${{ matrix.target }}/release-dist/${{ matrix.cli_artifact_name }}
+          if-no-files-found: error
+
+  package:
+    name: Create Release Package
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      # cargo metadata needs a toolchain; the SBOM is derived from the
+      # committed Cargo.lock, not from a build. Deliberately no
+      # check-active-toolchain.sh step here, unlike every other job that
+      # installs a toolchain: nothing in this job compiles, so which rustc is
+      # active cannot change the output.
+      - name: Install Rust toolchain
+        # No `toolchain:` input: the action resolves the pin from
+        # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
+        # See that file for why CI must not install @stable (#189, #518).
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rust-src-dir: gpy-agent
+          cache: false
+
+      # CycloneDX SBOM of the dependency graph the binaries were built from
+      # (#494). Ships both inside the archive and as a standalone release
+      # asset. package-release.sh refuses to run without either --sbom or an
+      # explicit --no-sbom, so this can never be skipped by accident.
+      - name: Generate SBOM
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: ./scripts/generate-sbom.sh --version "$VERSION" --output sbom.cdx.json
+
+      # Fail-closed packaging: a missing shell file, a missing build artifact,
+      # an archive that does not contain what install.sh and Fisher reach for,
+      # or a checksum sidecar that does not match its file aborts the release.
+      # Covered locally by tests/bash/release_packaging.test.bash.
+      - name: Build release archives
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: ./scripts/package-release.sh --version "$VERSION" --artifacts release-artifacts --out . --sbom sbom.cdx.json
+
+      # One artifact carries the archives, the asset-named binaries, the SBOM
+      # and every checksum, so create-release downloads a single,
+      # already-verified payload instead of re-deriving per-platform paths from
+      # the build matrix. gpy-release/bin/* picks up both the binaries and the
+      # per-binary .sha256 sidecars, which is where install-oneline.sh fetches
+      # its verification metadata from.
+      - name: Upload release payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpy-release-package
+          path: |
+            gpy-release.tar.gz
+            gpy-release.zip
+            fisher-gpy.tar.gz
+            gpy-sbom.cdx.json
+            SHA256SUMS
+            *.sha256
+            gpy-release/bin/*
+          if-no-files-found: error
+
+  smoke:
+    # Run what is about to be published (#652): the archive's install.sh,
+    # both `--version`s, a oneshot render, a responding agent, and one prompt
+    # per shell on Linux; the two .exe `--version`s and `gpy --help` on
+    # Windows (CLI-only). macOS binaries are built and checksummed but not
+    # smoke-run: that runner bills 10x (see pr-gate.yml).
+    name: Smoke-run packaged binaries (${{ matrix.os }})
+    needs: [validate, package]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download release payload
+        uses: actions/download-artifact@v4
+        with:
+          name: gpy-release-package
+          path: dist
+
+      - name: Install shells (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fish zsh python3 socat
+
+      - name: Smoke-run the packaged binaries
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: ./scripts/smoke-release.sh --package dist --version "$VERSION"
+
+  create-release:
+    name: Create GitHub Release
+    needs: [validate, build, package, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Build-provenance attestation (#494): id-token signs the Sigstore
+      # bundle, attestations writes it to the repository's attestation store.
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download release payload
+        uses: actions/download-artifact@v4
+        with:
+          name: gpy-release-package
+          path: dist
+
+      # Ties every published artifact to the workflow run, commit and builder
+      # that produced it, verifiable with `gh attestation verify <file> --repo
+      # jpease/gpy`. Checksums prove a download matches what the release page
+      # says; an attestation proves the release page itself came from this
+      # repository's CI.
+      #
+      # Free for public repositories only, so this is gated rather than
+      # unconditional: while the repository is private (epic #489 flips it) a
+      # tag would otherwise fail here having already built everything.
+      - name: Attest build provenance
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/gpy-release.tar.gz
+            dist/gpy-release.zip
+            dist/fisher-gpy.tar.gz
+            dist/gpy-sbom.cdx.json
+            dist/gpy-release/bin/*
+            !dist/gpy-release/bin/*.sha256
+
+      # Body text comes from the CHANGELOG section for this version and the
+      # asset table from the binaries actually built, so nothing in the notes
+      # can drift from the repository the way the old hardcoded body did.
+      # generate_release_notes appends GitHub's own commit/PR summary below it.
+      - name: Generate release notes
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: ./scripts/release-notes.sh --version "$VERSION" --assets dist/gpy-release/bin --output release_notes.md
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: GPY ${{ needs.validate.outputs.version }}
+          tag_name: ${{ needs.validate.outputs.version }}
+          body_path: release_notes.md
+          # gpy-release/bin/* publishes each binary next to its .sha256
+          # sidecar, which is the exact URL install-oneline.sh fetches
+          # (<asset>.sha256 beside <asset>). SHA256SUMS is the aggregate
+          # manifest for verifying a whole release by hand.
+          files: |
+            dist/gpy-release.tar.gz
+            dist/gpy-release.zip
+            dist/fisher-gpy.tar.gz
+            dist/gpy-sbom.cdx.json
+            dist/SHA256SUMS
+            dist/*.sha256
+            dist/gpy-release/bin/*
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          generate_release_notes: true

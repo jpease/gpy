@@ -1,0 +1,35 @@
+# tests/fixtures/json_escape_vectors.tsv
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Shared JSON-escape test vectors for __gpy_escape_json (bash/zsh) and
+# __gpy_json_escape (fish) (#614). Tab-separated: input<TAB>expected, one
+# pair per line. Blank lines and lines starting with # are ignored.
+#
+# `input` uses a mini escape scheme to carry bytes a TSV row cannot hold
+# literally -- backslash first, then control chars: \\ -> one literal
+# backslash byte, \n -> newline (LF), \r -> carriage return (CR), \t ->
+# tab. Every reading test MUST unescape `input` the same way (backslash
+# first) before calling the shell's escape function under test.
+#
+# `expected` is the literal JSON-escaped-string content `input` (after
+# unescaping) must turn into -- i.e. exactly what the escape function's
+# stdout should be -- and needs NO further processing: a correct
+# implementation already emits \\, \n, \r, \t as literal two-character
+# sequences, which is what appears here. (A one-backslash input's `input`
+# and `expected` columns can look identical on disk -- e.g. `a\\b` for
+# both -- because the mini escape scheme for a literal backslash happens
+# to coincide with JSON's own backslash-escaping. That is not a mistake.)
+plain text no special chars	plain text no special chars
+a\\b	a\\b
+a\\\\b	a\\\\b
+C:\\Users\\foo\\	C:\\Users\\foo\\
+C:\\Users\\foo\\bar	C:\\Users\\foo\\bar
+a"b	a\"b
+a\\"b	a\\\"b
+x/\\y	x/\\y
+line1\nline2	line1\nline2
+line1\rline2	line1\rline2
+col1\tcol2	col1\tcol2
+a\\\nb"c\td\re	a\\\nb\"c\td\re
+\n\r\t	\n\r\t
+trailing-backslash-\\	trailing-backslash-\\

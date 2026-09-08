@@ -1,0 +1,44 @@
+# Pin the toolchain so the clippy lint set is reproducible across contributors
+# and CI. The strict gate (`moon run gpy-agent:clippy`) enables pedantic/nursery
+# lints whose membership changes between releases; an unpinned toolchain gives
+# each contributor a different lint set. See issue #189.
+#
+# This MUST be >= rust-version in Cargo.toml. It sat at 1.96.0 against a
+# declared 1.98, so `cargo check` in a fresh clone failed outright with
+# "rustc 1.96.0 is not supported ... requires rustc 1.98" (#516).
+# `tests/bash/msrv_consistency.test.bash` now asserts that ordering.
+#
+# HOW CI RESOLVES THIS FILE (#518)
+#
+# Every workflow used to install dtolnay/rust-toolchain@stable, which overrode
+# this file and left the "and CI" half of #189 unmet: a new stable release
+# could change the pedantic/nursery lint set under a PR that was green
+# yesterday. That action cannot read this file at all -- its `toolchain` input
+# is `required: true` and it hard-errors when empty.
+#
+# Workflows now use actions-rust-lang/setup-rust-toolchain@v1 with no
+# `toolchain:` input and `rust-src-dir: gpy-agent`, which makes it install from
+# this file. That resolution is silent when it fails: the action falls back to
+# `stable` if it cannot find the file, with no warning. Every job that builds
+# or lints therefore runs `scripts/check-active-toolchain.sh`, which fails
+# loudly when the active rustc is not the pin below.
+#
+# WHEN TO BUMP
+#
+# On demand, not on a schedule. The pin exists for lint-set reproducibility,
+# not currency -- an old pin does not degrade, a divergent one does. Bump it
+# when either of these forces the issue, both of which fail loudly:
+#
+#   1. `rust-version` in Cargo.toml moves. The MSRV consistency test fails
+#      until this file follows.
+#   2. A dependency raises its own MSRV past this pin, so `cargo update`
+#      produces a lockfile this toolchain cannot build.
+#
+# Deliberately no calendar reminder and no Dependabot entry: Dependabot has no
+# ecosystem for this file, and a recurring nag that is a no-op most of the time
+# trains everyone to close it unread. When you do bump it, bump
+# `.clippy.toml`'s msrv and `Cargo.toml`'s rust-version in the same commit --
+# the MSRV consistency test requires the first two to match exactly.
+[toolchain]
+channel = "1.98.1"
+components = ["clippy", "rustfmt"]

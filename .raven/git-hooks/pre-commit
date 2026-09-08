@@ -1,0 +1,111 @@
+#!/usr/bin/env sh
+
+# Git exports GIT_DIR, GIT_WORK_TREE and friends into every hook it runs, and
+# neither `git -C <dir>` nor `cd` overrides an exported GIT_DIR. Anything this
+# hook invokes therefore inherits a pointer at *this* repository -- including a
+# test suite that builds throwaway git fixtures, whose `git -C "$sandbox"
+# config user.email ...` then writes into the real `.git/config` instead of the
+# sandbox. That corruption is durable, shared with every linked worktree, and
+# was observed downstream as ~50 commits authored by a fixture identity with
+# commit signing silently disabled.
+#
+# Unsetting is safe in both shapes a hook runs in: the working directory is the
+# worktree root either way, so git rediscovers the right repository (and, in a
+# linked worktree, the right gitdir) from the current directory. A fixture that
+# genuinely wants a different repository has to say so explicitly, which is the
+# point.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
+    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$repo_root" || exit 0
+
+# Run the fast static checks (lint + format) when the task runner is available;
+# a failure blocks the commit. The slower type-check and test suite run once in
+# pre-push, not here, to keep the commit loop quick. If `just` is not installed,
+# skip rather than hard-failing.
+#
+# The justfile has to be there too, not just the binary (issue #225). The
+# `dotfiles` and `generic` templates ship no justfile by design, so on a machine
+# that has `just` installed `just check-fast` printed "error: no justfile found"
+# and exited 1 -- which this hook turned into a refused commit, every time. We
+# have already cd-ed to repo_root, so the bare names are repo-root relative:
+# a justfile in some *parent* directory is deliberately not this repo's gate.
+# JUST_JUSTFILE wins when set, since that is how `just` itself resolves.
+if command -v just >/dev/null 2>&1 && { [ -n "$JUST_JUSTFILE" ] || [ -f justfile ] || [ -f Justfile ] || [ -f .justfile ]; }; then
+    just check-fast || exit 1
+fi
+
+# Block AI-authorship credits (e.g. an AI tool named as the generator) from
+# leaking into staged file content; commit-msg only cleans commit *message*
+# trailers. Skip if the lib script is missing (a stale/partial install)
+# rather than hard-failing.
+attribution_check="$repo_root/.raven/git-hooks/lib/check-ai-attribution-content.py"
+if [ -f "$attribution_check" ]; then
+    python3 "$attribution_check" staged || exit 1
+fi
+
+# Block direct edits inside a RAVEN:BEGIN/RAVEN:END managed block (AGENTS.md
+# says to update the source template instead). Skip if the lib script is
+# missing (a stale/partial install) rather than hard-failing.
+block_check="$repo_root/.raven/git-hooks/lib/check-managed-block-integrity.py"
+if [ -f "$block_check" ]; then
+    python3 "$block_check" || exit 1
+fi
+
+# Block a staged change that adds a blanket lint suppression -- one that names
+# no rule, so it silences the gate rather than one finding. Dispatched by file
+# extension, so a polyglot repo gets the right detector per file. Skip if the
+# lib script is missing (a stale/partial install) rather than hard-failing.
+relaxation_check="$repo_root/.raven/git-hooks/lib/check-gate-relaxation.py"
+if [ -f "$relaxation_check" ]; then
+    python3 "$relaxation_check" || exit 1
+fi
+
+# Optional secret scan for staged changes; a detected leak blocks the commit.
+if command -v gitleaks >/dev/null 2>&1; then
+    # gitleaks added the `git` subcommand in 8.19 and deprecated `protect`;
+    # a pre-8.19 gitleaks has no `git` subcommand at all. Decide the
+    # subcommand up front from `gitleaks version` rather than sniffing the
+    # `git` subcommand's error text for "unknown command" -- that text is
+    # not a stable contract, and a reword or locale change would silently
+    # stop the old fallback from ever firing, blocking every commit on an
+    # old gitleaks (issue #198). Tolerate an optional leading v/V in case a
+    # repackaged build prefixes the version. An unparseable version fails
+    # closed to the modern `git` subcommand and shows its output: an
+    # unrecognized gitleaks is more likely to be newer than 8.19 -- which
+    # shipped a long time ago -- than older.
+    gitleaks_version=$(gitleaks version 2>/dev/null)
+    gitleaks_version=${gitleaks_version#[vV]}
+    case "$gitleaks_version" in
+        *.*)
+            gitleaks_major=$(printf '%s' "$gitleaks_version" | cut -d. -f1)
+            gitleaks_minor=$(printf '%s' "$gitleaks_version" | cut -d. -f2)
+            ;;
+        *)
+            gitleaks_major=""
+            gitleaks_minor=""
+            ;;
+    esac
+    gitleaks_version_ok=1
+    case "$gitleaks_major" in
+        ''|*[!0-9]*) gitleaks_version_ok=0 ;;
+    esac
+    case "$gitleaks_minor" in
+        ''|*[!0-9]*) gitleaks_version_ok=0 ;;
+    esac
+    gitleaks_subcommand=git
+    if [ "$gitleaks_version_ok" -eq 1 ]; then
+        if [ "$gitleaks_major" -lt 8 ]; then
+            gitleaks_subcommand=protect
+        elif [ "$gitleaks_major" -eq 8 ] && [ "$gitleaks_minor" -lt 19 ]; then
+            gitleaks_subcommand=protect
+        fi
+    fi
+    gitleaks_output=$(gitleaks "$gitleaks_subcommand" --staged --redact 2>&1)
+    gitleaks_status=$?
+    if [ "$gitleaks_status" -ne 0 ]; then
+        printf '%s\n' "$gitleaks_output" >&2
+        exit 1
+    fi
+fi

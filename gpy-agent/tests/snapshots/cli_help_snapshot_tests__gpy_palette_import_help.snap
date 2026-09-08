@@ -1,0 +1,16 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy palette import
+expression: help
+---
+Import a base16/base24 scheme file as a palette
+
+Usage: gpy palette import [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>  Path to a base16/base24 scheme YAML file
+
+Options:
+      --name <NAME>  Override the palette name (defaults to the scheme name)
+      --force        Overwrite an existing palette of the same name
+  -h, --help         Print help

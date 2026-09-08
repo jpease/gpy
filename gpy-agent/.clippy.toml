@@ -1,0 +1,57 @@
+# GPY Agent Clippy Configuration
+# Aggressive lint configuration - only applied during `cargo clippy`
+# This keeps `cargo build` fast while maintaining strict code quality standards
+
+# === COMPLEXITY THRESHOLDS ===
+cognitive-complexity-threshold = 15        # Lower = stricter
+too-many-lines-threshold = 60             # Encourage smaller functions
+too-many-arguments-threshold = 5          # Force better API design
+type-complexity-threshold = 150           # Limit complex type nesting
+
+# === MEMORY AND PERFORMANCE ===
+trivial-copy-size-limit = 32              # Prefer Copy for small types
+array-size-threshold = 128000             # Warn on large stack arrays
+vec-box-size-threshold = 4096             # Warn on large boxed collections
+too-large-for-stack = 200                 # Prefer heap for large types
+
+# === BOOLEAN PARAMETERS ===
+max-struct-bools = 2                      # Use enums instead of many bools
+max-fn-params-bools = 1                   # Very strict - prefer config structs
+
+# === DOCUMENTATION ===
+doc-valid-idents = [
+    "GPY", "IPC", "UUID", "JSON", "CLI", "API",
+    "SIGUSR1", "SIGTERM", "macOS", "TOML", "UTF8",
+    "TLS", "TCP", "UDP", "HTTP", "URL", "URI"
+]
+missing-docs-in-crate-items = true        # Require all pub items documented
+
+# === STRING AND NAMING ===
+single-char-binding-names-threshold = 2   # Very strict on single char names
+min-ident-chars-threshold = 3             # Minimum identifier length
+upper-case-acronyms-aggressive = true     # Enforce acronym casing
+
+# === ARITHMETIC SAFETY ===
+arithmetic-side-effects-allowed = []      # No arithmetic exceptions
+
+# === IMPORT CONTROL ===
+allowed-wildcard-imports = []             # No wildcard imports allowed
+warn-on-all-wildcard-imports = true
+
+# === ERROR HANDLING ===
+allow-expect-in-tests = true              # Tests can use expect
+allow-unwrap-in-tests = true              # Tests can use unwrap
+allow-panic-in-tests = true               # Tests can panic
+allow-dbg-in-tests = true                 # Tests can use dbg!
+allow-print-in-tests = true               # Tests can print
+
+# === MSRV COMPATIBILITY ===
+# Kept in step with rust-version in Cargo.toml and the channel in
+# rust-toolchain.toml. A stale value here silently disables every lint
+# gated on a newer MSRV -- this sat at 1.90 against a declared 1.98 and
+# suppressed clippy::duration_suboptimal_units at three sites (#516).
+msrv = "1.98"
+
+# === PERFORMANCE OPTIMIZATIONS ===
+avoid-breaking-exported-api = false      # Allow breaking changes for better APIs
+check-private-items = true               # Check private items too

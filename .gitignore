@@ -1,0 +1,104 @@
+# Fish shell binaries (at root)
+/bin/
+
+# Allow src/bin directories
+!**/src/bin/
+
+# Rust build artifacts
+target/
+# Cargo.lock IS committed: gpy-agent is an application/binary crate, so the
+# lockfile is tracked for reproducible `--locked` builds (Rust convention).
+
+# Development files
+.claude/
+*.backup
+*.snap
+# insta snapshots are source: reviewed, committed, and diffed by the tests.
+# Both snapshot roots must be listed: `src/theme/snapshots/` holds the golden
+# theme-export files (see gpy-agent/src/theme/export.rs), and an unmatched
+# root would be dropped by the fresh `git add` that recreates history (#509).
+!gpy-agent/tests/snapshots/*.snap
+!gpy-agent/src/theme/snapshots/*.snap
+lcov.info
+# Anchored: both are scratch output written at the repo root by scripts/bench.sh
+# and scripts/ci-bench.sh. Unanchored, `bench-results/` also swallowed the
+# tracked docs/dev/performance/bench-results/ archive.
+/bench-results.json
+/bench-results/
+
+# GPY agent debug log (generated at runtime, never source)
+gpy-agent/agent
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Test coverage
+*.profraw
+coverage/
+
+# Machine-local just recipes, pulled in by `import? 'private.just'`
+private.just
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# Documentation build
+book/
+
+# Backup files
+*.bak
+*.orig
+*.rej
+
+# Erlang crash dumps (from language detection testing)
+erl_crash.dump
+
+# moon
+.moon/cache
+.moon/docker
+.moon/cache
+.moon/docker
+
+# Local database files
+.dolt/
+*.db
+
+# Legacy Beads local state (no longer used by this repository)
+.beads/
+.beads-hooks/
+
+# Raven guided-merge scratch artifacts
+.raven/merge/
+
+# Isolated fixture $HOME used by demo/setup.fish to record demo/demo.tape
+demo/.fixture-home/
+
+# Superpowers subagent-driven-development scratch (progress ledger, etc.)
+.superpowers/
+
+# Local agent/session state and language-server caches. Each of these is kept
+# out of git today only by a nested `.gitignore` the tool itself writes
+# (`.remember/.gitignore` is two bytes). That is too thin a thread for a repo
+# whose history gets recreated from a single `git add` (#504, #509): if the
+# tool stops writing it, session notes land in public history. Named here so
+# the repository owns the rule.
+.remember/
+.ruby-lsp/
+.ruff_cache/
+
+# GitNexus code-intelligence index, rebuilt per clone
+.gitnexus/

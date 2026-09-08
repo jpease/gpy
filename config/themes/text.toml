@@ -1,0 +1,102 @@
+# GPY Text Theme Configuration
+# Text-oriented colors and icons grouped under `[segments.*]`
+
+[ui]
+prompt_icon = "❯"
+prompt_color = "white"
+root_prompt_icon = "!❯!"
+root_prompt_color = "red"
+
+[ui.prompt_open]
+icon = "|"
+icon_color = "white"
+bg_color = "transparent"
+
+[ui.prompt_close]
+icon = ")"
+icon_color = "white"
+bg_color = "transparent"
+
+[ui.segment_open]
+icon = "["
+icon_color = "white"
+bg_color = "transparent"
+
+[ui.segment_close]
+icon = "]"
+icon_color = "white"
+bg_color = "transparent"
+
+[segments.clock]
+text_color = "white"
+bg_color = "black"
+time_format = "12"
+
+[segments.duration]
+format = "[$duration]($style)"
+icon = "󰑧"
+text_color = "white"
+bg_color = "black"
+show_if_exceeds_ms = 100
+
+[segments.directory]
+format = "[$path]($style)"
+text_color = "white"
+bg_color = "blue"
+
+[segments.status]
+ok_icon = "✔"
+ok_text_color = "black"
+ok_bg_color = "green"
+fail_icon = "✖"
+fail_text_color = "black"
+fail_bg_color = "red"
+
+[segments.character]
+format = "[$symbol]($style)"
+
+[segments.git]
+format = "[$symbol $branch]($style)([ $ahead_behind]($style))([ $status]($style))"
+text_color = "white"
+bg_color = "black"
+clean_text_color = "white"
+clean_bg_color = "green"
+dirty_text_color = "white"
+dirty_bg_color = "red"
+ahead_behind_text_color = "black"
+ahead_behind_bg_color = "yellow"
+conflicts_text_color = "white"
+conflicts_bg_color = "red"
+
+[segments.language]
+format = "[$symbol]($style)([ $version]($style))"
+text_color = "white"
+bg_color = "black"
+rust_text_color = "white"
+rust_bg_color = "red"
+python_text_color = "white"
+python_bg_color = "blue"
+node_text_color = "white"
+node_bg_color = "green"
+go_text_color = "white"
+go_bg_color = "cyan"
+java_text_color = "white"
+java_bg_color = "blue"
+ruby_text_color = "white"
+ruby_bg_color = "red"
+swift_text_color = "white"
+swift_bg_color = "red"
+elixir_text_color = "white"
+elixir_bg_color = "magenta"
+php_text_color = "white"
+php_bg_color = "blue"
+csharp_text_color = "white"
+csharp_bg_color = "magenta"
+cpp_text_color = "white"
+cpp_bg_color = "blue"
+c_text_color = "white"
+c_bg_color = "blue"
+erlang_text_color = "white"
+erlang_bg_color = "red"
+fish_text_color = "white"
+fish_bg_color = "green"

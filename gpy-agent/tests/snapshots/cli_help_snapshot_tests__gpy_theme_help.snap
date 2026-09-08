@@ -1,0 +1,21 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy theme
+expression: help
+---
+Manage themes
+
+Usage: gpy theme <COMMAND>
+
+Commands:
+  list      List available themes
+  use       Switch to a theme
+  show      Show current theme
+  new       Create new theme from template
+  save      Save the currently active theme's contents as a theme file
+  validate  Validate a theme by name or file path (defaults to active theme)
+  import    Import a `starship.toml` into a GPY palette + prompt theme
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help

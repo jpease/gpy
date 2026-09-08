@@ -1,0 +1,62 @@
+# Project configuration
+# https://moonrepo.dev/docs/config/project
+
+tasks:
+  build:
+    command: 'cargo build'
+    inputs:
+      - 'src/**/*'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+    outputs:
+      - 'target/debug/gpy'
+      - 'target/debug/gpy-agent'
+
+  test:
+    command: 'cargo nextest run'
+    inputs:
+      - 'src/**/*'
+      - 'tests/**/*'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+  test-doc:
+    command: 'cargo test --doc'
+    inputs:
+      - 'src/**/*'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+  clippy:
+    command: >
+      cargo clippy --all-targets --all-features --
+      -D clippy::all -D clippy::pedantic -D clippy::nursery -D clippy::cargo
+      -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic
+      -D clippy::todo -D clippy::unimplemented -D clippy::unreachable
+      -D clippy::unwrap_in_result -D clippy::as_conversions
+      -D clippy::lossy_float_literal -D clippy::default_numeric_fallback
+      -D clippy::mem_forget -D clippy::clone_on_ref_ptr -D clippy::rc_buffer
+      -D clippy::print_stdout -D clippy::print_stderr -D clippy::dbg_macro
+      -D clippy::create_dir -D clippy::exit -D clippy::indexing_slicing
+      -D clippy::get_unwrap -D clippy::arithmetic_side_effects
+      -D clippy::string_add -D clippy::str_to_string -D clippy::multiple_inherent_impl
+      -D clippy::same_name_method -D clippy::self_named_module_files
+      -D clippy::shadow_reuse -D clippy::shadow_same -D clippy::shadow_unrelated
+      -D clippy::float_cmp_const -D clippy::rest_pat_in_fully_bound_structs
+      -D clippy::use_debug -D clippy::wildcard_dependencies
+      -A clippy::module_inception -A clippy::single_char_lifetime_names
+      -A clippy::similar_names -A clippy::len_without_is_empty
+      -A clippy::new_without_default
+      -A clippy::redundant_feature_names
+    inputs:
+      - 'src/**/*'
+      - 'tests/**/*'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+  fmt-check:
+    command: 'cargo fmt -- --check'
+    inputs:
+      - 'src/**/*'
+      - 'tests/**/*'
+      - 'Cargo.toml'

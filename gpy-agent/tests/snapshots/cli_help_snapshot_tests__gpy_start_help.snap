@@ -1,0 +1,11 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy start
+expression: help
+---
+Start the background agent
+
+Usage: gpy start
+
+Options:
+  -h, --help  Print help

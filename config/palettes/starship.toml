@@ -1,0 +1,26 @@
+# GPY "starship" palette — reproduces Starship's default colors.
+# Pairs with the starship theme (recommended via [ui.recommended].palette).
+name = "starship"
+description = "Reproduces Starship's default colors (pairs with the starship theme)"
+
+[colors]
+# ANSI accents — identity (Starship uses terminal ANSI for most modules).
+black = "black"
+red = "red"
+green = "green"
+yellow = "yellow"
+blue = "blue"
+magenta = "magenta"
+cyan = "cyan"
+white = "white"
+bright_black = "bright_black"
+bright_red = "bright_red"
+bright_yellow = "bright_yellow"
+bright_blue = "bright_blue"
+bright_cyan = "bright_cyan"
+bright_white = "bright_white"
+# Off-ANSI language slots, aligned to Starship's exact 256-color indices.
+orange = "202"          # swift
+bright_magenta = "147"  # php
+bright_green = "149"     # cpp / c
+brown = "130"

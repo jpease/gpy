@@ -1,0 +1,11 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy stop
+expression: help
+---
+Stop the background agent
+
+Usage: gpy stop
+
+Options:
+  -h, --help  Print help

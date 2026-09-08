@@ -1,0 +1,138 @@
+#!/usr/bin/env sh
+
+# Git exports GIT_DIR, GIT_WORK_TREE and friends into every hook it runs, and
+# neither `git -C <dir>` nor `cd` overrides an exported GIT_DIR. Anything this
+# hook invokes therefore inherits a pointer at *this* repository -- including a
+# test suite that builds throwaway git fixtures, whose `git -C "$sandbox"
+# config user.email ...` then writes into the real `.git/config` instead of the
+# sandbox. That corruption is durable, shared with every linked worktree, and
+# was observed downstream as ~50 commits authored by a fixture identity with
+# commit signing silently disabled.
+#
+# Unsetting is safe in both shapes a hook runs in: the working directory is the
+# worktree root either way, so git rediscovers the right repository (and, in a
+# linked worktree, the right gitdir) from the current directory. A fixture that
+# genuinely wants a different repository has to say so explicitly, which is the
+# point.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
+    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+
+
+# Git invokes this hook as `pre-push <remote-name> <remote-url>`. The name is
+# forwarded to the attribution scan so it can scope "already on the remote" to
+# the remote actually being pushed to instead of assuming `origin`. Git passes
+# the URL for both arguments when pushing to a raw URL; the scanner tolerates
+# that (a URL simply matches no tracking refs).
+remote_name="$1"
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$repo_root" || exit 0
+
+# HEAD is resolved up front: the delete-only/no-op check below only cares
+# whether any ref update is real, but the stamp check further down needs it to
+# confirm the pushed ref actually is this worktree's HEAD (see refs_match_head).
+#
+# On an unborn HEAD (no commits yet), `git rev-parse HEAD` exits non-zero but
+# still echoes the literal unresolved arg "HEAD" to stdout -- its
+# pathspec-passthrough fallback. Checking the exit status, not just whether
+# stdout came back non-empty, is what keeps that string out of head_sha, the
+# same way lib/with-verified-cache.sh does it.
+head_sha=$(git rev-parse HEAD 2>/dev/null) || head_sha=""
+
+# Git feeds the push plan on stdin as "<local-ref> <local-sha> <remote-ref>
+# <remote-sha>" lines; a deletion has an all-zero local-sha. If every line is a
+# deletion (or stdin is empty), no code is leaving the machine, so skip the
+# expensive gate. Git already short-circuits a fully up-to-date push before the
+# hook runs, so this only adds coverage for delete-only pushes. The `case` glob
+# treats a SHA as real work iff it holds any non-zero character, which keeps this
+# free of external commands (no `tr`) and agnostic to SHA-1 vs SHA-256 length.
+#
+# refs_match_head also tracks whether every pushed local-sha equals head_sha.
+# The stamp only proves that *this* worktree's checked-out HEAD passed `just
+# check`; it says nothing about a different commit being pushed (a different
+# branch than the one checked out here, or a commit made in another worktree
+# sharing this git dir). Without this check, a stamped worktree on `main`
+# could rubber-stamp `git push origin feature` with zero checks run
+# (issue #80).
+#
+# stdin can only be drained once, so the loop also reaccumulates the plan into
+# push_plan to hand to the attribution scan below -- otherwise that scan has no
+# idea which refs are being pushed and falls back to guessing from HEAD (issue
+# #126). Building the string by concatenation (rather than re-reading stdin, a
+# here-doc, or a temp file) keeps the loop in the current shell so has_work and
+# refs_match_head survive, needs no cleanup path, and never re-parses ref names.
+has_work=0
+refs_match_head=1
+push_plan=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$local_sha" in
+        "") ;;             # blank line, ignore
+        *[!0]*)            # contains a non-zero digit -> a real ref update
+            has_work=1
+            [ "$local_sha" = "$head_sha" ] || refs_match_head=0
+            push_plan="${push_plan}${local_ref} ${local_sha} ${remote_ref} ${remote_sha}
+"
+            ;;
+    esac
+done
+[ "$has_work" -eq 0 ] && exit 0
+
+# Block AI-authorship credits in outbound commit content (an AI tool named as
+# the generator, left in a source file). Independent of the check-passed
+# stamp below, since that stamp only vouches for `just check` having passed,
+# not content. Skip if the lib script is missing (a stale/partial install)
+# rather than hard-failing.
+#
+# The captured plan goes in on stdin (--push-plan), so the scan covers the
+# commits actually being pushed rather than whatever this worktree has checked
+# out -- `git push origin feature` from a worktree sitting on `main` used to
+# scan `main` and wave the feature branch through (issue #126). An older lib
+# without --push-plan ignores the extra arguments and falls back to its previous
+# behavior instead of erroring.
+attribution_check="$repo_root/.raven/git-hooks/lib/check-ai-attribution-content.py"
+if [ -f "$attribution_check" ]; then
+    printf '%s' "$push_plan" |
+        python3 "$attribution_check" outbound --push-plan --remote "$remote_name" || exit 1
+fi
+
+# Run the full verification set (lint, format, type-check, tests) before code
+# leaves the machine; a failure blocks the push. pre-commit already ran the fast
+# subset, so the only heavy work added here is the type-check and test suite --
+# tests run exactly once across both hooks. Re-running the fast checks is the
+# cheap last line of defense against commits made with `--no-verify`. If `just`
+# is not installed, skip rather than hard-failing.
+#
+# with-verified-cache.sh skips the run entirely when HEAD already passed
+# `just check` against a clean tree -- recorded either by this hook, or by
+# the `check` recipe itself when it is run manually, so a manual run earns
+# the same credit. A new commit, amend, or any uncommitted change alters HEAD
+# or dirties the tree and invalidates that cache, same as before. When a
+# pushed ref is not HEAD (refs_match_head=0, see above), the cache cannot
+# vouch for what is actually being pushed, so --force skips the cached read
+# and the gate always runs; the write on success still happens, crediting
+# HEAD for a later push of HEAD itself. That still only checks the working
+# tree, not the pushed ref's actual content, so it does not fully verify e.g.
+# a cross-worktree push of a different branch -- closing that would require
+# checking out the pushed ref, which this hook intentionally does not do. A
+# second, unrelated gap the working-tree design cannot close either:
+# committing broken code and then fixing it locally without committing lets
+# `just check` pass against the fixed tree while HEAD (the broken commit) is
+# what actually gets pushed. The cache lives in the (per-worktree) git dir,
+# so it is never committed and is wiped on re-clone. Skip the wrapper
+# entirely (falling back to a plain, uncached run) if the lib script is
+# missing (a stale/partial install) rather than hard-failing.
+# The justfile presence test matches pre-commit's (issue #225): a template that
+# ships no justfile must skip this gate, not have every push refused by
+# `just check` failing with "error: no justfile found".
+if command -v just >/dev/null 2>&1 && { [ -n "$JUST_JUSTFILE" ] || [ -f justfile ] || [ -f Justfile ] || [ -f .justfile ]; }; then
+    cache_script="$repo_root/.raven/git-hooks/lib/with-verified-cache.sh"
+    if [ -f "$cache_script" ]; then
+        if [ "$refs_match_head" -eq 1 ]; then
+            sh "$cache_script" check just check || exit 1
+        else
+            sh "$cache_script" --force check just check || exit 1
+        fi
+    else
+        just check || exit 1
+    fi
+fi

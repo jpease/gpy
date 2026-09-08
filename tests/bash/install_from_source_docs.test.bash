@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# tests/bash/install_from_source_docs.test.bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The documented from-source install, executed verbatim from a clean checkout
+# (#635, pinned for #649).
+#
+# README.md's "From source" section told users to `git clone` and run
+# `bash install.sh`, which cannot work: install.sh is the release-archive
+# installer and dies on the missing, checksummed bin/ payload a checkout does
+# not carry. Nothing executed the instructions, so nothing noticed. This test
+# extracts `git archive HEAD` into a scratch directory, runs every fenced
+# `bash` block of README.md's "From source" section and docs/INSTALL.md's
+# "Install Locally" section against a sandboxed HOME/XDG_*, and asserts the
+# result is an installed, runnable agent and CLI plus the shell files for
+# Fish, Zsh and Bash. The commands are read from the docs at run time, so a
+# doc edit that breaks the path fails here.
+#
+# Cost: this builds the agent in release mode, like a real user would. The
+# scratch checkout's gpy-agent/target is symlinked at this repo's, so the
+# dependency graph is warm and only the crate itself is rebuilt (~2 min);
+# a truly cold build is what #652's clean-container job measures. Because of
+# that cost the test runs under CI or GPY_GATE_RELEASE=1 (the same switch
+# that gates the release-build leg in scripts/quality-check.sh) and reports
+# a SKIP otherwise -- never a silent pass.
+#
+# Asserts:
+#   (a) README's from-source block exits 0
+#   (b) ~/.local/bin/gpy-agent --version and ~/.local/bin/gpy --version run
+#   (c) the Fish integration is installed under $XDG_CONFIG_HOME/fish
+#   (d) INSTALL.md's Zsh/Bash block exits 0 and both integrations source
+#       cleanly in their shells
+#   (e) nothing was written outside the sandbox HOME
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
+
+if [[ -z "${CI:-}" && -z "${GPY_GATE_RELEASE:-}" ]]; then
+    test_skip "from-source install builds a release binary (~2 min); set GPY_GATE_RELEASE=1 to run it locally (CI always runs it)"
+fi
+test_require_command git
+test_require_command cargo "cargo not installed; the documented from-source path needs Rust"
+test_require_command fish "fish not installed; README's from-source path uses install-dev.fish"
+test_require_command zsh
+test_require_command bash
+
+failures=0
+fail() {
+    echo "FAIL: $*"
+    failures=$((failures + 1))
+}
+
+# --- extract the documented commands ----------------------------------------
+
+# Print the bodies of every ```bash fence between the heading `$2` and the
+# next heading of the same or higher level in file `$1`.
+doc_bash_blocks() {
+    local file="$1" heading="$2"
+    awk -v heading="$heading" '
+        BEGIN { level = 0; inside = 0; fence = 0 }
+        {
+            if (!inside) {
+                if ($0 == heading) {
+                    inside = 1
+                    match($0, /^#+/)
+                    level = RLENGTH
+                }
+                next
+            }
+            if (fence) {
+                if ($0 == "```") { fence = 0; print ""; next }
+                print
+                next
+            }
+            # A `# comment` inside a fence is handled above; only bare text
+            # lines can be headings.
+            if ($0 ~ /^#+ /) {
+                match($0, /^#+/)
+                if (RLENGTH <= level) { exit }
+            }
+            if ($0 == "```bash") { fence = 1; next }
+        }
+    ' "$file"
+}
+
+readme_block="$(doc_bash_blocks "$ROOT/README.md" "### From source")"
+install_block="$(doc_bash_blocks "$ROOT/docs/INSTALL.md" "### Install Locally")"
+
+[[ -n "$readme_block" ]] || fail "README.md has no bash block under '### From source'"
+[[ -n "$install_block" ]] || fail "docs/INSTALL.md has no bash block under '### Install Locally'"
+if [[ $failures -gt 0 ]]; then
+    exit 1
+fi
+
+# The README block clones from GitHub; a test must not touch the network, so
+# the clone line is replaced by the archive extraction below and everything
+# after `cd gpy` runs as written.
+if ! grep -q '^git clone https://github.com/jpease/gpy.git$' <<<"$readme_block"; then
+    fail "README from-source block no longer starts with the expected git clone line:
+$readme_block"
+fi
+readme_commands="$(grep -v '^git clone ' <<<"$readme_block" | grep -v '^cd gpy$')"
+
+# --- sandbox -------------------------------------------------------------------
+
+SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-from-source.XXXXXX")"
+SRC="$SANDBOX/gpy"
+SANDBOX_HOME="$SANDBOX/home"
+mkdir -p "$SRC" "$SANDBOX_HOME" "$SANDBOX/runtime"
+
+cleanup() {
+    # install-dev.fish starts the freshly installed agent to verify hot
+    # reload; stop it before the sandbox goes away.
+    if [[ -x "$SANDBOX_HOME/.local/bin/gpy-agent" ]]; then
+        "$SANDBOX_HOME/.local/bin/gpy-agent" stop >/dev/null 2>&1 || true
+    fi
+    rm -rf "$SANDBOX"
+}
+trap cleanup EXIT
+
+git -C "$ROOT" archive --format=tar HEAD | tar -x -C "$SRC"
+# Warm dependency cache (see the header); the crate itself still builds.
+mkdir -p "$ROOT/gpy-agent/target"
+ln -s "$ROOT/gpy-agent/target" "$SRC/gpy-agent/target"
+
+# The sandboxed HOME hides the developer's Rust toolchain (rustup and mise
+# both resolve through $HOME), so hand the real toolchain to the sandbox:
+# the resolved cargo directory goes first on PATH, ahead of any version-
+# manager shim that would need $HOME to work, and CARGO_HOME/RUSTUP_HOME keep
+# pointing at the real ones.
+real_cargo="$(rustup which cargo 2>/dev/null || command -v cargo)"
+real_cargo_dir="$(dirname "$real_cargo")"
+real_home="$HOME"
+
+sandbox_env=(
+    "HOME=$SANDBOX_HOME"
+    "XDG_CONFIG_HOME=$SANDBOX_HOME/.config"
+    "XDG_CACHE_HOME=$SANDBOX_HOME/.cache"
+    "XDG_RUNTIME_DIR=$SANDBOX/runtime"
+    "PATH=$SANDBOX_HOME/.local/bin:$real_cargo_dir:$PATH"
+    "CARGO_HOME=${CARGO_HOME:-$real_home/.cargo}"
+    "RUSTUP_HOME=${RUSTUP_HOME:-$real_home/.rustup}"
+    "GPY_NERD_FONT=none"
+    "RUSTC_WRAPPER="
+)
+
+run_documented() {
+    local label="$1" commands="$2"
+    echo "--- running documented commands: $label ---"
+    local log="$SANDBOX/$label.log"
+    if (cd "$SRC" && env "${sandbox_env[@]}" bash -e -c "$commands") >"$log" 2>&1; then
+        return 0
+    fi
+    fail "$label commands failed; last 40 lines:"
+    tail -n 40 "$log"
+    return 1
+}
+
+# --- (a)-(c) README: fish install-dev.fish ----------------------------------------
+
+run_documented "readme-from-source" "$readme_commands" || true
+
+for bin in gpy-agent gpy; do
+    if version="$(env "${sandbox_env[@]}" "$SANDBOX_HOME/.local/bin/$bin" --version 2>&1)"; then
+        echo "  $bin: $version"
+    else
+        fail "$bin is not installed and runnable at ~/.local/bin ($version)"
+    fi
+done
+
+fish_dir="$SANDBOX_HOME/.config/fish"
+[[ -f "$fish_dir/gpy/core/init.fish" ]] || fail "Fish core files missing at $fish_dir/gpy/core"
+[[ -f "$fish_dir/conf.d/gpy_init.fish" ]] || fail "Fish conf.d entry missing"
+[[ -e "$fish_dir/functions/fish_prompt.fish" ]] || fail "Fish prompt function missing"
+[[ -f "$fish_dir/completions/gpy.fish" ]] || fail "Fish completions were not generated"
+
+# --- (d) INSTALL.md: Zsh and Bash ---------------------------------------------------
+
+run_documented "install-md-install-locally" "$install_block" || true
+
+[[ -f "$SANDBOX_HOME/.config/gpy/zsh/gpy.zsh" ]] || fail "Zsh integration not copied"
+[[ -f "$SANDBOX_HOME/.config/gpy/bash/gpy.bash" ]] || fail "Bash integration not copied"
+grep -q 'source ~/.config/gpy/zsh/gpy.zsh' "$SANDBOX_HOME/.zshrc" 2>/dev/null || fail ".zshrc was not updated"
+grep -q 'source ~/.config/gpy/bash/gpy.bash' "$SANDBOX_HOME/.bashrc" 2>/dev/null || fail ".bashrc was not updated"
+
+# Each integration must source without error in its shell; the agent is kept
+# off so sourcing never spawns a daemon from inside this test.
+if ! env "${sandbox_env[@]}" GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
+    zsh -c 'source ~/.config/gpy/zsh/gpy.zsh && whence -w __gpy_debug_paths >/dev/null' >"$SANDBOX/zsh-source.log" 2>&1; then
+    fail "sourcing the installed Zsh integration failed: $(cat "$SANDBOX/zsh-source.log")"
+fi
+if ! env "${sandbox_env[@]}" GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
+    bash -c 'source ~/.config/gpy/bash/gpy.bash && declare -F __gpy_debug_paths >/dev/null' >"$SANDBOX/bash-source.log" 2>&1; then
+    fail "sourcing the installed Bash integration failed: $(cat "$SANDBOX/bash-source.log")"
+fi
+
+# --- (e) nothing escaped the sandbox ---------------------------------------------------
+
+if [[ -n "$(git -C "$ROOT" status --porcelain -- bin 2>/dev/null)" ]]; then
+    fail "the from-source install wrote into this checkout's bin/"
+fi
+
+if [[ $failures -gt 0 ]]; then
+    echo "FAILED: $failures assertion(s)"
+    exit 1
+fi
+echo "PASS: documented from-source install works from a clean checkout"

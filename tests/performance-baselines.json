@@ -1,0 +1,162 @@
+{
+  "version": "1.0.0",
+  "updated": "2026-05-15T00:00:00Z",
+  "description": "Performance baselines and budgets for GPY agent",
+  "budgets": {
+    "ipc_latency": {
+      "target_ms": 1.0,
+      "max_ms": 1.5,
+      "description": "IPC roundtrip latency budget"
+    },
+    "git_status_cold": {
+      "target_ms": 500.0,
+      "max_ms": 750.0,
+      "description": "Git status scan (cold cache) budget"
+    },
+    "git_status_warm": {
+      "target_ms": 50.0,
+      "max_ms": 100.0,
+      "description": "Git status scan (warm cache) budget"
+    },
+    "cache_write": {
+      "target_ms": 10.0,
+      "max_ms": 25.0,
+      "description": "Cache write operation budget"
+    },
+    "cache_read": {
+      "target_ms": 1.0,
+      "max_ms": 5.0,
+      "description": "Cache read operation budget"
+    },
+    "language_detection": {
+      "target_ms": 100.0,
+      "max_ms": 200.0,
+      "description": "Language detection budget"
+    },
+    "prompt_render": {
+      "target_ms": 20.0,
+      "max_ms": 50.0,
+      "description": "Warm prompt render budget (agent up, instant cache fresh)"
+    },
+    "prompt_render_cold": {
+      "target_ms": 150.0,
+      "max_ms": 300.0,
+      "description": "Cold-cache prompt render budget (instant cache cleared each render)"
+    },
+    "prompt_render_stale": {
+      "target_ms": 40.0,
+      "max_ms": 100.0,
+      "description": "Stale-cache prompt render budget (serve-stale path)"
+    },
+    "prompt_render_degraded": {
+      "target_ms": 80.0,
+      "max_ms": 200.0,
+      "description": "Agent-unavailable prompt render budget (graceful fallback)"
+    },
+    "memory_usage": {
+      "target_mb": 15.0,
+      "max_mb": 50.0,
+      "description": "Agent memory usage budget (RSS)"
+    },
+    "memory_long_running": {
+      "target_mb": 20.0,
+      "max_mb": 50.0,
+      "description": "Agent peak RSS budget under sustained long-running prompt load"
+    },
+    "startup_time": {
+      "target_ms": 100.0,
+      "max_ms": 500.0,
+      "description": "Agent startup time budget"
+    },
+    "config_validation": {
+      "target_ms": 50.0,
+      "max_ms": 100.0,
+      "description": "Configuration validation budget"
+    },
+    "theme_manager_load": {
+      "target_ms": 5.0,
+      "max_ms": 20.0,
+      "description": "ThemeManager::new load budget (Agent::new cold-start sub-step, issue #335)"
+    },
+    "theme_export_write": {
+      "target_ms": 10.0,
+      "max_ms": 30.0,
+      "description": "write_theme_export_cache atomic write budget (Agent::new cold-start sub-step, issue #335)"
+    },
+    "version_command_spawn": {
+      "target_ms": 10.0,
+      "max_ms": 50.0,
+      "description": "Version-detection subprocess spawn/read/timeout/parse overhead budget, stub command (issue #335)"
+    },
+    "watcher_setup_single_file": {
+      "target_ms": 300.0,
+      "max_ms": 500.0,
+      "description": "Filesystem watcher setup for single file budget"
+    },
+    "watcher_setup_deep_directory": {
+      "target_ms": 400.0,
+      "max_ms": 600.0,
+      "description": "Filesystem watcher setup for deep directory structure budget"
+    }
+  },
+  "regression_thresholds": {
+    "major_regression_percent": 50.0,
+    "minor_regression_percent": 20.0,
+    "improvement_percent": -10.0,
+    "measurement_variance_percent": 15.0
+  },
+  "baselines": {
+    "git_status_100_files": {
+      "mean_ms": 17.2,
+      "std_dev_ms": 0.5,
+      "samples": 100,
+      "last_updated": "2026-05-15T00:00:00Z"
+    },
+    "ipc_ping": {
+      "mean_ms": 0.037,
+      "std_dev_ms": 0.001,
+      "samples": 100,
+      "last_updated": "2026-05-15T00:00:00Z"
+    },
+    "cache_atomic_write": {
+      "mean_ms": 0.003,
+      "std_dev_ms": 0.0002,
+      "samples": 100,
+      "last_updated": "2026-05-15T00:00:00Z"
+    },
+    "config_load_from_file": {
+      "mean_ms": 0.0164,
+      "std_dev_ms": 0.0002,
+      "samples": 100,
+      "last_updated": "2026-07-02T00:00:00Z"
+    },
+    "theme_manager_load": {
+      "mean_ms": 0.0407,
+      "std_dev_ms": 0.0005,
+      "samples": 100,
+      "last_updated": "2026-07-02T00:00:00Z"
+    },
+    "theme_export_write": {
+      "mean_ms": 0.1646,
+      "std_dev_ms": 0.0075,
+      "samples": 100,
+      "last_updated": "2026-07-02T00:00:00Z"
+    },
+    "version_command_spawn": {
+      "mean_ms": 1.594,
+      "std_dev_ms": 0.05,
+      "samples": 100,
+      "last_updated": "2026-07-02T00:00:00Z"
+    }
+  },
+  "test_configurations": {
+    "git_repo_sizes": [10, 50, 100, 500, 1000],
+    "cache_data_sizes_kb": [1, 10, 100, 500],
+    "concurrent_connections": [1, 5, 10, 50, 100],
+    "measurement_iterations": {
+      "fast": 10,
+      "normal": 100,
+      "thorough": 1000
+    }
+  }
+}

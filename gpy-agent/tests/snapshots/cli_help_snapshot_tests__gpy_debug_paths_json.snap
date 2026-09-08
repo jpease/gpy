@@ -1,0 +1,16 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy debug paths --format json (root redacted)
+expression: redacted
+---
+{
+  "runtime_root": "<ROOT>/.runtime/gpy",
+  "socket": "<ROOT>/.runtime/gpy/gpy.sock",
+  "shell_registry_dir": "<ROOT>/.runtime/gpy/shells",
+  "cache_root": "<ROOT>/.cache/gpy",
+  "instant_prompts_dir": "<ROOT>/.cache/gpy/instant-prompts",
+  "theme_export_file": "<ROOT>/.cache/gpy/theme-export.fish",
+  "config_path": "<ROOT>/.config/gpy/config.toml",
+  "config_candidates": "<ROOT>/.config/gpy/config.toml|<ROOT>/.config/gpy/config.toml|.gpy.toml",
+  "theme_dir": "<ROOT>/.config/gpy/themes"
+}

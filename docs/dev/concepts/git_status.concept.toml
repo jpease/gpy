@@ -1,0 +1,240 @@
+# Git Status Concept Specification
+#
+# This is an example concept specification following the Jackson/Meng pattern
+# from "What You See Is What It Does" (Onward! 2025).
+#
+# Purpose: Demonstrates how GPY's git module could be specified as an
+# independent concept with clear contracts, enabling LLM-assisted regeneration.
+
+[concept]
+name = "GitStatus"
+version = "1.0.0"
+purpose = """
+To detect and report the working tree state of git repositories, including:
+- Current branch name
+- Ahead/behind count relative to upstream
+- Staged, unstaged, and untracked file counts
+- Repository state (clean, merge, rebase, cherry-pick, etc.)
+- Stash presence
+
+This concept is independent of how the information is displayed (that's Theme)
+or how it's communicated (that's IPC).
+"""
+
+# Type parameters (polymorphic references to external concepts)
+[parameters]
+Repository = "opaque identifier for a repository path"
+
+# Conceptual state (not implementation details)
+[state]
+repositories = "set of Repository"
+branch_name = "Repository -> optional String"
+ahead_count = "Repository -> Natural"
+behind_count = "Repository -> Natural"
+staged_count = "Repository -> Natural"
+unstaged_count = "Repository -> Natural"
+untracked_count = "Repository -> Natural"
+conflicted_count = "Repository -> Natural"
+stash_count = "Repository -> Natural"
+repo_state = "Repository -> RepoState"
+
+[state.types]
+RepoState = { type = "enum", values = [
+  "Clean",
+  "Merge",
+  "Rebase",
+  "RebaseInteractive",
+  "RebaseMerge",
+  "CherryPick",
+  "Revert",
+  "Bisect"
+] }
+
+# Actions (external API)
+
+[[actions]]
+name = "query_status"
+description = """
+Return the current working tree status for a repository.
+May return cached results if recent query exists.
+"""
+
+  [actions.inputs]
+  repo_path = { type = "Path", description = "Path within a git repository" }
+
+  [actions.outputs.success]
+  status = { type = "GitInfo", description = "Complete repository status" }
+
+  [actions.outputs.error]
+  error = { type = "String", description = "Error if repo invalid or inaccessible" }
+
+[[actions]]
+name = "invalidate_cache"
+description = """
+Force the next query_status call to re-scan the repository instead of
+returning cached results. Used when filesystem watcher detects changes.
+"""
+
+  [actions.inputs]
+  repo_path = { type = "Path", description = "Repository to invalidate" }
+
+  [actions.outputs]
+  # Returns nothing, always succeeds
+
+[[actions]]
+name = "set_cache_ttl"
+description = """
+Configure how long status results are cached before automatic refresh.
+"""
+
+  [actions.inputs]
+  ttl_seconds = { type = "Natural", description = "Time-to-live in seconds" }
+
+  [actions.outputs]
+  # Returns nothing, always succeeds
+
+# Operational principle (archetypal scenario)
+[operational_principle]
+scenario = """
+Given a repository at /home/user/project with:
+  - Branch 'feature-x' checked out
+  - 2 files staged
+  - 1 file with unstaged changes
+  - 3 untracked files
+
+After query_status(repo_path: '/home/user/project') => {
+  branch: 'feature-x',
+  staged: 2,
+  unstaged: 1,
+  untracked: 3,
+  state: Clean
+}
+
+Then user runs: git commit -m "Save work"
+
+After invalidate_cache(repo_path: '/home/user/project')
+
+Then query_status(repo_path: '/home/user/project') => {
+  branch: 'feature-x',
+  staged: 0,      # Changed!
+  unstaged: 1,    # Unchanged
+  untracked: 3,   # Unchanged
+  state: Clean
+}
+"""
+
+# Implementation notes (not part of specification, but helpful)
+[implementation]
+language = "Rust"
+primary_library = "native git subprocess (git status --porcelain=v2 --branch)"
+caching_strategy = "LRU with TTL"
+cache_capacity = 100
+default_ttl_seconds = 60
+
+  [implementation.files]
+  main = "gpy-agent/src/git/status.rs"
+  cache = "gpy-agent/src/git/cache.rs"
+  backend = "gpy-agent/src/git/native/mod.rs"
+  parser = "gpy-agent/src/git/native/parser.rs"
+
+  [implementation.dependencies]
+  external = [
+    "git (invoked as a subprocess; porcelain v2 requires Git >= 2.11.0)",
+    "std::path::PathBuf",
+    "std::time::Instant"
+  ]
+  internal = [
+    "crate::error::Error",
+    "crate::security::validate_path"
+  ]
+
+  [implementation.performance]
+  cold_query = "10-50ms (depends on repo size)"
+  cached_query = "<1ms"
+  cache_memory = "~200 bytes per repository"
+
+# Security considerations
+[security]
+path_validation = """
+All repo_path inputs MUST be validated via security::validate_path() to prevent:
+- Directory traversal attacks (../)
+- Null byte injection
+- Excessively long paths
+- Suspicious patterns
+"""
+
+timeout = """
+All git operations MUST have a timeout (default 10 seconds) to prevent:
+- Hanging on network filesystems
+- DoS via slow repositories
+"""
+
+# Test scenarios (could auto-generate tests from these)
+[[tests]]
+name = "clean_repository"
+setup = "Create git repo with no changes"
+action = "query_status(repo)"
+expected = "{ staged: 0, unstaged: 0, untracked: 0, state: Clean }"
+
+[[tests]]
+name = "during_merge"
+setup = "Create git repo with merge conflict"
+action = "query_status(repo)"
+expected = "{ state: Merge, conflicted: > 0 }"
+
+[[tests]]
+name = "cache_invalidation"
+setup = "Query repo, modify .git/index, invalidate cache"
+action = "query_status(repo)"
+expected = "Returns fresh data, not cached"
+
+[[tests]]
+name = "invalid_path"
+setup = "Non-existent directory"
+action = "query_status('/nonexistent')"
+expected = "Returns error variant"
+
+# Dependencies (what this concept needs from other concepts)
+[dependencies]
+# None! GitStatus is fully independent.
+# It takes opaque Path values and returns status data.
+# It doesn't know about:
+#   - How status is formatted (that's Theme)
+#   - How it's communicated (that's IPC)
+#   - What triggers queries (that's Synchronization)
+
+# Properties (invariants maintained by this concept)
+[properties]
+cache_freshness = """
+If cache entry exists with timestamp T and TTL is N seconds,
+then query at time T+M returns cached data if M < N, else fresh data.
+"""
+
+invalidation_effect = """
+After invalidate_cache(repo), the next query_status(repo) MUST
+re-scan the repository, not return cached data.
+"""
+
+timeout_safety = """
+All git operations complete within configured timeout or return error.
+Never hang indefinitely.
+"""
+
+# Variations (alternative implementations or configurations)
+[variations]
+cache_disabled = """
+Some deployments may disable caching entirely for maximum freshness.
+Set TTL to 0 to force every query to re-scan.
+"""
+
+custom_git_dir = """
+Support repositories with non-standard .git directory locations
+via GIT_DIR environment variable or --git-dir parameter.
+"""
+
+# Related concepts (in a full concept design)
+[related]
+FileWatcher = "Detects git file changes and triggers invalidate_cache"
+Theme = "Formats GitInfo into ANSI codes or JSON for display"
+IPC = "Transports query_status requests and responses"
+Config = "Provides TTL and timeout settings"

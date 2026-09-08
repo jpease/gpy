@@ -1,0 +1,5 @@
+# Workspace configuration
+# https://moonrepo.dev/docs/config/workspace
+
+projects:
+  gpy-agent: 'gpy-agent'

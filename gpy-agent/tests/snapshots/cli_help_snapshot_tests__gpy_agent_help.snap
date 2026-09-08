@@ -1,0 +1,24 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy-agent --help
+expression: result.stdout
+---
+Fast, cross-platform agent for Git status and language detection used by the GPY prompt for Bash, Fish, and Zsh
+
+Usage: gpy-agent <COMMAND>
+
+Commands:
+  start    Start the agent as a background process
+  stop     Stop the background agent process
+  status   Show the current status of the agent
+  theme    Theme management commands
+  palette  Palette (color theme) management commands
+  oneshot  Run a single command and print the result (used as a fallback)
+  config   Query configuration values from config.toml (used by shell integrations)
+  doctor   Run system diagnostics to check for common issues
+  init     Bootstrap configuration on first install (picks a Nerd/ASCII icon default that renders on this machine). No-op when a config file already exists
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version

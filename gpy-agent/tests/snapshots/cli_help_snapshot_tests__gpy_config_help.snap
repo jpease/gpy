@@ -1,0 +1,19 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy config
+expression: help
+---
+Configuration management
+
+Usage: gpy config <COMMAND>
+
+Commands:
+  show    Show configuration
+  get     Get a config value
+  set     Set a config value
+  open    Open the config file in your editor
+  wizard  Launch the interactive configuration wizard (theme, palette, segments, live preview)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help

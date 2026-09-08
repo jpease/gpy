@@ -1,0 +1,6 @@
+---
+source: tests/formatter_snapshot_tests.rs
+description: Git status (merge conflicts) in JSON format
+expression: output
+---
+{"ahead":0,"ahead_capped":false,"behind":0,"behind_capped":false,"branch":"feature/authentication","conflicts":3,"detached":false,"rebase_progress":null,"staged":2,"stash_count":0,"state":"merging","unstaged":1,"untracked":0}

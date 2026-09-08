@@ -1,0 +1,7 @@
+---
+source: tests/formatter_snapshot_tests.rs
+assertion_line: 243
+description: Agent status in JSON format
+expression: output
+---
+{"cache_entries":10,"protocol_version":1,"registered_clients":5,"version":"0.1.0","watched_repos":3}

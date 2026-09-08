@@ -1,0 +1,23 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy debug paths
+expression: help
+---
+Dump every path GPY resolves from the environment
+
+Each shell integration exposes the same map via `__gpy_debug_paths`; `tests/fish/path_parity.test.fish` diffs the two across an environment matrix so path resolution cannot drift between the agent and a shell.
+
+Usage: gpy debug paths [OPTIONS]
+
+Options:
+      --format <FORMAT>
+          Output format
+
+          Possible values:
+          - json: A JSON object, keys in resolution order
+          - kv:   `key=value` lines — the format each shell's `__gpy_debug_paths` emits, and what the cross-shell parity harness diffs
+
+          [default: json]
+
+  -h, --help
+          Print help (see a summary with '-h')

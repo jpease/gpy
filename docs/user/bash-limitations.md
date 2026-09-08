@@ -1,0 +1,282 @@
+# Bash Support: Limitations and Caveats
+
+**Last Updated**: 2025-11-26
+
+## Overview
+
+GPY supports Bash with **functional parity** to Fish and Zsh for core features (git status, language detection, segments). However, Bash has inherent limitations that affect some advanced features.
+
+This document clearly outlines what works, what has caveats, and what's unavailable in Bash.
+
+---
+
+## ✅ Fully Supported Features
+
+These features work identically to Fish/Zsh:
+
+- **Git status** - Branch, ahead/behind, staged/unstaged counts, states
+- **Language detection** - All 10 languages with version detection
+- **Directory segment** - Current directory with abbreviation
+- **Status segment** - Exit code indicator (✔/✖)
+- **Clock segment** - Current time
+- **Agent IPC** - Full daemon communication
+- **Theme system** - Complete color/icon customization
+- **Config hot-reload** - Live config changes via SIGUSR2
+- **Caching** - Sub-millisecond cache hits
+
+---
+
+## ⚠️ Limited/Degraded Features
+
+### 1. Command Duration Tracking
+
+**Limitation**: Precision depends on Bash version
+
+| Bash Version | Duration Precision | Notes |
+|--------------|-------------------|-------|
+| **Bash 5.0+** | ✅ Millisecond | Uses `EPOCHREALTIME` (like Zsh) |
+| **Bash 4.x** | ⚠️ 10-20ms overhead | Uses `date +%s%N` (slower) |
+| **Bash 3.x** | ❌ Not supported | No nanosecond timing, segment disabled |
+
+**Impact**:
+- Bash 5: Works perfectly, matches Zsh
+- Bash 4: Works but adds ~15ms overhead per prompt render
+- Bash 3: Duration segment will not display (macOS default)
+
+**Workaround**: Upgrade to Bash 5 via Homebrew (macOS) or package manager (Linux)
+
+```bash
+# macOS: Install Bash 5
+brew install bash
+sudo bash -c 'echo /opt/homebrew/bin/bash >> /etc/shells'
+chsh -s /opt/homebrew/bin/bash
+```
+
+---
+
+### 2. Live Updates (SIGUSR1)
+
+**Limitation**: An idle Bash prompt does not repaint by itself.
+
+**What is measured** (`tests/bash/e2e_git_live_content.test.bash`, a real
+`bash -i` on a pseudo-terminal against a real agent): when a tracked file
+changes while the shell sits at an idle prompt, the agent updates its cache
+and delivers SIGUSR1, and Bash's handler re-renders `PS1` — but readline has
+already drawn the previous prompt and has no `reset-prompt`, so the screen does
+not change until the next prompt. Press Enter (or run any command) and the new
+state is there. Fish and Zsh repaint the idle prompt in place; see
+[Troubleshooting → Shell Comparison](troubleshooting.md#shell-comparison-at-a-glance).
+
+**Also**:
+- Signals are not delivered inside command substitution `$(...)` or subshells
+- Delivery during a long-running foreground command waits for it to finish
+
+**Mitigation**: Every prompt render reads the agent's current state, so the
+change is never lost — it is one Enter away. SIGUSR1 keeps the cache warm so
+that next prompt is instant.
+
+Bash does re-register after an agent restart (SIGALRM nudge, #638) and
+recovers a dead agent from its periodic supervisor check, so live updates
+resume without reopening the shell.
+
+---
+
+### 3. Performance
+
+**Limitation**: ~20-30% slower than Zsh, ~50% slower than Fish
+
+**Why**:
+- Bash string operations are slower
+- Less optimized array handling
+- `PROMPT_COMMAND` overhead
+- No built-in JSON escaping
+
+**Numbers**: the render-time budgets every gate enforces are in
+`tests/performance-baselines.json` (`./scripts/bench.sh --ci` checks them;
+`./scripts/bench.sh` measures your machine with hyperfine). The per-shell
+table that used to sit here was measured on 2025-11-26, before the render
+loop and cache changes of #341-#343 and #614, and is not reproduced; run the
+benchmark script for a current figure.
+
+---
+
+### 4. Prompt Customization
+
+**Limitation**: Bash's `PS1` uses different escape sequences
+
+**Differences**:
+
+| Feature | Zsh | Bash |
+|---------|-----|------|
+| Username | `%n` | `\u` |
+| Hostname | `%m` | `\h` |
+| Directory | `%~` | `\w` |
+| Time | `%D{%H:%M}` | `\t` or `\A` |
+| Colors | `%F{color}` | `\[\033[...m\]` |
+
+**Impact**: GPY handles this internally, but custom `PS1` tweaks differ between shells
+
+---
+
+## ❌ Unavailable Features
+
+### 1. Transient Prompt
+
+**Status**: Not implemented in Bash version
+
+**Why**:
+- Bash has no clean way to rewrite prompt history
+- Would require fragile terminal control sequences
+- High risk of breaking terminal state
+
+**Workaround**: Use full prompt mode (standard behavior)
+
+---
+
+### 2. Shell Exit Cleanup (zshexit equivalent)
+
+**Status**: Unreliable in Bash
+
+**Why**:
+- `trap EXIT` is per-script, not shell-wide
+- Doesn't fire consistently on shell exit
+- Can miss `exit`, `logout`, or terminal close
+
+**Impact**: Agent client unregistration may be delayed
+
+**Mitigation**: Agent automatically prunes dead clients (no functional impact)
+
+---
+
+### 3. Sub-millisecond Cache Display
+
+**Status**: Bash 3.x only (macOS default)
+
+**Why**: No nanosecond timing available
+
+**Impact**: Can't display "0.1ms" cache hit times (shows as "1ms" minimum)
+
+---
+
+## 🔧 Version Recommendations
+
+### Minimum Requirements
+
+- **Bash 4.0+** required for basic functionality
+- **Bash 5.0+** recommended for full experience
+
+### Optimal Setup
+
+- **Bash 5.3+** for best performance and features
+- Modern terminal emulator (iTerm2, Alacritty, WezTerm)
+- Nerd Font for icons
+
+### Version Detection
+
+GPY automatically detects Bash version and disables incompatible features:
+
+```bash
+# Check your Bash version
+bash --version
+
+# Example output:
+# GNU bash, version 5.3.8(1)-release  ← Good, full features
+# GNU bash, version 3.2.57(1)-release ← macOS default, limited
+```
+
+---
+
+## 📊 Feature Matrix
+
+| Feature | Fish | Zsh | Bash 5 | Bash 4 | Bash 3 |
+|---------|------|-----|--------|--------|--------|
+| Git status | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Language detection | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Status indicator | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Clock | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Directory | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Duration** | ✅ | ✅ | ✅ | ⚠️ | ❌ |
+| **Live updates (SIGUSR1)** | ✅ idle prompt repaints | ✅ idle prompt repaints | ⚠️ shown at next prompt | ⚠️ shown at next prompt | ⚠️ shown at next prompt |
+| Config hot-reload (SIGUSR2) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Agent IPC | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Performance** | A+ | A | B+ | B | B- |
+| Transient prompt | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Exit cleanup | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ |
+
+**Legend**: ✅ Full support | ⚠️ Works with caveats | ❌ Not available
+
+---
+
+## 🎯 Recommendations
+
+### For Best Experience
+
+1. **Upgrade to Bash 5** if possible (especially macOS users)
+2. Use a modern terminal emulator
+3. Install a Nerd Font
+4. Consider Zsh if you need all features
+
+### When to Use Bash GPY
+
+✅ **Good fit**:
+- Bash is required (CI/CD, enterprise environments)
+- You're already using Bash 5
+- You want cross-shell consistency
+- Performance is "good enough" (6-8ms)
+
+⚠️ **Consider alternatives**:
+- macOS with default Bash 3.2 → Use Fish or Zsh
+- Need transient prompt → Use Fish or Zsh
+- Need absolute fastest performance → Use Fish or Zsh
+
+### Migration Path
+
+If you're on Bash 3.2 (macOS):
+
+```bash
+# Option 1: Upgrade Bash (keeps Bash familiarity)
+brew install bash
+chsh -s /opt/homebrew/bin/bash
+
+# Option 2: Switch to Zsh (native macOS, full features)
+chsh -s /bin/zsh
+
+# Option 3: Switch to Fish (fastest, best experience)
+brew install fish
+chsh -s /opt/homebrew/bin/fish
+```
+
+---
+
+## 🐛 Known Issues
+
+### Issue: Duration shows "0ms" on first prompt
+**Bash version**: All
+**Cause**: `PROMPT_COMMAND` hasn't run yet
+**Workaround**: Displays correctly after first command
+**Severity**: Cosmetic
+
+### Issue: SIGUSR1 doesn't trigger during `sleep`
+**Bash version**: All
+**Cause**: Bash doesn't interrupt foreground commands
+**Workaround**: Prompt updates when command finishes
+**Severity**: Minor (expected Bash behavior)
+
+### Issue: Prompt renders slowly on Bash 3.2
+**Bash version**: 3.x
+**Cause**: Slow string operations + `date` overhead
+**Workaround**: Upgrade to Bash 5 or switch shells
+**Severity**: Moderate
+
+---
+
+## 📝 Summary
+
+Bash support in GPY is **production-ready** with understood trade-offs:
+
+- ✅ **Core functionality**: 100% feature parity for git/language/segments
+- ⚠️ **Advanced features**: Some limitations (duration precision, live updates reliability)
+- ⚠️ **Performance**: 20-30% slower than Zsh, still faster than Starship
+- ❌ **Missing**: Transient prompt, reliable exit cleanup
+
+**Bottom line**: Bash 5 users get ~90% of the Fish/Zsh experience. Bash 3/4 users get ~75%. Still better than most alternatives.

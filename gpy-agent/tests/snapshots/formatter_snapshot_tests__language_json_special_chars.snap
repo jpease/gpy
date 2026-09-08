@@ -1,0 +1,6 @@
+---
+source: tests/formatter_snapshot_tests.rs
+description: Language with special characters (C++)
+expression: output
+---
+{"languages":[{"color":"#f34b7d","name":"C++","version":"20"}]}

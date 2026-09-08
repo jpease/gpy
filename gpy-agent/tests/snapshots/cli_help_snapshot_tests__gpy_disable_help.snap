@@ -1,0 +1,14 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy disable
+expression: help
+---
+Disable a prompt segment
+
+Usage: gpy disable <SEGMENT>
+
+Arguments:
+  <SEGMENT>  Segment name (built-in or discovered plugin segment)
+
+Options:
+  -h, --help  Print help

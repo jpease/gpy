@@ -1,0 +1,11 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy segments
+expression: help
+---
+List all available segments
+
+Usage: gpy segments
+
+Options:
+  -h, --help  Print help

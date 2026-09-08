@@ -1,0 +1,13 @@
+---
+source: tests/formatter_snapshot_tests.rs
+description: Git status (clean) in Fish source format
+expression: output
+---
+set -g __gpy_git_branch "main"
+set -g __gpy_git_ahead 2
+set -g __gpy_git_behind 1
+set -g __gpy_git_staged 3
+set -g __gpy_git_unstaged 4
+set -g __gpy_git_untracked 5
+set -g __gpy_git_conflicts 0
+set -g __gpy_git_state "clean"

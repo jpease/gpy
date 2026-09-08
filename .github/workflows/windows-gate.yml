@@ -1,0 +1,89 @@
+name: Windows gate
+
+# The one definition of the Windows leg (#653). pr-gate.yml and
+# cross-platform-test.yml both call this instead of carrying their own copy
+# of the steps, so the two cannot drift apart again.
+#
+# What runs here, and why only this: native Windows is CLI-only -- the
+# prompt integration talks to the agent over a Unix domain socket, which
+# native Windows does not provide, so no Fish/Bash/Zsh suite runs. Until
+# #653 the leg ran `cargo build --locked` and the library unit tests only;
+# every CLI test target is an integration target excluded by `--lib`, so the
+# one thing Windows is claimed to support had never been tested there. The
+# five hermetic CLI targets now run through nextest after the lib tests
+# (their Windows compile is reproduced first with `cargo check --locked
+# --target x86_64-pc-windows-gnu --profile test` in a Linux container with
+# mingw-w64, so the leg compiles the first time it runs).
+#
+# config::manager::tests::poll_fallback_reloads_without_any_watcher_running
+# is a known intermittent timing flake on this leg (#482); re-run once
+# before treating a red result as a regression.
+
+on:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: ""
+  # windows-latest ships no shell the theme-export injection-safety tests
+  # can drive (its bash.exe launches and then fails, #528). Declaring that
+  # lets those tests skip the shells; anywhere else a missing shell under
+  # CI is a failure (#650).
+  GPY_CI_NO_SHELLS: "1"
+
+jobs:
+  windows:
+    name: Windows lib and CLI tests
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        # No `toolchain:` input: the action resolves the pin from
+        # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
+        # See that file for why CI must not install @stable (#189, #518).
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rust-src-dir: gpy-agent
+          cache: false
+
+      - name: Verify the pinned toolchain is active
+        shell: bash
+        run: ./scripts/check-active-toolchain.sh
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gpy-agent
+
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Build agent
+        working-directory: gpy-agent
+        # Cargo.lock is committed, so --locked gives a reproducible build and
+        # fails loudly if the lock drifts from Cargo.toml.
+        run: cargo build --locked --verbose
+
+      - name: Rust lib tests
+        working-directory: gpy-agent
+        # Library unit tests are hermetic (no fish/agent/socket deps).
+        run: cargo test --locked --lib --verbose
+
+      - name: CLI integration tests (the targets behind the CLI-only claim)
+        working-directory: gpy-agent
+        # Hermetic CLI targets: each drives the built binaries through
+        # CliTestEnv with an isolated HOME/XDG_* (honoured by the Windows
+        # path resolver) and no running agent. Socket-dependent lifecycle
+        # tests live in other targets under #[cfg(unix)].
+        run: >-
+          cargo nextest run --locked --features test-support
+          --test gpy_cli_tests
+          --test cli_config_mutation_tests
+          --test theme_import_tests
+          --test init_command_tests
+          --test cli_integration_tests

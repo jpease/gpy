@@ -1,0 +1,30 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy --help
+expression: help
+---
+Fast, cross-platform agent for Git status and language detection used by the GPY prompt for Bash, Fish, and Zsh
+
+Usage: gpy <COMMAND>
+
+Commands:
+  start        Start the background agent
+  stop         Stop the background agent
+  restart      Restart the background agent
+  status       Show agent status and diagnostics
+  theme        Manage themes
+  palette      Manage palettes (color themes)
+  plugin       Manage plugins
+  enable       Enable a prompt segment
+  disable      Disable a prompt segment
+  segments     List all available segments
+  lang         Language detection configuration
+  config       Configuration management
+  doctor       Run health checks and diagnostics
+  debug        Debugging tools
+  completions  Generate shell completions
+  help         Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
