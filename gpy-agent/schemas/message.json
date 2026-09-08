@@ -1,0 +1,331 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/jpease/gpy/schemas/message.json",
+  "title": "GPY Agent IPC Message",
+  "description": "Message types sent from Fish shell to GPY Agent",
+  "oneOf": [
+    {
+      "title": "RepositoryStatus (Native Format)",
+      "type": "object",
+      "required": ["RepositoryStatus"],
+      "properties": {
+        "RepositoryStatus": {
+          "type": "object",
+          "required": ["path"],
+          "properties": {
+            "path": {
+              "type": "string",
+              "maxLength": 4096,
+              "description": "The path to the directory to check"
+            },
+            "format": {
+              "type": "string",
+              "enum": ["json", "fish-ansi", "fish-source"],
+              "default": "json",
+              "description": "Desired response format"
+            },
+            "is_last": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether this is the last segment in the prompt"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "RepositoryStatus (Fish Format)",
+      "type": "object",
+      "required": ["op", "cwd"],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "git"
+        },
+        "cwd": {
+          "type": "string",
+          "maxLength": 4096,
+          "description": "Current working directory"
+        },
+        "format": {
+          "type": "string",
+          "enum": ["json", "fish-ansi", "fish-source"],
+          "default": "json"
+        },
+        "is_last": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    {
+      "title": "LanguageDetect (Native Format)",
+      "type": "object",
+      "required": ["LanguageDetect"],
+      "properties": {
+        "LanguageDetect": {
+          "type": "object",
+          "required": ["path"],
+          "properties": {
+            "path": {
+              "type": "string",
+              "maxLength": 4096,
+              "description": "The path to the directory to check"
+            },
+            "format": {
+              "type": "string",
+              "enum": ["json", "fish-ansi", "fish-source"],
+              "default": "json"
+            },
+            "is_last": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "LanguageDetect (Fish Format)",
+      "type": "object",
+      "required": ["op", "cwd"],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "lang"
+        },
+        "cwd": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "format": {
+          "type": "string",
+          "enum": ["json", "fish-ansi", "fish-source"],
+          "default": "json"
+        },
+        "is_last": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    {
+      "title": "RegisterClient (Native Format)",
+      "type": "object",
+      "required": ["RegisterClient"],
+      "properties": {
+        "RegisterClient": {
+          "type": "object",
+          "required": ["pid"],
+          "properties": {
+            "pid": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000,
+              "description": "Process ID of the client"
+            },
+            "cwd": {
+              "type": ["string", "null"],
+              "maxLength": 4096,
+              "description": "Optional current working directory"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "RegisterClient (Fish Format)",
+      "type": "object",
+      "required": ["op", "pid"],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "register"
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "cwd": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      }
+    },
+    {
+      "title": "UnregisterClient (Native Format)",
+      "type": "object",
+      "required": ["UnregisterClient"],
+      "properties": {
+        "UnregisterClient": {
+          "type": "object",
+          "required": ["pid"],
+          "properties": {
+            "pid": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "UnregisterClient (Fish Format)",
+      "type": "object",
+      "required": ["op", "pid"],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "unregister"
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        }
+      }
+    },
+    {
+      "title": "WorkspaceUpdate (Native Format)",
+      "type": "object",
+      "required": ["WorkspaceUpdate"],
+      "properties": {
+        "WorkspaceUpdate": {
+          "type": "object",
+          "required": ["pid", "cwd"],
+          "properties": {
+            "pid": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "cwd": {
+              "type": "string",
+              "maxLength": 4096,
+              "description": "Current working directory"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "WorkspaceUpdate (Fish Format)",
+      "type": "object",
+      "required": ["op", "pid", "cwd"],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "workspace"
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "cwd": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      }
+    },
+    {
+      "title": "Ping (Native Format)",
+      "type": "string",
+      "const": "Ping"
+    },
+    {
+      "title": "Ping (Fish Format)",
+      "type": "object",
+      "required": ["op"],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "ping"
+        }
+      }
+    },
+    {
+      "title": "Status (Native Format)",
+      "type": "string",
+      "const": "Status"
+    },
+    {
+      "title": "Status (Fish Format)",
+      "type": "object",
+      "required": ["op"],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "status"
+        }
+      }
+    },
+    {
+      "title": "ThemeQuery (Native Format)",
+      "type": "object",
+      "required": ["ThemeQuery"],
+      "properties": {
+        "ThemeQuery": {
+          "type": "object",
+          "required": ["key"],
+          "properties": {
+            "key": {
+              "type": "string",
+              "maxLength": 256,
+              "description": "Theme setting key to query"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "ThemeQuery (Fish Format)",
+      "type": "object",
+      "required": ["op", "key"],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "theme"
+        },
+        "key": {
+          "type": "string",
+          "maxLength": 256
+        }
+      }
+    },
+    {
+      "title": "Shutdown (Native Format)",
+      "type": "string",
+      "const": "Shutdown"
+    },
+    {
+      "title": "Shutdown (Fish Format)",
+      "type": "object",
+      "required": ["op"],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "shutdown"
+        }
+      }
+    },
+    {
+      "title": "ConfigReload (Native Format)",
+      "type": "string",
+      "const": "ConfigReload"
+    },
+    {
+      "title": "ConfigReload (Fish Format)",
+      "type": "object",
+      "required": ["op"],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "config_reload"
+        }
+      }
+    }
+  ]
+}

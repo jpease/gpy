@@ -1,0 +1,93 @@
+name: Bug Report
+description: The prompt broke, misbehaved, or crashed on your setup.
+title: "Bug: "
+labels: ["type:bug", "priority:P2"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        GPY is a personal project maintained by one person in spare time.
+        Bug reports are genuinely wanted, especially from a platform the
+        maintainer cannot test directly — a Linux distribution, an older
+        bash, Windows. Review is best-effort with no fixed timeline, but a
+        report with the fields below filled in is much faster to act on than
+        one without them.
+
+        Security vulnerability? Do not file it here — use
+        [private vulnerability reporting](https://github.com/jpease/gpy/security/advisories/new)
+        instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect instead?
+      placeholder: The git segment shows nothing in a bare repository, but I expected it to show "(bare)".
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps, from a fresh shell if possible.
+      placeholder: |
+        1. cd into a bare git repository
+        2. open a new shell
+        3. the prompt shows no git segment at all
+    validations:
+      required: true
+
+  - type: input
+    id: gpy-version
+    attributes:
+      label: gpy --version
+      description: Output of `gpy --version`.
+      placeholder: gpy 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: shell-version
+    attributes:
+      label: Shell and version
+      description: Which shell, and its version (`fish --version`, `bash --version`, or `zsh --version`).
+      placeholder: fish, version 3.7.1
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: Distribution/version, not just "Linux" — e.g. Ubuntu 22.04, Fedora 40, macOS 14.5, Windows 11 (WSL2, Ubuntu 22.04).
+      placeholder: Ubuntu 22.04
+    validations:
+      required: true
+
+  - type: textarea
+    id: agent-state
+    attributes:
+      label: Agent state
+      description: Output of `gpy status`. If the agent will not start, say so and include what `gpy start` prints.
+      placeholder: |
+        $ gpy status
+        Agent running (PID 12345), socket connected, protocol v3
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Logs, config snippets, screenshots — anything else that might help. Redact anything private.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true

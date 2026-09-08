@@ -1,0 +1,230 @@
+[package]
+name = "gpy-agent"
+
+description = "Fast, cross-platform agent for Git status and language detection used by the GPY prompt for Bash, Fish, and Zsh"
+
+version = "0.1.0"
+rust-version = "1.98"
+edition = "2024"
+authors = ["Justin Pease <536+jpease@users.noreply.github.com>"]
+license = "GPL-3.0-or-later"
+readme = "README.md"
+repository = "https://github.com/jpease/gpy"
+homepage = "https://github.com/jpease/gpy"
+documentation = "https://github.com/jpease/gpy#readme"
+keywords = [
+  "git",
+  "status",
+  "language-detection",
+  "agent",
+  "fish-shell",
+  "cross-platform",
+]
+categories = ["command-line-utilities", "development-tools"]
+
+# Never published to crates.io (#502). A registry install would place the two
+# binaries and nothing else -- not the fish/, bash/ and zsh/ trees the prompt
+# renders from -- so it could only ever produce a broken install. Distribution is GitHub Releases plus, in future, a Homebrew
+# tap. This also means the library surface carries no semver guarantee; see the
+# crate root docs.
+publish = false
+
+# Keep the crate contents honest for `cargo package --list` and for anyone
+# building from a source archive, even though nothing is uploaded.
+exclude = [
+  ".claude/",
+  "*.backup",
+  "tests/snapshots/",
+  "lcov.info",
+  "deny.toml",
+  "SCHEMA_EVOLUTION.md",
+]
+
+[lints.rust]
+# Promotes every warn-level lint -- rustc's own plus whatever clippy level
+# below adds -- to a hard error. Together with clippy.pedantic this is the
+# canonical gate policy (#584): a bare `cargo clippy --all-targets` now
+# matches scripts/quality-check.sh's `-D warnings -W clippy::pedantic`
+# without needing those flags spelled out at every call site.
+warnings = "deny"
+
+[lints.clippy]
+# priority = -1 on both groups: lower than an unset (0) per-lint attribute,
+# so an individual #[allow(clippy::some_pedantic_lint)] in code still wins
+# over this crate-wide deny (Cargo requires an explicit priority whenever a
+# lint name could be covered by more than one [lints] entry).
+pedantic = { level = "deny", priority = -1 }
+
+# "test-support" is referenced by name across justfile/scripts/tests/CI;
+# renaming for a cosmetic clippy::cargo lint isn't worth that blast radius.
+# Covers a bare `cargo clippy`; `just lint`'s explicit `-D clippy::cargo` on
+# the command line outranks this table, so moon.yml also carries a matching
+# `-A clippy::redundant_feature_names`.
+redundant_feature_names = "allow"
+
+[dependencies]
+# CLI argument parsing
+clap = { version = "4.6", features = ["derive", "string"] }
+clap_complete = "4.6"
+
+# Async runtime
+tokio = { version = "1.53", features = ["full"] }
+
+# Error handling
+thiserror = "2.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Configuration
+toml = "1.1.2"
+
+# Language detection: linguist-grade matcher tables (extensions, filenames,
+# path globs, interpreters, content heuristics). Only the language tables are
+# used -- GPY owns the directory walk itself in src/language/detector.rs, so
+# the `gengo` crate that wraps them is deliberately NOT a dependency: its
+# `Gengo::analyze` reads every file in the tree (546 ms at 20k files against a
+# 200 ms hard max, #519) and pulls gix back in, the git backend GPY retired in
+# 0efbaa24. Replaced hyperpolyglot in #523.
+gengo-language = "0.15.0"
+
+# File watching
+notify = { version = "8.2", features = ["macos_fsevent"] }
+# .gitignore matching for the worktree watcher, and the parallel walk that
+# drives directory language detection (src/language/detector.rs).
+ignore = "0.4"
+
+# Terminal UI (config wizard)
+ratatui = "0.30"
+crossterm = "0.29"
+
+# Cross-platform compatibility
+[target."cfg(unix)".dependencies]
+libc = "0.2"
+fork = "0.10"
+nix = { version = "0.31", features = ["signal", "process", "fs", "user"] }
+# Process identity lookup (start time) for the client registry: verifies a
+# PID still belongs to the process we registered before signaling it, so a
+# PID recycled to an unrelated process is never signaled (#319). gpy-agent
+# forbids unsafe code crate-wide, and macOS has no /proc, so this wraps the
+# platform-specific (partly unsafe) lookups instead of us reimplementing them.
+sysinfo = "0.39"
+
+# Note: No Windows-specific dependencies needed - Fish runs on WSL which is a Unix environment
+
+[target."cfg(unix)".dev-dependencies]
+# PTY-backed integration test for wizard terminal restoration (#460): spawns
+# the real `gpy` binary against a pseudo-terminal so the test can assert on
+# actual termios state, which a `RecordingTerminalOps` unit-test double
+# cannot prove. Only reachable through the `test-support` feature.
+portable-pty = "0.9"
+
+[features]
+# Compiles in test-only surface (a hidden `gpy __wizard_force_fail` subcommand)
+# that is otherwise absent from every binary, including release builds.
+test-support = []
+
+[dev-dependencies]
+# Testing utilities
+tempfile = "3.27"
+futures = "0.3"
+serial_test = { version = "3.4.0", features = ["file_locks"] }
+regex = "1.13"
+
+# Advanced testing
+insta = { version = "1.48", features = ["json", "redactions"] }
+proptest = "1.11"
+
+# Benchmarking
+criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
+
+[[bin]]
+name = "gpy-agent"
+path = "src/main.rs"
+
+[[bin]]
+name = "gpy"
+path = "src/bin/gpy.rs"
+
+[[bench]]
+name = "template_bench"
+harness = false
+
+[[bench]]
+name = "formatter_bench"
+harness = false
+[[bench]]
+name = "ipc_bench"
+harness = false
+
+[[bench]]
+name = "git_bench"
+harness = false
+
+[[bench]]
+name = "cache_bench"
+harness = false
+
+[[bench]]
+name = "language_bench"
+harness = false
+
+[[bench]]
+name = "perf_canary_bench"
+harness = false
+
+[[bench]]
+name = "agent_startup_bench"
+harness = false
+
+# No clippy lints in Cargo.toml - all lints configured via the moon task and .clippy.toml
+# This keeps builds fast while allowing strict linting when needed
+#
+# Available lint commands (run from the repo root):
+#   just lint                                 - Strict pre-push gate (moon run gpy-agent:clippy)
+#   cargo clippy --all-targets -- -D warnings - Documented baseline gate
+#
+# Benefits:
+#   • Fast builds (no compilation overhead from lint flags) • Strict quality control via CI
+#   • Developer flexibility for local development
+
+[profile.dev]
+# Keep development fast
+opt-level = 0
+debug = true
+overflow-checks = true
+
+[profile.release]
+# Production optimizations - optimized for build reliability
+# Disable LTO to prevent timeouts
+lto = false
+# Maximum parallel compilation units
+codegen-units = 256
+# Smaller binary, faster startup
+panic = "abort"
+# Disable stripping to speed up compilation
+strip = false
+# Minimal optimization to speed up compilation
+opt-level = 1
+
+# Custom profile for fast building with some optimization
+[profile.fast]
+inherits = "dev"
+opt-level = 1
+lto = false
+codegen-units = 256
+debug = false
+overflow-checks = false
+
+# Optimized profile for shipping (release) binaries: full optimization + thin
+# LTO for maximum runtime performance. Distinct from `[profile.release]`
+# (which stays fast-to-build for local iteration and the pre-push gate) -- see
+# epic #334.
+[profile.release-dist]
+inherits = "release"
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+# panic = "abort" is inherited from release

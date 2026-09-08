@@ -1,0 +1,39 @@
+# Flat preset with an explicit palette and several language modules.
+format = "$directory$git_branch$git_status$rust$python$nodejs$golang$cmd_duration$character"
+palette = "catppuccin"
+
+[palettes.catppuccin]
+rosewater = "#f5e0dc"
+mauve = "#cba6f7"
+red = "#f38ba8"
+
+[directory]
+style = "bold mauve"
+
+[git_branch]
+symbol = " "
+style = "bold mauve"
+
+[git_status]
+style = "bold red"
+
+[rust]
+symbol = "🦀 "
+style = "bold red"
+
+[python]
+style = "bold yellow"
+
+[nodejs]
+style = "bold green"
+
+[golang]
+style = "bold cyan"
+
+[cmd_duration]
+min_time = 1000
+style = "bold yellow"
+
+[character]
+success_symbol = "[❯](bold green)"
+error_symbol = "[❯](bold red)"

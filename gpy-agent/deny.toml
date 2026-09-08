@@ -1,0 +1,122 @@
+# GPY Agent - cargo-deny configuration for A+ security and dependency enforcement
+# This enforces production-grade dependency management practices for 2025
+
+[graph]
+
+[advisories]
+# Security vulnerability database - keep updated
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+
+# Evaluate the informational classes as well as vulnerabilities. Without these
+# two lines cargo-deny 0.20 skips `unsound` advisories entirely: before #503,
+# RUSTSEC-2021-0145 and RUSTSEC-2026-0097 were reported by `cargo audit` and
+# passed `cargo deny` silently, because neither tool failed on them by default.
+# With `unsound = "all"`, an unsound advisory now fails the check unless it is
+# listed below with a reason.
+unsound = "all"
+unmaintained = "all"
+
+# Waived advisories. Canonical register: docs/dev/security-audit.md -- it
+# carries the full audit history and the review date. cargo-deny 0.20 accepts
+# only `id` and `reason` on an ignore entry (no expiry field), so the review
+# date lives in that document and tests/bash/dependency_advisory_claims
+# .test.bash fails once it passes.
+#
+# Empty as of 2026-09-01: `cargo audit` reports zero advisories against this
+# lockfile. The five that were waived here all arrived through hyperpolyglot
+# 0.1.7, removed in #523; retiring the dependency retired the advisories with
+# it (#525). `unsound`/`unmaintained` stay enabled below so a future advisory
+# in either class cannot pass silently the way RUSTSEC-2021-0145 and
+# RUSTSEC-2026-0097 briefly did.
+ignore = [
+]
+
+[licenses]
+# ONLY allow well-established, permissive licenses for production use
+allow = [
+    # Standard permissive licenses
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+
+    # Unicode/text handling licenses
+    "Unicode-3.0",
+
+    # Public domain equivalent
+    "CC0-1.0",
+    "Unlicense",
+
+    # Other established permissive
+    "BSL-1.0",
+]
+
+# High confidence threshold for license detection
+confidence-threshold = 0.9
+
+# License exceptions for specific crates (use sparingly!)
+exceptions = [
+    # Our crate is GPL licensed; allow it explicitly.
+    { name = "gpy-agent", allow = ["GPL-3.0-or-later"] },
+]
+
+[bans]
+# Deny problematic crates that have known issues or better alternatives
+deny = [
+    # Security/crypto: prefer rustls ecosystem
+    { name = "openssl-sys" },
+    { name = "native-tls" },
+
+    # Build complexity: avoid heavy build dependencies
+    { name = "cmake" },
+
+    # Known problematic crates
+    { name = "time", version = ">=0.2.0, <0.2.23" },
+    { name = "chrono", version = "<0.4.20" },
+]
+
+# Duplicate versions we accept. Each entry is checked against Cargo.lock by
+# tests/bash/dependency_advisory_claims.test.bash, which fails if a crate
+# listed here stops being duplicated -- a stale skip hides the next duplicate.
+# The per-crate reasoning is in the duplicate-version table in
+# gpy-agent/src/lib.rs.
+skip = [
+    # clap 2.34.0 (hyperpolyglot's `hyply` binary) against clap 4.x (our own
+    # CLI) duplicated bitflags, clap, strsim and wasi. hyperpolyglot is gone
+    # (#523); all four are back to a single version and are not skipped here.
+
+    # bitflags 1.3.2 (portable-pty, a Unix dev-dependency) against bitflags
+    # 2.x (crossterm, notify, nix, ratatui)
+    { name = "bitflags" },
+
+    # windows-sys 0.60.2 (notify) against windows-sys 0.61.2 (rustix, mio,
+    # socket2, clap's anstream/anstyle-wincon, ignore/walkdir's winapi-util)
+    { name = "windows-sys" },
+
+    # getrandom 0.3.4 and 0.4.3, both dev-only: 0.3.4 under rand_core 0.9.5
+    # (proptest), 0.4.3 under tempfile (insta, proptest, rusty-fork)
+    { name = "getrandom" },
+]
+
+# Skip dependency trees for build tools
+skip-tree = [
+    { name = "proc-macro2" },
+    { name = "syn" },
+]
+
+[sources]
+# STRICT: Only allow crates from official registries (no random git repos)
+unknown-registry = "deny"
+unknown-git = "deny"
+
+# Allow crates.io (the main registry)
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+# Allow git sources ONLY for specific, documented cases
+allow-git = [
+    # Example: "https://github.com/tokio-rs/tokio", # Reason: need unreleased fix for X
+]

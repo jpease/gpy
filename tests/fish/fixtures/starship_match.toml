@@ -1,0 +1,32 @@
+# Parity baseline config for tests/fish/starship_parity.test.fish
+# ---------------------------------------------------------------------------
+# This is native Starship's built-in default configuration with two
+# documented deviations: the `package` module is disabled, and `hostname`'s
+# `ssh_only` is turned off.
+#
+# GPY's `starship` theme emulates Starship's directory, git, language
+# (toolchain version), command-duration, hostname, and character modules. It
+# does NOT emulate the `package` module (`is 📦 v1.2.3`). Leaving `package`
+# enabled would therefore produce a guaranteed mismatch that reflects an
+# emulation *scope* decision, not a rendering-fidelity bug — so we disable it
+# here to keep the comparison focused on modules GPY actually claims to
+# reproduce.
+#
+# Everything else is left at Starship's defaults on purpose: the test asserts
+# that GPY renders the same bytes (after ANSI stripping) Starship does.
+[package]
+disabled = true
+
+# hostname is SSH-only by default in both Starship and GPY, so neither side
+# renders it during a normal (non-SSH) test run. `ssh_only = false` makes
+# Starship's own hostname module visible here so the comparison can exercise
+# it at all; Starship still hides its `ssh_symbol` off-SSH even with
+# `ssh_only = false` (verified against real starship 1.26.0), so this
+# baseline shows plain `<hostname> in ` with no icon. The paired GPY-side
+# isolated config (see starship_parity.test.fish) mirrors this by setting
+# `show_always = true` and dropping the icon for the test run only — the
+# *shipped* starship.toml preset keeps `show_always = false` and its icon, so
+# real users still get Starship's default SSH-only behavior with the same
+# glyph over an actual SSH session. See #257 for the semantic background.
+[hostname]
+ssh_only = false

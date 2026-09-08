@@ -1,0 +1,121 @@
+name: Cross-Platform Smoke
+
+# 2026-09-02: automatic `push`/`schedule` triggers disabled and macOS split
+# out of the automatic matrix -- same reasoning as pr-gate.yml's 2026-09-02
+# note. This repo is private, so GitHub Actions minutes are metered with a
+# 10x multiplier on macOS runners, and this workflow ran a full macOS smoke
+# test on every merge to main with no concurrency dedup. Re-enable `push`
+# (and add a concurrency group while at it) once minutes reset, or drop this
+# note entirely once the repo goes public (epic #489) -- GitHub Actions on
+# GitHub-hosted runners is free and unlimited for public repos.
+on:
+  # push:
+  #   branches: [main]
+  # schedule:
+  #   - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: cross-platform-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-latest moved to the manual `smoke-macos` job below (see the
+        # 2026-09-02 note above); windows-latest to the shared
+        # windows-gate.yml, called by the `windows` job below (#653).
+        os: [ubuntu-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        # No `toolchain:` input: the action resolves the pin from
+        # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
+        # See that file for why CI must not install @stable (#189, #518).
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rust-src-dir: gpy-agent
+          cache: false
+
+      - name: Verify the pinned toolchain is active
+        shell: bash
+        run: ./scripts/check-active-toolchain.sh
+
+      - name: Install Fish (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fish
+
+      - name: Build agent
+        working-directory: gpy-agent
+        # Cargo.lock is now committed (it is an application crate), so --locked
+        # gives reproducible cross-platform builds and fails loudly if the lock
+        # drifts from Cargo.toml.
+        run: cargo build --locked --verbose
+
+      - name: Rust smoke tests
+        working-directory: gpy-agent
+        # Library unit tests are hermetic (no fish/agent/socket deps), so they
+        # are the right cross-platform smoke — including Windows IPC coverage.
+        # (The former `cross_platform_validation_tests` target was deleted in
+        # cc610df9; the workflow was never updated, reddening main on every push.)
+        run: cargo test --locked --lib --verbose
+
+      - name: Fish syntax smoke
+        if: runner.os != 'Windows'
+        shell: bash
+        # Fish sources now live under fish/** (core, segments, functions,
+        # conf.d); the old top-level core/segments/themes globs no longer exist.
+        run: find fish install-dev.fish -name '*.fish' -print0 | xargs -0 -n1 fish -n
+
+  windows:
+    name: Windows lib and CLI tests
+    uses: ./.github/workflows/windows-gate.yml
+
+  smoke-macos:
+    # Manual only -- see the 2026-09-02 note above. Dispatch from the Actions
+    # tab, or `gh workflow run cross-platform-test.yml`, when you want macOS
+    # smoke coverage beyond what the mandatory local pre-push hook already ran.
+    if: github.event_name == 'workflow_dispatch'
+    name: Smoke (macos-latest, manual)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rust-src-dir: gpy-agent
+          cache: false
+
+      - name: Verify the pinned toolchain is active
+        shell: bash
+        run: ./scripts/check-active-toolchain.sh
+
+      - name: Install Fish (macOS)
+        run: brew install fish
+
+      - name: Build agent
+        working-directory: gpy-agent
+        run: cargo build --locked --verbose
+
+      - name: Rust smoke tests
+        working-directory: gpy-agent
+        run: cargo test --locked --lib --verbose
+
+      - name: Fish syntax smoke
+        shell: bash
+        run: find fish install-dev.fish -name '*.fish' -print0 | xargs -0 -n1 fish -n

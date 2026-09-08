@@ -1,0 +1,18 @@
+[build]
+# Clean configuration for normal development
+
+[profile.release]
+# Optimized release build
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[term]
+# Normal terminal output
+quiet = false
+verbose = false
+
+# Registry configuration
+[registries.crates-io]
+protocol = "sparse"

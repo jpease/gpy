@@ -1,0 +1,75 @@
+# GPY Agent - Rust component of GPY
+# Agent-specific justfile
+
+# Default recipe
+default:
+    @just --list
+
+# Build the agent in debug mode
+build:
+    RUSTC_WRAPPER="" moon run gpy-agent:build
+
+# Build the agent in release mode
+build-release:
+    cargo build --release
+
+# Run tests
+test *args:
+    RUSTC_WRAPPER="" moon run gpy-agent:test -- {{args}}
+
+# Run doc tests
+test-doc:
+    RUSTC_WRAPPER="" moon run gpy-agent:test-doc
+
+# Run clippy with strict settings
+clippy *args:
+    RUSTC_WRAPPER="" moon run gpy-agent:clippy -- {{args}}
+
+# Development-friendly Clippy linting
+clippy-dev:
+    cargo clippy --all-targets --all-features -- \
+      -D clippy::unwrap_used \
+      -D clippy::expect_used \
+      -D clippy::panic \
+      -D clippy::indexing_slicing \
+      -D clippy::default_numeric_fallback \
+      -W clippy::pedantic \
+      -W clippy::uninlined_format_args \
+      -A clippy::module_name_repetitions \
+      -A clippy::missing_errors_doc \
+      -A clippy::missing_panics_doc \
+      -A clippy::too_many_lines \
+      -A clippy::too_many_arguments
+
+# Strict Clippy linting with aggressive lint levels
+clippy-strict:
+    RUSTC_WRAPPER="" moon run gpy-agent:clippy
+
+# Run clippy and apply fixes
+clippy-fix:
+    cargo clippy --fix --allow-dirty --allow-staged --all-targets
+
+# Run benchmarks
+bench *args:
+    cargo bench {{args}}
+
+# Check formatting
+fmt-check:
+    cargo fmt -- --check
+
+# Apply formatting
+fmt:
+    cargo fmt
+
+# Install quality enforcement tools
+install-tools coverage="":
+    cargo install cargo-audit
+    cargo install cargo-deny
+    cargo install taplo-cli
+    cargo install cargo-outdated
+    cargo install cargo-udeps
+    if [ -n "{{coverage}}" ]; then cargo install cargo-tarpaulin; fi
+
+# Clean build artifacts
+clean:
+    cargo clean

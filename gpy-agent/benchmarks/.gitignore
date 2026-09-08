@@ -1,0 +1,7 @@
+# Ignore benchmark results and temporary files
+*.json
+# baseline.json is source, not a result: run.sh reads it as the comparison
+# baseline and README.md documents its schema. Without this negation the
+# fresh `git add` that recreates history (#509) would drop it.
+!baseline.json
+/tmp/

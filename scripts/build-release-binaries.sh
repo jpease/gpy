@@ -1,0 +1,164 @@
+#!/bin/bash
+# Build GPY release binaries for all platforms
+# This script builds binaries locally for testing before creating a GitHub release
+
+set -e
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+RESET='\033[0m'
+
+info() { printf "${BLUE}ℹ${RESET} %s\n" "$1"; }
+success() { printf "${GREEN}✓${RESET} %s\n" "$1"; }
+warn() { printf "${YELLOW}⚠${RESET} %s\n" "$1"; }
+error() { printf "${RED}✗${RESET} %s\n" "$1"; }
+
+# Change to gpy-agent directory
+cd "$(dirname "$0")/../gpy-agent" || exit 1
+
+info "Building GPY release binaries..."
+echo ""
+
+# Detect current platform
+CURRENT_OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+CURRENT_ARCH=$(uname -m)
+
+info "Current platform: $CURRENT_OS ($CURRENT_ARCH)"
+echo ""
+
+# Create bin directory in repo root
+mkdir -p ../bin
+
+# Function to build for a target
+build_target() {
+    local target=$1
+    local output_name=$2
+
+    info "Building for $target..."
+
+    # Check if target is installed
+    if ! rustup target list --installed | grep -q "$target"; then
+        info "Installing target $target..."
+        rustup target add "$target" || {
+            warn "Could not install target $target (may require cross-compilation tools)"
+            return 1
+        }
+    fi
+
+    # Build (release-dist: opt-level 3 + thin LTO, see gpy-agent/Cargo.toml)
+    if cargo build --profile release-dist --locked --target "$target"; then
+        # Copy to bin directory
+        local binary_path="target/$target/release-dist/gpy-agent"
+        if [ "$target" = "x86_64-pc-windows-msvc" ]; then
+            binary_path="target/$target/release-dist/gpy-agent.exe"
+            output_name="${output_name}.exe"
+        fi
+
+        if [ -f "$binary_path" ]; then
+            cp "$binary_path" "../bin/$output_name"
+
+            # release-dist already strips symbols (strip = true), so no
+            # manual strip step is needed here.
+
+            success "Built $output_name ($(du -h "../bin/$output_name" | cut -f1))"
+            return 0
+        else
+            error "Binary not found at $binary_path"
+            return 1
+        fi
+    else
+        error "Build failed for $target"
+        return 1
+    fi
+}
+
+# Build for current platform first (guaranteed to work)
+echo ""
+info "Building for current platform..."
+case "$CURRENT_OS" in
+    linux)
+        case "$CURRENT_ARCH" in
+            x86_64)
+                build_target "x86_64-unknown-linux-gnu" "gpy-agent-linux-x86_64"
+                ;;
+            aarch64|arm64)
+                build_target "aarch64-unknown-linux-gnu" "gpy-agent-linux-aarch64"
+                ;;
+        esac
+        ;;
+    darwin)
+        case "$CURRENT_ARCH" in
+            x86_64)
+                build_target "x86_64-apple-darwin" "gpy-agent-macos-x86_64"
+                ;;
+            arm64)
+                build_target "aarch64-apple-darwin" "gpy-agent-macos-aarch64"
+                ;;
+        esac
+        ;;
+esac
+
+# Try to build for other platforms (may require cross-compilation)
+echo ""
+info "Attempting to build for other platforms (may fail without cross-compilation tools)..."
+echo ""
+
+# Linux targets
+if [ "$CURRENT_OS-$CURRENT_ARCH" != "linux-x86_64" ]; then
+    build_target "x86_64-unknown-linux-gnu" "gpy-agent-linux-x86_64" || warn "Skipped Linux x86_64 (requires cross-compilation)"
+fi
+
+if [ "$CURRENT_OS-$CURRENT_ARCH" != "linux-aarch64" ] && [ "$CURRENT_OS-$CURRENT_ARCH" != "linux-arm64" ]; then
+    build_target "aarch64-unknown-linux-gnu" "gpy-agent-linux-aarch64" || warn "Skipped Linux aarch64 (requires cross-compilation)"
+fi
+
+# macOS targets
+if [ "$CURRENT_OS-$CURRENT_ARCH" != "darwin-x86_64" ]; then
+    build_target "x86_64-apple-darwin" "gpy-agent-macos-x86_64" || warn "Skipped macOS x86_64 (requires macOS)"
+fi
+
+if [ "$CURRENT_OS-$CURRENT_ARCH" != "darwin-arm64" ]; then
+    build_target "aarch64-apple-darwin" "gpy-agent-macos-aarch64" || warn "Skipped macOS arm64 (requires macOS with Apple Silicon)"
+fi
+
+# Windows target (usually requires Windows or complex cross-compilation)
+build_target "x86_64-pc-windows-msvc" "gpy-agent-windows-x86_64" || warn "Skipped Windows (requires Windows or cross-compilation setup)"
+
+# Summary
+echo ""
+info "Build summary:"
+echo ""
+ls -lh ../bin/ 2>/dev/null || true
+
+echo ""
+success "Binaries available in bin/ directory"
+echo ""
+
+info "Next steps:"
+echo "  1. Test the installer locally:"
+echo "     bash install-oneline.sh"
+echo ""
+echo "  2. Or test with a local HTTP server:"
+echo "     python3 -m http.server 8000"
+echo "     curl -sS http://localhost:8000/install-oneline.sh | sh"
+echo ""
+echo "  3. When ready for release, create and push a tag:"
+echo "     git tag v0.1.0"
+echo "     git push origin v0.1.0"
+echo ""
+echo "  4. GitHub Actions will automatically:"
+echo "     - Build all platform binaries"
+echo "     - Run tests"
+echo "     - Create a GitHub release"
+echo "     - Upload all binaries"
+echo ""
+
+info "Cross-compilation tips:"
+echo "  • Linux aarch64: Install gcc-aarch64-linux-gnu"
+echo "  • Windows: Install mingw-w64 or use cross"
+echo "  • macOS: Requires macOS SDK and proper toolchain"
+echo "  • Easiest: Use GitHub Actions (already configured!)"
+echo ""

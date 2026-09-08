@@ -1,0 +1,10 @@
+---
+source: tests/formatter_snapshot_tests.rs
+description: Agent status in Fish source format
+expression: output
+---
+set -g __gpy_agent_version "0.1.0"
+set -g __gpy_protocol_version 1
+set -g __gpy_status_watched_repos 3
+set -g __gpy_status_registered_clients 5
+set -g __gpy_status_cache_entries 10

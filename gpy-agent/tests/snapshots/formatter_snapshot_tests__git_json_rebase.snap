@@ -1,0 +1,6 @@
+---
+source: tests/formatter_snapshot_tests.rs
+description: Git status (rebase) in JSON format
+expression: output
+---
+{"ahead":5,"ahead_capped":false,"behind":0,"behind_capped":false,"branch":"develop","conflicts":0,"detached":false,"rebase_progress":null,"staged":0,"stash_count":0,"state":"rebasing","unstaged":2,"untracked":1}

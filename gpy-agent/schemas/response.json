@@ -1,0 +1,175 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/jpease/gpy/schemas/response.json",
+  "title": "GPY Agent IPC Response",
+  "description": "Response types sent from GPY Agent to Fish shell",
+  "oneOf": [
+    {
+      "title": "RepositoryStatus",
+      "type": "object",
+      "required": ["RepositoryStatus"],
+      "properties": {
+        "RepositoryStatus": {
+          "type": "object",
+          "required": ["branch", "ahead", "behind", "staged", "unstaged", "untracked", "conflicts", "state"],
+          "properties": {
+            "branch": {
+              "type": "string",
+              "description": "The current branch name"
+            },
+            "ahead": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of commits ahead of remote"
+            },
+            "behind": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of commits behind remote"
+            },
+            "staged": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of staged changes"
+            },
+            "unstaged": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of unstaged changes"
+            },
+            "untracked": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of untracked files"
+            },
+            "conflicts": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of conflicts"
+            },
+            "state": {
+              "type": "string",
+              "description": "Repository state (e.g., 'rebase', 'merge', or empty string)"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "Language",
+      "type": "object",
+      "required": ["Language"],
+      "properties": {
+        "Language": {
+          "type": "object",
+          "required": ["languages"],
+          "properties": {
+            "languages": {
+              "type": "array",
+              "description": "List of detected languages",
+              "items": {
+                "$ref": "#/definitions/LanguageInfo"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "Ack",
+      "type": "string",
+      "const": "Ack"
+    },
+    {
+      "title": "AgentStatus",
+      "type": "object",
+      "required": ["AgentStatus"],
+      "properties": {
+        "AgentStatus": {
+          "type": "object",
+          "required": ["version", "protocol_version", "watched_repos", "registered_clients", "cache_entries"],
+          "properties": {
+            "version": {
+              "type": "string",
+              "description": "Agent version string"
+            },
+            "protocol_version": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "IPC protocol version number"
+            },
+            "watched_repos": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of watched repositories"
+            },
+            "registered_clients": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of registered clients"
+            },
+            "cache_entries": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of cache entries"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "ThemeValue",
+      "type": "object",
+      "required": ["ThemeValue"],
+      "properties": {
+        "ThemeValue": {
+          "type": "object",
+          "required": ["value"],
+          "properties": {
+            "value": {
+              "type": "string",
+              "description": "The theme setting value"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "Error",
+      "type": "object",
+      "required": ["Error"],
+      "properties": {
+        "Error": {
+          "type": "object",
+          "required": ["message"],
+          "properties": {
+            "message": {
+              "type": "string",
+              "description": "The error message"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "LanguageInfo": {
+      "type": "object",
+      "required": ["name", "color"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Language name (e.g., 'Rust', 'JavaScript')"
+        },
+        "version": {
+          "type": ["string", "null"],
+          "description": "Version string (e.g., '1.70.0'), null if unknown"
+        },
+        "color": {
+          "type": "string",
+          "description": "Display color for the language (hex code)"
+        }
+      }
+    }
+  }
+}

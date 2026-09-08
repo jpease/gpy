@@ -1,0 +1,18 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy theme import
+expression: help
+---
+Import a `starship.toml` into a GPY palette + prompt theme
+
+Usage: gpy theme import [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>  Path to the source `starship.toml`
+
+Options:
+      --name <NAME>   Base name for the emitted artifacts (default: file stem)
+      --force         Overwrite existing artifacts of the same name
+      --stdout        Print both artifacts instead of writing files
+      --apply-layout  Also write the derived `enabled_segments` into the active config
+  -h, --help          Print help

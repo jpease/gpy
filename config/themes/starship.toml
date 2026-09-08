@@ -1,0 +1,208 @@
+# GPY Starship Preset Theme
+# ---------------------------------------------------------------------------
+# Mimics the *default appearance* of Starship: flat (transparent) backgrounds,
+# Starship's foreground palette, and per-segment Starship `format` templates
+# rendered by GPY's template engine.
+#
+# Layout: enabled segments render on one line, then the prompt character `❯`
+# (colored green on success / red on failure) renders on the next line.
+# `two_line = true` enables this on bash/zsh; fish is already two-line.
+#
+# Segment order, directory display, and icon visibility come from config
+# (`[ui]` in config.toml), not from this theme file. This preset *recommends*
+# the settings closest to Starship's default look via `[ui.recommended]`; opt
+# into them without editing config by hand with:
+#   gpy theme use starship --force
+
+[ui]
+prompt_icon = "❯"
+prompt_color = "green"
+root_prompt_icon = "❯"
+root_prompt_color = "red"
+# Opt-in two-line layout for bash/zsh (segments line + character line).
+two_line = true
+
+# Settings applied to `config.ui` by `gpy theme use starship --force`.
+# Advisory only: never exported to shells; ignored unless --force is used.
+[ui.recommended]
+# Starship's segment order ($all: ...$hostname$directory...): hostname comes
+# before directory, then git → language → cmd_duration → char.
+enabled_segments = ["username", "hostname", "directory", "git", "language", "duration"]
+# Starship shows per-language symbols.
+show_icons = true
+# Starship surfaces a language only when its project markers/extensions exist
+# (e.g. Cargo.toml, package.json), rather than scanning directory contents.
+language_detection = "markers"
+# Pair the starship theme with the starship palette for byte-identical vanilla colors.
+palette = "starship"
+
+# Starship's default directory truncation: keep the last 3 path components.
+[ui.recommended.directory]
+display = "truncated"
+truncation_length = 3
+# Starship anchors the path at the git repo root.
+truncate_to_repo = true
+
+# Flat look: no powerline delimiters or segment backgrounds.
+[ui.prompt_open]
+icon = ""
+icon_color = "white"
+bg_color = "transparent"
+
+[ui.prompt_close]
+icon = ""
+icon_color = "white"
+bg_color = "transparent"
+
+[ui.segment_open]
+icon = ""
+icon_color = "white"
+bg_color = "transparent"
+
+[ui.segment_close]
+icon = ""
+icon_color = "white"
+bg_color = "transparent"
+
+# Clock — Starship's `time` module is disabled by default, so its look is flat:
+# transparent background, plain foreground. GPY renders the clock shell-side
+# (no `format` template), so it reads these colors directly. Without this section
+# `bg_color` would default to "black", rendering a black box that clashes with the
+# otherwise-transparent flat look whenever the clock segment is enabled.
+[segments.clock]
+text_color = "white"
+bg_color = "transparent"
+time_format = "12"
+show_leading_zero = false
+
+# Username — Starship: `[$user]($style) in `. GPY renders this only for
+# root/sudo (gated shell-side by segment_username_detect), so `$style` maps to
+# Starship's `style_root` (bold red) — the elevated-session case. Non-root users
+# see nothing (show_always = false), matching Starship's default. GPY renders a
+# single style rather than Starship's root-vs-user style switch (#252).
+[segments.username]
+format = "[$username](bold red) in "
+show_always = false
+
+# Hostname — Starship: `[$ssh_symbol$hostname]($style) in `, bold dimmed green.
+# SSH-only by default (show_always = false), matching Starship's ssh_only = true
+# default: the shell's segment_hostname_detect hides this segment off-SSH, and
+# the agent has no SSH knowledge (#259) so `$symbol` always renders whenever the
+# segment renders — it is the shell-side detect, not the agent, that keeps this
+# hidden on local sessions. The icon is Starship's default `ssh_symbol` (globe +
+# trailing space), so a real SSH session shows the same glyph as native Starship.
+[segments.hostname]
+format = "[$symbol$hostname](bold dimmed green) in "
+icon = "🌐 "
+show_always = false
+
+# Directory — Starship: `[$path]($style)[$read_only]($read_only_style) `, bold cyan.
+[segments.directory]
+format = "[$path](bold cyan)[$read_only](bold red) "
+text_color = "cyan"
+bg_color = "transparent"
+
+# Git — combines Starship's `git_branch` (bold purple) and `git_status` (bold red)
+# into GPY's single git segment. The status group is hidden when the tree is clean.
+[segments.git]
+format = 'on [$symbol $branch](bold purple) ([\[$status$ahead_behind\]](bold red) )'
+text_color = "magenta"
+bg_color = "transparent"
+# Starship's git_status shows symbols only (e.g. `[!?]`), no per-category counts.
+show_counts = false
+# Starship's default git_status symbols (modified/staged/untracked/conflicted).
+unstaged_icon = "!"
+staged_icon = "+"
+untracked_icon = "?"
+conflicts_icon = "="
+
+# Language — flat per-language foreground via the language's own color (`$color`),
+# mirroring Starship's per-module bold colors. Languages without an explicit color
+# fall back to the terminal default (still flat). `$color` is resolved from the
+# per-language `*_bg_color` values below. Most languages use standard ANSI role
+# names; swift/php/cpp/c use base24 roles (`orange`/`bright_magenta`/`bright_green`)
+# that the paired `starship` palette maps to Starship's exact indices (202/147/149),
+# so a palette swap recolors every language.
+#
+# The leading `via ` mirrors Starship, whose language modules default to
+# `via [$symbol($version )]($style)`. The template renders once per detected
+# language and concatenates, so `via ` repeats per toolchain exactly as Starship
+# does. The `v` before `$version` matches Starship's `v1.96.0` rendering; the
+# optional group `( v$version)` drops both the space and the `v` when no version
+# resolves (e.g. `via 󱘗 v1.96.0 via 󰌠 v3.14.6`).
+[segments.language]
+format = "via [$symbol( v$version)]($attr fg:$color) "
+text_color = "white"
+bg_color = "transparent"
+# Starship shows a language module's symbol even when no version resolves; GPY
+# otherwise hides versionless languages while show_versions is on.
+show_symbol_without_version = true
+# Match Starship's toolchain module set: Starship has no fish-shell module, so
+# exclude fish (GPY detects it from .fish files). All other GPY-supported
+# languages are listed so none are unexpectedly hidden.
+enabled_languages = [
+    "rust",
+    "python",
+    "node",
+    "go",
+    "java",
+    "ruby",
+    "swift",
+    "elixir",
+    "php",
+    "csharp",
+    "cpp",
+    "c",
+    "erlang",
+]
+rust_bg_color = "red"
+python_bg_color = "yellow"
+node_bg_color = "green"
+go_bg_color = "cyan"
+java_bg_color = "red"
+# Starship renders the java module `red dimmed` (not bold); override the bold default.
+java_style = "dimmed"
+ruby_bg_color = "red"
+php_bg_color = "bright_magenta"
+swift_bg_color = "orange"
+elixir_bg_color = "magenta"
+csharp_bg_color = "blue"
+cpp_bg_color = "bright_green"
+c_bg_color = "bright_green"
+erlang_bg_color = "red"
+fish_bg_color = "green"
+# Starship's default per-language symbols, exactly as it ships them: a mix of
+# emoji, Nerd Font glyphs (node, erlang), and plain text (C++, C). The Nerd Font
+# glyphs require a Nerd Font to display; emoji may be double-width in some terminals.
+rust_symbol = "🦀"
+python_symbol = "🐍"
+node_symbol = ""
+go_symbol = "🐹"
+java_symbol = "☕"
+ruby_symbol = "💎"
+php_symbol = "🐘"
+swift_symbol = "🐦"
+elixir_symbol = "💧"
+csharp_symbol = "🎯"
+cpp_symbol = "C++"
+c_symbol = "C"
+erlang_symbol = ""
+
+# Command duration — Starship: `took [$duration]($style) `, bold yellow.
+# Only shown when a command runs longer than Starship's default 2s threshold.
+# show_milliseconds = false matches Starship's default humanized output (`took 2s`).
+[segments.duration]
+format = "took [$duration](bold yellow) "
+text_color = "yellow"
+bg_color = "transparent"
+show_if_exceeds_ms = 2000
+show_milliseconds = false
+
+# Character — the prompt symbol, colored by exit status (green ❯ / red ❯).
+# Replaces GPY's separate status indicator under this preset.
+[segments.character]
+format = "[$symbol](bold $style) "
+success_symbol = "❯"
+error_symbol = "❯"
+success_color = "green"
+error_color = "red"

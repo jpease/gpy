@@ -1,0 +1,6 @@
+---
+source: tests/formatter_snapshot_tests.rs
+description: Git status (clean) in JSON format
+expression: output
+---
+{"ahead":2,"ahead_capped":false,"behind":1,"behind_capped":false,"branch":"main","conflicts":0,"detached":false,"rebase_progress":null,"staged":3,"stash_count":0,"state":"clean","unstaged":4,"untracked":5}

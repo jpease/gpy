@@ -1,0 +1,20 @@
+{
+  "name": "gpy",
+  "version": "0.1.0",
+  "description": "High-performance Fish shell prompt with agent-based architecture for Git status and language detection",
+  "homepage": "https://github.com/jpease/gpy",
+  "repository": "https://github.com/jpease/gpy",
+  "license": "GPL-3.0-or-later",
+  "authors": ["jpease <jpease@github.com>"],
+  "files": [
+    "conf.d/",
+    "core/",
+    "segments/",
+    "functions/",
+    "completions/"
+  ],
+  "dependencies": [],
+  "keywords": ["prompt", "git", "status", "fast", "cross-platform", "agent", "performance"],
+  "fish_version": ">=3.6.0",
+  "os": ["linux", "macos"]
+}

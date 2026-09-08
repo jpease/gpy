@@ -1,0 +1,124 @@
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+    -   id: check-yaml
+    -   id: end-of-file-fixer
+        # Golden ANSI fixtures are byte-exact contracts; never append newlines.
+        exclude: ^gpy-agent/tests/golden/.*\.ansi$
+    -   id: trailing-whitespace
+        # Golden ANSI fixtures are byte-exact contracts; never trim bytes.
+        exclude: ^gpy-agent/tests/golden/.*\.ansi$
+    -   id: check-added-large-files
+        # Recorded feature-walkthrough GIF embedded in the README (demo/README.md).
+        exclude: ^assets/demo\.gif$
+
+-   repo: local
+    hooks:
+    -   id: cargo-sweep
+        name: cargo-sweep
+        description: Keep Rust build artifacts under control
+        entry: bash -c "command -v cargo-sweep >/dev/null 2>&1 || cargo install cargo-sweep; cd gpy-agent && cargo sweep --installed"
+        language: system
+        files: \.rs$
+        pass_filenames: false
+    -   id: rustfmt
+        name: rustfmt
+        entry: rustfmt --edition 2024
+        language: system
+        types: [rust]
+        files: ^gpy-agent/
+        pass_filenames: true
+    -   id: clippy-strict
+        name: clippy-strict
+        description: Run strict clippy checks for the Rust agent
+        entry: just clippy-strict
+        language: system
+        files: \.rs$
+        pass_filenames: false
+    -   id: fish-check
+        name: fish-check
+        description: Run Fish shell syntax and formatting checks
+        entry: scripts/quality-check.sh --fish-only
+        language: system
+        files: \.fish$
+        pass_filenames: false
+    -   id: raven-ai-attribution
+        name: raven-ai-attribution
+        description: Block AI-authorship credits from leaking into staged file content
+        entry: python3 .raven/git-hooks/lib/check-ai-attribution-content.py staged
+        language: system
+        pass_filenames: false
+    -   id: raven-managed-block-integrity
+        name: raven-managed-block-integrity
+        description: Block direct edits inside a RAVEN:BEGIN/RAVEN:END managed block
+        entry: python3 .raven/git-hooks/lib/check-managed-block-integrity.py
+        language: system
+        pass_filenames: false
+    -   id: gitleaks
+        name: gitleaks
+        description: Scan staged changes for secrets
+        entry: bash -c 'command -v gitleaks >/dev/null 2>&1 || exit 0; gitleaks git --staged --redact'
+        language: system
+        pass_filenames: false
+    # --- Pre-push gates (path-aware) ---
+    # The push diff drives which gates run. A shell-only push (no Rust/config/build
+    # paths) skips the Rust toolchain entirely; a Rust-touching push still runs the
+    # shell suites because the shells consume the agent's rendered output (e.g.
+    # starship_parity checks fish output against the agent binary).
+    #
+    #   rust-gate / moon-lint   : Rust source, Cargo manifests, config/, justfile,
+    #   / cargo-clean             moon.yml, scripts/  → skipped for shell-only pushes.
+    #                             moon-lint (#584) is the stricter nursery/cargo/
+    #                             restriction-lint gate; rust-gate covers the
+    #                             deny-warnings/pedantic baseline via Cargo.toml's
+    #                             [lints] table. Both are required.
+    #   shell-gate              : the above OR *.fish/*.bash/*.zsh + shell test dirs
+    #   perf-canary             : any shell or Rust source change
+    -   id: raven-ai-attribution-outbound
+        name: raven-ai-attribution-outbound
+        description: Block AI-authorship credits from leaking into content about to be pushed
+        entry: python3 .raven/git-hooks/lib/check-ai-attribution-content.py outbound
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+    -   id: cargo-clean
+        name: cargo-clean
+        description: Clean build artifacts before push to ensure a fresh state
+        entry: just clean
+        language: system
+        pass_filenames: false
+        files: '(\.rs$|(^|/)Cargo\.(toml|lock)$|^config/|^justfile$|^moon\.yml$|^scripts/)'
+        stages: [pre-push]
+    -   id: rust-gate
+        name: rust-gate
+        description: Run Rust toolchain checks before push (skipped for shell-only pushes)
+        entry: just check-rust
+        language: system
+        pass_filenames: false
+        files: '(\.rs$|(^|/)Cargo\.(toml|lock)$|^config/|^justfile$|^moon\.yml$|^scripts/)'
+        stages: [pre-push]
+    -   id: moon-lint
+        name: moon-lint
+        description: Run the stricter moon clippy gate (nursery/cargo/restriction lints) before push (#584)
+        entry: just lint
+        language: system
+        pass_filenames: false
+        files: '(\.rs$|(^|/)Cargo\.(toml|lock)$|^config/|^justfile$|^moon\.yml$|^scripts/)'
+        stages: [pre-push]
+    -   id: shell-gate
+        name: shell-gate
+        description: Run Fish/Bash/Zsh integration suites before push
+        entry: just check-shell
+        language: system
+        pass_filenames: false
+        files: '(\.(fish|bash|zsh)$|^tests/(fish|bash|zsh)/|\.rs$|(^|/)Cargo\.(toml|lock)$|^config/|^scripts/)'
+        stages: [pre-push]
+    -   id: perf-canary
+        name: perf-canary
+        description: Compare focused benchmarks against the last pushed commit on this machine
+        entry: just perf-canary
+        language: system
+        pass_filenames: false
+        files: '(\.(fish|bash|zsh|rs)$|^config/)'
+        stages: [pre-push]

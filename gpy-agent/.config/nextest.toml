@@ -1,0 +1,42 @@
+# Nextest configuration for gpy-agent
+#
+# gpy-agent#620: profile.default used to retry the ENTIRE suite up to twice
+# (a global `retries = 2`), on the theory that agent-spawning integration
+# tests could miss the 15s readiness ping under 800+ concurrently running
+# tests. That blanket retry made a green run weak evidence for outside
+# contributors: any test's first-attempt failure was silently absorbed.
+#
+# Measured instead (2026-09-05/06, this machine): four back-to-back full
+# `cargo nextest run --features test-support --no-fail-fast` passes with
+# `retries = 0` (three quiet, one run concurrently with
+# `./scripts/test_fish.sh` to reproduce the "contended" condition the old
+# comment described) all passed on the first attempt, 2075/2075 tests, zero
+# retries needed. The four named-test overrides below (gpy-agent#384/#385/
+# #386/#388) also passed cleanly inside every one of those runs, and an
+# additional 20x isolated `--retries 0` loop over exactly those seven tests
+# was clean too (0/20 failures). All four tracking issues are now CLOSED,
+# and re-verification found no reproduction of the original flake, so their
+# overrides are removed rather than carried forward without an open issue.
+# The actual fix for the underlying race -- `#[file_serial(
+# watcher_fsevents_bootstrap)]` serializing real FSEventStream bootstraps
+# across the affected tests (see watcher_tests.rs, config_watcher_tests.rs,
+# config_hot_reload_tests.rs, multi_repo_integration_tests.rs, and
+# watcher/multi_repo.rs) -- is deterministic coordination, not a retry, and
+# stays in the test code regardless of this file's retry policy.
+#
+# If a genuinely flaky test turns up again, add a new override here that:
+# names the exact test(s) with a `test(...)`/`binary_id(...)` filter, links
+# an OPEN tracking issue in the comment immediately above it, and documents
+# the underlying race or platform constraint -- do not reach for a
+# profile-wide retry.
+#
+# Visibility: `status-level = "retry"` prints a line for every retry
+# attempt as it happens, and `final-status-level = "flaky"` lists any test
+# that needed more than one attempt in the run's final summary, so a retry
+# (from a future override, or from `--retries` passed ad hoc on the command
+# line) is always visible rather than silently green.
+
+[profile.default]
+retries = 0
+status-level = "retry"
+final-status-level = "flaky"

@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""commit-msg hook: strip AI agent attribution trailers, and warn on a closing
+keyword paired with a negation, before the message lands in git history."""
+
+from __future__ import annotations
+
+import importlib.util
+import re
+import sys
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+# Match AI attribution trailers: Co-Authored-By/Generated-by naming a known AI tool or provider
+# domain, or a bot's literal "noreply@" address (catches unlisted/future tools without
+# naming them -- GitHub's own human co-author suggestion uses "<id+user@users.noreply...>",
+# which does not start with "noreply@" and so is not matched), or the Claude-session link
+# trailer injected by the Claude Code system prompt.
+_AI_TRAILER = re.compile(
+    r"^(?:co-authored-by|generated-by):\s+.*"
+    r"(?:(?:claude|copilot|codex|chatgpt|gpt-[0-9]+|gemini|llama|mistral"
+    r"|@anthropic\.com|@openai\.com)"
+    r"|<noreply@[^>]+>)"
+    r"|^claude-session:\s+\S+",
+    re.IGNORECASE,
+)
+
+# GitHub/GitLab's closing-keyword parser matches keyword+issue-number proximity
+# only, not grammar -- "did not fix #123" still auto-closes #123 on merge to
+# the default branch. Flags (does not block) a negation word within ~40 chars
+# before a closing keyword that is itself within ~10 chars of a "#<number>".
+# The apostrophe in "didn't"/"doesn't" is matched with `.` so both the
+# straight (') and curly (') forms hit.
+_NEGATED_CLOSING_KEYWORD = re.compile(
+    r"\b(?:not|didn.t|doesn.t|did\s+not|does\s+not)\b"
+    r".{0,40}?"
+    r"\b(?:fix(?:es|ed)?|close[sd]?|resolve[sd]?)\b"
+    r".{0,10}?"
+    r"#(\d+)",
+    re.IGNORECASE,
+)
+
+
+def _raven_config_module():
+    """Import the ``lib/raven_config.py`` sibling of this hook's own directory.
+
+    This script (``.raven/git-hooks/commit-msg``) and the shared parser
+    (``.raven/git-hooks/lib/raven_config.py``) always ship together in the
+    "hooks" component, one level apart -- resolved via this file's own
+    location. ``_repo_root()`` below is now also derived from this same
+    file location (issue #202), rather than an independently injectable
+    value: a test exercising a fixture repo now installs this script (and
+    its ``lib/raven_config.py`` sibling) at the fixture's own matching
+    relative offset, rather than pointing an isolated ``_repo_root()`` at it.
+    """
+    path = Path(__file__).resolve().parent / "lib" / "raven_config.py"
+    spec = importlib.util.spec_from_file_location(
+        "raven_config_for_commit_msg",
+        path,
+        loader=SourceFileLoader("raven_config_for_commit_msg", str(path)),
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"could not load raven_config from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _read_config_bool(config_path: Path, section: str, key: str, default: bool) -> bool:
+    """Read a boolean flag from ``config_path``, defaulting on anything short of a clean read.
+
+    Previously this had no ``try``/``except`` around ``read_text()``: a
+    present-but-unreadable config propagated an uncaught ``OSError`` out of
+    the hook, failing the commit outright. That was never an intentional
+    failure semantic here -- a missing file, a missing section, a missing
+    key, and a non-boolean value all already fell back to ``default`` -- so
+    it is fixed here to do the same, via the shared parser's
+    ``RavenConfigError``, rather than preserved.
+    """
+    raven_config = _raven_config_module()
+    try:
+        parsed = raven_config.read_config(config_path)
+    except raven_config.RavenConfigError:
+        return default
+    if parsed is None:
+        return default
+    raw_value = parsed.get(section, {}).get(key)
+    if raw_value is None:
+        return default
+    parsed_value = raven_config.parse_bool(raw_value)
+    return default if parsed_value is None else parsed_value
+
+
+def _repo_root() -> Path:
+    """The project root for this checkout, via the shared parent-directory walk.
+
+    This hook always ships at ``<root>/.raven/git-hooks/commit-msg``, a
+    fixed offset -- two parents up from this file's own directory is the
+    candidate root. Passed as ``start`` to the shared
+    ``raven_config.resolve_repo_root`` (loaded by ``_raven_config_module``
+    above), which confirms it (or walks further up, e.g. if the hook were
+    relocated) rather than trusting the fixed offset blindly. Unlike the
+    ``git rev-parse --show-toplevel`` subprocess this replaces, the shared
+    walk never shells out to git, so it is immune to an inherited
+    ``GIT_DIR``/``GIT_WORK_TREE`` corrupting the answer -- see that
+    function's own docstring for why that class of bug motivated dropping
+    the subprocess call entirely (issue #202).
+    """
+    candidate = Path(__file__).resolve().parents[2]
+    return _raven_config_module().resolve_repo_root(candidate)
+
+
+def _warn_negated_closing_keywords(lines: list[str]) -> None:
+    """Print a warning (never blocks) for each negated-closing-keyword match.
+
+    Lines are joined with spaces before matching so a phrase wrapped across
+    two lines (commit bodies wrap at 72 columns) is still caught.
+    """
+    text = " ".join(lines)
+    for match in _NEGATED_CLOSING_KEYWORD.finditer(text):
+        issue_num = match.group(1)
+        print(
+            f"raven commit-msg: warning: \"{match.group(0)}\" reads like a negated "
+            f"closing keyword -- GitHub/GitLab still auto-close #{issue_num} on merge; "
+            f"the parser matches keyword+number proximity, not grammar. "
+            f"Use 'Refs: #{issue_num}' instead if the fix attempt failed.",
+            file=sys.stderr,
+        )
+
+
+def main() -> int:
+    root = _repo_root()
+    config = root / ".raven" / "config.toml"
+
+    msg_file = Path(sys.argv[1])
+    try:
+        lines = msg_file.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError:
+        # Cosmetic hook: fail open rather than block a commit over an encoding we can't read.
+        return 0
+
+    if _read_config_bool(config, "git_hooks", "warn_negated_closing_keyword", default=True):
+        _warn_negated_closing_keywords(lines)
+
+    if not _read_config_bool(config, "git_hooks", "strip_ai_attribution", default=True):
+        return 0
+
+    removed = [line for line in lines if _AI_TRAILER.match(line)]
+    if not removed:
+        return 0
+
+    cleaned = [line for line in lines if not _AI_TRAILER.match(line)]
+    while cleaned and not cleaned[-1].strip():
+        cleaned.pop()
+
+    msg_file.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
+    for trailer in removed:
+        print(f"raven commit-msg: removed AI attribution: {trailer}", file=sys.stderr)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

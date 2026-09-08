@@ -1,0 +1,90 @@
+# GPY Agent Configuration
+
+[ui]
+# Show language/tool icons
+show_icons = true
+# Color theme: default (visual), text (basic)
+theme = "default"
+
+[ui.directory]
+# Display mode: basename, abbreviated, truncated, full
+display = "basename"
+# Trailing path components kept when display = "truncated"
+truncation_length = 3
+# Prefix shown before a truncated path (e.g. "…/")
+truncation_symbol = ""
+# Maximum path length to display (character cap)
+max_length = 80
+
+[agent]
+# Enable background agent process
+enabled = true
+# Request timeout in seconds
+timeout_seconds = 5
+# Enable live prompt updates via signals
+live_updates = true
+
+[agent.supervisor]
+# Enable supervisor for automatic agent restart
+enabled = true
+# Supervisor health check interval in seconds
+check_interval_seconds = 30
+# Maximum restart attempts before giving up
+max_restart_attempts = 5
+
+[git]
+# Enable git status detection
+enabled = true
+# Show ahead/behind commit counts
+show_upstream = true
+# Git command timeout in seconds
+timeout_seconds = 10
+# Paths to skip git detection for performance (e.g., system directories)
+# Example: skip_paths = ["/tmp", "/var", "/usr"]
+skip_paths = []
+# Maximum branch name length to display (0 = unlimited)
+# Long branch names will be truncated with an ellipsis (…)
+# Example: "feature/very-long-branch-name" → "feature/very-long-bra…"
+max_branch_length = 0
+
+# Git icons (semantic indicators)
+[git.icons]
+ahead = "󰁝"       # Ahead of remote indicator
+behind = "󰁅"      # Behind remote indicator
+staged = "󱓞"      # Staged files indicator
+unstaged = "󰛄"    # Unstaged files indicator
+untracked = "?"   # Untracked files indicator
+conflicts = "󱈸"   # Conflicts indicator
+
+[language]
+# Enable programming language detection
+enabled = true
+# Show language versions
+show_versions = true
+# Version cache TTL in hours
+cache_ttl_hours = 24
+# Specific languages to detect (empty = detect all)
+# enabled_languages = ["rust", "node", "python", "go"]
+enabled_languages = []
+# Display mode: "icon" or "text"
+# "icon" - use icons from language.icons (fallback to text if not defined)
+# "text" - always use language name
+display = "icon"
+
+# Language icons (Nerd Fonts icons from https://www.nerdfonts.com/cheat-sheet)
+[language.icons]
+rust = "󱘗"      # nf-md-language_rust
+python = "󰌠"    # nf-md-language_python
+node = "󰎙"      # nf-md-nodejs
+go = "󰟓"        # nf-md-language_go
+java = "󰬷"      # nf-md-language_java
+ruby = "󰴭"      # nf-md-language_ruby
+swift = "󰛥"     # nf-md-language_swift
+elixir = ""    # nf-dev-elixir
+php = "󰌟"       # nf-md-language_php
+csharp = "󰌛"    # nf-md-language_csharp
+cpp = "󰙲"       # nf-md-language_cpp
+c = "󰙱"         # nf-md-language_c
+erlang = ""    # nf-dev-erlang
+fish = "󰈺"      # nf-md-fish
+# If a language icon is not defined and show="icon", falls back to language name

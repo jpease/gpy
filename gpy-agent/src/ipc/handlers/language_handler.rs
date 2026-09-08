@@ -1,0 +1,320 @@
+//! IPC handler for language detection requests.
+//!
+//! Language requests combine project language detection, optional version
+//! lookup, and prompt formatting context. The expensive detection logic lives in
+//! [`crate::language`]; this handler applies IPC validation, configuration
+//! toggles, and cache-aware orchestration for shell clients.
+
+use super::{
+    HandlerError, JobGuard, RenderDeps, RequestHandler, SharedJob, SingleFlight, notify_if_changed,
+    spawn_detached,
+};
+use crate::ipc::{Message, Response};
+use crate::language::DetectionCache;
+use crate::language::display::build_language_display_info_at;
+use crate::watcher::multi_repo::MultiRepoWatcher;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+/// Handler for programming language detection queries
+pub struct LanguageHandler {
+    /// Everything needed to publish detected languages to the instant-prompt
+    /// cache and repaint live shells; see [`LanguageHandler::publish_language_status`].
+    render: RenderDeps,
+    language_cache: DetectionCache,
+    in_flight: SingleFlight<PathBuf, Vec<crate::language::DetectedLanguage>>,
+}
+
+type LanguageJob = SharedJob<Vec<crate::language::DetectedLanguage>>;
+type LanguageJobGuard = JobGuard<PathBuf, Vec<crate::language::DetectedLanguage>>;
+
+impl LanguageHandler {
+    /// Create a new `LanguageHandler` with the given dependencies
+    #[must_use]
+    pub fn new(render: RenderDeps, language_cache: DetectionCache) -> Self {
+        Self {
+            render,
+            language_cache,
+            in_flight: SingleFlight::new(),
+        }
+    }
+
+    /// Handle language detection for a given path
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a cold cache miss does not complete within the agent
+    /// timeout budget (#154); the detection keeps running on the blocking pool and
+    /// its result is served from cache on a subsequent request.
+    fn handle_language_detection(
+        &self,
+        path: &crate::security::SafePath,
+        _is_last: bool,
+        prev_bg: Option<&str>,
+        virtual_env: Option<&str>,
+    ) -> Result<Response, HandlerError> {
+        let config = self.render.config_manager.get();
+        if !config.language.enabled {
+            return Ok(Response::Language { languages: vec![] });
+        }
+
+        // Use the shared theme manager instead of loading from disk
+        let theme = self.render.theme_manager.get();
+        let request_path = path.as_path();
+        let repo_root = MultiRepoWatcher::find_git_root(request_path)
+            .unwrap_or_else(|| request_path.to_path_buf());
+
+        // Resolve the forwarded venv (if any) against this repo and stash it so
+        // the background detection job renders the same interpreter version,
+        // preventing a flip-flop between the synchronous reply and later refreshes.
+        let forwarded_venv = virtual_env
+            .map(std::path::Path::new)
+            .and_then(|env| crate::language::venv::resolve_python_venv(&repo_root, Some(env)));
+        if let Some(venv) = forwarded_venv.as_deref() {
+            crate::language::venv::stash_project_venv(&repo_root, venv);
+        }
+
+        // Check the in-memory cache first. On a cold miss, wait on the single-flight
+        // detection job only up to a bounded budget so a slow scan never blocks the
+        // request indefinitely (#154). The wait runs on the blocking pool (the IPC
+        // server routes requests via `spawn_blocking`), so it never ties up a Tokio
+        // worker thread.
+        let detected_languages = if let Some(cached) = self.language_cache.get(&repo_root) {
+            cached
+        } else {
+            let job = self.language_detection_job(&repo_root);
+            let wait_budget = Duration::from_secs(config.agent.timeout_seconds.get());
+            let Some(detected) = job.wait_timeout(wait_budget) else {
+                // Detection exceeded the budget and is still running on the
+                // blocking pool. Return an error (mirroring the git handler's
+                // timeout path) rather than an empty success: an error response
+                // leaves the instant cache and live shells untouched, so a slow
+                // scan never clobbers a good prompt with a blank one. The result
+                // lands in the in-memory cache and is served on the next prompt.
+                return Err(HandlerError::TimedOut("Language detection"));
+            };
+            detected
+        };
+
+        // Refresh the instant cache so subsequent shell prompts render without IPC,
+        // and repaint any other live shells in this repo when the rendered output
+        // actually changed (the requesting shell already gets the fresh reply
+        // directly via the response below). Mirrors the background path's
+        // `publish_language_status` and `git_handler`'s synchronous
+        // `publish_and_repaint` (#624).
+        let palette = self.render.palette_cache.get();
+        let result = self.render.instant_cache.write_language_variants(
+            &repo_root,
+            &detected_languages,
+            &config,
+            &theme,
+            prev_bg,
+            &palette,
+            forwarded_venv.as_deref(),
+        );
+        notify_if_changed(&self.render.client_registry, &repo_root, result, "language");
+
+        if detected_languages.is_empty() {
+            return Ok(Response::Language { languages: vec![] });
+        }
+
+        let languages = build_language_display_info_at(
+            &detected_languages,
+            &theme,
+            &config.language,
+            Some(&repo_root),
+            forwarded_venv.as_deref(),
+        );
+
+        Ok(Response::Language { languages })
+    }
+
+    fn language_detection_job(&self, repo_root: &Path) -> Arc<LanguageJob> {
+        let language_cache = self.language_cache.clone();
+        let render = self.render.clone();
+        let repo_root_owned = repo_root.to_path_buf();
+        // On a panic mid-job, the guard's Drop completes the shared job with
+        // an empty result (matching this type's "no languages detected"
+        // semantics) instead of leaving the slot permanently poisoned (#318).
+        self.in_flight
+            .get_or_start(repo_root_owned.clone(), Vec::new(), move |guard| {
+                Self::spawn_language_detection_job(repo_root_owned, language_cache, render, guard);
+            })
+    }
+
+    fn spawn_language_detection_job(
+        repo_root: PathBuf,
+        language_cache: DetectionCache,
+        render: RenderDeps,
+        guard: LanguageJobGuard,
+    ) {
+        let job = move || {
+            let detection_mode = render.config_manager.get().language.detection_mode;
+            let detected = crate::language::detector::Detector::detect_directory_bounded(
+                &repo_root,
+                detection_mode,
+            );
+            language_cache.set(&repo_root, detected.clone());
+            guard.finish(detected.clone());
+            // Mirror the git handler's publish_and_repaint: write the
+            // instant-prompt cache and fire a content-gated SIGUSR1 so live
+            // prompts repaint without waiting for the next render (#166).
+            Self::publish_language_status(&render, &repo_root, &detected);
+        };
+
+        spawn_detached(job);
+    }
+
+    /// Write the instant-prompt cache and fire a content-gated SIGUSR1 when the
+    /// detected languages produce different rendered output. The language-domain
+    /// counterpart of `git_handler::publish_and_repaint`, so live prompts receive
+    /// deferred results without requiring another render.
+    fn publish_language_status(
+        deps: &RenderDeps,
+        repo_root: &Path,
+        detected: &[crate::language::DetectedLanguage],
+    ) {
+        let config = deps.config_manager.get();
+        let theme = deps.theme_manager.get();
+        let palette = deps.palette_cache.get();
+        // Background detection job: no IPC request context, so prev_bg is None.
+        // Reuse any venv the synchronous handler stashed for this repo so the
+        // refreshed render matches the interpreter version the client saw.
+        let stashed_venv = crate::language::venv::stashed_project_venv(repo_root);
+        let result = deps.instant_cache.write_language_variants(
+            repo_root,
+            detected,
+            &config,
+            &theme,
+            None,
+            &palette,
+            stashed_venv.as_deref(),
+        );
+        notify_if_changed(&deps.client_registry, repo_root, result, "language");
+    }
+}
+
+impl RequestHandler for LanguageHandler {
+    fn handle(&self, message: &Message) -> Result<Response, HandlerError> {
+        match message {
+            Message::LanguageDetect {
+                path,
+                is_last,
+                prev_bg,
+                virtual_env,
+                ..
+            } => self.handle_language_detection(
+                path,
+                *is_last,
+                prev_bg.as_deref(),
+                virtual_env.as_deref(),
+            ),
+            _ => Err(HandlerError::UnexpectedMessage {
+                handler: "LanguageHandler",
+                qualifier: "non-language",
+                message: format!("{message:?}"),
+            }),
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "LanguageHandler"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::missing_panics_doc)]
+    use super::*;
+    use crate::cache::InstantPromptCache;
+    use crate::config::manager::ConfigManager;
+    use crate::formatter::Format;
+    use crate::ipc::ClientDirectory;
+    use crate::language::DetectedLanguage;
+    use crate::palette::PaletteCache;
+    use crate::theme::ThemeManager;
+
+    fn make_handler() -> (LanguageHandler, Arc<ClientDirectory>) {
+        let registry = ClientDirectory::new().shared();
+        let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
+        let palette_cache = Arc::new(PaletteCache::from_config(&config_manager.get()));
+        let render = RenderDeps {
+            config_manager: Arc::clone(&config_manager),
+            // Use the embedded builtin theme so the test is hermetic against a
+            // stale on-disk ~/.config/gpy/themes/default.toml, matching
+            // git_handler's equivalent fixture.
+            theme_manager: Arc::new(ThemeManager::builtin("default").expect("theme")),
+            palette_cache,
+            instant_cache: Arc::new(InstantPromptCache::new_for_test()),
+            client_registry: Arc::clone(&registry),
+        };
+        let handler = LanguageHandler::new(render, DetectionCache::new());
+        (handler, registry)
+    }
+
+    /// Build a synchronous `LanguageDetect` request for `repo_root`.
+    fn language_detect_request(repo_root: &Path) -> Message {
+        Message::LanguageDetect {
+            path: crate::security::SafePath::new(repo_root.to_str().expect("utf8 path"))
+                .expect("safe path"),
+            format: Format::default(),
+            is_last: false,
+            is_first: false,
+            prev_bg: None,
+            virtual_env: None,
+        }
+    }
+
+    /// #624: a synchronous language request must repaint other live shells.
+    ///
+    /// Exactly like `git_handler`'s equivalent synchronous path
+    /// (`publish_and_repaint_notifies_only_on_content_change`). The requesting
+    /// shell already receives the fresh detection in its reply; every *other*
+    /// registered shell in the repo is still showing the instant-cache content
+    /// the write just replaced. The change gate in `notify_if_changed` keeps a
+    /// no-op refresh silent (#145/#146), so a second identical request must not
+    /// add another notification.
+    #[test]
+    fn handle_language_detection_notifies_only_on_content_change() {
+        let (handler, registry) = make_handler();
+        // A unique temp path keeps the instant-cache key (and on-disk file)
+        // isolated from other runs so the first write is always a change.
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let repo_dir = temp_dir.path().join("repo");
+        std::fs::create_dir_all(repo_dir.join(".git")).expect("git dir");
+        // `handle_language_detection` resolves the repo root via
+        // `MultiRepoWatcher::find_git_root`, which canonicalizes; the cache key
+        // used below must match that canonical form.
+        let repo_root = std::fs::canonicalize(&repo_dir).expect("canonicalize repo root");
+
+        handler.language_cache.set(
+            &repo_root,
+            vec![DetectedLanguage {
+                name: "rust".to_owned(),
+                confidence: 1.0,
+                file_count: 3,
+                total_bytes: 512,
+            }],
+        );
+
+        let message = language_detect_request(&repo_root);
+
+        // First request writes fresh content -> repaint.
+        handler.handle(&message).expect("first request");
+        assert_eq!(
+            registry.notify_invocations(),
+            1,
+            "a synchronous request that changes the cached output should repaint live shells"
+        );
+
+        // Second, identical request -> no repaint (change-gated).
+        handler.handle(&message).expect("second request");
+        assert_eq!(
+            registry.notify_invocations(),
+            1,
+            "an unchanged refresh must not wake terminals"
+        );
+    }
+}

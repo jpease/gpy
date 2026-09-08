@@ -1,0 +1,39 @@
+# Zsh Tests
+
+Every `*.test.zsh` in this directory is auto-discovered and run by
+`scripts/quality-check.sh` (`just check-shell`), each in a hermetic
+`XDG_CACHE_HOME`/`XDG_CONFIG_HOME`. A file must exit non-zero on failure and
+print `PASS`/`FAIL` lines a reader can follow. All files here are
+shell-integration tests of `zsh/gpy.zsh` (the repository-policy checks live
+in `tests/bash/`, see its README for the split).
+
+| Tier | Files | Agent? |
+|---|---|---|
+| Live daemon, real terminal | `e2e_agent_autostart`, `e2e_git_live_content`, `e2e_reregister_after_restart`, `e2e_config_sigusr2_reload` | real `gpy-agent`, real `zsh -i` on a pty |
+| Live daemon, no terminal | `e2e_agent_down_stale_git` (agent down, then up), `path_parity` (`gpy debug paths` vs `__gpy_debug_paths`, cache key against a file the agent wrote) | real `gpy-agent`, functions called directly |
+| Function-level | `basic`, `integration`, `json_escape`, `json_flags_tail`, `load_theme_cache`, `instant_cache_status`, `is_first_instant_cache`, `oneshot_budget`, `parity`, `prompt_dispatch_positions`, `segment_bg_export`, `missing_core_file_disables_cleanly` | none (`integration` runs with the supervisor off and a socket that does not exist) |
+| Completion widgets | `completions` | a nested zsh via `zsh/zpty` |
+| IPC edge cases | `ipc_partial_response`, `ipc_no_double_send_on_slow_reply`, `protocol_version_mismatch`, `ipc_nc_fallback_timeout` | a python3 fake listener |
+
+## The live-daemon harness
+
+`tests/lib/shell_e2e.sh` is shared with the Bash suite and documented in
+`tests/bash/README.md`. Source it from zsh with sh semantics so its functions
+keep sh word-splitting:
+
+```zsh
+ROOT=${0:a:h:h:h}
+emulate sh -c ". $ROOT/tests/lib/shell_e2e.sh"
+shell_e2e_init "$ROOT"
+shell_e2e_spawn_client zsh "$ROOT"
+```
+
+The skip contract (`test_skip`, exit 0 locally and exit 1 under `CI`, #650)
+comes from the same file.
+
+## Running
+
+```bash
+just check-shell                            # everything, as the gate runs it
+zsh tests/zsh/e2e_agent_autostart.test.zsh  # one file
+```

@@ -1,0 +1,15 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy plugin new
+expression: help
+---
+Create a new plugin scaffold
+
+Usage: gpy plugin new [OPTIONS] <ID>
+
+Arguments:
+  <ID>  Plugin ID
+
+Options:
+      --segment <SEGMENT>  Optional segment ID (defaults to the plugin ID)
+  -h, --help               Print help
