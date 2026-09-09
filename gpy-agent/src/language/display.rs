@@ -43,10 +43,12 @@ pub(crate) fn probe_call_count_for_test() -> u64 {
 
 /// Select which detected languages should actually be displayed.
 ///
-/// Applies the confidence threshold, filter mode (`Primary`/`All`/`Top(n)`),
-/// and the theme-or-config allow-list, in that order. Pure: no I/O, no
-/// version probing -- only these selected languages warrant a version probe
-/// afterward.
+/// Applies the confidence threshold and the theme-or-config allow-list, drops
+/// languages that cannot satisfy `show_versions`, and only then applies the
+/// filter mode (`Primary`/`All`/`Top(n)`). The filter has to run last: it takes
+/// from the front, so any narrowing done afterwards can empty a selection that
+/// was supposed to name one language. Pure: no I/O, no version probing -- only
+/// these selected languages warrant a version probe afterward.
 #[must_use]
 pub fn select_display_languages<'a>(
     detected: &'a [DetectedLanguage],
@@ -69,35 +71,58 @@ pub fn select_display_languages<'a>(
     let allowed_languages: Option<HashSet<String>> =
         effective_enabled.map(|list| list.iter().map(|name| name.to_lowercase()).collect());
 
-    // Apply confidence threshold
+    // Narrow to displayable languages BEFORE the filter mode picks a subset.
+    // `Primary`/`Top(n)` take from the front, so anything that would be
+    // discarded later has to be gone already or the selection comes back
+    // empty -- the allow-list check used to run *after* the take, so a
+    // `Primary` whose top language was not on the list rendered nothing.
     let threshold = cfg.confidence_threshold.get();
-    let filtered_languages: Vec<_> = detected
+    let mut candidates: Vec<_> = detected
         .iter()
         .filter(|lang| lang.confidence >= threshold)
-        .collect();
-
-    // Apply filter mode
-    let display_languages: Vec<_> = match cfg.filter {
-        crate::config::types::LanguageFilter::Primary => {
-            filtered_languages.into_iter().take(1).collect()
-        }
-        crate::config::types::LanguageFilter::All => filtered_languages,
-        crate::config::types::LanguageFilter::Top(count) => {
-            filtered_languages.into_iter().take(count).collect()
-        }
-    };
-
-    // Narrow to the languages that will actually be displayed (after the theme /
-    // config allow-list), preserving order. Only these warrant a version probe.
-    display_languages
-        .into_iter()
         .filter(|detected_lang| {
             let name_lower = detected_lang.name.to_lowercase();
             allowed_languages
                 .as_ref()
                 .is_none_or(|allowed| allowed.contains(&name_lower))
         })
-        .collect()
+        .collect();
+
+    // Same trap, one layer down: when the renderer will drop languages that
+    // have no version (`select_languages` in formatter::fish_ansi), selecting
+    // only version-less ones renders an empty segment. A Node project whose
+    // highest-confidence detection is JSON did exactly that under
+    // `filter = "primary"` -- JSON has no version detector, so the one
+    // selected language was then discarded and the segment vanished, while
+    // `filter = "all"` still showed Node.
+    //
+    // Restrict the candidates to languages GPY can actually probe, unless that
+    // would empty the list -- a project with no probeable language at all
+    // keeps its previous behavior rather than silently changing which language
+    // is named.
+    let versions_required =
+        cfg.show_versions && !theme_lang.show_symbol_without_version.unwrap_or(false);
+    if versions_required {
+        let probeable: Vec<_> = candidates
+            .iter()
+            .copied()
+            .filter(|detected_lang| {
+                crate::language::version::has_version_detector(&detected_lang.name)
+            })
+            .collect();
+        if !probeable.is_empty() {
+            candidates = probeable;
+        }
+    }
+
+    // Apply filter mode. Only the survivors warrant a version probe.
+    match cfg.filter {
+        crate::config::types::LanguageFilter::Primary => candidates.into_iter().take(1).collect(),
+        crate::config::types::LanguageFilter::All => candidates,
+        crate::config::types::LanguageFilter::Top(count) => {
+            candidates.into_iter().take(count).collect()
+        }
+    }
 }
 
 /// Build language display information from detected languages
@@ -269,6 +294,130 @@ mod tests {
                 total_bytes: 256,
             },
         ]
+    }
+
+    #[test]
+    fn primary_skips_a_language_that_can_never_have_a_version() {
+        // The reported bug: a Node project whose highest-confidence detection
+        // is JSON. JSON has no version detector, so under `primary` it was
+        // selected and then discarded by the renderer's version filter, and
+        // the language segment disappeared entirely -- while `all` still
+        // showed Node.
+        let detected = vec![
+            DetectedLanguage {
+                name: "json".to_owned(),
+                confidence: 1.0,
+                file_count: 1,
+                total_bytes: 84,
+            },
+            DetectedLanguage {
+                name: "node".to_owned(),
+                confidence: 0.6,
+                file_count: 1,
+                total_bytes: 29,
+            },
+        ];
+        let theme = ThemeConfig::default();
+        let language_cfg = LanguageSettings {
+            filter: crate::config::types::LanguageFilter::Primary,
+            show_versions: true,
+            ..LanguageSettings::default()
+        };
+
+        let selected = select_display_languages(&detected, &theme.segments.language, &language_cfg);
+        let names: Vec<&str> = selected.iter().map(|lang| lang.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["node"],
+            "primary must name the top language that can actually show a version"
+        );
+    }
+
+    #[test]
+    fn primary_keeps_the_top_language_when_versions_are_not_shown() {
+        // With show_versions off nothing is discarded downstream, so the
+        // version-detector narrowing must not apply and JSON stays primary.
+        let detected = vec![
+            DetectedLanguage {
+                name: "json".to_owned(),
+                confidence: 1.0,
+                file_count: 1,
+                total_bytes: 84,
+            },
+            DetectedLanguage {
+                name: "node".to_owned(),
+                confidence: 0.6,
+                file_count: 1,
+                total_bytes: 29,
+            },
+        ];
+        let theme = ThemeConfig::default();
+        let language_cfg = LanguageSettings {
+            filter: crate::config::types::LanguageFilter::Primary,
+            show_versions: false,
+            ..LanguageSettings::default()
+        };
+
+        let selected = select_display_languages(&detected, &theme.segments.language, &language_cfg);
+        let names: Vec<&str> = selected.iter().map(|lang| lang.name.as_str()).collect();
+        assert_eq!(names, vec!["json"]);
+    }
+
+    #[test]
+    fn primary_falls_back_when_nothing_can_be_probed() {
+        // A project with no probeable language keeps naming its top detection
+        // rather than selecting nothing at all.
+        let detected = vec![DetectedLanguage {
+            name: "json".to_owned(),
+            confidence: 1.0,
+            file_count: 1,
+            total_bytes: 84,
+        }];
+        let theme = ThemeConfig::default();
+        let language_cfg = LanguageSettings {
+            filter: crate::config::types::LanguageFilter::Primary,
+            show_versions: true,
+            ..LanguageSettings::default()
+        };
+
+        let selected = select_display_languages(&detected, &theme.segments.language, &language_cfg);
+        let names: Vec<&str> = selected.iter().map(|lang| lang.name.as_str()).collect();
+        assert_eq!(names, vec!["json"]);
+    }
+
+    #[test]
+    fn primary_applies_the_allowlist_before_taking_one() {
+        // The allow-list used to be applied after the take, so a primary whose
+        // top language was not allowed selected nothing.
+        let detected = vec![
+            DetectedLanguage {
+                name: "rust".to_owned(),
+                confidence: 1.0,
+                file_count: 1,
+                total_bytes: 84,
+            },
+            DetectedLanguage {
+                name: "node".to_owned(),
+                confidence: 0.6,
+                file_count: 1,
+                total_bytes: 29,
+            },
+        ];
+        let theme = ThemeConfig::default();
+        let language_cfg = LanguageSettings {
+            filter: crate::config::types::LanguageFilter::Primary,
+            enabled_languages: vec!["node".to_owned()],
+            show_versions: true,
+            ..LanguageSettings::default()
+        };
+
+        let selected = select_display_languages(&detected, &theme.segments.language, &language_cfg);
+        let names: Vec<&str> = selected.iter().map(|lang| lang.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["node"],
+            "an allow-list that excludes the top language must not empty the selection"
+        );
     }
 
     #[test]
