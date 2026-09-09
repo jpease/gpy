@@ -58,6 +58,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{PoisonError, RwLock};
+use std::time::{Duration, SystemTime};
 
 /// Per-process counter appended to temp-file names, alongside the pid.
 ///
@@ -161,6 +162,14 @@ impl InstantPromptCache {
     pub fn new() -> Result<Self> {
         let cache_dir = get_instant_cache_dir()?;
         std::fs::create_dir_all(&cache_dir)?;
+        // Nothing else ever removes entries from this directory, so without a
+        // sweep it grows without bound for the life of the machine. Two things
+        // accumulate: entries keyed by directories that no longer exist (every
+        // test run that reaches a real cache dir leaves a set keyed by its temp
+        // repo), and `.tmp-<pid>` files orphaned when a process is killed
+        // between `write_atomic`'s write and its rename. Best-effort: a cache
+        // that cannot be tidied must not stop the agent from starting.
+        let _ = prune_stale_entries(&cache_dir, SystemTime::now());
         Ok(Self {
             cache_dir,
             last_written: RwLock::new(HashMap::new()),
@@ -692,6 +701,85 @@ fn get_instant_cache_dir() -> Result<PathBuf> {
     get_gpy_cache_dir().map(|d| d.join("instant-prompts"))
 }
 
+/// How long an unused cache entry is kept before the startup sweep removes it.
+///
+/// Entries are pure derived data — a miss costs one render, not correctness —
+/// so this only has to be long enough that a directory someone returns to
+/// after a holiday still hits warm.
+/// Clippy suggests `Duration::from_days`/`from_hours` here, but both are
+/// still behind the unstable `duration_constructors` feature, so the
+/// arithmetic form is the only one that builds on stable.
+#[expect(
+    clippy::duration_suboptimal_units,
+    reason = "from_days/from_hours are unstable (duration_constructors)"
+)]
+const CACHE_ENTRY_MAX_AGE: Duration = Duration::from_secs(14 * 24 * 60 * 60);
+
+/// How long a leftover `.tmp-*` file is kept before it is treated as orphaned.
+///
+/// `write_atomic` removes its own temp file on either failure path, so one
+/// surviving this long means the writing process died between the write and
+/// the rename. An hour is far beyond any in-flight write while still leaving
+/// a concurrently-running agent's temp files alone.
+/// Clippy suggests `Duration::from_days`/`from_hours` here, but both are
+/// still behind the unstable `duration_constructors` feature, so the
+/// arithmetic form is the only one that builds on stable.
+#[expect(
+    clippy::duration_suboptimal_units,
+    reason = "from_days/from_hours are unstable (duration_constructors)"
+)]
+const ORPHAN_TMP_MAX_AGE: Duration = Duration::from_secs(60 * 60);
+
+/// Remove stale cache entries and orphaned temp files from `dir`.
+///
+/// Returns `(entries_removed, orphans_removed)`. Errors reading the directory
+/// or any individual entry are swallowed: this is opportunistic tidying on the
+/// startup path, and a permission problem on one file must not abort the sweep
+/// or fail agent startup.
+///
+/// `now` is injected rather than read here so tests can age files deterministically
+/// without sleeping.
+fn prune_stale_entries(dir: &Path, now: SystemTime) -> (u64, u64) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return (0, 0);
+    };
+
+    let mut removed_entries = 0_u64;
+    let mut removed_orphans = 0_u64;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else {
+            continue;
+        };
+        let Ok(age) = now.duration_since(modified) else {
+            // Modified in the future (clock skew, or a file being written right
+            // now). Leave it alone rather than guess.
+            continue;
+        };
+
+        let is_orphan_tmp = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.contains(".tmp-"));
+
+        let (limit, counter) = if is_orphan_tmp {
+            (ORPHAN_TMP_MAX_AGE, &mut removed_orphans)
+        } else {
+            (CACHE_ENTRY_MAX_AGE, &mut removed_entries)
+        };
+
+        if age > limit && std::fs::remove_file(&path).is_ok() {
+            *counter = counter.saturating_add(1);
+        }
+    }
+
+    (removed_entries, removed_orphans)
+}
+
 /// Filesystem-safe token identifying the previous-segment background a cache
 /// entry was rendered with.
 ///
@@ -870,6 +958,123 @@ fn find_project_root(path: &Path) -> std::path::PathBuf {
 mod tests {
     use super::*;
     use crate::language::DetectedLanguage;
+
+    // ---- Startup sweep (unbounded-growth fix) --------------------------------
+
+    /// Write `name` into `dir` and backdate its mtime by `age`.
+    fn aged_file(dir: &Path, name: &str, age: Duration) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, "x").expect("write cache file");
+        set_mtime(
+            &path,
+            SystemTime::now()
+                .checked_sub(age)
+                .expect("backdating must stay within SystemTime range"),
+        );
+        path
+    }
+
+    fn set_mtime(path: &Path, when: SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open for mtime")
+            .set_modified(when)
+            .expect("set mtime");
+    }
+
+    #[test]
+    fn sweep_keeps_recent_entries_and_removes_ancient_ones() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let fresh = aged_file(dir.path(), "repo.git.none.ansi", Duration::from_secs(60));
+        let ancient = aged_file(
+            dir.path(),
+            "old.git.none.ansi",
+            CACHE_ENTRY_MAX_AGE.saturating_add(Duration::from_secs(60)),
+        );
+
+        let (entries, orphans) = prune_stale_entries(dir.path(), SystemTime::now());
+
+        assert_eq!(entries, 1, "only the ancient entry should be swept");
+        assert_eq!(orphans, 0);
+        assert!(fresh.exists(), "a recently used entry must survive");
+        assert!(
+            !ancient.exists(),
+            "an entry unused for weeks must be removed"
+        );
+    }
+
+    #[test]
+    fn sweep_removes_orphaned_temp_files_on_a_shorter_clock() {
+        // write_atomic removes its own temp file on both failure paths, so one
+        // that survives means the writer was killed between the write and the
+        // rename -- which is what left tens of thousands behind in a real
+        // cache directory.
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let orphan = aged_file(
+            dir.path(),
+            "repo.git.none.ansi.tmp-1234-5",
+            ORPHAN_TMP_MAX_AGE.saturating_add(Duration::from_secs(60)),
+        );
+        // Well past the orphan clock but nowhere near the entry clock, proving
+        // temp files are swept on their own much shorter threshold.
+        let live_entry = aged_file(
+            dir.path(),
+            "repo.git.none.ansi",
+            ORPHAN_TMP_MAX_AGE.saturating_add(Duration::from_secs(60)),
+        );
+
+        let (entries, orphans) = prune_stale_entries(dir.path(), SystemTime::now());
+
+        assert_eq!(orphans, 1, "the orphaned temp file should be swept");
+        assert_eq!(entries, 0, "a normal entry that age must be left alone");
+        assert!(!orphan.exists());
+        assert!(live_entry.exists());
+    }
+
+    #[test]
+    fn sweep_spares_an_in_flight_temp_file() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let in_flight = aged_file(
+            dir.path(),
+            "repo.git.none.ansi.tmp-99-1",
+            Duration::from_secs(1),
+        );
+
+        let (_, orphans) = prune_stale_entries(dir.path(), SystemTime::now());
+
+        assert_eq!(
+            orphans, 0,
+            "a concurrently running agent's in-flight write must not be deleted"
+        );
+        assert!(in_flight.exists());
+    }
+
+    #[test]
+    fn sweep_tolerates_a_missing_directory() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let absent = dir.path().join("does-not-exist");
+        assert_eq!(prune_stale_entries(&absent, SystemTime::now()), (0, 0));
+    }
+
+    #[test]
+    fn sweep_ignores_files_dated_in_the_future() {
+        // Clock skew on a networked filesystem must not make the sweep guess.
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let path = dir.path().join("skewed.git.none.ansi");
+        std::fs::write(&path, "x").expect("write");
+        set_mtime(
+            &path,
+            SystemTime::now()
+                .checked_add(ORPHAN_TMP_MAX_AGE)
+                .expect("future timestamp must stay within SystemTime range"),
+        );
+
+        let (entries, orphans) = prune_stale_entries(dir.path(), SystemTime::now());
+
+        assert_eq!((entries, orphans), (0, 0));
+        assert!(path.exists());
+    }
 
     #[test]
     fn test_write_cache_file_is_atomic_no_temp_leftovers() {
