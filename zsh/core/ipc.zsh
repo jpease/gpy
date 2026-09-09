@@ -225,7 +225,12 @@ function __gpy_send_json() {
             zsocket_connected=1
             fd=$REPLY
             print -u $fd "$json"
-            read -u $fd -t 0.1 response
+            # `IFS= read -r`, not a bare `read`: the default IFS makes `read`
+            # strip leading and trailing whitespace, which silently ate the
+            # trailing space the character segment's template emits after `❯`
+            # (so zsh rendered `❯cd foo` where fish rendered `❯ cd foo`), and
+            # without -r it would mangle the backslashes in the rendered ANSI.
+            IFS= read -r -u $fd -t 0.1 response
             read_status=$?
             exec {fd}>&-
         fi

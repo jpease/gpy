@@ -19,6 +19,7 @@ Exercise `bash/gpy.bash` and its segments.
 | IPC edge cases | `ipc_partial_response`, `protocol_version_mismatch`, `ipc_nc_fallback_timeout` | a python3 fake listener |
 | Installers, real binaries | `install_e2e_real_binary` (`install.sh`: install, first `fish -i` prompt through config.fish, upgrade with an old `agent.version`, `scripts/uninstall.fish`), `install_oneline_e2e_real_binary` (`install-oneline.sh` for fish, zsh and bash behind a fake `curl`, first prompt on a pty, `scripts/uninstall.*`) | the debug `gpy-agent` and `gpy`, installed into a sandboxed `~/.local/bin` |
 | Release payload | `release_smoke` (packages the debug binaries with `scripts/package-release.sh`, runs `scripts/smoke-release.sh`, then proves a broken agent fails it) | the packaged debug `gpy-agent`, installed into a sandboxed `~/.local/bin` |
+| Source shape | `ipc_read_preserves_whitespace` (every IPC response read in `zsh/core/ipc.zsh` and `bash/core/ipc.bash` uses `IFS= read -r`, so a bare `read` cannot strip the significant trailing space the character template emits after `❯`, nor mangle the backslashes in the clock's `\D{…}` token) | none |
 | Doc tripwire | `bash_limitations_claims` (pins the shell-support matrix rows the E2E tests measure), `ci_gate_shape` (pins the pr-gate/release workflow shape), `cli_reference_claims` (every shipped subcommand is in `docs/user/cli-reference.md`, walked from `--help`), `test_readme_claims` (the test READMEs name exactly the files that exist) | none |
 
 ### The live-daemon harness: `tests/lib/shell_e2e.sh`
