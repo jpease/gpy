@@ -422,6 +422,7 @@ impl HandlerRegistry {
             Message::RepositoryStatus { .. } => self.git.handle(message),
             Message::LanguageDetect { .. } => self.language.handle(message),
             Message::DirectoryRequest { .. }
+            | Message::ClockRequest { .. }
             | Message::DurationRequest { .. }
             | Message::CharacterRequest { .. }
             | Message::HostnameRequest { .. }

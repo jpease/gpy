@@ -40,6 +40,7 @@ impl RequestHandler for MiscHandler {
                 let read_only = crate::fs_util::directory_is_read_only(std::path::Path::new(&cwd));
                 Ok(Response::Directory { cwd, read_only })
             }
+            Message::ClockRequest { shell, .. } => Ok(Response::Clock { shell: *shell }),
             Message::DurationRequest { duration_ms, .. } => Ok(Response::Duration {
                 duration_ms: *duration_ms,
             }),

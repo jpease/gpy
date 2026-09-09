@@ -1086,10 +1086,17 @@ mod tests {
         // 5 bytes) is swapped for "black" (also 5 bytes): total file length
         // is unchanged, but the reloaded `ThemeConfig` differs in a field
         // reachable off `manager.get()`.
+        //
+        // The anchor runs through `time_format` rather than starting at the
+        // `[segments.clock]` header: the header and its `text_color` are no
+        // longer adjacent lines now that the section carries a comment
+        // explaining its `format` template. `time_format` keeps the anchor
+        // clock-specific — `[segments.directory]` has the same
+        // text_color/bg_color pair but no time settings.
         let variant_a = DEFAULT_THEME_CONTENT;
         let variant_b = variant_a.replacen(
-            "[segments.clock]\ntext_color = \"white\"",
-            "[segments.clock]\ntext_color = \"black\"",
+            "text_color = \"white\"\nbg_color = \"black\"\ntime_format",
+            "text_color = \"black\"\nbg_color = \"black\"\ntime_format",
             1,
         );
         assert_ne!(

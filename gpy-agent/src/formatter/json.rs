@@ -104,6 +104,11 @@ impl Formatter for JsonFormatter {
                 map.insert("read_only".to_owned(), Value::Bool(*read_only));
                 Value::Object(map)
             }
+            Response::Clock { shell } => {
+                let mut map = Map::new();
+                map.insert("shell".to_owned(), Value::String(shell.as_str().to_owned()));
+                Value::Object(map)
+            }
             Response::Duration { duration_ms } => {
                 let mut map = Map::new();
                 map.insert(

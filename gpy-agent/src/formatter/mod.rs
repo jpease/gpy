@@ -34,6 +34,7 @@
 //! ```
 
 pub(crate) mod character_resolver;
+pub(crate) mod clock_resolver;
 pub(crate) mod directory_resolver;
 pub(crate) mod duration_resolver;
 mod fish;

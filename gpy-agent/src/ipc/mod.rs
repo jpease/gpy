@@ -210,6 +210,40 @@ pub enum Message {
         prev_bg: Option<String>,
     },
 
+    /// Request clock segment render.
+    ///
+    /// Carries the requesting shell rather than a timestamp: the response
+    /// embeds that shell's own live-time prompt token (`%D{…}` for Zsh,
+    /// `\D{…}` for Bash) so the clock keeps ticking between prompt draws
+    /// without an IPC round-trip per second. See
+    /// [`crate::formatter::clock_resolver`].
+    ///
+    /// # Examples
+    ///
+    /// ```json
+    /// {"op":"clock","shell":"zsh","format":"ansi","is_last":false}
+    /// ```
+    ClockRequest {
+        /// Shell whose live-time prompt token the render should embed.
+        shell: crate::shell::Shell,
+        /// Desired response format.
+        #[serde(default)]
+        #[serde(skip_serializing_if = "Format::is_json_ref")]
+        format: Format,
+        /// Whether this is the last segment in the prompt.
+        #[serde(default)]
+        #[serde(skip_serializing_if = "is_false")]
+        is_last: bool,
+        /// Whether this is the first segment in the prompt (for opening-cap suppression).
+        #[serde(default)]
+        #[serde(skip_serializing_if = "is_false")]
+        is_first: bool,
+        /// Previous segment's background color for powerline chevron transitions.
+        #[serde(default)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        prev_bg: Option<String>,
+    },
+
     /// Request duration segment render for a given elapsed time.
     ///
     /// # Examples
@@ -710,6 +744,21 @@ pub enum Response {
     Duration {
         /// The command duration in milliseconds.
         duration_ms: u64,
+    },
+
+    /// Clock segment data returned by the agent when a clock format is set.
+    ///
+    /// Carries the requesting shell so the formatter can embed that shell's
+    /// live-time prompt token rather than a timestamp frozen at render time.
+    ///
+    /// # Example
+    ///
+    /// ```json
+    /// {"Clock":{"shell":"zsh"}}
+    /// ```
+    Clock {
+        /// Shell whose live-time prompt token the render embeds.
+        shell: crate::shell::Shell,
     },
 
     /// Character segment data returned by the agent when format is set.

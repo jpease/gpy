@@ -6,6 +6,10 @@ prompt_icon = "❯"
 prompt_color = "white"
 root_prompt_icon = "!❯!"
 root_prompt_color = "red"
+# Segments on one line, the prompt character on the next. Fish has always
+# rendered this way and ignores the flag; bash and zsh previously defaulted to
+# a single line, so the same theme looked different depending on the shell.
+two_line = true
 
 [ui.prompt_open]
 icon = ""
@@ -42,6 +46,13 @@ display = "basename"
 truncate_to_repo = false
 
 [segments.clock]
+# Agent-rendered, like every other segment. `$time` resolves to the requesting
+# shell's own live-time prompt token (`%D{…}` for zsh, `\D{…}` for bash) built
+# from time_format/show_leading_zero/show_seconds below, so the clock keeps
+# ticking between draws while the agent owns the caps and colors. Before this,
+# zsh and bash rendered the clock locally with a hardcoded 24-hour format and
+# no closing cap, which is why they disagreed with fish on both.
+format = "([$sep_open](fg:$bg bg:default))[ $time]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
 text_color = "white"
 bg_color = "black"
 time_format = "12"

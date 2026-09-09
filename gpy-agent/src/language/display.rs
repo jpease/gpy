@@ -319,6 +319,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(probe_call_count)]
     fn probe_skipped_when_show_versions_false() {
         reset_probe_call_count_for_test();
         let detected = vec![DetectedLanguage {
@@ -347,7 +348,14 @@ mod tests {
         );
     }
 
+    // Shares the process-global `PROBE_CALL_COUNT` with the
+    // show_versions=false test above: both reset it and then assert on it, so
+    // running them concurrently lets one test's probes land inside the other's
+    // measurement window. Serialized on a shared key rather than left to
+    // scheduling luck (this surfaced when an unrelated module added tests and
+    // shifted the parallel interleaving).
     #[test]
+    #[serial_test::serial(probe_call_count)]
     fn probe_runs_when_show_versions_true() {
         reset_probe_call_count_for_test();
         let detected = vec![DetectedLanguage {

@@ -607,7 +607,7 @@ fn theme_use_default_force_restores_builtin_layout() {
 }
 
 #[test]
-fn starship_preset_exports_two_line_other_themes_single_line() {
+fn two_line_export_follows_each_theme() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let xdg_config = temp_dir.path().join("config");
 
@@ -627,16 +627,21 @@ fn starship_preset_exports_two_line_other_themes_single_line() {
         String::from_utf8(output.stdout).expect("utf8 stdout")
     };
 
-    // Opt-in: the Starship preset enables two-line on bash/zsh.
+    // The Starship preset enables two-line on bash/zsh.
     assert!(
         export("starship").contains("__gpy_two_line \"1\""),
         "starship preset should export two-line on"
     );
-    // No regression: default/text stay single-line.
+    // The default theme now does too. Fish has always rendered the prompt
+    // character on its own line and ignores this flag, so leaving bash/zsh
+    // single-line here made the same theme look different per shell.
     assert!(
-        export("default").contains("__gpy_two_line \"0\""),
-        "default theme should export two-line off"
+        export("default").contains("__gpy_two_line \"1\""),
+        "default theme should export two-line on"
     );
+    // `text` is the deliberately minimal preset and stays single-line, which
+    // keeps this test meaningful: it still proves the flag is read from the
+    // theme rather than hardcoded on.
     assert!(
         export("text").contains("__gpy_two_line \"0\""),
         "text theme should export two-line off"

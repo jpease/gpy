@@ -22,6 +22,7 @@ impl Formatter for FishAnsiFormatter {
             Response::Directory { cwd, read_only } => {
                 Ok(render_directory_segment(cwd, *read_only, ctx))
             }
+            Response::Clock { shell } => Ok(render_clock_segment(*shell, ctx)),
             Response::Duration { duration_ms } => Ok(render_duration_segment(*duration_ms, ctx)),
             Response::Character { success } => Ok(render_character_segment(*success, ctx)),
             Response::Hostname { hostname } => Ok(render_hostname_segment(hostname, ctx)),
@@ -211,6 +212,38 @@ fn render_directory_via_template(
     use crate::formatter::directory_resolver::DirectoryResolver;
 
     let resolver = DirectoryResolver::new(cwd, read_only, ctx.config, ctx.theme, ctx.position);
+    render_via_template(&resolver, ctx, format)
+}
+
+/// Entry point: render the clock via the template engine when a `format` is set.
+///
+/// When no format template is configured the agent emits nothing and the shell
+/// renders the clock locally — which is what Fish always does, and what Zsh and
+/// Bash did for every theme before this segment gained a template.
+fn render_clock_segment(shell: crate::shell::Shell, ctx: &RenderContext<'_>) -> String {
+    let Some(format) = ctx.theme.segments.clock.format.as_deref() else {
+        // No format set: shell renders the clock locally; agent emits nothing.
+        return String::new();
+    };
+    render_or_warn(
+        "clock segment",
+        render_clock_via_template(shell, ctx, format),
+    )
+}
+
+/// Render the clock segment through the template engine + ANSI encoder.
+///
+/// # Errors
+///
+/// Returns a [`crate::template::TemplateError`] when `format` fails to parse or evaluate.
+fn render_clock_via_template(
+    shell: crate::shell::Shell,
+    ctx: &RenderContext<'_>,
+    format: &str,
+) -> crate::template::Result<String> {
+    use crate::formatter::clock_resolver::ClockResolver;
+
+    let resolver = ClockResolver::new(shell, ctx.theme, ctx.position);
     render_via_template(&resolver, ctx, format)
 }
 

@@ -1,9 +1,14 @@
 //! Shell identification and syntax templates
 
 use clap::{ValueEnum, builder::PossibleValue};
+use serde::{Deserialize, Serialize};
 
 /// Supported shell types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Serializes as its canonical lowercase name (`"fish"`, `"zsh"`, `"bash"`),
+/// matching [`Shell::as_str`] and the spelling accepted on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Shell {
     /// Fish shell
     Fish,
