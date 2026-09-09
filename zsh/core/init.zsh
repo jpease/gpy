@@ -230,7 +230,12 @@ function __gpy_precmd() {
 
 function __gpy_render_prompt() {
     local last_ret=$1
+    # Blank line before the prompt for visual separation between commands
+    # (theme-controlled via `__gpy_add_newline`, default on). Fish has always
+    # done this unconditionally; bash/zsh had no equivalent, so the same theme
+    # rendered visibly tighter here.
     local p=""
+    [[ "${__gpy_add_newline:-1}" == "1" ]] && p=$'\n'
     local seg
     local -a segments_to_render
 

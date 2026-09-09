@@ -674,6 +674,34 @@ function __gpy_request_duration() {
     return 1
 }
 
+# Send a clock render request to the agent via IPC. Used when a theme sets
+# `[segments.clock].format`; the response embeds zsh's own `%D{…}` prompt token
+# (see gpy-agent/src/formatter/clock_resolver.rs), so the clock still ticks
+# between draws off a single render.
+#
+# There is intentionally NO oneshot fallback, and unlike `__gpy_request_hostname`
+# an unreachable agent is not the end of it: clock.zsh falls back to its own
+# pure-zsh renderer, so the segment degrades to an uncapped clock rather than
+# disappearing.
+#
+# is_last/is_first: "true" or "" (#613).
+function __gpy_request_clock() {
+    local is_last=${1:-}
+    local prev_bg=${2:-}
+    local is_first=${3:-}
+
+    local flags_tail
+    flags_tail=$(__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg")
+    local request="{\"op\":\"clock\",\"shell\":\"zsh\",\"format\":\"ansi\"${flags_tail}}"
+
+    local result
+    result=$(__gpy_send_json "$request")
+
+    [[ -n "$result" ]] || return 1
+    echo "$result"
+    return 0
+}
+
 # Send a hostname render request to the agent via IPC. Used only when a theme
 # sets a Starship-compatible `__hostname_format`; the pure-zsh render path in
 # hostname.zsh handles the common case without any IPC call. There is

@@ -197,6 +197,12 @@ __enabled_segments=(directory)
 __prompt_color=green
 __icon_prompt="❯"
 
+# Pin the blank-line separator off for this block. It defaults on (matching
+# fish), and these cases assert on the presence of *any* newline in the
+# prompt, so leaving it enabled would make the two_line=0 case fail on a
+# newline that has nothing to do with two-line layout.
+__gpy_add_newline=0
+
 __gpy_two_line=0
 single_prompt=$(__gpy_render_prompt 0)
 if [[ "$single_prompt" == *$'\n'* ]]; then

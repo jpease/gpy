@@ -598,6 +598,33 @@ __gpy_fallback_oneshot() {
     return "$GPY_SEG_STATUS_ONESHOT"
 }
 
+# Send a clock render request to the agent via IPC. Used when a theme sets
+# `[segments.clock].format`; the response embeds bash's own `\D{…}` prompt
+# token (see gpy-agent/src/formatter/clock_resolver.rs), so the clock still
+# ticks between draws off a single render.
+#
+# No oneshot fallback: clock.bash falls back to its own pure-bash renderer, so
+# an unreachable agent degrades the segment to an uncapped clock rather than
+# costing a fork per prompt.
+#
+# is_last/is_first: "true" or "" (#613).
+__gpy_request_clock() {
+    local is_last="${1:-}"
+    local prev_bg="${2:-}"
+    local is_first="${3:-}"
+
+    local flags_tail
+    flags_tail="$(__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg")"
+    local request="{\"op\":\"clock\",\"shell\":\"bash\",\"format\":\"ansi\"${flags_tail}}"
+
+    local result
+    result="$(__gpy_send_json "$request")" || return 1
+
+    [[ -n "$result" ]] || return 1
+    echo "$result"
+    return 0
+}
+
 # Send a duration render request to the agent via IPC, with oneshot fallback.
 # Unlike git/lang/directory there is no cwd — only duration_ms is required.
 # Returns GPY_SEG_STATUS_ONESHOT when the oneshot fallback was actually

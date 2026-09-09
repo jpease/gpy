@@ -33,12 +33,40 @@ export GPY_AGENT_SOCKET_PATH="$ROOT/.gpy-test-missing.sock"
 source bash/gpy.bash
 
 echo "=== Testing Clock Segment ==="
+# Agent unreachable here (GPY_AGENT_SOCKET_PATH points at a missing socket),
+# so this exercises the pure-bash fallback: still renders, uncapped.
 output=$(__gpy_segment_clock)
 if [[ -z "$output" ]]; then
     echo "FAIL: Clock segment empty"
     exit 1
 fi
 echo "PASS: Clock segment working"
+
+# The fallback must honor the configured time format rather than hardcoding
+# 24-hour, which is what it did before the clock became agent-rendered and is
+# why bash showed 17:21:42 beside fish's 5:21 PM under the same theme.
+spec="$(__time_format=12 __clock_show_seconds=0 __gpy_clock_time_spec)"
+if [[ "$spec" != "%-I:%M %p" ]]; then
+    echo "FAIL: 12-hour spec should be '%-I:%M %p'; got: $spec"
+    exit 1
+fi
+spec="$(__time_format=24 __clock_show_seconds=1 __gpy_clock_time_spec)"
+if [[ "$spec" != "%-H:%M:%S" ]]; then
+    echo "FAIL: 24-hour+seconds spec should be '%-H:%M:%S'; got: $spec"
+    exit 1
+fi
+echo "PASS: fallback clock honors the configured time format"
+
+# When the agent does answer, the segment must delegate rather than render
+# locally. Mock the request helper the way the duration test below does.
+__gpy_request_clock() { printf 'AGENT-CLOCK'; }
+delegated="$(__gpy_segment_clock "" "black" "true")"
+if [[ "$delegated" != *"AGENT-CLOCK"* ]]; then
+    echo "FAIL: clock should delegate to the agent when it answers; got: $delegated"
+    exit 1
+fi
+unset -f __gpy_request_clock
+echo "PASS: clock delegates to the agent when available"
 
 echo "=== Testing Duration Segment ==="
 # Test with duration above threshold - agent-rendered (#199): mock the IPC call

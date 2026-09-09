@@ -257,7 +257,14 @@ __gpy_render_prompt() {
     local __gpy_oneshot_used=0
 
     # Build prompt from enabled segments
+    # Blank line before the prompt for visual separation between commands
+    # (theme-controlled via `__gpy_add_newline`, default on). Fish has always
+    # done this unconditionally; bash/zsh had no equivalent, so the same theme
+    # rendered visibly tighter here.
     local prompt_output=""
+    if [[ "${__gpy_add_newline:-1}" == "1" ]]; then
+        prompt_output=$'\n'
+    fi
     local segments_to_render=()
     local segment
 
