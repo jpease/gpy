@@ -72,6 +72,12 @@ set -gx PATH "$fixture_home/.local/bin" $real_toolchain_dirs $PATH
 # logic -- it never touches the real ~/.config/gpy or ~/.local/bin.
 ./install-dev.fish $argv; or exit 1
 
+# --- Demo-only config tweaks ------------------------------------------------
+# Show only the language judged primary for a repo. The default (`all`) puts up
+# to three language pills on every prompt, which crowds the frame and competes
+# with the beat headers for attention.
+gpy config set language.filter primary >/dev/null; or exit 1
+
 # --- Seed a small multi-language tour workspace -----------------------------
 # api/service/engine are three INDEPENDENT git repos, not sub-dirs of one
 # shared repo: GPY's default language detection scans a whole project (repo

@@ -674,6 +674,20 @@ pub(crate) fn version_cache_ttl_seconds_for_tests() -> u64 {
     crate::cache::ttl_map::shared_cache_ttl_seconds()
 }
 
+/// Whether GPY has a version detector registered for `language`.
+///
+/// Used when selecting which detected languages to display: a language with no
+/// detector can never satisfy `show_versions`, so selecting one would render an
+/// empty segment. Matched case-insensitively because detected names come from
+/// the language matcher while detector names are the crate's own lowercase
+/// spellings.
+#[must_use]
+pub fn has_version_detector(language: &str) -> bool {
+    get_version_detectors()
+        .iter()
+        .any(|probe| probe.language_name().eq_ignore_ascii_case(language))
+}
+
 /// Get all available version detectors (lazy-initialized, cached)
 pub fn get_version_detectors() -> &'static Vec<Box<dyn ReleaseSource + Sync + Send>> {
     VERSION_DETECTORS.get_or_init(|| {
