@@ -27,6 +27,7 @@ impl Formatter for FishSourceFormatter {
             // or username variable contract; the agent emits nothing and the shell
             // renders those segments locally.
             Response::Directory { .. }
+            | Response::Clock { .. }
             | Response::Duration { .. }
             | Response::Character { .. }
             | Response::Hostname { .. }

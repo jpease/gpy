@@ -141,6 +141,19 @@ fn resolve(wire: WireMessage) -> Result<Message> {
             is_first,
             prev_bg,
         }),
+        WireMessage::ClockRequest {
+            shell,
+            format,
+            is_last,
+            is_first,
+            prev_bg,
+        } => Ok(Message::ClockRequest {
+            shell,
+            format,
+            is_last,
+            is_first,
+            prev_bg,
+        }),
         WireMessage::DurationRequest {
             duration_ms,
             format,
@@ -287,6 +300,7 @@ pub fn validate_message_content(msg: &Message) -> Result<()> {
         Message::RepositoryStatus { prev_bg, .. }
         | Message::LanguageDetect { prev_bg, .. }
         | Message::DirectoryRequest { prev_bg, .. }
+        | Message::ClockRequest { prev_bg, .. }
         | Message::DurationRequest { prev_bg, .. }
         | Message::CharacterRequest { prev_bg, .. } => {
             if let Some(bg) = prev_bg {
@@ -558,6 +572,23 @@ enum WireMessage {
         #[serde(default)]
         prev_bg: Option<String>,
     },
+    /// Raw form of [`Message::ClockRequest`].
+    ClockRequest {
+        /// Shell whose live-time prompt token the render should embed.
+        shell: crate::shell::Shell,
+        /// Desired response format.
+        #[serde(default)]
+        format: super::Format,
+        /// Whether this is the last segment in the prompt.
+        #[serde(default)]
+        is_last: bool,
+        /// Whether this is the first segment in the prompt.
+        #[serde(default)]
+        is_first: bool,
+        /// Previous segment's background color.
+        #[serde(default)]
+        prev_bg: Option<String>,
+    },
     /// Raw form of [`Message::DurationRequest`].
     DurationRequest {
         /// The command duration in milliseconds.
@@ -733,6 +764,23 @@ impl ShellIpcMessage {
             }),
             "directory" => Ok(WireMessage::DirectoryRequest {
                 path: self.cwd.unwrap_or_else(|| ".".to_owned()),
+                format,
+                is_last: self.is_last.unwrap_or(false),
+                is_first: self.is_first.unwrap_or(false),
+                prev_bg: self.prev_bg,
+            }),
+            "clock" => Ok(WireMessage::ClockRequest {
+                // Reuses the flat wire struct's existing `shell` string field.
+                // An absent or unrecognized shell falls back to Fish, whose
+                // render is a no-op (Fish draws the clock locally), so a
+                // malformed request degrades to "agent emits nothing" rather
+                // than to some other shell's prompt-escape syntax leaking
+                // through as literal text.
+                shell: self
+                    .shell
+                    .as_deref()
+                    .and_then(|s| s.parse::<crate::shell::Shell>().ok())
+                    .unwrap_or(crate::shell::Shell::Fish),
                 format,
                 is_last: self.is_last.unwrap_or(false),
                 is_first: self.is_first.unwrap_or(false),

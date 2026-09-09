@@ -390,6 +390,14 @@ impl Default for UsernameTheme {
 /// Clock segment colors
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClockTheme {
+    /// Template used to render the segment agent-side.
+    ///
+    /// When unset the agent emits nothing and the shell renders the clock
+    /// locally, which is what Fish does. Zsh and Bash have no local cap
+    /// renderer, so a theme that leaves this unset gets an uncapped clock
+    /// there; the shipped themes set it.
+    #[serde(default)]
+    pub format: Option<String>,
     /// Open delimiter configuration (supports fg/bg colors)
     #[serde(default)]
     pub open: Option<DelimiterConfig>,
@@ -416,6 +424,7 @@ pub struct ClockTheme {
 impl Default for ClockTheme {
     fn default() -> Self {
         Self {
+            format: None,
             open: None,
             close: None,
             bg_color: default_color_black(),
