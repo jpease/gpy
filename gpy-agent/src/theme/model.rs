@@ -146,6 +146,15 @@ pub struct UiTheme {
     #[serde(default)]
     pub two_line: bool,
 
+    /// Blank line before each prompt, for visual separation between commands.
+    ///
+    /// Defaults to `true`, which is what Fish has always done unconditionally
+    /// (`fish/functions/fish_prompt.fish`). Bash and zsh had no equivalent at
+    /// all, so the same theme produced visibly tighter prompts there; they now
+    /// read this flag too. Exported to shells as `__gpy_add_newline` (`0`/`1`).
+    #[serde(default = "default_true")]
+    pub add_newline: bool,
+
     /// Optional `config.ui` settings a theme/preset recommends for the closest
     /// match to its intended look (e.g. the Starship preset's segment order,
     /// abbreviated directory, and language icons).
@@ -219,6 +228,7 @@ impl Default for UiTheme {
             prompt_color: None,
             root_prompt_color: Some(default_ui_root_prompt_color()),
             two_line: false,
+            add_newline: default_true(),
             recommended: None,
         }
     }

@@ -314,6 +314,15 @@ fn append_prompt_assignments(output: &mut String, shell: Shell, theme: &ThemeCon
         syntax,
         ShellAssignment::local("__gpy_two_line", flag(theme.ui.two_line)),
     );
+
+    // Blank line before each prompt. Always emit 0/1 for the same reason as
+    // two_line: turning it off in-session must re-export 0 so the shells stop
+    // emitting the separator rather than keeping the last enabled value.
+    append_shell_assignment(
+        output,
+        syntax,
+        ShellAssignment::local("__gpy_add_newline", flag(theme.ui.add_newline)),
+    );
 }
 
 /// Built-in clock, directory, and duration segment settings.

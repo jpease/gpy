@@ -554,9 +554,23 @@ impl Message {
     /// in the IPC server's request router into a single accessor: adding a
     /// new segment-render message only requires adding it to the pattern
     /// below, rather than duplicating a whole routing arm.
+    ///
+    /// Destructures to a tuple and builds the [`RequestMeta`] once at the end.
+    /// The two variant groups differ only in whether they carry `is_first`, and
+    /// repeating the struct literal per group pushes this past the pedantic
+    /// 60-line limit.
     #[must_use]
     pub fn request_meta(&self) -> Option<RequestMeta> {
-        match self {
+        self.positional_request_meta()
+            .or_else(|| self.capless_request_meta())
+    }
+
+    /// [`RequestMeta`] for the segment variants that carry `is_first`.
+    ///
+    /// Split from its `capless` sibling purely to keep each match under the
+    /// pedantic 60-line limit; together they cover every render request.
+    fn positional_request_meta(&self) -> Option<RequestMeta> {
+        let (format, is_last, is_first, prev_bg) = match self {
             Self::RepositoryStatus {
                 format,
                 is_last,
@@ -578,18 +592,37 @@ impl Message {
                 prev_bg,
                 ..
             }
+            | Self::ClockRequest {
+                format,
+                is_last,
+                is_first,
+                prev_bg,
+                ..
+            }
             | Self::DurationRequest {
                 format,
                 is_last,
                 is_first,
                 prev_bg,
                 ..
-            } => Some(RequestMeta {
-                format: *format,
-                is_last: *is_last,
-                is_first: *is_first,
-                prev_bg: prev_bg.clone(),
-            }),
+            } => (*format, *is_last, *is_first, prev_bg),
+            _ => return None,
+        };
+
+        Some(RequestMeta {
+            format,
+            is_last,
+            is_first,
+            prev_bg: prev_bg.clone(),
+        })
+    }
+
+    /// [`RequestMeta`] for the variants that carry no `is_first`.
+    ///
+    /// These can never open the segment chain, so the opening-cap suppression
+    /// `is_first` drives does not apply and it is reported as `false`.
+    fn capless_request_meta(&self) -> Option<RequestMeta> {
+        let (format, is_last, prev_bg) = match self {
             Self::CharacterRequest {
                 format,
                 is_last,
@@ -607,14 +640,16 @@ impl Message {
                 is_last,
                 prev_bg,
                 ..
-            } => Some(RequestMeta {
-                format: *format,
-                is_last: *is_last,
-                is_first: false,
-                prev_bg: prev_bg.clone(),
-            }),
-            _ => None,
-        }
+            } => (*format, *is_last, prev_bg),
+            _ => return None,
+        };
+
+        Some(RequestMeta {
+            format,
+            is_last,
+            is_first: false,
+            prev_bg: prev_bg.clone(),
+        })
     }
 
     /// Returns the path that live-update notifications should be scoped to

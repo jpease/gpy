@@ -51,6 +51,11 @@ echo "Checking transparent clock background..."
 # Flat themes (e.g. the Starship preset) export a transparent clock bg. It must
 # map to the terminal default (SGR 49) instead of the cyan `*)` fallback.
 source bash/segments/clock.bash
+# Exercise the pure-bash fallback specifically. The clock is agent-rendered
+# whenever the theme sets [segments.clock].format and the daemon answers, so
+# without dropping the request helper this would assert against agent ANSI and
+# never reach the transparent-color mapping below.
+unset -f __gpy_request_clock 2>/dev/null || true
 __color_clock_bg="transparent" __color_clock_fg="white"
 clock_out="$(__gpy_segment_clock)"
 if [[ "$clock_out" != *"49;37m"* ]]; then

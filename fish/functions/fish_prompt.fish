@@ -66,8 +66,13 @@ function fish_prompt
         set -g __gpy_prompt_now (date +%s 2>/dev/null)
     end
 
-    # Always start with a blank line for visual separation
-    echo
+    # Blank line for visual separation between commands. Fish did this
+    # unconditionally; it is now theme-controlled (`__gpy_add_newline`,
+    # default on) so bash and zsh can match instead of rendering tighter
+    # prompts from the same theme.
+    if test "$__gpy_add_newline" != 0
+        echo
+    end
 
     # Reset segment position tracker
     set -g __gpy_segment_position first
