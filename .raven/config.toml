@@ -57,3 +57,135 @@ settings = true
 #     ".claude/agents/raven-security-reviewer.md",
 #   ]
 paths = []
+
+[components.gemini]
+# Gemini CLI adapter files, enabled for this project.
+root_instructions = true
+settings = true
+hooks = true
+scripts = true
+subagents = true
+rules = true
+
+[issue_tracker]
+platform = "github"
+
+[components.claude]
+# Claude Code settings at .claude/settings.json, including Raven hook wiring.
+# Turn this off if your repository owns Claude settings and will merge hooks manually.
+settings = true
+
+# Claude Code hook scripts under .claude/hooks/raven-*.
+hooks = true
+
+# Claude Code helper scripts under .claude/scripts/raven-*.
+# Skills invoke these directly, so they stay installed even with hooks off.
+scripts = true
+
+# Claude Code subagent definitions under .claude/agents/raven-*.
+subagents = true
+
+# Claude Code scoped rule files under .claude/rules/raven-*.
+rules = true
+
+[components.codex]
+# Codex project config at .codex/config.toml, including MCP and subagent concurrency defaults.
+# Project-local Codex config loads only after the .codex layer is trusted by the user.
+config = true
+
+# Codex hook wiring and hook scripts under .codex/hooks.json and .codex/hooks/raven-*.
+hooks = true
+
+# Codex helper scripts under .codex/scripts/raven-*.
+# Skills invoke these directly, so they stay installed even with hooks off.
+scripts = true
+
+# Codex custom agent definitions under .codex/agents/raven-*.toml.
+subagents = true
+
+# Codex command approval rules under .codex/rules/raven.rules.
+# Codex rules are experimental and complement, not replace, hook guardrails.
+rules = true
+
+[lifecycle]
+# Enable checkpoint enforcement hook for raven-project-lifecycle.
+# When true, the PreToolUse hook validates each unit checkpoint before
+# allowing raven-session.py --complete to proceed.
+# Set to false to fall back to instructional-only enforcement.
+checkpoint_enforcement = true
+
+[edit_guard]
+# Project-declared protected paths (issue #247). AGENTS.md's Pause-And-Ask
+# categories are prose; this is the mechanical backstop for the ones a project
+# can spell as paths. A PreToolUse hook matches each edited path, relative to
+# the repository root, against these fnmatch globs (`*` crosses directory
+# separators, so `migrations/*` covers the whole tree beneath it). On Claude
+# Code a match escalates the edit to a permission prompt; on Codex, which has
+# no `ask` decision yet, it adds a warning to the agent's context instead.
+# protected_paths = ["migrations/*", "infra/*.tf", "src/auth/*"]
+# "ask" (default) or "warn". `warn` adds context on both hosts and never prompts.
+# protected_paths_decision = "ask"
+
+[bash_output]
+# Claude Code only. A PostToolUse hook replaces a Bash result longer than this
+# many lines with its first 40 lines, its last lines up to the limit, and the
+# path of a file holding the whole output, so the agent can search it instead
+# of carrying it on every later turn. Codex cannot replace a tool result from
+# a hook, so there is no Codex counterpart. 0 turns it off. Default 150.
+# max_lines = 150
+
+[skeleton]
+# Skeleton-first read gate (Claude Code only). When read_gate is true, a
+# PreToolUse hook denies unbounded reads of large supported-language files and
+# points the agent at the raven-skeleton helper to fetch a symbol map and read
+# only the ranges it needs. Default off: rung-0 guidance and the raven-skeleton
+# skill still apply regardless. Supported languages: Python, TypeScript/TSX,
+# JavaScript, Go, Rust, Swift, Lua.
+# read_gate = true
+# Minimum file length in lines before the gate fires. Default 500.
+# read_gate_threshold_lines = 500
+
+[git_hooks]
+# Strip AI agent attribution trailers (Co-Authored-By, Generated-by) from commit
+# messages before they land in git history.  The commit-msg hook removes lines
+# that name known AI tools or AI provider domains so they never reach the repo.
+# Set to false only if your team intentionally records AI attribution in commits.
+strip_ai_attribution = true
+
+# Block (rather than silently rewrite) staged and outbound commit content that
+# credits an AI tool as the author, e.g. a comment naming an AI tool as the
+# generator, left in a source file or README. Runs in pre-commit (staged) and
+# pre-push (outbound), alongside strip_ai_attribution above, which only cleans
+# commit message trailers.
+block_ai_attribution_content = true
+
+# Block a staged change that adds a blanket lint suppression -- one naming no
+# rule, so it silences the gate rather than one finding. Runs in pre-commit,
+# with a detector per language chosen by each staged file's extension. A
+# suppression that names its rule passes, and a reviewed blanket one passes
+# with a trailing `raven-hygiene: allow` comment on its line.
+block_gate_relaxation = true
+
+# Warn (never block) when a commit message pairs a closing keyword with a
+# negation near an issue number, e.g. "did not fix #123" -- GitHub's and
+# GitLab's closing-keyword parsers match keyword+number proximity only, not
+# grammar, and still auto-close #123 on merge despite the negation. Suggests
+# "Refs: #123" instead when a fix attempt failed. Runs in commit-msg.
+warn_negated_closing_keyword = true
+
+# [sources.superpowers]
+# An externally-installed agent-skill library this repository depends on.
+# Raven neither installs nor vendors one: `raven doctor` checks that the
+# dependency is present and reports every lane where a Raven skill and an
+# installed upstream skill claim the same kind of work.
+#
+# kind is required, and "claude-plugin" is the only value Raven recognizes
+# today -- the plugin is looked up in Claude Code's installed-plugin registry.
+# The section name is the plugin name.
+#
+# required = false reports a missing source as a warning; true makes it an
+# error, for a repository whose workflow genuinely depends on it. A registry
+# Raven cannot read stays a warning either way, because "cannot tell" is not
+# "missing".
+# kind = "claude-plugin"
+# required = false
