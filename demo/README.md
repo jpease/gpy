@@ -28,10 +28,10 @@ This runs `setup.fish`, which:
    real `~/.config/gpy`, `~/.local/bin`, and default tmux server are never
    touched.
 2. Seeds a small multi-language "tour" workspace (`workspace/gpy-tour/`,
-   with `api/`/`service/`/`engine/` as three independent Node/Python/Rust
-   git repos -- separate repos so language detection actually changes as
-   the tape moves between them) plus two real fixtures already used by the
-   Rust test suite: a Starship preset
+   with `node-app/`/`python-app/`/`rust-app/` as three independent
+   Node/Python/Rust git repos -- separate repos so language detection
+   actually changes as the tape moves between them) plus two real fixtures
+   already used by the Rust test suite: a Starship preset
    (`gpy-agent/tests/fixtures/starship/preset_gruvbox_rainbow.toml`) and a
    base16 scheme (`gpy-agent/tests/fixtures/base16/tokyo-night-dark.yaml`),
    for the theme/palette import beats.

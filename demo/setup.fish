@@ -79,42 +79,44 @@ set -gx PATH "$fixture_home/.local/bin" $real_toolchain_dirs $PATH
 gpy config set language.filter primary >/dev/null; or exit 1
 
 # --- Seed a small multi-language tour workspace -----------------------------
-# api/service/engine are three INDEPENDENT git repos, not sub-dirs of one
-# shared repo: GPY's default language detection scans a whole project (repo
-# root down), so nesting them under one repo would show every sub-project's
-# language at once in each dir instead of demonstrating detection actually
-# changing as you move around.
+# node-app/python-app/rust-app are three INDEPENDENT git repos, not sub-dirs
+# of one shared repo: GPY's default language detection scans a whole project
+# (repo root down), so nesting them under one repo would show every
+# sub-project's language at once in each dir instead of demonstrating
+# detection actually changing as you move around. Named after the language
+# each one demonstrates rather than a generic role (api/service/engine) so
+# what's being shown is obvious without narration.
 echo "🌱 Seeding tour workspace at $workspace"
-mkdir -p $workspace/api $workspace/service $workspace/engine/src
+mkdir -p $workspace/node-app $workspace/python-app $workspace/rust-app/src
 
 printf '%s\n' \
     '{' \
-    '  "name": "gpy-tour-api",' \
+    '  "name": "gpy-tour-node-app",' \
     '  "version": "0.1.0",' \
     '  "engines": { "node": ">=18" }' \
-    '}' >$workspace/api/package.json
-printf '%s\n' 'console.log("gpy tour api");' >$workspace/api/index.js
+    '}' >$workspace/node-app/package.json
+printf '%s\n' 'console.log("gpy tour node-app");' >$workspace/node-app/index.js
 
 printf '%s\n' \
     '[project]' \
-    'name = "gpy-tour-service"' \
+    'name = "gpy-tour-python-app"' \
     'version = "0.1.0"' \
-    'requires-python = ">=3.11"' >$workspace/service/pyproject.toml
-printf '%s\n' 'print("gpy tour service")' >$workspace/service/main.py
+    'requires-python = ">=3.11"' >$workspace/python-app/pyproject.toml
+printf '%s\n' 'print("gpy tour python-app")' >$workspace/python-app/main.py
 
 printf '%s\n' \
     '[package]' \
-    'name = "gpy-tour-engine"' \
+    'name = "gpy-tour-rust-app"' \
     'version = "0.1.0"' \
-    'edition = "2021"' >$workspace/engine/Cargo.toml
-printf '%s\n' 'fn main() { println!("gpy tour engine"); }' >$workspace/engine/src/main.rs
+    'edition = "2021"' >$workspace/rust-app/Cargo.toml
+printf '%s\n' 'fn main() { println!("gpy tour rust-app"); }' >$workspace/rust-app/src/main.rs
 printf '%s\n' \
     '# Notes' \
     '' \
     'Tracked so demo/demo.tape can append to it and show a live, ' \
-    'no-keypress prompt update across both tmux panes.' >$workspace/engine/NOTES.md
+    'no-keypress prompt update across both tmux panes.' >$workspace/rust-app/NOTES.md
 
-for dir in api service engine
+for dir in node-app python-app rust-app
     git -C $workspace/$dir init -q
     git -C $workspace/$dir add -A
     git -C $workspace/$dir \
@@ -132,9 +134,9 @@ cp gpy-agent/tests/fixtures/base16/tokyo-night-dark.yaml \
 # git repo (rather than leaving it bare) so GPY's git segment stops here
 # instead of walking up and picking up this real gpy checkout's own status
 # (the fixture lives under demo/.fixture-home/, inside this very repo).
-# api/service/engine are their own repos (gitlinks), so they're ignored
-# here rather than tracked.
-printf '%s\n' api/ service/ engine/ >$workspace/.gitignore
+# node-app/python-app/rust-app are their own repos (gitlinks), so they're
+# ignored here rather than tracked.
+printf '%s\n' node-app/ python-app/ rust-app/ >$workspace/.gitignore
 git -C $workspace init -q
 git -C $workspace add -A
 git -C $workspace \
