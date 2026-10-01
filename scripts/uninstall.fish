@@ -1,6 +1,94 @@
 #!/usr/bin/env fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+function __gpy_clean_rc_file --argument-names rc_file
+    test -f "$rc_file"; or return 0
+
+    set -l block_start "# >>> gpy-init >>>"
+    set -l block_end "# <<< gpy-init <<<"
+
+    if not grep -qF -- "$block_start" "$rc_file"; and not grep -qF -- "$block_end" "$rc_file"
+        echo "🤔 GPY block not found in $rc_file. Skipping."
+        return 0
+    end
+
+    awk '
+    BEGIN {
+        start_marker = "# >>> gpy-init >>>"
+        end_marker = "# <<< gpy-init <<<"
+        n = 0
+    }
+    {
+        lines[++n] = $0
+    }
+    END {
+        i = 1
+        has_missing_end = 0
+        has_missing_start = 0
+        removed_any = 0
+
+        while (i <= n) {
+            if (lines[i] == start_marker) {
+                found_end = 0
+                for (j = i + 1; j <= n; j++) {
+                    if (lines[j] == end_marker) {
+                        found_end = j
+                        break
+                    }
+                }
+                if (found_end > 0) {
+                    del_start = i
+                    if (i > 1 && lines[i - 1] ~ /^[[:space:]]*$/ && !marked_for_del[i - 1]) {
+                        del_start = i - 1
+                    }
+                    for (k = del_start; k <= found_end; k++) {
+                        marked_for_del[k] = 1
+                    }
+                    removed_any = 1
+                    i = found_end + 1
+                    continue
+                } else {
+                    has_missing_end = 1
+                }
+            } else if (lines[i] == end_marker) {
+                has_missing_start = 1
+            }
+            i++
+        }
+
+        for (i = 1; i <= n; i++) {
+            if (!marked_for_del[i]) {
+                print lines[i]
+            }
+        }
+
+        if (has_missing_end) {
+            print "MISSING_END" > "/dev/stderr"
+        }
+        if (has_missing_start) {
+            print "MISSING_START" > "/dev/stderr"
+        }
+        if (removed_any) {
+            print "REMOVED" > "/dev/stderr"
+        }
+    }
+    ' "$rc_file" >"$rc_file.tmp" 2>"$rc_file.diag"
+
+    if grep -q MISSING_END "$rc_file.diag"
+        echo "🤔 GPY block start found but no matching end marker in $rc_file. Skipping removal to avoid corrupting the file."
+    end
+    if grep -q MISSING_START "$rc_file.diag"
+        echo "🤔 GPY block end marker found without start marker in $rc_file. Skipping removal to avoid corrupting the file."
+    end
+    if grep -q REMOVED "$rc_file.diag"
+        mv "$rc_file.tmp" "$rc_file"
+        echo "✅ Removed GPY block from $rc_file"
+    else
+        rm -f "$rc_file.tmp"
+    end
+    rm -f "$rc_file.diag"
+end
+
 function uninstall_custom_prompt
     echo "🗑️  Uninstalling GPY..."
 
@@ -52,17 +140,18 @@ function uninstall_custom_prompt
 
     set -l config_file "$fish_config_dir/config.fish"
 
-    echo "GPY will be uninstalled from the following locations:"
-    echo "  - Fish files: $prompt_dir"
+    echo "GPY will be uninstalled globally for the current user from the following locations:"
+    echo "  - Shell integration files (including completions):"
+    echo "    - Fish: $prompt_dir, $conf_d_file, $completions_dir/gpy*.fish"
+    echo "    - Bash/Zsh: $gpy_config_dir/bash, $gpy_config_dir/zsh"
     echo "  - Agent binary: $agent_binary (and gpy-agent.backup.* copies)"
     echo "  - CLI binary: $cli_binary (and gpy.backup.* copies)"
-    echo "  - Completions: $completions_dir/gpy.fish, gpy-dynamic.fish"
     echo "  - Configuration: $gpy_config_dir"
     echo "  - Cache: $gpy_cache_dir"
     echo "  - Runtime: $runtime_root"
-    echo "  - fish_prompt.fish (will restore previous backup if available)"
-    echo "  - conf.d/gpy_init.fish"
-    echo "  - GPY block in $config_file (if exists)"
+    echo "  - fish_prompt.fish (will restore previous backup if destination becomes absent)"
+    echo "  - GPY init blocks from startup files (if present):"
+    echo "    - $HOME/.bashrc, $HOME/.bash_profile, $HOME/.zshrc, $config_file"
     echo ""
     echo "⚠️  This will also stop any running agent and supervisor processes"
     read -P "Press Enter to continue or Ctrl-C to cancel"
@@ -132,44 +221,11 @@ function uninstall_custom_prompt
         echo "🤔 GPY conf.d initialization script not found. Skipping."
     end
 
-    # Remove the GPY init block from config.fish (written by install.sh /
-    # install-oneline.sh, or by manual installs following the same
-    # convention). The block is delimited by "# >>> gpy-init >>>" / "# <<<
-    # gpy-init <<<", with a blank separator line immediately preceding the
-    # open marker for readability against any pre-existing content. To
-    # restore the file byte-identically, the delete range starts at that
-    # blank line (when present) through the close marker -- otherwise the
-    # separator would be left behind as a stray trailing blank line (#310).
-    if test -f "$config_file"
-        set -l block_start "# >>> gpy-init >>>"
-        set -l block_end "# <<< gpy-init <<<"
-        if grep -qF -- "$block_start" "$config_file"
-            set -l open_match (grep -nF -- "$block_start" "$config_file" | head -n1)
-            set -l close_match (grep -nF -- "$block_end" "$config_file" | head -n1)
-            set -l open_line (string split -m1 ':' -- $open_match)[1]
-            set -l close_line (string split -m1 ':' -- $close_match)[1]
-
-            if test -z "$close_line"
-                echo "🤔 GPY block start found but no matching end marker in $config_file. Skipping removal to avoid corrupting the file."
-            else
-                set -l start_line $open_line
-                if test "$open_line" -gt 1
-                    set -l prev_line_num (math "$open_line - 1")
-                    set -l prev_addr "$prev_line_num"p
-                    set -l prev_line_content (sed -n "$prev_addr" "$config_file")
-                    if test -z "$prev_line_content"
-                        set start_line $prev_line_num
-                    end
-                end
-
-                set -l sed_range "$start_line,$close_line"d
-                sed -i.gpy1 -e "$sed_range" "$config_file"
-                and rm "$config_file.gpy1"
-                echo "✅ Removed GPY block from $config_file"
-            end
-        else
-            echo "🤔 GPY block not found in $config_file. Skipping."
-        end
+    # Remove GPY init blocks from all supported startup files (#671):
+    # $HOME/.bashrc, $HOME/.bash_profile, $HOME/.zshrc, and $config_file
+    set -l rc_files "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.zshrc" "$config_file"
+    for rc_file in $rc_files
+        __gpy_clean_rc_file "$rc_file"
     end
 
     # Stop agent and supervisor processes
@@ -275,7 +331,7 @@ function uninstall_custom_prompt
     echo "🔄 Restart your shell to see changes."
     echo ""
     echo "📊 Removed:"
-    echo "  • Fish prompt files and completions"
+    echo "  • Shell integration files and completions (bash, zsh, fish)"
     echo "  • Agent and CLI binaries (and their backups)"
     echo "  • Configuration files"
     echo "  • Cache and runtime files"

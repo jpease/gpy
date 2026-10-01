@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Multi-shell global uninstallation and complete startup cleanup (#671): both
+  `scripts/uninstall.sh` and `scripts/uninstall.fish` now perform global
+  uninstallation for the current user's install across all supported shells
+  (Fish, Bash, Zsh), removing integration files, stopping agent and Fish
+  supervisor processes, and cleaning delimited `# >>> gpy-init >>>` blocks from
+  all existing startup files (`~/.bashrc`, `~/.bash_profile`, `~/.zshrc`, and
+  `config.fish`).
+
 - Fish uninstaller backup timestamp selection (#670): `scripts/uninstall.fish`
   now chooses the latest backup by comparing the timestamp suffix
   (`YYYYMMDD_HHMMSS`) descending across both installer conventions
