@@ -235,7 +235,7 @@ end
 # fish `pushd` so changing directory does not fire fish PWD-change hooks (e.g.
 # mise) that would spam the report with unrelated errors.
 function __sp_starship --argument-names dir
-    sh -c 'cd "$1" || exit 1; STARSHIP_CONFIG="$2" starship prompt --status "$3" --cmd-duration "$4" --terminal-width 80' \
+    sh -c 'cd "$1" || exit 1; term="${TERM:-xterm-256color}"; [ "$term" != "dumb" ] || term="xterm-256color"; TERM="$term" STARSHIP_CONFIG="$2" starship prompt --status "$3" --cmd-duration "$4" --terminal-width 80' \
         sh $dir $match_cfg $SP_STATUS $SP_DURATION 2>/dev/null
 end
 
