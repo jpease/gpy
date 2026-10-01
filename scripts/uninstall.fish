@@ -12,6 +12,14 @@ function __gpy_clean_rc_file --argument-names rc_file
         return 0
     end
 
+    set -l tmp_root /tmp
+    set -q TMPDIR; and test -n "$TMPDIR"; and set tmp_root $TMPDIR
+    set -l tmp (mktemp "$tmp_root/gpy-uninstall.XXXXXX"); or return 1
+    set -l diag (mktemp "$tmp_root/gpy-uninstall.XXXXXX"); or begin
+        rm -f "$tmp"
+        return 1
+    end
+
     awk '
     BEGIN {
         start_marker = "# >>> gpy-init >>>"
@@ -33,6 +41,11 @@ function __gpy_clean_rc_file --argument-names rc_file
                 for (j = i + 1; j <= n; j++) {
                     if (lines[j] == end_marker) {
                         found_end = j
+                        break
+                    }
+                    # A second start before any end means this start is
+                    # orphaned; never pair it with the end of a later block.
+                    if (lines[j] == start_marker) {
                         break
                     }
                 }
@@ -72,21 +85,27 @@ function __gpy_clean_rc_file --argument-names rc_file
             print "REMOVED" > "/dev/stderr"
         }
     }
-    ' "$rc_file" >"$rc_file.tmp" 2>"$rc_file.diag"
+    ' "$rc_file" >"$tmp" 2>"$diag"
 
-    if grep -q MISSING_END "$rc_file.diag"
-        echo "🤔 GPY block start found but no matching end marker in $rc_file. Skipping removal to avoid corrupting the file."
+    if grep -q MISSING_END "$diag"
+        echo "🤔 GPY block start found without a matching end marker in $rc_file. Leaving that portion untouched; remove it by hand if it is stale."
     end
-    if grep -q MISSING_START "$rc_file.diag"
-        echo "🤔 GPY block end marker found without start marker in $rc_file. Skipping removal to avoid corrupting the file."
+    if grep -q MISSING_START "$diag"
+        echo "🤔 GPY block end marker found without a start marker in $rc_file. Leaving it untouched; remove it by hand if it is stale."
     end
-    if grep -q REMOVED "$rc_file.diag"
-        mv "$rc_file.tmp" "$rc_file"
+    if grep -q REMOVED "$diag"
+        # Write through the existing path so a symlinked rc file keeps its
+        # link (the target is edited) and the file keeps its mode. awk always
+        # ends output with a newline; drop it when the original had none.
+        set -l last_byte (tail -c 1 "$rc_file")
+        if test -n "$last_byte"
+            printf '%s' (cat "$tmp" | string collect) >"$rc_file"
+        else
+            cat "$tmp" >"$rc_file"
+        end
         echo "✅ Removed GPY block from $rc_file"
-    else
-        rm -f "$rc_file.tmp"
     end
-    rm -f "$rc_file.diag"
+    rm -f "$tmp" "$diag"
 end
 
 function uninstall_custom_prompt

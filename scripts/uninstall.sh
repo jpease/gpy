@@ -64,6 +64,9 @@ clean_rc_file() {
         return 0
     fi
 
+    tmp=$(mktemp "${TMPDIR:-/tmp}/gpy-uninstall.XXXXXX") || return 1
+    diag=$(mktemp "${TMPDIR:-/tmp}/gpy-uninstall.XXXXXX") || { rm -f "$tmp"; return 1; }
+
     awk '
     BEGIN {
         start_marker = "# >>> gpy-init >>>"
@@ -85,6 +88,11 @@ clean_rc_file() {
                 for (j = i + 1; j <= n; j++) {
                     if (lines[j] == end_marker) {
                         found_end = j
+                        break
+                    }
+                    # A second start before any end means this start is
+                    # orphaned; never pair it with the end of a later block.
+                    if (lines[j] == start_marker) {
                         break
                     }
                 }
@@ -124,21 +132,27 @@ clean_rc_file() {
             print "REMOVED" > "/dev/stderr"
         }
     }
-    ' "$rc_file" > "$rc_file.tmp" 2> "$rc_file.diag"
+    ' "$rc_file" > "$tmp" 2> "$diag"
 
-    if grep -q "MISSING_END" "$rc_file.diag"; then
-        echo "🤔 GPY block start found but no matching end marker in $rc_file. Skipping removal to avoid corrupting the file."
+    if grep -q "MISSING_END" "$diag"; then
+        echo "🤔 GPY block start found without a matching end marker in $rc_file. Leaving that portion untouched; remove it by hand if it is stale."
     fi
-    if grep -q "MISSING_START" "$rc_file.diag"; then
-        echo "🤔 GPY block end marker found without start marker in $rc_file. Skipping removal to avoid corrupting the file."
+    if grep -q "MISSING_START" "$diag"; then
+        echo "🤔 GPY block end marker found without a start marker in $rc_file. Leaving it untouched; remove it by hand if it is stale."
     fi
-    if grep -q "REMOVED" "$rc_file.diag"; then
-        mv "$rc_file.tmp" "$rc_file"
+    if grep -q "REMOVED" "$diag"; then
+        # Write through the existing path rather than replacing it, so a
+        # symlinked rc file (dotfile managers) keeps its link and the target
+        # is edited, and the file keeps its mode. awk always ends output with
+        # a newline; drop it again when the original had none.
+        if [ -n "$(tail -c 1 "$rc_file")" ]; then
+            printf '%s' "$(cat "$tmp")" > "$rc_file"
+        else
+            cat "$tmp" > "$rc_file"
+        fi
         echo "✅ Removed GPY block from $rc_file"
-    else
-        rm -f "$rc_file.tmp"
     fi
-    rm -f "$rc_file.diag"
+    rm -f "$tmp" "$diag"
 }
 
 echo "🗑️  Uninstalling GPY..."
