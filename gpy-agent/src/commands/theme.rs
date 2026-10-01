@@ -305,6 +305,9 @@ pub fn print_theme_validation_error(context: &str, error: &Error) {
 /// Returns an error if the theme file cannot be created, or if `from` names a
 /// theme that cannot be discovered or read.
 pub fn new(name: &str, from: Option<&str>) -> Result<()> {
+    let _theme_name = config::types::ThemeName::new(name.to_owned())
+        .ok_or_else(|| Error::config(format!("Invalid theme name: '{name}'")))?;
+
     let themes_dir = ThemeManager::user_themes_dir();
 
     std::fs::create_dir_all(&themes_dir)
