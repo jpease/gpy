@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Theme validation segment coverage (#669): `validate_segment_templates` now
+  validates `clock`, `hostname`, and `username` format templates alongside
+  `git`, `language`, `directory`, `duration`, and `character`, preventing themes
+  with invalid colors or broken templates from passing validation or being set
+  via `gpy config set ui.theme`.
+
 ## [0.1.0] - YYYY-MM-DD
 
 ### Added
