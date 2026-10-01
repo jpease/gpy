@@ -280,7 +280,7 @@ check_prose_refs() {
     local file="$1"
 
     case "$file" in
-        docs/archive/* | GEMINI.md) return 0 ;;
+        docs/archive/*) return 0 ;;
     esac
 
     while IFS=: read -r lineno token; do

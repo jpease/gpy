@@ -94,12 +94,17 @@ cd "$ROOT" || exit 1
 # rejoined the private set on that decision even though the rest of `.raven/`
 # did not. Section (j) holds that no public file references it and no public
 # hook reads it.
-PRIVATE_PATHS=(.agents .codex docs/superpowers AGENTS.md CLAUDE.md .raven/manifest.json)
+#
+# `.gemini/` and `GEMINI.md` (the Raven Gemini CLI adapter) joined the set on
+# 2026-10-01: its hooks name `AGENTS.md`, `.codex/`, `docs/superpowers/` and
+# `.raven/manifest.json`, so tracking it published references to everything
+# above. Kept on disk, excluded via `.git/info/exclude` like the rest.
+PRIVATE_PATHS=(.agents .codex docs/superpowers AGENTS.md CLAUDE.md .raven/manifest.json .gemini GEMINI.md)
 
 # The subset above that public files may not reference at all. Same list here,
 # but they are different claims: (d)/(e) are about the paths existing and being
 # excluded, (g) is about nothing public pointing at them once they are gone.
-CUTOVER_PATHS=(.agents/ .codex/ docs/superpowers/ AGENTS.md CLAUDE.md)
+CUTOVER_PATHS=(.agents/ .codex/ docs/superpowers/ AGENTS.md CLAUDE.md .gemini/ GEMINI.md)
 
 WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
@@ -455,7 +460,7 @@ while IFS= read -r tracked; do
     [[ -f "$tracked" ]] || continue
     reference_exempt "$tracked" && continue
     case "$tracked" in
-        .agents/* | .codex/* | .gemini/* | docs/superpowers/* | AGENTS.md | CLAUDE.md | GEMINI.md) continue ;;
+        .agents/* | .codex/* | docs/superpowers/* | AGENTS.md | CLAUDE.md) continue ;;
     esac
     while IFS=$'\t' read -r hit_file hit_pattern; do
         [[ -n "$hit_file" ]] || continue
@@ -492,7 +497,7 @@ while IFS= read -r tracked; do
         # and are free to name Raven's runtime state (`.raven/session.md` and
         # friends), which is written at runtime and tracked nowhere. Ignore
         # rules name paths without following them.
-        .raven/* | .agents/* | .codex/* | .gemini/* | docs/superpowers/* | GEMINI.md) continue ;;
+        .raven/* | .agents/* | .codex/* | docs/superpowers/*) continue ;;
         .ignore | .gitignore) continue ;;
         tests/bash/agent_tooling_privacy_claims.test.bash) continue ;;
     esac
@@ -579,8 +584,8 @@ fi
 manifest_referenced_by() {
     local file="$1"
     case "$file" in
-        .raven/* | .agents/* | .codex/* | .gemini/* | docs/superpowers/*) return 1 ;;
-        AGENTS.md | CLAUDE.md | GEMINI.md) return 1 ;;
+        .raven/* | .agents/* | .codex/* | docs/superpowers/*) return 1 ;;
+        AGENTS.md | CLAUDE.md) return 1 ;;
         # This suite names the path it is checking for, in comments, in the
         # PRIVATE_PATHS entry, and in this very grep pattern -- it is the
         # detector, not a reference from a file that stays public.
