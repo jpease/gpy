@@ -112,7 +112,7 @@ end
 function _build_agent
     echo "🔨 Building agent (release mode)..."
     cd gpy-agent
-    if env RUSTC_WRAPPER="" cargo build --release
+    if cargo build --release
         echo "✅ Agent built successfully"
         cd ..
         return 0

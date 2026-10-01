@@ -12,7 +12,7 @@ RESULTS_FILE="/tmp/gpy-threshold-analysis.md"
 # Build release binary
 echo "Building gpy-agent in release mode..."
 cd "$PROJECT_ROOT/gpy-agent"
-RUSTC_WRAPPER="" CARGO_BUILD_JOBS=2 cargo build --release --quiet
+CARGO_BUILD_JOBS=2 cargo build --release --quiet
 
 AGENT="$PROJECT_ROOT/gpy-agent/target/release/gpy-agent"
 

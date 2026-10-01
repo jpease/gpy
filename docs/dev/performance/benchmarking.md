@@ -22,7 +22,7 @@ take materially longer and must be communicated separately.
 - Close heavy background workloads (IDE indexing, large downloads).
 - Run on AC power, not on battery saver.
 - Ensure `socat`, `jq`, and `hyperfine` are installed (for shell and CI benchmarks).
-- If `sccache` causes permission errors, disable it for benchmarks with:
+- If your configured compiler cache (`rustc-wrapper`) causes errors, disable it for benchmarks with:
   - `RUSTC_WRAPPER=`
 
 ## Repeatable Run Protocol

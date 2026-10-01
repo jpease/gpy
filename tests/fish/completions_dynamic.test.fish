@@ -67,7 +67,7 @@ set -g gpy_bin $repo_root/gpy-agent/target/debug/gpy
 if not test -x $gpy_bin
     echo "Building gpy debug binary for completions test..."
     pushd $repo_root/gpy-agent
-    env RUSTC_WRAPPER="" cargo build --quiet
+    cargo build --quiet
     popd
 end
 

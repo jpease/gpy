@@ -73,7 +73,7 @@ audit:
 
 # Run lint checks (strict clippy for the agent)
 lint:
-    RUSTC_WRAPPER="" moon run gpy-agent:clippy
+    moon run gpy-agent:clippy
 
 # Line coverage for gpy-agent (#654): lcov.info in gpy-agent/ plus a summary
 # table on stdout. Non-gating; the ubuntu pr-gate uploads the same file.
@@ -101,7 +101,7 @@ test: test-rust test-fish
 
 # Run Rust unit and integration tests
 test-rust:
-    RUSTC_WRAPPER="" moon run gpy-agent:test
+    moon run gpy-agent:test
 
 # Run Fish integration tests
 test-fish:
@@ -149,7 +149,7 @@ bench-zsh:
 
 # Build the agent in debug mode
 build:
-    RUSTC_WRAPPER="" moon run gpy-agent:build
+    moon run gpy-agent:build
 
 # Build the agent in release mode
 build-release:

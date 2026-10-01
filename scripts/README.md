@@ -98,9 +98,8 @@ The `--fast` mode is recommended for CI environments as it skips slower checks w
 
 - The script automatically navigates to the project root
 - Fish test files using `@test` syntax are automatically skipped
-- Rust tests use `RUSTC_WRAPPER=""` to avoid sccache issues
+- Rust checks clear any `RUSTC_WRAPPER` environment override, so the wrapper configured in Cargo's config (e.g. kache) applies
 - The script uses colors for better readability (can be piped to `less -R`)
-- If you run raw `cargo` commands in this repository (outside the script), prepend `RUSTC_WRAPPER=""` or `unset RUSTC_WRAPPER` to avoid sandbox permission errors from sccache
 
 ## Other Scripts
 

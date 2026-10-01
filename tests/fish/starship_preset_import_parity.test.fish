@@ -141,7 +141,7 @@ set -g spi_agent_bin $spi_repo_root/gpy-agent/target/debug/gpy-agent
 for bin in $spi_gpy_bin $spi_agent_bin
     if not test -x $bin
         echo "❌ binary not found at $bin"
-        echo "   Build it first: (cd gpy-agent && RUSTC_WRAPPER= cargo build)"
+        echo "   Build it first: (cd gpy-agent && cargo build)"
         exit 1
     end
 end

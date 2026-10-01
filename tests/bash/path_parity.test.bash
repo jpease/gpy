@@ -24,7 +24,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 GPY_BIN="$ROOT/gpy-agent/target/debug/gpy"
 if [ ! -x "$GPY_BIN" ]; then
-    (cd "$ROOT/gpy-agent" && RUSTC_WRAPPER="" cargo build --quiet --bin gpy --bin gpy-agent) || {
+    (cd "$ROOT/gpy-agent" && cargo build --quiet --bin gpy --bin gpy-agent) || {
         echo "FAIL: could not build the gpy binaries"
         exit 1
     }

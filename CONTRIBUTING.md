@@ -144,9 +144,6 @@ fish_indent --check install-dev.fish fish/**/*.fish
 (cd gpy-agent && cargo fmt --all --check)   # check only
 ```
 
-`cargo`, `nextest`, and `clippy` invocations in this repo sometimes need
-`RUSTC_WRAPPER=""` set first — the `just` recipes already do this for you.
-
 `*.bak` files are gitignored: leave a scratch copy of a test next to the
 original if you like, but nothing will pick it up, and a stale `.rs.bak`
 under `gpy-agent/tests/` is invisible to nextest (it discovers `*.rs` only).

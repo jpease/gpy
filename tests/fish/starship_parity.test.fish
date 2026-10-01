@@ -76,7 +76,7 @@ set -g agent_bin $repo_root/gpy-agent/target/debug/gpy-agent
 for bin in $gpy_bin $agent_bin
     if not test -x $bin
         echo "❌ binary not found at $bin"
-        echo "   Build it first: (cd gpy-agent && RUSTC_WRAPPER= cargo build)"
+        echo "   Build it first: (cd gpy-agent && cargo build)"
         exit 1
     end
 end

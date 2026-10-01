@@ -113,7 +113,7 @@ require_tools() {
 ensure_agent_built() {
   if [[ ! -x "$AGENT_BIN" ]]; then
     info "Building release agent for benchmarks..."
-    if ! (cd "$AGENT_DIR" && RUSTC_WRAPPER="" cargo build --release --quiet); then
+    if ! (cd "$AGENT_DIR" && cargo build --release --quiet); then
       record_hard "Failed to build release agent"
       return 1
     fi
