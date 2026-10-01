@@ -340,12 +340,15 @@ gpy theme save mytheme
 
 Validate a theme and print actionable diagnostics.
 
+Validates theme schema fields, icon definitions, and segment format templates
+across all eight supported agent-rendered segments (`git`, `language`, `directory`,
+`duration`, `character`, `clock`, `hostname`, `username`) against the active palette,
+verifying that all color tokens resolve to valid ANSI colors or defined palette roles.
+
 If `target` is omitted, validates the currently active theme from config.
 If `target` is provided, it can be either:
 - a theme name (for discovered themes), or
 - a direct path to a theme `.toml` file.
-
-**Arguments:**
 - `[target]` - Optional theme name or file path
 
 **Examples:**

@@ -1479,3 +1479,155 @@ this is not valid toml
         "Should detect malformed config. Output: {combined}"
     );
 }
+
+// Issue #669: theme validation covers clock, hostname, and username formats
+// ===========================================================================
+
+#[test]
+fn test_theme_validate_and_config_set_reject_broken_clock_hostname_username() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let themes_dir = env.themes_dir();
+    fs::create_dir_all(&themes_dir).expect("Failed to create themes dir");
+
+    let original_config_bytes =
+        fs::read(env.config_path()).expect("Failed to read original config");
+    let env_overrides = [
+        ("GPY_CONFIG_PATH", env.config_path().display().to_string()),
+        (
+            "GPY_AGENT_SOCKET_PATH",
+            env.xdg_runtime_dir().join("gpy.sock").display().to_string(),
+        ),
+        (
+            "GPY_BUNDLED_PLUGIN_DIR",
+            env.root().join("empty_plugins").display().to_string(),
+        ),
+    ];
+
+    for (segment, var) in [
+        ("clock", "time"),
+        ("hostname", "hostname"),
+        ("username", "username"),
+    ] {
+        let theme_name = format!("broken-{segment}");
+        let theme_content =
+            format!("[ui]\n[segments.{segment}]\nformat = \"[${var}](fg:does_not_exist)\"\n");
+        fs::write(themes_dir.join(format!("{theme_name}.toml")), theme_content)
+            .expect("Failed to write theme");
+
+        // 1. theme validate <name> rejects
+        let val_out = env
+            .run_gpy_with_env(&["theme", "validate", &theme_name], &env_overrides)
+            .expect("Failed to run gpy theme validate");
+        assert_ne!(
+            val_out.exit_code, 0_i32,
+            "theme validate must reject broken {segment}"
+        );
+        let combined_val = format!("{}{}", val_out.stdout, val_out.stderr);
+        assert!(
+            combined_val.contains(segment),
+            "validation error should mention segment '{segment}': {combined_val}"
+        );
+
+        // 2. config set ui.theme rejects and config is unchanged
+        let set_out = env
+            .run_gpy_with_env(&["config", "set", "ui.theme", &theme_name], &env_overrides)
+            .expect("Failed to run gpy config set");
+        assert_ne!(
+            set_out.exit_code, 0_i32,
+            "config set must reject broken {segment}"
+        );
+        let current_config_bytes = fs::read(env.config_path()).expect("Failed to re-read config");
+        assert_eq!(
+            current_config_bytes, original_config_bytes,
+            "config bytes must remain unchanged on rejected config set for {segment}"
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn test_valid_hostname_username_theme_renders_via_oneshot() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let themes_dir = env.themes_dir();
+    fs::create_dir_all(&themes_dir).expect("Failed to create themes dir");
+
+    let valid_theme = r#"
+[ui]
+[segments.hostname]
+format = "[$hostname](fg:white)"
+[segments.username]
+format = "[$username](fg:white)"
+"#;
+    fs::write(themes_dir.join("valid-custom.toml"), valid_theme)
+        .expect("Failed to write valid theme");
+
+    let env_overrides = [
+        ("GPY_CONFIG_PATH", env.config_path().display().to_string()),
+        (
+            "GPY_AGENT_SOCKET_PATH",
+            env.xdg_runtime_dir().join("gpy.sock").display().to_string(),
+        ),
+        (
+            "GPY_BUNDLED_PLUGIN_DIR",
+            env.root().join("empty_plugins").display().to_string(),
+        ),
+    ];
+
+    let val_out = env
+        .run_gpy_with_env(&["theme", "validate", "valid-custom"], &env_overrides)
+        .expect("Failed to run validate");
+    val_out.assert_success("valid-custom theme validation");
+
+    // Set active theme to valid-custom
+    let set_out = env
+        .run_gpy_with_env(
+            &["config", "set", "ui.theme", "valid-custom"],
+            &env_overrides,
+        )
+        .expect("Failed to set theme");
+    set_out.assert_success("set theme valid-custom");
+
+    // oneshot hostname renders expected text
+    let host_out = env
+        .run_gpy_agent_with_env(
+            &[
+                "oneshot",
+                "hostname",
+                "--hostname",
+                "example-box",
+                "--format",
+                "ansi",
+            ],
+            &env_overrides,
+        )
+        .expect("Failed to run oneshot hostname");
+    assert!(
+        host_out.stdout.contains("example-box"),
+        "hostname rendering must contain example-box: stdout={:?} stderr={:?}",
+        host_out.stdout,
+        host_out.stderr
+    );
+
+    // oneshot username renders expected text
+    let user_out = env
+        .run_gpy_agent_with_env(
+            &[
+                "oneshot",
+                "username",
+                "--username",
+                "test-user",
+                "--format",
+                "ansi",
+            ],
+            &env_overrides,
+        )
+        .expect("Failed to run oneshot username");
+    assert!(
+        user_out.stdout.contains("test-user"),
+        "username rendering must contain test-user: stdout={:?} stderr={:?}",
+        user_out.stdout,
+        user_out.stderr
+    );
+}
+
+// ===========================================================================
