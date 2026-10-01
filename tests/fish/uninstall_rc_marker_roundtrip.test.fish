@@ -428,6 +428,183 @@ end
 rm -rf "$home_f" "$fake_bin_f"
 
 # ===========================================================================
+# Part C: Multi-shell global uninstall regressions (#671)
+# ===========================================================================
+
+# --- 1. Bash + Zsh installed; run sh uninstaller with GPY_SHELL=bash and zsh ---
+for gpy_shell_val in bash zsh
+    set -l h_multi (mktemp -d)
+    set -l xdg_c_multi "$h_multi/xdg-config"
+    set -l xdg_cache_multi "$h_multi/xdg-cache"
+    set -l xdg_rt_multi "$h_multi/xdg-runtime"
+    mkdir -p "$xdg_c_multi/gpy/bash" "$xdg_c_multi/gpy/zsh" "$xdg_cache_multi/gpy" "$xdg_rt_multi"
+    set -l bash_entry "$xdg_c_multi/gpy/bash/gpy.bash"
+    set -l zsh_entry "$xdg_c_multi/gpy/zsh/gpy.zsh"
+    printf '%s\n' "# bash entry" >"$bash_entry"
+    printf '%s\n' "# zsh entry" >"$zsh_entry"
+
+    set -l bashrc "$h_multi/.bashrc"
+    set -l zshrc "$h_multi/.zshrc"
+    printf '%s\n' "export PRE_BASH=1" "" "# >>> gpy-init >>>" "source \"$bash_entry\"" "# <<< gpy-init <<<" "export POST_BASH=1" >"$bashrc"
+    printf '%s\n' "export PRE_ZSH=1" "" "# >>> gpy-init >>>" "source \"$zsh_entry\"" "# <<< gpy-init <<<" "export POST_ZSH=1" >"$zshrc"
+
+    printf '\n' | env HOME=$h_multi XDG_CONFIG_HOME=$xdg_c_multi XDG_CACHE_HOME=$xdg_cache_multi XDG_RUNTIME_DIR=$xdg_rt_multi GPY_CONFIG_PATH="$xdg_c_multi/gpy/config.toml" GPY_AGENT_SOCKET_PATH="$xdg_rt_multi/gpy.sock" GPY_SHELL=$gpy_shell_val sh scripts/uninstall.sh >/dev/null 2>&1
+
+    if not grep -qF gpy-init "$bashrc"; and not grep -qF gpy-init "$zshrc"
+        __gpy_test_pass "#671 (sh uninstaller, GPY_SHELL=$gpy_shell_val): neither rc keeps gpy-init block"
+    else
+        __gpy_test_fail "#671 (sh uninstaller, GPY_SHELL=$gpy_shell_val): gpy-init block remained in bashrc or zshrc"
+    end
+
+    set -l exp_b "$h_multi/exp_b"
+    set -l exp_z "$h_multi/exp_z"
+    printf '%s\n' "export PRE_BASH=1" "export POST_BASH=1" >"$exp_b"
+    printf '%s\n' "export PRE_ZSH=1" "export POST_ZSH=1" >"$exp_z"
+    __gpy_assert_byte_identical "#671 (sh uninstaller, GPY_SHELL=$gpy_shell_val): bashrc bytes preserved" "$exp_b" "$bashrc"
+    __gpy_assert_byte_identical "#671 (sh uninstaller, GPY_SHELL=$gpy_shell_val): zshrc bytes preserved" "$exp_z" "$zshrc"
+    rm -rf "$h_multi"
+end
+
+# --- 2. Fish + Bash + Zsh installed: run each entry point in separate fixtures ---
+for uninstaller_entry in "fish:scripts/uninstall.fish" "sh:scripts/uninstall.sh"
+    set -l parts (string split ':' -- "$uninstaller_entry")
+    set -l u_type $parts[1]
+    set -l u_script $parts[2]
+
+    set -l h_all (mktemp -d)
+    set -l xdg_c_all "$h_all/xdg-config"
+    set -l xdg_cache_all "$h_all/xdg-cache"
+    set -l xdg_rt_all "$h_all/xdg-runtime"
+    mkdir -p "$xdg_c_all/gpy/bash" "$xdg_c_all/gpy/zsh" "$xdg_c_all/fish/functions" "$xdg_c_all/fish/conf.d" "$xdg_c_all/fish/completions" "$xdg_c_all/fish/gpy/functions" "$xdg_cache_all/gpy" "$xdg_rt_all"
+
+    # Shared entries and rc files
+    set -l bashrc_all "$h_all/.bashrc"
+    set -l bashprof_all "$h_all/.bash_profile"
+    set -l zshrc_all "$h_all/.zshrc"
+    set -l fishrc_all "$xdg_c_all/fish/config.fish"
+
+    printf '%s\n' "alias b=1" "" "# >>> gpy-init >>>" "source gpy.bash" "# <<< gpy-init <<<" "alias b_post=1" >"$bashrc_all"
+    printf '%s\n' "alias bp=1" "" "# >>> gpy-init >>>" "source gpy.bash" "# <<< gpy-init <<<" "alias bp_post=1" >"$bashprof_all"
+    printf '%s\n' "alias z=1" "" "# >>> gpy-init >>>" "source gpy.zsh" "# <<< gpy-init <<<" "alias z_post=1" >"$zshrc_all"
+    printf '%s\n' "set -g f 1" "" "# >>> gpy-init >>>" "source gpy.fish" "# <<< gpy-init <<<" "set -g f_post 1" >"$fishrc_all"
+
+    # Fish integration files
+    set -l gpy_prompt_target "$xdg_c_all/fish/gpy/functions/fish_prompt.fish"
+    printf '%s\n' "function fish_prompt; echo gpy; end" >"$gpy_prompt_target"
+    ln -s "$gpy_prompt_target" "$xdg_c_all/fish/functions/fish_prompt.fish"
+    set -l fish_backup "$xdg_c_all/fish/functions/fish_prompt.fish.backup.20260101_000000"
+    printf '%s\n' "function fish_prompt; echo custom_restored; end" >"$fish_backup"
+
+    set -l gpy_init_fish "$xdg_c_all/fish/conf.d/gpy_init.fish"
+    printf '%s\n' "# gpy init" >"$gpy_init_fish"
+    set -l gpy_comp_fish "$xdg_c_all/fish/completions/gpy.fish"
+    printf '%s\n' "# gpy comp" >"$gpy_comp_fish"
+    set -l custom_comp "$xdg_c_all/fish/completions/other.fish"
+    printf '%s\n' "# other comp" >"$custom_comp"
+
+    if test "$u_type" = fish
+        printf '\n' | env HOME=$h_all XDG_CONFIG_HOME=$xdg_c_all XDG_CACHE_HOME=$xdg_cache_all XDG_RUNTIME_DIR=$xdg_rt_all GPY_CONFIG_PATH="$xdg_c_all/gpy/config.toml" GPY_AGENT_SOCKET_PATH="$xdg_rt_all/gpy.sock" fish "$u_script" >/dev/null 2>&1
+    else
+        printf '\n' | env HOME=$h_all XDG_CONFIG_HOME=$xdg_c_all XDG_CACHE_HOME=$xdg_cache_all XDG_RUNTIME_DIR=$xdg_rt_all GPY_CONFIG_PATH="$xdg_c_all/gpy/config.toml" GPY_AGENT_SOCKET_PATH="$xdg_rt_all/gpy.sock" sh "$u_script" >/dev/null 2>&1
+    end
+
+    # Verify all 4 rc files cleaned of gpy-init
+    set -l rcs_cleaned 1
+    for f in "$bashrc_all" "$bashprof_all" "$zshrc_all" "$fishrc_all"
+        if grep -qF gpy-init "$f"
+            set rcs_cleaned 0
+        end
+    end
+    if test $rcs_cleaned -eq 1
+        __gpy_test_pass "#671 ($u_type uninstaller): all 4 rc locations cleaned"
+    else
+        __gpy_test_fail "#671 ($u_type uninstaller): one or more rc files still have gpy-init"
+    end
+
+    # Verify fish prompt restored and backup consumed
+    set -l active_prompt "$xdg_c_all/fish/functions/fish_prompt.fish"
+    if test -f "$active_prompt"; and not test -L "$active_prompt"; and test (cat "$active_prompt") = "function fish_prompt; echo custom_restored; end"; and not test -e "$fish_backup"
+        __gpy_test_pass "#671 ($u_type uninstaller): fish prompt restored from backup"
+    else
+        __gpy_test_fail "#671 ($u_type uninstaller): fish prompt restoration failed"
+    end
+
+    # Verify gpy init and completions removed, but unrelated completion untouched
+    if not test -e "$gpy_init_fish"; and not test -e "$gpy_comp_fish"; and test -f "$custom_comp"
+        __gpy_test_pass "#671 ($u_type uninstaller): GPY fish files removed, unrelated completion untouched"
+    else
+        __gpy_test_fail "#671 ($u_type uninstaller): fish completions/conf.d cleanup failed"
+    end
+
+    rm -rf "$h_all"
+end
+
+# --- 3. Both .bashrc and .bash_profile cleaned; missing file not created ---
+set -l h_bash_only (mktemp -d)
+set -l xdg_c_bo "$h_bash_only/xdg-config"
+mkdir -p "$xdg_c_bo"
+set -l bashrc_only "$h_bash_only/.bashrc"
+printf '%s\n' prefix "" "# >>> gpy-init >>>" "source gpy.bash" "# <<< gpy-init <<<" suffix >"$bashrc_only"
+printf '\n' | env HOME=$h_bash_only XDG_CONFIG_HOME=$xdg_c_bo sh scripts/uninstall.sh >/dev/null 2>&1
+set -l exp_bo "$h_bash_only/exp_bo"
+printf '%s\n' prefix suffix >"$exp_bo"
+__gpy_assert_byte_identical "#671: .bashrc cleaned byte-for-byte" "$exp_bo" "$bashrc_only"
+if not test -e "$h_bash_only/.bash_profile"
+    __gpy_test_pass "#671: missing .bash_profile not created"
+else
+    __gpy_test_fail "#671: .bash_profile erroneously created"
+end
+rm -rf "$h_bash_only"
+# --- 4. Multiple complete blocks, trailing content, and incomplete marker ---
+set -l h_blocks (mktemp -d)
+set -l xdg_c_bl "$h_blocks/xdg-config"
+mkdir -p "$xdg_c_bl"
+set -l zshrc_blocks "$h_blocks/.zshrc"
+printf '%s\n' \
+    head \
+    "" \
+    "# >>> gpy-init >>>" \
+    "first block" \
+    "# <<< gpy-init <<<" \
+    mid \
+    "" \
+    "# >>> gpy-init >>>" \
+    "second block" \
+    "# <<< gpy-init <<<" \
+    tail \
+    "" \
+    "# >>> gpy-init >>>" \
+    "incomplete marker without end" >"$zshrc_blocks"
+
+printf '\n' | env HOME=$h_blocks XDG_CONFIG_HOME=$xdg_c_bl sh scripts/uninstall.sh >/dev/null 2>&1
+set -l exp_zb "$h_blocks/exp_zb"
+printf '%s\n' head mid tail "" "# >>> gpy-init >>>" "incomplete marker without end" >"$exp_zb"
+__gpy_assert_byte_identical "#671: multiple complete blocks removed and incomplete marker preserved" "$exp_zb" "$zshrc_blocks"
+rm -rf "$h_blocks"
+# --- 5. Roots with spaces: operates cleanly without split-path errors ---
+set -l h_space (mktemp -d "/tmp/gpy uninst space home.XXXXXX")
+set -l xdg_c_space (mktemp -d "/tmp/gpy uninst space config.XXXXXX")
+set -l xdg_cache_space (mktemp -d "/tmp/gpy uninst space cache.XXXXXX")
+set -l xdg_rt_space (mktemp -d "/tmp/gpy uninst space rt.XXXXXX")
+mkdir -p "$xdg_c_space/fish/functions" "$xdg_c_space/gpy/bash"
+set -l bashrc_space "$h_space/.bashrc"
+set -l fish_prompt_space "$xdg_c_space/fish/functions/fish_prompt.fish"
+set -l fish_backup_space "$xdg_c_space/fish/functions/fish_prompt.fish.backup.20260101_000000"
+printf '%s\n' start "" "# >>> gpy-init >>>" "source gpy.bash" "# <<< gpy-init <<<" end >"$bashrc_space"
+printf '%s\n' "function fish_prompt; echo space_restored; end" >"$fish_backup_space"
+
+printf '\n' | env HOME=$h_space XDG_CONFIG_HOME=$xdg_c_space XDG_CACHE_HOME=$xdg_cache_space XDG_RUNTIME_DIR=$xdg_rt_space GPY_CONFIG_PATH="$xdg_c_space/gpy/config.toml" GPY_AGENT_SOCKET_PATH="$xdg_rt_space/gpy.sock" sh scripts/uninstall.sh >/dev/null 2>&1
+set -l exp_sp "$h_space/exp_sp"
+printf '%s\n' start end >"$exp_sp"
+__gpy_assert_byte_identical "#671: paths with spaces rc bytes preserved" "$exp_sp" "$bashrc_space"
+if test (cat "$fish_prompt_space") = "function fish_prompt; echo space_restored; end"
+    __gpy_test_pass "#671: paths with spaces fish prompt restored"
+else
+    __gpy_test_fail "#671: paths with spaces fish prompt restoration failed"
+end
+rm -rf "$h_space" "$xdg_c_space" "$xdg_cache_space" "$xdg_rt_space"
+
+# ===========================================================================
 
 if test $failed -eq 1
     exit 1

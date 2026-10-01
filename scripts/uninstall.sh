@@ -32,7 +32,6 @@ esac
 config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
 cache_home="${XDG_CACHE_HOME:-$HOME/.cache}"
 
-shell_config_dir="$config_home/gpy/$current_shell"
 gpy_config_dir="$config_home/gpy"
 gpy_cache_dir="$cache_home/gpy"
 bin_dir="$HOME/.local/bin"
@@ -47,88 +46,249 @@ case "${XDG_RUNTIME_DIR:-}" in
     /*) runtime_root="$XDG_RUNTIME_DIR/gpy" ;;
 esac
 
-if [ "$current_shell" = "zsh" ]; then
-    rc_file="$HOME/.zshrc"
-else
-    # Same precedence install-oneline.sh uses when configuring Bash: prefer
-    # .bashrc, fall back to .bash_profile.
-    if [ -f "$HOME/.bashrc" ]; then
-        rc_file="$HOME/.bashrc"
-    else
-        rc_file="$HOME/.bash_profile"
+fish_config_dir="$config_home/fish"
+fish_prompt_dir="$fish_config_dir/gpy"
+fish_prompt_file="$fish_config_dir/functions/fish_prompt.fish"
+fish_conf_d="$fish_config_dir/conf.d/gpy_init.fish"
+fish_completions_dir="$fish_config_dir/completions"
+
+clean_rc_file() {
+    rc_file="$1"
+    [ -f "$rc_file" ] || return 0
+
+    block_start="# >>> gpy-init >>>"
+    block_end="# <<< gpy-init <<<"
+
+    if ! grep -qF -- "$block_start" "$rc_file" && ! grep -qF -- "$block_end" "$rc_file"; then
+        echo "🤔 GPY block not found in $rc_file. Skipping."
+        return 0
     fi
-fi
+
+    awk '
+    BEGIN {
+        start_marker = "# >>> gpy-init >>>"
+        end_marker = "# <<< gpy-init <<<"
+        n = 0
+    }
+    {
+        lines[++n] = $0
+    }
+    END {
+        i = 1
+        has_missing_end = 0
+        has_missing_start = 0
+        removed_any = 0
+
+        while (i <= n) {
+            if (lines[i] == start_marker) {
+                found_end = 0
+                for (j = i + 1; j <= n; j++) {
+                    if (lines[j] == end_marker) {
+                        found_end = j
+                        break
+                    }
+                }
+                if (found_end > 0) {
+                    del_start = i
+                    if (i > 1 && lines[i - 1] ~ /^[[:space:]]*$/ && !marked_for_del[i - 1]) {
+                        del_start = i - 1
+                    }
+                    for (k = del_start; k <= found_end; k++) {
+                        marked_for_del[k] = 1
+                    }
+                    removed_any = 1
+                    i = found_end + 1
+                    continue
+                } else {
+                    has_missing_end = 1
+                }
+            } else if (lines[i] == end_marker) {
+                has_missing_start = 1
+            }
+            i++
+        }
+
+        for (i = 1; i <= n; i++) {
+            if (!marked_for_del[i]) {
+                print lines[i]
+            }
+        }
+
+        if (has_missing_end) {
+            print "MISSING_END" > "/dev/stderr"
+        }
+        if (has_missing_start) {
+            print "MISSING_START" > "/dev/stderr"
+        }
+        if (removed_any) {
+            print "REMOVED" > "/dev/stderr"
+        }
+    }
+    ' "$rc_file" > "$rc_file.tmp" 2> "$rc_file.diag"
+
+    if grep -q "MISSING_END" "$rc_file.diag"; then
+        echo "🤔 GPY block start found but no matching end marker in $rc_file. Skipping removal to avoid corrupting the file."
+    fi
+    if grep -q "MISSING_START" "$rc_file.diag"; then
+        echo "🤔 GPY block end marker found without start marker in $rc_file. Skipping removal to avoid corrupting the file."
+    fi
+    if grep -q "REMOVED" "$rc_file.diag"; then
+        mv "$rc_file.tmp" "$rc_file"
+        echo "✅ Removed GPY block from $rc_file"
+    else
+        rm -f "$rc_file.tmp"
+    fi
+    rm -f "$rc_file.diag"
+}
 
 echo "🗑️  Uninstalling GPY..."
-echo "GPY will be uninstalled from the following locations:"
-echo "  - $current_shell integration files (including completions): $shell_config_dir"
+echo "GPY will be uninstalled globally for the current user from the following locations:"
+echo "  - Shell integration files (including completions):"
+echo "    - Bash: $gpy_config_dir/bash"
+echo "    - Zsh: $gpy_config_dir/zsh"
+echo "    - Fish: $fish_prompt_dir, $fish_conf_d, $fish_completions_dir/gpy*.fish"
 echo "  - Agent binary: $agent_binary (and gpy-agent.backup.* copies)"
 echo "  - CLI binary: $cli_binary (and gpy.backup.* copies)"
 echo "  - Configuration: $gpy_config_dir"
 echo "  - Cache: $gpy_cache_dir"
 echo "  - Runtime: $runtime_root"
-echo "  - GPY block in $rc_file (if exists)"
+echo "  - fish_prompt.fish (will restore previous backup if destination becomes absent)"
+echo "  - GPY init blocks from startup files (if present):"
+echo "    - $HOME/.bashrc, $HOME/.bash_profile, $HOME/.zshrc, $fish_config_dir/config.fish"
 echo ""
-echo "⚠️  This will also stop any running agent process"
+echo "⚠️  This will also stop any running agent and supervisor processes"
 printf '%s' "Press Enter to continue or Ctrl-C to cancel: "
 # Read and discard one line. `|| true` keeps a closed/EOF stdin (as used by
 # non-interactive callers and tests) from tripping `set -e`.
 read -r _gpy_uninstall_confirm || true
 
 # Remove shell integration files
-if [ -d "$shell_config_dir" ]; then
-    rm -rf "$shell_config_dir"
-    echo "✅ Removed $current_shell integration files from $shell_config_dir"
-else
-    echo "🤔 No $current_shell integration directory found to remove."
+if [ -d "$gpy_config_dir/bash" ]; then
+    rm -rf "$gpy_config_dir/bash"
+    echo "✅ Removed bash integration files from $gpy_config_dir/bash"
+fi
+if [ -d "$gpy_config_dir/zsh" ]; then
+    rm -rf "$gpy_config_dir/zsh"
+    echo "✅ Removed zsh integration files from $gpy_config_dir/zsh"
 fi
 
-# Remove the GPY init block from the rc file (written by install-oneline.sh).
-# The block is delimited by "# >>> gpy-init >>>" / "# <<< gpy-init <<<", with
-# a blank separator line immediately preceding the open marker for
-# readability against any pre-existing content. To restore the file
-# byte-identically, the delete range starts at that blank line (when
-# present) through the close marker -- otherwise the separator would be left
-# behind as a stray trailing blank line (#310).
-if [ -f "$rc_file" ]; then
-    block_start="# >>> gpy-init >>>"
-    block_end="# <<< gpy-init <<<"
-    if grep -qF -- "$block_start" "$rc_file"; then
-        open_line=$(grep -nF -- "$block_start" "$rc_file" | head -n1 | cut -d: -f1)
-        close_line=$(grep -nF -- "$block_end" "$rc_file" | head -n1 | cut -d: -f1)
+# Remove Fish integration files (#671)
+if [ -d "$fish_prompt_dir" ]; then
+    rm -rf "$fish_prompt_dir"
+    echo "✅ Removed prompt files from $fish_prompt_dir"
+fi
 
-        if [ -z "$close_line" ]; then
-            echo "🤔 GPY block start found but no matching end marker in $rc_file. Skipping removal to avoid corrupting the file."
-        else
-            start_line=$open_line
-            if [ "$open_line" -gt 1 ]; then
-                prev_line_num=$((open_line - 1))
-                prev_line_content=$(sed -n "${prev_line_num}p" "$rc_file")
-                if [ -z "$prev_line_content" ]; then
-                    start_line=$prev_line_num
-                fi
-            fi
-
-            sed -i.gpy1 -e "${start_line},${close_line}d" "$rc_file"
-            rm -f "$rc_file.gpy1"
-            echo "✅ Removed GPY block from $rc_file"
-        fi
+if [ -L "$fish_prompt_file" ]; then
+    linked_target=$(readlink "$fish_prompt_file" 2>/dev/null || true)
+    if [ "$linked_target" = "$fish_prompt_dir/functions/fish_prompt.fish" ]; then
+        rm -f "$fish_prompt_file"
+        echo "✅ Removed GPY fish_prompt symlink"
     else
-        echo "🤔 GPY block not found in $rc_file. Skipping."
+        echo "🤔 fish_prompt.fish is a symlink to $linked_target; leaving untouched"
+    fi
+elif [ -f "$fish_prompt_file" ]; then
+    if grep -q gpy "$fish_prompt_file" 2>/dev/null; then
+        rm -f "$fish_prompt_file"
+        echo "✅ Removed GPY fish_prompt implementation"
     fi
 fi
 
-# Stop agent process
+# Restore previous fish_prompt backup if destination is absent (#667, #670, #671).
+# A non-GPY regular file, symlink (valid or dangling), directory, or other
+# existing destination must be preserved byte-for-byte, leaving all backups
+# untouched.
+if [ -e "$fish_prompt_file" ] || [ -L "$fish_prompt_file" ]; then
+    echo "🤔 fish_prompt.fish already exists; preserving current prompt and backups"
+else
+    # Compare timestamp suffix descending; on equal stamps, lexicographical
+    # order of the basename wins (.gpy-backup. over .backup.) (#670).
+    TAB=$(printf '\t')
+    eligible_backups=""
+    for candidate in "$fish_prompt_file".backup.* "$fish_prompt_file".gpy-backup.*; do
+        [ -f "$candidate" ] || continue
+        [ ! -L "$candidate" ] || continue
+        bname="${candidate##*/}"
+        case "$bname" in
+            fish_prompt.fish.backup.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]|\
+            fish_prompt.fish.gpy-backup.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9])
+                stamp="${bname##*.}"
+                entry="${stamp}${TAB}${bname}${TAB}${candidate}"
+                if [ -z "$eligible_backups" ]; then
+                    eligible_backups="$entry"
+                else
+                    eligible_backups="${eligible_backups}
+${entry}"
+                fi
+                ;;
+        esac
+    done
+
+    if [ -n "$eligible_backups" ]; then
+        winner_line=$(printf "%s\n" "$eligible_backups" | LC_ALL=C sort | tail -n1)
+        latest_backup=$(printf "%s" "$winner_line" | cut -f3-)
+        mv "$latest_backup" "$fish_prompt_file"
+        echo "♻️  Restored backup prompt from $latest_backup"
+    fi
+fi
+
+if [ -f "$fish_conf_d" ]; then
+    rm -f "$fish_conf_d"
+    echo "✅ Removed GPY initialization script from $fish_conf_d"
+fi
+
+for completion in "$fish_completions_dir/gpy.fish" "$fish_completions_dir/gpy-dynamic.fish"; do
+    if [ -f "$completion" ] || [ -L "$completion" ]; then
+        rm -f "$completion"
+        echo "✅ Removed completion file: $completion"
+    fi
+done
+
+# Remove GPY init blocks from all supported startup files (#671)
+for rc_file in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.zshrc" "$fish_config_dir/config.fish"; do
+    clean_rc_file "$rc_file"
+done
+
+# Stop agent and supervisor processes
 echo ""
 echo "🛑 Stopping GPY processes..."
+
+# Stop the Fish supervisor loop if recorded PID matches (#671, mirroring uninstall.fish)
+supervisor_pidfile="$runtime_root/supervisor.pid"
+if [ -f "$supervisor_pidfile" ]; then
+    supervisor_pid=$(cat "$supervisor_pidfile" 2>/dev/null | tr -d '[:space:]')
+    case "$supervisor_pid" in
+        ''|*[!0-9]*) ;;
+        *)
+            if kill -0 "$supervisor_pid" 2>/dev/null; then
+                cmd=$(ps -o command= -p "$supervisor_pid" 2>/dev/null || true)
+                case "$cmd" in
+                    *__gpy_agent_supervisor_loop*)
+                        kill "$supervisor_pid" 2>/dev/null || true
+                        i=0
+                        while [ $i -lt 20 ]; do
+                            kill -0 "$supervisor_pid" 2>/dev/null || break
+                            sleep 0.1 2>/dev/null || sleep 1
+                            i=$((i + 1))
+                        done
+                        if kill -0 "$supervisor_pid" 2>/dev/null; then
+                            kill -9 "$supervisor_pid" 2>/dev/null || true
+                        fi
+                        echo "✅ Stopped supervisor process $supervisor_pid"
+                        ;;
+                    *)
+                        echo "🤔 PID $supervisor_pid in $supervisor_pidfile is not a GPY supervisor; leaving it alone"
+                        ;;
+                esac
+            fi
+            ;;
+    esac
+    rm -f "$supervisor_pidfile" 2>/dev/null
+fi
 
 if [ -x "$agent_binary" ]; then
     "$agent_binary" stop 2>/dev/null || true
     echo "✅ Sent stop command to agent"
 fi
-
-# `gpy-agent stop` already waits (bounded) for the agent to go away.
-
 # Remove agent binary
 if [ -f "$agent_binary" ]; then
     rm -f "$agent_binary"
@@ -183,8 +343,8 @@ echo "🎉 Uninstall complete!"
 echo "🔄 Restart your shell to see changes."
 echo ""
 echo "📊 Removed:"
-echo "  • $current_shell integration files and completions"
+echo "  • Shell integration files and completions (bash, zsh, fish)"
 echo "  • Agent and CLI binaries (and their backups)"
 echo "  • Configuration files"
 echo "  • Cache and runtime files"
-echo "  • Running agent process"
+echo "  • Running agent and supervisor processes"
