@@ -89,7 +89,7 @@ __gpy_ipc_endpoint() {
 
 # The agent's runtime root (crate::paths::runtime_root_for): where the
 # socket lives by default and where the agent looks for the shell PIDs it
-# nudges with SIGALRM after a restart (#638). Mirrors fish's
+# nudges after a restart (#638). Mirrors fish's
 # __gpy_runtime_root, including the same fallbacks.
 __gpy_runtime_root() {
     local home
@@ -108,9 +108,10 @@ __gpy_runtime_root() {
     echo "/tmp/gpy"
 }
 
-# Directory of shell PIDs the agent wakes with SIGALRM when it (re)starts,
-# and this shell's own entry in it. The file name IS the PID the agent
-# signals, so it must be numeric.
+# Directory of shell PIDs the agent wakes when it (re)starts, and this
+# shell's own entry in it. The file name IS the PID the agent signals, so it
+# must be numeric. The agent's `<pid>.reload` / `<pid>.reregister` doorbell
+# flags (#674) live next to it.
 __gpy_shell_registry_dir() {
     echo "$(__gpy_runtime_root)/shells"
 }
@@ -120,17 +121,22 @@ __gpy_shell_registry_file() {
 
 # Record this shell so an agent restart can nudge it to re-register (#638):
 # the agent only signals PIDs it finds here, and until this landed Bash never
-# wrote one, so an open Bash shell stopped receiving SIGUSR1/SIGUSR2 for the
-# rest of its life after any agent restart.
+# wrote one, so an open Bash shell stopped receiving agent notifications for
+# the rest of its life after any agent restart. Also caches the doorbell flag
+# base path so __gpy_handle_doorbell checks flags without forking.
+__gpy_shell_flag_base=""
 __gpy_track_shell_for_agent_recovery() {
     local dir
     dir="$(__gpy_shell_registry_dir)"
+    __gpy_shell_flag_base="$dir/$$"
     mkdir -p "$dir" 2>/dev/null || return 0
     echo "$$" >"$dir/$$" 2>/dev/null || true
 }
 
 __gpy_untrack_shell_for_agent_recovery() {
-    rm -f "$(__gpy_shell_registry_file)" 2>/dev/null || true
+    local file
+    file="$(__gpy_shell_registry_file)"
+    rm -f "$file" "$file.reload" "$file.reregister" 2>/dev/null || true
 }
 
 # Directory holding the agent's pre-rendered instant-prompt cache files.
@@ -248,7 +254,7 @@ __gpy_send_json() {
 }
 
 # Expected protocol version (must match gpy-agent/src/ipc/protocol.rs::PROTOCOL_VERSION)
-GPY_EXPECTED_PROTOCOL_VERSION=1
+GPY_EXPECTED_PROTOCOL_VERSION=2
 
 # Check protocol version compatibility with the running agent.
 #
@@ -384,7 +390,7 @@ __gpy_read_instant_cache() {
     # ANSI bakes in the fg:prev_bg opening chevron, so the cache is keyed by the
     # previous-segment background too. Fall back to the context-free ("none")
     # render when no context-specific entry exists yet — the caller then triggers
-    # a refresh that populates the correct token file and repaints via SIGUSR1.
+    # a refresh that populates the correct token file and repaints via the doorbell.
     local cache_key token
     cache_key="$(__gpy_path_to_cache_key "$key_path")"
     token="$(__gpy_prev_bg_token "$prev_bg")"
@@ -481,7 +487,7 @@ __gpy_json_flags_tail() {
 
 # Send a data op directly to the agent via IPC, bypassing the instant cache.
 # Used for background refreshes after serving a stale cache entry. No oneshot
-# fallback: without a running daemon there is no SIGUSR1 repaint, so the
+# fallback: without a running daemon there is no agent repaint, so the
 # already-served stale prompt simply remains until the agent returns.
 __gpy_trigger_data_refresh() {
     local op="$1"

@@ -133,16 +133,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::time::timeout;
 
-#[cfg(unix)]
-fn setup_signal_handler() {
-    unsafe {
-        libc::signal(libc::SIGUSR1, libc::SIG_IGN);
-    }
-}
-
-#[cfg(not(unix))]
-fn setup_signal_handler() {}
-
 // Import test fixtures from common module
 mod fixtures;
 use crate::fixtures::TestRepo;
@@ -374,7 +364,6 @@ impl IntegrationTestServer {
     ///
     /// Returns error if agent fails to start or socket setup fails
     pub async fn with_config(config: TestConfig) -> io::Result<Self> {
-        setup_signal_handler();
         // Create temporary git repository
         let repo = TestRepo::new();
 

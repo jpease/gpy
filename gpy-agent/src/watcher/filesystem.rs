@@ -1213,7 +1213,7 @@ impl FileSystemWatcher {
     /// `should_trigger_update` faithfully classifies and attributes to
     /// `<main>` via `find_git_root`. `handle_file_event` has no watched-repo
     /// gate, so delivering that runs a full git capture round on a repository no
-    /// shell is registered for: a cache write nobody reads and a SIGUSR1 with no
+    /// shell is registered for: a cache write nobody reads and a doorbell with no
     /// recipient. The `refs/heads` route matters most — every commit made *in*
     /// the worktree takes it.
     ///
@@ -4767,7 +4767,7 @@ mod tests {
 }
 
 // Design reference (see docs/ARCHITECTURE.md § File Watching):
-// - notify crate with 100ms debouncer drives SIGUSR1 updates for prompt refreshes
+// - notify crate with 100ms debouncer drives repaint-doorbell updates for prompt refreshes
 // - Filters focus on git metadata, config, and language signals while skipping heavy dirs
 // - Expected characteristics: ~0.1% idle CPU, sub-50ms latency, +2–5MB RSS for watchers
 // - Events flow into FileEvent and ultimately SignalHandler::trigger_update for subscribed shells

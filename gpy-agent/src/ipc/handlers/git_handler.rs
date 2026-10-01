@@ -55,7 +55,7 @@ struct GitStatusJob {
 }
 
 /// Write the instant-prompt cache for `status` and repaint live shells (forced
-/// SIGUSR1) only when the rendered output actually changed.
+/// doorbell) only when the rendered output actually changed.
 ///
 /// The single publish-and-repaint implementation for git status (#587): the
 /// synchronous IPC request path, the background single-flight job, and the
@@ -481,7 +481,7 @@ mod tests {
 
     /// The serve-stale repaint contract (#160).
     ///
-    /// Writing the instant cache fires a forced SIGUSR1 only when the rendered
+    /// Writing the instant cache rings a forced repaint doorbell only when the rendered
     /// output actually changed, so no-op refreshes never wake terminals
     /// (preserving #145/#146 clock gating).
     #[test]

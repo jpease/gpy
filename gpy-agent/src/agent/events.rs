@@ -395,7 +395,7 @@ enum LanguageRefreshMode {
 const LANGUAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Refresh `root`'s detected languages according to `mode`, write its
-/// instant-cache prompt variants, and repaint (SIGUSR1) when a cache file's
+/// instant-cache prompt variants, and repaint (SIGURG doorbell) when a cache file's
 /// content actually changed.
 ///
 /// The single writer behind all three language-cache refresh triggers: a
@@ -465,7 +465,7 @@ fn refresh_language_for(
     }
 
     if wrote {
-        ctx.registry.notify_sigusr1_force(Some(root));
+        ctx.registry.notify_repaint_force(Some(root));
     }
     wrote
 }
@@ -582,7 +582,7 @@ struct RepoRefresh {
 ///
 /// ## Why a failed write suppresses the repaint (#446)
 ///
-/// A SIGUSR1 does not push fresh content to shells — it only asks the shell
+/// A repaint doorbell does not push fresh content to shells — it only asks the shell
 /// to re-render its *next* prompt from whatever is currently on disk in the
 /// instant-prompt cache file (see `fish/core/ipc.fish`'s repaint-trigger
 /// handler and `fish/segments/git.fish`'s serve-stale fast path, which reads
@@ -641,10 +641,10 @@ pub(super) fn refresh_and_notify_if_changed(
     if should_notify {
         debug_log!(
             "agent",
-            "Status changed for {}, notifying clients via SIGUSR1 (forced)",
+            "Status changed for {}, notifying clients via SIGURG (forced)",
             git_root.display()
         );
-        ctx.registry.notify_sigusr1_force(Some(git_root));
+        ctx.registry.notify_repaint_force(Some(git_root));
     } else {
         debug_log!(
             "agent",
@@ -1037,11 +1037,11 @@ pub(super) fn create_watcher(
         .callback(Box::new(move |event: DebouncedEvent| {
             // #480: gate `FileEvent::Git` on "would a refresh reach anybody",
             // via `ClientDirectory::has_subscriber` -- the same targeting
-            // rule `notify_sigusr1*` itself applies, so this can never
+            // rule `notify_repaint*` itself applies, so this can never
             // silently drift from what a refresh's own notification would
             // deliver. A repo with no registered (or ancestor-registered)
             // client would spend a full git capture round producing a cache
-            // write nobody reads and a SIGUSR1 with no recipient.
+            // write nobody reads and a doorbell with no recipient.
             //
             // This lives here -- the watcher callback, the single production
             // entry point from the watcher into the refresh pipeline -- and
@@ -1120,7 +1120,7 @@ fn maybe_switch_theme(
 
 /// Whether a config reload changes anything that affects the RENDERED
 /// prompt, and so should nudge already-open shells to redraw immediately
-/// (via SIGUSR1/SIGUSR2) rather than waiting for the next command.
+/// (via the reload doorbell) rather than waiting for the next command.
 /// `ConfigManager::get()` always serves the freshest config regardless, so a
 /// field missing from this classification only delays a redraw -- it never
 /// causes incorrect data to be shown.
@@ -1305,8 +1305,7 @@ fn sync_watcher_state(
         }
         drop(watcher_guard);
         if refresh_required {
-            ctx.registry.notify_sigusr1(None);
-            ctx.registry.notify_sigusr2();
+            ctx.registry.notify_reload();
         }
         return;
     }
@@ -1344,8 +1343,7 @@ fn sync_watcher_state(
     drop(watcher_guard);
 
     if refresh_required {
-        ctx.registry.notify_sigusr1_force(None);
-        ctx.registry.notify_sigusr2();
+        ctx.registry.notify_reload();
     }
 }
 
@@ -1374,7 +1372,7 @@ pub(super) fn handle_config_reload(
     }
 
     // Write theme export cache before notifying shells (ordering guarantee: cache
-    // must be on disk before SIGUSR2 is sent so shells can source it immediately).
+    // must be on disk before the reload doorbell so shells can source it immediately).
     if let Err(e) = crate::cache::write_theme_export_cache(&ctx.theme_manager, new_config) {
         debug_log!("agent", "Failed to write theme export cache: {}", e);
     }
@@ -1389,7 +1387,7 @@ pub(super) fn handle_config_reload(
     let refresh_required = config_refresh_required(old_config, new_config);
 
     // Proactively regenerate instant-prompt caches with the new theme *before* any
-    // SIGUSR2 so the repaint hits warm caches and recolors atomically — no
+    // reload doorbell so the repaint hits warm caches and recolors atomically — no
     // disappear/reappear flicker for the async-rendered git/language segments
     // (#223). Only re-renders already-cached data; never adds synchronous
     // detection to the reload path. Gated on `refresh_required` because that is
@@ -1400,8 +1398,7 @@ pub(super) fn handle_config_reload(
 
     if disable_watcher {
         if refresh_required {
-            ctx.registry.notify_sigusr1(None);
-            ctx.registry.notify_sigusr2();
+            ctx.registry.notify_reload();
         }
         return Ok(());
     }
@@ -1442,7 +1439,7 @@ pub(super) fn handle_config_reload(
 /// (subprocesses), which MUST NOT run on this event-loop path — a single hung or
 /// cold detector would block the reload handler, wedging live updates and
 /// `gpy-agent stop` (#223 guarantee: no synchronous detection on the render path).
-/// Language is therefore deferred to a background job that repaints via SIGUSR1.
+/// Language is therefore deferred to a background job that repaints via the doorbell.
 fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, config: &Config) {
     let theme = ctx.theme_manager.get();
     let palette = ctx.palette_cache.get();
@@ -1512,7 +1509,7 @@ fn schedule_language_cache_regen(ctx: &AgentContext, lang_root: &Path, config: &
 
 /// Synchronous body of the deferred language regeneration: re-render the cached
 /// language data with the active theme into the context-free fallback plus the
-/// new theme's `prev_bg` token, then fire SIGUSR1 when the output changed.
+/// new theme's `prev_bg` token, then ring the repaint doorbell when the output changed.
 ///
 /// Returns `true` when a cache file changed (a repaint was warranted). Separated
 /// from [`schedule_language_cache_regen`] so it can be unit-tested without a thread.
@@ -2506,15 +2503,9 @@ mod tests {
         // The load-bearing half: proves the gate isn't simply swallowing
         // everything, and fails if the condition were inverted.
         //
-        // A nonexistent PID, deliberately NOT `std::process::id()`: a status
-        // change on a genuinely subscribed repo reaches
-        // `notify_sigusr1_force`, which sends a real `kill()` -- SIGUSR1's
-        // default disposition is terminate (see `ClientInfo::started_at`'s
-        // doc comment / #319), so registering this test's own PID would risk
-        // killing the test process itself the moment the gate correctly lets
-        // the refresh through. `ClientDirectory::notify_prunes_pid_...` and
-        // `notify_does_not_block_signal_when_identity_unknown` establish the
-        // same nonexistent-PID convention for the same reason.
+        // A nonexistent PID: a status change on a genuinely subscribed repo
+        // reaches `notify_repaint_force`, whose `kill()` prunes it via ESRCH,
+        // keeping the test process out of the delivery path entirely.
         let fake_pid = 999_999_u32;
         ctx.registry.register(fake_pid, Some(repo.clone()));
         fs::write(repo.join("b.txt"), "two\n").expect("write b.txt");
@@ -3132,11 +3123,11 @@ mod tests {
 
     /// #223: a theme change must proactively regenerate the instant-prompt caches
     /// for an active (registered, warm) path — using the already-cached git and
-    /// language data and the new theme — so the SIGUSR2 repaint hits warm caches
+    /// language data and the new theme — so the reload repaint hits warm caches
     /// and recolors atomically instead of cold-missing (disappear/reappear flicker).
     ///
     /// Drives the regeneration helper that `handle_config_reload` runs before any
-    /// SIGUSR2, with a hermetic instant cache and the embedded builtin theme.
+    /// reload doorbell, with a hermetic instant cache and the embedded builtin theme.
     ///
     /// Git renders from cached status (no subprocess) and is regenerated
     /// synchronously; language detection is deferred off the event loop (see
@@ -3254,7 +3245,7 @@ mod tests {
 
     /// #611: `refresh_language_for` is the single writer behind all three
     /// language-cache refresh triggers, and each of them used to call
-    /// `notify_sigusr1_force` unconditionally; now they all go through the
+    /// `notify_repaint_force` unconditionally; now they all go through the
     /// `if wrote { notify }` gate this function applies. Pins that gate
     /// directly: a render that actually changes cache-file content must
     /// notify, and a repeat render of the exact same content must not.
@@ -3363,7 +3354,7 @@ mod tests {
         let ctx = make_hermetic_ctx(cache_tmp.path());
         let mut config = Config::default();
         // Disable the async language-refresh side channel: it calls
-        // `notify_sigusr1_force` itself on a background thread (see
+        // `notify_repaint_force` itself on a background thread (see
         // `schedule_language_refresh_from_git_status`), independent of the
         // instant git-cache write outcome under test here. Left enabled it
         // would race with this test's synchronous notification counts.

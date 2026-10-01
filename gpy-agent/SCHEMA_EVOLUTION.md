@@ -31,6 +31,23 @@ Changes are listed newest-first within each release group.
 
 ---
 
+### IPC protocol — single SIGURG doorbell for shell notifications (BREAKING, #674)
+
+| Property | Value |
+|---|---|
+| Scope | Agent → shell notification channel (`ClientDirectory::notify_repaint*`, `notify_reload`, restart nudge) |
+| Change type | BREAKING — `PROTOCOL_VERSION` 1 → 2 |
+| IPC protocol | Message/Response enums unchanged; the signal channel changed. The agent now sends only SIGURG (default disposition: ignore) and carries meaning in empty flag files under `<runtime_root>/shells/`: `<pid>.reload` (reload theme/config) and `<pid>.reregister` (forget registration and register again), each written before the signal. The old runtime-root restart marker file is no longer written. |
+| Config schema | No change |
+
+**What changed.** A shell that `exec`s itself keeps its PID and stays
+registered, so the agent's former per-purpose signals (all default-terminate)
+could kill it before it installed handlers. SIGURG is ignored by default, so an
+unprepared shell is unaffected; shells built for protocol 1 no longer receive
+repaint/reload notifications and must be upgraded together with the agent.
+
+---
+
 ### Config schema — bounded supervisor ints (BREAKING, #597)
 
 | Property | Value |
@@ -70,7 +87,7 @@ No migration tooling is provided for this narrow case.
 |---|---|
 | Scope | `Message::LanguageDetect`, `ShellIpcMessage` (`{"op":"lang",...}` shorthand), fish/bash/zsh `lang` payload builders |
 | Change type | MINOR — new optional `virtual_env: Option<String>`, `#[serde(default, skip_serializing_if = "Option::is_none")]` |
-| IPC protocol | Additive — older clients that never send it deserialize unchanged (`None`); agents ignore it when absent. `PROTOCOL_VERSION` unchanged at 1 |
+| IPC protocol | Additive — older clients that never send it deserialize unchanged (`None`); agents ignore it when absent. `PROTOCOL_VERSION` unchanged (1 at the time) |
 | Config schema | No change |
 
 **What changed.** The agent daemon never inherits an interactive shell's activated

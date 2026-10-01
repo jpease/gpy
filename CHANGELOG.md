@@ -254,6 +254,17 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Fixed
 
+- `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
+  (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
+  registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
+  default) could hit it before its handlers were installed. Agent→shell
+  notifications now use a single SIGURG (ignored by default) plus empty
+  `<pid>.reload` / `<pid>.reregister` flag files in the runtime `shells/`
+  directory; a plain SIGURG means repaint. The IPC protocol version is now 2:
+  a running agent from an older version is restarted by the shell's protocol
+  check. The `agent.restart.marker` file is removed. See
+  [ADR-0007](docs/dev/adr/adr-0007-sigurg-doorbell-notifications.md).
+
 - Fish uninstaller prompt preservation (#667): `scripts/uninstall.fish` now
   checks whether the destination `fish_prompt.fish` already exists (as an
   unrelated custom prompt, symlink, directory, or other object) before restoring

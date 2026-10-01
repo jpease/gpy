@@ -102,7 +102,7 @@ This document provides a comprehensive comparison of GPY against other leading s
 | Feature | GPY | Starship | p10k | Oh-My-Posh | Pure | Tide |
 |---------|-----|----------|------|------------|------|------|
 | **File Watching** | ✅ notify crate | ❌ No | ✅ gitstatus | ❌ No | ❌ No | ❌ No |
-| **Async Updates** | ✅ SIGUSR1 | ❌ No | ✅ ZLE | ❌ No | ❌ No | ❌ No |
+| **Async Updates** | ✅ SIGURG | ❌ No | ✅ ZLE | ❌ No | ❌ No | ❌ No |
 | **Config Changes** | ✅ Live | ✅ Live | ✅ Live | ✅ Live | Manual | Manual |
 | **Debouncing** | ✅ 100ms | N/A | ✅ Yes | N/A | N/A | N/A |
 | **Prompt Refresh Latency** | 50-250ms⁹ | On enter only | <100ms | On enter only | On enter only | On enter only |
@@ -156,7 +156,7 @@ This document provides a comprehensive comparison of GPY against other leading s
 - ✅ **Confidence-based language detection** - Only prompt that scores languages by dominance
 - ✅ **Smart filtering** - Show primary language only or top-N by confidence
 - ✅ **Trace file suppression** - Hide languages below configurable threshold (e.g., <5%)
-- ✅ **Live filesystem updates** - Prompt updates without pressing Enter (via file watching + SIGUSR1)
+- ✅ **Live filesystem updates** - Prompt updates without pressing Enter (via file watching + SIGURG doorbell)
 - ✅ **Proven faster than Starship** - 6% faster on benchmarked real-world repos (n=1000, p<0.001)
 - ✅ **Hybrid architecture** - Best of both worlds (fast shell + powerful Rust agent)
 - ✅ **Native git optimizations** - Leverages fsmonitor, untracked cache, sparse-checkout

@@ -79,7 +79,7 @@ s.bind(sys.argv[1])
 s.listen(1)
 conn, _ = s.accept()
 conn.recv(4096)
-conn.sendall(b"{\"AgentStatus\":{\"version\":\"0.1.0\",\"protocol_version\":1,\"watched_repos\":0,\"registered_clients\":0,\"cache_entries\":0}}\n")
+conn.sendall(b"{\"AgentStatus\":{\"version\":\"0.1.0\",\"protocol_version\":2,\"watched_repos\":0,\"registered_clients\":0,\"cache_entries\":0}}\n")
 conn.close()
 ' "$sock2" &
 listener2_pid=$!

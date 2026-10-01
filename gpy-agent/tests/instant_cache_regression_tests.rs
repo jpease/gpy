@@ -58,34 +58,6 @@ fn palette_cache_for(config_manager: &Arc<ConfigManager>) -> Arc<gpy_agent::pale
     ))
 }
 
-/// Ignore SIGUSR1 for a test that registers its own pid as a client, returning
-/// the previous disposition for [`restore_sigusr1`].
-///
-/// Publishing a freshly scanned status now repaints live shells whenever the
-/// render changed (#587). A test that registers `std::process::id()` is
-/// therefore signalled by the code under test, and SIGUSR1's default
-/// disposition is termination -- which would kill the test binary rather than
-/// fail an assertion. Mirrors the install/restore convention in
-/// `signal_tests.rs`.
-#[cfg(unix)]
-fn ignore_sigusr1() -> nix::sys::signal::SigAction {
-    let ignore = nix::sys::signal::SigAction::new(
-        nix::sys::signal::SigHandler::SigIgn,
-        nix::sys::signal::SaFlags::empty(),
-        nix::sys::signal::SigSet::empty(),
-    );
-    unsafe { nix::sys::signal::sigaction(nix::sys::signal::Signal::SIGUSR1, &ignore) }
-        .expect("install SIGUSR1 ignore")
-}
-
-/// Restore the SIGUSR1 disposition captured by [`ignore_sigusr1`], so other
-/// tests sharing this binary are unaffected.
-#[cfg(unix)]
-fn restore_sigusr1(previous: nix::sys::signal::SigAction) {
-    unsafe { nix::sys::signal::sigaction(nix::sys::signal::Signal::SIGUSR1, &previous) }
-        .expect("restore SIGUSR1 disposition");
-}
-
 /// Bundle the handles every publish-and-repaint site shares (#587).
 ///
 /// Uses the embedded builtin theme so the tests stay hermetic: a stale on-disk
@@ -281,9 +253,6 @@ fn test_client_handler_triggers_initial_scan_on_registration() {
     use gpy_agent::ipc::{LatencyTracker, registry::ClientDirectory};
     use std::sync::Mutex;
 
-    #[cfg(unix)]
-    let previous_sigusr1 = ignore_sigusr1();
-
     let repo = create_git_repo();
     let repo_path = repo.path().to_str().expect("valid utf8 path");
 
@@ -343,9 +312,6 @@ fn test_client_handler_triggers_initial_scan_on_registration() {
         !cache_content.is_empty(),
         "Cache file should have content from initial scan"
     );
-
-    #[cfg(unix)]
-    restore_sigusr1(previous_sigusr1);
 }
 
 /// Regression test: Verify instant-prompt cache is updated when git status changes

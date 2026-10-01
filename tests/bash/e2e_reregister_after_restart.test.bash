@@ -2,18 +2,23 @@
 # tests/bash/e2e_reregister_after_restart.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# An idle Bash shell re-registers after the agent restarts (#647 row 2, pins
-# #638).
+# A Bash shell re-registers after the agent restarts, at its next prompt
+# (#647 row 2, pins #638).
 #
-# When the agent (re)starts it sends SIGALRM to every PID recorded under
-# <runtime root>/shells/, and keeps nudging tracked shells that stay
-# unregistered. Bash never recorded its PID and had no SIGALRM handler, so an
-# open shell that stayed in one directory stopped receiving SIGUSR1/SIGUSR2
-# for the rest of its life after any restart. With a client registered and
-# idle (no keystrokes from here on):
-#   (a) `gpy-agent stop` then `gpy-agent start` on the same socket leaves the
-#       client registered again within 5 s;
-#   (b) a tracked-file edit then makes the agent notify via SIGUSR1 and
+# When the agent (re)starts it writes a `<pid>.reregister` flag for, and rings
+# the SIGURG doorbell of, every PID recorded under <runtime root>/shells/, and
+# keeps nudging tracked shells that stay unregistered. Bash never recorded
+# its PID and had no handler, so an open shell that stayed in one directory
+# stopped receiving agent notifications for the rest of its life after any
+# restart. Bash at an idle readline prompt defers a URG trap until readline
+# returns (measured: only SIGALRM, which readline handles itself, runs a trap
+# immediately, and SIGALRM would kill a handler-less `exec`ed shell), so the
+# re-registration happens on the next line, like Bash's live updates
+# (docs/user/bash-limitations.md). With a client registered:
+#   (a) `gpy-agent stop` then `gpy-agent start` on the same socket leaves a
+#       `<pid>.reregister` flag for the shell; one Enter then re-registers
+#       the client and consumes the flag;
+#   (b) a tracked-file edit then makes the agent notify via SIGURG and
 #       rewrite the instant cache (the shell is a live client again);
 #   (c) the shell's PID file exists under the runtime root's shells/ directory
 #       while it runs and is gone after `exit`.
@@ -47,7 +52,7 @@ else
     fail "no PID file for $client_pid under $shells_dir"
 fi
 
-# --- (a) restart the agent; the shell types nothing -----------------------------
+# --- (a) restart the agent, then one Enter ----------------------------------------
 registrations_before="$(grep -c "Registering client: PID=$client_pid," "$GPY_DEBUG_LOG")"
 scans_before="$(grep -c "Caching status for .*$(basename "$SHELL_E2E_REPO")" "$GPY_DEBUG_LOG" 2>/dev/null || true)"
 : "${scans_before:=0}"
@@ -56,14 +61,27 @@ shell_e2e_stop_agent
 # A restarted agent appends to the same debug log.
 shell_e2e_start_agent || { fail "agent did not restart"; shell_e2e_dump_transcript; exit 1; }
 
+flag_written() { [ -e "$shells_dir/$client_pid.reregister" ]; }
+if shell_e2e_poll 5 flag_written; then
+    pass "the restarted agent left a .reregister flag for the shell"
+else
+    fail "no .reregister flag for $client_pid after the restart"
+fi
+shell_e2e_send '\r'
 reregistered() {
     now="$(grep -c "Registering client: PID=$client_pid," "$GPY_DEBUG_LOG")"
     [ "${now:-0}" -gt "${registrations_before:-0}" ]
 }
 if shell_e2e_poll 5 reregistered; then
-    pass "the idle shell re-registered within 5 s of the restart (SIGALRM nudge)"
+    pass "the shell re-registered at its next prompt after the restart"
 else
-    fail "the idle shell did not re-register within 5 s of the restart"
+    fail "the shell did not re-register within 5 s of the next prompt"
+fi
+flag_consumed() { [ ! -e "$shells_dir/$client_pid.reregister" ]; }
+if shell_e2e_poll 5 flag_consumed; then
+    pass "the shell consumed its .reregister flag"
+else
+    fail "the .reregister flag is still present after re-registration"
 fi
 counted() { "$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep -q 'Registered Clients: 1'; }
 if shell_e2e_poll 5 counted; then
@@ -75,7 +93,7 @@ fi
 # --- (b) a change now reaches the shell as a live client ----------------------------
 # Re-registration triggers an initial scan of the repo; edit only after a
 # post-restart scan has cached the clean state. Whether the change then
-# reaches the shell through the watcher's SIGUSR1 or a request-triggered
+# reaches the shell through the watcher's SIGURG or a request-triggered
 # refresh is the agent's business; what must hold is that the re-registered
 # shell sees it.
 scanned() {

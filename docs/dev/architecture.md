@@ -18,8 +18,8 @@ GPY is a **two-process system** for creating fast, live-updating shell prompts a
 └───────────────────┘                  └──────────────────┘
        ↑                                        │
        │                                        │
-       └─────── SIGUSR1 signals ────────────────┘
-              (live updates)
+       └─────── SIGURG doorbell ────────────────┘
+              (live updates; ADR-0007)
 ```
 
 **Design Philosophy**: Keep the shell fast by offloading work to a persistent background agent. The agent provides a shell-agnostic IPC interface, allowing Fish, Zsh, and Bash to share the same backend.
@@ -33,14 +33,14 @@ GPY is a **two-process system** for creating fast, live-updating shell prompts a
 **Fish Shell** (`segments/`, `core/`, `functions/`):
 - Renders the prompt UI (ANSI codes, delimiters)
 - Makes IPC requests to agent for git/language data
-- Handles SIGUSR1 signals to trigger repaints
+- Handles the agent's SIGURG doorbell to repaint, reload or re-register
 - Falls back to oneshot mode if agent unavailable
 
 **Rust Agent** (`gpy-agent/src/`):
 - Runs as background daemon (started via `gpy start`)
 - Serves IPC requests over Unix domain socket
 - Watches filesystem for git changes
-- Sends SIGUSR1 to Fish processes for live updates
+- Sends SIGURG to shell processes for live updates
 - Maintains caches to avoid redundant git queries
 
 **Why this split?**
@@ -138,16 +138,17 @@ end
 
 #### Layer 2: Signal Handling (`core/signals.{fish,zsh,bash}`)
 
-**Responsibility**: Receive SIGUSR1/SIGUSR2 from agent, trigger prompt repaint
+**Responsibility**: Receive the agent's SIGURG doorbell, act on any flag file, repaint the prompt
 
-**Shell-agnostic behavior**:
-- SIGUSR1: Git/clock update → repaint prompt
-- SIGUSR2: Config/theme change → reload theme + repaint
+**Shell-agnostic behavior** ([ADR-0007](adr/adr-0007-sigurg-doorbell-notifications.md)): the agent sends only SIGURG, whose default disposition is ignore, so a shell without a handler (e.g. mid-`exec`) is never killed. Meaning travels in empty flag files under `<runtime_root>/shells/`, written by the agent before the signal. One handler:
+1. `<pid>.reregister` exists → remove it, re-register with the agent
+2. `<pid>.reload` exists → remove it, reload theme/config variables
+3. Always repaint (no flag = plain repaint: git/clock update)
 
 **Shell-specific implementation**:
-- Fish: `trap __gpy_sigusr1_handler SIGUSR1` → increment `$__gpy_repaint_trigger`
-- Zsh: `TRAPUSR1()` → `zle reset-prompt`
-- Bash: `trap '__gpy_sigusr1_handler' SIGUSR1` → `PROMPT_COMMAND` triggers repaint
+- Fish: one `--on-signal SIGURG` function → increment `$__gpy_repaint_trigger`
+- Zsh: `TRAPURG()` → re-render `PROMPT`, `zle reset-prompt` when zle is active
+- Bash: `trap '...' URG` → re-render `PS1` (visible at the next prompt)
 
 #### Layer 3: Segment Rendering (`segments/*.{fish,zsh,bash}`)
 
@@ -294,36 +295,28 @@ end
 
 ### Live Updates Across Shells
 
-**Challenge**: SIGUSR1 signal handling differs per shell
+**Challenge**: Signal handling and repaint primitives differ per shell
 
-**Solution**: Each shell provides a SIGUSR1 handler that triggers repaint
+**Solution**: Each shell installs one SIGURG handler that checks the flag files, then repaints with its own primitive
 
 ```fish
-# Fish (fish/core/signals.fish)
-function __gpy_sigusr1_handler --on-signal SIGUSR1
-    set -g __gpy_repaint_trigger (math $__gpy_repaint_trigger + 1)
-end
-
+# Fish: a function declared with --on-signal SIGURG
+#   handles <pid>.reregister / <pid>.reload, then:
+set -g __gpy_repaint_trigger (math $__gpy_repaint_trigger + 1)
 # Variable change triggers prompt repaint via hook
 ```
 
 ```zsh
-# Zsh (zsh/core/signals.zsh)
-TRAPUSR1() {
-    zle reset-prompt  # Zsh-specific repaint primitive
-}
+# Zsh: TRAPURG() handles the flags, re-renders PROMPT, then
+zle reset-prompt  # Zsh-specific repaint primitive
 ```
 
 ```bash
-# Bash (bash/core/signals.bash)
-__gpy_sigusr1_handler() {
-    # Bash has no clean "repaint" - rely on PROMPT_COMMAND
-    # Next prompt will render with fresh data
-}
-trap '__gpy_sigusr1_handler' SIGUSR1
+# Bash: trap '...' URG handles the flags, re-renders PS1.
+# Readline cannot redraw an idle prompt; the next prompt shows fresh data.
 ```
 
-**Key insight**: Agent sends signals the same way to all shells. Each shell handles the signal according to its capabilities.
+**Key insight**: Agent sends the same SIGURG to all shells. Each shell handles it according to its capabilities.
 
 ### Testing Multi-Shell Compatibility
 
@@ -362,18 +355,18 @@ Debouncer waits 100ms (coalesce rapid changes)
       ↓
 Agent runs git status, updates cache
       ↓
-Agent sends SIGUSR1 to all registered Fish PIDs
+Agent sends SIGURG to all registered shell PIDs in that repo
       ↓
-Terminal B: Receives SIGUSR1
+Terminal B: Receives SIGURG (no flag file → repaint)
       ↓
-Fish SIGUSR1 handler: commandline -f repaint
+Fish SIGURG handler bumps $__gpy_repaint_trigger → commandline -f repaint
       ↓
 Prompt redraws with fresh git status (✨ magic!)
 ```
 
 **Terminal A gets two updates**:
 1. Immediate: Prompt renders after command (shows stale cache)
-2. Async: ~200ms later, receives SIGUSR1 and updates to fresh status
+2. Async: ~200ms later, receives SIGURG and updates to fresh status
 
 ---
 
@@ -403,15 +396,15 @@ Prompt redraws with fresh git status (✨ magic!)
 └─────────────────────────────────────────────────────────────┘
                         ▲       │
                         │       │
-                    JSON│       │SIGUSR1
-                    IPC │       │signals
+                    JSON│       │SIGURG
+                    IPC │       │doorbell
                         │       ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                 Fish Shell Process(es)                      │
 │                                                              │
 │  fish_prompt() → segments → __gpy_request → socket          │
 │                                                              │
-│  SIGUSR1 handler → commandline -f repaint                   │
+│  SIGURG handler → flags → commandline -f repaint            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -472,7 +465,7 @@ tokio::select! {
 
     // Clock timer (1s or 60s intervals)
     _ = clock_timer.tick() => {
-        // Send SIGUSR1 to all Fish processes
+        // Send SIGURG (repaint) to all registered shells
     }
 }
 ```
@@ -528,7 +521,7 @@ This table documents which modules own which pieces of state and how state is sh
 | State | Owner Module | Type | Sharing Pattern | Access Rules | Examples |
 |-------|-------------|------|-----------------|--------------|----------|
 | **Git Status Cache** | `git::cache::GitStatusCache` | `HashMap<PathBuf, CacheEntry>` | `Arc<GitStatusCache>` | • Owner: Provides `get()`, `set()`, `invalidate()` methods<br>• Consumers: Read via `get()`, never direct mutation<br>• Thread-safe: Internal `Mutex` (all access serialized) | ✅ `cache.get(&repo)` in IPC handler<br>✅ `cache.set(&repo, status)` in agent<br>❌ Accessing internal HashMap directly |
-| **Client Registry** | `ipc::registry::ClientDirectory` | `HashMap<u32, ClientInfo>` | `Arc<ClientDirectory>` | • Owner: Provides `register()`, `unregister()`, `notify_*()` methods<br>• Consumers: Register clients, send signals<br>• Thread-safe: Internal `Mutex` (all access serialized) | ✅ `registry.register(pid, cwd)` in IPC<br>✅ `registry.notify_sigusr1()` in agent<br>❌ Direct PID manipulation |
+| **Client Registry** | `ipc::registry::ClientDirectory` | `HashMap<u32, ClientInfo>` | `Arc<ClientDirectory>` | • Owner: Provides `register()`, `unregister()`, `notify_*()` methods<br>• Consumers: Register clients, send signals<br>• Thread-safe: Internal `Mutex` (all access serialized) | ✅ `registry.register(pid, cwd)` in IPC<br>✅ `registry.notify_repaint()` in agent<br>❌ Direct PID manipulation |
 | **File Watcher** | `watcher::multi_repo::MultiRepoWatcher` | `notify::RecommendedWatcher` | `Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>` | • Owner: Agent module creates and destroys<br>• Consumers: IPC server registers repos via shared slot<br>• Lazy initialization pattern | ✅ `watcher.register(repo)` via agent<br>✅ Agent creates watcher in `Agent::new()`<br>❌ Creating watcher outside agent module |
 | **Configuration** | `config::manager::ConfigManager` | `Config` struct | `Arc<ConfigManager>` | • Owner: Provides `get_current()`, `reload()` methods<br>• Consumers: Read config, never cache locally<br>• Hot-reload: Config can change, always use fresh copy | ✅ `config_mgr.get_current()` in handlers<br>✅ `config_mgr.reload()` on file events<br>❌ Storing `Config` directly (stale data risk) |
 | **Theme State** | `theme::manager::ThemeManager` | `ThemeConfig` | `Arc<ThemeManager>` | • Owner: Loads themes, generates Fish exports<br>• Consumers: Call `export_fish()` for Fish vars, `get()` to clone config<br>• Hot-reload: Theme can change, always call methods | ✅ `theme_mgr.export_fish(&config)` in agent<br>✅ `let theme = theme_mgr.get()` to clone<br>❌ Caching theme colors locally |
@@ -541,7 +534,7 @@ This table documents which modules own which pieces of state and how state is sh
 ```rust
 // ✅ CORRECT: Use owner's API
 let status = git_cache.get(&repo_path);  // GitStatusCache::get()
-clients.notify_sigusr1();                // ClientDirectory::notify_sigusr1()
+clients.notify_repaint(None);            // ClientDirectory::notify_repaint()
 
 // ✅ CORRECT: Agent coordinates state updates
 impl Agent {
@@ -567,7 +560,7 @@ pub struct MyModule {
 impl GitCache {
     fn refresh(&self, repo: &Path, clients: &ClientDirectory) {
         // ...
-        clients.notify_sigusr1();  // Coordination belongs in agent module!
+        clients.notify_repaint(None);  // Coordination belongs in agent module!
     }
 }
 ```
@@ -706,11 +699,11 @@ DebouncedEvent → callback
 agent::handle_file_event():
   - Check if cache is fresh (cooldown window)
   - If stale: run git status, update cache
-  - Notify all registered clients with SIGUSR1
+  - Notify all registered clients with SIGURG
   ↓
-Fish processes receive SIGUSR1
+Fish processes receive SIGURG (no flag file)
   ↓
-__gpy_sigusr1_handler → commandline -f repaint
+SIGURG handler bumps $__gpy_repaint_trigger → commandline -f repaint
   ↓
 Prompt redraws (calls segment_git_render again)
 ```
@@ -731,9 +724,9 @@ Check: should_send_clock_signal()
   - If on minute boundary: send
   - Otherwise: skip
   ↓
-client_registry.notify_sigusr1(None)
+client_registry.notify_repaint(None)
   ↓
-All Fish processes receive SIGUSR1
+All shell processes receive SIGURG
   ↓
 Prompt repaints with updated time
 ```
@@ -756,7 +749,7 @@ watcher/debouncer.rs:87 - debounce 100ms
   ↓
 agent.rs:1065 - handle_file_event() invalidates cache
   ↓
-agent.rs:1102 - notify_clients_for_repo() sends SIGUSR1
+agent.rs:1102 - notify_clients_for_repo() sends SIGURG
   ↓
 All Fish processes repaint with fresh git status
   ↓
@@ -771,9 +764,9 @@ watcher/filesystem.rs:329 - config file event detected
   ↓
 agent.rs:1150 - handle_config_change() calls config_mgr.reload()
   ↓
-agent.rs:1165 - sends SIGUSR2 to all clients
+agent writes <pid>.reload for each client, then sends SIGURG (notify_reload)
   ↓
-Fish receives SIGUSR2 → sources fresh theme export
+Fish SIGURG handler sees the reload flag → sources fresh theme export
   ↓
 Tests: gpy-agent/tests/config_hot_reload_tests.rs:test_config_watcher_triggers_reload
        gpy-agent/tests/cli_integration_tests.rs:test_config_hot_reload_git_toggle
@@ -807,7 +800,7 @@ agent.rs:200 - create_clock_timer() ticks
   ↓
 agent.rs:850 - should_send_clock_signal() checks minute boundary
   ↓
-agent.rs:870 - client_registry.notify_sigusr1(None) sends to all clients
+agent.rs:870 - client_registry.notify_repaint(None) sends to all clients
   ↓
 All Fish terminals repaint with updated time
   ↓
@@ -831,7 +824,7 @@ Breakdown (cached paths):
 Performance validation: time fish_prompt
 ```
 
-**Key insight**: Most user-visible behaviors involve the pattern: filesystem event → watcher → agent cache update → SIGUSR1/SIGUSR2 → Fish repaint. The agent orchestrates this coordination in `agent.rs`, ensuring prompt updates stay fast via caching while remaining accurate via file watching.
+**Key insight**: Most user-visible behaviors involve the pattern: filesystem event → watcher → agent cache update → SIGURG (plus a `<pid>.reload` flag for config/theme) → Fish repaint. The agent orchestrates this coordination in `agent.rs`, ensuring prompt updates stay fast via caching while remaining accurate via file watching.
 
 ---
 
@@ -1003,7 +996,7 @@ Responses are operation-specific, but always valid JSON:
 
 #### 3. Client Registration (`"register"`)
 
-**Purpose**: Register a shell process for live updates (SIGUSR1/SIGUSR2)
+**Purpose**: Register a shell process for live updates (SIGURG doorbell)
 
 **Request**:
 ```json
@@ -1027,8 +1020,8 @@ Responses are operation-specific, but always valid JSON:
 **Behavior**:
 - Agent tracks PID in client registry
 - Agent starts watching `cwd` for git changes (if git repo)
-- Agent sends SIGUSR1 to PID when git status changes
-- Agent sends SIGUSR2 to PID when config/theme changes
+- Agent sends SIGURG to PID when git status changes (repaint)
+- Agent writes `<pid>.reload` then sends SIGURG when config/theme changes
 
 #### 4. Ping (`"ping"`)
 
@@ -1343,7 +1336,7 @@ Process request
 | IPC round-trip | < 1.5ms | ~0.04ms | Cached response |
 | Git status (fresh) | < 100ms | ~17ms | Depends on repo size |
 | Prompt render | < 50ms | 10-20ms | All segments |
-| Signal delivery | < 10ms | 2-5ms | SIGUSR1 to all clients |
+| Signal delivery | < 10ms | 2-5ms | SIGURG to all clients |
 
 ### Memory Footprint
 
@@ -1409,13 +1402,13 @@ show_seconds = false  # false = 60s updates, true = 1s updates
 
 **Critical Design Decisions**:
 
-1. **Unified Signal Path**: Both SIGUSR1 (git/clock) and SIGUSR2 (config/theme) use the same mechanism:
+1. **Unified Signal Path**: Repaints (git/clock) and reloads (config/theme) arrive as the same SIGURG; a reload is a SIGURG preceded by a `<pid>.reload` flag file:
    - Agent sends signal
    - Fish increments `__gpy_repaint_trigger`
    - Variable change handler calls `force-repaint`
    - No direct `commandline -f` calls from signal handlers (causes timing issues)
 
-2. **Agent Must Send SIGUSR2 for ALL Config Changes**: When config changes affect visible segments (like `git.enabled = false`), the agent MUST send SIGUSR2 even when disabling features. This ensures Fish reloads theme variables (`GPY_GIT_ENABLED`, `__enabled_segments`) so segments can correctly determine which is last.
+2. **Agent Must Send a Reload for ALL Config Changes**: When config changes affect visible segments (like `git.enabled = false`), the agent MUST send a reload notification even when disabling features. This ensures Fish reloads theme variables (`GPY_GIT_ENABLED`, `__enabled_segments`) so segments can correctly determine which is last.
 
 3. **Theme Loading Must Use Pipe-to-Source**:
    ```fish
@@ -1427,18 +1420,18 @@ show_seconds = false  # false = 60s updates, true = 1s updates
 
 **Common Pitfalls**:
 - Using `commandline -f execute` for repaints → creates blank prompt lines
-- Multiple SIGUSR handlers → causes double-repaints
-- Forgetting SIGUSR2 in disabled-feature paths → Fish keeps stale segment list
+- Multiple signal handlers → causes double-repaints
+- Forgetting the reload notification in disabled-feature paths → Fish keeps stale segment list
 - Using `eval` instead of `source` → theme variables don't get set
 
 **Test Coverage**:
 
 Hot-reload functionality is now comprehensively tested to prevent regressions:
 
-1. **SIGUSR2 Signal Delivery** (`config_hot_reload_tests.rs`):
-   - `test_sigusr2_sent_when_git_disabled` - Verifies SIGUSR2 sent when disabling git
-   - `test_sigusr2_sent_when_git_enabled` - Verifies SIGUSR2 sent when enabling git
-   - `test_sigusr2_sent_when_disabling_multiple_features` - Edge case with multiple feature toggles
+1. **Reload Notification Delivery** (`config_hot_reload_tests.rs`):
+   - Reload notification sent when disabling git
+   - Reload notification sent when enabling git
+   - Edge case with multiple feature toggles
 
 2. **Theme Export Updates** (`config_hot_reload_tests.rs`, `theme_manager_tests.rs`):
    - `test_theme_export_updates_enabled_segments_when_git_disabled` - Removes git from `__enabled_segments`
@@ -1453,7 +1446,7 @@ Hot-reload functionality is now comprehensively tested to prevent regressions:
    - `test_theme_export_delimiter_selection_after_git_disabled` - Verifies delimiter selection
    - `test_config_hot_reload_git_toggle_full_scenario` - End-to-end config toggle
 
-These tests specifically cover the critical bug where disabling `git.enabled` would not send SIGUSR2, causing Fish to use stale segment lists and incorrect delimiters.
+These tests specifically cover the critical bug where disabling `git.enabled` would not send a reload notification, causing Fish to use stale segment lists and incorrect delimiters.
 
 ---
 
@@ -1476,16 +1469,16 @@ These tests specifically cover the critical bug where disabling `git.enabled` wo
 **Rust** (gpy-agent/tests/):
 - `e2e_ipc_tests.rs`: Full request/response cycles with real agent
 - `agent_daemon_tests.rs`: Agent lifecycle, signal handling
-- `config_hot_reload_tests.rs`: SIGUSR2 delivery, theme export updates, config watcher (NEW)
+- `config_hot_reload_tests.rs`: Reload notification delivery, theme export updates, config watcher
 - `git_status_tests.rs`: Git detection, caching, error cases
 - `language_tests.rs`: Language detection, versioning
 - `watcher_tests.rs`: Debouncing, multi-repo coordination
 - `clock_timer_tests.rs`: Timer alignment, signal delivery
 
 **Fish** (tests/fish/):
-- `e2e_live_updates_signal.test.fish`: SIGUSR1 delivery, agent restart
+- `e2e_live_updates_signal.test.fish`: Repaint signal delivery, agent restart
 - `e2e_agent_autostart.test.fish`: Auto-start on Fish init
-- `sigusr1_repaint.test.fish`: Signal handler integration
+- `doorbell_signal.test.fish`: SIGURG handler, flag files, repaint trigger
 
 ### Coverage Goals
 
@@ -1506,7 +1499,7 @@ just lint   # moon run gpy-agent:clippy
 ./scripts/test_fish.sh
 
 # Interactive sessions on a real pseudo-terminal (idle repaint, two shells,
-# SIGUSR2 on a Fish client)
+# a config reload reaching a Fish client)
 fish tests/fish/e2e_interactive_session.test.fish
 ```
 
@@ -1601,6 +1594,7 @@ After you're comfortable with basics:
 - [segment-development.md](segment-development.md) - How to add segments
 - [caching-strategy.md](../archive/caching-strategy.md) - Cache invalidation deep dive (archived)
 - [ADR-0004: SIGUSR1 Live Updates](adr/adr-0004-sigusr1-live-updates.md) - Why the watcher signals shells instead of polling
+- [ADR-0007: SIGURG Doorbell](adr/adr-0007-sigurg-doorbell-notifications.md) - The current single-signal protocol and flag files
 - [CONTRIBUTING.md § Quality Gates](../../CONTRIBUTING.md#quality-gates) - How to run every suite
 - [concepts/git_status.concept.toml](concepts/git_status.concept.toml) - Example formal concept specification (demonstrates LLM-optimized module specs; other modules intentionally omitted to avoid over-engineering)
 

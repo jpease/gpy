@@ -134,7 +134,7 @@ end
 # fish` synchronously and sourcing its output. This is the single "how do we
 # get the current theme's fish variables into this shell" primitive shared
 # by shell startup (__gpy_load_theme), the manual reload command
-# (__gpy_reload_theme / prompt-reload), and the agent's SIGUSR2 hot-reload
+# (__gpy_reload_theme / prompt-reload), and the agent's .reload doorbell
 # handler (#576) -- it used to be hand-copied three times and drifted.
 #
 # Returns the status of whichever path ran (source's status, the spawned
@@ -176,8 +176,9 @@ function __gpy_load_theme
 end
 
 # Config and theme change detection is handled by the agent's file watcher.
-# The agent watches config.toml and theme files, sending SIGUSR2 when they change.
-# SIGUSR2 handler loads fresh theme variables and calls force-repaint directly.
+# The agent watches config.toml and theme files; on change it creates this
+# shell's .reload flag and rings SIGURG. The doorbell handler (core/ipc.fish)
+# loads fresh theme variables and calls force-repaint directly.
 # This ensures a single, unified hot-reload path for all changes
 # (config, theme, git, clock all use the same signal-based mechanism).
 
@@ -212,7 +213,7 @@ end
 # init (__gpy_load_segments above); fish_prompt silently skips any segment
 # whose detect function doesn't exist, so a theme/config reload that enables
 # a segment the shell didn't start with must load it here. Called only from
-# the SIGUSR2 handler and __gpy_reload_theme — never the per-prompt hot path.
+# the agent reload path (__gpy_apply_agent_reload) and __gpy_reload_theme — never the per-prompt hot path.
 function __gpy_ensure_segments_loaded --description 'source segment files newly added to __enabled_segments'
     for segment in $__enabled_segments
         functions -q segment_{$segment}_detect; and continue
@@ -330,7 +331,7 @@ function __gpy_reload_theme --description 'reload GPY theme from config (interna
     # colors in place, then running prompt-reload) must not leave a stale
     # cached render behind, even though the cache key -- which is keyed on
     # theme NAME, not content -- would otherwise still match (#576: this
-    # clear was missing here even though __gpy_sigusr2_handler already had
+    # clear was missing here even though the agent reload path already had
     # it, so a manual reload silently under-invalidated compared to the
     # automatic one).
     set -e __gpy_char_cache_key
@@ -358,7 +359,7 @@ function prompt-reload --description 'manually reload GPY theme and config (for 
 end
 
 # --- Signal Handling for Live Repainting ---
-# SIGUSR1 handler is defined in core/ipc.fish
+# The SIGURG doorbell handler is defined in core/ipc.fish
 
 # Initialize configuration - use defaults to avoid hanging during startup
 # Agent communication is handled lazily when needed, not during initialization

@@ -38,7 +38,7 @@ end
 # The warm path reads the agent-maintained instant cache (0ms) and never blocks
 # the prompt on IPC or one-shot git. A stale entry is displayed immediately and
 # refreshed in the background; a cold miss omits the segment and repaints once
-# the agent produces data (via SIGUSR1).
+# the agent produces data (via the SIGURG repaint doorbell).
 function segment_git_render --argument-names is_last is_first
     # A caller that passes fewer than 2 args (some tests call this with none,
     # to simulate a middle-of-prompt render) leaves the corresponding
@@ -95,7 +95,7 @@ function segment_git_render --argument-names is_last is_first
 
         # Agent unreachable, or the query exceeded budget / returned empty:
         # keep today's behavior -- omit the segment and refresh in the
-        # background. The agent repaints via SIGUSR1 when the data lands.
+        # background. The agent repaints via SIGURG when the data lands.
         # Omitting output is a successful render, so always return 0.
         __gpy_maybe_refresh git "$root" "$cache_suffix" "$is_last" "$prev_bg" "$is_first"
         return 0
@@ -133,7 +133,7 @@ function segment_git_render --argument-names is_last is_first
     #    else -- no socket probe, no added cost.
     #
     #    Stale entry: serve-stale-first (#160) shows the stale value and refreshes
-    #    in the background, relying on the agent to SIGUSR1 a repaint once it
+    #    in the background, relying on the agent to SIGURG a repaint once it
     #    recomputes. That recovery only works while the agent is UP; with the
     #    agent DOWN the background refresh reaches no listener, so the stale value
     #    would be shown indefinitely -- the prompt strands on the old working-tree
@@ -148,13 +148,13 @@ function segment_git_render --argument-names is_last is_first
     #    idle shell (one that never renders a prompt) is only corrected on its
     #    next prompt render or the agent's ~45s reconcile push -- there is no
     #    timer that repaints an idle shell on its own. After an agent RESTART an
-    #    idle shell still converges promptly via the existing SIGALRM path
-    #    (__gpy_sigalrm_handler -> re-register + force-repaint); see ipc.fish.
+    #    idle shell still converges promptly via the .reregister doorbell
+    #    (__gpy_doorbell_handler -> re-register + force-repaint); see ipc.fish.
     if not __gpy_cache_status_stale $cache_status
         printf '%s' "$rendered_output"
     else
         if test -S (__gpy_ipc_endpoint)
-            # Agent up: serve stale now, refresh in the background (SIGUSR1
+            # Agent up: serve stale now, refresh in the background (SIGURG
             # repaints iff the recomputed output changed). No flicker; the only
             # cost added over the fresh path is the single `test -S` stat above.
             printf '%s' "$rendered_output"

@@ -39,7 +39,7 @@ __gpy_registered=""
 __gpy_last_workspace=""
 
 # Character/directory render memoization (#343): keyed by the full input
-# tuple + theme identity, cleared on SIGUSR2 (bash/core/signals.bash). A cache
+# tuple + theme identity, cleared on reload (bash/core/signals.bash). A cache
 # hit must cost zero IPC and zero forks; only a non-empty render is ever
 # cached (see __gpy_render_prompt / __gpy_directory_segment_output below).
 __gpy_char_cache_key=""
@@ -73,12 +73,12 @@ fi
 # Sources the agent's cached theme-export.bash file when present (written by
 # write_theme_export_to_dir, gpy-agent/src/cache/theme_export.rs, on startup
 # and every config/theme change -- no call-site change needed there) instead
-# of forking `gpy-agent theme export` on every shell start and SIGUSR2
+# of forking `gpy-agent theme export` on every shell start and config
 # reload (#614). Falls back to the fork only when the cache file is absent
 # (e.g. a `gpy-agent` older than this cache, or a first run before it has
 # ever written one). Mirrors Fish's __gpy_apply_theme_export
 # (fish/core/init.fish) / __gpy_theme_export_cache_path (fish/core/util.fish).
-# The SIGUSR2 reload path (signals.bash) calls this same function, so it
+# The reload path (__gpy_reload_config, signals.bash) calls this same function, so it
 # picks up the cache too.
 __gpy_load_theme() {
     local cache_path
@@ -166,7 +166,7 @@ __gpy_precmd() {
     # Registration used to be attempted exactly once, at init, and never again
     # unless a `cd` happened; a shell that started while its autostarted
     # agent was still coming up (or whose agent restarted later) stayed
-    # unregistered -- no SIGUSR1/SIGUSR2 -- for its whole life (#638). Retry
+    # unregistered -- no agent notifications -- for its whole life (#638). Retry
     # on each prompt until it sticks; it is one `test -S` when nothing
     # listens.
     if [[ -z "$__gpy_registered" ]]; then
@@ -417,7 +417,7 @@ __gpy_register_with_agent() {
     return 1
 }
 
-# Forget the current registration and register again. Runs from the SIGALRM
+# Forget the current registration and register again. Runs from the doorbell
 # handler after an agent restart (#638) and is safe to call at any time: a
 # missing socket just returns 1 and the next prompt retries.
 __gpy_reregister_with_agent() {

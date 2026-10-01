@@ -2,10 +2,10 @@
 //!
 //! This is a distinct output from the instant-prompt cache (see
 //! [`crate::cache::instant_prompt`]): it caches the Fish-format theme export
-//! consumed by the SIGUSR2 reload handler, not the instant-prompt hot path.
+//! consumed by the shell's reload handler (doorbell + `.reload` flag), not the instant-prompt hot path.
 //!
 //! The agent writes this file atomically on startup and after every
-//! config/theme change (before sending SIGUSR2), so shells can source it
+//! config/theme change (before ringing the reload doorbell), so shells can source it
 //! without spawning the binary on the hot path.
 
 use super::instant_prompt::{get_gpy_cache_dir, write_atomic};
@@ -15,7 +15,7 @@ use std::path::PathBuf;
 /// Return the path used to cache the Fish-format theme export.
 ///
 /// The agent writes this file atomically on startup and after every config/theme
-/// change (before sending SIGUSR2), so shells can source it without spawning the
+/// change (before ringing the reload doorbell), so shells can source it without spawning the
 /// binary on the hot path.
 ///
 /// # Errors

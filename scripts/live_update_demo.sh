@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Live update demonstration for GPY
-# This shows the core functionality: agent registration + SIGUSR1 + prompt repaint
+# This shows the core functionality: agent registration + SIGURG doorbell + prompt repaint
 
 echo "🧪 GPY Live Updates Demonstration"
 echo "=================================="
@@ -35,7 +35,7 @@ fish -c '
     end
 
     # Signal handler for live updates
-    function handle_sigusr1 --on-signal SIGUSR1
+    function handle_doorbell --on-signal SIGURG
         echo ""  # New line
         echo "📡 Live update signal received!"
 
@@ -83,7 +83,7 @@ fish -c '
     echo ""
     echo "🎯 Test the live updates:"
     echo "  • Open another terminal"
-    echo "  • Run: kill -USR1 $fish_pid"
+    echo "  • Run: kill -URG $fish_pid"
     echo "  • Watch the prompt change instantly!"
     echo "  • Try typing commands between signals"
     echo "  • Type \"exit\" when done"

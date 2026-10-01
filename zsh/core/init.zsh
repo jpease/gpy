@@ -34,7 +34,7 @@ typeset -g __gpy_cmd_duration=0
 typeset -g __duration_threshold_ms=2000  # milliseconds; overwritten by `gpy theme export`
 
 # Character/directory render memoization (#343): keyed by the full input
-# tuple + theme identity, cleared on TRAPUSR2 (zsh/core/signals.zsh). A cache
+# tuple + theme identity, cleared on reload (zsh/core/signals.zsh). A cache
 # hit must cost zero IPC and zero forks.
 #
 # __gpy_render_prompt executes entirely inside the `$(...)` command
@@ -94,12 +94,12 @@ function __gpy_load_cache_relay() {
 # Sources the agent's cached theme-export.zsh file when present (written by
 # write_theme_export_to_dir, gpy-agent/src/cache/theme_export.rs, on startup
 # and every config/theme change -- no call-site change needed there) instead
-# of forking `gpy-agent theme export` on every shell start and SIGUSR2
+# of forking `gpy-agent theme export` on every shell start and config
 # reload (#614). Falls back to the fork only when the cache file is absent
 # (e.g. a `gpy-agent` older than this cache, or a first run before it has
 # ever written one). Mirrors Fish's __gpy_apply_theme_export
 # (fish/core/init.fish) / __gpy_theme_export_cache_path (fish/core/util.fish).
-# The TRAPUSR2 reload path (signals.zsh) calls this same function, so it
+# The reload path (__gpy_reload_config, signals.zsh) calls this same function, so it
 # picks up the cache too.
 function __gpy_load_theme() {
     local cache_path
@@ -137,8 +137,8 @@ function __gpy_register_with_agent() {
     return 1
 }
 
-# Forget the current registration and register again. Runs from the SIGALRM
-# handler after an agent restart (#638); safe at any time -- a missing
+# Forget the current registration and register again. Runs from TRAPURG
+# (the doorbell) after an agent restart (#638); safe at any time -- a missing
 # socket just fails and the next prompt retries.
 function __gpy_reregister_with_agent() {
     __gpy_registered=""

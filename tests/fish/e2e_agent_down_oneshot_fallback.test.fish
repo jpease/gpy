@@ -6,7 +6,7 @@
 #
 # Serve-stale-first (#160) shows the last cached git segment instantly and
 # refreshes in the background. That refresh is a fire-and-forget IPC send: with
-# the agent DOWN there is nothing to recompute the status or SIGUSR1 a repaint,
+# the agent DOWN there is nothing to recompute the status or SIGURG a repaint,
 # so a stale entry is served indefinitely -- the prompt keeps showing the OLD
 # working-tree state until the daemon returns.
 #

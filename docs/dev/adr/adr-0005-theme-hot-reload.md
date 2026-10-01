@@ -4,6 +4,8 @@
 
 Accepted (2024-11)
 
+Superseded in part by [ADR-0007](adr-0007-sigurg-doorbell-notifications.md): reloads are now a `<pid>.reload` flag file plus SIGURG instead of SIGUSR2.
+
 ## Context
 
 Users want to customize their prompt appearance (colors, icons, segments) without restarting the agent or shell. The editing experience should be:

@@ -21,7 +21,7 @@ These features work identically to Fish/Zsh:
 - **Clock segment** - Current time
 - **Agent IPC** - Full daemon communication
 - **Theme system** - Complete color/icon customization
-- **Config hot-reload** - Live config changes via SIGUSR2
+- **Config hot-reload** - Live config changes via the reload flag and SIGURG
 - **Caching** - Sub-millisecond cache hits
 
 ---
@@ -54,14 +54,14 @@ chsh -s /opt/homebrew/bin/bash
 
 ---
 
-### 2. Live Updates (SIGUSR1)
+### 2. Live Updates
 
 **Limitation**: An idle Bash prompt does not repaint by itself.
 
 **What is measured** (`tests/bash/e2e_git_live_content.test.bash`, a real
 `bash -i` on a pseudo-terminal against a real agent): when a tracked file
 changes while the shell sits at an idle prompt, the agent updates its cache
-and delivers SIGUSR1, and Bash's handler re-renders `PS1` — but readline has
+and delivers SIGURG, and Bash's handler re-renders `PS1` — but readline has
 already drawn the previous prompt and has no `reset-prompt`, so the screen does
 not change until the next prompt. Press Enter (or run any command) and the new
 state is there. Fish and Zsh repaint the idle prompt in place; see
@@ -72,12 +72,16 @@ state is there. Fish and Zsh repaint the idle prompt in place; see
 - Delivery during a long-running foreground command waits for it to finish
 
 **Mitigation**: Every prompt render reads the agent's current state, so the
-change is never lost — it is one Enter away. SIGUSR1 keeps the cache warm so
+change is never lost — it is one Enter away. SIGURG keeps the cache warm so
 that next prompt is instant.
 
-Bash does re-register after an agent restart (SIGALRM nudge, #638) and
-recovers a dead agent from its periodic supervisor check, so live updates
-resume without reopening the shell.
+Bash re-registers after an agent restart at its next prompt (#638): the
+agent leaves a `<pid>.reregister` flag and rings SIGURG, but an idle readline
+prompt defers the trap until the line is accepted (measured; readline runs
+traps immediately only for SIGALRM, which would kill a shell that has no
+handler yet). The first Enter re-registers the shell. A dead agent is
+recovered by the periodic supervisor check, so live updates resume without
+reopening the shell.
 
 ---
 
@@ -196,8 +200,8 @@ bash --version
 | Clock | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Directory | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Duration** | ✅ | ✅ | ✅ | ⚠️ | ❌ |
-| **Live updates (SIGUSR1)** | ✅ idle prompt repaints | ✅ idle prompt repaints | ⚠️ shown at next prompt | ⚠️ shown at next prompt | ⚠️ shown at next prompt |
-| Config hot-reload (SIGUSR2) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Live updates** | ✅ idle prompt repaints | ✅ idle prompt repaints | ⚠️ shown at next prompt | ⚠️ shown at next prompt | ⚠️ shown at next prompt |
+| Config hot-reload | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Agent IPC | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Performance** | A+ | A | B+ | B | B- |
 | Transient prompt | ✅ | ✅ | ❌ | ❌ | ❌ |
@@ -256,7 +260,7 @@ chsh -s /opt/homebrew/bin/fish
 **Workaround**: Displays correctly after first command
 **Severity**: Cosmetic
 
-### Issue: SIGUSR1 doesn't trigger during `sleep`
+### Issue: SIGURG doesn't trigger during `sleep`
 **Bash version**: All
 **Cause**: Bash doesn't interrupt foreground commands
 **Workaround**: Prompt updates when command finishes

@@ -15,9 +15,11 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 #[cfg(unix)]
+use crate::ipc::registry::{ShellFlag, default_shell_dir, ring_doorbell, write_shell_flag};
+#[cfg(unix)]
 use fork::{Fork, daemon};
 #[cfg(unix)]
-use nix::sys::signal::{Signal, kill};
+use nix::sys::signal::kill;
 #[cfg(unix)]
 use nix::unistd::Pid;
 
@@ -82,14 +84,13 @@ impl ShellRenudger {
     ///
     /// A shell in that state is broken: it holds a tracking file, so it
     /// registered successfully at some point, yet the agent no longer knows it
-    /// and it receives no SIGUSR1 live updates at all. Re-sending the SIGALRM
-    /// restart nudge lets it retry — which only recovers anything because the
-    /// Fish handler leaves the restart marker *unconsumed* after a failed
-    /// attempt (see `__gpy_refresh_registration_after_restart` in
-    /// `fish/core/ipc.fish`); consuming it there would make every retry a no-op.
+    /// and it receives no live updates at all. Re-writing its `<pid>.reregister`
+    /// flag and ringing the doorbell lets it retry; the shell removes the flag
+    /// before each attempt, so every re-nudge is a fresh request.
     ///
-    /// Tracking files for PIDs that are no longer alive are removed, mirroring
-    /// [`notify_existing_shells_of_restart`]'s opportunistic cleanup. A PID seen
+    /// Files for PIDs that are no longer alive are removed: the `<pid>`
+    /// tracking file and any `<pid>.reload`/`<pid>.reregister` flags, including
+    /// orphan flags whose tracking file is already gone. A PID seen
     /// registered has its attempt budget cleared, so a later restart that
     /// strands it again starts from a full budget instead of an exhausted one.
     pub(crate) fn pids_to_nudge<R, A>(
@@ -114,6 +115,19 @@ impl ShellRenudger {
             let Some(name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
                 continue;
             };
+            if let Some((stem, suffix)) = name.split_once('.') {
+                // Flag file: never a tracking entry, only cleaned up when its
+                // shell is gone.
+                let is_flag = suffix == ShellFlag::Reload.suffix()
+                    || suffix == ShellFlag::Reregister.suffix();
+                if is_flag
+                    && let Ok(flag_pid) = stem.parse::<u32>()
+                    && !is_alive(flag_pid)
+                {
+                    let _ = std::fs::remove_file(&path);
+                }
+                continue;
+            }
             let Ok(pid) = name.parse::<u32>() else {
                 continue;
             };
@@ -145,7 +159,7 @@ impl ShellRenudger {
     }
 }
 
-/// Re-send the SIGALRM restart nudge to every tracked shell that is alive but
+/// Re-send the restart nudge to every tracked shell that is alive but
 /// unregistered, so it retries registration instead of staying stranded for the
 /// rest of this agent's lifetime.
 #[cfg(unix)]
@@ -153,7 +167,7 @@ pub(crate) fn renudge_unregistered_shells(
     renudger: &mut ShellRenudger,
     registry: &crate::ipc::ClientDirectory,
 ) {
-    renudge_unregistered_shells_in(&runtime_root().join("shells"), renudger, registry);
+    renudge_unregistered_shells_in(&default_shell_dir(), renudger, registry);
 }
 
 /// [`renudge_unregistered_shells`] against an explicit tracking directory, so
@@ -172,12 +186,20 @@ fn renudge_unregistered_shells_in(
     );
 
     for pid in pids {
-        let Ok(pid_raw) = i32::try_from(pid) else {
-            continue;
-        };
         debug_log!("agent", "Re-nudging unregistered tracked shell {pid}");
-        let _ = kill(Pid::from_raw(pid_raw), Signal::SIGALRM);
+        request_reregistration(shell_dir, pid);
     }
+}
+
+/// Write `<pid>.reregister` in `shell_dir`, then ring the doorbell. The flag
+/// must exist before the signal, or the shell's handler finds nothing to do.
+#[cfg(unix)]
+fn request_reregistration(shell_dir: &std::path::Path, pid: u32) {
+    if let Err(e) = write_shell_flag(shell_dir, pid, ShellFlag::Reregister) {
+        debug_log!("agent", "Failed to write reregister flag for {pid}: {e}");
+        return;
+    }
+    let _ = ring_doorbell(pid);
 }
 
 /// Fork and start the agent as a background daemon process
@@ -209,102 +231,22 @@ fn wait_for_agent_ready(socket_path: &PathBuf, child_pid: i32) -> Result<()> {
 }
 
 #[cfg(unix)]
-fn runtime_root() -> PathBuf {
-    crate::paths::runtime_root_for(
-        std::env::var("XDG_RUNTIME_DIR").ok().as_deref(),
-        std::env::var("XDG_CACHE_HOME").ok().as_deref(),
-        crate::paths::home_dir().as_deref(),
-    )
-}
-
-#[cfg(unix)]
-/// Write `content` to `marker_path` atomically.
+/// Notify previously tracked shells that a new agent instance is ready.
 ///
-/// The Fish-side restart handler reads the marker from a `SIGALRM`
-/// signal-handler context, racing an in-progress write from this process. A
-/// plain `std::fs::write` opens the destination with truncate+write, which is
-/// not a single atomic syscall on POSIX: a reader that opens the file in the
-/// narrow window between the truncate and the full content landing can
-/// observe a transiently empty file. Writing to a temp file in the same
-/// directory (so the following rename stays on one filesystem, which POSIX
-/// guarantees is atomic) and renaming it into place means a concurrent reader
-/// only ever observes either the complete previous content or the complete
-/// new content -- never a partial or empty read.
-///
-/// Also opportunistically cleans up stray temp files left behind by a
-/// previous write that crashed between the write and the rename (e.g. the
-/// process was killed mid-write). This is safe and self-healing: a stray temp
-/// file is never read as the marker itself, so leaving one behind for one
-/// extra restart cycle has no observable effect, and each subsequent call
-/// sweeps up anything left over.
-///
-/// # Errors
-///
-/// Returns an error if the temp file cannot be written or the rename fails.
-/// The temp file is removed on a failed rename so it doesn't accumulate.
-fn write_marker_atomically(
-    dir: &std::path::Path,
-    marker_path: &std::path::Path,
-    content: &str,
-) -> std::io::Result<()> {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let entry_name = entry.file_name();
-            let name = entry_name.to_string_lossy();
-            if name.starts_with("agent.restart.marker.") && name.ends_with(".tmp") {
-                let _ = std::fs::remove_file(entry.path());
-            }
-        }
-    }
-
-    let tmp_path = dir.join(format!("agent.restart.marker.{}.tmp", std::process::id()));
-    std::fs::write(&tmp_path, content)?;
-
-    let rename_result = std::fs::rename(&tmp_path, marker_path);
-    if rename_result.is_err() {
-        let _ = std::fs::remove_file(&tmp_path);
-    }
-    rename_result
-}
-
-#[cfg(unix)]
-/// Notify previously registered Fish shells that a new agent instance is ready.
-///
-/// The shell-side live-update registration is tied to the Fish PID, not the
+/// The shell-side live-update registration is tied to the shell PID, not the
 /// daemon PID. When the agent restarts, shells can otherwise keep a stale
-/// registration until the user happens to render another prompt. Writing a
-/// restart marker and nudging tracked shells via `SIGALRM` makes that recovery
-/// explicit and testable.
+/// registration until the user happens to render another prompt. Writing each
+/// alive tracked shell's `<pid>.reregister` flag and ringing its doorbell makes
+/// that recovery explicit and testable.
 ///
-/// # Errors
-///
-/// Returns an error if the runtime directory or restart marker cannot be
-/// written. Stale shell PID files are removed opportunistically and do not
-/// surface as errors.
-pub(crate) fn notify_existing_shells_of_restart() -> Result<()> {
-    let runtime_root = runtime_root();
-    std::fs::create_dir_all(&runtime_root)
-        .map_err(|e| Error::process("runtime_root".to_owned(), e.to_string()))?;
-
-    let marker_path = runtime_root.join("agent.restart.marker");
-    let marker = format!(
-        "{}:{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-    );
-    write_marker_atomically(&runtime_root, &marker_path, &marker)
-        .map_err(|e| Error::process("restart_marker".to_owned(), e.to_string()))?;
-
-    nudge_all_tracked_shells_in(&runtime_root.join("shells"));
-
-    Ok(())
+/// Stale shell files are removed opportunistically and flag write failures
+/// are logged per shell, so there is nothing to report to the caller.
+pub(crate) fn notify_existing_shells_of_restart() {
+    nudge_all_tracked_shells_in(&default_shell_dir());
 }
 
-/// SIGALRM every alive shell tracked in `shell_dir`, removing the tracking
-/// files of ones that have exited.
+/// Request re-registration from every alive shell tracked in `shell_dir`,
+/// removing the files of ones that have exited.
 ///
 /// Shares [`ShellRenudger::pids_to_nudge`]'s scan with the periodic
 /// re-nudge path (see [`renudge_unregistered_shells_in`]) instead of walking
@@ -327,9 +269,8 @@ pub(crate) fn notify_existing_shells_of_restart() -> Result<()> {
 ///   exists to bound the *periodic* caller, which reuses one renudger for the
 ///   agent's lifetime.
 ///
-/// Liveness now comes from [`crate::ipc::ClientDirectory::is_client_alive`],
-/// which treats `EPERM` as alive where the previous inline `kill(pid, None)`
-/// treated any error as dead — so a live shell we merely lack permission to
+/// Liveness comes from [`crate::ipc::ClientDirectory::is_client_alive`],
+/// which treats `EPERM` as alive, so a live shell we merely lack permission to
 /// signal keeps its tracking file instead of having it deleted.
 #[cfg(unix)]
 fn nudge_all_tracked_shells_in(shell_dir: &std::path::Path) {
@@ -341,11 +282,8 @@ fn nudge_all_tracked_shells_in(shell_dir: &std::path::Path) {
     );
 
     for pid in pids {
-        let Ok(pid_raw) = i32::try_from(pid) else {
-            continue;
-        };
         debug_log!("agent", "Nudging tracked shell {pid} after agent restart");
-        let _ = kill(Pid::from_raw(pid_raw), Signal::SIGALRM);
+        request_reregistration(shell_dir, pid);
     }
 }
 
@@ -407,7 +345,7 @@ fn fork_agent(socket_path: &PathBuf) -> Result<()> {
             // kept as a best-effort fallback for platforms where `daemon()` returns
             // in the parent.
             wait_for_agent_ready(socket_path, child_pid)?;
-            let _ = notify_existing_shells_of_restart();
+            notify_existing_shells_of_restart();
             eprintln!("✅ GPY Agent started successfully (PID: {child_pid})");
             Ok(())
         }
@@ -461,7 +399,7 @@ mod tests {
     }
 
     /// A shell holding a tracking file but missing from the client registry is broken: it
-    /// registered successfully once, so the agent should know it, yet it receives no SIGUSR1
+    /// registered successfully once, so the agent should know it, yet it receives no
     /// live updates at all.
     ///
     /// Re-nudging it is the only way it recovers without the user pressing enter.
@@ -501,15 +439,10 @@ mod tests {
 
     /// #611: the restart nudge shares `pids_to_nudge`'s directory scan.
     ///
-    /// It must keep that scan's dead-tracking-file cleanup while still
-    /// targeting *every* alive tracked shell (its `is_registered` is hardwired
-    /// to `false`, since the just-started daemon's registry is empty).
-    ///
-    /// Only dead PIDs are seeded, so nothing is actually signalled: this
-    /// asserts the scan-and-cleanup half without sending SIGALRM to a real
-    /// process. The signalling half is covered by
-    /// `renudge_signals_only_the_unregistered_tracked_shell`, which drives the
-    /// same `pids_to_nudge` scan.
+    /// It must keep that scan's dead-shell cleanup (tracking file and both
+    /// flag kinds, including orphan flags) while still targeting *every*
+    /// alive tracked shell (its `is_registered` is hardwired to `false`, since
+    /// the just-started daemon's registry is empty).
     #[cfg(unix)]
     #[test]
     fn restart_nudge_cleans_up_tracking_files_for_dead_shells() {
@@ -518,12 +451,20 @@ mod tests {
         // reports them dead -- the same convention as
         // `is_client_alive_nonexistent_pid` in `ipc::registry`.
         track_shells(dir.path(), &[999_997_u32, 999_998_u32]);
+        for name in ["999997.reload", "999997.reregister", "999996.reload"] {
+            std::fs::write(dir.path().join(name), "").expect("seed flag");
+        }
 
         super::nudge_all_tracked_shells_in(dir.path());
 
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("read dir")
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
         assert!(
-            !dir.path().join("999997").exists() && !dir.path().join("999998").exists(),
-            "the restart nudge must clean up tracking files for shells that have exited"
+            leftovers.is_empty(),
+            "the restart nudge must clean up tracking and flag files for exited shells: {leftovers:?}"
         );
     }
 
@@ -539,14 +480,8 @@ mod tests {
     /// mirroring `is_client_alive_current_process` in `ipc::registry`, and
     /// drives the exact scan `nudge_all_tracked_shells_in` runs --
     /// `pids_to_nudge` with `is_registered` hardwired to `false` and the real
-    /// `is_client_alive` -- without going through the actual signal dispatch,
-    /// which would deliver a real SIGALRM (default disposition: terminate) to
-    /// this test process itself. This suite's only established pattern for
-    /// asserting real signal *delivery* uses a stand-in child process instead
-    /// of the test's own PID (see
-    /// `renudge_signals_only_the_unregistered_tracked_shell`), so this test is
-    /// deliberately scoped to the targeting/survival behavior rather than
-    /// inventing a new signal-handler mechanism for self-delivery.
+    /// `is_client_alive` -- without the flag write and doorbell, which are
+    /// covered by `restart_nudge_writes_reregister_flag_and_spares_unhandled_shell`.
     #[cfg(unix)]
     #[test]
     fn nudge_all_tracked_shells_targets_and_preserves_an_alive_tracked_shell() {
@@ -629,24 +564,51 @@ mod tests {
         );
     }
 
-    /// End-to-end proof that the registry drives a real signal to the right PID.
-    ///
-    /// An unregistered tracked shell receives SIGALRM (whose default disposition terminates
-    /// these stand-in children, making delivery observable), while a registered one is left
-    /// alone.
+    /// Spawn a stand-in shell that touches `mark` when SIGURG arrives while its
+    /// `<pid>.reregister` flag already exists in `dir`.
+    #[cfg(unix)]
+    fn spawn_reregister_observer(
+        dir: &std::path::Path,
+        mark: &std::path::Path,
+    ) -> std::process::Child {
+        let script = format!(
+            "trap '[ -e \"{dir}/$$.reregister\" ] && touch \"{mark}\"' URG; while :; do sleep 0.05; done",
+            dir = dir.display(),
+            mark = mark.display(),
+        );
+        let child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .spawn()
+            .expect("spawn stand-in shell");
+        // Let sh install its trap before any doorbell rings.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        child
+    }
+
+    #[cfg(unix)]
+    fn wait_for(path: &std::path::Path) -> bool {
+        for _ in 0_u32..250_u32 {
+            if path.exists() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        path.exists()
+    }
+
+    /// End-to-end proof that the registry drives the re-nudge to the right PID:
+    /// the unregistered tracked shell gets its `.reregister` flag written before
+    /// the doorbell, while the registered one gets neither.
     #[cfg(unix)]
     #[test]
     fn renudge_signals_only_the_unregistered_tracked_shell() {
         let dir = tempfile::tempdir().expect("create tempdir");
+        let registered_mark = dir.path().join("registered.mark");
+        let stranded_mark = dir.path().join("stranded.mark");
 
-        let mut registered_child = std::process::Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .expect("spawn registered stand-in shell");
-        let mut stranded_child = std::process::Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .expect("spawn stranded stand-in shell");
+        let mut registered_child = spawn_reregister_observer(dir.path(), &registered_mark);
+        let mut stranded_child = spawn_reregister_observer(dir.path(), &stranded_mark);
 
         let registered_pid = registered_child.id();
         let stranded_pid = stranded_child.id();
@@ -658,16 +620,51 @@ mod tests {
         let mut renudger = super::ShellRenudger::default();
         super::renudge_unregistered_shells_in(dir.path(), &mut renudger, &registry);
 
-        let stranded_status = stranded_child.wait().expect("await stranded stand-in");
         assert!(
-            !stranded_status.success(),
-            "the unregistered tracked shell should have been signalled"
+            wait_for(&stranded_mark),
+            "the unregistered tracked shell should get the doorbell with its reregister flag present"
         );
+        assert!(
+            !dir.path()
+                .join(format!("{registered_pid}.reregister"))
+                .exists(),
+            "the registered shell must not be asked to re-register"
+        );
+        assert!(!registered_mark.exists());
 
-        // The registered one must still be running; kill it to confirm it was
-        // untouched (and to avoid leaking the process).
-        let _ = registered_child.kill();
-        let _ = registered_child.wait();
+        for child in [&mut registered_child, &mut stranded_child] {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    /// #674 regression: the restart nudge writes `.reregister` and rings the
+    /// doorbell, and a tracked process with NO handler (a shell mid-`exec`)
+    /// survives it.
+    #[cfg(unix)]
+    #[test]
+    fn restart_nudge_writes_reregister_flag_and_spares_unhandled_shell() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn unhandled stand-in shell");
+        let pid = child.id();
+        track_shells(dir.path(), &[pid]);
+
+        super::nudge_all_tracked_shells_in(dir.path());
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        assert!(
+            dir.path().join(format!("{pid}.reregister")).exists(),
+            "the restart nudge must write the reregister flag"
+        );
+        assert!(
+            child.try_wait().expect("poll child").is_none(),
+            "an unhandled process must survive the restart nudge"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     /// #391: `fork_agent` bounds runtime teardown with `shutdown_timeout`.
@@ -707,81 +704,6 @@ mod tests {
             elapsed < std::time::Duration::from_secs(5),
             "shutdown_timeout must not block for anywhere near the stuck task's \
              30s sleep; took {elapsed:?}"
-        );
-    }
-
-    /// #419: a Fish `SIGALRM` handler reads the restart marker concurrently with the agent
-    /// (re)writing it.
-    ///
-    /// `std::fs::write` alone truncates then writes, so a reader can land in between and
-    /// observe an empty file. This drives a real concurrent reader against
-    /// `write_marker_atomically` across many rapid rewrites and asserts it never observes an
-    /// empty or partial marker -- proving the write-temp-then-rename swap is atomic with
-    /// respect to a concurrent `read_to_string`, not just asserting it.
-    #[cfg(unix)]
-    #[test]
-    fn write_marker_atomically_never_exposes_empty_or_partial_content() {
-        use std::sync::Arc;
-        use std::sync::atomic::{AtomicBool, Ordering};
-
-        let dir = tempfile::tempdir().expect("create tempdir");
-        let marker_path = dir.path().join("agent.restart.marker");
-
-        // Seed an initial marker so the reader always has valid content to
-        // observe before the writer loop below starts overwriting it.
-        super::write_marker_atomically(dir.path(), &marker_path, "seed:0")
-            .expect("seed initial marker");
-
-        let stop = Arc::new(AtomicBool::new(false));
-        let saw_empty = Arc::new(AtomicBool::new(false));
-
-        let reader_marker_path = marker_path.clone();
-        let reader_stop = Arc::clone(&stop);
-        let reader_saw_empty = Arc::clone(&saw_empty);
-        let reader = std::thread::spawn(move || {
-            while !reader_stop.load(Ordering::SeqCst) {
-                if let Ok(content) = std::fs::read_to_string(&reader_marker_path)
-                    && content.trim().is_empty()
-                {
-                    reader_saw_empty.store(true, Ordering::SeqCst);
-                }
-            }
-        });
-
-        for i in 0_u32..2000_u32 {
-            super::write_marker_atomically(dir.path(), &marker_path, &format!("marker:{i}"))
-                .expect("rewrite marker");
-        }
-
-        stop.store(true, Ordering::SeqCst);
-        reader.join().expect("join reader thread");
-
-        assert!(
-            !saw_empty.load(Ordering::SeqCst),
-            "concurrent reader observed an empty/partial marker file mid-write"
-        );
-    }
-
-    /// #419: if the process is killed between the temp-file write and the
-    /// rename, a stray `agent.restart.marker.<pid>.tmp` can be left behind.
-    /// The next restart's write must not let that accumulate.
-    #[cfg(unix)]
-    #[test]
-    fn write_marker_atomically_cleans_up_stray_temp_files_from_a_crashed_previous_write() {
-        let dir = tempfile::tempdir().expect("create tempdir");
-        let marker_path = dir.path().join("agent.restart.marker");
-        let stray_tmp = dir.path().join("agent.restart.marker.999999.tmp");
-        std::fs::write(&stray_tmp, "stray").expect("seed stray temp file");
-
-        super::write_marker_atomically(dir.path(), &marker_path, "marker:1").expect("write marker");
-
-        assert!(
-            !stray_tmp.exists(),
-            "stray temp file from a crashed prior write should be cleaned up"
-        );
-        assert_eq!(
-            std::fs::read_to_string(&marker_path).expect("read marker"),
-            "marker:1"
         );
     }
 }

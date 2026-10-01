@@ -21,7 +21,7 @@ max-fn-params-bools = 1                   # Very strict - prefer config structs
 # === DOCUMENTATION ===
 doc-valid-idents = [
     "GPY", "IPC", "UUID", "JSON", "CLI", "API",
-    "SIGUSR1", "SIGTERM", "macOS", "TOML", "UTF8",
+    "SIGURG", "SIGTERM", "macOS", "TOML", "UTF8",
     "TLS", "TCP", "UDP", "HTTP", "URL", "URI"
 ]
 missing-docs-in-crate-items = true        # Require all pub items documented

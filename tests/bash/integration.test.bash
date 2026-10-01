@@ -414,35 +414,59 @@ if [[ -z "$PS1" ]]; then
 fi
 echo "PASS: Full prompt rendered"
 
-echo "=== Testing SIGUSR2 Segment Reload (lazy segment gap regression) ==="
+echo "=== Testing Doorbell Reload (lazy segment gap regression) ==="
 # gpy.bash sources every file under segments/*.bash unconditionally at init,
 # regardless of $__enabled_segments (unlike Fish, which only sources files for
 # segments already in the enabled list). So a theme switch that enables a
 # segment new to this shell's __enabled_segments already has its detect/render
-# functions in memory; __gpy_handle_sigusr2 only needs to refresh
+# functions in memory; the doorbell's reload only needs to refresh
 # __enabled_segments (via __gpy_load_theme) and re-render. This guards against
 # a future regression to per-segment lazy sourcing that would reintroduce the
 # gap Fish had (#296).
+doorbell_dir=$(mktemp -d)
+__gpy_shell_flag_base="$doorbell_dir/$$"
+# What the agent does for a config change: leave the reload flag, ring SIGURG.
+__gpy_test_ring_reload() {
+    : >"$__gpy_shell_flag_base.reload"
+    __gpy_handle_doorbell
+}
 __gpy_load_theme() {
     __enabled_segments="duration"
 }
 __duration_threshold_ms=100
 __gpy_cmd_duration=5000
-__gpy_handle_sigusr2
+__gpy_test_ring_reload
 if [[ "$PS1" == *"3.5s"* ]]; then
-    echo "PASS: newly-enabled duration segment rendered after SIGUSR2"
+    echo "PASS: newly-enabled duration segment rendered after reload doorbell"
 else
-    echo "FAIL: newly-enabled duration segment missing after SIGUSR2 (PS1=$PS1)"
+    echo "FAIL: newly-enabled duration segment missing after reload doorbell (PS1=$PS1)"
+    exit 1
+fi
+if [[ -e "$__gpy_shell_flag_base.reload" ]]; then
+    echo "FAIL: doorbell left the reload flag behind"
+    exit 1
+fi
+echo "PASS: doorbell consumes the reload flag"
+
+# A bare doorbell (no flag) is a repaint: it must not reload the theme.
+__gpy_load_theme() {
+    __enabled_segments="directory"
+}
+__gpy_handle_doorbell
+if [[ "$__enabled_segments" == "duration" ]]; then
+    echo "PASS: doorbell without a reload flag does not reload"
+else
+    echo "FAIL: doorbell without a reload flag reloaded (enabled=$__enabled_segments)"
     exit 1
 fi
 
 __gpy_load_theme() {
     __enabled_segments="duration does-not-exist-segment"
 }
-if __gpy_handle_sigusr2; then
-    echo "PASS: unknown segment in enabled list does not error the SIGUSR2 handler"
+if __gpy_test_ring_reload; then
+    echo "PASS: unknown segment in enabled list does not error the doorbell handler"
 else
-    echo "FAIL: SIGUSR2 handler errored on an unknown segment"
+    echo "FAIL: doorbell handler errored on an unknown segment"
     exit 1
 fi
 unset __duration_threshold_ms __gpy_cmd_duration
@@ -839,9 +863,9 @@ __gpy_segment_directory() {
     printf 'DIR'
 }
 # Earlier sections in this file permanently redefine __gpy_load_theme (e.g.
-# "Testing SIGUSR2 Segment Reload" leaves it setting
+# "Testing Doorbell Reload" leaves it setting
 # __enabled_segments="duration does-not-exist-segment"), and a real gpy-agent
-# binary may also be on PATH. Pin it here so __gpy_handle_sigusr2's reload
+# binary may also be on PATH. Pin it here so the doorbell's reload
 # is deterministic for this section regardless of what ran before it.
 __gpy_load_theme() {
     __enabled_segments="directory"
@@ -903,7 +927,7 @@ else
     exit 1
 fi
 
-# 4. Theme change (SIGUSR2 handler) re-renders both segments. The handler
+# 4. Theme change (reload doorbell) re-renders both segments. The handler
 # itself re-renders immediately when PS1 is set (it always is here, from
 # earlier sections), so the invalidation is already exercised by that
 # internal render; the trailing explicit render is a hit against its result.
@@ -911,7 +935,7 @@ __gpy_memo_reset
 __gpy_theme_name="themeA"
 __gpy_render_prompt 0 # baseline (miss for both)
 __gpy_theme_name="themeB"
-__gpy_handle_sigusr2 >/dev/null 2>&1
+__gpy_test_ring_reload >/dev/null 2>&1
 __gpy_render_prompt 0
 if [[ "$(__gpy_memo_call_count "$memo_char_calls_file")" == "2" && "$(__gpy_memo_call_count "$memo_dir_calls_file")" == "2" ]]; then
     echo "PASS: theme change re-renders character and directory"

@@ -618,7 +618,7 @@ impl ThemeManager {
     }
 
     /// Reload the theme at `theme_path` and apply it, or log why the reload
-    /// failed. Notifies clients via SIGUSR2 when the reload succeeds. Shared by
+    /// failed. Asks clients to reload (`notify_reload`) when the reload succeeds. Shared by
     /// the file-watcher callback (`start_watching`) and the polling fallback
     /// (`start_poll_fallback`) so a load failure is never silently discarded.
     /// The name and path are carried over from the state being replaced (a
@@ -653,7 +653,7 @@ impl ThemeManager {
                 drop(guard);
 
                 if let Some(registry) = client_registry {
-                    registry.notify_sigusr2();
+                    registry.notify_reload();
                 }
             }
             Err(e) => {

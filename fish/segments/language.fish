@@ -75,7 +75,7 @@ function segment_language_render --argument-names is_last is_first
     if test "$cache_status" -eq 1
         # 2. Cache miss - trigger background refresh
         # This prevents blocking the prompt on slow language detection (~80ms)
-        # The agent will write the cache and send SIGUSR1 when done, causing a repaint.
+        # The agent will write the cache and send SIGURG when done, causing a repaint.
         # Deliberately uses mode=request (__gpy_request, not
         # __gpy_trigger_data_refresh): the cache read genuinely missed here, so
         # there is no stale entry that __gpy_request's own cache check could
@@ -121,7 +121,7 @@ function segment_language_render --argument-names is_last is_first
 
     # 4. If the cache is stale, trigger a background refresh while still showing
     # the cached result (no flicker). The agent will write a fresh cache file and
-    # send SIGUSR1, causing a repaint with updated versions.
+    # send SIGURG, causing a repaint with updated versions.
     #
     # Must bypass the instant cache (#458, mode=refresh -> __gpy_trigger_data_refresh).
     # `__gpy_request` reads it first and returns early on any hit, which is right

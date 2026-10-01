@@ -10,7 +10,7 @@
 //! 1. Refresh git status (existing)
 //! 2. Update `GitStatusCache` (existing)
 //! 3. **Write instant-prompt cache files** (this module)
-//! 4. Send SIGUSR1/2 to shells (existing)
+//! 4. Ring the SIGURG doorbell for shells (existing)
 //!
 //! When shells need a prompt:
 //! 1. Read instant-prompt cache file (0ms) ✨
@@ -1957,7 +1957,7 @@ mod tests {
     ///
     /// This is a formatter-level invariant test.  End-to-end cache-file invalidation
     /// triggered by `gpy palette use` (`config_reload` → `config_refresh_required` →
-    /// SIGUSR1/SIGUSR2) is covered by the Fish integration suite.
+    /// reload doorbell) is covered by the Fish integration suite.
     #[test]
     fn git_cache_changes_when_palette_redefines_used_color() {
         use crate::formatter::{Format, RenderContext, SegmentPosition, create_formatter};

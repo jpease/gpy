@@ -1272,7 +1272,7 @@ fn test_fish_rendered_uses_theme_colors_not_default() {
 /// 1. Config has `git.enabled = true`, segments = `["clock", "directory", "git"]`
 /// 2. Directory is NOT last, uses `segment_close` delimiter
 /// 3. User changes `git.enabled = false`
-/// 4. Agent sends SIGUSR2 (critical fix in agent.rs:670)
+/// 4. Agent writes the `<pid>.reload` flag and rings the SIGURG doorbell
 /// 5. Fish reloads theme export, `__enabled_segments` becomes `["clock", "directory"]`
 /// 6. Directory segment is now last, should use `prompt_close` delimiter
 ///

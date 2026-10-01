@@ -8,7 +8,7 @@
 # instant-cache is cold (new repo, evicted entry, fresh shell) showed NO git
 # segment at all -- segment_git_render's cold-miss branch only omitted the
 # segment and kicked off a throttled background refresh, relying on the
-# agent's SIGUSR1 repaint to fill it in on a LATER prompt (and only while the
+# agent's SIGURG repaint to fill it in on a LATER prompt (and only while the
 # agent stays up).
 #
 # AC1: with the agent UP and the instant cache genuinely cold for a repo, the

@@ -64,7 +64,7 @@ The unit tests live next to the code in `src/`.
 | `plugin_performance_tests.rs` | Plugin discovery stays within its performance budget |
 | `prev_bg_ansi.rs` | Integration test: `prev_bg` threads through the render pipeline and produces |
 | `schema_validation.rs` | Schema validation tests |
-| `signal_tests.rs` | SIGUSR1/SIGUSR2 delivery to registered client PIDs |
+| `signal_tests.rs` | SIGURG doorbell delivery to registered client PIDs (reloads add `<pid>.reload` flag files) |
 | `stale_socket_tests.rs` | Integration tests for `check_and_cleanup_socket` ping-retry behaviour (#317) |
 | `starship_import_golden_tests.rs` | Golden import tests: real-ish Starship configs → valid GPY artifacts |
 | `template_golden_tests.rs` | Golden fidelity tests: GPY engine output vs. Starship default module formats |
@@ -140,7 +140,7 @@ counter.reset();
 ```
 
 **When to use:**
-- Counting signals (SIGUSR1, etc.) in tests
+- Counting SIGURG doorbell deliveries in tests
 - Waiting for a specific number of events
 - Avoiding `sleep()` waits in signal-based tests
 
@@ -190,14 +190,14 @@ flag.clear();
 
 **❌ Bad:**
 ```rust
-registry.notify_sigusr1(None);
+registry.notify_repaint(None);
 sleep(Duration::from_millis(50)).await;
 assert_eq!(SIGNAL_COUNT.load(Ordering::Relaxed), 1);
 ```
 
 **✅ Good:**
 ```rust
-registry.notify_sigusr1(None);
+registry.notify_repaint(None);
 let received = counter.wait_for_count(1, Duration::from_secs(1)).await;
 assert!(received, "Should have received signal within timeout");
 ```
@@ -322,7 +322,7 @@ async fn test_my_signal_feature() {
         SaFlags::empty(),
         SigSet::empty(),
     );
-    let previous = unsafe { sigaction(Signal::SIGUSR1, &handler) }
+    let previous = unsafe { sigaction(Signal::SIGURG, &handler) }
         .expect("install handler");
 
     // Trigger the feature that should send a signal
@@ -334,10 +334,15 @@ async fn test_my_signal_feature() {
 
     // Restore previous handler
     unsafe {
-        sigaction(Signal::SIGUSR1, &previous).expect("restore handler");
+        sigaction(Signal::SIGURG, &previous).expect("restore handler");
     }
 }
 ```
+
+Reload notifications (`notify_reload`) also write `<shell_dir>/<pid>.reload`.
+Build the registry with `ClientDirectory::with_shell_dir(tempdir)` so the flag
+lands in a temp directory, and assert the flag exists alongside the doorbell
+count.
 
 ### Example: Testing Async Coordination
 

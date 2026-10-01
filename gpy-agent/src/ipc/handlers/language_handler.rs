@@ -158,7 +158,7 @@ impl LanguageHandler {
             language_cache.set(&repo_root, detected.clone());
             guard.finish(detected.clone());
             // Mirror the git handler's publish_and_repaint: write the
-            // instant-prompt cache and fire a content-gated SIGUSR1 so live
+            // instant-prompt cache and ring a content-gated repaint doorbell so live
             // prompts repaint without waiting for the next render (#166).
             Self::publish_language_status(&render, &repo_root, &detected);
         };
@@ -166,7 +166,7 @@ impl LanguageHandler {
         spawn_detached(job);
     }
 
-    /// Write the instant-prompt cache and fire a content-gated SIGUSR1 when the
+    /// Write the instant-prompt cache and ring a content-gated repaint doorbell when the
     /// detected languages produce different rendered output. The language-domain
     /// counterpart of `git_handler::publish_and_repaint`, so live prompts receive
     /// deferred results without requiring another render.

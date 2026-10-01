@@ -36,17 +36,11 @@ done
 # and bash 3.2 (macOS's system bash) resets non-ignored traps in subshells,
 # so the handler would appear missing even though it is correctly installed.
 # `$(...)` preserves it on both bash 3.2 and 5.
-if [[ "$(trap -p SIGUSR1)" != *__gpy_handle_sigusr1* ]]; then
-    echo "FAIL: Missing SIGUSR1 handler"
+if [[ "$(trap -p URG)" != *__gpy_handle_doorbell* ]]; then
+    echo "FAIL: Missing SIGURG doorbell handler"
     exit 1
 fi
-echo "✓ SIGUSR1 handler"
-
-if [[ "$(trap -p SIGUSR2)" != *__gpy_handle_sigusr2* ]]; then
-    echo "FAIL: Missing SIGUSR2 handler"
-    exit 1
-fi
-echo "✓ SIGUSR2 handler"
+echo "✓ SIGURG doorbell handler"
 
 # Check supervisor
 if ! declare -f __gpy_supervisor_start &>/dev/null; then

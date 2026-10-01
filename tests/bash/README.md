@@ -13,7 +13,7 @@ Exercise `bash/gpy.bash` and its segments.
 
 | Tier | Files | Agent? |
 |---|---|---|
-| Live daemon, real terminal | `e2e_agent_autostart`, `e2e_git_live_content`, `e2e_reregister_after_restart`, `e2e_config_sigusr2_reload` | real `gpy-agent`, real `bash -i` on a pty |
+| Live daemon, real terminal | `e2e_agent_autostart`, `e2e_git_live_content`, `e2e_reregister_after_restart`, `e2e_config_reload`, `e2e_exec_survives_doorbell` | real `gpy-agent`, real `bash -i` on a pty |
 | Live daemon, no terminal | `e2e_agent_down_stale_git` (agent down, then up), `path_parity` (`gpy debug paths` vs `__gpy_debug_paths`, cache key against a file the agent wrote) | real `gpy-agent`, functions called directly |
 | Function-level | `basic`, `integration`, `debug_trap`, `duration_math`, `json_escape_vectors`, `json_flags_tail`, `load_theme_cache`, `instant_cache_status`, `is_first_instant_cache`, `oneshot_budget`, `parity`, `prompt_dispatch_positions`, `segment_bg_export`, `missing_core_file_disables_cleanly`, `completions` | none (`integration` runs with the supervisor off and a socket that does not exist) |
 | IPC edge cases | `ipc_partial_response`, `protocol_version_mismatch`, `ipc_nc_fallback_timeout` | a python3 fake listener |

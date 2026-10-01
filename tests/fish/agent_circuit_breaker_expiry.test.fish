@@ -12,9 +12,9 @@
 # It must CLOSE again once that window elapses. A breaker that latches open
 # permanently makes the agent unreachable for the rest of the shell's life:
 # `__gpy_register_with_agent` gates on `__gpy_agent_available`, so such a shell
-# can never re-register -- not from the restart SIGALRM nudge, not from the
-# agent's re-nudge, not from a prompt render -- and therefore never receives
-# another SIGUSR1 live update (#464).
+# can never re-register -- not from the agent's restart .reregister nudge, not
+# from the agent's re-nudge, not from a prompt render -- and therefore never
+# receives another live update (#464).
 
 source (dirname (status -f))/../lib/test_helpers.fish
 

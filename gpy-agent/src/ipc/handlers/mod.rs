@@ -131,13 +131,13 @@ pub struct RenderDeps {
     pub palette_cache: Arc<crate::palette::PaletteCache>,
     /// On-disk cache the shell reads to render a prompt without any IPC round trip.
     pub instant_cache: Arc<crate::cache::InstantPromptCache>,
-    /// Live shells to repaint (SIGUSR1) when a write produces user-visibly
+    /// Live shells to repaint (SIGURG doorbell) when a write produces user-visibly
     /// different output. Required so a background refresh does not strand
     /// updated status until the next keystroke (#160).
     pub client_registry: Arc<ClientDirectory>,
 }
 
-/// Repaint live shells with a forced SIGUSR1 when `write_result` reports the
+/// Repaint live shells with a forced doorbell when `write_result` reports the
 /// rendered output actually changed; log a warning (never fail the request) on
 /// error.
 ///
@@ -154,7 +154,7 @@ pub(crate) fn notify_if_changed(
     context: &str,
 ) {
     match write_result {
-        Ok(true) => client_registry.notify_sigusr1_force(Some(root)),
+        Ok(true) => client_registry.notify_repaint_force(Some(root)),
         Ok(false) => {}
         // Log but don't fail - the instant cache is an optimization, not critical.
         Err(e) => warn_log!(

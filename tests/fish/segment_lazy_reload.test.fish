@@ -1,6 +1,6 @@
 #!/usr/bin/env fish
 # Test: __gpy_ensure_segments_loaded lazily sources segment files newly added
-# to __enabled_segments (e.g. by a SIGUSR2/theme reload) without a new shell.
+# to __enabled_segments (e.g. by an agent config/theme reload) without a new shell.
 
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)

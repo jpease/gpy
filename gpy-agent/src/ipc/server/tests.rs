@@ -38,7 +38,7 @@ fn create_language_project() -> TempDir {
     dir
 }
 
-// `notify_clients` signals live-update subscribers with SIGUSR1 (#540).
+// `notify_clients` rings the repaint doorbell for live-update subscribers (#540).
 #[cfg(unix)]
 /// # Panics
 ///

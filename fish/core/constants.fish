@@ -112,7 +112,7 @@ set -g GPY_CIRCUIT_BREAKER_BACKOFF_SECONDS 60
 # ============================================================================
 
 # Git instant-cache TTL (seconds)
-# This is the pull-based self-heal bound when a SIGUSR1 repaint push is missed:
+# This is the pull-based self-heal bound when a SIGURG repaint push is missed:
 # cached git output is still served instantly, but entries older than this flag
 # a throttled background refresh.
 set -g GPY_GIT_INSTANT_CACHE_TTL_SECONDS 5
