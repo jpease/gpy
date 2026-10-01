@@ -545,7 +545,7 @@ set -l xdg_c_bo "$h_bash_only/xdg-config"
 mkdir -p "$xdg_c_bo"
 set -l bashrc_only "$h_bash_only/.bashrc"
 printf '%s\n' prefix "" "# >>> gpy-init >>>" "source gpy.bash" "# <<< gpy-init <<<" suffix >"$bashrc_only"
-printf '\n' | env HOME=$h_bash_only XDG_CONFIG_HOME=$xdg_c_bo sh scripts/uninstall.sh >/dev/null 2>&1
+printf '\n' | env -u GPY_BUNDLED_PLUGIN_DIR HOME=$h_bash_only XDG_CONFIG_HOME=$xdg_c_bo XDG_CACHE_HOME=$h_bash_only/cache XDG_RUNTIME_DIR=$h_bash_only/rt GPY_CONFIG_PATH=$xdg_c_bo/gpy/config.toml GPY_AGENT_SOCKET_PATH=$h_bash_only/rt/gpy.sock sh scripts/uninstall.sh >/dev/null 2>&1
 set -l exp_bo "$h_bash_only/exp_bo"
 printf '%s\n' prefix suffix >"$exp_bo"
 __gpy_assert_byte_identical "#671: .bashrc cleaned byte-for-byte" "$exp_bo" "$bashrc_only"
@@ -576,7 +576,7 @@ printf '%s\n' \
     "# >>> gpy-init >>>" \
     "incomplete marker without end" >"$zshrc_blocks"
 
-printf '\n' | env HOME=$h_blocks XDG_CONFIG_HOME=$xdg_c_bl sh scripts/uninstall.sh >/dev/null 2>&1
+printf '\n' | env -u GPY_BUNDLED_PLUGIN_DIR HOME=$h_blocks XDG_CONFIG_HOME=$xdg_c_bl XDG_CACHE_HOME=$h_blocks/cache XDG_RUNTIME_DIR=$h_blocks/rt GPY_CONFIG_PATH=$xdg_c_bl/gpy/config.toml GPY_AGENT_SOCKET_PATH=$h_blocks/rt/gpy.sock sh scripts/uninstall.sh >/dev/null 2>&1
 set -l exp_zb "$h_blocks/exp_zb"
 printf '%s\n' head mid tail "" "# >>> gpy-init >>>" "incomplete marker without end" >"$exp_zb"
 __gpy_assert_byte_identical "#671: multiple complete blocks removed and incomplete marker preserved" "$exp_zb" "$zshrc_blocks"
@@ -603,6 +603,47 @@ else
     __gpy_test_fail "#671: paths with spaces fish prompt restoration failed"
 end
 rm -rf "$h_space" "$xdg_c_space" "$xdg_cache_space" "$xdg_rt_space"
+
+# --- 6. Orphaned start marker before a complete block; symlinked rc file;
+# mode and missing trailing newline preserved. Run through both entry points.
+for uninstaller in "sh scripts/uninstall.sh" "fish --no-config scripts/uninstall.fish"
+    set -l h6 (mktemp -d)
+    set -l c6 "$h6/xdg-config"
+    mkdir -p "$c6" "$h6/dots"
+
+    # Orphaned start, user content, then a complete block: only the complete
+    # block may go; the orphan and the user line between them must survive.
+    printf '%s\n' keep1 "# >>> gpy-init >>>" orphan USER_LINE_MUST_SURVIVE "" "# >>> gpy-init >>>" src "# <<< gpy-init <<<" tail >"$h6/.zshrc"
+    printf '%s\n' keep1 "# >>> gpy-init >>>" orphan USER_LINE_MUST_SURVIVE tail >"$h6/exp_zsh"
+
+    # Dotfile-manager symlink with a restrictive mode.
+    printf '%s\n' a "" "# >>> gpy-init >>>" x "# <<< gpy-init <<<" >"$h6/dots/bashrc"
+    chmod 600 "$h6/dots/bashrc"
+    ln -s "$h6/dots/bashrc" "$h6/.bashrc"
+    printf '%s\n' a >"$h6/exp_bash"
+
+    # Original without a trailing newline stays without one.
+    printf 'p\n\n# >>> gpy-init >>>\nx\n# <<< gpy-init <<<\nlast' >"$h6/.bash_profile"
+    printf 'p\nlast' >"$h6/exp_profile"
+
+    printf '\n' | env -u GPY_BUNDLED_PLUGIN_DIR HOME=$h6 XDG_CONFIG_HOME=$c6 XDG_CACHE_HOME=$h6/cache XDG_RUNTIME_DIR=$h6/rt GPY_CONFIG_PATH=$c6/gpy/config.toml GPY_AGENT_SOCKET_PATH=$h6/rt/gpy.sock (string split ' ' -- $uninstaller) >/dev/null 2>&1
+
+    __gpy_assert_byte_identical "#671 ($uninstaller): orphaned start never pairs with a later block" "$h6/exp_zsh" "$h6/.zshrc"
+    __gpy_assert_byte_identical "#671 ($uninstaller): symlink target cleaned" "$h6/exp_bash" "$h6/dots/bashrc"
+    if test -L "$h6/.bashrc"
+        __gpy_test_pass "#671 ($uninstaller): symlinked rc file is still a symlink"
+    else
+        __gpy_test_fail "#671 ($uninstaller): symlinked rc file was replaced by a regular file"
+    end
+    set -l mode (stat -f %Lp "$h6/dots/bashrc" 2>/dev/null; or stat -c %a "$h6/dots/bashrc")
+    if test "$mode" = 600
+        __gpy_test_pass "#671 ($uninstaller): rc file mode preserved"
+    else
+        __gpy_test_fail "#671 ($uninstaller): rc file mode changed to $mode"
+    end
+    __gpy_assert_byte_identical "#671 ($uninstaller): missing trailing newline preserved" "$h6/exp_profile" "$h6/.bash_profile"
+    rm -rf "$h6"
+end
 
 # ===========================================================================
 
