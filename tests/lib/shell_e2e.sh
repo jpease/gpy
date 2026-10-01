@@ -121,7 +121,7 @@ shell_e2e_init() {
     SHELL_E2E_AGENT_BIN="$_repo_root/gpy-agent/target/debug/gpy-agent"
     if [ ! -x "$SHELL_E2E_AGENT_BIN" ]; then
         echo "Building debug gpy-agent for the shell E2E tests..."
-        (cd "$_repo_root/gpy-agent" && RUSTC_WRAPPER="" cargo build --quiet) || {
+        (cd "$_repo_root/gpy-agent" && cargo build --quiet) || {
             echo "FAIL: could not build gpy-agent"
             exit 1
         }

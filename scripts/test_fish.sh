@@ -20,7 +20,7 @@ echo
 AGENT_BIN="gpy-agent/target/debug/gpy-agent"
 if [ ! -x "$AGENT_BIN" ]; then
     echo "Building gpy-agent debug binary for Fish tests..."
-    (cd gpy-agent && RUSTC_WRAPPER="" cargo build --quiet)
+    (cd gpy-agent && cargo build --quiet)
 fi
 
 if [ ! -x "$AGENT_BIN" ]; then

@@ -203,7 +203,7 @@ run_canary_bench() {
     GPY_PERF_CANARY_SAMPLE_SIZE="$SAMPLE_SIZE" \
     GPY_PERF_CANARY_WARMUP_SECONDS="$WARM_UP_SECONDS" \
     GPY_PERF_CANARY_MEASUREMENT_SECONDS="$MEASUREMENT_SECONDS" \
-    RUSTC_WRAPPER="" cargo bench --bench perf_canary_bench
+    cargo bench --bench perf_canary_bench
   )
 }
 

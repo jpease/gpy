@@ -421,8 +421,8 @@ main() {
     cd "$(dirname "$0")/.."
     PROJECT_ROOT="$(pwd)"
 
-    # Some environments set RUSTC_WRAPPER (e.g., to sccache) by default, which
-    # can fail in sandboxed CI. Clear it so these checks always run cleanly.
+    # Clear any RUSTC_WRAPPER environment override so the wrapper configured
+    # in Cargo's config (e.g. kache) is the one these checks use.
     if [[ -n "${RUSTC_WRAPPER:-}" ]]; then
         print_warning "Clearing RUSTC_WRAPPER=${RUSTC_WRAPPER} for quality checks"
         unset RUSTC_WRAPPER
@@ -523,7 +523,7 @@ main() {
     # [lints] table (#584), not on this command line — a bare `cargo clippy
     # --all-targets --features test-support` run by hand matches this check
     # exactly, no extra flags needed.
-    run_check "Clippy" "RUSTC_WRAPPER=\"\" cargo clippy --all-targets --features test-support" || true
+    run_check "Clippy" "cargo clippy --all-targets --features test-support" || true
 
     # Run tests (--features test-support additionally compiles the
     # PTY-backed wizard-terminal-restoration regression test, #460; the
@@ -539,18 +539,18 @@ main() {
     # already broken. `--fast` mode keeps fail-fast, which is the right
     # trade for local iteration.
     nextest_log="$(mktemp)"
-    run_check "Rust tests" "RUSTC_WRAPPER=\"\" cargo nextest run --features test-support --no-fail-fast 2>&1 | tee \"$nextest_log\"" || true
+    run_check "Rust tests" "cargo nextest run --features test-support --no-fail-fast 2>&1 | tee \"$nextest_log\"" || true
     report_nextest_retries "$nextest_log"
     rm -f "$nextest_log"
 
     # Run doc tests
-    run_check "Doc tests" "RUSTC_WRAPPER=\"\" cargo test --doc" || true
+    run_check "Doc tests" "cargo test --doc" || true
 
     # Security audit (mandatory — tools verified above)
     run_check "Security audit" "cargo audit" || true
 
     # Dependency/license check (mandatory — tools verified above)
-    run_check "Dependency check" "RUSTC_WRAPPER=\"\" cargo deny check" || true
+    run_check "Dependency check" "cargo deny check" || true
 
     # Check for unused dependencies (if cargo-machete is available).
     # --with-metadata resolves bench, example and dev targets through cargo
@@ -572,7 +572,7 @@ main() {
     # caught before code leaves the machine. Force it locally with
     # GPY_GATE_RELEASE=1 (or it runs automatically when CI is set).
     if [[ -n "${CI:-}" || -n "${GPY_GATE_RELEASE:-}" ]]; then
-        run_check "Release build" "RUSTC_WRAPPER=\"\" cargo build --release" || true
+        run_check "Release build" "cargo build --release" || true
     else
         print_warning "Skipping release build in local full check (runs in pre-push/CI via --rust-only; set GPY_GATE_RELEASE=1 to force)"
     fi
@@ -718,9 +718,9 @@ case "${1:-}" in
         # checks and audits above/below, not from a relaxed clippy pass.
         pushd gpy-agent >/dev/null
         run_check "Rust format check" "cargo fmt -- --check" || true
-        run_check "Clippy" "RUSTC_WRAPPER=\"\" cargo clippy --all-targets --features test-support" || true
+        run_check "Clippy" "cargo clippy --all-targets --features test-support" || true
         nextest_log="$(mktemp)"
-        run_check "Rust tests" "RUSTC_WRAPPER=\"\" cargo nextest run --features test-support 2>&1 | tee \"$nextest_log\"" || true
+        run_check "Rust tests" "cargo nextest run --features test-support 2>&1 | tee \"$nextest_log\"" || true
         report_nextest_retries "$nextest_log"
         rm -f "$nextest_log"
         popd >/dev/null
@@ -756,7 +756,7 @@ case "${1:-}" in
         pushd gpy-agent >/dev/null
 
         run_check "Rust format check" "cargo fmt -- --check" || true
-        run_check "Clippy" "RUSTC_WRAPPER=\"\" cargo clippy --all-targets --features test-support" || true
+        run_check "Clippy" "cargo clippy --all-targets --features test-support" || true
         # --no-fail-fast: report every failure, not just the first (#544).
         # nextest stops the run at the first failing test by default, which on
         # ubuntu meant the gate reported one failure while carrying nine -- the
@@ -767,10 +767,10 @@ case "${1:-}" in
         # already broken. `--fast` mode keeps fail-fast, which is the right
         # trade for local iteration.
         nextest_log="$(mktemp)"
-        run_check "Rust tests" "RUSTC_WRAPPER=\"\" cargo nextest run --features test-support --no-fail-fast 2>&1 | tee \"$nextest_log\"" || true
+        run_check "Rust tests" "cargo nextest run --features test-support --no-fail-fast 2>&1 | tee \"$nextest_log\"" || true
         report_nextest_retries "$nextest_log"
         rm -f "$nextest_log"
-        run_check "Doc tests" "RUSTC_WRAPPER=\"\" cargo test --doc" || true
+        run_check "Doc tests" "cargo test --doc" || true
 
         # Supply-chain checks (match the full gate). Warn-skip if the tool is
         # absent rather than failing the whole gate.
@@ -780,12 +780,12 @@ case "${1:-}" in
             print_warning "Skipping security audit (cargo-audit not installed)"
         fi
         if command -v cargo-deny >/dev/null 2>&1; then
-            run_check "Dependency check" "RUSTC_WRAPPER=\"\" cargo deny check" || true
+            run_check "Dependency check" "cargo deny check" || true
         else
             print_warning "Skipping dependency check (cargo-deny not installed)"
         fi
 
-        run_check "Release build" "RUSTC_WRAPPER=\"\" cargo build --release" || true
+        run_check "Release build" "cargo build --release" || true
 
         popd >/dev/null
 

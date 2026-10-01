@@ -10,7 +10,7 @@
 set -l agent_bin gpy-agent/target/debug/gpy-agent
 if not test -x $agent_bin
     echo "❌ gpy-agent binary not found at $agent_bin"
-    echo "   Build it first: (cd gpy-agent && RUSTC_WRAPPER= cargo build)"
+    echo "   Build it first: (cd gpy-agent && cargo build)"
     exit 1
 end
 

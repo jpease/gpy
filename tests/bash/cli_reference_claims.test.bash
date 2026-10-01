@@ -22,7 +22,7 @@ DOC="$ROOT/docs/user/cli-reference.md"
 GPY="$ROOT/gpy-agent/target/debug/gpy"
 GPY_AGENT="$ROOT/gpy-agent/target/debug/gpy-agent"
 if [ ! -x "$GPY" ] || [ ! -x "$GPY_AGENT" ]; then
-    (cd "$ROOT/gpy-agent" && RUSTC_WRAPPER="" cargo build --quiet --bin gpy --bin gpy-agent) || {
+    (cd "$ROOT/gpy-agent" && cargo build --quiet --bin gpy --bin gpy-agent) || {
         echo "FAIL: could not build the gpy binaries"
         exit 1
     }

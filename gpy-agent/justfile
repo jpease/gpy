@@ -7,7 +7,7 @@ default:
 
 # Build the agent in debug mode
 build:
-    RUSTC_WRAPPER="" moon run gpy-agent:build
+    moon run gpy-agent:build
 
 # Build the agent in release mode
 build-release:
@@ -15,15 +15,15 @@ build-release:
 
 # Run tests
 test *args:
-    RUSTC_WRAPPER="" moon run gpy-agent:test -- {{args}}
+    moon run gpy-agent:test -- {{args}}
 
 # Run doc tests
 test-doc:
-    RUSTC_WRAPPER="" moon run gpy-agent:test-doc
+    moon run gpy-agent:test-doc
 
 # Run clippy with strict settings
 clippy *args:
-    RUSTC_WRAPPER="" moon run gpy-agent:clippy -- {{args}}
+    moon run gpy-agent:clippy -- {{args}}
 
 # Development-friendly Clippy linting
 clippy-dev:
@@ -43,7 +43,7 @@ clippy-dev:
 
 # Strict Clippy linting with aggressive lint levels
 clippy-strict:
-    RUSTC_WRAPPER="" moon run gpy-agent:clippy
+    moon run gpy-agent:clippy
 
 # Run clippy and apply fixes
 clippy-fix:

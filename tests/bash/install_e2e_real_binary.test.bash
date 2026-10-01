@@ -46,7 +46,7 @@ pass() { echo "PASS: $*"; }
 
 GPY_CLI="$ROOT/gpy-agent/target/debug/gpy"
 if [ ! -x "$GPY_CLI" ]; then
-    (cd "$ROOT/gpy-agent" && RUSTC_WRAPPER="" cargo build --quiet --bin gpy) || {
+    (cd "$ROOT/gpy-agent" && cargo build --quiet --bin gpy) || {
         echo "FAIL: could not build the gpy CLI"
         exit 1
     }
