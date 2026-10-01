@@ -91,21 +91,36 @@ function uninstall_custom_prompt
         end
     end
 
-    # Restore previous fish_prompt backup if present. install.sh writes
-    # `fish_prompt.fish.gpy-backup.<stamp>`, install-oneline.sh
-    # `fish_prompt.fish.backup.<stamp>`; both are ours to restore (#642).
-    set -l backup_glob $prompt_function_file.gpy-backup.* $prompt_function_file.backup.*
-    set -l valid_backups
-    for candidate in $backup_glob
-        if test -e $candidate
-            set valid_backups $valid_backups $candidate
+    # Restore previous fish_prompt backup if destination is absent (#667).
+    # A non-GPY regular file, symlink (valid or dangling), directory, or other
+    # existing destination must be preserved byte-for-byte, leaving all backups
+    # untouched.
+    if test -e "$prompt_function_file" -o -L "$prompt_function_file"
+        echo "🤔 fish_prompt.fish already exists; preserving current prompt and backups"
+    else
+        # install.sh writes `fish_prompt.fish.gpy-backup.<stamp>`, install-oneline.sh
+        # `fish_prompt.fish.backup.<stamp>`; both are ours to restore (#642).
+        # Compare timestamp suffix descending; on equal stamps, lexicographical
+        # order of the basename wins (.gpy-backup. over .backup.) (#670).
+        set -l backup_candidates "$prompt_function_file".backup.* "$prompt_function_file".gpy-backup.*
+        set -l eligible_backups
+        for candidate in $backup_candidates
+            if test -f "$candidate" -a ! -L "$candidate"
+                set -l bname (basename "$candidate")
+                set -l match (string match -r '^fish_prompt\.fish\.(backup|gpy-backup)\.([0-9]{8}_[0-9]{6})$' -- "$bname")
+                if test (count $match) -eq 3
+                    set -l stamp $match[3]
+                    set eligible_backups $eligible_backups (printf "%s\t%s\t%s" "$stamp" "$bname" "$candidate")
+                end
+            end
         end
-    end
 
-    if test (count $valid_backups) -gt 0
-        set -l latest_backup (printf '%s\n' $valid_backups | sort | tail -n1)
-        mv $latest_backup $prompt_function_file
-        echo "♻️  Restored backup prompt from $latest_backup"
+        if test (count $eligible_backups) -gt 0
+            set -l winner_line (printf '%s\n' $eligible_backups | env LC_ALL=C sort | tail -n1)
+            set -l latest_backup (printf '%s' "$winner_line" | cut -f3-)
+            mv "$latest_backup" "$prompt_function_file"
+            echo "♻️  Restored backup prompt from $latest_backup"
+        end
     end
 
     # Remove conf.d file
