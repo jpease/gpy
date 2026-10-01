@@ -7,48 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- Multi-shell global uninstallation and complete startup cleanup (#671): both
-  `scripts/uninstall.sh` and `scripts/uninstall.fish` now perform global
-  uninstallation for the current user's install across all supported shells
-  (Fish, Bash, Zsh), removing integration files, stopping agent and Fish
-  supervisor processes, and cleaning delimited `# >>> gpy-init >>>` blocks from
-  all existing startup files (`~/.bashrc`, `~/.bash_profile`, `~/.zshrc`, and
-  `config.fish`).
-
-- Fish uninstaller backup timestamp selection (#670): `scripts/uninstall.fish`
-  now chooses the latest backup by comparing the timestamp suffix
-  (`YYYYMMDD_HHMMSS`) descending across both installer conventions
-  (`fish_prompt.fish.backup.<stamp>` and `fish_prompt.fish.gpy-backup.<stamp>`),
-  with deterministic `.gpy-backup.` preference on equal stamps, preventing older
-  `install.sh` backups from incorrectly overwriting newer `install-oneline.sh`
-  backups.
-
-- Fish uninstaller prompt preservation (#667): `scripts/uninstall.fish` now
-  checks whether the destination `fish_prompt.fish` already exists (as an
-  unrelated custom prompt, symlink, directory, or other object) before restoring
-  a backup, preserving the existing file and leaving all backups untouched.
-  Backup restoration now occurs only into an absent destination.
-
-- Empty and invalid theme name rejection in `theme new` (#672): `gpy theme new`
-  now validates destination theme names against the `ThemeName` invariant
-  before creating directories or files, rejecting empty names, whitespace-only
-  names, and names containing invalid characters without creating unusable
-  `.toml` files.
-
-- Prospective activation validation in `theme use` (#668): `gpy theme use` and
-  `gpy theme use --force` now validate the candidate theme's segment format
-  templates against the prospective active palette before modifying `config.toml`,
-  preventing activation of themes with broken templates or unresolved color roles
-  and preserving configuration on validation failure.
-
-- Theme validation segment coverage (#669): `validate_segment_templates` now
-  validates `clock`, `hostname`, and `username` format templates alongside
-  `git`, `language`, `directory`, `duration`, and `character`, preventing themes
-  with invalid colors or broken templates from passing validation or being set
-  via `gpy config set ui.theme`.
-
 ## [0.1.0] - YYYY-MM-DD
 
 ### Added
@@ -295,6 +253,46 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   place of `gpy_setup`, and `gpy doctor` in place of `gpy_config_validate`.
 
 ### Fixed
+
+- Fish uninstaller prompt preservation (#667): `scripts/uninstall.fish` now
+  checks whether the destination `fish_prompt.fish` already exists (as an
+  unrelated custom prompt, symlink, directory, or other object) before restoring
+  a backup, preserving the existing file and leaving all backups untouched.
+  Backup restoration now occurs only into an absent destination.
+
+- Fish uninstaller backup timestamp selection (#670): `scripts/uninstall.fish`
+  now chooses the latest backup by comparing the timestamp suffix
+  (`YYYYMMDD_HHMMSS`) descending across both installer conventions
+  (`fish_prompt.fish.backup.<stamp>` and `fish_prompt.fish.gpy-backup.<stamp>`),
+  with deterministic `.gpy-backup.` preference on equal stamps, preventing older
+  `install.sh` backups from incorrectly overwriting newer `install-oneline.sh`
+  backups.
+
+- Multi-shell global uninstallation and complete startup cleanup (#671): both
+  `scripts/uninstall.sh` and `scripts/uninstall.fish` now perform global
+  uninstallation for the current user's install across all supported shells
+  (Fish, Bash, Zsh), removing integration files, stopping agent and Fish
+  supervisor processes, and cleaning delimited `# >>> gpy-init >>>` blocks from
+  all existing startup files (`~/.bashrc`, `~/.bash_profile`, `~/.zshrc`, and
+  `config.fish`).
+
+- Theme validation segment coverage (#669): `validate_segment_templates` now
+  validates `clock`, `hostname`, and `username` format templates alongside
+  `git`, `language`, `directory`, `duration`, and `character`, preventing themes
+  with invalid colors or broken templates from passing validation or being set
+  via `gpy config set ui.theme`.
+
+- Prospective activation validation in `theme use` (#668): `gpy theme use` and
+  `gpy theme use --force` now validate the candidate theme's segment format
+  templates against the prospective active palette before modifying `config.toml`,
+  preventing activation of themes with broken templates or unresolved color roles
+  and preserving configuration on validation failure.
+
+- Empty and invalid theme name rejection in `theme new` (#672): `gpy theme new`
+  now validates destination theme names against the `ThemeName` invariant
+  before creating directories or files, rejecting empty names, whitespace-only
+  names, and names containing invalid characters without creating unusable
+  `.toml` files.
 
 - Release workflow rebuilt for the current repository layout (#492). It
   validated root-level `core/`/`segments/`/`themes/` Fish paths that moved
