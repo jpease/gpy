@@ -286,10 +286,14 @@ default
 
 Create a new theme based on the default theme template, or by cloning an existing theme.
 
+Destination names must satisfy the safe configuration name invariant: non-empty,
+non-whitespace, containing no path separators (`/`, `\`), `..`, or control characters.
+An invalid destination name is rejected before creating files or directories.
+
 Creates a new theme file in `~/.config/gpy/themes/<name>.toml`. Without `--from`, it copies the default theme. With `--from <base>`, it copies the full contents of `<base>` (a builtin, user, or plugin theme name) instead, so you can start customizing from a theme you already like rather than the blank default. You can then edit this file to customize colors, icons, and other visual elements.
 
 **Arguments:**
-- `<name>` - New theme name
+- `<name>` - New theme name (non-empty safe config name)
 
 **Options:**
 - `--from <base>` - Clone an existing theme's full contents instead of the default template

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Empty and invalid theme name rejection in `theme new` (#672): `gpy theme new`
+  now validates destination theme names against the `ThemeName` invariant
+  before creating directories or files, rejecting empty names, whitespace-only
+  names, and names containing invalid characters without creating unusable
+  `.toml` files.
+
 - Prospective activation validation in `theme use` (#668): `gpy theme use` and
   `gpy theme use --force` now validate the candidate theme's segment format
   templates against the prospective active palette before modifying `config.toml`,

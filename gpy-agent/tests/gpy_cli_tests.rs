@@ -1480,6 +1480,7 @@ this is not valid toml
     );
 }
 
+// ===========================================================================
 // Issue #669: theme validation covers clock, hostname, and username formats
 // ===========================================================================
 
@@ -1631,7 +1632,6 @@ format = "[$username](fg:white)"
 }
 
 // ===========================================================================
-
 // Issue #668: theme use prospective activation validation
 // ===========================================================================
 
@@ -1831,3 +1831,99 @@ activation_accent = "#123456"
 }
 
 // ===========================================================================
+// Issue #672: theme new validates destination name
+// ===========================================================================
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn test_theme_new_rejects_empty_and_whitespace_names() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let themes_dir = env.themes_dir();
+    // Remove pre-created themes dir to test fresh directory-less behavior
+    if themes_dir.exists() {
+        fs::remove_dir_all(&themes_dir).expect("Failed to remove themes dir");
+    }
+
+    let env_overrides = [
+        ("GPY_CONFIG_PATH", env.config_path().display().to_string()),
+        (
+            "GPY_AGENT_SOCKET_PATH",
+            env.xdg_runtime_dir().join("gpy.sock").display().to_string(),
+        ),
+        (
+            "GPY_BUNDLED_PLUGIN_DIR",
+            env.root().join("empty_plugins").display().to_string(),
+        ),
+    ];
+
+    // 1. Empty destination name, plain and --from default
+    for flags in [
+        &["theme", "new", ""][..],
+        &["theme", "new", "", "--from", "default"][..],
+    ] {
+        let res = env
+            .run_gpy_with_env(flags, &env_overrides)
+            .expect("Failed to run gpy theme new");
+        assert_ne!(res.exit_code, 0_i32, "theme new with empty name must fail");
+        assert!(
+            !themes_dir.join(".toml").exists(),
+            ".toml must not be created for empty name"
+        );
+        assert!(
+            !themes_dir.exists(),
+            "themes dir must not be materialized for invalid name"
+        );
+    }
+
+    // 2. Whitespace-only destination name, plain and cloned
+    for flags in [
+        &["theme", "new", "   "][..],
+        &["theme", "new", "   ", "--from", "default"][..],
+    ] {
+        let res = env
+            .run_gpy_with_env(flags, &env_overrides)
+            .expect("Failed to run gpy theme new");
+        assert_ne!(
+            res.exit_code, 0_i32,
+            "theme new with whitespace name must fail"
+        );
+        assert!(
+            !themes_dir.exists(),
+            "themes dir must not be materialized for whitespace name"
+        );
+    }
+
+    // 3. Valid plain name creates valid theme that validate and use accept
+    let res_valid = env
+        .run_gpy_with_env(&["theme", "new", "my-valid-theme"], &env_overrides)
+        .expect("Failed to create valid theme");
+    res_valid.assert_success("create valid theme");
+    assert!(themes_dir.join("my-valid-theme.toml").exists());
+
+    let val_res = env
+        .run_gpy_with_env(&["theme", "validate", "my-valid-theme"], &env_overrides)
+        .expect("Failed to validate new theme");
+    val_res.assert_success("validate created theme");
+
+    let use_res = env
+        .run_gpy_with_env(&["theme", "use", "my-valid-theme"], &env_overrides)
+        .expect("Failed to use new theme");
+    use_res.assert_success("use created theme");
+    let active_cfg = fs::read_to_string(env.config_path()).expect("read active config");
+    assert!(
+        active_cfg.contains("theme = \"my-valid-theme\""),
+        "active config must have new theme: {active_cfg}"
+    );
+
+    // 4. Existing destination rejects and preserves content
+    let original_bytes = fs::read(themes_dir.join("my-valid-theme.toml")).expect("read original");
+    let res_collision = env
+        .run_gpy_with_env(&["theme", "new", "my-valid-theme"], &env_overrides)
+        .expect("Failed to run collision test");
+    assert_ne!(res_collision.exit_code, 0_i32, "collision must fail");
+    assert_eq!(
+        fs::read(themes_dir.join("my-valid-theme.toml")).expect("read after collision"),
+        original_bytes,
+        "existing theme file must not be modified on collision"
+    );
+}

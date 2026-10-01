@@ -145,7 +145,7 @@ Already like a specific theme (built-in, user, or plugin) and just want to tweak
 gpy theme new mytheme --from starship
 ```
 
-This copies the chosen theme (the default, or the one named by `--from`) to `~/.config/gpy/themes/mytheme.toml` and prints the path to edit plus the activation command. Open it in your editor:
+Theme names must be valid configuration names (non-empty, non-whitespace, containing no `/`, `\`, `..`, or control characters). This copies the chosen theme (the default, or the one named by `--from`) to `~/.config/gpy/themes/mytheme.toml` and prints the path to edit plus the activation command. Open it in your editor:
 
 ```bash
 $EDITOR ~/.config/gpy/themes/mytheme.toml
@@ -195,9 +195,7 @@ After editing, validate before activating:
 gpy theme validate mytheme
 gpy theme use mytheme
 ```
-
-`gpy theme validate` reports the failing field, the invalid value, and remediation guidance if something's wrong (bad color name, empty icon glyph, malformed TOML).
-
+`gpy theme validate` checks theme schema fields, icon glyphs, and segment format templates across all eight supported agent-rendered segments (`git`, `language`, `directory`, `duration`, `character`, `clock`, `hostname`, `username`), reporting the failing field, the invalid value, and remediation guidance if something's wrong (bad color name, empty icon glyph, malformed TOML). Both `theme validate` and `theme use` share this validator.
 ### Already using Starship?
 
 If you're migrating from [Starship](https://starship.rs/) and want to start from your existing look rather than the GPY default theme, `gpy theme import` converts a `starship.toml` into a matching GPY palette + theme pair in one step:
