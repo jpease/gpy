@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fish uninstaller prompt preservation (#667): `scripts/uninstall.fish` now
+  checks whether the destination `fish_prompt.fish` already exists (as an
+  unrelated custom prompt, symlink, directory, or other object) before restoring
+  a backup, preserving the existing file and leaving all backups untouched.
+  Backup restoration now occurs only into an absent destination.
+
 - Empty and invalid theme name rejection in `theme new` (#672): `gpy theme new`
   now validates destination theme names against the `ThemeName` invariant
   before creating directories or files, rejecting empty names, whitespace-only

@@ -495,42 +495,57 @@ bash --version
 
 ## Uninstallation
 
-Run the uninstall script for the shell you installed. Each one stops the
-agent (and, for Fish, the supervisor loop it started), then removes the
-binaries and their upgrade backups from `~/.local/bin`, the shell
-integration files and completions, the `gpy-init` block from your rc file,
-and the config, cache and runtime directories. It asks for confirmation
-first; the rc file is restored byte-for-byte.
+Run either uninstall script (`fish scripts/uninstall.fish` or `sh scripts/uninstall.sh`).
+Uninstallation is **global for the current user's install**: either script stops
+the agent and supervisor processes, removes the binaries and their upgrade backups
+from `~/.local/bin`, removes all shell integration files and completions (Fish,
+Zsh, Bash), cleans the `gpy-init` block from all supported startup files
+(`~/.bashrc`, `~/.bash_profile`, `~/.zshrc`, and `~/.config/fish/config.fish`), and
+removes the config, cache, and runtime directories. It asks for confirmation first,
+and startup files are restored byte-for-byte.
 
 ```bash
 # From a release archive or a clone of the repository
-fish scripts/uninstall.fish                 # Fish
-GPY_SHELL=zsh sh scripts/uninstall.sh       # Zsh
-GPY_SHELL=bash sh scripts/uninstall.sh      # Bash
+fish scripts/uninstall.fish                 # Fish entry point (uninstalls globally)
+sh scripts/uninstall.sh                     # POSIX shell entry point (uninstalls globally)
 
 # Installed with the one-liner and no local copy? Download the script first
 # (piping it straight into a shell would feed the confirmation prompt the
 # script itself):
 curl -fsSL https://raw.githubusercontent.com/jpease/gpy/main/scripts/uninstall.sh -o /tmp/gpy-uninstall.sh
-GPY_SHELL=zsh sh /tmp/gpy-uninstall.sh      # or GPY_SHELL=bash; Fish users fetch uninstall.fish
+sh /tmp/gpy-uninstall.sh                    # or download uninstall.fish
 ```
 
-If you had your own `fish_prompt.fish` before installing, the Fish script
-puts it back from the backup the installer made.
+### Fish Prompt Restoration
 
-To remove GPY by hand instead, this is everything the scripts touch:
+If your `fish_prompt.fish` is an unrelated custom prompt or symlink, the uninstaller
+preserves it byte-for-byte and leaves all backups untouched.
+
+When the prompt destination is absent (or becomes absent after removing the GPY
+symlink/implementation), the uninstaller restores the newest backup by comparing the
+timestamp suffix (`YYYYMMDD_HHMMSS`) across both naming conventions:
+- `fish_prompt.fish.backup.<stamp>` (from `install-oneline.sh`)
+- `fish_prompt.fish.gpy-backup.<stamp>` (from `install.sh`)
+
+If timestamps are equal, `.gpy-backup.` is preferred deterministically. Older backups
+remain untouched.
+
+### Manual Removal Checklist
+
+To remove GPY manually instead, this is everything the uninstaller touches:
 
 ```bash
 gpy-agent stop
 rm -f ~/.local/bin/gpy-agent ~/.local/bin/gpy ~/.local/bin/gpy-agent.backup.* ~/.local/bin/gpy.backup.*
-rm -rf ~/.config/fish/gpy ~/.config/fish/completions/gpy.fish ~/.config/fish/completions/gpy-dynamic.fish   # Fish
-rm -rf ~/.config/gpy                                           # config, plus the Zsh/Bash files and completions
+rm -rf ~/.config/fish/gpy ~/.config/fish/conf.d/gpy_init.fish ~/.config/fish/completions/gpy.fish ~/.config/fish/completions/gpy-dynamic.fish
+rm -rf ~/.config/gpy                                           # config, plus Zsh/Bash integrations and completions
 rm -rf ~/.cache/gpy "${XDG_RUNTIME_DIR:-~/.cache}/gpy"          # cache; socket, agent.version, shells/
 # Remove the "# >>> gpy-init >>>" ... "# <<< gpy-init <<<" block from
-# ~/.config/fish/config.fish, ~/.zshrc or ~/.bashrc
-# Fish: also remove the prompt symlink and restore any backup
-rm ~/.config/fish/functions/fish_prompt.fish
-mv ~/.config/fish/functions/fish_prompt.fish.gpy-backup.* ~/.config/fish/functions/fish_prompt.fish 2>/dev/null
+# ~/.config/fish/config.fish, ~/.zshrc, ~/.bashrc, and ~/.bash_profile
+# Fish prompt: if a GPY symlink, remove it and restore the newest backup if desired
+rm -f ~/.config/fish/functions/fish_prompt.fish
+# Restore newest backup if present:
+# mv ~/.config/fish/functions/fish_prompt.fish.backup.<newest_stamp> ~/.config/fish/functions/fish_prompt.fish
 
 exec fish  # or zsh, bash
 ```
