@@ -268,6 +268,110 @@ else
 end
 rm -rf "$t8"
 
+# 9. Older .gpy-backup. plus newer .backup.: restore newer .backup. (#670)
+set -l t9 (mktemp -d)
+set -l t9_fn "$t9/config/fish/functions"
+mkdir -p "$t9_fn"
+set -l t9_prompt "$t9_fn/fish_prompt.fish"
+set -l t9_older "$t9_fn/fish_prompt.fish.gpy-backup.20260101_000000"
+set -l t9_newer "$t9_fn/fish_prompt.fish.backup.20260201_000000"
+printf '%s\n' "function fish_prompt; echo older_gpy; end" >"$t9_older"
+printf '%s\n' "function fish_prompt; echo newer_backup; end" >"$t9_newer"
+__gpy_test_uninstall "$isolated_bin/uninstall.fish" "$t9"
+if test -f "$t9_prompt"; and test (cat "$t9_prompt") = "function fish_prompt; echo newer_backup; end"; and test -f "$t9_older"; and not test -e "$t9_newer"
+    __gpy_test_pass "#670 matrix 1: older .gpy-backup. + newer .backup. restores newer .backup."
+else
+    __gpy_test_fail "#670 matrix 1: wrong backup restored"
+end
+rm -rf "$t9"
+
+# 10. Newer .gpy-backup. plus older .backup.: restore newer .gpy-backup. (#670)
+set -l t10 (mktemp -d)
+set -l t10_fn "$t10/config/fish/functions"
+mkdir -p "$t10_fn"
+set -l t10_prompt "$t10_fn/fish_prompt.fish"
+set -l t10_older "$t10_fn/fish_prompt.fish.backup.20260101_000000"
+set -l t10_newer "$t10_fn/fish_prompt.fish.gpy-backup.20260201_000000"
+printf '%s\n' "function fish_prompt; echo older_backup; end" >"$t10_older"
+printf '%s\n' "function fish_prompt; echo newer_gpy; end" >"$t10_newer"
+__gpy_test_uninstall "$isolated_bin/uninstall.fish" "$t10"
+if test -f "$t10_prompt"; and test (cat "$t10_prompt") = "function fish_prompt; echo newer_gpy; end"; and test -f "$t10_older"; and not test -e "$t10_newer"
+    __gpy_test_pass "#670 matrix 2: newer .gpy-backup. + older .backup. restores newer .gpy-backup."
+else
+    __gpy_test_fail "#670 matrix 2: wrong backup restored"
+end
+rm -rf "$t10"
+
+# 11. Multiple backups of either convention alone: greatest suffix wins (#670)
+set -l t11 (mktemp -d)
+set -l t11_fn "$t11/config/fish/functions"
+mkdir -p "$t11_fn"
+set -l t11_prompt "$t11_fn/fish_prompt.fish"
+set -l t11_b1 "$t11_fn/fish_prompt.fish.backup.20260101_100000"
+set -l t11_b2 "$t11_fn/fish_prompt.fish.backup.20260102_100000"
+set -l t11_b3 "$t11_fn/fish_prompt.fish.backup.20260103_100000"
+printf '%s\n' "function fish_prompt; echo b1; end" >"$t11_b1"
+printf '%s\n' "function fish_prompt; echo b2; end" >"$t11_b2"
+printf '%s\n' "function fish_prompt; echo b3_greatest; end" >"$t11_b3"
+__gpy_test_uninstall "$isolated_bin/uninstall.fish" "$t11"
+if test -f "$t11_prompt"; and test (cat "$t11_prompt") = "function fish_prompt; echo b3_greatest; end"; and test -f "$t11_b1"; and test -f "$t11_b2"; and not test -e "$t11_b3"
+    __gpy_test_pass "#670 matrix 3: greatest timestamp suffix wins among single convention"
+else
+    __gpy_test_fail "#670 matrix 3: greatest suffix selection failed"
+end
+rm -rf "$t11"
+
+# 12. Same suffix tie policy: .gpy-backup. wins tie (#670)
+set -l t12 (mktemp -d)
+set -l t12_fn "$t12/config/fish/functions"
+mkdir -p "$t12_fn"
+set -l t12_prompt "$t12_fn/fish_prompt.fish"
+set -l t12_plain "$t12_fn/fish_prompt.fish.backup.20260101_000000"
+set -l t12_gpy "$t12_fn/fish_prompt.fish.gpy-backup.20260101_000000"
+printf '%s\n' "function fish_prompt; echo plain_tie; end" >"$t12_plain"
+printf '%s\n' "function fish_prompt; echo gpy_tie_winner; end" >"$t12_gpy"
+__gpy_test_uninstall "$isolated_bin/uninstall.fish" "$t12"
+if test -f "$t12_prompt"; and test (cat "$t12_prompt") = "function fish_prompt; echo gpy_tie_winner; end"; and test -f "$t12_plain"; and not test -e "$t12_gpy"
+    __gpy_test_pass "#670 matrix 4: same suffix tie gives victory to .gpy-backup."
+else
+    __gpy_test_fail "#670 matrix 4: same suffix tie policy failed"
+end
+rm -rf "$t12"
+
+# 13. Malformed suffix and matching directory/symlink candidates ignored (#670)
+set -l t13 (mktemp -d)
+set -l t13_fn "$t13/config/fish/functions"
+mkdir -p "$t13_fn"
+set -l t13_prompt "$t13_fn/fish_prompt.fish"
+set -l t13_bad_suffix "$t13_fn/fish_prompt.fish.backup.invalid_stamp"
+printf '%s\n' "function fish_prompt; echo bad_suffix; end" >"$t13_bad_suffix"
+set -l t13_dir_candidate "$t13_fn/fish_prompt.fish.backup.20260101_000000"
+mkdir -p "$t13_dir_candidate"
+set -l t13_symlink_candidate "$t13_fn/fish_prompt.fish.gpy-backup.20260101_000000"
+ln -s "$t13_bad_suffix" "$t13_symlink_candidate"
+__gpy_test_uninstall "$isolated_bin/uninstall.fish" "$t13"
+if not test -e "$t13_prompt"; and not test -L "$t13_prompt"; and test -f "$t13_bad_suffix"; and test -d "$t13_dir_candidate"; and test -L "$t13_symlink_candidate"
+    __gpy_test_pass "#670 matrix 5: malformed suffix, directory and symlink candidates untouched"
+else
+    __gpy_test_fail "#670 matrix 5: invalid candidate was improperly selected or modified"
+end
+rm -rf "$t13"
+
+# 14. Fixture root includes spaces: correct restoration, no split-path (#670)
+set -l t14 (mktemp -d "/tmp/gpy test spaces.XXXXXX")
+set -l t14_fn "$t14/config/fish/functions"
+mkdir -p "$t14_fn"
+set -l t14_prompt "$t14_fn/fish_prompt.fish"
+set -l t14_backup "$t14_fn/fish_prompt.fish.backup.20260101_000000"
+printf '%s\n' "function fish_prompt; echo space_path_restored; end" >"$t14_backup"
+__gpy_test_uninstall "$isolated_bin/uninstall.fish" "$t14"
+if test -f "$t14_prompt"; and test (cat "$t14_prompt") = "function fish_prompt; echo space_path_restored; end"; and not test -e "$t14_backup"
+    __gpy_test_pass "#670 matrix 6: path with spaces restores correctly"
+else
+    __gpy_test_fail "#670 matrix 6: space path restoration failed"
+end
+rm -rf "$t14"
+
 rm -rf "$isolated_bin"
 
 # ===========================================================================
