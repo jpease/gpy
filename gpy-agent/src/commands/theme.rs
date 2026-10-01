@@ -15,7 +15,7 @@ use crate::config::recommended_layout::{
 };
 use crate::{
     Error, Result, config,
-    theme::{RecommendedUi, ThemeManager, ThemeSource},
+    theme::{RecommendedUi, ThemeConfig, ThemeManager, ThemeSource},
 };
 use std::path::Path;
 
@@ -120,12 +120,14 @@ pub fn use_theme(name: &str, force: bool) -> Result<()> {
             name,
             &mut config,
             &path,
+            &theme,
             pending,
             recommended_detection,
             recommended_palette,
             outgoing_recommended.as_ref(),
         )?;
     } else {
+        validate_prospective_activation(&theme, config.ui.palette.as_str())?;
         save_config_to(&config, &path)?;
 
         println!("✅ Switched to '{name}' theme");
@@ -159,12 +161,13 @@ pub fn use_theme(name: &str, force: bool) -> Result<()> {
 /// Returns an error if the updated config cannot be saved.
 #[expect(
     clippy::too_many_arguments,
-    reason = "each parameter is a distinct piece of --force's decision state (name, config, path, pending layout, three independent recommendation options); grouping them would only move the same seven names into a params struct"
+    reason = "each parameter is a distinct piece of --force's decision state (name, config, path, theme, pending layout, three independent recommendation options); grouping them would only move the same eight names into a params struct"
 )]
 fn apply_forced_switch(
     name: &str,
     config: &mut config::Config,
     path: &str,
+    theme: &ThemeConfig,
     pending: PendingLayout,
     recommended_detection: Option<config::types::DetectionMode>,
     recommended_palette: Option<config::types::PaletteName>,
@@ -184,6 +187,7 @@ fn apply_forced_switch(
         outgoing_recommended,
     );
     let palette_applied = resolve_forced_palette(config, recommended_palette, user_set.palette);
+    validate_prospective_activation(theme, config.ui.palette.as_str())?;
     save_config_to(config, path)?;
 
     println!("✅ Switched to '{name}' theme");
@@ -197,6 +201,19 @@ fn apply_forced_switch(
         preserved.summary(),
         detection_preserved,
     );
+    Ok(())
+}
+/// Validate prospective theme activation against the prospective active palette.
+///
+/// # Errors
+///
+/// Returns an error if the prospective palette cannot be loaded or if theme
+/// segment templates fail rendering validation.
+fn validate_prospective_activation(theme: &ThemeConfig, palette_name: &str) -> Result<()> {
+    let palette_mgr = crate::palette::PaletteManager::new(palette_name)?;
+    let palette = palette_mgr.get().to_template_palette();
+    crate::config::validation::templates::validate_segment_templates(theme, &palette)
+        .map_err(|e| Error::config(e.to_string()))?;
     Ok(())
 }
 

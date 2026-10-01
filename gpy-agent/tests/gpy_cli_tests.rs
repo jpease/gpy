@@ -1631,3 +1631,203 @@ format = "[$username](fg:white)"
 }
 
 // ===========================================================================
+
+// Issue #668: theme use prospective activation validation
+// ===========================================================================
+
+#[test]
+fn test_theme_use_rejects_broken_template_preserving_config() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let themes_dir = env.themes_dir();
+    fs::create_dir_all(&themes_dir).expect("Failed to create themes dir");
+
+    let broken_theme = r#"
+[ui]
+[segments.git]
+format = "[$branch](fg:does_not_exist)"
+"#;
+    fs::write(themes_dir.join("broken.toml"), broken_theme).expect("Failed to write broken theme");
+
+    let original_config = b"[ui]\ntheme = \"default\"\n";
+    fs::write(env.config_path(), original_config).expect("Failed to write config");
+
+    let env_overrides = [
+        ("GPY_CONFIG_PATH", env.config_path().display().to_string()),
+        (
+            "GPY_AGENT_SOCKET_PATH",
+            env.xdg_runtime_dir().join("gpy.sock").display().to_string(),
+        ),
+        (
+            "GPY_BUNDLED_PLUGIN_DIR",
+            env.root().join("empty_plugins").display().to_string(),
+        ),
+    ];
+
+    // Normal activation
+    let res = env
+        .run_gpy_with_env(&["theme", "use", "broken"], &env_overrides)
+        .expect("Failed to run theme use");
+    assert_ne!(res.exit_code, 0_i32, "theme use broken must fail");
+    assert_eq!(
+        fs::read(env.config_path()).expect("read config"),
+        original_config,
+        "config bytes must be unchanged after rejected theme use"
+    );
+
+    // Forced activation
+    let res_force = env
+        .run_gpy_with_env(&["theme", "use", "broken", "--force"], &env_overrides)
+        .expect("Failed to run theme use --force");
+    assert_ne!(
+        res_force.exit_code, 0_i32,
+        "theme use broken --force must fail"
+    );
+    assert_eq!(
+        fs::read(env.config_path()).expect("read config"),
+        original_config,
+        "config bytes must be unchanged after rejected theme use --force"
+    );
+}
+
+#[test]
+fn test_theme_use_missing_config_environment() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let themes_dir = env.themes_dir();
+    fs::create_dir_all(&themes_dir).expect("Failed to create themes dir");
+
+    let broken_theme = r#"
+[ui]
+[segments.git]
+format = "[$branch](fg:does_not_exist)"
+"#;
+    fs::write(themes_dir.join("broken.toml"), broken_theme).expect("Failed to write broken theme");
+
+    // Remove config file to test fresh file-less environment
+    let config_path = env.config_path();
+    if config_path.exists() {
+        fs::remove_file(&config_path).expect("Failed to remove config file");
+    }
+
+    let env_overrides = [
+        ("GPY_CONFIG_PATH", config_path.display().to_string()),
+        (
+            "GPY_AGENT_SOCKET_PATH",
+            env.xdg_runtime_dir().join("gpy.sock").display().to_string(),
+        ),
+        (
+            "GPY_BUNDLED_PLUGIN_DIR",
+            env.root().join("empty_plugins").display().to_string(),
+        ),
+    ];
+
+    let res = env
+        .run_gpy_with_env(&["theme", "use", "broken"], &env_overrides)
+        .expect("Failed to run theme use");
+    assert_ne!(
+        res.exit_code, 0_i32,
+        "theme use broken must fail in fileless environment"
+    );
+    assert!(
+        !config_path.exists(),
+        "no config file should be materialized on rejected theme use"
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn test_theme_use_prospective_palette_reconciliation() {
+    // Verified prospective-palette fixture from issue #668
+    let initial_config = "[ui]\ntheme = \"default\"\n";
+    let env = CliTestEnv::with_config(initial_config)
+        .expect("Failed to create isolated CLI test environment");
+
+    let themes_dir = env.themes_dir();
+    fs::create_dir_all(&themes_dir).expect("Failed to create themes dir");
+    let palettes_dir = env.config_dir().join("palettes");
+    fs::create_dir_all(&palettes_dir).expect("Failed to create palettes dir");
+
+    let activation_theme = r#"
+[ui]
+[ui.recommended]
+palette = "activation-palette"
+[segments.git]
+format = "[$branch](fg:activation_accent)"
+"#;
+    fs::write(themes_dir.join("activation-case.toml"), activation_theme)
+        .expect("Failed to write activation-case theme");
+
+    let activation_palette = r##"
+[colors]
+activation_accent = "#123456"
+"##;
+    fs::write(
+        palettes_dir.join("activation-palette.toml"),
+        activation_palette,
+    )
+    .expect("Failed to write activation-palette");
+
+    let env_overrides = [
+        ("GPY_CONFIG_PATH", env.config_path().display().to_string()),
+        (
+            "GPY_AGENT_SOCKET_PATH",
+            env.xdg_runtime_dir().join("gpy.sock").display().to_string(),
+        ),
+        (
+            "GPY_BUNDLED_PLUGIN_DIR",
+            env.root().join("empty_plugins").display().to_string(),
+        ),
+    ];
+
+    // 1. Ordinary activation: rejects because activation_accent is not in default palette
+    let res_ordinary = env
+        .run_gpy_with_env(&["theme", "use", "activation-case"], &env_overrides)
+        .expect("Failed to run ordinary theme use");
+    assert_ne!(
+        res_ordinary.exit_code, 0_i32,
+        "ordinary theme use must reject unresolved accent"
+    );
+    assert_eq!(
+        fs::read_to_string(env.config_path()).expect("read config"),
+        initial_config,
+        "config must remain unchanged on rejected ordinary activation"
+    );
+
+    // 2. Forced activation: succeeds and persists palette = "activation-palette"
+    let res_forced = env
+        .run_gpy_with_env(
+            &["theme", "use", "activation-case", "--force"],
+            &env_overrides,
+        )
+        .expect("Failed to run forced theme use");
+    res_forced.assert_success("forced theme use activation-case");
+    let persisted_toml = fs::read_to_string(env.config_path()).expect("read persisted config");
+    assert!(
+        persisted_toml.contains("theme = \"activation-case\""),
+        "config must contain theme = activation-case: {persisted_toml}"
+    );
+    assert!(
+        persisted_toml.contains("palette = \"activation-palette\""),
+        "config must contain palette = activation-palette: {persisted_toml}"
+    );
+
+    // 3. Explicit palette = "default": forced activation preserves explicit value and rejects
+    let explicit_config = "[ui]\ntheme = \"default\"\npalette = \"default\"\n";
+    fs::write(env.config_path(), explicit_config).expect("Failed to write explicit config");
+    let res_explicit = env
+        .run_gpy_with_env(
+            &["theme", "use", "activation-case", "--force"],
+            &env_overrides,
+        )
+        .expect("Failed to run forced theme use with explicit palette");
+    assert_ne!(
+        res_explicit.exit_code, 0_i32,
+        "forced activation must reject when explicit default palette lacks accent"
+    );
+    assert_eq!(
+        fs::read_to_string(env.config_path()).expect("read config"),
+        explicit_config,
+        "config must remain unchanged when forced activation fails due to explicit palette"
+    );
+}
+
+// ===========================================================================

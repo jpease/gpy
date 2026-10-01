@@ -70,6 +70,8 @@ Only three themes ship in the box: `default`, `starship`, `text`. `text` is a pl
 
 `gpy theme use <name>` also accepts `--force`: it applies that theme's *recommended* settings (segment layout, palette, language detection mode) on top of your current config, but only for values you haven't already customized by hand. Without `--force`, switching themes leaves everything else as-is.
 
+Before writing changes, `gpy theme use` validates the candidate theme's segment format templates against the prospective active palette. If any format template fails validation (unsupported syntax or an unknown color role not present in the prospective palette), activation fails and your current `config.toml` is preserved untouched.
+
 ```bash
 gpy theme use starship --force   # adopt starship's recommended layout + palette too
 ```

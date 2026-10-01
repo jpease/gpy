@@ -201,8 +201,12 @@ The `*` marker indicates the currently active theme.
 
 Switch to a different theme.
 
-Updates the configuration and reloads the running agent to apply changes immediately.
+Validates that the candidate theme's segment format templates render successfully
+against the prospective active palette before persisting any changes. If template
+rendering fails (unknown color, unbalanced syntax), activation aborts with exit
+code 1, leaving the active configuration byte-for-byte unchanged.
 
+On successful validation, updates `config.toml` and reloads the running agent.
 **Arguments:**
 - `<name>` - Theme name (without `.toml` extension)
 
