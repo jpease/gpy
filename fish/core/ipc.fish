@@ -43,13 +43,10 @@ end
 function __gpy_shell_registry_file --description 'Fish shell PID file for agent recovery nudges'
     # Use $fish_pid, not %self: fish only performs %-job expansion at the start of
     # an argument, so "(dir)/%self" would yield a literal "%self" filename. The
-    # agent parses this filename as the PID to nudge via SIGALRM on restart, so it
-    # MUST be the numeric PID or recovery silently breaks.
+    # agent parses this filename as the PID to ring (SIGURG) on restart, and the
+    # .reload/.reregister doorbell flags derive from it, so it MUST be the
+    # numeric PID or recovery silently breaks.
     echo (__gpy_shell_registry_dir)/$fish_pid
-end
-
-function __gpy_agent_restart_marker_file --description 'Marker file updated when the agent restarts'
-    echo (__gpy_runtime_root)/agent.restart.marker
 end
 
 # Path to the Unix domain socket (Unix) or pipe hint on Windows.
@@ -639,7 +636,7 @@ function __gpy_read_instant_cache --argument-names suffix cwd prev_bg --descript
     # ANSI bakes in the fg:prev_bg opening chevron, so the cache is keyed by the
     # previous-segment background too. Fall back to the context-free ("none")
     # render when no context-specific entry exists yet — the caller then triggers
-    # a refresh that populates the correct token file and repaints via SIGUSR1.
+    # a refresh that populates the correct token file and repaints via SIGURG.
     #
     # `suffix` already encodes is_first (see __gpy_cache_variant_suffix and its
     # callers in __gpy_request): the writer side (write_git/write_language in
@@ -766,7 +763,7 @@ end
 # for rendering but means a stale-but-present cache would never be refreshed.
 # This helper sends the data op straight to the agent so it recomputes, rewrites
 # the instant cache, and (when the rendered output changed) repaints live shells
-# via SIGUSR1. Output is intentionally ignored — only the agent side effects
+# via the SIGURG doorbell. Output is intentionally ignored — only the agent side effects
 # matter. There is no one-shot fallback: with no daemon there is nothing to send
 # a repaint signal, so the already-served stale prompt simply remains until the
 # daemon returns.
@@ -849,7 +846,7 @@ function __gpy_maybe_refresh --argument-names op root cache_suffix is_last prev_
     __gpy_register_with_agent >/dev/null 2>&1
 
     # Background the request and ignore output: the goal is the agent's side
-    # effects (recompute, instant-cache write, SIGUSR1-on-change).
+    # effects (recompute, instant-cache write, repaint-on-change).
     switch $mode
         case request
             __gpy_request $op "$root" "$is_last" "$prev_bg" "$is_first" >/dev/null 2>&1 &
@@ -879,7 +876,7 @@ function __gpy_get_agent_version --description 'Get the version and protocol ver
     end
 
     # Parse the version and protocol_version from the JSON status response
-    # Response format: {"AgentStatus":{"version":"0.1.0","protocol_version":1,"watched_repos":5,...}}
+    # Response format: {"AgentStatus":{"version":"0.1.0","protocol_version":2,"watched_repos":5,...}}
 
     # Extract version field (fork-free, #612: no trailing `tail` subprocess)
     # NOTE: local var is NOT named `version` -- that's fish's own read-only
@@ -906,7 +903,7 @@ end
 # Displays a warning if there's a version mismatch
 function __gpy_check_protocol_version --description 'Check and warn on protocol version mismatch'
     # Expected protocol version (must match gpy-agent/src/ipc/protocol.rs::PROTOCOL_VERSION)
-    set -l EXPECTED_PROTOCOL_VERSION 1
+    set -l EXPECTED_PROTOCOL_VERSION 2
 
     # Get agent version and protocol version
     if not __gpy_get_agent_version >/dev/null
@@ -1006,10 +1003,11 @@ function __gpy_track_shell_for_agent_recovery --description 'Track this Fish PID
 end
 
 function __gpy_untrack_shell_for_agent_recovery --description 'Remove this Fish PID from agent recovery tracking'
-    rm -f (__gpy_shell_registry_file) 2>/dev/null
+    set -l registry_file (__gpy_shell_registry_file)
+    rm -f $registry_file $registry_file.reload $registry_file.reregister 2>/dev/null
 end
 
-function __gpy_refresh_registration_after_restart --description 'Refresh stale agent registration after an agent restart nudge'
+function __gpy_refresh_registration_after_restart --description 'Forget this shell registration and register again (agent .reregister doorbell)'
     if set -q GPY_SUPERVISOR_CHILD
         return 1
     end
@@ -1018,60 +1016,17 @@ function __gpy_refresh_registration_after_restart --description 'Refresh stale a
         return 1
     end
 
-    set -l marker_file (__gpy_agent_restart_marker_file)
-    if not test -f "$marker_file"
-        return 1
-    end
-
-    # The agent writes this marker via write-temp-then-rename (atomic against
-    # a concurrent reader), so a truncated/empty read should now be
-    # vanishingly rare. Retry a few times with a brief sleep anyway: this
-    # runs once per restart in a SIGALRM signal-handler context, not the
-    # per-prompt hot path, so a little extra robustness here is cheap, and a
-    # missed read here has no other retry for *this* restart's marker.
-    set -l marker ""
-    for __gpy_restart_marker_attempt in 1 2 3
-        set marker (cat "$marker_file" 2>/dev/null | string trim)
-        if test -n "$marker"
-            break
-        end
-        sleep 0.02
-    end
-    if test -z "$marker"
-        return 1
-    end
-
-    if set -q __gpy_last_seen_restart_marker; and test "$__gpy_last_seen_restart_marker" = "$marker"
-        return 1
-    end
-
-    # Empirically, existing shells can keep a stale __gpy_registered flag after an
-    # agent restart and stop receiving live git updates until they happen to render
-    # another prompt. The restart marker lets the shell distinguish an agent
-    # recovery nudge from an ordinary SIGUSR1 git refresh and proactively
-    # re-register with the new agent instance.
+    # Existing shells keep a stale __gpy_registered flag across an agent
+    # restart and would receive no live updates until they happened to render
+    # another prompt. The agent's .reregister flag tells the shell to forget it
+    # and register with the new instance. On failure (e.g. the circuit breaker
+    # is still backing off from pings made while the agent was down) nothing
+    # is recorded: the agent's re-nudge writes the flag again and retries.
     set -e __gpy_registered
     set -e __gpy_registered_pid
     set -e __gpy_last_workspace
-    __gpy_log_debug ipc "Observed agent restart marker $marker, refreshing registration for PID %self"
-
-    # Record the marker as consumed ONLY once registration actually succeeded.
-    # Marking it before the attempt strands the shell whenever that attempt
-    # fails -- most commonly because __gpy_agent_available's circuit breaker is
-    # still backing off from the pings this shell made while the agent was down,
-    # a window the restart nudge lands inside. The guard above would then
-    # early-return on every subsequent nudge for this agent instance, leaving
-    # the shell unregistered (and therefore receiving no SIGUSR1 live updates)
-    # until the user happens to render another prompt. Leaving the marker
-    # unconsumed on failure makes the agent's re-nudge (see
-    # `shells_needing_renudge` in agent/lifecycle/start.rs) a genuine retry.
-    if __gpy_register_with_agent >/dev/null 2>&1
-        set -g __gpy_last_seen_restart_marker $marker
-        return 0
-    end
-
-    __gpy_log_debug ipc "Re-registration for marker $marker failed; leaving it unconsumed so the next nudge retries"
-    return 1
+    __gpy_log_debug ipc "Re-registration requested by agent for PID $fish_pid"
+    __gpy_register_with_agent >/dev/null 2>&1
 end
 
 function __gpy_register_with_agent --description 'Register this Fish process with the GPY agent'
@@ -1374,35 +1329,41 @@ if not set -q GPY_SUPERVISOR_CHILD; and not test "$GPY_AGENT_ENABLED" = 0 -a "$G
     end
 end
 
-# SIGUSR1 handler must be defined outside the conditional block above
-# so it's always available in interactive shells
+# The doorbell handler must be defined outside the conditional block above so
+# it's always available in interactive shells.
 #
-# WHY THIS EXISTS:
-# The agent sends SIGUSR1 when git changes are detected by the file watcher.
-# This triggers a prompt repaint in all open terminals (Terminal A and B alike)
-# via the variable-change pattern: incrementing __gpy_repaint_trigger fires
+# WHY SIGURG:
+# The agent rings every shell with SIGURG only; the meaning travels in
+# per-shell flag files next to the registry file (<pid>.reregister,
+# <pid>.reload) that the agent creates before signalling. SIGURG's default
+# disposition is ignore, so a shell that `exec`s itself (same PID, still
+# registered) survives a notification that lands before this handler is
+# installed (#674). Every ring repaints all open terminals via the
+# variable-change pattern: incrementing __gpy_repaint_trigger fires
 # __gpy_repaint_on_variable which calls commandline -f force-repaint.
-function __gpy_sigusr1_handler --on-signal SIGUSR1
+function __gpy_doorbell_handler --on-signal SIGURG
+    set -l registry_file (__gpy_shell_registry_file)
+    # Builtin existence checks keep the common no-flag path fork-free. Each
+    # flag is removed BEFORE acting so a ring arriving mid-action re-queues.
+    if test -e $registry_file.reregister
+        rm -f $registry_file.reregister
+        __gpy_refresh_registration_after_restart
+    end
+    if test -e $registry_file.reload
+        rm -f $registry_file.reload
+        __gpy_apply_agent_reload
+    end
     # Trigger repaint via variable change (this is the Hydro/Tide approach)
-    # Incrementing a counter variable triggers the --on-variable handler below
     set -g __gpy_repaint_trigger (math (set -q __gpy_repaint_trigger; and echo $__gpy_repaint_trigger; or echo 0) + 1)
 end
 
-function __gpy_sigalrm_handler --on-signal SIGALRM
-    # Agent startup uses SIGALRM as a dedicated "wake up and re-register" nudge
-    # for already-open shells. Keep this separate from SIGUSR1 so git watcher
-    # updates and restart recovery remain independently testable and diagnosable.
-    __gpy_refresh_registration_after_restart
-    set -g __gpy_repaint_trigger (math (set -q __gpy_repaint_trigger; and echo $__gpy_repaint_trigger; or echo 0) + 1)
-end
-
-function __gpy_sigusr2_handler --on-signal SIGUSR2
-    # Agent writes the theme export cache before sending SIGUSR2, so source the
+function __gpy_apply_agent_reload --description 'Reload theme/config after the agent .reload doorbell'
+    # Agent writes the theme export cache before ringing, so source the
     # file directly (no fork). Fall back to spawning the binary if the cache is
-    # absent (e.g., very first SIGUSR2 before the first agent write completes).
+    # absent (e.g., very first reload before the first agent write completes).
     # Deliberately does not branch on success (#576): proceeds unconditionally
-    # to the cache clears / repaint below even if neither path produced fresh
-    # theme variables, matching this handler's pre-existing behavior.
+    # to the cache clears below even if neither path produced fresh theme
+    # variables. The caller (__gpy_doorbell_handler) repaints afterwards.
     __gpy_apply_theme_export
 
     # Load implementation files for any segment newly added to __enabled_segments
@@ -1420,9 +1381,6 @@ function __gpy_sigusr2_handler --on-signal SIGUSR2
     set -e __gpy_char_cache_val
     set -e __gpy_dir_cache_key
     set -e __gpy_dir_cache_val
-
-    # Trigger repaint via variable change (avoids inserting blank prompts)
-    set -g __gpy_repaint_trigger (math (set -q __gpy_repaint_trigger; and echo $__gpy_repaint_trigger; or echo 0) + 1)
 end
 
 # Variable change handler that actually triggers the repaint

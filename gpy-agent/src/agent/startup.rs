@@ -86,7 +86,7 @@ pub(super) fn create_shutdown_signal() -> ShutdownSignal {
     })
 }
 
-/// Whether the current wall-clock minute warrants a fresh SIGUSR1 clock
+/// Whether the current wall-clock minute warrants a fresh repaint-doorbell clock
 /// broadcast, and the minute to remember as "last notified" afterward.
 ///
 /// Pure: the caller supplies `current_minute` (`now_secs / 60`) rather than

@@ -35,13 +35,13 @@ Condensed from the full [Bash Limitations](bash-limitations.md) matrix, with Fis
 
 | Feature | Fish | Zsh | Bash 5.x | Bash 3.x (macOS default) |
 |---|---|---|---|---|
-| Live SIGUSR1 updates | Full: idle prompt repaints in place | Full: idle prompt repaints in place (re-rendered in `TRAPUSR1`, #637) | Shown at the next prompt: readline cannot repaint an idle prompt (measured, see [Bash Limitations](bash-limitations.md#2-live-updates-sigusr1)) | Same as Bash 5.x |
-| Config/theme hot-reload (SIGUSR2) | Full | Full | Full | Full |
+| Live updates | Full: idle prompt repaints in place | Full: idle prompt repaints in place (re-rendered in `TRAPURG`, #637) | Shown at the next prompt: readline cannot repaint an idle prompt (measured, see [Bash Limitations](bash-limitations.md#2-live-updates)) | Same as Bash 5.x |
+| Config/theme hot-reload | Full | Full | Full | Full |
 | Transient prompt | Yes | Yes | No | No |
 | Duration segment precision | Millisecond | Millisecond (`EPOCHREALTIME`) | Millisecond (`EPOCHREALTIME`) | Not available — segment disabled |
 | Relative performance | Fastest (A+) | A | B+ | B- (slowest) |
-| Signal mechanism | `--on-signal` trap | Native `TRAPUSR1`/`TRAPUSR2`/`TRAPALRM` functions | `trap` builtin (SIGUSR1/SIGUSR2/SIGALRM) | `trap` builtin |
-| Re-registers after an agent restart | Yes (SIGALRM) | Yes (SIGALRM, #638) | Yes (SIGALRM, #638) | Yes |
+| Signal mechanism | One `--on-signal SIGURG` handler | Native `TRAPURG` function | `trap` builtin (URG) | `trap` builtin (URG) |
+| Re-registers after an agent restart | Yes | Yes (#638) | At the next prompt (#638) | At the next prompt |
 | Minimum version | 3.6+ | 5.8+ | 4.0+ (5.0+ recommended) | N/A (upgrade recommended) |
 
 See [Bash Limitations](bash-limitations.md) for the exhaustive version-by-version breakdown (duration precision by Bash version, benchmark numbers, `PS1` escape-sequence differences, known issues list) — that document is authoritative for Bash; this table exists only to compare shells side by side.
@@ -54,7 +54,7 @@ This is the most common class of complaint for a tool like GPY, and the underlyi
 
 ### How live updates work
 
-The agent watches your repo, `config.toml`, and active theme file for changes using OS-level filesystem notifications (`FSEvents` on macOS, `inotify` on Linux, via the `notify` crate). When something relevant changes, the agent sends `SIGUSR1` (repaint prompt — git/language state changed) or `SIGUSR2` (reload theme/config variables) to registered shell processes. See [ADR-0004](../dev/adr/adr-0004-sigusr1-live-updates.md) and [ADR-0005](../dev/adr/adr-0005-theme-hot-reload.md) for the full rationale.
+The agent watches your repo, `config.toml`, and active theme file for changes using OS-level filesystem notifications (`FSEvents` on macOS, `inotify` on Linux, via the `notify` crate). When something relevant changes, the agent sends `SIGURG` to registered shell processes. A plain `SIGURG` means "repaint the prompt" (git/language state changed); to ask for a theme/config reload or a re-registration the agent first writes an empty `<pid>.reload` or `<pid>.reregister` flag file in the runtime `shells/` directory. `SIGURG` is ignored by default, so a shell that has not installed its handler yet (for example right after `exec fish`) is never killed by a notification. See [ADR-0007](../dev/adr/adr-0007-sigurg-doorbell-notifications.md) for the current protocol and [ADR-0004](../dev/adr/adr-0004-sigusr1-live-updates.md) / [ADR-0005](../dev/adr/adr-0005-theme-hot-reload.md) for the original rationale.
 
 ### Why it can silently stop working
 
@@ -76,7 +76,7 @@ All of these are off/default unless explicitly set — setting none of them pres
 | `GPY_CONFIG_WATCH_POLL_MS` | Same shape as the theme variable, for `config.toml`: unset/`0` = disabled (default); positive integer = poll interval in ms, floored at the 1-second config debounce. This is the fix if editing `config.toml` never applies until you manually `gpy restart`. | `gpy-agent/src/config/manager.rs` (`start_poll_fallback`, `parse_poll_interval_ms`) |
 | `GPY_RECONCILE_INTERVAL_SECS` | Overrides the periodic git-status reconcile cadence (default 45 seconds — a backstop scan of all watched repos that catches changes the watcher missed, gated on `agent.live_updates`). Set to a positive integer to tighten it; `0`/unset/non-numeric falls back to 45s. Lowering this trades CPU for freshness on environments with unreliable watcher events. | `gpy-agent/src/agent/mod.rs` (`reconcile_interval_secs`) |
 | `GPY_DEBOUNCE_MS` | Debounce window (default 100ms) for the git/language repo watcher: coalesces bursts of filesystem events (e.g. `git commit` touching many files) into a single reconcile. Rarely needs changing; lower it only if you need faster reaction to rapid successive changes and can tolerate more work per event. | `gpy-agent/src/watcher/mod.rs` (`WatcherConfig::from_env`, `parse_env`) |
-| `GPY_SIGUSR1_THROTTLE_MS` | Minimum interval (default 150ms) between `SIGUSR1` repaint signals sent to a shell. Raise it if a very active repo (e.g. a build script touching many files) causes visible prompt flicker from rapid-fire repaints; lower it if you need faster reaction and can tolerate more signal traffic. | `gpy-agent/src/watcher/mod.rs` (`WatcherConfig::from_env`, `parse_env`) |
+| `GPY_SIGUSR1_THROTTLE_MS` | Minimum interval (default 150ms) between repaint notifications (`SIGURG`) sent to a shell; the name predates the switch to `SIGURG`. Reload and re-register notifications are never throttled. Raise it if a very active repo (e.g. a build script touching many files) causes visible prompt flicker from rapid-fire repaints; lower it if you need faster reaction and can tolerate more signal traffic. | `gpy-agent/src/watcher/mod.rs` (`WatcherConfig::from_env`, `parse_env`) |
 | `GPY_WATCH_WORKTREE` | Default: worktree watching is **on**. Set to `0`/`false`/`no`/`off` to stop watching the working-tree files themselves (only `.git/` metadata is watched) — any other value forces it on. An explicit env var always wins over the `git.watch_worktree` config key at agent init; newly registered repos pick up the change, existing watches keep their setting until re-registration (e.g. `cd` or agent restart). Turn this off on very large or slow-to-stat working trees where per-file watching is too expensive. **Tradeoff:** with it off, pure working-tree changes (new untracked file, editing/removing a tracked file) touch nothing under `.git`, so they fire no event — dirty/untracked state then surfaces only on the next `.git` write (commit/stage/checkout) or the periodic reconcile scan (default 45s), not instantly. If that lag matters, lower `GPY_RECONCILE_INTERVAL_SECS` to bound it more tightly (at the cost of more frequent full rescans). | `gpy-agent/src/watcher/multi_repo.rs` (`set_watch_worktree`, `env_watch_worktree_override`) |
 
 **Recommended recovery sequence** when live updates seem stuck:
@@ -90,14 +90,14 @@ All of these are off/default unless explicitly set — setting none of them pres
 
 ## Fish-Specific Issues
 
-- **SIGUSR1/SIGUSR2 handling**: Fish uses native `--on-signal` traps (`__gpy_handle_sigusr1`, `__gpy_handle_sigusr2` in `init.fish`), which are the most reliable of the three shells — see the comparison table above. If Fish's prompt isn't repainting on signal, the watcher section above is the more likely cause than Fish's signal handling itself.
+- **Signal handling**: Fish uses one native `--on-signal SIGURG` handler, which checks the reload/re-register flag files and then repaints; it is the most reliable of the three shells — see the comparison table above. If Fish's prompt isn't repainting on signal, the watcher section above is the more likely cause than Fish's signal handling itself.
 - **Agent won't start / crash loop**: Fish runs a background supervisor loop (`__gpy_agent_supervisor_loop` in `fish/core/ipc.fish`) that health-checks the agent and restarts it. Relevant env vars, in increasing order of aggressiveness:
   - `GPY_AGENT_SUPERVISOR_ENABLED=0` — disable the restart loop entirely (useful while debugging a crash so it doesn't keep respawning under you).
   - `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` (default 30) — health-check cadence.
   - `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` (default 5) — restarts attempted before the supervisor gives up.
   - `GPY_AGENT_ENABLED=0` — disable the agent entirely (falls back to oneshot mode; slower per-prompt but no background process).
 
-  These are read by Fish with a "use if already set" pattern (`set -q VAR; or set -g VAR default`), so setting them in your shell config *before* GPY's `conf.d/gpy_init.fish` runs overrides the defaults for that session. They also get live-updated whenever the agent reloads config (`config.toml`'s `[agent]`/`[agent.supervisor]` sections) and sends `SIGUSR2`, since `gpy-agent theme export --format fish` re-exports them. If GPY seems completely disabled, check both `GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` — `gpy_init.fish` skips loading entirely when *both* are `0`.
+  These are read by Fish with a "use if already set" pattern (`set -q VAR; or set -g VAR default`), so setting them in your shell config *before* GPY's `conf.d/gpy_init.fish` runs overrides the defaults for that session. They also get live-updated whenever the agent reloads config (`config.toml`'s `[agent]`/`[agent.supervisor]` sections) and sends a reload notification, since `gpy-agent theme export --format fish` re-exports them. If GPY seems completely disabled, check both `GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` — `gpy_init.fish` skips loading entirely when *both* are `0`.
 - **Reproducing registration issues**: `tests/fish/e2e_interactive_session.test.fish` drives a real `fish -i` on a pseudo-terminal against a real agent (two shells, one agent, repaint with no keystroke); run it, or borrow its sandbox setup, to reproduce a registration problem outside your own session. Prompt content itself is asserted by the gating `tests/fish/e2e_prompt_content.test.fish`.
 - **Abbreviations/completions**: shell completions are installed and regenerated automatically by the standard installers ([CLI Reference § Shell Completion](cli-reference.md#shell-completion)). If `gpy <TAB>` doesn't complete, confirm the `gpy` CLI binary itself is on `PATH` — completions require it.
 
@@ -105,15 +105,15 @@ All of these are off/default unless explicitly set — setting none of them pres
 
 ## Zsh-Specific Issues
 
-Zsh uses native `TRAPUSR1`/`TRAPUSR2` functions and `precmd`/`preexec` hooks rather than Fish's `--on-signal`/`--on-event`, but the underlying contract (agent-rendered `directory`/`duration`/`git`/`language` segments, shell-rendered `clock`/`status`) is identical across Fish, Zsh, and Bash — see `docs/archive/fish-integration-contract.md` for the full shared contract if you're debugging segment rendering specifically.
+Zsh uses a native `TRAPURG` function and `precmd`/`preexec` hooks rather than Fish's `--on-signal`/`--on-event`, but the underlying contract (agent-rendered `directory`/`duration`/`git`/`language` segments, shell-rendered `clock`/`status`) is identical across Fish, Zsh, and Bash — see `docs/archive/fish-integration-contract.md` for the full shared contract if you're debugging segment rendering specifically.
 
-Zsh is at parity with Fish for live updates: `TRAPUSR1` re-renders `PROMPT` and calls `zle reset-prompt`, so an idle prompt shows a git change with no keystroke (asserted on a real pty by `tests/zsh/e2e_git_live_content.test.zsh`), a restarted agent's SIGALRM nudge re-registers the shell (`tests/zsh/e2e_reregister_after_restart.test.zsh`), and a dead agent is restarted from the next prompt by the periodic supervisor check. If you hit a Zsh-only issue, it's worth filing as a gap in this doc.
+Zsh is at parity with Fish for live updates: `TRAPURG` re-renders `PROMPT` and calls `zle reset-prompt`, so an idle prompt shows a git change with no keystroke (asserted on a real pty by `tests/zsh/e2e_git_live_content.test.zsh`), a restarted agent's re-register nudge re-registers the shell (`tests/zsh/e2e_reregister_after_restart.test.zsh`), and a dead agent is restarted from the next prompt by the periodic supervisor check. If you hit a Zsh-only issue, it's worth filing as a gap in this doc.
 
 ---
 
 ## Bash-Specific Issues
 
-Bash support is functionally complete but has real, well-documented caveats: duration-segment precision varies by Bash version (disabled entirely on Bash 3.x, macOS's default), SIGUSR1 live updates are less reliable than Fish/Zsh due to Bash's `trap` mechanism, transient prompt isn't implemented, and overall performance is 20-30% slower than Zsh. macOS ships Bash 3.2 by default — most Bash-related reports trace back to that. See [Bash Limitations](bash-limitations.md) for the full version matrix, benchmarks, migration paths, and known-issues list; that document is authoritative and this guide won't restate it.
+Bash support is functionally complete but has real, well-documented caveats: duration-segment precision varies by Bash version (disabled entirely on Bash 3.x, macOS's default), live updates are less reliable than Fish/Zsh due to Bash's `trap` mechanism, transient prompt isn't implemented, and overall performance is 20-30% slower than Zsh. macOS ships Bash 3.2 by default — most Bash-related reports trace back to that. See [Bash Limitations](bash-limitations.md) for the full version matrix, benchmarks, migration paths, and known-issues list; that document is authoritative and this guide won't restate it.
 
 ---
 

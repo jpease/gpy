@@ -13,7 +13,7 @@
 #
 # This test exercises the full git → watcher → agent → Fish shell pipeline.
 # It verifies that:
-#   1. The real agent delivers SIGUSR1 signals when repository changes occur.
+#   1. The real agent rings SIGURG when repository changes occur.
 #   2. The pipeline recovers after the agent is stopped and restarted.
 #
 # The test intentionally runs against the actual gpy-agent binary so we catch
@@ -88,10 +88,10 @@ function test_signal_flow
 
     trigger_git_change (pwd) >/dev/null
     if wait_for_signal $client1 (math $baseline1 + 1) 6
-        print_test_result "Watcher delivers SIGUSR1 on change" "PASS"
+        print_test_result "Watcher rings SIGURG on change" "PASS"
     else
         set -l observed (count_signals $client1)
-        print_test_result "Watcher delivers SIGUSR1 on change" "FAIL" "Expected > $baseline1 signals, saw $observed"
+        print_test_result "Watcher rings SIGURG on change" "FAIL" "Expected > $baseline1 signals, saw $observed"
         cleanup_test_files
         return 1
     end

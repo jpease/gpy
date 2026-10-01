@@ -1,11 +1,11 @@
 #!/usr/bin/env zsh
-# tests/zsh/e2e_config_sigusr2_reload.test.zsh
+# tests/zsh/e2e_config_reload.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# config.toml edit -> theme export rewritten -> SIGUSR2 -> Zsh repaints
-# (#647 row 3).
+# config.toml edit -> theme export rewritten -> `<pid>.reload` flag + SIGURG
+# doorbell -> Zsh repaints (#647 row 3).
 #
-# `integration.test.zsh` covers `TRAPUSR2` with `__gpy_load_theme` stubbed;
+# `integration.test.zsh` covers the reload doorbell with `__gpy_load_theme` stubbed;
 # nothing drove a real Zsh client through a real config change. With a real
 # agent and a `zsh -i` on a pty, flipping `show_icons` in config.toml must:
 #   (a) rewrite $XDG_CACHE_HOME/gpy/theme-export.zsh (mtime and content),
@@ -89,4 +89,4 @@ if [ "$failures" -gt 0 ]; then
     echo "FAILED: $failures assertion(s)"
     exit 1
 fi
-echo "PASS: zsh config edit reaches the prompt via SIGUSR2"
+echo "PASS: zsh config edit reaches the prompt via the reload doorbell"

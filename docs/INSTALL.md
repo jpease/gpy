@@ -75,7 +75,7 @@ running, all three shells fall back to forking `gpy-agent oneshot` for that
 prompt render. A PID-scoped marker file limits this to one fork per prompt
 render, so a broken IPC path costs one extra process per prompt rather than
 one per segment. The background/live-refresh path has no such fallback:
-without a running daemon there is no `SIGUSR1` repaint, so the prompt stays
+without a running daemon there is no `SIGURG` repaint, so the prompt stays
 static until the next render.
 
 ## One-Line Installation (Recommended)

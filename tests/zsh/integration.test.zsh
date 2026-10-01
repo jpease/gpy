@@ -151,43 +151,68 @@ if [[ -z "$PROMPT" ]]; then
 fi
 echo "PASS: Full prompt rendered"
 
-echo "=== Testing SIGUSR2 Segment Reload (lazy segment gap regression) ==="
+echo "=== Testing Doorbell Reload (lazy segment gap regression) ==="
 # gpy.zsh sources every file under segments/*.zsh unconditionally at init,
 # regardless of $__enabled_segments (unlike Fish, which only sources files for
 # segments already in the enabled list). So a theme switch that enables a
 # segment new to this shell's __enabled_segments already has its detect/render
-# functions in memory; TRAPUSR2 only needs to refresh __enabled_segments (via
-# __gpy_load_theme) before the next render. This guards against a future
-# regression to per-segment lazy sourcing that would reintroduce the gap Fish
-# had (#296).
+# functions in memory; the doorbell's reload only needs to refresh
+# __enabled_segments (via __gpy_load_theme) before the next render. This
+# guards against a future regression to per-segment lazy sourcing that would
+# reintroduce the gap Fish had (#296).
+doorbell_dir=$(mktemp -d)
+doorbell_stderr="$doorbell_dir/stderr"
+__gpy_shell_flag_base="$doorbell_dir/$$"
+# What the agent does for a config change: leave the reload flag, ring SIGURG.
+function __gpy_test_ring_reload() {
+    : >"$__gpy_shell_flag_base.reload"
+    TRAPURG
+}
 function __gpy_load_theme() {
     __enabled_segments=(duration)
 }
 __duration_threshold_ms=100
 __gpy_cmd_duration=5000
-usr2_stderr=$(TRAPUSR2 2>&1 1>/dev/null)
-if [[ -n "$usr2_stderr" ]]; then
-    echo "FAIL: SIGUSR2 handler wrote to stderr: $usr2_stderr"
+__gpy_test_ring_reload 2>"$doorbell_stderr" 1>/dev/null
+if [[ -s "$doorbell_stderr" ]]; then
+    echo "FAIL: doorbell handler wrote to stderr: $(<"$doorbell_stderr")"
     exit 1
 fi
+if [[ -e "$__gpy_shell_flag_base.reload" ]]; then
+    echo "FAIL: doorbell left the reload flag behind"
+    exit 1
+fi
+echo "PASS: doorbell consumes the reload flag"
 PROMPT=$(__gpy_render_prompt 0)
 if [[ "$PROMPT" == *"3.5s"* ]]; then
-    echo "PASS: newly-enabled duration segment rendered after SIGUSR2"
+    echo "PASS: newly-enabled duration segment rendered after reload doorbell"
 else
-    echo "FAIL: newly-enabled duration segment missing after SIGUSR2 (PROMPT=$PROMPT)"
+    echo "FAIL: newly-enabled duration segment missing after reload doorbell (PROMPT=$PROMPT)"
+    exit 1
+fi
+
+# A bare doorbell (no flag) is a repaint: it must not reload the theme.
+function __gpy_load_theme() {
+    __enabled_segments=(directory)
+}
+TRAPURG >/dev/null 2>&1
+if [[ "${__enabled_segments[*]}" == "duration" ]]; then
+    echo "PASS: doorbell without a reload flag does not reload"
+else
+    echo "FAIL: doorbell without a reload flag reloaded (enabled=${__enabled_segments[*]})"
     exit 1
 fi
 
 function __gpy_load_theme() {
     __enabled_segments=(duration does-not-exist-segment)
 }
-usr2_stderr=$(TRAPUSR2 2>&1 1>/dev/null)
-if [[ -n "$usr2_stderr" ]]; then
-    echo "FAIL: SIGUSR2 handler wrote to stderr on unknown segment: $usr2_stderr"
+__gpy_test_ring_reload 2>"$doorbell_stderr" 1>/dev/null
+if [[ -s "$doorbell_stderr" ]]; then
+    echo "FAIL: doorbell handler wrote to stderr on unknown segment: $(<"$doorbell_stderr")"
     exit 1
 fi
-echo "PASS: unknown segment in enabled list does not error the SIGUSR2 handler"
-unset __duration_threshold_ms __gpy_cmd_duration usr2_stderr
+echo "PASS: unknown segment in enabled list does not error the doorbell handler"
+unset __duration_threshold_ms __gpy_cmd_duration doorbell_stderr
 
 echo "=== Testing Git Worktree Detection ==="
 exec 2>/dev/null
@@ -695,7 +720,7 @@ function __gpy_segment_directory() {
     printf 'DIR'
 }
 # Earlier sections in this file permanently redefine __gpy_load_theme; pin it
-# here so TRAPUSR2's reload is deterministic for this section regardless of
+# here so the doorbell's reload is deterministic for this section regardless of
 # what ran before it.
 function __gpy_load_theme() {
     __enabled_segments=(directory)
@@ -770,12 +795,12 @@ else
     exit 1
 fi
 
-# 4. Theme change (TRAPUSR2) re-renders both segments on the next render
+# 4. Theme change (reload doorbell) re-renders both segments on the next render
 __gpy_memo_reset
 __gpy_theme_name="themeA"
 __gpy_memo_render 0 # baseline (miss for both)
 __gpy_theme_name="themeB"
-TRAPUSR2 >/dev/null 2>&1
+__gpy_test_ring_reload >/dev/null 2>&1
 __gpy_memo_render 0 # theme changed
 if [[ "$(__gpy_memo_call_count "$memo_char_calls_file")" == "2" && "$(__gpy_memo_call_count "$memo_dir_calls_file")" == "2" ]]; then
     echo "PASS: theme change re-renders character and directory"

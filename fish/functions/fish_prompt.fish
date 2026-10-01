@@ -142,8 +142,8 @@ function fish_prompt
         # tuple (theme identity + success + prev_bg) matches the last render.
         # __gpy_theme_name is agent-controlled (read-only here); folding it into
         # the key means a theme switch invalidates a stale entry via the key
-        # alone, even if a SIGUSR2 got missed mid-reconnect (belt-and-suspenders
-        # -- the SIGUSR2 handler below is the primary invalidation path).
+        # alone, even if a reload doorbell got missed mid-reconnect (belt-and-suspenders
+        # -- the agent reload path in core/ipc.fish is the primary invalidation path).
         set -l char_key "$__gpy_theme_name:$char_success:$__gpy_last_segment_bg"
         if test -n "$__gpy_char_cache_key"; and test "$char_key" = "$__gpy_char_cache_key"
             set char_output $__gpy_char_cache_val

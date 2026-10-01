@@ -1,7 +1,7 @@
 //! File system watching for live prompt updates
 //!
 //! Uses the notify crate with debouncing to detect changes that should
-//! trigger prompt updates via SIGUSR1 signals.
+//! trigger prompt updates via the SIGURG repaint doorbell.
 //!
 //! # Architecture Overview
 //!

@@ -4,7 +4,7 @@
 #
 # Live git content in an idle Zsh prompt (#647 row 1, pins #637).
 #
-# The Zsh SIGUSR1 handler used to be `zle reset-prompt` alone; PROMPT is a
+# The Zsh repaint handler used to be `zle reset-prompt` alone; PROMPT is a
 # string rendered once per precmd, so the redraw showed the same bytes and a
 # git change could not appear until the next Enter, while the docs called
 # Zsh live updates "Full". This drives `zsh -i` on a pty against a real

@@ -29,17 +29,11 @@ for seg in $required_segments; do
 done
 
 # Check signal handlers
-if (( ! $+functions[TRAPUSR1] )); then
-    echo "FAIL: Missing SIGUSR1 handler"
+if (( ! $+functions[TRAPURG] )); then
+    echo "FAIL: Missing SIGURG doorbell handler"
     exit 1
 fi
-echo "✓ SIGUSR1 handler"
-
-if (( ! $+functions[TRAPUSR2] )); then
-    echo "FAIL: Missing SIGUSR2 handler"
-    exit 1
-fi
-echo "✓ SIGUSR2 handler"
+echo "✓ SIGURG doorbell handler"
 
 # Check cleanup
 if [[ ! " ${zshexit_functions[@]} " =~ " __gpy_zshexit " ]]; then

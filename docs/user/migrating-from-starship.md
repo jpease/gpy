@@ -62,7 +62,7 @@ Some Starship constructs have no GPY equivalent and are dropped with a warning r
 | Config file(s) | One file: `~/.config/starship.toml` (or `$STARSHIP_CONFIG`) | Two layers: `~/.config/gpy/themes/<name>.toml` (structure) + `~/.config/gpy/palettes/<name>.toml` (color), selected from `~/.config/gpy/config.toml` |
 | Color reuse | Palette is one table inside the same file | Palette is a separate, independently swappable file — switch colors without touching layout, or vice versa |
 | Rendering | Synchronous, in-process per prompt render | Background agent (`gpy-agent`) over a Unix-socket IPC connection, with the shell falling back to a degraded oneshot render if the agent isn't running |
-| Live updates | Recomputes on every prompt render | File-watches the repo and pushes updates between renders (`SIGUSR1`); see [Configuration Reference](configuration-reference.md) for the debounce/TTL knobs |
+| Live updates | Recomputes on every prompt render | File-watches the repo and pushes updates between renders (`SIGURG`); see [Configuration Reference](configuration-reference.md) for the debounce/TTL knobs |
 
 The two-layer theme/palette split is why `gpy theme import` writes *two* files instead of one — see [Theme Customization](theme-customization.md) for how to swap either layer independently afterward.
 

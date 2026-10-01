@@ -419,7 +419,12 @@ fn validate_length(field_name: &str, value: &str, max_length: usize) -> Result<(
 ///
 /// # Version History
 ///
-/// - **Version 1** (current): Initial stable protocol
+/// - **Version 2** (current): Shell notification channel changed (#674). The
+///   agent signals shells only with SIGURG (a "doorbell" whose default
+///   disposition is ignore) and carries meaning in per-shell flag files under
+///   `<runtime_root>/shells/` (`<pid>.reload`, `<pid>.reregister`);
+///   the earlier per-purpose signals are no longer sent. Wire messages are unchanged.
+/// - **Version 1**: Initial stable protocol
 ///   - Fish shell format (legacy) with `op` field
 ///   - Native Rust enum serialization
 ///   - Message types: `RepositoryStatus`, `LanguageDetect`, `RegisterClient`, `UnregisterClient`,
@@ -498,7 +503,7 @@ fn validate_length(field_name: &str, value: &str, max_length: usize) -> Result<(
 /// validate protocol compliance. These schemas are tested in
 /// `tests/schema_validation.rs` to ensure documentation examples match actual
 /// serialization behavior.
-pub const PROTOCOL_VERSION: u8 = 1;
+pub const PROTOCOL_VERSION: u8 = 2;
 
 /// Raw wire mirror of [`Message`], carrying unvalidated field values.
 ///

@@ -1,4 +1,11 @@
-//! Client registry for tracking Fish processes interested in live updates.
+//! Client registry for tracking shell processes interested in live updates.
+//!
+//! Every shell notification is a single "doorbell" signal, [`DOORBELL`]
+//! (SIGURG), whose default disposition is *ignore*. A shell that has not (yet)
+//! installed a handler -- e.g. one that `exec`ed itself and so kept its
+//! registered PID -- is therefore never killed by a notification. Anything
+//! beyond "repaint" travels in per-shell flag files under the shell tracking
+//! directory (see [`ShellFlag`]), written *before* the doorbell rings.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -13,15 +20,83 @@ use nix::sys::signal::{Signal, kill};
 #[cfg(unix)]
 use nix::unistd::Pid;
 
-/// Stand-in for `nix::sys::signal::Signal` on non-Unix platforms.
+/// The only signal the agent ever sends to a shell. Its default disposition
+/// is ignore, so a process without a handler survives it.
+#[cfg(unix)]
+pub(crate) const DOORBELL: Signal = Signal::SIGURG;
+
+#[cfg_attr(
+    not(unix),
+    expect(
+        dead_code,
+        reason = "flag files accompany the Unix-only doorbell signal"
+    )
+)]
+/// A message for one shell, carried by the existence of
+/// `<shell_dir>/<pid>.<suffix>` and delivered by ringing [`DOORBELL`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShellFlag {
+    /// Reload theme/config.
+    Reload,
+    /// Forget the current registration and register again.
+    Reregister,
+}
+
+#[cfg_attr(
+    not(unix),
+    expect(
+        dead_code,
+        reason = "flag files accompany the Unix-only doorbell signal"
+    )
+)]
+impl ShellFlag {
+    /// File-name suffix of this flag (`<pid>.<suffix>`).
+    pub(crate) const fn suffix(self) -> &'static str {
+        match self {
+            Self::Reload => "reload",
+            Self::Reregister => "reregister",
+        }
+    }
+
+    /// Path of this flag for `pid` inside `shell_dir`.
+    pub(crate) fn path(self, shell_dir: &Path, pid: u32) -> PathBuf {
+        shell_dir.join(format!("{pid}.{}", self.suffix()))
+    }
+}
+
+#[cfg(unix)]
+/// The shell tracking directory, `<runtime_root>/shells`, shared with the
+/// shells' `__gpy_shell_registry_dir`.
+#[must_use]
+pub(crate) fn default_shell_dir() -> PathBuf {
+    crate::paths::runtime_root_for(
+        std::env::var("XDG_RUNTIME_DIR").ok().as_deref(),
+        std::env::var("XDG_CACHE_HOME").ok().as_deref(),
+        crate::paths::home_dir().as_deref(),
+    )
+    .join("shells")
+}
+
+#[cfg(unix)]
+/// Create `flag` for `pid` in `shell_dir` (creating the directory if needed).
 ///
-/// Signal-based client notification is a no-op there (see `notify_with_signal`);
-/// this only exists so the call sites below type-check without cfg-gating each one.
-#[cfg(not(unix))]
-#[derive(Clone, Copy)]
-enum Signal {
-    SIGUSR1,
-    SIGUSR2,
+/// # Errors
+///
+/// Returns an error if the directory or the flag file cannot be created.
+pub(crate) fn write_shell_flag(shell_dir: &Path, pid: u32, flag: ShellFlag) -> std::io::Result<()> {
+    std::fs::create_dir_all(shell_dir)?;
+    std::fs::File::create(flag.path(shell_dir, pid)).map(drop)
+}
+
+/// Ring the doorbell for `pid`.
+///
+/// # Errors
+///
+/// Returns the `kill` error (`ESRCH` also for a PID that does not fit `i32`).
+#[cfg(unix)]
+pub(crate) fn ring_doorbell(pid: u32) -> nix::Result<()> {
+    let pid_i32 = i32::try_from(pid).map_err(|_| nix::errno::Errno::ESRCH)?;
+    kill(Pid::from_raw(pid_i32), DOORBELL)
 }
 
 /// Default throttle interval in milliseconds between signals to the same client
@@ -63,7 +138,7 @@ enum BroadcastMode {
     not(unix),
     expect(
         dead_code,
-        reason = "`token` is compared only by `should_notify_repo`, which is Unix-only because the throttle exists to coalesce SIGUSR1 pushes (#540)"
+        reason = "`token` is compared only by `should_notify_repo`, which is Unix-only because the throttle exists to coalesce repaint pushes (#540)"
     )
 )]
 #[derive(Clone, Copy)]
@@ -77,6 +152,16 @@ pub struct ClientDirectory {
     inner: Mutex<HashMap<u32, ClientInfo>>,
     last_notify: Mutex<HashMap<PathBuf, ThrottleRecord>>,
     throttle_ms: AtomicU64,
+    /// Shell tracking directory flag files are written to; `None` resolves
+    /// `default_shell_dir` at write time.
+    #[cfg_attr(
+        not(unix),
+        expect(
+            dead_code,
+            reason = "flag files accompany the Unix-only doorbell signal"
+        )
+    )]
+    shell_dir: Option<PathBuf>,
     // Reused across identity lookups per sysinfo's own guidance: recreating
     // `System` per call is wasteful, and on some platforms re-walks process
     // tables that a targeted refresh does not need to touch.
@@ -106,9 +191,9 @@ struct ClientInfo {
     /// registration. Re-checked against the current occupant of this PID
     /// before every signal: if the OS has recycled the PID to an unrelated
     /// process since the registered shell exited, the start time will
-    /// differ and the signal must be skipped. SIGUSR1/SIGUSR2's default
-    /// disposition is terminate, so signaling the wrong process can kill it
-    /// (#319). `None` means the start time couldn't be determined at
+    /// differ and the signal must be skipped, so an unrelated process is
+    /// never sent a doorbell nor has flag files written for it (#319).
+    /// `None` means the start time couldn't be determined at
     /// registration (e.g. a transient lookup failure) and is treated as
     /// "nothing to compare", not as a mismatch.
     started_at: Option<u64>,
@@ -136,10 +221,21 @@ impl ClientDirectory {
             inner: Mutex::new(HashMap::new()),
             last_notify: Mutex::new(HashMap::new()),
             throttle_ms: AtomicU64::new(DEFAULT_THROTTLE_MS),
+            shell_dir: None,
             #[cfg(unix)]
             sysinfo: Mutex::new(sysinfo::System::new()),
             #[cfg(test)]
             notify_events: AtomicU64::new(0),
+        }
+    }
+
+    /// Create a new, empty registry that writes shell flag files into
+    /// `shell_dir` instead of `<runtime_root>/shells` (tests).
+    #[must_use]
+    pub fn with_shell_dir(shell_dir: PathBuf) -> Self {
+        Self {
+            shell_dir: Some(shell_dir),
+            ..Self::new()
         }
     }
 
@@ -357,49 +453,41 @@ impl ClientDirectory {
         dead_pids
     }
 
-    /// Broadcast a SIGUSR1 signal to all (or matching) registered clients.
+    /// Ring the repaint doorbell for all (or matching) registered clients.
     /// Automatically prunes stale PIDs that no longer exist.
     ///
     /// Note: Assumes `target` and client paths are already canonical (from `PathValidator::validate_path`).
     /// This eliminates blocking filesystem calls on the async path.
-    pub fn notify_sigusr1(&self, target: Option<&Path>) {
-        self.notify_with_signal(target, BroadcastMode::Throttled, Signal::SIGUSR1, None);
+    pub fn notify_repaint(&self, target: Option<&Path>) {
+        self.notify_with_signal(target, BroadcastMode::Throttled, None, None);
     }
 
-    /// Broadcast a throttled SIGUSR1 carrying a content token (#438).
+    /// Ring a throttled repaint doorbell carrying a content token (#438).
     ///
-    /// Same per-repo throttle as [`notify_sigusr1`], but a token that differs
+    /// Same per-repo throttle as [`Self::notify_repaint`], but a token that differs
     /// from the last delivered one for that repo is delivered even inside the
     /// throttle window (latest-wins), so a genuinely distinct rapid push is not
     /// swallowed. Derive the token from the pushed content (see
     /// `content_token`).
-    pub fn notify_sigusr1_coalesced(&self, target: Option<&Path>, token: u64) {
-        self.notify_with_signal(
-            target,
-            BroadcastMode::Throttled,
-            Signal::SIGUSR1,
-            Some(token),
-        );
+    pub fn notify_repaint_coalesced(&self, target: Option<&Path>, token: u64) {
+        self.notify_with_signal(target, BroadcastMode::Throttled, None, Some(token));
     }
 
-    /// Broadcast a SIGUSR1 signal bypassing throttle controls.
+    /// Ring the repaint doorbell bypassing throttle controls.
     ///
     /// Intended for immediate updates after a confirmed repository mutation.
-    pub fn notify_sigusr1_force(&self, target: Option<&Path>) {
-        self.notify_with_signal(target, BroadcastMode::Force, Signal::SIGUSR1, None);
+    pub fn notify_repaint_force(&self, target: Option<&Path>) {
+        self.notify_with_signal(target, BroadcastMode::Force, None, None);
     }
 
-    /// Notify all clients via SIGUSR2 (force repaint / config reload)
-    pub fn notify_sigusr2(&self) {
-        let is_empty = self
-            .inner
-            .lock()
-            .map_or_else(|_| true, |guard| guard.is_empty());
-        if is_empty {
-            return;
-        }
-        debug_log!("agent", "Notifying clients via SIGUSR2");
-        self.notify_with_signal(None, BroadcastMode::Throttled, Signal::SIGUSR2, None);
+    /// Ask every registered client to reload theme/config: write its
+    /// `<pid>.reload` flag, then ring the doorbell.
+    ///
+    /// Always [`BroadcastMode::Force`]: a throttled-away doorbell would leave
+    /// the flag sitting unread.
+    pub fn notify_reload(&self) {
+        debug_log!("agent", "Notifying clients to reload via SIGURG");
+        self.notify_with_signal(None, BroadcastMode::Force, Some(ShellFlag::Reload), None);
     }
 
     /// Copy the registry's live clients out from under the lock, so the
@@ -425,18 +513,19 @@ impl ClientDirectory {
         &self,
         target: Option<&Path>,
         mode: BroadcastMode,
-        signal: Signal,
+        flag: Option<ShellFlag>,
         token: Option<u64>,
     ) {
         #[cfg(test)]
         self.notify_events.fetch_add(1, Ordering::Relaxed);
         #[cfg(not(unix))]
         {
-            let _ = (target, mode, signal, token);
+            let _ = (target, mode, flag, token);
         }
         #[cfg(unix)]
         {
             let clients = self.client_snapshots();
+            let shell_dir = flag.map(|_| self.shell_dir.clone().unwrap_or_else(default_shell_dir));
 
             let mut stale: Vec<u32> = Vec::new();
 
@@ -474,22 +563,8 @@ impl ClientDirectory {
                     continue;
                 }
 
-                // Use nix for direct syscall - 20x faster than spawning shell
-                let Ok(pid_i32) = i32::try_from(pid) else {
-                    // PID too large for i32, mark as stale
+                if !Self::deliver(pid, flag.zip(shell_dir.as_deref())) {
                     stale.push(pid);
-                    continue;
-                };
-
-                match kill(Pid::from_raw(pid_i32), signal) {
-                    Ok(()) | Err(nix::errno::Errno::EPERM) => {
-                        // Signal sent successfully, or process exists but we lack permission
-                    }
-                    Err(e) => {
-                        if e == nix::errno::Errno::ESRCH {
-                            stale.push(pid);
-                        }
-                    }
                 }
             }
 
@@ -501,6 +576,32 @@ impl ClientDirectory {
                 }
             }
         }
+    }
+
+    /// Deliver one notification to `pid`: write `flag` (if any) into its shell
+    /// dir, then ring the doorbell. Returns `false` when the PID is gone and
+    /// must be pruned.
+    ///
+    /// The flag must exist before the doorbell rings, or the shell's handler
+    /// would find nothing to act on. A dead PID gets no flag, so no orphan is
+    /// left behind.
+    #[cfg(unix)]
+    fn deliver(pid: u32, flag: Option<(ShellFlag, &Path)>) -> bool {
+        if let Some((flag_kind, dir)) = flag {
+            if !Self::is_client_alive(pid) {
+                return false;
+            }
+            if let Err(e) = write_shell_flag(dir, pid, flag_kind) {
+                debug_log!(
+                    "agent",
+                    "Failed to write {} flag for {pid}: {e}",
+                    flag_kind.suffix()
+                );
+            }
+        }
+
+        // EPERM: the process exists but we lack permission -- keep it.
+        !matches!(ring_doorbell(pid), Err(nix::errno::Errno::ESRCH))
     }
 
     /// Override the per-repository throttle interval used when broadcasting notifications.
@@ -618,7 +719,7 @@ impl ClientDirectory {
     /// Whether a broadcast aimed at `target` should proceed for the *whole*
     /// broadcast -- not per client.
     ///
-    /// An untargeted broadcast (`target: None`, e.g. `notify_sigusr2`) or a
+    /// An untargeted broadcast (`target: None`, e.g. `notify_reload`) or a
     /// forced one always proceeds. Otherwise this defers to
     /// `should_notify_repo`, which applies the per-repo throttle and mutates
     /// `last_notify` on approval. Because of that mutation, callers MUST call
@@ -942,7 +1043,7 @@ mod tests {
         directory.register_with_started_at_for_test(999_991, Some(repo.clone()), None);
         assert_eq!(directory.len(), 2, "Should have 2 clients registered");
 
-        directory.notify_sigusr1(Some(&repo));
+        directory.notify_repaint(Some(&repo));
 
         assert_eq!(
             directory.len(),
@@ -1242,7 +1343,7 @@ mod tests {
         directory.register_with_started_at_for_test(current_pid, None, Some(1));
         assert_eq!(directory.len(), 1, "Should have 1 client registered");
 
-        directory.notify_sigusr1(None);
+        directory.notify_repaint(None);
 
         assert!(
             !directory.clients().contains(&current_pid),
@@ -1271,7 +1372,7 @@ mod tests {
         directory.register_with_started_at_for_test(fake_pid, None, None);
         assert_eq!(directory.len(), 1, "Should have 1 client registered");
 
-        directory.notify_sigusr1(None);
+        directory.notify_repaint(None);
 
         assert!(
             !directory.clients().contains(&fake_pid),
@@ -1346,5 +1447,93 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&base);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod doorbell_tests {
+    #![allow(clippy::expect_used, clippy::missing_panics_doc)]
+
+    use super::{ClientDirectory, ShellFlag};
+    use std::path::Path;
+    use std::process::{Child, Command};
+    use std::time::Duration;
+
+    /// Wait up to ~5s for `path` to exist.
+    fn wait_for(path: &Path) -> bool {
+        for _ in 0_u32..250_u32 {
+            if path.exists() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        path.exists()
+    }
+
+    fn kill_child(mut child: Child) {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    /// #674 regression: a registered process with NO handler (a shell that
+    /// just `exec`ed itself) must survive every agent notification.
+    #[test]
+    fn unhandled_registered_process_survives_repaint_and_reload() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id();
+
+        let registry = ClientDirectory::with_shell_dir(dir.path().to_path_buf());
+        registry.register(pid, None);
+        registry.notify_repaint_force(None);
+        registry.notify_repaint(None);
+        registry.notify_reload();
+        std::thread::sleep(Duration::from_millis(200));
+
+        assert!(
+            child.try_wait().expect("poll child").is_none(),
+            "an unhandled process must survive the doorbell"
+        );
+        assert!(registry.is_registered(pid));
+        kill_child(child);
+    }
+
+    /// `notify_reload` writes `<pid>.reload` before ringing the doorbell: the
+    /// stand-in's URG trap only records delivery if the flag already exists.
+    #[test]
+    fn notify_reload_writes_flag_before_signalling() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mark = dir.path().join("delivered");
+        let flag_glob = dir.path().join("$$.reload");
+        let script = format!(
+            "trap '[ -e \"{flag}\" ] && touch \"{mark}\"' URG; while :; do sleep 0.05; done",
+            flag = flag_glob.display(),
+            mark = mark.display(),
+        );
+        let child = Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .spawn()
+            .expect("spawn sh");
+        let pid = child.id();
+        // Let sh install its trap before the doorbell rings.
+        std::thread::sleep(Duration::from_millis(200));
+
+        let registry = ClientDirectory::with_shell_dir(dir.path().to_path_buf());
+        registry.register(pid, None);
+        registry.notify_reload();
+
+        assert!(
+            ShellFlag::Reload.path(dir.path(), pid).exists(),
+            "reload flag must be written"
+        );
+        assert!(
+            wait_for(&mark),
+            "doorbell must arrive with the reload flag already present"
+        );
+        kill_child(child);
     }
 }

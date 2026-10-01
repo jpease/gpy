@@ -29,10 +29,10 @@ This directory contains integration tests for the Fish shell prompt and GPY init
 ### End-to-End Tests
 
 - **`e2e_prompt_content.test.fish`** - Renders `fish_prompt` through a real agent from a real repository and asserts the exact git (branch, ahead, dirty, untracked, stash, detached, rebase), language (names, venv version) and directory (every display mode) tokens, plus the prompt frame (#644)
-- **`e2e_interactive_session.test.fish`** - Drives real interactive `fish -i` sessions on a pseudo-terminal through `tests/lib/pty_session.py`: a tracked-file edit repaints the idle prompt with no keystroke, two shells share one agent and both repaint after a commit typed in one of them, and a `config.toml` edit reaches a Fish client via SIGUSR2 (theme switch, new segment, icons off) without a keypress (#645)
+- **`e2e_interactive_session.test.fish`** - Drives real interactive `fish -i` sessions on a pseudo-terminal through `tests/lib/pty_session.py`: a tracked-file edit repaints the idle prompt with no keystroke, two shells share one agent and both repaint after a commit typed in one of them, a `config.toml` edit reaches a Fish client via the `.reload` doorbell (theme switch, new segment, icons off) without a keypress (#645), and an `exec fish` survives the agent's notifications during its startup (#674)
 - **`e2e_agent_autostart.test.fish`** - Tests agent auto-start behavior
-- **`e2e_live_updates_signal.test.fish`** - Tests live prompt updates via SIGUSR1
-- **`sigusr1_repaint.test.fish`** - Tests prompt repainting on SIGUSR1 signals
+- **`e2e_live_updates_signal.test.fish`** - Tests live prompt updates via the SIGURG doorbell
+- **`doorbell_signal.test.fish`** - Tests the SIGURG doorbell handler: repaint on every ring, `.reload`/`.reregister` flags consumed once, untrack removes them (#674)
 
 ### Feature-Specific Tests
 
@@ -83,6 +83,7 @@ sections above describe the ones worth reading first.
 
 - `agent_circuit_breaker_expiry.test.fish`
 - `agent_restart_quiet_when_socket_missing.test.fish`
+- `doorbell_signal.test.fish`
 - `ipc_nc_fallback_timeout.test.fish`
 - `ipc_partial_response.test.fish`
 - `ipc_request_status.test.fish`
@@ -94,7 +95,6 @@ sections above describe the ones worth reading first.
 - `policy_helpers.test.fish`
 - `prompt_autostart_backoff.test.fish`
 - `protocol_version_mismatch.test.fish`
-- `sigusr1_repaint.test.fish`
 - `supervisor_cadence.test.fish`
 - `test_helpers_scoped_kill.test.fish`
 
@@ -171,8 +171,8 @@ There is no `tests/manual/` any more (#655). Everything the old scripts
 exercised by hand now gates: the "no JSON leaks into the prompt" check in
 `e2e_prompt_content.test.fish` (#644), the live-update walkthrough in
 `e2e_interactive_session.test.fish` (#645), the socket → cache → oneshot flow
-in `e2e_agent_down_oneshot_fallback.test.fish`, and SIGUSR1 repaints in
-`sigusr1_repaint.test.fish`. For an interactive look at a prompt, run a real
+in `e2e_agent_down_oneshot_fallback.test.fish`, and doorbell repaints in
+`doorbell_signal.test.fish`. For an interactive look at a prompt, run a real
 `fish -i` in the sandbox `tests/lib/pty_session.py` builds, the way the E2E
 tests do.
 

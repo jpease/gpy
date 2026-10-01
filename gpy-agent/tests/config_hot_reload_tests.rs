@@ -3,12 +3,12 @@
 //! Tests the complete hot-reload flow:
 //! 1. Config file changes
 //! 2. Agent detects change via file watcher
-//! 3. Agent sends SIGUSR2 to registered Fish processes
+//! 3. Agent writes `<pid>.reload` flag files and rings the SIGURG doorbell on registered Fish processes
 //! 4. Fish reloads theme variables (`GPY_GIT_ENABLED`, `__enabled_segments`, etc.)
 //! 5. Prompt updates with correct delimiters
 //!
 //! These tests prevent regressions of the critical bug where disabling git.enabled
-//! would not send SIGUSR2, causing Fish to use stale segment lists and wrong delimiters.
+//! would not request a reload, causing Fish to use stale segment lists and wrong delimiters.
 
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -22,7 +22,6 @@ use gpy_agent::config::manager::ConfigManager;
 use gpy_agent::ipc::ClientDirectory;
 use serial_test::serial;
 use std::fs;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tempfile::TempDir;
@@ -30,56 +29,65 @@ use tempfile::TempDir;
 #[cfg(unix)]
 use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
 
-// Signal counters for tracking SIGUSR1 and SIGUSR2 delivery
-static SIGUSR1_COUNTER: OnceLock<AtomicUsize> = OnceLock::new();
-static SIGUSR2_COUNTER: OnceLock<AtomicUsize> = OnceLock::new();
+// Counter for SIGURG doorbell deliveries
+static DOORBELL_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-fn get_sigusr1_counter() -> &'static AtomicUsize {
-    SIGUSR1_COUNTER.get_or_init(|| AtomicUsize::new(0))
-}
-
-fn get_sigusr2_counter() -> &'static AtomicUsize {
-    SIGUSR2_COUNTER.get_or_init(|| AtomicUsize::new(0))
+fn get_doorbell_counter() -> &'static AtomicUsize {
+    &DOORBELL_COUNTER
 }
 
 #[cfg(unix)]
-extern "C" fn count_sigusr1(_signal: i32) {
-    get_sigusr1_counter().fetch_add(1, Ordering::Relaxed);
+extern "C" fn count_doorbell(_signal: i32) {
+    get_doorbell_counter().fetch_add(1, Ordering::Relaxed);
+}
+
+/// Reset the doorbell counter and install the counting SIGURG handler,
+/// returning the previous disposition for [`restore_doorbell`].
+#[cfg(unix)]
+fn install_doorbell() -> SigAction {
+    get_doorbell_counter().store(0, Ordering::Relaxed);
+    let handler = SigAction::new(
+        SigHandler::Handler(count_doorbell),
+        SaFlags::empty(),
+        SigSet::empty(),
+    );
+    unsafe { sigaction(Signal::SIGURG, &handler) }.expect("install SIGURG handler")
 }
 
 #[cfg(unix)]
-extern "C" fn count_sigusr2(_signal: i32) {
-    get_sigusr2_counter().fetch_add(1, Ordering::Relaxed);
+fn restore_doorbell(previous: SigAction) {
+    unsafe { sigaction(Signal::SIGURG, &previous) }.expect("restore SIGURG");
 }
 
-/// Test that SIGUSR2 is sent when git.enabled changes from true to false
+/// Assert a reload reached this process: the doorbell rang and the
+/// `<shell_dir>/<pid>.reload` flag was written.
+#[cfg(unix)]
+fn assert_reload_delivered(shell_dir: &TempDir, initial_count: usize, what: &str) {
+    let final_count = get_doorbell_counter().load(Ordering::Relaxed);
+    assert!(
+        final_count > initial_count,
+        "SIGURG doorbell should ring when {what}. Before: {initial_count}, After: {final_count}"
+    );
+    let flag = shell_dir
+        .path()
+        .join(format!("{}.reload", std::process::id()));
+    assert!(
+        flag.exists(),
+        "reload flag {} should exist when {what}",
+        flag.display()
+    );
+}
+
+/// Test that a reload is requested when git.enabled changes from true to false
 ///
-/// This is a regression test for the critical bug where the agent would only send
-/// SIGUSR1 (git status update) but not SIGUSR2 (config/theme reload) when disabling git.
-/// Without SIGUSR2, Fish keeps the old `__enabled_segments` list and uses the wrong delimiter.
+/// This is a regression test for the critical bug where the agent would only request
+/// a repaint (git status update) but not a reload (config/theme) when disabling git.
+/// Without a reload, Fish keeps the old `__enabled_segments` list and uses the wrong delimiter.
 #[cfg(unix)]
 #[tokio::test]
 #[serial]
-async fn test_sigusr2_sent_when_git_disabled() {
-    // Reset counters
-    get_sigusr1_counter().store(0, Ordering::Relaxed);
-    get_sigusr2_counter().store(0, Ordering::Relaxed);
-
-    // Install signal handlers
-    let sigusr1_handler = SigAction::new(
-        SigHandler::Handler(count_sigusr1),
-        SaFlags::empty(),
-        SigSet::empty(),
-    );
-    let sigusr2_handler = SigAction::new(
-        SigHandler::Handler(count_sigusr2),
-        SaFlags::empty(),
-        SigSet::empty(),
-    );
-    let prev_usr1 =
-        unsafe { sigaction(Signal::SIGUSR1, &sigusr1_handler) }.expect("install SIGUSR1 handler");
-    let prev_usr2 =
-        unsafe { sigaction(Signal::SIGUSR2, &sigusr2_handler) }.expect("install SIGUSR2 handler");
+async fn test_reload_sent_when_git_disabled() {
+    let prev = install_doorbell();
 
     // Create temp config with git enabled
     let temp_dir = TempDir::new().expect("create temp dir");
@@ -106,14 +114,15 @@ enabled_segments = ["clock", "directory", "git"]
     assert!(config.git.enabled, "git should be enabled initially");
 
     // Register this process to receive signals
-    let registry = ClientDirectory::new();
+    let shell_dir = TempDir::new().expect("create shell dir");
+    let registry = ClientDirectory::with_shell_dir(shell_dir.path().to_path_buf());
     let pid = std::process::id();
     let cwd = std::env::current_dir().expect("current dir");
     registry.register(pid, Some(cwd));
 
     // Simulate agent detecting config change and sending signals
     // (In real agent, this happens in agent.rs reload_config)
-    let initial_sigusr2_count = get_sigusr2_counter().load(Ordering::Relaxed);
+    let initial_count = get_doorbell_counter().load(Ordering::Relaxed);
 
     // Change config to disable git
     fs::write(
@@ -137,43 +146,23 @@ enabled_segments = ["clock", "directory", "git"]
     let new_config = manager.get();
     assert!(!new_config.git.enabled, "git should be disabled now");
 
-    // Agent should send SIGUSR2 when git is disabled
-    // This is the critical fix: agent.rs:670 now calls client_registry.notify_sigusr2()
-    registry.notify_sigusr2();
+    // Agent should request a reload when git is disabled
+    registry.notify_reload();
 
     // Wait for signal delivery
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Verify SIGUSR2 was sent
-    let sigusr2_count = get_sigusr2_counter().load(Ordering::Relaxed);
-    assert!(
-        sigusr2_count > initial_sigusr2_count,
-        "SIGUSR2 should be sent when git.enabled changes to false. Before: {initial_sigusr2_count}, After: {sigusr2_count}"
-    );
+    assert_reload_delivered(&shell_dir, initial_count, "git.enabled changes to false");
 
-    // Restore signal handlers
-    unsafe {
-        sigaction(Signal::SIGUSR1, &prev_usr1).expect("restore SIGUSR1");
-        sigaction(Signal::SIGUSR2, &prev_usr2).expect("restore SIGUSR2");
-    }
+    restore_doorbell(prev);
 }
 
-/// Test that SIGUSR2 is sent when git.enabled changes from false to true
+/// Test that a reload is requested when git.enabled changes from false to true
 #[cfg(unix)]
 #[tokio::test]
 #[serial]
-async fn test_sigusr2_sent_when_git_enabled() {
-    // Reset counters
-    get_sigusr2_counter().store(0, Ordering::Relaxed);
-
-    // Install signal handler
-    let sigusr2_handler = SigAction::new(
-        SigHandler::Handler(count_sigusr2),
-        SaFlags::empty(),
-        SigSet::empty(),
-    );
-    let prev_usr2 =
-        unsafe { sigaction(Signal::SIGUSR2, &sigusr2_handler) }.expect("install SIGUSR2 handler");
+async fn test_reload_sent_when_git_enabled() {
+    let prev = install_doorbell();
 
     // Create temp config with git disabled
     let temp_dir = TempDir::new().expect("create temp dir");
@@ -194,10 +183,11 @@ enabled_segments = ["clock", "directory"]
     assert!(!manager.get().git.enabled);
 
     // Register for signals
-    let registry = ClientDirectory::new();
+    let shell_dir = TempDir::new().expect("create shell dir");
+    let registry = ClientDirectory::with_shell_dir(shell_dir.path().to_path_buf());
     registry.register(std::process::id(), Some(std::env::current_dir().unwrap()));
 
-    let initial_count = get_sigusr2_counter().load(Ordering::Relaxed);
+    let initial_count = get_doorbell_counter().load(Ordering::Relaxed);
 
     // Enable git
     fs::write(
@@ -215,20 +205,12 @@ enabled_segments = ["clock", "directory", "git"]
     manager.reload_now().expect("reload");
     assert!(manager.get().git.enabled);
 
-    // Send SIGUSR2
-    registry.notify_sigusr2();
+    registry.notify_reload();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let final_count = get_sigusr2_counter().load(Ordering::Relaxed);
-    assert!(
-        final_count > initial_count,
-        "SIGUSR2 should be sent when git.enabled changes to true"
-    );
+    assert_reload_delivered(&shell_dir, initial_count, "git.enabled changes to true");
 
-    // Restore handler
-    unsafe {
-        sigaction(Signal::SIGUSR2, &prev_usr2).expect("restore SIGUSR2");
-    }
+    restore_doorbell(prev);
 }
 
 /// Test that theme export reflects updated `enabled_segments` when git is disabled
@@ -370,11 +352,11 @@ fn test_theme_export_updates_enabled_segments_when_both_disabled() {
     );
 }
 
-/// Test that config watcher triggers reload and would send SIGUSR2
+/// Test that config watcher triggers reload
 ///
 /// This test verifies the file watcher mechanism that monitors config.toml
 /// for changes and triggers reloads. In production, this reload would also
-/// send SIGUSR2 to all registered Fish clients.
+/// write reload flags and ring the SIGURG doorbell on all registered Fish clients.
 // gpy-agent#385: see the matching comment on
 // `config_watcher_detects_language_toggle` in config_watcher_tests.rs -- this
 // test bootstraps its own FSEvents stream via `ConfigManager::start_watching`
@@ -440,24 +422,14 @@ enabled_segments = ["clock", "directory"]
     manager.stop_watching();
 }
 
-/// Test that SIGUSR2 is sent even when both `live_updates` and git are disabled
+/// Test that a reload is requested even when both `live_updates` and git are disabled
 ///
-/// This ensures we don't miss SIGUSR2 in edge cases where multiple features are disabled.
+/// This ensures we don't miss a reload in edge cases where multiple features are disabled.
 #[cfg(unix)]
 #[tokio::test]
 #[serial]
-async fn test_sigusr2_sent_when_disabling_multiple_features() {
-    // Reset counter
-    get_sigusr2_counter().store(0, Ordering::Relaxed);
-
-    // Install handler
-    let sigusr2_handler = SigAction::new(
-        SigHandler::Handler(count_sigusr2),
-        SaFlags::empty(),
-        SigSet::empty(),
-    );
-    let prev_usr2 =
-        unsafe { sigaction(Signal::SIGUSR2, &sigusr2_handler) }.expect("install SIGUSR2 handler");
+async fn test_reload_sent_when_disabling_multiple_features() {
+    let prev = install_doorbell();
 
     let temp_dir = TempDir::new().expect("create temp dir");
     let config_path = temp_dir.path().join("config.toml");
@@ -479,10 +451,11 @@ enabled = true
     .expect("write initial config");
 
     let manager = ConfigManager::from_path(&config_path).expect("create manager");
-    let registry = ClientDirectory::new();
+    let shell_dir = TempDir::new().expect("create shell dir");
+    let registry = ClientDirectory::with_shell_dir(shell_dir.path().to_path_buf());
     registry.register(std::process::id(), Some(std::env::current_dir().unwrap()));
 
-    let initial_count = get_sigusr2_counter().load(Ordering::Relaxed);
+    let initial_count = get_doorbell_counter().load(Ordering::Relaxed);
 
     // Disable multiple features
     fs::write(
@@ -501,40 +474,23 @@ enabled = false
     .expect("write updated config");
 
     manager.reload_now().expect("reload");
-    registry.notify_sigusr2();
+    registry.notify_reload();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let final_count = get_sigusr2_counter().load(Ordering::Relaxed);
-    assert!(
-        final_count > initial_count,
-        "SIGUSR2 should be sent even when disabling multiple features"
-    );
+    assert_reload_delivered(&shell_dir, initial_count, "disabling multiple features");
 
-    // Restore handler
-    unsafe {
-        sigaction(Signal::SIGUSR2, &prev_usr2).expect("restore SIGUSR2");
-    }
+    restore_doorbell(prev);
 }
 
-/// Test that SIGUSR2 is sent when `language.display` changes
+/// Test that a reload is requested when `language.display` changes
 ///
 /// This ensures that changing from "icon" to "text" or vice versa triggers
 /// a config refresh, causing Fish to re-render the language segment.
 #[cfg(unix)]
 #[tokio::test]
 #[serial]
-async fn test_sigusr2_sent_when_language_display_changes() {
-    // Reset counter
-    get_sigusr2_counter().store(0, Ordering::Relaxed);
-
-    // Install handler
-    let sigusr2_handler = SigAction::new(
-        SigHandler::Handler(count_sigusr2),
-        SaFlags::empty(),
-        SigSet::empty(),
-    );
-    let prev_usr2 =
-        unsafe { sigaction(Signal::SIGUSR2, &sigusr2_handler) }.expect("install SIGUSR2 handler");
+async fn test_reload_sent_when_language_display_changes() {
+    let prev = install_doorbell();
 
     let temp_dir = TempDir::new().expect("create temp dir");
     let config_path = temp_dir.path().join("config.toml");
@@ -551,10 +507,11 @@ display = "icon"
     .expect("write initial config");
 
     let manager = ConfigManager::from_path(&config_path).expect("create manager");
-    let registry = ClientDirectory::new();
+    let shell_dir = TempDir::new().expect("create shell dir");
+    let registry = ClientDirectory::with_shell_dir(shell_dir.path().to_path_buf());
     registry.register(std::process::id(), Some(std::env::current_dir().unwrap()));
 
-    let initial_count = get_sigusr2_counter().load(Ordering::Relaxed);
+    let initial_count = get_doorbell_counter().load(Ordering::Relaxed);
 
     // Change to display = "text"
     fs::write(
@@ -573,22 +530,15 @@ display = "text"
         gpy_agent::config::types::LanguageDisplay::Text
     );
 
-    registry.notify_sigusr2();
+    registry.notify_reload();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let final_count = get_sigusr2_counter().load(Ordering::Relaxed);
-    assert!(
-        final_count > initial_count,
-        "SIGUSR2 should be sent when language.display changes"
-    );
+    assert_reload_delivered(&shell_dir, initial_count, "language.display changes");
 
-    // Restore handler
-    unsafe {
-        sigaction(Signal::SIGUSR2, &prev_usr2).expect("restore SIGUSR2");
-    }
+    restore_doorbell(prev);
 }
 
-/// Test that SIGUSR2 is sent when `language.icons` changes
+/// Test that a reload is requested when `language.icons` changes
 ///
 /// This ensures that changing language icons (e.g., customizing the Rust icon)
 /// triggers a config refresh, causing Fish to re-render the language segment
@@ -596,18 +546,8 @@ display = "text"
 #[cfg(unix)]
 #[tokio::test]
 #[serial]
-async fn test_sigusr2_sent_when_language_icons_change() {
-    // Reset counter
-    get_sigusr2_counter().store(0, Ordering::Relaxed);
-
-    // Install handler
-    let sigusr2_handler = SigAction::new(
-        SigHandler::Handler(count_sigusr2),
-        SaFlags::empty(),
-        SigSet::empty(),
-    );
-    let prev_usr2 =
-        unsafe { sigaction(Signal::SIGUSR2, &sigusr2_handler) }.expect("install SIGUSR2 handler");
+async fn test_reload_sent_when_language_icons_change() {
+    let prev = install_doorbell();
 
     let temp_dir = TempDir::new().expect("create temp dir");
     let config_path = temp_dir.path().join("config.toml");
@@ -623,10 +563,11 @@ enabled = true
     .expect("write initial config");
 
     let manager = ConfigManager::from_path(&config_path).expect("create manager");
-    let registry = ClientDirectory::new();
+    let shell_dir = TempDir::new().expect("create shell dir");
+    let registry = ClientDirectory::with_shell_dir(shell_dir.path().to_path_buf());
     registry.register(std::process::id(), Some(std::env::current_dir().unwrap()));
 
-    let initial_count = get_sigusr2_counter().load(Ordering::Relaxed);
+    let initial_count = get_doorbell_counter().load(Ordering::Relaxed);
 
     // Add custom Rust icon
     fs::write(
@@ -654,23 +595,16 @@ python = "🐍"
         Some("🦀")
     );
 
-    registry.notify_sigusr2();
+    registry.notify_reload();
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let final_count = get_sigusr2_counter().load(Ordering::Relaxed);
-    assert!(
-        final_count > initial_count,
-        "SIGUSR2 should be sent when language.icons changes"
-    );
+    assert_reload_delivered(&shell_dir, initial_count, "language.icons changes");
 
-    // Restore handler
-    unsafe {
-        sigaction(Signal::SIGUSR2, &prev_usr2).expect("restore SIGUSR2");
-    }
+    restore_doorbell(prev);
 }
 
 #[cfg(not(unix))]
 #[test]
-fn sigusr2_tests_require_unix() {
+fn reload_tests_require_unix() {
     // Placeholder for non-Unix platforms
 }

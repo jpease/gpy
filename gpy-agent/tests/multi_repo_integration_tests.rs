@@ -401,10 +401,10 @@ fn test_client_directory_repo_boundary() {
     // Verify both clients are registered
     assert_eq!(client_dir.len(), 2);
 
-    // Verify SIGUSR1 targeting works for specific repos
+    // Verify repaint targeting works for specific repos
     // (This tests that the directory properly tracks repo associations)
-    client_dir.notify_sigusr1(Some(&repo1));
-    client_dir.notify_sigusr1(Some(&repo2));
+    client_dir.notify_repaint(Some(&repo1));
+    client_dir.notify_repaint(Some(&repo2));
 
     // If we reach here without panic, the targeting worked successfully
 }

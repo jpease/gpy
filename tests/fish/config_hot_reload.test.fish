@@ -40,7 +40,7 @@ end
 
 echo "Reload config with show_versions=false"
 printf "[language]\nenabled = true\nshow_versions = false\n\n[ui]\nshow_icons = false\ntheme = \"default\"\ndirectory.max_length = 80\nenabled_segments = [\"clock\",\"directory\",\"language\",\"git\"]\n" > $config_path
-# Reload theme by re-sourcing the theme export (simulates SIGUSR2 handler)
+# Reload theme by re-sourcing the theme export (simulates the agent reload doorbell)
 gpy-agent theme export --format fish 2>/dev/null | source
 
 set rendered (segment_language_render last)
@@ -51,7 +51,7 @@ end
 
 echo "Reload config with language disabled"
 printf "[language]\nenabled = false\nshow_versions = false\n\n[ui]\nshow_icons = false\ntheme = \"default\"\ndirectory.max_length = 80\nenabled_segments = [\"clock\",\"directory\",\"language\",\"git\"]\n" > $config_path
-# Reload theme by re-sourcing the theme export (simulates SIGUSR2 handler)
+# Reload theme by re-sourcing the theme export (simulates the agent reload doorbell)
 gpy-agent theme export --format fish 2>/dev/null | source
 
 if segment_language_detect

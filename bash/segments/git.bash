@@ -41,7 +41,7 @@ __gpy_segment_git() {
 
     # Stale (bit 2 set: status 2 or 6). With the agent UP, serve the stale
     # value now and trigger a background IPC refresh so the agent updates the
-    # instant cache and repaints via SIGUSR1 once the output changes. With the
+    # instant cache and repaints via the SIGURG doorbell once the output changes. With the
     # agent DOWN that refresh reaches no listener and the stale value would be
     # shown indefinitely, in every directory with a cache entry (#639, the
     # #430 branch Fish already had): run a bounded foreground oneshot instead,

@@ -31,7 +31,7 @@ typeset -g -a __enabled_segments=()
 typeset -g GPY_IPC_TIMEOUT_MS=150
 
 # Git instant-cache TTL (seconds). This is the pull-based self-heal bound when
-# a SIGUSR1 repaint push is missed: cached git output is still served instantly,
+# an agent repaint push is missed: cached git output is still served instantly,
 # but entries older than this flag a throttled background refresh.
 typeset -g GPY_GIT_INSTANT_CACHE_TTL_SECONDS=${GPY_GIT_INSTANT_CACHE_TTL_SECONDS:-5}
 

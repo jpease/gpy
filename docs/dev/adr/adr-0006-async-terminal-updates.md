@@ -150,10 +150,10 @@ Tests validate:
 
 ### SIGUSR1 Repaint Regression Tests
 
-**Critical regression tests** at `/tests/fish/sigusr1_repaint.test.fish`:
+**Critical regression tests** originally lived in `sigusr1_repaint.test.fish`. Since [ADR-0007](adr-0007-sigurg-doorbell-notifications.md) replaced SIGUSR1 with the SIGURG doorbell, they are in `tests/fish/doorbell_signal.test.fish`:
 
 ```bash
-fish tests/fish/sigusr1_repaint.test.fish
+fish tests/fish/doorbell_signal.test.fish
 ```
 
 These tests prevent regressions to broken repaint patterns:
@@ -171,7 +171,7 @@ These tests prevent regressions to broken repaint patterns:
 **Run both test suites:**
 ```bash
 fish tests/fish/postexec_async_update.test.fish && \
-fish tests/fish/sigusr1_repaint.test.fish
+fish tests/fish/doorbell_signal.test.fish
 ```
 
 ## Maintenance Notes

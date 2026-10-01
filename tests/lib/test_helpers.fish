@@ -11,7 +11,7 @@
 # - start_test_agent: Start agent in test mode with debug logging
 # - stop_test_agent: Stop agent and cleanup
 # - register_test_client: Spawn Fish subprocess that counts signals
-# - count_signals: Count SIGUSR1 signals received by test client
+# - count_signals: Count SIGURG doorbell rings received by test client
 # - wait_for_agent: Wait for agent to become responsive
 # - cleanup_test_files: Remove temporary test files
 
@@ -212,7 +212,7 @@ function poll_until
     return 1
 end
 
-# Register a test client that counts SIGUSR1 signals
+# Register a test client that counts SIGURG doorbell rings
 # Arguments:
 #   $argv[1] - duration to run (seconds)
 #   $argv[2] - working directory to register from (defaults to current directory)
@@ -233,7 +233,7 @@ function register_test_client
         set -g signal_file $__gpy_test_signal_dir/client-\$fish_pid
 
         # Define our test signal handler BEFORE GPY init
-        function __test_count_signal --on-signal SIGUSR1
+        function __test_count_signal --on-signal SIGURG
             echo SIGNAL >> \$signal_file
         end
 

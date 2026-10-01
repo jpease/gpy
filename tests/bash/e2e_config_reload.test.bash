@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# tests/bash/e2e_config_sigusr2_reload.test.bash
+# tests/bash/e2e_config_reload.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# config.toml edit -> theme export rewritten -> SIGUSR2 -> Bash re-renders
-# (#647 row 3).
+# config.toml edit -> theme export rewritten -> `<pid>.reload` flag + SIGURG
+# doorbell -> Bash re-renders (#647 row 3).
 #
-# `integration.test.bash` covers the SIGUSR2 handler with `__gpy_load_theme`
+# `integration.test.bash` covers the reload doorbell with `__gpy_load_theme`
 # stubbed; nothing drove a real Bash client through a real config change.
 # With a real agent and a `bash -i` on a pty, flipping `show_icons` in
 # config.toml must:
 #   (a) rewrite $XDG_CACHE_HOME/gpy/theme-export.bash (mtime and content),
-#   (b) show the change at the NEXT prompt: the SIGUSR2 handler re-sources the
+#   (b) show the change at the NEXT prompt: the doorbell handler re-sources the
 #       export and re-renders PS1, but readline cannot repaint an idle prompt
 #       (docs/user/bash-limitations.md), so one Enter is needed and recorded
 #       here as the measured behaviour,
@@ -100,4 +100,4 @@ if [ "$failures" -gt 0 ]; then
     echo "FAILED: $failures assertion(s)"
     exit 1
 fi
-echo "PASS: bash config edit reaches the next prompt via SIGUSR2"
+echo "PASS: bash config edit reaches the next prompt via the reload doorbell"

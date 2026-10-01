@@ -4,13 +4,13 @@
 #
 # Live git content and an idle Bash prompt (#647 row 1; measured for #637).
 #
-# Bash's SIGUSR1 handler re-renders PS1, but readline has already expanded
+# Bash's SIGURG doorbell handler re-renders PS1, but readline has already expanded
 # and drawn the previous prompt and has no `reset-prompt`: the new PS1 is only
 # shown at the next prompt. This test pins what a Bash user actually gets,
 # which docs/user/bash-limitations.md states in the same words:
 #   (a) the agent's instant-cache entry for the repo changes after an edit
 #       made from outside the shell with no `git add` (the agent side works),
-#   (b) the agent delivered SIGUSR1 to the shell,
+#   (b) the agent delivered the SIGURG doorbell to the shell,
 #   (c) the prompt on screen does NOT change with no keystroke (measured;
 #       if this ever starts passing, update the doc and flip the assertion),
 #   (d) the next prompt after Enter shows the unstaged marker.
@@ -49,7 +49,7 @@ else
     fail "no git instant-cache entry appeared"
 fi
 cp "$cache_file" "$SHELL_E2E_ROOT/before.ansi" 2>/dev/null || true
-sigusr1_before="$(grep -c 'notifying clients via SIGUSR1' "$GPY_DEBUG_LOG" 2>/dev/null || true)"
+signal_before="$(grep -c 'notifying clients via SIGURG' "$GPY_DEBUG_LOG" 2>/dev/null || true)"
 
 echo dirty >>"$SHELL_E2E_REPO/tracked.txt"
 
@@ -60,13 +60,13 @@ else
     fail "the instant-cache entry did not change within 10 s"
 fi
 signalled() {
-    now="$(grep -c 'notifying clients via SIGUSR1' "$GPY_DEBUG_LOG" 2>/dev/null || true)"
-    [ "${now:-0}" -gt "${sigusr1_before:-0}" ]
+    now="$(grep -c 'notifying clients via SIGURG' "$GPY_DEBUG_LOG" 2>/dev/null || true)"
+    [ "${now:-0}" -gt "${signal_before:-0}" ]
 }
 if shell_e2e_poll 10 signalled; then
-    pass "the agent sent SIGUSR1 for the change"
+    pass "the agent sent SIGURG for the change"
 else
-    fail "the agent never logged a SIGUSR1 notification for the change"
+    fail "the agent never logged a SIGURG notification for the change"
 fi
 
 # (c) measured limitation: no keystroke-free repaint in Bash.

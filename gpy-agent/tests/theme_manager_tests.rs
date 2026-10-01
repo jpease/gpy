@@ -826,43 +826,34 @@ fn test_theme_hot_reload_triggers_on_file_change() {
     }
 }
 
-// Test that SIGUSR2 is sent to Fish clients when theme file changes
+// Test that a reload (flag file + SIGURG doorbell) reaches Fish clients when the theme file changes
 //
 // This ensures that when a user edits their theme file (e.g., changes colors),
 // Fish shells automatically reload the theme variables without needing to restart.
 #[cfg(unix)]
 #[test]
 #[serial]
-fn test_theme_change_sends_sigusr2() {
+fn test_theme_change_sends_reload() {
     use gpy_agent::ipc::ClientDirectory;
     use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, OnceLock};
 
-    static SIGUSR2_COUNTER: OnceLock<AtomicUsize> = OnceLock::new();
+    static DOORBELL_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-    fn get_counter() -> &'static AtomicUsize {
-        SIGUSR2_COUNTER.get_or_init(|| AtomicUsize::new(0))
+    extern "C" fn count_doorbell(_signal: i32) {
+        DOORBELL_COUNTER.fetch_add(1, Ordering::Relaxed);
     }
 
-    extern "C" fn count_sigusr2(_signal: i32) {
-        get_counter().fetch_add(1, Ordering::Relaxed);
-    }
+    DOORBELL_COUNTER.store(0, Ordering::Relaxed);
 
-    // Reset counter
-    get_counter().store(0, Ordering::Relaxed);
-
-    // Install signal handler
-    let sigusr2_handler = SigAction::new(
-        SigHandler::Handler(count_sigusr2),
+    let doorbell_handler = SigAction::new(
+        SigHandler::Handler(count_doorbell),
         SaFlags::empty(),
         SigSet::empty(),
     );
-    // Install the counting handler and keep it in place for the entire
-    // async-delivery window. We never restore the previous disposition (see
-    // teardown below) so there is no window where the default terminate
-    // disposition could fire on a late signal.
-    unsafe { sigaction(Signal::SIGUSR2, &sigusr2_handler) }.expect("install SIGUSR2 handler");
+    let previous =
+        unsafe { sigaction(Signal::SIGURG, &doorbell_handler) }.expect("install SIGURG handler");
 
     let temp_dir = TempDir::new().expect("create temp dir");
     let config_home = temp_dir.path();
@@ -872,17 +863,22 @@ fn test_theme_change_sends_sigusr2() {
     }
 
     // Create initial theme
-    let theme_path =
-        create_test_theme_toml(&config_home.join("gpy"), "sigusr2_test", MINIMAL_THEME);
+    let theme_path = create_test_theme_toml(&config_home.join("gpy"), "reload_test", MINIMAL_THEME);
 
-    // Create theme manager and client registry
-    let manager = ThemeManager::new("sigusr2_test").unwrap();
-    let client_registry = Arc::new(ClientDirectory::new());
+    // Create theme manager and client registry (flags land in a tempdir)
+    let manager = ThemeManager::new("reload_test").unwrap();
+    let shell_dir = TempDir::new().expect("create shell dir");
+    let client_registry = Arc::new(ClientDirectory::with_shell_dir(
+        shell_dir.path().to_path_buf(),
+    ));
+    let reload_flag = shell_dir
+        .path()
+        .join(format!("{}.reload", std::process::id()));
 
     // Register this process
     client_registry.register(std::process::id(), Some(std::env::current_dir().unwrap()));
 
-    let initial_count = get_counter().load(Ordering::Relaxed);
+    let initial_count = DOORBELL_COUNTER.load(Ordering::Relaxed);
 
     // Start watching with client registry
     unsafe {
@@ -926,19 +922,24 @@ fail_text_color = "white"
 
     fs::write(&theme_path, updated_theme).unwrap();
 
-    // Wait for both the signal and the actual theme reload. Under full-suite load
+    // Wait for both the doorbell and the actual theme reload. Under full-suite load
     // the signal can arrive slightly before the manager's read observes the new
     // theme, so asserting on the signal counter alone is racy.
     let signaled = wait_until(Duration::from_secs(2), Duration::from_millis(25), || {
-        let signal_seen = get_counter().load(Ordering::Relaxed) > initial_count;
+        let signal_seen = DOORBELL_COUNTER.load(Ordering::Relaxed) > initial_count;
         let theme = manager.get();
         signal_seen && theme.ui.prompt_icon == ">" && theme.segments.clock.bg_color == "red"
     });
-    let final_count = get_counter().load(Ordering::Relaxed);
-    assert!(signaled, "SIGUSR2 should be sent within timeout");
+    let final_count = DOORBELL_COUNTER.load(Ordering::Relaxed);
+    assert!(signaled, "SIGURG doorbell should ring within timeout");
     assert!(
         final_count > initial_count,
-        "SIGUSR2 should be sent when theme file changes. Before: {initial_count}, After: {final_count}"
+        "SIGURG doorbell should ring when theme file changes. Before: {initial_count}, After: {final_count}"
+    );
+    assert!(
+        reload_flag.exists(),
+        "reload flag {} should be written when theme file changes",
+        reload_flag.display()
     );
 
     // Verify theme was actually reloaded
@@ -949,16 +950,10 @@ fail_text_color = "white"
     // Stop watching
     manager.stop_watching();
 
-    // Ignore any late SIGUSR2 still in flight from the watcher's background
-    // thread. Setting SIG_IGN discards any already-pending signal and prevents
-    // future delivery from terminating the process. We deliberately do NOT
-    // restore the previous (default = terminate) disposition: under nextest each
-    // test runs in its own short-lived process, and restoring terminate reopens
-    // the race where an async SIGUSR2 delivered during shutdown kills the process
-    // with SIG 31 / SIGUSR2 (issue #347).
-    let ignore_usr2 = SigAction::new(SigHandler::SigIgn, SaFlags::empty(), SigSet::empty());
+    // SIGURG's default disposition is ignore, so restoring it is safe even if a
+    // late doorbell is still in flight from the watcher thread.
     unsafe {
-        sigaction(Signal::SIGUSR2, &ignore_usr2).expect("ignore SIGUSR2 during teardown");
+        sigaction(Signal::SIGURG, &previous).expect("restore SIGURG");
         std::env::remove_var("GPY_THEME_WATCH_POLL_MS");
         std::env::remove_var("XDG_CONFIG_HOME");
     }
@@ -966,7 +961,7 @@ fail_text_color = "white"
 
 #[cfg(not(unix))]
 #[test]
-fn test_theme_change_sends_sigusr2() {
+fn test_theme_change_sends_reload() {
     // Placeholder for non-Unix platforms
 }
 
@@ -1195,33 +1190,27 @@ provided_segments = ["k8s-tools"]
 #[cfg(unix)]
 #[test]
 #[serial]
-fn test_switch_theme_preserves_sigusr2_notifications() {
+fn test_switch_theme_preserves_reload_notifications() {
     use gpy_agent::ipc::ClientDirectory;
     use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, OnceLock};
 
-    static SIGUSR2_COUNTER_AFTER_SWITCH: OnceLock<AtomicUsize> = OnceLock::new();
+    static DOORBELL_COUNTER_AFTER_SWITCH: AtomicUsize = AtomicUsize::new(0);
 
-    fn counter() -> &'static AtomicUsize {
-        SIGUSR2_COUNTER_AFTER_SWITCH.get_or_init(|| AtomicUsize::new(0))
+    extern "C" fn count_doorbell(_signal: i32) {
+        DOORBELL_COUNTER_AFTER_SWITCH.fetch_add(1, Ordering::Relaxed);
     }
 
-    extern "C" fn count_sigusr2(_signal: i32) {
-        counter().fetch_add(1, Ordering::Relaxed);
-    }
+    DOORBELL_COUNTER_AFTER_SWITCH.store(0, Ordering::Relaxed);
 
-    counter().store(0, Ordering::Relaxed);
-
-    let sigusr2_handler = SigAction::new(
-        SigHandler::Handler(count_sigusr2),
+    let doorbell_handler = SigAction::new(
+        SigHandler::Handler(count_doorbell),
         SaFlags::empty(),
         SigSet::empty(),
     );
-    // Install the counting handler and keep it in place for the entire
-    // async-delivery window; teardown switches to SIG_IGN rather than restoring
-    // the default terminate disposition (see below).
-    unsafe { sigaction(Signal::SIGUSR2, &sigusr2_handler) }.expect("install SIGUSR2 handler");
+    let previous =
+        unsafe { sigaction(Signal::SIGURG, &doorbell_handler) }.expect("install SIGURG handler");
 
     let temp_dir = TempDir::new().expect("create temp dir");
     let config_home = temp_dir.path().join("gpy");
@@ -1234,7 +1223,13 @@ fn test_switch_theme_preserves_sigusr2_notifications() {
     }
 
     let manager = ThemeManager::new("default_switch").expect("theme manager");
-    let client_registry = Arc::new(ClientDirectory::new());
+    let shell_dir = TempDir::new().expect("create shell dir");
+    let client_registry = Arc::new(ClientDirectory::with_shell_dir(
+        shell_dir.path().to_path_buf(),
+    ));
+    let reload_flag = shell_dir
+        .path()
+        .join(format!("{}.reload", std::process::id()));
     client_registry.register(std::process::id(), Some(std::env::current_dir().unwrap()));
 
     manager
@@ -1247,36 +1242,42 @@ fn test_switch_theme_preserves_sigusr2_notifications() {
         .switch_theme("after_switch")
         .expect("switch theme should succeed");
 
-    let initial_count = counter().load(Ordering::Relaxed);
+    let initial_count = DOORBELL_COUNTER_AFTER_SWITCH.load(Ordering::Relaxed);
+    // The switch itself may already have requested a reload; clear its flag so
+    // the assertion below observes the edit's reload.
+    let _ = fs::remove_file(&reload_flag);
     let updated_theme = CUSTOM_THEME.replace("prompt_color = \"cyan\"", "prompt_color = \"green\"");
     fs::write(&switched_path, updated_theme).expect("update switched theme");
 
-    // Wait for the edit itself to land, not merely for *a* SIGUSR2: any reload
+    // Wait for the edit itself to land, not merely for *a* doorbell: any reload
     // raises the counter, so waiting on the counter let an unrelated reload
     // release the wait before this edit had been read, and the test then failed
     // on the theme assertion below with whatever was loaded instead (#551).
     let reloaded = wait_until(Duration::from_secs(2), Duration::from_millis(25), || {
         manager.get().ui.prompt_color.as_deref() == Some("green")
+            && DOORBELL_COUNTER_AFTER_SWITCH.load(Ordering::Relaxed) > initial_count
+            && reload_flag.exists()
     });
     assert!(
         reloaded,
         "the edited theme should be reloaded after a switch"
     );
     assert!(
-        counter().load(Ordering::Relaxed) > initial_count,
-        "SIGUSR2 should still be delivered after switch_theme"
+        DOORBELL_COUNTER_AFTER_SWITCH.load(Ordering::Relaxed) > initial_count,
+        "SIGURG doorbell should still ring after switch_theme"
+    );
+    assert!(
+        reload_flag.exists(),
+        "reload flag should still be written after switch_theme"
     );
 
     manager.stop_watching();
     client_registry.unregister(std::process::id());
 
-    // Ignore any late SIGUSR2 still in flight instead of restoring the default
-    // terminate disposition, which would let an async signal delivered during
-    // shutdown kill the process with SIG 31 / SIGUSR2 (issue #347). SIG_IGN also
-    // discards any already-pending signal, so no settle-sleep is needed.
-    let ignore_usr2 = SigAction::new(SigHandler::SigIgn, SaFlags::empty(), SigSet::empty());
+    // SIGURG's default disposition is ignore, so restoring it is safe even if a
+    // late doorbell is still in flight.
     unsafe {
-        sigaction(Signal::SIGUSR2, &ignore_usr2).expect("ignore SIGUSR2 during teardown");
+        sigaction(Signal::SIGURG, &previous).expect("restore SIGURG");
         std::env::remove_var("GPY_THEME_WATCH_POLL_MS");
         std::env::remove_var("XDG_CONFIG_HOME");
     }

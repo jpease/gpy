@@ -27,7 +27,7 @@
 # - Registration mechanism works correctly
 #
 # Real interactive sessions (repaint with no keystroke, two shells on one
-# agent, SIGUSR2 on a Fish client) are driven on a pseudo-terminal by
+# agent, config reload on a Fish client) are driven on a pseudo-terminal by
 # tests/fish/e2e_interactive_session.test.fish (#645).
 #
 # Test Flow:

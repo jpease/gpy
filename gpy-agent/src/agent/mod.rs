@@ -9,7 +9,7 @@
 //!
 //! 1. **IPC Server** ([`crate::ipc::server::EndpointHandle`]) - Handles Fish shell requests
 //! 2. **File Watcher** ([`crate::watcher::multi_repo::MultiRepoWatcher`]) - Detects git/config changes
-//! 3. **Clock Timer** - Sends periodic SIGUSR1 for live clock updates
+//! 3. **Clock Timer** - Rings the periodic repaint doorbell (SIGURG) for live clock updates
 //! 4. **Pruning Timer** - Removes dead client PIDs every 60 seconds
 //!
 //! These run concurrently via `tokio::select!` in the main event loop (see `start_background`).
@@ -34,7 +34,7 @@
 //!   → GitStatusCache::invalidate()
 //!   → load_repository_state()
 //!   → GitStatusCache::set()
-//!   → ClientDirectory::notify_sigusr1_force()
+//!   → ClientDirectory::notify_repaint_force()
 //! ```
 //!
 //! **Why here**: Git module (`git::status`) owns status detection, cache module (`git::cache`)
@@ -44,7 +44,7 @@
 //! **AI Agent Note**: When adding new cache invalidation triggers, add them to `handle_file_event()`.
 //! Do NOT add invalidation logic directly to git or cache modules.
 //!
-//! ## 2. File Watcher → Client Notifications (SIGUSR1)
+//! ## 2. File Watcher → Client Notifications (repaint doorbell)
 //!
 //! **What**: Filesystem changes trigger prompt re-rendering in Fish shells
 //!
@@ -56,9 +56,9 @@
 //!   → Watcher debouncer
 //!   → handle_file_event()
 //!   → [Update relevant cache/state]
-//!   → ClientDirectory::notify_sigusr1_force()
-//!   → Fish shells receive SIGUSR1
-//!   → Fish re-renders prompt
+//!   → ClientDirectory::notify_repaint_force()
+//!   → shells receive SIGURG (the doorbell; default disposition is ignore)
+//!   → shell re-renders prompt
 //! ```
 //!
 //! **Why here**: Watcher module (`watcher::multi_repo`) owns file watching, client registry
@@ -66,10 +66,10 @@
 //! clients based on event types and configuration state.
 //!
 //! **AI Agent Note**: All client notifications must flow through `ClientDirectory` methods.
-//! Never send signals directly from watcher or other modules. Use `notify_sigusr1_force()`
-//! for immediate updates or `notify_sigusr1()` for throttled updates.
+//! Never send signals directly from watcher or other modules. Use `notify_repaint_force()`
+//! for immediate updates or `notify_repaint()` for throttled updates.
 //!
-//! ## 3. Config Changes → Subsystem Reload (SIGUSR2)
+//! ## 3. Config Changes → Subsystem Reload (reload flag + doorbell)
 //!
 //! **What**: Configuration file changes trigger theme export reload in Fish shells
 //!
@@ -80,7 +80,7 @@
 //! Config file changed (.toml or theme files)
 //!   → Watcher detects FileEvent::Config
 //!   → handle_file_event() logs the event
-//!   → ThemeManager sends SIGUSR2 via its own reload callback
+//!   → ThemeManager calls `ClientDirectory::notify_reload()` (writes `<pid>.reload`, rings SIGURG)
 //!   → Fish shells re-source theme export
 //! ```
 //!
@@ -89,12 +89,12 @@
 //! propagate correctly.
 //!
 //! **AI Agent Note**: When adding new config-driven features, ensure the affected state
-//! is exported via `theme export`. The SIGUSR2 signal is sent by `ThemeManager` callback,
+//! is exported via `theme export`. The reload doorbell is rung by the `ThemeManager` callback,
 //! not directly in this function. There is no config/theme cache to invalidate any more
 //! (#608) -- `ConfigManager`/`ThemeManager` each hold one live `Arc<RwLock<Arc<_>>>` state
 //! that is always current.
 //!
-//! ## 4. Clock Timer → Client Updates (SIGUSR1)
+//! ## 4. Clock Timer → Client Updates (repaint doorbell)
 //!
 //! **What**: Periodic timer sends signals to update clock segment in prompts
 //!
@@ -105,14 +105,14 @@
 //! tokio::interval tick (1s or 60s)
 //!   → start_background() event loop
 //!   → Check if clients registered
-//!   → ClientDirectory::notify_sigusr1()
+//!   → ClientDirectory::notify_repaint()
 //!   → Fish shells re-render clock segment
 //! ```
 //!
 //! **Why here**: Clock logic could live in a separate module, but centralizing timer
 //! coordination in the agent's event loop makes shutdown and signal throttling simpler.
 //!
-//! **AI Agent Note**: Only sends SIGUSR1 if registered clients exist (see `clients.len() > 0` check).
+//! **AI Agent Note**: Only rings the doorbell if registered clients exist (see `clients.len() > 0` check).
 //! This prevents unnecessary timer processing when no Fish shells are connected. To add new
 //! timer-based updates, add another `tokio::interval` to the `tokio::select!` block.
 //!
@@ -149,7 +149,7 @@
 //! ```text
 //! Fish sends RegisterClient { pid, cwd }
 //!   → Server stores in ClientDirectory
-//!   → Watcher uses workspace info for targeted SIGUSR1
+//!   → Watcher uses workspace info for targeted repaint doorbells
 //!   → Only affected clients get notification
 //! ```
 //!
@@ -158,7 +158,7 @@
 //!
 //! **AI Agent Note**: Workspace tracking is optional but improves performance. The registry
 //! tracks client PIDs and CWDs. When a file changes, only clients in affected workspace
-//! receive signals. See `ClientDirectory::notify_sigusr1_for_path()`.
+//! receive signals. See `ClientDirectory::notify_repaint()`'s `target`.
 //!
 //! ## Coordination Architecture Diagram
 //!
@@ -324,17 +324,17 @@
 //!   rollover, even though the underlying timer is still polling every second.
 //!
 //! So the 1-second poll is constant; what varies is purely the gate deciding
-//! whether that poll results in a SIGUSR1 broadcast.
+//! whether that poll results in a repaint doorbell broadcast.
 //!
 //! **Why not OS signals?** Could use a cron-like approach, but `tokio::time::interval`
 //! is simpler, testable, and doesn't require external dependencies or system config.
 //!
-//! **Signal throttling**: Only sends SIGUSR1 if registered clients exist. When no Fish
+//! **Signal throttling**: Only rings the doorbell if registered clients exist. When no Fish
 //! processes are connected, timer ticks are no-ops.
 //!
 //! ## File Event Handling
 //!
-//! **Flow**: File change → Watcher → Debouncer → `handle_file_event` → SIGUSR1
+//! **Flow**: File change → Watcher → Debouncer → `handle_file_event` → repaint doorbell (SIGURG)
 //!
 //! **Coalescing, not a freshness cooldown** (see `events::handle_file_event`,
 //! `events::refresh_and_notify_coalesced`, and the per-repo
@@ -557,7 +557,7 @@ fn prune_dead_clients(registry: &ClientDirectory, watcher_slot: &SharedWatcherSl
     pruned_pids
 }
 
-/// Decide whether this clock tick warrants a SIGUSR1 nudge, and send it if so.
+/// Decide whether this clock tick warrants a repaint doorbell, and ring it if so.
 ///
 /// Returns the `last_notified_minute` the caller should carry into the next
 /// tick — unchanged when the clock segment is disabled, so a later tick that
@@ -596,11 +596,11 @@ fn handle_clock_tick(
         let client_count = registry.len();
         debug_log!(
             "agent",
-            "Clock: sending SIGUSR1 to {} clients",
+            "Clock: ringing repaint doorbell for {} clients",
             client_count
         );
         if client_count > 0 {
-            registry.notify_sigusr1(None);
+            registry.notify_repaint(None);
         }
     } else {
         debug_log!("agent", "Clock: should_send=false, skipping this tick");
@@ -753,7 +753,7 @@ impl Agent {
         // The initial theme-export cache is written by a background task in
         // `start_background` *after* the socket begins accepting, so the accept
         // path is no longer gated on the theme render + atomic write. This is
-        // safe because the export file's only reader is the SIGUSR2 fast-reload
+        // safe because the export file's only reader is the shell's reload
         // handler, which falls back to spawning `gpy-agent theme export` on a
         // cache miss; first-prompt renders never read it.
         let watcher_slot: SharedWatcherSlot = Arc::new(Mutex::new(None));
@@ -960,8 +960,8 @@ impl Agent {
         startup::startup_checks(self.server.socket_path());
 
         // Recovery nudge. `daemon()` exits the parent before the start path can
-        // notify existing shells, so the daemon itself writes the restart marker
-        // and SIGALRMs tracked shells once our socket is accepting connections.
+        // notify existing shells, so the daemon itself writes each tracked
+        // shell's `.reregister` flag and rings its doorbell once our socket is accepting connections.
         // Those shells re-register and resume live updates without the user
         // having to press enter.
         #[cfg(unix)]
@@ -974,17 +974,14 @@ impl Agent {
                     }
                     tokio::time::sleep(Duration::from_millis(50)).await;
                 }
-                if let Err(e) = crate::agent::lifecycle::start::notify_existing_shells_of_restart()
-                {
-                    debug_log!("agent", "Failed to notify existing shells of restart: {e}");
-                }
+                crate::agent::lifecycle::start::notify_existing_shells_of_restart();
             });
         }
 
         // Warm the theme-export cache off the accept path. This renders the theme
         // and atomically writes the export file (blocking FS work), so it runs on
         // a blocking thread and only after the server has begun accepting below.
-        // A first request or SIGUSR2 racing this warmup gets a cache miss and the
+        // A first request or reload doorbell racing this warmup gets a cache miss and the
         // shell falls back to spawning `gpy-agent theme export`, so the prompt is
         // always correct, never gated on this write.
         {
@@ -1086,11 +1083,11 @@ impl Agent {
                         prune_dead_clients(&registry_for_pruning, &watcher_for_pruning);
 
                     // Re-nudge shells that are alive and still tracked but have
-                    // fallen out of the registry. The one-shot SIGALRM sent at
+                    // fallen out of the registry. The one-shot nudge sent at
                     // restart is otherwise their only chance to re-register, and
                     // a shell whose circuit breaker was still backing off when
                     // that nudge landed would stay stranded — receiving no
-                    // SIGUSR1 live updates at all — until the user happened to
+                    // live updates at all — until the user happened to
                     // render another prompt.
                     #[cfg(unix)]
                     lifecycle::start::renudge_unregistered_shells(

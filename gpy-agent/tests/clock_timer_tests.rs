@@ -1,6 +1,6 @@
 //! Clock timer integration tests
 //!
-//! Tests the clock timer feature that sends SIGUSR1 signals to registered clients
+//! Tests the clock timer feature that rings the SIGURG doorbell on registered clients
 //! at minute boundaries (or every second when `show_seconds=true`).
 //!
 //! These tests use deterministic signaling primitives (see `test_harness` module)
@@ -41,7 +41,7 @@ fn get_unregistered_counter() -> &'static SignalCounter {
 }
 
 #[cfg(unix)]
-extern "C" fn count_sigusr1(_signal: i32) {
+extern "C" fn count_doorbell(_signal: i32) {
     get_registered_counter().increment();
 }
 
@@ -101,11 +101,11 @@ async fn test_clock_timer_ticks() {
     );
 }
 
-/// Test that SIGUSR1 signals are sent to registered clients
+/// Test that SIGURG doorbell signals are sent to registered clients
 ///
 /// This is an integration test that verifies:
 /// 1. Clients can be registered with the `ClientDirectory`
-/// 2. `notify_sigusr1()` correctly sends signals to registered PIDs
+/// 2. `notify_repaint()` correctly rings the doorbell on registered PIDs
 /// 3. The signal handler is invoked
 ///
 /// Uses deterministic signaling instead of sleep-based timing.
@@ -118,11 +118,11 @@ async fn test_clock_signals_sent_to_clients() {
 
     // Install our test signal handler
     let handler = SigAction::new(
-        SigHandler::Handler(count_sigusr1),
+        SigHandler::Handler(count_doorbell),
         SaFlags::empty(),
         SigSet::empty(),
     );
-    let previous = unsafe { sigaction(Signal::SIGUSR1, &handler) }.expect("install handler");
+    let previous = unsafe { sigaction(Signal::SIGURG, &handler) }.expect("install handler");
 
     // Create a client registry and register ourselves
     let registry = Arc::new(ClientDirectory::new());
@@ -131,25 +131,25 @@ async fn test_clock_signals_sent_to_clients() {
     registry.register(pid, Some(cwd.clone()));
 
     // Emulate the clock timer sending a signal
-    registry.notify_sigusr1(None);
+    registry.notify_repaint(None);
 
     // Wait for signal delivery (up to 1 second, but should be nearly instant)
     let received = counter.wait_for_count(1, Duration::from_secs(1)).await;
-    assert!(received, "Should have received SIGUSR1 within timeout");
-    assert_eq!(counter.get(), 1, "Should have received exactly one SIGUSR1");
+    assert!(received, "Should have received SIGURG within timeout");
+    assert_eq!(counter.get(), 1, "Should have received exactly one SIGURG");
 
     // Send another signal to verify it works multiple times
-    registry.notify_sigusr1(None);
+    registry.notify_repaint(None);
     let received = counter.wait_for_count(2, Duration::from_secs(1)).await;
     assert!(
         received,
-        "Should have received second SIGUSR1 within timeout"
+        "Should have received second SIGURG within timeout"
     );
-    assert_eq!(counter.get(), 2, "Should have received two SIGUSR1 signals");
+    assert_eq!(counter.get(), 2, "Should have received two SIGURG signals");
 
     // Restore previous handler
     unsafe {
-        sigaction(Signal::SIGUSR1, &previous).expect("restore handler");
+        sigaction(Signal::SIGURG, &previous).expect("restore handler");
     }
 }
 
@@ -170,13 +170,13 @@ async fn test_unregistered_clients_dont_receive_signals() {
         SaFlags::empty(),
         SigSet::empty(),
     );
-    let previous = unsafe { sigaction(Signal::SIGUSR1, &handler) }.expect("install handler");
+    let previous = unsafe { sigaction(Signal::SIGURG, &handler) }.expect("install handler");
 
     // Create a registry but DON'T register ourselves
     let registry = Arc::new(ClientDirectory::new());
 
     // Try to send a signal (should do nothing since no clients registered)
-    registry.notify_sigusr1(None);
+    registry.notify_repaint(None);
 
     // Wait briefly to ensure no signal arrives (should timeout)
     let received = counter.wait_for_count(1, Duration::from_millis(100)).await;
@@ -189,7 +189,7 @@ async fn test_unregistered_clients_dont_receive_signals() {
 
     // Restore previous handler
     unsafe {
-        sigaction(Signal::SIGUSR1, &previous).expect("restore handler");
+        sigaction(Signal::SIGURG, &previous).expect("restore handler");
     }
 }
 

@@ -4,6 +4,8 @@
 
 Accepted (2024-11)
 
+Superseded in part by [ADR-0007](adr-0007-sigurg-doorbell-notifications.md): the agent now sends SIGURG instead of SIGUSR1.
+
 ## Context
 
 Users expect their prompt to update in real-time when the working directory changes:

@@ -211,7 +211,7 @@ async fn test_git_status_invalid_path() {
 /// test connects immediately after that and asserts a correct prompt render
 /// comes back — even though the theme-export warmup may not have finished. A
 /// first-prompt git render reads the instant cache / IPC, never the theme-export
-/// file (whose only reader is the miss-tolerant SIGUSR2 fast-reload handler), so
+/// file (whose only reader is the miss-tolerant reload-flag fast-reload handler), so
 /// the response is correct regardless of warmup timing.
 #[tokio::test]
 #[serial_test::serial]

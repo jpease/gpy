@@ -5,12 +5,12 @@
 # An idle Zsh shell re-registers after the agent restarts (#647 row 2, pins
 # #638).
 #
-# When the agent (re)starts it sends SIGALRM to every PID recorded under
-# <runtime root>/shells/, and keeps nudging tracked shells that stay
-# unregistered. Zsh never recorded its PID and had no TRAPALRM, so an open
-# shell that stayed in one directory stopped receiving SIGUSR1/SIGUSR2 for
-# the rest of its life after any restart. With a client registered and
-# idle (no keystrokes from here on):
+# When the agent (re)starts it writes a `<pid>.reregister` flag for, and rings
+# the SIGURG doorbell of, every PID recorded under <runtime root>/shells/, and
+# keeps nudging tracked shells that stay unregistered. Zsh never recorded its
+# PID and had no handler, so an open shell that stayed in one directory
+# stopped receiving agent notifications for the rest of its life after any
+# restart. With a client registered and idle (no keystrokes from here on):
 #   (a) `gpy-agent stop` then `gpy-agent start` on the same socket leaves the
 #       client registered again within 5 s;
 #   (b) a tracked-file edit then repaints the idle prompt with no keystroke
@@ -60,9 +60,15 @@ reregistered() {
     [ "${now:-0}" -gt "${registrations_before:-0}" ]
 }
 if shell_e2e_poll 5 reregistered; then
-    pass "the idle shell re-registered within 5 s of the restart (SIGALRM nudge)"
+    pass "the idle shell re-registered within 5 s of the restart (reregister doorbell)"
 else
     fail "the idle shell did not re-register within 5 s of the restart"
+fi
+flag_consumed() { [ ! -e "$shells_dir/$client_pid.reregister" ]; }
+if shell_e2e_poll 5 flag_consumed; then
+    pass "the shell consumed its .reregister flag"
+else
+    fail "the .reregister flag is still present after re-registration"
 fi
 counted() { "$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep -q 'Registered Clients: 1'; }
 if shell_e2e_poll 5 counted; then
@@ -74,7 +80,7 @@ fi
 # --- (b) a change now reaches the shell as a live client ----------------------------
 # Re-registration triggers an initial scan of the repo; edit only after a
 # post-restart scan has cached the clean state. Whether the change then
-# reaches the shell through the watcher's SIGUSR1 or a request-triggered
+# reaches the shell through the watcher's SIGURG or a request-triggered
 # refresh is the agent's business; what must hold is that the re-registered
 # shell sees it.
 scanned() {

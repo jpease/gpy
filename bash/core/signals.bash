@@ -1,18 +1,9 @@
 # bash/core/signals.bash
 # Signal handlers for live updates and config reload
 
-# SIGUSR1: Live update from agent (prompt refresh)
-__gpy_handle_sigusr1() {
-    # Force prompt re-render without incrementing command count
-    # Note: This is less reliable in Bash than Fish/Zsh
-    # May not work inside command substitution or subshells
-    if [[ -n "$PS1" ]]; then
-        __gpy_render_prompt "${__gpy_last_exit_code:-0}"
-    fi
-}
-
-# SIGUSR2: Config hot-reload signal
-__gpy_handle_sigusr2() {
+# Config hot-reload: re-read the theme and drop render caches. Runs from the
+# doorbell handler when the agent left a `<pid>.reload` flag.
+__gpy_reload_config() {
     # Reload theme from agent
     __gpy_load_theme &>/dev/null
     # Clear character/directory render caches (#343): a theme change can alter
@@ -22,23 +13,36 @@ __gpy_handle_sigusr2() {
     __gpy_char_cache_val=""
     __gpy_dir_cache_key=""
     __gpy_dir_cache_val=""
-    # Refresh prompt
-    if [[ -n "$PS1" ]]; then
-        __gpy_render_prompt "${__gpy_last_exit_code:-0}"
-    fi
 }
 
-# SIGALRM: the agent's "I (re)started, register again" nudge (#638). The agent
-# sends it to every PID recorded under <runtime root>/shells/ when it comes
-# up, and re-sends it to tracked shells that stay unregistered. Re-entrancy
-# guard: a second nudge while one is being handled is dropped; the next
-# prompt's own retry covers it.
+# SIGURG doorbell (#674): the agent's only signal to a shell. SIGURG is
+# ignored by default, so a shell that has not installed this handler yet (for
+# example one that just ran `exec bash` under the same, still-registered PID)
+# is not killed by it. The message travels in flag files next to this shell's
+# tracking entry (__gpy_shell_flag_base, set by
+# __gpy_track_shell_for_agent_recovery):
+#   <pid>.reregister  the agent (re)started: forget the registration and
+#                     register again (#638). Re-entrancy guard: a second nudge
+#                     while one is being handled is dropped; the next
+#                     prompt's own retry covers it.
+#   <pid>.reload      config/theme changed: reload.
+# Each flag is removed before acting on it. Then re-render, as a plain
+# repaint does. Bash at an idle readline prompt defers this trap until the
+# line is accepted (readline runs traps immediately only for SIGALRM), so
+# both the re-registration and the new PS1 take effect at the next prompt.
 __gpy_reregistering=""
-__gpy_handle_sigalrm() {
-    [[ -z "$__gpy_reregistering" ]] || return 0
-    __gpy_reregistering=1
-    __gpy_reregister_with_agent &>/dev/null
-    __gpy_reregistering=""
+__gpy_handle_doorbell() {
+    local base="${__gpy_shell_flag_base:-}"
+    if [[ -n "$base" && -e "$base.reregister" && -z "$__gpy_reregistering" ]]; then
+        rm -f "$base.reregister" 2>/dev/null
+        __gpy_reregistering=1
+        __gpy_reregister_with_agent &>/dev/null
+        __gpy_reregistering=""
+    fi
+    if [[ -n "$base" && -e "$base.reload" ]]; then
+        rm -f "$base.reload" 2>/dev/null
+        __gpy_reload_config
+    fi
     if [[ -n "$PS1" ]]; then
         __gpy_render_prompt "${__gpy_last_exit_code:-0}"
     fi
@@ -64,9 +68,7 @@ __gpy_handle_exit() {
 # Setup signal handlers
 __gpy_setup_signals() {
     # Register signal handlers
-    trap '__gpy_handle_sigusr1' SIGUSR1
-    trap '__gpy_handle_sigusr2' SIGUSR2
-    trap '__gpy_handle_sigalrm' SIGALRM
+    trap '__gpy_handle_doorbell' URG
 
     local existing_exit
     existing_exit="$(trap -p EXIT)"

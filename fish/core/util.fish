@@ -124,7 +124,7 @@ end
 # `__gpy_locate_config_path` is the config file.
 
 # Return the path to the cached Fish-format theme export.
-# The agent writes this file before sending SIGUSR2, so shells can source it
+# The agent writes this file before ringing the reload doorbell, so shells can source it
 # without spawning the binary on the startup/reload hot path.
 function __gpy_theme_export_cache_path --description 'Path to the theme export cache file'
     if set -q XDG_CACHE_HOME; and test -n "$XDG_CACHE_HOME"; and string match -q '/*' -- "$XDG_CACHE_HOME"

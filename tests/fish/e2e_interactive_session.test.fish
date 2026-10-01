@@ -5,8 +5,8 @@
 # ============================================================================
 #
 # The product's defining behaviour is that the prompt updates with no
-# keystroke when the repository changes: watcher -> SIGUSR1 ->
-# __gpy_sigusr1_handler -> __gpy_repaint_trigger -> `commandline -f
+# keystroke when the repository changes: watcher -> SIGURG ->
+# __gpy_doorbell_handler -> __gpy_repaint_trigger -> `commandline -f
 # force-repaint` -> fish_prompt. `commandline -f force-repaint` is a no-op
 # outside interactive mode, so every `fish -c` based test only ever counted
 # a signal. These scenarios drive a real `fish -i` on a pseudo-terminal
@@ -18,9 +18,12 @@
 #      untracked marker, then `exit` unregisters the client;
 #   2. two shells, one agent: a commit typed in shell A repaints shell B, the
 #      agent reports two registered clients, and both renders agree;
-#   3. SIGUSR2 on a Fish client: a config.toml edit (theme switch, a new
+#   3. config reload on a Fish client: a config.toml edit (theme switch, a new
 #      segment, icons off) repaints with the new theme and segments with no
-#      keypress.
+#      keypress (.reload flag + SIGURG doorbell);
+#   4. `exec fish` survives agent notifications (#674): the exec'd shell keeps
+#      the registered PID and receives the agent's ring before it has
+#      installed any handler; it must stay alive and answer a command.
 #
 # All waits are bounded polls on the transcript; the transcript tail is
 # printed on failure. Skips (via test_skip) when python3 is missing: exit 0
@@ -275,8 +278,8 @@ function scenario_two_shells --argument-names repo
     return 0
 end
 
-function scenario_sigusr2 --argument-names repo
-    print_test_header "Scenario 3: SIGUSR2 config reload on a Fish client"
+function scenario_config_reload --argument-names repo
+    print_test_header "Scenario 3: config reload on a Fish client"
 
     write_config 'show_icons = true' 'theme = "text"' 'enabled_segments = ["directory", "git"]'
     # Instant-cache entries are keyed by path, not theme; drop the renders
@@ -298,7 +301,7 @@ function scenario_sigusr2 --argument-names repo
     end
     poll_until 5 __clients_are 1
 
-    # Theme switch + a new segment, no keypress: the agent's SIGUSR2 makes
+    # Theme switch + a new segment, no keypress: the agent's .reload doorbell makes
     # the shell re-source the export and repaint, and the default theme
     # frames segments in powerline chevrons the text theme never emits.
     write_config 'show_icons = true' 'theme = "default"' 'enabled_segments = ["directory", "git", "duration"]'
@@ -355,6 +358,60 @@ function scenario_sigusr2 --argument-names repo
     return 0
 end
 
+# #674: `exec fish` keeps the PID, and fish_exit does not fire on exec, so the
+# agent still counts the new process as a registered client and rings it
+# while it starts up, before any gpy handler exists. The exec'd shell waits on
+# a gate file before sourcing gpy, so the agent's reload (and the watcher's
+# git notification) deterministically land in that handler-less window. With
+# a terminating notification signal the pane dies there; with the SIGURG
+# doorbell (default disposition: ignore) it must live on and answer.
+function scenario_exec_survives_notifications --argument-names repo
+    print_test_header "Scenario 4: exec fish survives agent notifications during startup"
+
+    write_config 'show_icons = true' 'theme = "default"' 'enabled_segments = ["directory", "git"]'
+    set -l a (session_start a $repo)
+    set -l off (session_wait $a "❯" 10 0)
+    if test -z "$off"
+        check "first prompt rendered before exec" 0 "no prompt character within 10 s"
+        return 1
+    end
+    if not poll_until 5 __clients_are 1
+        check "session registered before exec" 0 (registered_clients)
+        return 1
+    end
+    check "session registered before exec" 1
+
+    set -l gate $__gpy_test_tmp_dir/exec-gate
+    rm -f $gate
+    session_send $a "exec fish --no-config -i -C 'while not test -e $gate; sleep 0.1; end; source $__gpy_root/fish/core/init.fish; source $__gpy_root/fish/functions/fish_prompt.fish'\r"
+    # The exec'd shell is now spinning on the gate with no gpy handlers.
+    sleep 0.5
+
+    # Notifications while handler-less: a config reload rings every
+    # registered client, and a working-tree edit makes the watcher ring too.
+    write_config 'show_icons = true' 'theme = "text"' 'enabled_segments = ["directory", "git"]'
+    echo exec-dirty >>$repo/tracked.txt
+    sleep 1.5
+
+    set -l off2 (session_size $a)
+    touch $gate
+    session_send $a 'echo gpy""alive\r'
+    set -l answered (session_wait $a gpyalive 10 $off2)
+    if test -n "$answered"
+        check "exec'd shell survived notifications during startup and answers" 1
+    else
+        check "exec'd shell survived notifications during startup and answers" 0 "no gpyalive output within 10 s"
+        git -C $repo checkout -q -- tracked.txt
+        return 1
+    end
+
+    git -C $repo checkout -q -- tracked.txt
+    session_send $a 'exit\r'
+    poll_until 5 __clients_are 0
+    session_stop_all
+    return 0
+end
+
 # ---------------------------------------------------------------------------
 
 if not command -q python3
@@ -389,7 +446,8 @@ print_test_result "Agent Start" PASS
 
 scenario_idle_repaint $repo
 scenario_two_shells $repo
-scenario_sigusr2 $repo
+scenario_config_reload $repo
+scenario_exec_survives_notifications $repo
 
 session_stop_all
 stop_supervisor_loop

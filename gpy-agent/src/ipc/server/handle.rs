@@ -274,11 +274,11 @@ pub(super) fn notify_clients_for_response(
             Some(path) => {
                 let target = std::path::Path::new(path);
                 match content_token(response) {
-                    Some(token) => client_registry.notify_sigusr1_coalesced(Some(target), token),
-                    None => client_registry.notify_sigusr1(Some(target)),
+                    Some(token) => client_registry.notify_repaint_coalesced(Some(target), token),
+                    None => client_registry.notify_repaint(Some(target)),
                 }
             }
-            None => client_registry.notify_sigusr1(None),
+            None => client_registry.notify_repaint(None),
         }
     }
 }
@@ -985,7 +985,7 @@ impl EndpointHandle {
     }
 }
 
-// `content_token` feeds the SIGUSR1 coalescing throttle, which is Unix-only.
+// `content_token` feeds the repaint-doorbell coalescing throttle, which is Unix-only.
 #[cfg(all(test, unix))]
 mod content_token_tests {
     #![allow(clippy::unwrap_used)]

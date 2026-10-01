@@ -5,7 +5,7 @@
 # Verifies the character and directory segments memoize their agent-rendered
 # output (#343): a repeat render with the same input tuple must make zero
 # additional IPC calls (cache hit), an exit-status flip must re-render the
-# character, a `cd` must re-render the directory, a theme change (SIGUSR2)
+# character, a `cd` must re-render the directory, a theme change (agent reload)
 # must re-render both, a manual reload (__gpy_reload_theme / prompt-reload)
 # must re-render both even without a theme name change (#576), and an
 # empty/failed render must never be cached.
@@ -13,7 +13,7 @@
 # Isolate the theme-export cache dir so init.fish's fast path can't read a
 # real, live dogfooding daemon's cache (#402). Pre-seed it with an empty,
 # no-op cache file so every source-or-spawn call in this test
-# (__gpy_load_theme, __gpy_reload_theme, __gpy_sigusr2_handler) takes the
+# (__gpy_load_theme, __gpy_reload_theme, __gpy_apply_agent_reload) takes the
 # fast "source the cache" path instead of possibly falling through to spawn
 # a REAL gpy-agent binary, if one happens to be resolvable on this machine
 # -- a real spawn would clobber __gpy_theme_name with a real theme's name,
@@ -110,7 +110,7 @@ fish_prompt >/dev/null 2>&1 # PWD changed
 check "cd re-renders directory" 2 $__gpy_dir_call_count
 check "cd does not re-render character" 1 $__gpy_char_call_count
 
-# --- 4. Theme change (SIGUSR2 handler) re-renders both segments ---
+# --- 4. Theme change (agent reload doorbell) re-renders both segments ---
 reset_caches
 set -g __gpy_char_call_count 0
 set -g __gpy_dir_call_count 0
@@ -118,7 +118,7 @@ set -g __gpy_theme_name themeA
 true
 fish_prompt >/dev/null 2>&1 # baseline (miss for both, count=1 each)
 set -g __gpy_theme_name themeB
-__gpy_sigusr2_handler >/dev/null 2>&1
+__gpy_apply_agent_reload >/dev/null 2>&1
 true
 fish_prompt >/dev/null 2>&1 # theme changed
 check "theme change re-renders character" 2 $__gpy_char_call_count

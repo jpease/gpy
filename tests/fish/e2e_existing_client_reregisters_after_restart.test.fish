@@ -13,7 +13,7 @@
 #
 # This test covers the failure scenario where an already-open shell remains
 # idle while the agent is stopped and restarted. The shell should recover and
-# resume receiving SIGUSR1 live-update signals without requiring a brand-new
+# resume receiving SIGURG live-update signals without requiring a brand-new
 # terminal window or an extra prompt render from the user.
 #
 # gpy#419 extends this file with a second scenario covering the sibling
@@ -21,14 +21,15 @@
 # were exhausted while the agent was unavailable (which deletes the
 # self-repeating `__gpy_start_supervisor_on_prompt` hook) must still recover
 # once the agent becomes available again, via the git segment's cold-miss/
-# stale registration retry rather than the SIGALRM restart marker.
+# stale registration retry rather than the agent's .reregister doorbell.
 #
 # Note on "no cd / manual prompt render needed" (acceptance criterion 1):
 # `test_existing_client_reregisters` below already proves this for the
-# restart-marker path -- the persistent client (`register_test_client`)
+# doorbell path -- the persistent client (`register_test_client`)
 # registers once, then only sleeps waiting for signals; it never calls `cd`
 # or re-renders a prompt between the initial registration and the recovery
-# assertion. Recovery there comes entirely from the `SIGALRM` nudge.
+# assertion. Recovery there comes entirely from the agent's restart nudge
+# (.reregister flag + SIGURG).
 
 source (dirname (status -f))/../lib/test_helpers.fish
 
@@ -110,18 +111,21 @@ function test_existing_client_reregisters
         return 1
     end
 
-    # Wait for the restarted agent to publish its restart marker and for the
+    # Wait for the restarted agent to nudge (.reregister + SIGURG) and for the
     # already-open client to re-register (was: fixed `sleep 2`). Polling the
     # agent's client count means we trigger the change only once the client is
     # actually reattached, which is both faster and less racy.
     poll_until 4 __gpy_agent_has_registered_client
 
+    # The restart nudge itself rings SIGURG, so count from the post-reattach
+    # baseline: only a watcher repaint can raise it from here.
+    set -l baseline_after_restart (count_signals $client)
     trigger_git_change $repo >/dev/null
-    if wait_for_signal $client 2 6
+    if wait_for_signal $client (math $baseline_after_restart + 1) 6
         print_test_result "Existing client recovers" PASS
     else
         set -l observed_after_restart (count_signals $client)
-        print_test_result "Existing client recovers" FAIL "Expected ≥2 signals after restart, saw $observed_after_restart"
+        print_test_result "Existing client recovers" FAIL "Expected > $baseline_after_restart signals after restart, saw $observed_after_restart"
         cleanup_test_files
         return 1
     end
@@ -314,10 +318,11 @@ function test_failed_restart_registration_retries_on_next_nudge
 
     # A shell whose re-registration attempt fails during the restart nudge (in
     # production: its circuit breaker is still backing off from the pings it
-    # made while the agent was down) must NOT record the marker as consumed --
-    # otherwise the `__gpy_last_seen_restart_marker` guard early-returns on
-    # every later nudge and the shell is stranded unregistered for the rest of
-    # that agent's lifetime, receiving no SIGUSR1 live updates at all.
+    # made while the agent was down) must still re-register on the agent's
+    # next nudge -- otherwise it is stranded unregistered for the rest of that
+    # agent's lifetime, receiving no live updates at all. Each nudge is the
+    # agent writing <pid>.reregister and ringing SIGURG; the doorbell consumes
+    # the flag, so the retry relies on the agent writing it again.
     fish -c "
         set -gx XDG_CONFIG_HOME $XDG_CONFIG_HOME
         set -gx XDG_CACHE_HOME $XDG_CACHE_HOME
@@ -327,32 +332,33 @@ function test_failed_restart_registration_retries_on_next_nudge
 
         cd $repo
 
-        set -l marker_file (__gpy_agent_restart_marker_file)
-        mkdir -p (dirname \$marker_file)
-        echo '4242:1700000000000' > \$marker_file
+        set -l reregister_flag (__gpy_shell_registry_file).reregister
+        mkdir -p (dirname \$reregister_flag)
+        touch \$reregister_flag
 
         # Simulate the real trigger: the circuit breaker opened while the agent
         # was down, so this shell refuses to talk to the agent for the length of
         # its backoff -- which the restart nudge lands inside.
         set -g __gpy_agent_backoff_until (math (date +%s) + 600)
 
-        __gpy_refresh_registration_after_restart
+        __gpy_doorbell_handler
 
         if set -q __gpy_registered
             echo 'FAIL:registered-despite-open-breaker' > $result_file
             exit 0
         end
-        if set -q __gpy_last_seen_restart_marker
-            echo 'FAIL:marker-consumed-on-failed-registration' > $result_file
+        if test -e \$reregister_flag
+            echo 'FAIL:flag-not-consumed' > $result_file
             exit 0
         end
 
-        # Backoff window elapses; the agent has been up the whole time. The very
-        # next nudge for the SAME marker must retry rather than early-return.
+        # Backoff window elapses; the agent has been up the whole time. The
+        # agent's re-nudge writes the flag again and must now succeed.
         set -g __gpy_agent_backoff_until 0
         set -g __gpy_agent_failure_count 0
 
-        __gpy_refresh_registration_after_restart
+        touch \$reregister_flag
+        __gpy_doorbell_handler
 
         if set -q __gpy_registered
             echo PASS > $result_file

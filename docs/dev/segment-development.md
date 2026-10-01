@@ -1110,7 +1110,7 @@ match file_name {
 // gpy-agent/src/agent.rs
 FileEvent::YourSegment { path } => {
     your_segment_cache.invalidate(&path);
-    client_registry.notify_sigusr1(Some(&path))?;
+    client_registry.notify_repaint(Some(&path));
 }
 ```
 

@@ -25,7 +25,7 @@ GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS="${GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECON
 GPY_SUPERVISOR_CHECK_MAX_ATTEMPTS="${GPY_SUPERVISOR_CHECK_MAX_ATTEMPTS:-3}"
 
 # Git instant-cache TTL (seconds). This is the pull-based self-heal bound when
-# a SIGUSR1 repaint push is missed: cached git output is still served instantly,
+# an agent repaint push is missed: cached git output is still served instantly,
 # but entries older than this flag a throttled background refresh.
 GPY_GIT_INSTANT_CACHE_TTL_SECONDS="${GPY_GIT_INSTANT_CACHE_TTL_SECONDS:-5}"
 

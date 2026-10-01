@@ -44,7 +44,7 @@ __gpy_segment_language() {
     local cache_status=$?
 
     if [[ $cache_status -eq 1 ]]; then
-        # 2. Cold miss: trigger background refresh, show nothing until SIGUSR1
+        # 2. Cold miss: trigger background refresh, show nothing until the agent repaints
         __gpy_trigger_data_refresh "lang" "$PWD" "$is_last" "$prev_bg" >/dev/null 2>&1 &
         disown $! 2>/dev/null
         return 0
