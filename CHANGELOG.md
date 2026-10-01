@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fish uninstaller backup timestamp selection (#670): `scripts/uninstall.fish`
+  now chooses the latest backup by comparing the timestamp suffix
+  (`YYYYMMDD_HHMMSS`) descending across both installer conventions
+  (`fish_prompt.fish.backup.<stamp>` and `fish_prompt.fish.gpy-backup.<stamp>`),
+  with deterministic `.gpy-backup.` preference on equal stamps, preventing older
+  `install.sh` backups from incorrectly overwriting newer `install-oneline.sh`
+  backups.
+
 - Fish uninstaller prompt preservation (#667): `scripts/uninstall.fish` now
   checks whether the destination `fish_prompt.fish` already exists (as an
   unrelated custom prompt, symlink, directory, or other object) before restoring
