@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Prospective activation validation in `theme use` (#668): `gpy theme use` and
+  `gpy theme use --force` now validate the candidate theme's segment format
+  templates against the prospective active palette before modifying `config.toml`,
+  preventing activation of themes with broken templates or unresolved color roles
+  and preserving configuration on validation failure.
+
 - Theme validation segment coverage (#669): `validate_segment_templates` now
   validates `clock`, `hostname`, and `username` format templates alongside
   `git`, `language`, `directory`, `duration`, and `character`, preventing themes
