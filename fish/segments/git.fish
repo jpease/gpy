@@ -35,10 +35,12 @@ end
 
 # Renders Git status from the instant-prompt cache (serve-stale, issue #160).
 #
-# The warm path reads the agent-maintained instant cache (0ms) and never blocks
-# the prompt on IPC or one-shot git. A stale entry is displayed immediately and
-# refreshed in the background; a cold miss omits the segment and repaints once
-# the agent produces data (via the SIGURG repaint doorbell).
+# A fresh entry is read from the agent-maintained instant cache (0ms, no IPC).
+# A stale entry is displayed immediately and refreshed in the background; the
+# agent repaints via the SIGURG doorbell. A cold miss with the agent up makes a
+# synchronous IPC request bounded by GPY_IPC_TIMEOUT_MS; with the agent down it
+# omits the segment. A stale entry with the agent down is replaced by a
+# foreground `gpy-agent oneshot` render.
 function segment_git_render --argument-names is_last is_first
     # A caller that passes fewer than 2 args (some tests call this with none,
     # to simulate a middle-of-prompt render) leaves the corresponding
