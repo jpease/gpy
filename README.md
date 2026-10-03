@@ -1,7 +1,8 @@
 # GPY: Guppy Prompt, Yay!
 
-A shell prompt for Fish, Zsh, and Bash. A background agent does the slow
-work, such as git status and language detection, so the prompt doesn't wait on it.
+A shell prompt for Fish, Zsh, and Bash. A background agent computes git status
+and language detection and caches the result, so most prompts draw from the
+cache and the agent repaints them when something changes.
 
 <p align="center">
   <img src="./assets/demo.gif" alt="GPY prompt in a git repository" width="90%">
@@ -15,7 +16,9 @@ Bash has [some limitations](docs/user/bash-limitations.md). Full matrix:
 
 ## Features
 
-- Git status and language detection run in a background agent, outside the prompt.
+- Cached prompts draw without waiting. A stale entry shows at once and the agent
+  repaints it when the update is ready. The first prompt in a repository waits
+  up to 150 ms for git status; language detection never blocks.
 - Language detection by file content, project markers, or both; show every
   language found, the main one, or the top N.
 - Themes, including import of an existing Starship `starship.toml`.
