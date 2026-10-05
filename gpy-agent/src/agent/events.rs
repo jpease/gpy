@@ -803,6 +803,13 @@ fn try_incremental_update_with<B: GitBackend>(
         let Some(relative) = incremental_relative_path(path, git_root) else {
             return not_attempted;
         };
+        // Git's index may spell a non-ASCII name in another Unicode
+        // normalization (NFC vs NFD on macOS), so a pathspec built from the
+        // watcher's spelling can match nothing. A full scan is always
+        // correct (#713).
+        if !relative.to_str().is_some_and(str::is_ascii) {
+            return not_attempted;
+        }
         relative_paths.push(relative.to_path_buf());
     }
     if relative_paths.is_empty() {
@@ -1549,9 +1556,11 @@ mod tests {
 
     use super::*;
     use crate::config::Config;
+    use crate::git::{FileStatus, StatusAggregate};
     use crate::ipc::ClientDirectory;
     use crate::theme::ThemeManager;
     use crate::watcher::{DebouncedEvent, FileEvent, WatcherConfig, multi_repo::MultiRepoWatcher};
+    use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -1634,7 +1643,11 @@ mod tests {
             vec!["add", "-A"],
             vec!["commit", "-m", "init"],
         ] {
+            // A developer's global `commit.gpgsign = true` makes every test
+            // commit call gpg, which times out intermittently under a loaded
+            // parallel test run.
             let output = std::process::Command::new("git")
+                .args(["-c", "commit.gpgsign=false"])
                 .args(&args)
                 .current_dir(repo)
                 .output()
@@ -3544,6 +3557,234 @@ mod tests {
              repository status did not change (before: {baseline_notifications}, \
              after failed write: {after_failed_write}, after recovery: {after_recovery_write})"
         );
+    }
+
+    /// Per-path flags from an independent parse of
+    /// `git status --porcelain=v2 -z`: (staged, unstaged, untracked, conflicted).
+    type OracleFlags = (bool, bool, bool, bool);
+
+    /// The differential oracle for the incremental git pipeline (#675 step 1):
+    /// the per-path status derived straight from git, sharing no code with
+    /// `git::native::parser`, so a parser bug (#775) cannot hide by appearing
+    /// identically on both sides. Same merge rule as the agent's file map:
+    /// one entry per path, flags OR-merged, a conflict recorded only as a
+    /// conflict (#686).
+    fn oracle_files(repo: &Path) -> HashMap<PathBuf, FileStatus> {
+        let output = std::process::Command::new("git")
+            .args(["status", "--porcelain=v2", "-z"])
+            .current_dir(repo)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .output()
+            .expect("oracle git status");
+        assert!(output.status.success(), "oracle git status failed");
+        let text = String::from_utf8(output.stdout).expect("utf-8 status");
+
+        let mut files: HashMap<String, OracleFlags> = HashMap::new();
+        let mut records = text.split('\0');
+        while let Some(record) = records.next() {
+            let (path, flags) = match record.chars().next() {
+                Some('1') => {
+                    let mut fields = record.splitn(9, ' ');
+                    let xy = fields.nth(1).unwrap_or_default();
+                    let path = fields.nth(6).unwrap_or_default();
+                    (path, xy_flags(xy))
+                }
+                Some('2') => {
+                    let mut fields = record.splitn(10, ' ');
+                    let xy = fields.nth(1).unwrap_or_default();
+                    let path = fields.nth(7).unwrap_or_default();
+                    // The rename's original path is the next NUL field.
+                    records.next();
+                    (path, xy_flags(xy))
+                }
+                Some('u') => {
+                    let path = record.splitn(11, ' ').nth(10).unwrap_or_default();
+                    (path, (false, false, false, true))
+                }
+                Some('?') => (
+                    record.get(2..).unwrap_or_default(),
+                    (false, false, true, false),
+                ),
+                _ => continue,
+            };
+            let entry = files.entry(path.to_owned()).or_default();
+            *entry = (
+                entry.0 || flags.0,
+                entry.1 || flags.1,
+                entry.2 || flags.2,
+                entry.3 || flags.3,
+            );
+        }
+
+        files
+            .into_iter()
+            .map(|(path, (staged, unstaged, untracked, conflicted))| {
+                (
+                    PathBuf::from(path),
+                    FileStatus {
+                        staged,
+                        unstaged,
+                        untracked,
+                        conflicted,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn xy_flags(xy: &str) -> OracleFlags {
+        let mut chars = xy.chars();
+        let staged = chars.next().is_some_and(|c| c != '.');
+        let unstaged = chars.next().is_some_and(|c| c != '.');
+        (staged, unstaged, false, false)
+    }
+
+    /// xorshift64: deterministic, dependency-free, so a failing seed replays.
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, bound: usize) -> usize {
+            self.0 ^= self.0 << 13_u32;
+            self.0 ^= self.0 >> 7_u32;
+            self.0 ^= self.0 << 17_u32;
+            let bound64 = u64::try_from(bound).expect("small bound");
+            usize::try_from(self.0.checked_rem(bound64).expect("non-zero bound"))
+                .expect("fits usize")
+        }
+    }
+
+    /// Repo-relative names the generator draws from. They cover the spellings
+    /// that have broken the pipeline before: a TAB (#775), a leading `:`
+    /// (pathspec magic, #713), spaces, and files inside directories that do
+    /// not exist yet, which git collapses into one untracked `dir/` entry
+    /// (#711).
+    const ORACLE_NAMES: [&str; 8] = [
+        "a.txt",
+        "b c.txt",
+        "tab\tname.txt",
+        ":colon.txt",
+        "src/lib.txt",
+        "newdir/x.txt",
+        "newdir/deep/y.txt",
+        "other/z.txt",
+    ];
+
+    /// Apply one random mutation and return the paths a watcher would report
+    /// for it, plus a description for the failure log. Half the time it
+    /// reuses the previous operation's file, so write → add → edit → rm
+    /// chains on one path (where stale cache keys show up) are common rather
+    /// than rare.
+    fn apply_random_op(rng: &mut Rng, repo: &Path, previous: &mut usize) -> (Vec<PathBuf>, String) {
+        if rng.below(2) == 0 {
+            *previous = rng.below(ORACLE_NAMES.len());
+        }
+        let name = ORACLE_NAMES.get(*previous).copied().unwrap_or("a.txt");
+        let path = repo.join(name);
+        let index = vec![repo.join(".git/index")];
+        match rng.below(6) {
+            0 | 1 => {
+                // Write (create or modify). A watcher reports every directory
+                // it saw created plus the file itself.
+                let mut reported = Vec::new();
+                let mut dir = path.parent();
+                while let Some(d) = dir {
+                    if d == repo || d.exists() {
+                        break;
+                    }
+                    reported.push(d.to_path_buf());
+                    dir = d.parent();
+                }
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).expect("create parent");
+                }
+                let body = format!("{}\n", rng.below(1000));
+                fs::write(&path, body).expect("write file");
+                reported.push(path);
+                (reported, format!("write {name:?}"))
+            }
+            2 => {
+                let _ = fs::remove_file(&path);
+                // Removing the last file of a directory leaves it empty;
+                // git stops reporting it, so delete it like an editor would.
+                let mut reported = vec![path.clone()];
+                let mut dir = path.parent();
+                while let Some(d) = dir {
+                    if d == repo || fs::remove_dir(d).is_err() {
+                        break;
+                    }
+                    reported.push(d.to_path_buf());
+                    dir = d.parent();
+                }
+                (reported, format!("rm {name:?}"))
+            }
+            3 => {
+                git_in(repo, &["add", "--", &format!(":(literal){name}")]);
+                (index, format!("git add {name:?}"))
+            }
+            4 => {
+                git_in(
+                    repo,
+                    &["rm", "-q", "--cached", "--", &format!(":(literal){name}")],
+                );
+                (index, format!("git rm --cached {name:?}"))
+            }
+            _ => {
+                git_in(repo, &["commit", "-q", "-m", "step", "--allow-empty"]);
+                (index, "git commit".to_owned())
+            }
+        }
+    }
+
+    #[test]
+    /// Differential test for the incremental git pipeline (#675 step 1):
+    /// after every random mutation, the status the agent derives through
+    /// `refresh_repo_status_with`, fed the paths a watcher would report, must
+    /// equal an independent parse of a full `git status`. Fixed seeds keep it
+    /// deterministic; a failure prints the seed and the operation log.
+    fn incremental_refresh_matches_full_git_status_oracle() {
+        for seed in 1..=24_u64 {
+            let (_tmp, repo) = create_temp_repo();
+            fs::create_dir_all(repo.join("src")).expect("src dir");
+            fs::write(repo.join("a.txt"), "a\n").expect("seed a.txt");
+            fs::write(repo.join("src/lib.txt"), "lib\n").expect("seed lib");
+            commit_all(&repo);
+
+            let ctx = make_agent_context();
+            let config = Config::default();
+            let backend = NativeGitBackend;
+            refresh_repo_status_with(&backend, &ctx, &repo, &config, None);
+
+            let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+            let mut log = Vec::new();
+            let mut previous = 0_usize;
+            for _ in 0_u32..16_u32 {
+                let (reported, op) = apply_random_op(&mut rng, &repo, &mut previous);
+                log.push(op);
+                let hint = git_paths_hint(&GitPaths::Paths(reported), &repo);
+                let refreshed =
+                    refresh_repo_status_with(&backend, &ctx, &repo, &config, hint.as_deref());
+                let status = refreshed.status.expect("repository status");
+                let want_files = oracle_files(&repo);
+                let got_files = ctx.cache.files_for_test(&repo).unwrap_or_default();
+                assert_eq!(
+                    got_files, want_files,
+                    "seed {seed}: cached file map diverged from git after {log:#?}"
+                );
+                let got = StatusAggregate {
+                    staged: status.staged,
+                    unstaged: status.unstaged,
+                    untracked: status.untracked,
+                    conflicts: status.conflicts,
+                };
+                assert_eq!(
+                    got,
+                    StatusAggregate::from_file_statuses(want_files.values()),
+                    "seed {seed}: status counts diverged from git after {log:#?}"
+                );
+            }
+        }
     }
 }
 

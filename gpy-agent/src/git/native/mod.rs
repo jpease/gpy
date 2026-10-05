@@ -325,11 +325,16 @@ impl NativeGitBackend {
         // spaces, tabs, and non-ASCII bytes survive parsing intact.
         let mut args = vec!["status", "--porcelain=v2", "--branch", "-z"];
 
-        // Add specific paths if provided
+        // Add specific paths if provided. `:(literal)` stops git reading a
+        // leading `:`, `*`, `?` or `[` in a filename as pathspec magic or a
+        // glob (#713).
         let path_strings: Vec<String>;
         if let Some(p) = paths {
             args.push("--");
-            path_strings = p.iter().map(|pb| pb.display().to_string()).collect();
+            path_strings = p
+                .iter()
+                .map(|pb| format!(":(literal){}", pb.display()))
+                .collect();
             for path_str in &path_strings {
                 args.push(path_str);
             }

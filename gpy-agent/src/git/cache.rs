@@ -354,7 +354,13 @@ impl GitStatusCache {
     ///
     /// Returns `None` — meaning "do a full scan instead" — when the entry is
     /// missing or had its file-level details dropped for the memory budget,
-    /// matching [`update_file_canonical`](Self::update_file_canonical).
+    /// matching [`update_file_canonical`](Self::update_file_canonical), or
+    /// when the scan cannot be merged consistently with git's collapsed
+    /// untracked directories (#711): a full scan reports a new untracked
+    /// directory as one `dir/` entry, but a pathspec naming a file inside it
+    /// makes git report that file instead. So the merge is refused when a
+    /// cached untracked entry is a strict ancestor of a scanned path, or when
+    /// the scan reports an untracked file below the repository root.
     #[must_use]
     pub fn update_paths_canonical(
         &self,
@@ -369,8 +375,26 @@ impl GitStatusCache {
             return None;
         }
 
-        for scanned_path in scanned {
-            let relative = scanned_path.strip_prefix(key).unwrap_or(scanned_path);
+        let relative_scanned: Vec<&Path> = scanned
+            .iter()
+            .map(|path| path.strip_prefix(key).unwrap_or(path))
+            .collect();
+        let collapsed_ancestor = relative_scanned.iter().any(|relative| {
+            entry.data.files.iter().any(|(cached, status)| {
+                status.untracked && cached.as_path() != *relative && relative.starts_with(cached)
+            })
+        });
+        let nested_untracked = results.iter().any(|(path, status)| {
+            status.untracked
+                && path
+                    .parent()
+                    .is_some_and(|parent| !parent.as_os_str().is_empty())
+        });
+        if collapsed_ancestor || nested_untracked {
+            return None;
+        }
+
+        for relative in relative_scanned {
             // A scanned path may be a directory (the new-directory follow-up of
             // #416), in which case the scan covered its whole subtree.
             entry
@@ -461,6 +485,18 @@ impl GitStatusCache {
         {
             entry.cached_at = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
         }
+    }
+
+    /// Test-only helper: the cached per-file map for `key`, so a differential
+    /// test can compare it path-for-path against git (#675). `None` if the
+    /// key has no entry.
+    #[cfg(test)]
+    pub(crate) fn files_for_test(&self, key: &Path) -> Option<HashMap<PathBuf, FileStatus>> {
+        self.entries
+            .lock()
+            .ok()?
+            .get(key)
+            .map(|entry| entry.data.files.clone())
     }
 }
 

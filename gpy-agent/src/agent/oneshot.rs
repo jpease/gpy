@@ -63,9 +63,6 @@ pub struct OneshotRequest {
     /// Whether this is the first agent-rendered segment in the prompt.
     #[serde(default)]
     pub is_first: bool,
-    /// A specific changed file to consider, for incremental git status.
-    #[serde(default)]
-    pub changed_file: Option<String>,
     /// Whether to render in benchmark mode.
     #[serde(default)]
     pub benchmark_mode: bool,
@@ -197,15 +194,12 @@ fn handle_oneshot_git_parsed(request: &OneshotRequest) -> Result<String> {
         return create_formatter(format)?.render(&response, &ctx);
     }
 
-    let changed_file_path = request.changed_file.as_ref().map(std::path::PathBuf::from);
-    let paths = changed_file_path.as_ref().map(|p| vec![p.clone()]);
-
     let Some(crate::git::CompleteStatus { status, .. }) = ({
         let _t = crate::profiling::Timer::new("git_load_repository");
         crate::git::status::load_repository_state_with(
             &crate::git::native::NativeGitBackend,
             std::path::Path::new(&request.path),
-            paths.as_deref(),
+            None,
             config.git.max_ahead_behind,
             config.git.stash_enabled,
             std::time::Duration::from_secs(config.git.timeout_seconds.get()),

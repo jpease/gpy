@@ -198,7 +198,7 @@ enum OneshotCommands {
         /// The directory to get Git status for (defaults to current directory).
         #[arg(long, short, default_value_t = String::from("."))]
         cwd: String,
-        /// Output format (`json`, `fish`, `fish-ansi`, or `fish-source`).
+        /// Output format.
         #[arg(long, default_value_t = gpy_agent::formatter::Format::Json)]
         format: gpy_agent::formatter::Format,
         /// Mark segment as NOT the last (omit to mark as last - default for standalone use).
@@ -208,9 +208,6 @@ enum OneshotCommands {
         /// powerline cap). Omit to mark as not first - default for standalone use.
         #[arg(long)]
         first: bool,
-        /// A single changed file to check for incremental status.
-        #[arg(long)]
-        changed_file: Option<String>,
         /// Use the benchmark fast path for JSON output.
         ///
         /// This intentionally bypasses config/theme file I/O so benchmark runs measure
@@ -441,7 +438,6 @@ fn base_oneshot_request(
         format: format.as_str().to_owned(),
         is_last: !position.not_last, // is_last is the inverse of not_last
         is_first: position.first,
-        changed_file: None,
         benchmark_mode: false,
         duration_ms: 0_u64,
         success: None,
@@ -462,10 +458,8 @@ impl From<OneshotCommands> for OneshotRequest {
                 format,
                 not_last,
                 first,
-                changed_file,
                 benchmark_mode,
             } => Self {
-                changed_file,
                 benchmark_mode,
                 ..base_oneshot_request(
                     OneshotKind::GitStatus,
