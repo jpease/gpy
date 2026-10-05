@@ -6,7 +6,8 @@
 //!
 //! The live prompt path uses one SGR encoder in three [`PromptDialect`]s. All
 //! three emit the same color bytes; they differ only in how span text is
-//! escaped for the consuming shell (#677).
+//! escaped for the consuming shell (#677) and in the zero-width markers the
+//! bash and zsh dialects put around each SGR sequence (#679).
 
 use crate::template::{Attr, Color, Span, SpanKind, Style};
 use std::fmt::Write as _;
@@ -72,22 +73,26 @@ pub fn encode_ansi(spans: &[Span]) -> String {
 
 /// Encode `spans` as bash `PS1` source.
 ///
-/// Same SGR bytes as [`encode_ansi`]; `Text` spans are escaped so bash's
-/// prompt decoding plus `promptvars` expansion yields the literal text.
-/// `PromptToken` spans (the clock's `\D{…}`) are emitted raw.
+/// Same SGR bytes as [`encode_ansi`], each wrapped in `\[ \]` so readline
+/// counts it as zero-width (#679); `Text` spans are escaped so bash's prompt
+/// decoding plus `promptvars` expansion yields the literal text.
+/// `PromptToken` spans (the clock's `\D{…}`) are visible text, emitted raw
+/// and outside the markers.
 #[must_use]
 pub fn encode_bash_prompt(spans: &[Span]) -> String {
-    encode_sgr(spans, push_sgr, push_bash_text)
+    encode_sgr(spans, push_bash_sgr, push_bash_text)
 }
 
 /// Encode `spans` as zsh `PROMPT` source.
 ///
-/// Same SGR bytes as [`encode_ansi`]; `Text` spans are escaped so zsh's
-/// `prompt_subst` expansion and `%` escapes yield the literal text.
-/// `PromptToken` spans (the clock's `%D{…}`) are emitted raw.
+/// Same SGR bytes as [`encode_ansi`], each wrapped in `%{ %}` so ZLE counts
+/// it as zero-width (#679); `Text` spans are escaped so zsh's `prompt_subst`
+/// expansion and `%` escapes yield the literal text. `PromptToken` spans
+/// (the clock's `%D{…}`) are visible text, emitted raw and outside the
+/// markers.
 #[must_use]
 pub fn encode_zsh_prompt(spans: &[Span]) -> String {
-    encode_sgr(spans, push_sgr, push_zsh_text)
+    encode_sgr(spans, push_zsh_sgr, push_zsh_text)
 }
 
 /// The span walk shared by every SGR encoder.
@@ -125,6 +130,16 @@ fn encode_sgr(
 /// Write one raw SGR sequence, `ESC [ codes m`.
 fn push_sgr(out: &mut String, codes: &str) {
     let _ = write!(out, "\x1b[{codes}m");
+}
+
+/// Write one SGR sequence inside bash's non-printing markers `\[ \]`.
+fn push_bash_sgr(out: &mut String, codes: &str) {
+    let _ = write!(out, "\\[\x1b[{codes}m\\]");
+}
+
+/// Write one SGR sequence inside zsh's non-printing markers `%{ %}`.
+fn push_zsh_sgr(out: &mut String, codes: &str) {
+    let _ = write!(out, "%{{\x1b[{codes}m%}}");
 }
 
 /// Write a span's text escaped for bash `PS1` with `promptvars` on.
@@ -433,7 +448,8 @@ mod tests {
         assert_eq!(encode_ansi(&token_spans), encode_ansi(&text_spans));
     }
 
-    /// The prompt dialects change only text escaping, never the colors.
+    /// The prompt dialects keep the ANSI colors byte-for-byte; they only wrap
+    /// each SGR in the shell's zero-width markers (#679).
     #[test]
     fn prompt_dialects_emit_the_same_sgr_as_ansi() {
         let spans = [
@@ -447,10 +463,83 @@ mod tests {
             ),
             span(" b", Style::default()),
         ];
-        let ansi = encode_ansi(&spans);
-        assert_eq!(ansi, "\x1b[1;32;40ma\x1b[0m b");
-        assert_eq!(encode_bash_prompt(&spans), ansi);
-        assert_eq!(encode_zsh_prompt(&spans), ansi);
+        assert_eq!(encode_ansi(&spans), "\x1b[1;32;40ma\x1b[0m b");
+        assert_eq!(
+            encode_bash_prompt(&spans),
+            "\\[\x1b[1;32;40m\\]a\\[\x1b[0m\\] b"
+        );
+        assert_eq!(encode_zsh_prompt(&spans), "%{\x1b[1;32;40m%}a%{\x1b[0m%} b");
+    }
+
+    /// Remove every `open`…`close` region from `encoded`.
+    fn strip_regions(encoded: &str, open: &str, close: &str) -> String {
+        let mut visible = String::new();
+        let mut rest = encoded;
+        while let Some((before, after_open)) = rest.split_once(open) {
+            visible.push_str(before);
+            let (_marked, after_close) = after_open
+                .split_once(close)
+                .unwrap_or_else(|| panic!("unclosed {open} in {encoded:?}"));
+            rest = after_close;
+        }
+        visible.push_str(rest);
+        visible
+    }
+
+    /// The default theme's directory segment, rendered through the template
+    /// engine, plus the text it displays.
+    fn default_directory_spans() -> (Vec<Span>, String) {
+        use crate::config::Config;
+        use crate::formatter::SegmentPosition;
+        use crate::formatter::directory_resolver::DirectoryResolver;
+        use crate::template::{RenderContext as TemplateContext, render};
+
+        let config = Config::default();
+        let theme_mgr =
+            crate::theme::ThemeManager::builtin("default").expect("builtin default theme");
+        let theme = theme_mgr.get();
+        let format = theme
+            .segments
+            .directory
+            .format
+            .clone()
+            .expect("default theme has a directory format");
+        let resolver = DirectoryResolver::new(
+            "/home/user/project",
+            false,
+            &config,
+            &theme,
+            SegmentPosition::MIDDLE,
+        );
+        let ctx = TemplateContext::new(&resolver)
+            .with_prev_colors(None, Some(Color::Named("blue".to_owned())));
+        let spans = render(&format, &ctx).expect("render default directory");
+        let visible: String = spans.iter().map(|s| s.text.as_str()).collect();
+        (spans, visible)
+    }
+
+    /// Regression for #679: readline counts every byte outside `\[ \]` as a
+    /// printed column, so every SGR must sit inside the markers.
+    #[test]
+    fn bash_prompt_wraps_every_sgr_in_nonprinting_markers() {
+        let (spans, visible) = default_directory_spans();
+        let encoded = encode_bash_prompt(&spans);
+        assert!(encoded.contains('\x1b'), "{encoded:?}");
+        let printed = strip_regions(&encoded, "\\[", "\\]");
+        assert!(!printed.contains('\x1b'), "{encoded:?}");
+        assert_eq!(printed, visible);
+    }
+
+    /// Regression for #679: ZLE counts every byte outside `%{ %}` as a
+    /// printed column, so every SGR must sit inside the markers.
+    #[test]
+    fn zsh_prompt_wraps_every_sgr_in_nonprinting_markers() {
+        let (spans, visible) = default_directory_spans();
+        let encoded = encode_zsh_prompt(&spans);
+        assert!(encoded.contains('\x1b'), "{encoded:?}");
+        let printed = strip_regions(&encoded, "%{", "%}");
+        assert!(!printed.contains('\x1b'), "{encoded:?}");
+        assert_eq!(printed, visible);
     }
 
     #[test]
