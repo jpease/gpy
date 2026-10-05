@@ -1183,6 +1183,190 @@ fn linked_worktree_keeps_common_coverage_after_main_checkout_unregisters() {
     );
 }
 
+/// Let freshly armed (or just released) watches settle before the next step.
+fn settle() {
+    thread::sleep(Duration::from_millis(500));
+}
+
+/// An outer repository with a nested repository inside it, both canonical.
+fn nested_repos(parent: &Path) -> (PathBuf, PathBuf) {
+    let outer = fs::canonicalize(create_git_repo(parent, "outer")).expect("canonical outer");
+    let inner = fs::canonicalize(create_git_repo(&outer, "inner")).expect("canonical inner");
+    (outer, inner)
+}
+
+/// #687: unregistering the outer repository used to remove the nested
+/// repository's OS watches with it (inotify drops every descriptor under a
+/// removed recursive watch; the poll backend drops every expanded directory).
+#[test]
+#[serial_test::file_serial(watcher_fsevents_bootstrap)]
+fn nested_repo_keeps_events_after_outer_unregisters() {
+    let temp = tempdir().expect("create temp dir");
+    let (outer, inner) = nested_repos(temp.path());
+
+    let (watcher, events) = recording_watcher();
+    let outer_pid = std::process::id();
+    let inner_pid = outer_pid + 1;
+    watcher
+        .register_client(outer_pid, &outer)
+        .expect("register outer");
+    watcher
+        .register_client(inner_pid, &inner)
+        .expect("register inner");
+    settle();
+    watcher
+        .unregister_client(outer_pid)
+        .expect("unregister outer");
+    settle();
+    events.lock().unwrap().clear();
+
+    fs::write(inner.join("README.md"), b"changed content here\n").expect("edit inner file");
+
+    assert!(
+        wait_for_repo(&events, &inner, Duration::from_secs(20)),
+        "the nested repository must keep receiving events after the outer one unregisters, \
+         got: {:?}",
+        events.lock().unwrap()
+    );
+}
+
+/// #687: unregistering the nested repository used to remove the descriptors
+/// the outer repository's recursive watch shares for that subtree (inotify).
+#[test]
+#[serial_test::file_serial(watcher_fsevents_bootstrap)]
+fn nested_repo_outer_keeps_inner_subtree_after_inner_unregisters() {
+    let temp = tempdir().expect("create temp dir");
+    let (outer, inner) = nested_repos(temp.path());
+
+    let (watcher, events) = recording_watcher();
+    let outer_pid = std::process::id();
+    let inner_pid = outer_pid + 1;
+    watcher
+        .register_client(outer_pid, &outer)
+        .expect("register outer");
+    watcher
+        .register_client(inner_pid, &inner)
+        .expect("register inner");
+    settle();
+    watcher
+        .unregister_client(inner_pid)
+        .expect("unregister inner");
+    settle();
+    events.lock().unwrap().clear();
+
+    fs::write(inner.join("newfile.txt"), b"x\n").expect("create file in inner subtree");
+
+    assert!(
+        wait_for_repo(&events, &outer, Duration::from_secs(20)),
+        "the outer repository must keep its watch on the nested subtree after the nested \
+         repository unregisters, got: {:?}",
+        events.lock().unwrap()
+    );
+}
+
+/// #687: a linked worktree registered before its main checkout. The main
+/// checkout's recursive watch overlaps the worktree's admin-dir watch
+/// (`<main>/.git/worktrees/<name>`), and unregistering the main checkout used
+/// to remove it (inotify, poll).
+#[test]
+#[serial_test::file_serial(watcher_fsevents_bootstrap)]
+fn linked_worktree_registered_first_keeps_admin_events_after_main_unregisters() {
+    let temp = tempdir().expect("create temp dir");
+    let fixture = create_worktree_fixture(temp.path(), "wt_first", &["firstbranch"]);
+    let linked = fixture
+        .linked
+        .first()
+        .expect("fixture has a linked worktree")
+        .clone();
+    git(&fixture.main, &["branch", "other"]);
+
+    let (watcher, events) = recording_watcher();
+    let linked_pid = std::process::id();
+    let main_pid = linked_pid + 1;
+    watcher
+        .register_client(linked_pid, &linked)
+        .expect("register worktree client");
+    watcher
+        .register_client(main_pid, &fixture.main)
+        .expect("register main checkout");
+    settle();
+    watcher
+        .unregister_client(main_pid)
+        .expect("unregister main checkout");
+    settle();
+    events.lock().unwrap().clear();
+
+    // Writes `<main>/.git/worktrees/<name>/HEAD`.
+    git(&linked, &["symbolic-ref", "HEAD", "refs/heads/other"]);
+
+    assert!(
+        wait_for_repo(&events, &linked, Duration::from_secs(20)),
+        "the linked worktree must keep its admin-dir watch after the main checkout \
+         unregisters, got: {:?}",
+        events.lock().unwrap()
+    );
+}
+
+/// #687: with `watch_worktree = false` the linked worktree arms `<common>`
+/// shallow and the main checkout arms the same path (its gitdir)
+/// recursively. Unregistering the main checkout used to remove both
+/// (`FSEvents` removes every stream entry equal to the path), while the
+/// worktree's common-dir bookkeeping still listed its shallow watch as armed.
+#[test]
+#[serial_test::file_serial(watcher_fsevents_bootstrap)]
+fn gitdir_only_main_unregister_keeps_worktree_common_config_fanout() {
+    let temp = tempdir().expect("create temp dir");
+    let fixture = create_worktree_fixture(temp.path(), "wt_gitdir", &["gdbranch"]);
+    let linked = fixture
+        .linked
+        .first()
+        .expect("fixture has a linked worktree")
+        .clone();
+
+    let (watcher, events) = recording_watcher();
+    watcher.set_watch_worktree(false);
+    let linked_pid = std::process::id();
+    let main_pid = linked_pid + 1;
+    watcher
+        .register_client(linked_pid, &linked)
+        .expect("register worktree client");
+    settle();
+
+    // Control: the fan-out works before the main checkout is involved.
+    git(
+        &fixture.main,
+        &["config", "branch.gdbranch.remote", "origin"],
+    );
+    assert!(
+        wait_for_repo(&events, &linked, Duration::from_secs(20)),
+        "control: a common config write must reach the worktree before the main checkout \
+         registers"
+    );
+
+    watcher
+        .register_client(main_pid, &fixture.main)
+        .expect("register main checkout");
+    settle();
+    watcher
+        .unregister_client(main_pid)
+        .expect("unregister main checkout");
+    thread::sleep(Duration::from_millis(1500));
+    events.lock().unwrap().clear();
+
+    // Writes `<common>/config`.
+    git(
+        &fixture.main,
+        &["config", "branch.gdbranch.merge", "refs/heads/gdbranch"],
+    );
+
+    assert!(
+        wait_for_repo(&events, &linked, Duration::from_secs(20)),
+        "a common config write must still reach the worktree after the main checkout \
+         registers and unregisters, got: {:?}",
+        events.lock().unwrap()
+    );
+}
+
 /// Epic #465, the higher-frequency route: a commit made *inside* the linked
 /// worktree writes the SHARED `<common>/refs/heads/<branch>`, which
 /// `should_trigger_update` classifies and attributes to the main checkout. With

@@ -70,6 +70,7 @@
 //! Both mutexes are held briefly during register/unregister operations. The watcher
 //! itself runs in background threads (see [`super::WatchCoordinator`] docs).
 
+use super::watch_set::WatchMode;
 use super::{EventCallback, WatchCoordinator, WatchRegistry, WatcherConfig};
 use crate::debug_log;
 use crate::{Error, Result};
@@ -176,12 +177,17 @@ struct CommonDirWatch {
     /// common directory. The reference count: the entry — and the watches it
     /// armed — live exactly as long as this set is non-empty.
     dependents: HashSet<PathBuf>,
-    /// Paths this watcher actually armed for the common directory. Empty when
-    /// an already-watched ancestor covered them (e.g. the main checkout's own
-    /// recursive worktree watch), so teardown never unwatches a path it did not
-    /// watch.
-    armed: Vec<PathBuf>,
+    /// Paths this watcher actually armed for the common directory, each with
+    /// the mode it was armed in so teardown releases exactly that
+    /// registration (#687). Empty when an already-watched ancestor covered
+    /// them (e.g. the main checkout's own recursive worktree watch), so
+    /// teardown never unwatches a path it did not watch.
+    armed: ArmedWatches,
 }
+
+/// Paths armed on behalf of a common directory, each with the mode it was
+/// armed in (#687).
+type ArmedWatches = Vec<(PathBuf, WatchMode)>;
 
 /// Opaque `(dev, ino)` identity of a watched directory. `None` on platforms
 /// without a portable inode (identity checks are skipped there; the periodic
@@ -373,7 +379,7 @@ impl MultiRepoWatcher {
         {
             for repo in &repos_to_remove {
                 for path in &repo.armed {
-                    Self::unwatch_logged(w, path);
+                    Self::unwatch_logged(w, path, WatchMode::Recursive);
                 }
             }
         }
@@ -571,7 +577,7 @@ impl MultiRepoWatcher {
             && let Some((_, stale_armed)) = &stale
         {
             for path in stale_armed {
-                Self::unwatch_logged(w, path);
+                Self::unwatch_logged(w, path, WatchMode::Recursive);
             }
         }
 
@@ -645,14 +651,19 @@ impl MultiRepoWatcher {
         w.watch_directory(path)
     }
 
-    /// Unwatch `path`, logging (never silently dropping) a failure.
+    /// Release one `mode` watch of `path`, logging (never silently dropping)
+    /// a failure.
     ///
     /// Teardown must never leave a stale OS watch unaccounted for, but a
     /// failure here is not actionable by the caller — the watch is going
     /// away regardless — so this logs and moves on rather than propagating
     /// an error (#616).
-    fn unwatch_logged(w: &mut WatchCoordinator, path: &Path) {
-        if let Err(err) = w.unwatch_directory(path) {
+    fn unwatch_logged(w: &mut WatchCoordinator, path: &Path, mode: WatchMode) {
+        let released = match mode {
+            WatchMode::Recursive => w.unwatch_directory(path),
+            WatchMode::Shallow => w.unwatch_directory_shallow(path),
+        };
+        if let Err(err) = released {
             debug_log!("watcher", "Failed to unwatch {}: {err}", path.display());
         }
     }
@@ -861,7 +872,7 @@ impl MultiRepoWatcher {
     /// main checkout is registered, its single recursive worktree watch already
     /// covers `<common>` — so nothing rebuilds the `FSEventStream` for no gain
     /// (#388).
-    fn arm_common_dir(w: &mut WatchCoordinator, common_dir: &Path) -> Vec<PathBuf> {
+    fn arm_common_dir(w: &mut WatchCoordinator, common_dir: &Path) -> ArmedWatches {
         let mut armed = Vec::new();
 
         if w.covers_directory(common_dir) {
@@ -878,7 +889,7 @@ impl MultiRepoWatcher {
                 e
             );
         } else {
-            armed.push(common_dir.to_path_buf());
+            armed.push((common_dir.to_path_buf(), WatchMode::Shallow));
         }
 
         let refs_dir = common_dir.join("refs");
@@ -891,7 +902,7 @@ impl MultiRepoWatcher {
                     e
                 );
             } else {
-                armed.push(refs_dir);
+                armed.push((refs_dir, WatchMode::Recursive));
             }
         }
 
@@ -903,7 +914,7 @@ impl MultiRepoWatcher {
     /// dependent worktree is gone, and re-arm any surviving common directory
     /// whose covering ancestor watch has just been dropped (#468).
     fn release_common_dir_watches(&self, git_root: &Path) {
-        let mut to_unwatch: Vec<PathBuf> = Vec::new();
+        let mut to_unwatch: ArmedWatches = Vec::new();
         let mut to_rearm: Vec<PathBuf> = Vec::new();
 
         // Scoped so `common_watches` is released before the watcher lock is
@@ -942,12 +953,12 @@ impl MultiRepoWatcher {
             return;
         }
 
-        let mut rearmed: Vec<(PathBuf, Vec<PathBuf>)> = Vec::new();
+        let mut rearmed: Vec<(PathBuf, ArmedWatches)> = Vec::new();
         if let Ok(mut watcher) = self.watcher.lock()
             && let Some(w) = watcher.as_mut()
         {
-            for path in &to_unwatch {
-                Self::unwatch_logged(w, path);
+            for (path, mode) in &to_unwatch {
+                Self::unwatch_logged(w, path, *mode);
             }
             for common_dir in to_rearm {
                 // A no-op returning an empty vec while the ancestor watch is

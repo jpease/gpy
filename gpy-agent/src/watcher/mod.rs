@@ -86,6 +86,7 @@ pub mod debouncer;
 pub mod filesystem;
 pub(crate) mod hot_reload;
 pub mod multi_repo;
+mod watch_set;
 
 use crate::Result;
 use std::collections::HashSet;
@@ -1080,7 +1081,8 @@ impl WatchCoordinator {
             .is_some_and(|watcher| watcher.covers(path))
     }
 
-    /// Stop watching a directory
+    /// Release one recursive [`WatchCoordinator::watch_directory`] of `path`
+    /// (see [`filesystem::FileSystemWatcher::unwatch`]).
     ///
     /// # Errors
     ///
@@ -1092,6 +1094,23 @@ impl WatchCoordinator {
         }
         if let Some(watcher) = &mut self.watcher {
             watcher.unwatch(path)?;
+        }
+        Ok(())
+    }
+
+    /// Release one [`WatchCoordinator::watch_directory_shallow`] of `path`
+    /// (see [`filesystem::FileSystemWatcher::unwatch_shallow`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the directory cannot be unwatched.
+    pub fn unwatch_directory_shallow<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+        #[cfg(test)]
+        if let Ok(mut calls) = self.unwatch_calls.lock() {
+            calls.push(path.as_ref().to_path_buf());
+        }
+        if let Some(watcher) = &mut self.watcher {
+            watcher.unwatch_shallow(path)?;
         }
         Ok(())
     }
