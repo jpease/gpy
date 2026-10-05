@@ -61,27 +61,30 @@ chsh -s /opt/homebrew/bin/bash
 **What is measured** (`tests/bash/e2e_git_live_content.test.bash`, a real
 `bash -i` on a pseudo-terminal against a real agent): when a tracked file
 changes while the shell sits at an idle prompt, the agent updates its cache
-and delivers SIGURG, and Bash's handler re-renders `PS1` — but readline has
-already drawn the previous prompt and has no `reset-prompt`, so the screen does
-not change until the next prompt. Press Enter (or run any command) and the new
-state is there. Fish and Zsh repaint the idle prompt in place; see
+and rings SIGURG, but readline has already drawn the previous prompt and has
+no `reset-prompt`, so the screen does not change until the next prompt. Press
+Enter (or run any command) and the new state is there. Fish and Zsh repaint
+the idle prompt in place; see
 [Troubleshooting → Shell Comparison](troubleshooting.md#shell-comparison-at-a-glance).
 
-**Also**:
-- Signals are not delivered inside command substitution `$(...)` or subshells
-- Delivery during a long-running foreground command waits for it to finish
+Bash installs no SIGURG trap (#678). A trap could only re-render a `PS1`
+readline cannot show: on Bash 5 a doorbell arriving during a render started a
+nested one, so a steady stream of doorbells hung the shell, Bash 3.2 ran the
+trap at an idle prompt and re-rendered for nothing, and every doorbell made a
+running `wait` return early. SIGURG keeps its default disposition, ignore, so
+it never interrupts a command or `wait` and never kills a shell. The agent's
+`<pid>.reload` and `<pid>.reregister` flag files are read when the next prompt
+is drawn instead.
 
 **Mitigation**: Every prompt render reads the agent's current state, so the
-change is never lost — it is one Enter away. SIGURG keeps the cache warm so
-that next prompt is instant.
+change is never lost — it is one Enter away. The agent keeps its cache current
+as files change, so that next prompt is instant.
 
-Bash re-registers after an agent restart at its next prompt (#638): the
-agent leaves a `<pid>.reregister` flag and rings SIGURG, but an idle readline
-prompt defers the trap until the line is accepted (measured; readline runs
-traps immediately only for SIGALRM, which would kill a shell that has no
-handler yet). The first Enter re-registers the shell. A dead agent is
-recovered by the periodic supervisor check, so live updates resume without
-reopening the shell.
+Bash re-registers after an agent restart at its next prompt (#638), and
+applies a config reload the same way: the agent leaves a `<pid>.reregister`
+or `<pid>.reload` flag, and the prompt drawn after the next Enter consumes it
+before rendering. A dead agent is recovered by the periodic supervisor check,
+so live updates resume without reopening the shell.
 
 ---
 
@@ -260,11 +263,11 @@ chsh -s /opt/homebrew/bin/fish
 **Workaround**: Displays correctly after first command
 **Severity**: Cosmetic
 
-### Issue: SIGURG doesn't trigger during `sleep`
+### Issue: Agent updates during a command show at the next prompt
 **Bash version**: All
-**Cause**: Bash doesn't interrupt foreground commands
-**Workaround**: Prompt updates when command finishes
-**Severity**: Minor (expected Bash behavior)
+**Cause**: Bash ignores the agent's SIGURG doorbell (no trap, #678); its flags are read when the next prompt is drawn
+**Workaround**: None needed: the prompt after the command shows the current state
+**Severity**: Minor (readline cannot repaint a prompt in place)
 
 ### Issue: Prompt renders slowly on Bash 3.2
 **Bash version**: 3.x

@@ -21,13 +21,15 @@ Meaning travels in empty flag files in the existing shell tracking directory (`<
 | `<pid>.reregister` | agent, before SIGURG | forget the registration and register again |
 | `<pid>.reload` | agent, before SIGURG | reload theme/config variables |
 
-Each shell installs one SIGURG handler (fish `--on-signal SIGURG`, bash `trap ... URG`, zsh `TRAPURG`) which:
+Fish and zsh install one SIGURG handler (fish `--on-signal SIGURG`, zsh `TRAPURG`) which:
 
 1. removes `<pid>.reregister` if present and re-registers;
 2. removes `<pid>.reload` if present and reloads theme/config;
 3. repaints, as before.
 
 With no flag present, SIGURG is a plain repaint. Existence checks are shell builtins, so the common path forks nothing. Reload notifications are never throttled, so a written flag is always followed by a signal. The agent removes flags for dead PIDs; shells remove their own flags on exit. The agent restart marker file is gone: re-registration is driven by the flag. The IPC protocol version is bumped to 2.
+
+Bash installs no SIGURG trap (jpease/gpy-archive#678) and leaves SIGURG ignored. Readline cannot repaint an idle prompt, so a bash handler could only re-render a `PS1` nobody sees, and it did harm: bash 5 nested those renders while doorbells kept arriving (a hang), bash 3.2 ran them at the idle prompt, and any trapped signal makes a running `wait` return early. Instead `__gpy_precmd` performs steps 1 and 2 before every render, at the cost of two `[[ -e ]]` tests when no flag exists; the render itself is step 3.
 
 `GPY_SIGUSR1_THROTTLE_MS` keeps its name and now throttles repaint notifications.
 
