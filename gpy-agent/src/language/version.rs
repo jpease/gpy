@@ -365,10 +365,9 @@ fn cache_version_result(cache_key: &str, version: Option<String>) {
 
 /// Execute version detection for any detector (with 24-hour cache)
 ///
-/// # Errors
-///
-/// Returns an error if version detection fails or if caching fails.
-pub fn detect_language_release<P: ReleaseSource + ?Sized>(detector: &P) -> Result<Option<String>> {
+/// See [`detect_language_release_at`].
+#[must_use]
+pub fn detect_language_release<P: ReleaseSource + ?Sized>(detector: &P) -> Option<String> {
     detect_language_release_at(detector, None)
 }
 
@@ -378,28 +377,48 @@ pub fn detect_language_release<P: ReleaseSource + ?Sized>(detector: &P) -> Resul
 /// such as pyenv, rbenv, mise, and asdf can resolve different tool versions
 /// for different projects even when the executable path is identical.
 ///
-/// # Errors
-///
-/// Returns an error if version detection fails or if caching fails.
+/// Successful versions are cached for the shared TTL
+/// (`language.cache_ttl_hours`). A failed probe — non-zero exit, unparseable
+/// output, spawn error, or timeout, after every fallback program was tried —
+/// is recorded in [`VERSION_FAILURE_CACHE`] for [`VERSION_FAILURE_TTL`] and
+/// reported as `None`, so a hung or broken tool costs at most one probe round
+/// per directory in that window, and a fixed tool is picked up once it
+/// lapses.
+#[must_use]
 pub fn detect_language_release_at<P: ReleaseSource + ?Sized>(
     detector: &P,
     cwd: Option<&Path>,
-) -> Result<Option<String>> {
+) -> Option<String> {
     let cache_key = version_cache_key(detector.language_name(), cwd);
 
-    // Check cache first
-    match get_cached_version(&cache_key) {
-        cache::CacheLookup::Hit(cached_result) => Ok(cached_result),
-        cache::CacheLookup::Miss => {
-            // Execute version detection
-            let version = execute_version_command(detector, cwd)?;
-
-            // Cache the result (including failures)
-            cache_version_result(&cache_key, version.clone());
-
-            Ok(version)
-        }
+    if let cache::CacheLookup::Hit(cached_result) = get_cached_version(&cache_key) {
+        return cached_result;
     }
+    if has_recent_failure(&cache_key) {
+        return None;
+    }
+
+    if let Ok(Some(version)) = execute_version_command(detector, cwd) {
+        VERSION_FAILURE_CACHE.remove(&cache_key);
+        cache_version_result(&cache_key, Some(version.clone()));
+        Some(version)
+    } else {
+        VERSION_FAILURE_CACHE.insert(cache_key, SystemTime::now());
+        None
+    }
+}
+
+/// Whether a probe for `cache_key` failed within [`VERSION_FAILURE_TTL`].
+///
+/// A backwards clock reads as "not recent", so the probe is retried.
+fn has_recent_failure(cache_key: &str) -> bool {
+    VERSION_FAILURE_CACHE
+        .get(cache_key)
+        .is_some_and(|recorded_at| {
+            SystemTime::now()
+                .duration_since(recorded_at)
+                .is_ok_and(|elapsed| elapsed < VERSION_FAILURE_TTL)
+        })
 }
 
 /// Node.js version detector
@@ -595,15 +614,31 @@ impl ReleaseSource for FishDetector {
 }
 
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 /// Lazy-initialized version detectors to avoid repeated allocations
 static VERSION_DETECTORS: OnceLock<Vec<Box<dyn ReleaseSource + Sync + Send>>> = OnceLock::new();
 
-/// Global version cache: 24h default TTL (configurable, shared with the
-/// mise-walk and negative-mise caches below via [`TtlMap`]'s shared knob) to
-/// avoid repeated external command execution.
+/// Global version cache of successful probes.
+///
+/// 24h default TTL (configurable, shared with the mise-walk and negative-mise
+/// caches below via [`TtlMap`]'s shared knob) to avoid repeated external
+/// command execution. Failed probes go to [`VERSION_FAILURE_CACHE`] instead.
 static VERSION_CACHE: TtlMap<String, Option<String>> = TtlMap::new(VERSION_CACHE_CAPACITY);
+
+/// How long a failed version probe suppresses re-probing.
+///
+/// Long enough that a hung or broken tool is not re-spawned on every render,
+/// short enough that a freshly installed or repaired tool shows up within
+/// about a minute without an agent restart.
+const VERSION_FAILURE_TTL: Duration = Duration::from_secs(60);
+
+/// Negative cache of failed version probes, keyed like [`VERSION_CACHE`].
+///
+/// Values are the time the failure was recorded. [`TtlMap`]'s shared TTL only
+/// bounds how long entries linger; [`has_recent_failure`] enforces the much
+/// shorter [`VERSION_FAILURE_TTL`] against the stored instant.
+static VERSION_FAILURE_CACHE: TtlMap<String, SystemTime> = TtlMap::new(VERSION_CACHE_CAPACITY);
 
 fn version_cache_key(language_name: &str, cwd: Option<&Path>) -> String {
     let Some(path) = cwd else {
@@ -674,14 +709,17 @@ fn record_mise_negative(program: &str, cwd: Option<&Path>) {
     MISE_NEGATIVE_CACHE.insert(cache_key, ());
 }
 
-/// Clear cached language versions for a project directory.
+/// Clear cached language versions (successes and recorded failures) for a
+/// project directory.
 pub(crate) fn invalidate_language_release_cache_at(cwd: &Path) {
     let scoped_path = version_cache_path_key(cwd);
-    VERSION_CACHE.retain(|cache_key| {
+    let keep_other_dirs = |cache_key: &String| {
         cache_key
             .split_once(':')
             .is_none_or(|(_language_name, cached_path)| cached_path != scoped_path)
-    });
+    };
+    VERSION_CACHE.retain(keep_other_dirs);
+    VERSION_FAILURE_CACHE.retain(keep_other_dirs);
 
     // Drop the mise-walk and negative-mise memoizations for the same directory so
     // a project-file change (e.g. adding `.tool-versions`) is observed on the next
@@ -752,7 +790,6 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
 
     use super::*;
-    use std::time::SystemTime;
 
     #[test]
     fn parse_ruby_version_table() {
@@ -841,10 +878,8 @@ mod tests {
         VERSION_CACHE.clear();
 
         let detector = CwdVersionFileDetector;
-        let first_version =
-            detect_language_release_at(&detector, Some(first.path())).expect("detect first");
-        let second_version =
-            detect_language_release_at(&detector, Some(second.path())).expect("detect second");
+        let first_version = detect_language_release_at(&detector, Some(first.path()));
+        let second_version = detect_language_release_at(&detector, Some(second.path()));
 
         assert_eq!(first_version.as_deref(), Some("3.9.24"));
         assert_eq!(second_version.as_deref(), Some("3.14.4"));
@@ -1034,6 +1069,109 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Lines appended to `path` so far (0 when it does not exist).
+    #[cfg(unix)]
+    fn spawn_count(path: &Path) -> usize {
+        std::fs::read_to_string(path).map_or(0, |contents| contents.lines().count())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial_test::serial(global_ttl)]
+    fn probe_error_is_negatively_cached() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let dir = temp_dir.path();
+        let count = dir.join("count");
+        let script = dir.join("probe.sh");
+        // Present but not executable: the spawn fails with PermissionDenied,
+        // the same `Err` path a timeout takes, without waiting 5s.
+        std::fs::write(&script, "").expect("write non-executable probe");
+        let script_str = script.to_str().expect("utf-8 temp path");
+        let stub = StubDetector {
+            name: "probe-error-test",
+            command: vec![script_str],
+            fallbacks: vec![],
+        };
+
+        assert_eq!(detect_language_release_at(&stub, Some(dir)), None);
+
+        write_script(
+            &script,
+            &format!("echo spawn >> '{}'\necho v 1.2.3", count.display()),
+        );
+        assert_eq!(detect_language_release_at(&stub, Some(dir)), None);
+        assert!(
+            !count.exists(),
+            "a recent probe failure must suppress re-spawning"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial_test::serial(global_ttl)]
+    fn nonzero_exit_retries_after_failure_ttl() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let dir = temp_dir.path();
+        let count = dir.join("count");
+        let stub = StubDetector {
+            name: "nonzero-exit-test",
+            command: vec![
+                "sh",
+                "-c",
+                "echo spawn >> count; test -f ok && echo v 1.2.3 || exit 1",
+            ],
+            fallbacks: vec![],
+        };
+        let key = version_cache_key(stub.name, Some(dir));
+
+        assert_eq!(detect_language_release_at(&stub, Some(dir)), None);
+        assert_eq!(spawn_count(&count), 1);
+
+        std::fs::write(dir.join("ok"), "").expect("mark tool installed");
+        assert_eq!(detect_language_release_at(&stub, Some(dir)), None);
+        assert_eq!(spawn_count(&count), 1, "no re-probe within the failure TTL");
+
+        VERSION_FAILURE_CACHE.insert(
+            key.clone(),
+            SystemTime::now() - VERSION_FAILURE_TTL - Duration::from_secs(1),
+        );
+        assert_eq!(
+            detect_language_release_at(&stub, Some(dir)).as_deref(),
+            Some("1.2.3")
+        );
+        assert_eq!(spawn_count(&count), 2);
+        assert_eq!(VERSION_FAILURE_CACHE.get(&key), None);
+
+        assert_eq!(
+            detect_language_release_at(&stub, Some(dir)).as_deref(),
+            Some("1.2.3")
+        );
+        assert_eq!(spawn_count(&count), 2, "successes stay cached");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial_test::serial(global_ttl)]
+    fn invalidate_clears_failure_entries() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let dir = temp_dir.path();
+        let count = dir.join("count");
+        let stub = StubDetector {
+            name: "invalidate-failure-test",
+            command: vec!["sh", "-c", "echo spawn >> count; exit 1"],
+            fallbacks: vec![],
+        };
+
+        assert_eq!(detect_language_release_at(&stub, Some(dir)), None);
+        assert_eq!(spawn_count(&count), 1);
+        assert_eq!(detect_language_release_at(&stub, Some(dir)), None);
+        assert_eq!(spawn_count(&count), 1, "failure recorded");
+
+        invalidate_language_release_cache_at(dir);
+        assert_eq!(detect_language_release_at(&stub, Some(dir)), None);
+        assert_eq!(spawn_count(&count), 2, "invalidation must force a re-probe");
     }
 
     #[test]

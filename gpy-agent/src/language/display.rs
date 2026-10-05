@@ -223,8 +223,6 @@ pub fn build_language_display_info_at(
                     }
                     probe.and_then(|source| {
                         crate::language::version::detect_language_release_at(source, version_cwd)
-                            .ok()
-                            .flatten()
                     })
                 }));
             }
