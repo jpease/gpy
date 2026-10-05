@@ -62,27 +62,27 @@ function __gpy_home() {
 function __gpy_ipc_endpoint() {
     local home
     if [[ -n "${GPY_AGENT_SOCKET_PATH:-}" ]]; then
-        echo "$GPY_AGENT_SOCKET_PATH"
+        print -r -- "$GPY_AGENT_SOCKET_PATH"
         return
     fi
 
     if [[ -n "$XDG_RUNTIME_DIR" && "$XDG_RUNTIME_DIR" == /* ]]; then
-        echo "$XDG_RUNTIME_DIR/gpy/gpy.sock"
+        print -r -- "$XDG_RUNTIME_DIR/gpy/gpy.sock"
         return
     fi
 
     if [[ -n "$XDG_CACHE_HOME" && "$XDG_CACHE_HOME" == /* ]]; then
-        echo "$XDG_CACHE_HOME/gpy/gpy.sock"
+        print -r -- "$XDG_CACHE_HOME/gpy/gpy.sock"
         return
     fi
 
     if __gpy_home home; then
-        echo "$home/.cache/gpy/gpy.sock"
+        print -r -- "$home/.cache/gpy/gpy.sock"
         return
     fi
 
     # Last resort, matching paths::runtime_root_for's final branch.
-    echo "/tmp/gpy/gpy.sock"
+    print -r -- "/tmp/gpy/gpy.sock"
 }
 
 # The agent's runtime root (crate::paths::runtime_root_for): where the
@@ -92,18 +92,18 @@ function __gpy_ipc_endpoint() {
 function __gpy_runtime_root() {
     local home
     if [[ -n "${XDG_RUNTIME_DIR:-}" && "${XDG_RUNTIME_DIR:-}" == /* ]]; then
-        echo "$XDG_RUNTIME_DIR/gpy"
+        print -r -- "$XDG_RUNTIME_DIR/gpy"
         return
     fi
     if [[ -n "${XDG_CACHE_HOME:-}" && "${XDG_CACHE_HOME:-}" == /* ]]; then
-        echo "$XDG_CACHE_HOME/gpy"
+        print -r -- "$XDG_CACHE_HOME/gpy"
         return
     fi
     if __gpy_home home; then
-        echo "$home/.cache/gpy"
+        print -r -- "$home/.cache/gpy"
         return
     fi
-    echo "/tmp/gpy"
+    print -r -- "/tmp/gpy"
 }
 
 # Directory of shell PIDs the agent wakes when it (re)starts, and this
@@ -111,10 +111,10 @@ function __gpy_runtime_root() {
 # must be numeric. The agent's `<pid>.reload` / `<pid>.reregister` doorbell
 # flags (#674) live next to it.
 function __gpy_shell_registry_dir() {
-    echo "$(__gpy_runtime_root)/shells"
+    print -r -- "$(__gpy_runtime_root)/shells"
 }
 function __gpy_shell_registry_file() {
-    echo "$(__gpy_shell_registry_dir)/$$"
+    print -r -- "$(__gpy_shell_registry_dir)/$$"
 }
 
 # Record this shell so an agent restart can nudge it to re-register (#638):
@@ -128,7 +128,7 @@ function __gpy_track_shell_for_agent_recovery() {
     dir=$(__gpy_shell_registry_dir)
     __gpy_shell_flag_base="$dir/$$"
     mkdir -p "$dir" 2>/dev/null || return 0
-    echo "$$" >"$dir/$$" 2>/dev/null || true
+    print -r -- "$$" >"$dir/$$" 2>/dev/null || true
 }
 
 function __gpy_untrack_shell_for_agent_recovery() {
@@ -149,12 +149,12 @@ function __gpy_instant_cache_dir() {
     local home
 
     if [[ -n "$XDG_CACHE_HOME" && "$XDG_CACHE_HOME" == /* ]]; then
-        echo "$XDG_CACHE_HOME/gpy/instant-prompts"
+        print -r -- "$XDG_CACHE_HOME/gpy/instant-prompts"
         return 0
     fi
 
     if __gpy_home home; then
-        echo "$home/.cache/gpy/instant-prompts"
+        print -r -- "$home/.cache/gpy/instant-prompts"
         return 0
     fi
 
@@ -173,12 +173,12 @@ function __gpy_theme_export_cache_path() {
     local home
 
     if [[ -n "$XDG_CACHE_HOME" && "$XDG_CACHE_HOME" == /* ]]; then
-        echo "$XDG_CACHE_HOME/gpy/theme-export.zsh"
+        print -r -- "$XDG_CACHE_HOME/gpy/theme-export.zsh"
         return 0
     fi
 
     if __gpy_home home; then
-        echo "$home/.cache/gpy/theme-export.zsh"
+        print -r -- "$home/.cache/gpy/theme-export.zsh"
         return 0
     fi
 
@@ -230,7 +230,10 @@ function __gpy_send_json() {
         if zsocket "$socket_path" 2>/dev/null; then
             zsocket_connected=1
             fd=$REPLY
-            print -u $fd "$json"
+            # -r: plain `print` (like zsh's `echo`) interprets backslash
+            # escapes, which would undo __gpy_escape_json's doubling and
+            # corrupt the request (#676).
+            print -r -u $fd -- "$json"
             # `IFS= read -r`, not a bare `read`: the default IFS makes `read`
             # strip leading and trailing whitespace, which silently ate the
             # trailing space the character segment's template emits after `❯`
@@ -252,7 +255,7 @@ function __gpy_send_json() {
     # connect itself failed) reaches the socat/nc fallbacks below.
     if (( zsocket_connected )); then
         if [[ $read_status -eq 0 && -n "$response" ]]; then
-            echo "$response"
+            print -r -- "$response"
             return 0
         fi
         return 1
@@ -261,7 +264,7 @@ function __gpy_send_json() {
     # 2. Try socat
     read_status=1
     if (( $+commands[socat] )); then
-        IFS= read -r response < <(echo "$json" | socat -t 0.1 - UNIX-CONNECT:"$socket_path" 2>/dev/null)
+        IFS= read -r response < <(print -r -- "$json" | socat -t 0.1 - UNIX-CONNECT:"$socket_path" 2>/dev/null)
         read_status=$?
 
     # 3. Try nc (BSD/macOS style with -U). nc's -w only accepts whole
@@ -273,9 +276,9 @@ function __gpy_send_json() {
         if (( $+commands[timeout] )); then
             local timeout_secs
             __gpy_ms_to_secs "${GPY_IPC_TIMEOUT_MS:-150}" timeout_secs
-            IFS= read -r response < <(echo "$json" | timeout "$timeout_secs" nc -U "$socket_path" -w 1 2>/dev/null)
+            IFS= read -r response < <(print -r -- "$json" | timeout "$timeout_secs" nc -U "$socket_path" -w 1 2>/dev/null)
         else
-            IFS= read -r response < <(echo "$json" | nc -U "$socket_path" -w 1 2>/dev/null)
+            IFS= read -r response < <(print -r -- "$json" | nc -U "$socket_path" -w 1 2>/dev/null)
         fi
         read_status=$?
     else
@@ -283,7 +286,7 @@ function __gpy_send_json() {
     fi
 
     if [[ $read_status -eq 0 && -n "$response" ]]; then
-        echo "$response"
+        print -r -- "$response"
         return 0
     fi
 
@@ -310,7 +313,7 @@ function __gpy_check_protocol_version() {
     fi
 
     if [[ "$protocol_version" != "$GPY_EXPECTED_PROTOCOL_VERSION" ]]; then
-        echo "gpy: WARNING: agent protocol version $protocol_version does not match expected $GPY_EXPECTED_PROTOCOL_VERSION; restart the agent (gpy-agent stop && gpy-agent start)" >&2
+        print -r -- "gpy: WARNING: agent protocol version $protocol_version does not match expected $GPY_EXPECTED_PROTOCOL_VERSION; restart the agent (gpy-agent stop && gpy-agent start)" >&2
         return 1
     fi
 
@@ -334,7 +337,7 @@ function __gpy_find_git_root() {
 
     while [[ "$dir" != "/" ]]; do
         if [[ -e "$dir/.git" ]]; then
-            echo "$dir"
+            print -r -- "$dir"
             return 0
         fi
         # zsh history-modifier parameter expansion instead of a `dirname`
@@ -360,7 +363,7 @@ function __gpy_path_to_cache_key() {
     key="${key//\\/_b}"
     key="${key//:/_c}"
     key="${key// /_w}"
-    echo "$key"
+    print -r -- "$key"
 }
 
 # Filesystem-safe token identifying the previous-segment background a cache entry
@@ -370,10 +373,10 @@ function __gpy_path_to_cache_key() {
 function __gpy_prev_bg_token() {
     local prev_bg=$1
     if [[ -z "$prev_bg" ]]; then
-        echo "none"
+        print -r -- "none"
         return
     fi
-    echo "${prev_bg//[^a-zA-Z0-9]/_}"
+    print -r -- "${prev_bg//[^a-zA-Z0-9]/_}"
 }
 
 # Cache-filename suffix for a given (is_last, is_first) pair, e.g.
@@ -385,7 +388,7 @@ function __gpy_cache_variant_suffix() {
     local suffix="$base"
     [[ "$is_first" == "true" ]] && suffix="${suffix}_first"
     [[ "$is_last" == "true" ]] && suffix="${suffix}_last"
-    echo "$suffix"
+    print -r -- "$suffix"
 }
 
 # Read instant-prompt cache if available (serve-stale model: always serve).
@@ -554,7 +557,7 @@ function __gpy_request() {
         local cached_result
         cached_result=$(__gpy_read_instant_cache "$cache_suffix" "$context_path" "$prev_bg")
         if [[ -n "$cached_result" ]]; then
-            echo "$cached_result"
+            print -r -- "$cached_result"
             return 0
         fi
     elif [[ "$op" == "lang" ]]; then
@@ -563,7 +566,7 @@ function __gpy_request() {
         local cached_result
         cached_result=$(__gpy_read_instant_cache "$cache_suffix" "$context_path" "$prev_bg")
         if [[ -n "$cached_result" ]]; then
-            echo "$cached_result"
+            print -r -- "$cached_result"
             return 0
         fi
     fi
@@ -677,7 +680,7 @@ function __gpy_request_duration() {
         result=$(gpy-agent oneshot $args 2>/dev/null)
     fi
 
-    [[ -n "$result" ]] && echo "$result"
+    [[ -n "$result" ]] && print -r -- "$result"
     if [[ "$used_oneshot" -eq 1 ]]; then
         return "$GPY_SEG_STATUS_ONESHOT"
     fi
@@ -709,7 +712,7 @@ function __gpy_request_clock() {
     result=$(__gpy_send_json "$request")
 
     [[ -n "$result" ]] || return 1
-    echo "$result"
+    print -r -- "$result"
     return 0
 }
 
@@ -739,7 +742,7 @@ function __gpy_request_hostname() {
     result=$(__gpy_send_json "$request")
 
     if [[ -n "$result" ]]; then
-        echo "$result"
+        print -r -- "$result"
         return 0
     fi
     return 1
@@ -765,7 +768,7 @@ function __gpy_request_username() {
     result=$(__gpy_send_json "$request")
 
     if [[ -n "$result" ]]; then
-        echo "$result"
+        print -r -- "$result"
         return 0
     fi
     return 1
@@ -802,7 +805,7 @@ function __gpy_request_character() {
         result=$(gpy-agent oneshot $args 2>/dev/null)
     fi
 
-    [[ -n "$result" ]] && echo "$result"
+    [[ -n "$result" ]] && print -r -- "$result"
     if [[ "$used_oneshot" -eq 1 ]]; then
         return "$GPY_SEG_STATUS_ONESHOT"
     fi
@@ -844,13 +847,13 @@ function __gpy_debug_paths() {
         cache_root="<unresolved>"
     fi
 
-    echo "runtime_root=$(__gpy_runtime_root)"
-    echo "socket=$socket"
-    echo "shell_registry_dir=$(__gpy_shell_registry_dir)"
-    echo "cache_root=$cache_root"
-    echo "instant_prompts_dir=$instant_dir"
-    echo "theme_export_file=<unimplemented>"
-    echo "config_path=<unimplemented>"
-    echo "config_candidates=<unimplemented>"
-    echo "theme_dir=<unimplemented>"
+    print -r -- "runtime_root=$(__gpy_runtime_root)"
+    print -r -- "socket=$socket"
+    print -r -- "shell_registry_dir=$(__gpy_shell_registry_dir)"
+    print -r -- "cache_root=$cache_root"
+    print -r -- "instant_prompts_dir=$instant_dir"
+    print -r -- "theme_export_file=<unimplemented>"
+    print -r -- "config_path=<unimplemented>"
+    print -r -- "config_candidates=<unimplemented>"
+    print -r -- "theme_dir=<unimplemented>"
 }

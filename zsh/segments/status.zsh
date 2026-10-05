@@ -11,8 +11,8 @@ function __gpy_segment_status() {
     local color_fail=${__color_status_fail:-red}
 
     if [[ $last_status -eq 0 ]]; then
-        echo "%F{$color_ok}$icon_ok%f"
+        print -r -- "%F{$color_ok}$icon_ok%f"
     else
-        echo "%F{$color_fail}$icon_fail%f"
+        print -r -- "%F{$color_fail}$icon_fail%f"
     fi
 }

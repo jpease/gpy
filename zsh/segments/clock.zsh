@@ -42,7 +42,7 @@ function __gpy_segment_clock() {
         local rendered
         rendered=$(__gpy_request_clock "$is_last" "$prev_bg" "$is_first")
         if [[ -n "$rendered" ]]; then
-            echo "$rendered"
+            print -r -- "$rendered"
             return 0
         fi
     fi
@@ -61,5 +61,5 @@ function __gpy_segment_clock() {
     [[ $bg == transparent ]] && bg=default
     [[ $fg == transparent ]] && fg=default
 
-    echo "%K{$bg}%F{$fg} $icon %D{$(__gpy_clock_time_spec)} %f%k"
+    print -r -- "%K{$bg}%F{$fg} $icon %D{$(__gpy_clock_time_spec)} %f%k"
 }

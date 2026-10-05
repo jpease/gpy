@@ -13,7 +13,7 @@ GPY_ROOT=${0%/*}
 # fish/conf.d/gpy_init.fish's guard.
 for __gpy_core_file in constants ipc signals supervisor init; do
     if [[ ! -f "$GPY_ROOT/core/$__gpy_core_file.zsh" ]]; then
-        echo "gpy[init]: core files not found at $GPY_ROOT - GPY disabled" >&2
+        print -r -- "gpy[init]: core files not found at $GPY_ROOT - GPY disabled" >&2
         unset __gpy_core_file
         return 0
     fi
