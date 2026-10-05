@@ -604,6 +604,31 @@ fn test_cli_oneshot_git_invalid_path() {
     assert!(stdout.contains(r#""error":"Not in a git repository""#));
 }
 
+/// #680: the oneshot fallback prints an empty prompt segment for a git error.
+///
+/// Both outside a repository and with the git segment disabled, a prompt
+/// format prints only a newline rather than the error JSON. The JSON format
+/// keeps reporting the error (see `test_cli_oneshot_git_invalid_path`).
+#[test]
+fn test_cli_oneshot_git_error_renders_empty_prompt_segment() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let cwd = temp_dir.path().to_str().expect("utf8 temp path");
+
+    for format in ["ansi", "bash-prompt", "zsh-prompt"] {
+        let args = ["oneshot", "git", "--cwd", cwd, "--format", format];
+        let outside_repo = run_gpy_agent(&args);
+        let git_disabled = run_gpy_agent_with_config("[git]\nenabled = false\n", &args);
+
+        for (case, (exit_code, stdout, stderr)) in [
+            ("outside a repo", outside_repo),
+            ("with git disabled", git_disabled),
+        ] {
+            assert_eq!(exit_code, 0_i32, "{format} {case}: {stderr}");
+            assert_eq!(stdout, "\n", "{format} {case} must print only a newline");
+        }
+    }
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn test_cli_with_complex_paths() {

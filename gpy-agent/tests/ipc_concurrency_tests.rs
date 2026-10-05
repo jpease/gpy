@@ -264,16 +264,18 @@ async fn test_pings_stay_responsive_under_cold_git_load() {
     server_handle.abort();
 }
 
-/// Saturating the connection semaphore must reject new connections with a
-/// fast error response instead of queueing them forever (#316, acceptance
-/// criterion 2).
+/// Saturating the connection semaphore must reject new connections fast,
+/// by closing them without a reply.
+///
+/// Fast rejection instead of queueing forever is #316 (acceptance criterion
+/// 2). Closing without a reply is #680: the request is never read, so its
+/// format is unknown and any reply line could land in a prompt.
 ///
 /// Regression check: this test hangs against `semaphore.acquire().await`
-/// (blocks indefinitely once the single permit is held) and only passes
-/// once admission switches to `try_acquire()` with an immediate
-/// `Response::Error` reply.
+/// (blocks indefinitely once the single permit is held), and fails against
+/// the pre-#680 rejection that wrote a JSON `Response::Error` line.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_semaphore_saturation_fails_fast_with_error_response() {
+async fn test_semaphore_saturation_fails_fast_without_reply() {
     let config_manager = Arc::new(ConfigManager::with_defaults().expect("default config"));
     let security_config = GuardSettings {
         max_concurrent_connections: 1,
@@ -305,18 +307,19 @@ async fn test_semaphore_saturation_fails_fast_with_error_response() {
     // its task has actually run.
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    // A second connection must fail fast with an error response instead of
-    // queueing behind the saturated semaphore. Bound the wait well under
-    // the server's per-read/connection timeouts (default request timeout is
-    // 5s) so a regression back to a blocking `acquire().await` fails this
-    // test instead of hanging the whole suite.
+    // A second connection must fail fast instead of queueing behind the
+    // saturated semaphore. Bound the wait well under the server's
+    // per-read/connection timeouts (default request timeout is 5s) so a
+    // regression back to a blocking `acquire().await` fails this test
+    // instead of hanging the whole suite.
     //
     // The rejection is admission-control, not request/response: the server
-    // writes the busy error (and closes) as soon as it fails to acquire a
-    // permit, without ever reading from this connection. That can race
-    // ahead of our own write of the ping payload and close our write half
-    // first, so the write below is best-effort (`BrokenPipe` is an expected
-    // outcome, not a test failure) -- only the read matters.
+    // closes as soon as it fails to acquire a permit, without ever reading
+    // from this connection. That can race ahead of our own write of the
+    // ping payload, so the write below is best-effort (`BrokenPipe` is an
+    // expected outcome, not a test failure) -- only the read matters, and
+    // closing with the ping still unread may surface as a reset rather than
+    // a clean EOF, depending on the platform.
     let mut second = timeout(Duration::from_secs(5), UnixStream::connect(&socket_path))
         .await
         .expect("connect")
@@ -324,16 +327,18 @@ async fn test_semaphore_saturation_fails_fast_with_error_response() {
     let _ = second.write_all(b"{\"op\":\"ping\"}\n").await;
 
     let mut buf = vec![0_u8; 8192];
-    let n = timeout(Duration::from_secs(2), second.read(&mut buf))
+    let read = timeout(Duration::from_secs(2), second.read(&mut buf))
         .await
-        .expect("saturated semaphore must reject the second connection fast, not hang")
-        .expect("read");
-    let response = String::from_utf8_lossy(buf.get(..n).unwrap_or(&buf)).into_owned();
-
-    assert!(
-        response.contains(r#""Error""#) && response.to_lowercase().contains("busy"),
-        "expected a fast-fail busy error response, got: {response}"
-    );
+        .expect("saturated semaphore must reject the second connection fast, not hang");
+    match read {
+        Ok(0) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {}
+        Ok(n) => panic!(
+            "busy rejection must close without a reply, got: {}",
+            String::from_utf8_lossy(buf.get(..n).unwrap_or(&buf))
+        ),
+        Err(e) => panic!("unexpected read error on busy rejection: {e}"),
+    }
 
     drop(holder);
     server_handle.abort();

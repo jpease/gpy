@@ -299,7 +299,8 @@ impl ConnectionHandler {
         handler_registry: &HandlerRegistry,
         security_config: &GuardSettings,
     ) -> BlockingLineResult {
-        match protocol::deserialize_message(line_data) {
+        let (requested_format, parsed) = protocol::deserialize_message_with_format(line_data);
+        match parsed {
             Ok(message) => {
                 let is_shutdown = matches!(message, Message::Shutdown);
 
@@ -321,11 +322,15 @@ impl ConnectionHandler {
                     route_elapsed: Some(elapsed),
                 }
             }
+            // A request that parsed far enough to name its format (e.g. one
+            // whose `cwd` fails path validation) is answered in that format,
+            // so a prompt request gets an empty segment rather than protocol
+            // JSON (#680). Unparseable bytes have no format: answer in JSON.
             Err(e) => BlockingLineResult {
                 response: Response::Error {
                     message: format!("Parse error: {e}"),
                 },
-                format: Format::Json,
+                format: requested_format.unwrap_or(Format::Json),
                 notify_path: None,
                 position: SegmentPosition::MIDDLE,
                 prev_bg: None,
@@ -574,6 +579,25 @@ mod tests {
         ));
 
         (handler_registry, instant_cache, language_cache)
+    }
+
+    /// #680: a prompt request whose `cwd` fails path validation is answered
+    /// in the format it asked for, so the shell gets an empty segment rather
+    /// than a JSON error line printed into the prompt.
+    #[test]
+    fn ansi_request_with_denied_path_keeps_ansi_format() {
+        let (registry, _instant_cache, _language_cache) = test_handler_registry();
+        let result = ConnectionHandler::parse_and_route_blocking(
+            br#"{"op":"directory","cwd":"/etc","format":"ansi"}"#,
+            &registry,
+            &GuardSettings::default(),
+        );
+        assert_eq!(result.format, Format::Ansi);
+        assert!(
+            matches!(result.response, Response::Error { .. }),
+            "denied path must still be an error, got {:?}",
+            result.response
+        );
     }
 
     /// #570: a single `LanguageDetect` request must write each of the 4

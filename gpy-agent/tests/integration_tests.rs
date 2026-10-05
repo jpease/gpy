@@ -312,16 +312,17 @@ async fn test_message_size_limit_enforced() {
 /// Outcome of a single connection attempt in
 /// `spawn_concurrent_connection_attempts`.
 ///
-/// Since #316, a saturated connection semaphore fails fast with a
-/// `Response::Error` "busy" reply instead of queueing the connection
-/// forever, so a non-empty read no longer proves the handler held a
-/// permit — it must be distinguished from a real ack.
+/// Since #316, a saturated connection semaphore fails fast instead of
+/// queueing the connection forever, and since #680 it does so by closing
+/// the connection without writing a byte (any reply line would land in a
+/// prompt), so EOF before the first byte is the busy signal and a non-empty
+/// read proves the handler held a permit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConnectionOutcome {
     /// Got a real ping ack; the handler held a semaphore permit.
     Success,
-    /// Got the fast-fail busy error; the semaphore was saturated and no
-    /// permit was ever acquired.
+    /// The server closed the connection before writing any byte: the
+    /// semaphore was saturated and no permit was ever acquired.
     Busy,
     /// Connect/read failed or timed out outright.
     Failed,
@@ -381,24 +382,26 @@ async fn spawn_concurrent_connection_attempts(
             };
             let _ = stream.write_all(b"{\"op\":\"ping\"}\n").await;
 
-            // Read whatever response arrives: either a real ack (the
-            // handler acquired a semaphore permit) or the fast-fail busy
-            // error (#316 - the semaphore was saturated, no permit
-            // acquired). Only the former proves permit-gated concurrency.
+            // Read whatever arrives: either a real ack (the handler acquired
+            // a semaphore permit) or a close before any byte (#316/#680 -
+            // the semaphore was saturated, no permit acquired). Only the
+            // former proves permit-gated concurrency. Closing a Unix socket
+            // with the unread ping still queued can surface as a reset
+            // rather than a clean EOF, depending on the platform.
             let mut buf = [0_u8; 128];
-            let Ok(Ok(read_bytes)) =
+            let Ok(read_result) =
                 tokio::time::timeout(std::time::Duration::from_secs(5_u64), stream.read(&mut buf))
                     .await
             else {
                 return ConnectionOutcome::Failed;
             };
-            if read_bytes == 0_usize {
-                return ConnectionOutcome::Failed;
-            }
-
-            let response = String::from_utf8_lossy(buf.get(..read_bytes).unwrap_or(&buf));
-            if response.contains("\"Error\"") {
-                return ConnectionOutcome::Busy;
+            match read_result {
+                Ok(0_usize) => return ConnectionOutcome::Busy,
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {
+                    return ConnectionOutcome::Busy;
+                }
+                Err(_) => return ConnectionOutcome::Failed,
+                Ok(_) => {}
             }
 
             let now_active = active_clone
@@ -539,20 +542,20 @@ async fn test_concurrent_connection_limit() {
         "concurrent-limit observed: successful={successful_connections} busy={busy_connections} failed={failed_connections} peak={peak_concurrent} (of 250 attempts)"
     );
 
-    // Since #316, a saturated semaphore is rejected fast with a busy error
-    // instead of queueing indefinitely: exactly 200 of the 250 concurrent
-    // attempts can hold one of the 200 permits (all 250 attempts land on
-    // the server well within the permit hold window, before any permit is
-    // released, so this is a guarantee from the fixed permit supply, not a
-    // timing heuristic), and the rest are rejected immediately rather than
-    // hanging.
+    // Since #316, a saturated semaphore is rejected fast (since #680 by a
+    // close without any reply) instead of queueing indefinitely: exactly
+    // 200 of the 250 concurrent attempts can hold one of the 200 permits
+    // (all 250 attempts land on the server well within the permit hold
+    // window, before any permit is released, so this is a guarantee from
+    // the fixed permit supply, not a timing heuristic), and the rest are
+    // rejected immediately rather than hanging.
     assert_eq!(
         successful_connections, 200_i32,
         "expected exactly 200 connections (one per permit) to succeed, got {successful_connections}"
     );
     assert_eq!(
         busy_connections, 50_i32,
-        "expected the remaining 50 connections to be rejected fast with a busy error, got {busy_connections}"
+        "expected the remaining 50 connections to be closed fast without a reply, got {busy_connections}"
     );
     assert_eq!(
         failed_connections, 0_i32,
@@ -679,6 +682,94 @@ async fn test_workspace_update_requires_registration() {
 
     // Cleanup
     drop(stream);
+    server_handle.abort();
+}
+
+/// Send one request line on a fresh connection and return the full reply
+/// line, including its trailing newline.
+async fn request_reply_line(socket_path: &std::path::Path, request: &str) -> String {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::time::{Duration, timeout};
+
+    let mut stream = tokio::net::UnixStream::connect(socket_path)
+        .await
+        .expect("Failed to connect to test server");
+    stream
+        .write_all(format!("{request}\n").as_bytes())
+        .await
+        .expect("Failed to send request");
+    let mut reply = String::new();
+    timeout(
+        Duration::from_secs(5),
+        BufReader::new(stream).read_line(&mut reply),
+    )
+    .await
+    .expect("Timeout reading reply")
+    .expect("Failed to read reply");
+    reply
+}
+
+/// #680: a failed prompt-segment request is answered with an empty line.
+///
+/// This holds in every rendered prompt format, whether the request fails
+/// while resolving its path (a denylisted `cwd`) or in the handler (a stray
+/// empty `.git` directory), so no protocol JSON is ever printed into a
+/// prompt. JSON clients still get the `{"error": ...}` object.
+#[tokio::test]
+async fn ansi_error_replies_are_empty_lines() {
+    use tokio::time::Duration;
+
+    let _env = set_test_env();
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let socket_path = temp_dir.path().join("test_ansi_errors.sock");
+    let fake_repo_dir = temp_dir.path().join("fake");
+    fs::create_dir_all(fake_repo_dir.join(".git")).expect("create empty .git");
+    let fake_repo = fake_repo_dir.to_str().expect("utf8 temp path");
+
+    let mut server = EndpointHandle::builder()
+        .socket_path(socket_path.clone())
+        .client_registry(ClientDirectory::new().shared())
+        .git_cache(Arc::new(GitStatusCache::new()))
+        .config_manager(Arc::new(
+            ConfigManager::new().expect("default config should load"),
+        ))
+        .watcher_slot(Arc::new(std::sync::Mutex::new(None)))
+        .theme_manager(Arc::new(
+            ThemeManager::new("default").expect("default theme should load"),
+        ))
+        .instant_cache(Arc::new(
+            gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"),
+        ))
+        .latency_tracker(Arc::new(LatencyTracker::new(100)))
+        .language_cache(gpy_agent::language::DetectionCache::new())
+        .build()
+        .expect("server build");
+    let server_handle = tokio::spawn(async move {
+        let _ = server.start().await;
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    for format in ["ansi", "bash-prompt", "zsh-prompt", "json"] {
+        let git = format!(r#"{{"op":"git","cwd":"{fake_repo}","format":"{format}"}}"#);
+        let directory = format!(r#"{{"op":"directory","cwd":"/etc","format":"{format}"}}"#);
+        for request in [git, directory] {
+            let reply = request_reply_line(&socket_path, &request).await;
+            if format == "json" {
+                let value: serde_json::Value =
+                    serde_json::from_str(&reply).expect("json reply must parse");
+                assert!(
+                    value.get("error").is_some_and(serde_json::Value::is_string),
+                    "json error reply to {request} must carry an error string, got {reply}"
+                );
+            } else {
+                assert_eq!(
+                    reply, "\n",
+                    "error reply to {request} must be an empty line"
+                );
+            }
+        }
+    }
+
     server_handle.abort();
 }
 fn set_test_env() -> TestEnvGuard {

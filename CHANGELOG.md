@@ -254,6 +254,15 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Fixed
 
+- Failed prompt segments no longer print protocol JSON into the prompt
+  (#680). An `ansi`, `bash-prompt` or `zsh-prompt` request that fails (a
+  denylisted `cwd` such as `/etc`, a broken `.git`, git disabled, or no
+  repository in the oneshot fallback) now gets an empty line, so the segment
+  is omitted and Fish no longer memoizes the error as its directory segment.
+  The request keeps its format when path validation fails; `json` clients
+  still get `{"error": ...}`. A connection rejected as busy is closed without
+  a reply instead of receiving a JSON error line.
+
 - Zsh sends an integer `duration_ms` (#681). The command duration was
   computed in floating point from `$EPOCHREALTIME`, so the agent rejected
   every duration request and the oneshot fallback rejected the float too;

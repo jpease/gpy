@@ -46,6 +46,13 @@ impl Formatter for FishAnsiFormatter {
             Response::Character { success } => Ok(render_character_segment(*success, ctx, dialect)),
             Response::Hostname { hostname } => Ok(render_hostname_segment(hostname, ctx, dialect)),
             Response::Username { username } => Ok(render_username_segment(username, ctx, dialect)),
+            // A failed or disabled request omits the segment: the reply is
+            // printed verbatim into the prompt, so protocol JSON must never
+            // reach it (#680). JSON clients get the error from `JsonFormatter`.
+            Response::Error { message } => {
+                crate::debug_log!("formatter", "omitting segment after error: {message}");
+                Ok(String::new())
+            }
             // For other response types, fall back to the protocol serializer
             _ => protocol::serialize_response(response)
                 .map_err(|e| crate::Error::ipc(format!("Serialization error: {e}")))
@@ -678,6 +685,23 @@ mod tests {
         };
         let got = formatter.render(&response, &rc).expect("render");
         assert_eq!(got, "", "no format → agent emits nothing");
+    }
+
+    /// #680: an error reply renders as an empty segment in every prompt
+    /// dialect instead of leaking protocol JSON into the prompt.
+    #[test]
+    fn error_response_renders_empty() {
+        let (config, theme) = ctx();
+        let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
+        let response = Response::Error {
+            message: "x".into(),
+        };
+        for dialect in PromptDialect::ALL {
+            let got = FishAnsiFormatter::new(dialect)
+                .render(&response, &rc)
+                .expect("render");
+            assert_eq!(got, "", "{dialect:?}: error must render empty");
+        }
     }
 
     /// #677: the clock's live-time token reaches each shell unescaped, so the

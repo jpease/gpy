@@ -38,10 +38,29 @@ pub fn serialize_message(msg: &Message) -> Result<Vec<u8>> {
 ///
 /// Returns an error if deserialization fails or if message validation fails.
 pub fn deserialize_message(data: &[u8]) -> Result<Message> {
-    let wire = parse_wire(data)?;
-    let msg = resolve(wire)?;
-    validate_message_content(&msg)?;
-    Ok(msg)
+    let (_, message) = deserialize_message_with_format(data);
+    message
+}
+
+/// Deserialize JSON bytes into a message, also reporting the requested
+/// response format whenever the wire shape parsed far enough to carry one.
+///
+/// The format is read before path resolution and content validation, so a
+/// request that fails those later steps (for example a denylisted `cwd`) can
+/// still be answered in the format the client asked for (#680). It is `None`
+/// when the bytes do not parse as a message at all, or for an op that carries
+/// no format.
+pub fn deserialize_message_with_format(data: &[u8]) -> (Option<super::Format>, Result<Message>) {
+    let wire = match parse_wire(data) {
+        Ok(wire) => wire,
+        Err(e) => return (None, Err(e)),
+    };
+    let format = wire.format();
+    let message = resolve(wire).and_then(|msg| {
+        validate_message_content(&msg)?;
+        Ok(msg)
+    });
+    (format, message)
 }
 
 /// Parse wire bytes into a [`WireMessage`]: size and UTF-8 checks, JSON-shape
@@ -691,6 +710,32 @@ enum WireMessage {
     Shutdown,
     /// Raw form of [`Message::ConfigReload`].
     ConfigReload,
+}
+
+impl WireMessage {
+    /// The response format a segment-render request asked for, or `None` for
+    /// an op that carries no format.
+    const fn format(&self) -> Option<super::Format> {
+        match self {
+            Self::RepositoryStatus { format, .. }
+            | Self::LanguageDetect { format, .. }
+            | Self::DirectoryRequest { format, .. }
+            | Self::ClockRequest { format, .. }
+            | Self::DurationRequest { format, .. }
+            | Self::CharacterRequest { format, .. }
+            | Self::HostnameRequest { format, .. }
+            | Self::UsernameRequest { format, .. } => Some(*format),
+            Self::RegisterClient { .. }
+            | Self::UnregisterClient { .. }
+            | Self::WorkspaceUpdate { .. }
+            | Self::Ping
+            | Self::Status
+            | Self::ThemeQuery { .. }
+            | Self::LatencyStats
+            | Self::Shutdown
+            | Self::ConfigReload => None,
+        }
+    }
 }
 
 /// Shell IPC message format
