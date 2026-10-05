@@ -97,13 +97,65 @@ __gpy_load_theme() {
     fi
 }
 
-# Record command start time (called before each command)
+# Record command start time. Called once per command line, from the first
+# DEBUG-trap firing after __gpy_arm_preexec (#684).
 __gpy_preexec() {
     if [[ $__gpy_duration_method == "epochrealtime" ]]; then
         __gpy_cmd_start_time="$EPOCHREALTIME"
     elif [[ $__gpy_duration_method == "date" ]]; then
         __gpy_cmd_start_time=$(date +%s%N)
     fi
+}
+
+# Duration start-time capture is armed once per command line, the
+# bash-preexec technique (#684). __gpy_arm_preexec runs last in
+# PROMPT_COMMAND, so the first DEBUG-trap firing after it is the first simple
+# command of the line the user typed; __gpy_debug_trap records the start time
+# there and disarms. Without arming, the start time was overwritten before
+# every simple command: another PROMPT_COMMAND entry reset it right before
+# __gpy_precmd measured (about 0 ms), and a list or loop counted only its
+# last command. Preserves `$?` for anything that runs after it.
+__gpy_preexec_armed=""
+__gpy_arm_preexec() {
+    local s=$?
+    __gpy_preexec_armed=1
+    return $s
+}
+
+# PROMPT_COMMAND runs as an array of commands on bash >= 5.1 (#684).
+__gpy_prompt_command_arrays=""
+if (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1) )); then
+    __gpy_prompt_command_arrays=1
+fi
+
+# Make __gpy_arm_preexec the last PROMPT_COMMAND entry, adding it if missing
+# and moving it if a framework appended after it (else the start time would
+# be taken before the prompt is drawn, counting idle time). String form:
+# `...; __gpy_arm_preexec`; array form: its own last element. Idempotent and
+# fork-free; __gpy_precmd calls it every prompt, so a move takes effect from
+# the next prompt.
+__gpy_keep_arm_hook_last() {
+    local hook="__gpy_arm_preexec"
+    if [[ -n "$__gpy_prompt_command_arrays" && "${PROMPT_COMMAND@a}" == *a* ]]; then
+        [[ "${PROMPT_COMMAND[-1]}" == "$hook" ]] && return 0
+        local -a kept=()
+        local entry
+        for entry in "${PROMPT_COMMAND[@]}"; do
+            [[ "$entry" == "$hook" ]] || kept+=("$entry")
+        done
+        PROMPT_COMMAND=("${kept[@]}" "$hook")
+        return 0
+    fi
+    local pc="${PROMPT_COMMAND:-}"
+    while [[ "$pc" == *[\;[:space:]] ]]; do
+        pc="${pc%?}"
+    done
+    [[ "$pc" == "$hook" || "$pc" == *[\;[:space:]]"$hook" ]] && return 0
+    pc="${pc//; $hook/}"
+    while [[ "$pc" == *[\;[:space:]] ]]; do
+        pc="${pc%?}"
+    done
+    PROMPT_COMMAND="${pc:+$pc; }$hook"
 }
 
 # Millisecond delta between two EPOCHREALTIME-format strings ("SECONDS.microseconds",
@@ -184,8 +236,12 @@ __gpy_precmd() {
     # prompt; the restart (rate limited, backgrounded) benefits the next one.
     __gpy_supervisor_check
 
-    # Clear start time for next command
+    # Clear start time for next command, and keep the arming hook last in
+    # PROMPT_COMMAND in case something was appended after it (#684).
     __gpy_cmd_start_time=""
+    if [[ $__gpy_duration_method != "none" ]]; then
+        __gpy_keep_arm_hook_last
+    fi
 }
 
 __gpy_segment_would_render() {
@@ -471,14 +527,18 @@ __gpy_prev_debug_trap=""
 # simple command, the trap's own included, so the trap must end on the
 # user's `$_` to leave it unchanged (#682). $1 is that value.
 __gpy_debug_trap() {
-    # Only execute for interactive commands. COMP_LINE/PROMPT_COMMAND are
-    # unset outside completion/before PROMPT_COMMAND is assigned, so guard
-    # with defaults -- under `set -u` an unset reference here would error on
-    # every command (#320).
+    # Only execute for interactive commands. COMP_LINE is unset outside
+    # completion, so guard with a default -- under `set -u` an unset
+    # reference here would error on every command (#320).
     [[ -n "${COMP_LINE:-}" ]] && return  # Skip during completion
-    [[ "$BASH_COMMAND" == "${PROMPT_COMMAND:-}" ]] && return  # Skip PROMPT_COMMAND
 
-    __gpy_preexec
+    # Once per command line: armed by __gpy_arm_preexec at the end of
+    # PROMPT_COMMAND, so later simple commands, other PROMPT_COMMAND entries
+    # and trap handlers never move the start time (#684).
+    if [[ -n "$__gpy_preexec_armed" ]]; then
+        __gpy_preexec_armed=""
+        __gpy_preexec
+    fi
 
     # `if/fi` (not `[[ ]] && eval`) so a missing prior trap leaves this
     # function's exit status 0 instead of leaking the failed test's 1 as the
@@ -502,7 +562,9 @@ __gpy_setup_hooks() {
     # Setup DEBUG trap for preexec emulation, chaining any trap already
     # installed instead of overwriting it (#320). Skip capture if the
     # existing trap is already gpy's own (re-init in the same shell), which
-    # would otherwise chain into itself and recurse forever.
+    # would otherwise chain into itself and recurse forever. The arming hook
+    # goes last in PROMPT_COMMAND, after __gpy_precmd and anything else
+    # (#684).
     if [[ $__gpy_duration_method != "none" ]]; then
         local existing_trap
         existing_trap="$(trap -p DEBUG)"
@@ -511,6 +573,7 @@ __gpy_setup_hooks() {
             __gpy_prev_debug_trap="${existing_trap%\' DEBUG}"
         fi
         trap '__gpy_debug_trap "$_"' DEBUG
+        __gpy_keep_arm_hook_last
     fi
 }
 
