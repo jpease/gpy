@@ -252,6 +252,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   or reference them (#662). Use `gpy-agent init` / `gpy config wizard` in
   place of `gpy_setup`, and `gpy doctor` in place of `gpy_config_validate`.
 
+- `gpy-agent oneshot git --changed-file` (#776). It reported one file's
+  counts as the whole repository's status, and nothing used it.
+
 ### Fixed
 
 - Zsh prints IPC requests, replies and cached output verbatim (#676).
@@ -285,6 +288,14 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   overlapping OS watches (#687): nested repositories, submodules and linked
   worktrees keep their live updates. Watches are reference-counted per owner
   on every backend.
+
+- Incremental git updates no longer diverge from a full `git status` (#711,
+  #713, #775): files inside a new untracked directory are not counted twice,
+  emptying that directory clears it, a filename starting with `:` is matched
+  literally, a changed path with a non-ASCII name falls back to a full scan,
+  and a TAB in a tracked filename no longer truncates its cache key. A
+  differential test now checks the incremental pipeline against an
+  independent parse of `git status` after random file operations.
 
 - The Python segment falls back to `python3` when `python` is not on `PATH`
   (#688), as on stock macOS, Debian/Ubuntu and Homebrew.

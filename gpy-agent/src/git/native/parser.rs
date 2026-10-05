@@ -347,10 +347,11 @@ pub fn parse_v2_untracked_line(line: &str) -> Option<PathBuf> {
 /// - Type u (unmerged/conflict): `u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>`
 ///   — 10 metadata fields (three stage hashes), then the path.
 ///
-/// In `-z` mode a type `2` record's original path arrives as a separate
-/// NUL-delimited record (handled by the caller), so the record parsed here
-/// contains only the destination path, which is the correct file-map key. The
-/// `\t` split additionally keeps this correct for newline-mode `<dest>\t<orig>`.
+/// Only `-z` output is parsed: a type `2` record's original path arrives as a
+/// separate NUL-delimited record (handled by the caller), so the record parsed
+/// here contains only the destination path, which is the correct file-map
+/// key. The path is taken verbatim; a TAB is a legal filename byte in `-z`
+/// mode (#775).
 ///
 /// Returns: `Some(ParsedChangedFile)` if parsed successfully.
 #[must_use]
@@ -372,11 +373,10 @@ pub fn parse_v2_changed_line(line: &str) -> Option<ParsedChangedFile> {
     }
     let path_field = fields.next()?;
 
-    let dest = path_field.split('\t').next().unwrap_or(path_field);
-    if dest.is_empty() {
+    if path_field.is_empty() {
         return None;
     }
-    let path = PathBuf::from(dest);
+    let path = PathBuf::from(path_field);
 
     let (is_conflict, is_staged, is_unstaged) = parse_v2_file_status(xy);
 
@@ -481,11 +481,12 @@ mod tests {
     }
 
     #[test]
-    fn type2_rename_handles_tab_separated_original_path() {
-        // Newline-mode safety net: `<dest>\t<orig>` keeps only the destination.
-        let record = "2 R. N... 100644 100644 100644 abc abc R100 dest.txt\torig.txt";
-        let parsed = parse_v2_changed_line(record).expect("type 2 record parses");
-        assert_eq!(parsed.path, PathBuf::from("dest.txt"));
+    fn changed_record_keeps_tab_in_path() {
+        // `-z` paths are unquoted; a TAB is filename content, not a separator
+        // (#775).
+        let record = "1 A. N... 000000 100644 100644 abc abc tab\tname.txt";
+        let parsed = parse_v2_changed_line(record).expect("type 1 record parses");
+        assert_eq!(parsed.path, PathBuf::from("tab\tname.txt"));
     }
 
     #[test]
