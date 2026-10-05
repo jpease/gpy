@@ -427,12 +427,9 @@ echo "=== Testing Doorbell Reload (lazy segment gap regression) ==="
 doorbell_dir=$(mktemp -d)
 __gpy_shell_flag_base="$doorbell_dir/$$"
 # What the agent does for a config change: leave the reload flag (and ring
-# SIGURG, which Bash ignores); then the user presses Enter. The start time is
-# cleared so __gpy_precmd keeps the preset duration instead of measuring the
-# one this script's DEBUG trap just started.
+# SIGURG, which Bash ignores); then the user presses Enter.
 __gpy_test_ring_reload() {
     : >"$__gpy_shell_flag_base.reload"
-    __gpy_cmd_start_time=""
     __gpy_precmd
 }
 __gpy_load_theme() {
