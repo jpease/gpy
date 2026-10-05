@@ -26,6 +26,17 @@ pub trait ReleaseSource: Send + Sync {
     fn uses_stderr(&self) -> bool {
         false
     }
+
+    /// Programs to try, in order, when the primary program
+    /// (`version_command()[0]`) is not installed.
+    ///
+    /// Each entry replaces the program and reuses the same arguments. A
+    /// fallback runs only when the previous program's spawn failed with
+    /// [`std::io::ErrorKind::NotFound`]; any other outcome (success,
+    /// non-zero exit, timeout, other spawn error) is final.
+    fn fallback_programs(&self) -> &[&str] {
+        &[]
+    }
 }
 
 /// Look up `cache_key` in the shared version cache, evicting it if stale.
@@ -70,25 +81,50 @@ pub fn execute_version_command<P: ReleaseSource + ?Sized>(
         record_mise_negative(program, cwd);
     }
 
-    let output = execute_direct_version_command(program, args, cwd)?;
+    let candidates = std::iter::once(*program).chain(detector.fallback_programs().iter().copied());
+    let mut last_not_found = None;
+    for candidate in candidates {
+        let child = match spawn_direct_version_command(candidate, args, cwd) {
+            Ok(child) => child,
+            // Not installed: try the next fallback program, if any.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                last_not_found = Some((candidate, e));
+                continue;
+            }
+            Err(e) => {
+                return Err(Error::language(format!(
+                    "Failed to execute {candidate}: {e}"
+                )));
+            }
+        };
 
-    if !output.status.success() {
-        return Ok(None);
+        let output = wait_with_timeout(child, candidate, VERSION_COMMAND_TIMEOUT)?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        return Ok(parse_version_output(detector, &output));
     }
 
-    Ok(parse_version_output(detector, &output))
+    Err(last_not_found.map_or_else(
+        || Error::language(format!("Failed to execute {program}")),
+        |(candidate, e)| Error::language(format!("Failed to execute {candidate}: {e}")),
+    ))
 }
 
-/// Execute a version command directly in the requested working directory.
+/// Spawn a version command directly in the requested working directory.
+///
+/// Returns the raw [`std::io::Error`] so [`execute_version_command`] can tell
+/// a missing program ([`std::io::ErrorKind::NotFound`]) apart from other
+/// spawn failures.
 ///
 /// # Errors
 ///
-/// Returns an error when the detector command cannot be spawned.
-fn execute_direct_version_command(
+/// Returns the spawn error when the program cannot be started.
+fn spawn_direct_version_command(
     program: &str,
     args: &[&str],
     cwd: Option<&Path>,
-) -> Result<Output> {
+) -> std::io::Result<Child> {
     let mut command = Command::new(program);
     command.args(args);
     if let Some(path) = cwd {
@@ -96,12 +132,7 @@ fn execute_direct_version_command(
     }
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     crate::process::spawn_in_own_process_group(&mut command);
-
-    let child = command
-        .spawn()
-        .map_err(|e| Error::language(format!("Failed to execute {program}: {e}")))?;
-
-    wait_with_timeout(child, program, VERSION_COMMAND_TIMEOUT)
+    command.spawn()
 }
 
 /// Detect the version reported by a specific Python interpreter binary.
@@ -393,6 +424,12 @@ impl ReleaseSource for PythonDetector {
     }
     fn version_command(&self) -> &[&str] {
         &["python", "--version"]
+    }
+    /// `python` stays first so pyenv/asdf shims and a project's
+    /// `.python-version` win; `python3` covers hosts with no unversioned
+    /// `python` on `PATH` (macOS 12.3+, Debian/Ubuntu, Homebrew).
+    fn fallback_programs(&self) -> &[&str] {
+        &["python3"]
     }
     fn parse_version(&self, output: &str) -> Option<String> {
         output
@@ -876,6 +913,127 @@ mod tests {
     fn python_detector_uses_python_command() {
         let detector = PythonDetector;
         assert_eq!(detector.version_command(), ["python", "--version"]);
+    }
+
+    /// Stub detector with a caller-supplied command and fallback list. Parses
+    /// the second whitespace token, like [`PythonDetector`].
+    #[cfg(unix)]
+    struct StubDetector<'a> {
+        name: &'static str,
+        command: Vec<&'a str>,
+        fallbacks: Vec<&'a str>,
+    }
+
+    #[cfg(unix)]
+    impl ReleaseSource for StubDetector<'_> {
+        fn language_name(&self) -> &'static str {
+            self.name
+        }
+
+        fn version_command(&self) -> &[&str] {
+            &self.command
+        }
+
+        fn fallback_programs(&self) -> &[&str] {
+            &self.fallbacks
+        }
+
+        fn parse_version(&self, output: &str) -> Option<String> {
+            output
+                .split_whitespace()
+                .nth(1)
+                .map(std::borrow::ToOwned::to_owned)
+        }
+    }
+
+    /// Write an executable `/bin/sh` script at `path` with `body`.
+    #[cfg(unix)]
+    fn write_script(path: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(path, format!("#!/bin/sh\n{body}\n")).expect("write script");
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod script");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn fallback_program_used_when_primary_not_found() {
+        let stub = StubDetector {
+            name: "fallback-test",
+            command: vec!["gpy-test-no-such-binary-7f3a", "-c", "echo Python 3.11.9"],
+            fallbacks: vec!["sh"],
+        };
+
+        let version = execute_version_command(&stub, None).expect("fallback should run");
+        assert_eq!(version.as_deref(), Some("3.11.9"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn fallback_not_used_on_nonzero_exit() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let marker = temp_dir.path().join("fallback-ran");
+        let fallback = temp_dir.path().join("fallback.sh");
+        write_script(
+            &fallback,
+            &format!("echo ran >> '{}'\necho Python 9.9.9", marker.display()),
+        );
+        let fallback_str = fallback.to_str().expect("utf-8 temp path");
+        let stub = StubDetector {
+            name: "fallback-test",
+            command: vec!["sh", "-c", "exit 1"],
+            fallbacks: vec![fallback_str],
+        };
+
+        let version = execute_version_command(&stub, None).expect("non-zero exit is Ok(None)");
+        assert_eq!(version, None);
+        assert!(
+            !marker.exists(),
+            "fallback must not run after a non-zero exit"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn fallback_not_used_when_primary_succeeds() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let marker = temp_dir.path().join("fallback-ran");
+        let fallback = temp_dir.path().join("fallback.sh");
+        write_script(
+            &fallback,
+            &format!("echo ran >> '{}'\necho Python 9.9.9", marker.display()),
+        );
+        let fallback_str = fallback.to_str().expect("utf-8 temp path");
+        let stub = StubDetector {
+            name: "fallback-test",
+            command: vec!["sh", "-c", "echo Python 3.12.1"],
+            fallbacks: vec![fallback_str],
+        };
+
+        let version = execute_version_command(&stub, None).expect("primary should run");
+        assert_eq!(version.as_deref(), Some("3.12.1"));
+        assert!(
+            !marker.exists(),
+            "fallback must not run when primary exists"
+        );
+    }
+
+    #[test]
+    fn python_detector_falls_back_to_python3() {
+        assert_eq!(PythonDetector.fallback_programs(), ["python3"]);
+    }
+
+    #[test]
+    fn other_detectors_have_no_fallback_programs() {
+        for detector in get_version_detectors() {
+            if detector.language_name() != "python" {
+                assert!(
+                    detector.fallback_programs().is_empty(),
+                    "{} unexpectedly declares fallbacks",
+                    detector.language_name()
+                );
+            }
+        }
     }
 
     #[test]
