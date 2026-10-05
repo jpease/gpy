@@ -203,7 +203,29 @@ function _remove_conflicting_binaries --argument-names install_dir
     # install dir and would therefore shadow the freshly installed binaries
     # (e.g. a leftover `cargo install` copy in ~/.cargo/bin). Tool-manager
     # shims (mise/asdf) are left alone: they fall through to PATH.
+    #
+    # Deletion is limited to copies under $HOME (#693). A shadowing copy
+    # anywhere else (another user's home, /usr/local/bin, a Homebrew prefix)
+    # is reported, not removed: with HOME pointed at a sandbox, `sudo -E` or a
+    # second account, "earlier on PATH" says nothing about who owns the file.
     set -l target_dir (path resolve $install_dir)
+
+    # If the install dir is not on PATH, nothing can shadow it, and every
+    # copy on PATH is the one the user actually runs. Delete nothing; the
+    # post-install verification already warns that the install is off PATH.
+    if not contains -- $target_dir (path resolve $PATH)
+        for name in gpy gpy-agent
+            set -l in_use (type -P $name 2>/dev/null)
+            test -n "$in_use"; and echo "ℹ️  $install_dir is not on PATH; $name resolves to $in_use instead (left in place)"
+        end
+        return 0
+    end
+
+    # Resolved so a symlinked HOME (/var -> /private/var on macOS) compares
+    # equal to the resolved candidate directories below. Empty when HOME is
+    # unset, in which case nothing is deleted.
+    set -l home_dir
+    test -n "$HOME"; and set home_dir (path resolve $HOME)
 
     for name in gpy gpy-agent
         set -l reached_target 0
@@ -231,6 +253,15 @@ function _remove_conflicting_binaries --argument-names install_dir
             set -l found_version ("$found" --version 2>/dev/null)
             if not string match -q "$name *" -- $found_version
                 echo "⚠️  Found $name earlier on PATH but it doesn't look like ours, leaving it: $found"
+                continue
+            end
+
+            # `rm` removes the directory entry, so the directory (not a
+            # symlink's target) decides whether the file is under $HOME.
+            # Plain prefix comparison: HOME may contain glob metacharacters.
+            set -l home_prefix "$home_dir/"
+            if test -z "$home_dir"; or test (string sub -l (string length -- $home_prefix) -- "$found_dir/") != "$home_prefix"
+                echo "⚠️  $found shadows the install but is outside \$HOME, leaving it. If it is a stale copy, remove it: rm '$found'"
                 continue
             end
 
