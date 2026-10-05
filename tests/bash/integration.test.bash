@@ -419,16 +419,21 @@ echo "=== Testing Doorbell Reload (lazy segment gap regression) ==="
 # regardless of $__enabled_segments (unlike Fish, which only sources files for
 # segments already in the enabled list). So a theme switch that enables a
 # segment new to this shell's __enabled_segments already has its detect/render
-# functions in memory; the doorbell's reload only needs to refresh
-# __enabled_segments (via __gpy_load_theme) and re-render. This guards against
-# a future regression to per-segment lazy sourcing that would reintroduce the
-# gap Fish had (#296).
+# functions in memory; the reload only needs to refresh __enabled_segments
+# (via __gpy_load_theme) and re-render. This guards against a future
+# regression to per-segment lazy sourcing that would reintroduce the gap Fish
+# had (#296). Bash consumes the doorbell's flags at the next prompt, in
+# __gpy_precmd, before it renders (#678).
 doorbell_dir=$(mktemp -d)
 __gpy_shell_flag_base="$doorbell_dir/$$"
-# What the agent does for a config change: leave the reload flag, ring SIGURG.
+# What the agent does for a config change: leave the reload flag (and ring
+# SIGURG, which Bash ignores); then the user presses Enter. The start time is
+# cleared so __gpy_precmd keeps the preset duration instead of measuring the
+# one this script's DEBUG trap just started.
 __gpy_test_ring_reload() {
     : >"$__gpy_shell_flag_base.reload"
-    __gpy_handle_doorbell
+    __gpy_cmd_start_time=""
+    __gpy_precmd
 }
 __gpy_load_theme() {
     __enabled_segments="duration"
@@ -437,26 +442,26 @@ __duration_threshold_ms=100
 __gpy_cmd_duration=5000
 __gpy_test_ring_reload
 if [[ "$PS1" == *"3.5s"* ]]; then
-    echo "PASS: newly-enabled duration segment rendered after reload doorbell"
+    echo "PASS: newly-enabled duration segment rendered in the prompt after the reload flag"
 else
-    echo "FAIL: newly-enabled duration segment missing after reload doorbell (PS1=$PS1)"
+    echo "FAIL: newly-enabled duration segment missing from the prompt after the reload flag (PS1=$PS1)"
     exit 1
 fi
 if [[ -e "$__gpy_shell_flag_base.reload" ]]; then
-    echo "FAIL: doorbell left the reload flag behind"
+    echo "FAIL: the next prompt left the reload flag behind"
     exit 1
 fi
-echo "PASS: doorbell consumes the reload flag"
+echo "PASS: the next prompt consumes the reload flag"
 
-# A bare doorbell (no flag) is a repaint: it must not reload the theme.
+# A prompt with no flag must not reload the theme.
 __gpy_load_theme() {
     __enabled_segments="directory"
 }
-__gpy_handle_doorbell
+__gpy_precmd
 if [[ "$__enabled_segments" == "duration" ]]; then
-    echo "PASS: doorbell without a reload flag does not reload"
+    echo "PASS: a prompt without a reload flag does not reload"
 else
-    echo "FAIL: doorbell without a reload flag reloaded (enabled=$__enabled_segments)"
+    echo "FAIL: a prompt without a reload flag reloaded (enabled=$__enabled_segments)"
     exit 1
 fi
 
@@ -464,9 +469,9 @@ __gpy_load_theme() {
     __enabled_segments="duration does-not-exist-segment"
 }
 if __gpy_test_ring_reload; then
-    echo "PASS: unknown segment in enabled list does not error the doorbell handler"
+    echo "PASS: unknown segment in enabled list does not error the prompt"
 else
-    echo "FAIL: doorbell handler errored on an unknown segment"
+    echo "FAIL: the prompt errored on an unknown segment after a reload"
     exit 1
 fi
 unset __duration_threshold_ms __gpy_cmd_duration

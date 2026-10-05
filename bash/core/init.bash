@@ -160,6 +160,10 @@ __gpy_precmd() {
         fi
     fi
 
+    # Act on the agent's doorbell flags (signals.bash, #678) before rendering,
+    # so a config reload shows in the prompt about to be drawn.
+    __gpy_consume_shell_flags
+
     # Render prompt (pass exit code for status segment)
     __gpy_render_prompt "$exit_code"
 

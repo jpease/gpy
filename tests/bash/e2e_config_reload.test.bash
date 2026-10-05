@@ -3,17 +3,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # config.toml edit -> theme export rewritten -> `<pid>.reload` flag + SIGURG
-# doorbell -> Bash re-renders (#647 row 3).
+# doorbell -> Bash's next prompt reloads and re-renders (#647 row 3).
 #
-# `integration.test.bash` covers the reload doorbell with `__gpy_load_theme`
+# `integration.test.bash` covers the reload flag with `__gpy_load_theme`
 # stubbed; nothing drove a real Bash client through a real config change.
 # With a real agent and a `bash -i` on a pty, flipping `show_icons` in
 # config.toml must:
 #   (a) rewrite $XDG_CACHE_HOME/gpy/theme-export.bash (mtime and content),
-#   (b) show the change at the NEXT prompt: the doorbell handler re-sources the
-#       export and re-renders PS1, but readline cannot repaint an idle prompt
-#       (docs/user/bash-limitations.md), so one Enter is needed and recorded
-#       here as the measured behaviour,
+#   (b) show the change at the NEXT prompt: Bash ignores the SIGURG (no trap,
+#       #678) and readline cannot repaint an idle prompt
+#       (docs/user/bash-limitations.md); the prompt drawn after one Enter
+#       consumes the reload flag, re-sources the export and renders the new
+#       PS1, recorded here as the measured behaviour,
 #   (c) leave an export that sources cleanly under `bash -u`.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

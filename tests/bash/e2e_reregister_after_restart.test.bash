@@ -8,13 +8,12 @@
 # When the agent (re)starts it writes a `<pid>.reregister` flag for, and rings
 # the SIGURG doorbell of, every PID recorded under <runtime root>/shells/, and
 # keeps nudging tracked shells that stay unregistered. Bash never recorded
-# its PID and had no handler, so an open shell that stayed in one directory
-# stopped receiving agent notifications for the rest of its life after any
-# restart. Bash at an idle readline prompt defers a URG trap until readline
-# returns (measured: only SIGALRM, which readline handles itself, runs a trap
-# immediately, and SIGALRM would kill a handler-less `exec`ed shell), so the
-# re-registration happens on the next line, like Bash's live updates
-# (docs/user/bash-limitations.md). With a client registered:
+# its PID, so an open shell that stayed in one directory stopped receiving
+# agent notifications for the rest of its life after any restart. Bash
+# installs no URG trap (#678; readline cannot repaint an idle prompt anyway),
+# so the prompt drawn after the next Enter consumes the flag and
+# re-registers, like Bash's live updates (docs/user/bash-limitations.md).
+# With a client registered:
 #   (a) `gpy-agent stop` then `gpy-agent start` on the same socket leaves a
 #       `<pid>.reregister` flag for the shell; one Enter then re-registers
 #       the client and consumes the flag;

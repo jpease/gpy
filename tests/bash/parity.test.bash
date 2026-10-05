@@ -31,16 +31,22 @@ for seg in "${required_segments[@]}"; do
     echo "✓ $seg"
 done
 
-# Check signal handlers. Read the trap via command substitution, NOT a
-# pipe: `trap -p | grep` runs `trap -p` on the left of a pipe (a subshell),
-# and bash 3.2 (macOS's system bash) resets non-ignored traps in subshells,
-# so the handler would appear missing even though it is correctly installed.
-# `$(...)` preserves it on both bash 3.2 and 5.
-if [[ "$(trap -p URG)" != *__gpy_handle_doorbell* ]]; then
-    echo "FAIL: Missing SIGURG doorbell handler"
+# Check signal handling. Bash must NOT trap SIGURG (#678): the doorbell's
+# flags are consumed at the next prompt, and a trap only re-rendered a PS1
+# readline cannot show, nested renders on bash 5 and aborted `wait`. Read
+# the trap via command substitution, NOT a pipe: `trap -p | grep` runs
+# `trap -p` on the left of a pipe (a subshell), and bash 3.2 (macOS's system
+# bash) resets non-ignored traps in subshells. `$(...)` preserves them on
+# both bash 3.2 and 5.
+if [[ -n "$(trap -p URG)" ]]; then
+    echo "FAIL: SIGURG is trapped: $(trap -p URG)"
     exit 1
 fi
-echo "✓ SIGURG doorbell handler"
+if ! declare -F __gpy_consume_shell_flags >/dev/null; then
+    echo "FAIL: Missing doorbell flag consumer __gpy_consume_shell_flags"
+    exit 1
+fi
+echo "✓ SIGURG doorbell flags consumed at the prompt, no URG trap"
 
 # Check supervisor
 if ! declare -f __gpy_supervisor_start &>/dev/null; then

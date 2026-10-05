@@ -40,7 +40,7 @@ Condensed from the full [Bash Limitations](bash-limitations.md) matrix, with Fis
 | Transient prompt | Yes | Yes | No | No |
 | Duration segment precision | Millisecond | Millisecond (`EPOCHREALTIME`) | Millisecond (`EPOCHREALTIME`) | Not available — segment disabled |
 | Relative performance | Fastest (A+) | A | B+ | B- (slowest) |
-| Signal mechanism | One `--on-signal SIGURG` handler | Native `TRAPURG` function | `trap` builtin (URG) | `trap` builtin (URG) |
+| Signal mechanism | One `--on-signal SIGURG` handler | Native `TRAPURG` function | No trap: SIGURG ignored, flags read at the next prompt (#678) | Same as Bash 5.x |
 | Re-registers after an agent restart | Yes | Yes (#638) | At the next prompt (#638) | At the next prompt |
 | Minimum version | 3.6+ | 5.8+ | 4.0+ (5.0+ recommended) | N/A (upgrade recommended) |
 

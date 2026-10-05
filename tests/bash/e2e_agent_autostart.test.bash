@@ -117,14 +117,11 @@ fi
 echo dirty >>"$SHELL_E2E_REPO/tracked.txt"
 # gpy-agent writes the instant-prompt cache before it signals at all (the
 # watcher event lands, the cache is refreshed, *then* SIGURG goes out), so
-# the data is ready within milliseconds of the edit. What is NOT reliable is
-# Bash noticing the signal while it sits idle in readline: a trap registered
-# with plain `trap ... URG` does not run until Bash's main loop gets
-# control back, and readline's blocking terminal read never hands it back on
-# its own (confirmed with a bare `trap` on a user signal + idle `bash -i` on a
-# pty: the trap does not fire, with or without a signal, until the next
-# keystroke). __gpy_precmd renders synchronously off already-fresh data on
-# every keystroke-driven prompt, so poll by sending real newlines instead of
+# the data is ready within milliseconds of the edit. What is NOT available is
+# Bash showing it while it sits idle in readline: Bash ignores the SIGURG (no
+# trap, #678), and readline cannot repaint an idle prompt anyway.
+# __gpy_precmd renders synchronously off already-fresh data on every
+# keystroke-driven prompt, so poll by sending real newlines instead of
 # waiting on the async push -- each one drives an ordinary render that reads
 # whatever the cache currently holds, converging as soon as the watcher has
 # caught up (usually the first or second newline) and bounded by

@@ -123,7 +123,7 @@ __gpy_shell_registry_file() {
 # the agent only signals PIDs it finds here, and until this landed Bash never
 # wrote one, so an open Bash shell stopped receiving agent notifications for
 # the rest of its life after any agent restart. Also caches the doorbell flag
-# base path so __gpy_handle_doorbell checks flags without forking.
+# base path so __gpy_consume_shell_flags checks flags without forking.
 __gpy_shell_flag_base=""
 __gpy_track_shell_for_agent_recovery() {
     local dir

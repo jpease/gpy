@@ -148,7 +148,7 @@ end
 **Shell-specific implementation**:
 - Fish: one `--on-signal SIGURG` function → increment `$__gpy_repaint_trigger`
 - Zsh: `TRAPURG()` → re-render `PROMPT`, `zle reset-prompt` when zle is active
-- Bash: `trap '...' URG` → re-render `PS1` (visible at the next prompt)
+- Bash: no trap; SIGURG stays ignored (#678). `__gpy_precmd` handles flags 1 and 2 before rendering `PS1`, so changes show at the next prompt
 
 #### Layer 3: Segment Rendering (`segments/*.{fish,zsh,bash}`)
 
@@ -312,7 +312,7 @@ zle reset-prompt  # Zsh-specific repaint primitive
 ```
 
 ```bash
-# Bash: trap '...' URG handles the flags, re-renders PS1.
+# Bash: no URG trap. The next prompt handles the flags and renders PS1.
 # Readline cannot redraw an idle prompt; the next prompt shows fresh data.
 ```
 

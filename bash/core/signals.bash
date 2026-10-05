@@ -1,8 +1,8 @@
 # bash/core/signals.bash
 # Signal handlers for live updates and config reload
 
-# Config hot-reload: re-read the theme and drop render caches. Runs from the
-# doorbell handler when the agent left a `<pid>.reload` flag.
+# Config hot-reload: re-read the theme and drop render caches. Runs from
+# __gpy_consume_shell_flags when the agent left a `<pid>.reload` flag.
 __gpy_reload_config() {
     # Reload theme from agent
     __gpy_load_theme &>/dev/null
@@ -15,23 +15,24 @@ __gpy_reload_config() {
     __gpy_dir_cache_val=""
 }
 
-# SIGURG doorbell (#674): the agent's only signal to a shell. SIGURG is
-# ignored by default, so a shell that has not installed this handler yet (for
-# example one that just ran `exec bash` under the same, still-registered PID)
-# is not killed by it. The message travels in flag files next to this shell's
-# tracking entry (__gpy_shell_flag_base, set by
-# __gpy_track_shell_for_agent_recovery):
+# SIGURG doorbell (#674): the agent rings SIGURG and leaves the message in
+# flag files next to this shell's tracking entry (__gpy_shell_flag_base, set
+# by __gpy_track_shell_for_agent_recovery):
 #   <pid>.reregister  the agent (re)started: forget the registration and
 #                     register again (#638). Re-entrancy guard: a second nudge
 #                     while one is being handled is dropped; the next
 #                     prompt's own retry covers it.
 #   <pid>.reload      config/theme changed: reload.
-# Each flag is removed before acting on it. Then re-render, as a plain
-# repaint does. Bash at an idle readline prompt defers this trap until the
-# line is accepted (readline runs traps immediately only for SIGALRM), so
-# both the re-registration and the new PS1 take effect at the next prompt.
+# Bash installs no SIGURG trap (#678); the signal keeps its default
+# disposition, ignore, so it never kills a shell (an `exec bash` included)
+# and never interrupts `wait`. Readline cannot repaint an idle prompt, so a
+# trap could only re-render a PS1 nobody sees: bash 5 nested those renders
+# without bound while doorbells kept coming, and bash 3.2 ran them at the
+# idle prompt. Instead __gpy_precmd calls this before every render, so a
+# reload or re-registration takes effect in the prompt about to be drawn.
+# Each flag is removed before acting on it. No flag costs two `[[ -e ]]`.
 __gpy_reregistering=""
-__gpy_handle_doorbell() {
+__gpy_consume_shell_flags() {
     local base="${__gpy_shell_flag_base:-}"
     if [[ -n "$base" && -e "$base.reregister" && -z "$__gpy_reregistering" ]]; then
         rm -f "$base.reregister" 2>/dev/null
@@ -43,9 +44,7 @@ __gpy_handle_doorbell() {
         rm -f "$base.reload" 2>/dev/null
         __gpy_reload_config
     fi
-    if [[ -n "$PS1" ]]; then
-        __gpy_render_prompt "${__gpy_last_exit_code:-0}"
-    fi
+    return 0
 }
 
 # Shell exit: tell the agent this PID is gone and drop the recovery-nudge
@@ -67,8 +66,11 @@ __gpy_handle_exit() {
 
 # Setup signal handlers
 __gpy_setup_signals() {
-    # Register signal handlers
-    trap '__gpy_handle_doorbell' URG
+    # Drop the URG trap an earlier gpy installed in this shell (re-sourced
+    # after an upgrade); its handler no longer exists (#678).
+    if [[ "$(trap -p URG)" == *"__gpy_handle_doorbell"* ]]; then
+        trap - URG
+    fi
 
     local existing_exit
     existing_exit="$(trap -p EXIT)"

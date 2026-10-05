@@ -4,9 +4,10 @@
 #
 # Live git content and an idle Bash prompt (#647 row 1; measured for #637).
 #
-# Bash's SIGURG doorbell handler re-renders PS1, but readline has already expanded
-# and drawn the previous prompt and has no `reset-prompt`: the new PS1 is only
-# shown at the next prompt. This test pins what a Bash user actually gets,
+# The agent rings Bash's SIGURG doorbell, which Bash ignores (no trap, #678):
+# readline has already expanded and drawn the previous prompt and has no
+# `reset-prompt`, so fresh data is only shown at the next prompt. This test
+# pins what a Bash user actually gets,
 # which docs/user/bash-limitations.md states in the same words:
 #   (a) the agent's instant-cache entry for the repo changes after an edit
 #       made from outside the shell with no `git add` (the agent side works),
