@@ -63,7 +63,7 @@ For Zsh or Bash, see [Building from Source](docs/INSTALL.md#building-from-source
 gpy status                                # agent status and diagnostics
 gpy doctor                                # health checks
 gpy theme list
-gpy theme import ~/.config/starship.toml
+gpy theme import ~/.config/starship.toml --name my-prompt
 gpy palette import scheme.yaml
 ```
 

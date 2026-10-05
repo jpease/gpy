@@ -133,6 +133,40 @@ fn import_refuses_overwrite_without_force() {
 }
 
 #[test]
+fn import_refuses_to_shadow_builtin_starship_without_force() {
+    // #691: `starship.toml` derives the name `starship`, which is a builtin
+    // theme and palette; user files would silently replace both.
+    let env = CliTestEnv::new().unwrap();
+    let source = write_sample(&env);
+    let theme = env.themes_dir().join("starship.toml");
+    let palette = env.config_dir().join("palettes").join("starship.toml");
+
+    let refused = env
+        .run_gpy_agent(&["theme", "import", source.to_str().unwrap()])
+        .unwrap();
+    assert_ne!(refused.exit_code, 0_i32, "import should fail: {refused:?}");
+    assert!(refused.stderr.contains("builtin"), "{refused:?}");
+    assert!(refused.stderr.contains("--name"), "{refused:?}");
+    assert!(!theme.exists(), "no theme file written");
+    assert!(!palette.exists(), "no palette file written");
+
+    for kind in ["theme", "palette"] {
+        let listed = env.run_gpy(&[kind, "list"]).unwrap();
+        assert!(
+            listed.stdout.contains("  starship [builtin]")
+                || listed.stdout.contains("  starship * [builtin]"),
+            "{kind} list: {listed:?}"
+        );
+    }
+
+    env.run_gpy_agent(&["theme", "import", source.to_str().unwrap(), "--force"])
+        .unwrap()
+        .assert_success("forced import");
+    assert!(theme.exists(), "--force writes the theme");
+    assert!(palette.exists(), "--force writes the palette");
+}
+
+#[test]
 fn import_apply_layout_writes_enabled_segments() {
     let env = CliTestEnv::new().unwrap();
     let source = write_sample(&env);

@@ -4,6 +4,7 @@
 //! [`crate::import::starship`]. Unsupported Starship constructs become grouped
 //! warnings on stderr; the command exits 0 on a successful (if lossy) import.
 
+use crate::config::discovery::shadowed_provider;
 use crate::config::types::is_safe_config_name;
 use crate::import::starship::{ImportArtifacts, build, parse};
 use crate::palette::manager::PaletteManager;
@@ -56,7 +57,8 @@ pub fn derive_name(path: &str, explicit: Option<&str>) -> String {
 /// # Errors
 ///
 /// Returns an error if the source file is missing/unreadable/unparseable, if
-/// output files exist without `--force`, or if writing/config-save fails.
+/// the name matches a builtin/plugin theme or palette or output files exist
+/// without `--force`, or if writing/config-save fails.
 pub fn run(opts: &ImportOptions<'_>) -> Result<()> {
     let source_path = Path::new(opts.path);
     if !source_path.is_file() {
@@ -110,17 +112,19 @@ fn print_stdout(artifacts: &ImportArtifacts) -> Result<()> {
     Ok(())
 }
 
-/// Write palette + theme files, refusing to overwrite without `force`.
+/// Write palette + theme files, refusing to overwrite or shadow without `force`.
 ///
 /// # Errors
 ///
-/// Returns an error if the files already exist without `force`, or if creating
-/// directories or writing to disk fails.
+/// Returns an error if `name` matches a builtin or plugin theme/palette, or
+/// the files already exist, without `force`; or if creating directories or
+/// writing to disk fails.
 fn write_files(artifacts: &ImportArtifacts, name: &str, force: bool) -> Result<()> {
     let palette_path = PaletteManager::user_palettes_dir().join(format!("{name}.toml"));
     let theme_path = ThemeManager::user_themes_dir().join(format!("{name}.toml"));
 
     if !force {
+        refuse_shadowing(name)?;
         let existing: Vec<&PathBuf> = [&palette_path, &theme_path]
             .into_iter()
             .filter(|path| path.exists())
@@ -160,6 +164,29 @@ fn write_files(artifacts: &ImportArtifacts, name: &str, force: bool) -> Result<(
         Error::config(format!("failed to write {}: {error}", theme_path.display()))
     })?;
     Ok(())
+}
+
+/// Refuse an import whose `name` matches a builtin or plugin theme/palette.
+///
+/// User files take precedence, so writing them would silently replace the
+/// shipped artifact (and the live prompt, if it is active).
+///
+/// # Errors
+///
+/// Returns an error naming the shadowed artifacts when there are any.
+fn refuse_shadowing(name: &str) -> Result<()> {
+    let theme = shadowed_provider(&ThemeManager::discover_available_themes(), name)
+        .map(|provider| format!("{provider} theme"));
+    let palette = shadowed_provider(&PaletteManager::discover_available_palettes(), name)
+        .map(|provider| format!("{provider} palette"));
+    let shadowed: Vec<String> = theme.into_iter().chain(palette).collect();
+    if shadowed.is_empty() {
+        return Ok(());
+    }
+    Err(Error::config(format!(
+        "'{name}' is a {}; importing would shadow it. Pass --name <other>, or --force to override",
+        shadowed.join(" and ")
+    )))
 }
 
 /// Print activation hints + recommended segment order.
