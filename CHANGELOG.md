@@ -254,6 +254,11 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Fixed
 
+- Zsh sends an integer `duration_ms` (#681). The command duration was
+  computed in floating point from `$EPOCHREALTIME`, so the agent rejected
+  every duration request and the oneshot fallback rejected the float too;
+  zsh never showed a working duration segment.
+
 - Bash and Zsh prompts mark agent color escapes as zero-width (#679): the
   `bash-prompt` and `zsh-prompt` formats wrap every SGR sequence in `\[ \]`
   and `%{ %}`, so readline and ZLE no longer count escape bytes as columns.
