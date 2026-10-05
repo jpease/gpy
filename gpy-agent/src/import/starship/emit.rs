@@ -1,5 +1,7 @@
 //! Assemble translated fragments into serialized GPY palette + theme TOML.
 
+use crate::config::LanguageTheme;
+use crate::config::defaults::{STARSHIP_PALETTE_CONTENT, STARSHIP_THEME_CONTENT};
 use crate::import::starship::model::StarshipConfig;
 use crate::import::starship::modules::{
     translate_character, translate_directory, translate_directory_layout, translate_duration,
@@ -8,6 +10,7 @@ use crate::import::starship::modules::{
 use crate::import::starship::palette::{selected_palette, translate_palette};
 use crate::import::starship::{ImportError, Result, Warnings, layout};
 use crate::palette::config::PaletteConfig;
+use crate::template::{Color, parse_color};
 use crate::theme::{RecommendedDirectory, RecommendedUi, SegmentThemes, ThemeConfig, UiTheme};
 
 /// The translated output of an import: typed values, ready to serialize or
@@ -55,25 +58,37 @@ impl ImportArtifacts {
 }
 
 /// Translate `model` into palette + theme artifacts named `name`.
-#[must_use]
-pub fn build(model: &StarshipConfig, name: &str) -> ImportArtifacts {
+///
+/// Every segment starts from the builtin `starship` preset, which encodes
+/// Starship's default rendering; a module the source configures replaces its
+/// segment, and a module the source leaves out keeps the preset's look.
+///
+/// # Errors
+///
+/// Returns [`ImportError::Preset`] if the embedded `starship` preset theme or
+/// palette fails to parse.
+pub fn build(model: &StarshipConfig, name: &str) -> Result<ImportArtifacts> {
     let mut warnings = Warnings::new();
+    let preset = load_preset()?;
 
-    let language = translate_languages(model, &mut warnings);
-    let mut segments = SegmentThemes {
-        language: language.theme,
-        ..Default::default()
-    };
+    let mut segments = preset.segments;
+    let language =
+        translate_languages(model, std::mem::take(&mut segments.language), &mut warnings);
+    segments.language = language.theme;
     if let Some(table) = model.module_table("directory") {
         segments.directory = translate_directory(table, &mut warnings);
     }
+    let git_branch = model.module_table("git_branch");
+    let git_status = model.module_table("git_status");
     let git = translate_git(
-        model.module_table("git_branch"),
-        model.module_table("git_status"),
+        git_branch,
+        git_status,
         model.module_table("git_state"),
         &mut warnings,
     );
-    segments.git = git;
+    if git_branch.is_some() || git_status.is_some() {
+        segments.git = git;
+    }
     if let Some(table) = model.module_table("cmd_duration") {
         segments.duration = translate_duration(table, &mut warnings);
     }
@@ -94,7 +109,8 @@ pub fn build(model: &StarshipConfig, name: &str) -> ImportArtifacts {
     let theme = ThemeConfig { ui, segments };
 
     let selected = selected_palette(model, &mut warnings);
-    let palette = translate_palette(name, selected, &language.palette_colors, &mut warnings);
+    let mut palette = translate_palette(name, selected, &language.palette_colors, &mut warnings);
+    add_preset_language_roles(&mut palette, &theme.segments.language, &preset.palette);
 
     let segments_order = model
         .format
@@ -102,12 +118,66 @@ pub fn build(model: &StarshipConfig, name: &str) -> ImportArtifacts {
         .map(|format| layout::derive_segments(format, &mut warnings))
         .unwrap_or_default();
 
-    ImportArtifacts {
+    Ok(ImportArtifacts {
         theme,
         palette,
         segments: segments_order,
         warnings,
         palette_name: name.to_owned(),
+    })
+}
+
+/// The builtin `starship` preset's segments and palette: the import baseline.
+struct Preset {
+    /// Segment themes encoding Starship's default rendering per module.
+    segments: SegmentThemes,
+    /// The palette that resolves the color roles those segments reference.
+    palette: PaletteConfig,
+}
+
+/// Parse the embedded `starship` preset theme and palette.
+///
+/// Only the preset's `[segments]` are kept: its `[ui]` (including
+/// `[ui.recommended]`, which would recommend `palette = "starship"`) is not
+/// part of an import.
+///
+/// # Errors
+///
+/// Returns [`ImportError::Preset`] if either embedded file fails to parse.
+fn load_preset() -> Result<Preset> {
+    let theme = crate::theme::parse(STARSHIP_THEME_CONTENT, "starship").map_err(|error| {
+        ImportError::Preset {
+            message: error.to_string(),
+        }
+    })?;
+    let palette: PaletteConfig =
+        toml::from_str(STARSHIP_PALETTE_CONTENT).map_err(|error| ImportError::Preset {
+            message: error.to_string(),
+        })?;
+    Ok(Preset {
+        segments: theme.segments,
+        palette,
+    })
+}
+
+/// Add the preset palette's value for every palette role (e.g. `orange`,
+/// `bright_magenta`) that a `language` color references but `palette` lacks.
+///
+/// The preset's per-language colors use palette roles rather than literal
+/// colors; without these entries the template engine rejects the role as an
+/// unknown color and the language segment renders nothing.
+fn add_preset_language_roles(
+    palette: &mut PaletteConfig,
+    language: &LanguageTheme,
+    preset_palette: &PaletteConfig,
+) {
+    for spec in language.overrides.values() {
+        if let Ok(Color::Palette(role)) = parse_color(spec.as_str())
+            && !palette.colors.contains_key(&role)
+            && let Some(value) = preset_palette.colors.get(&role)
+        {
+            palette.colors.insert(role, value.clone());
+        }
     }
 }
 
@@ -187,7 +257,7 @@ error_symbol = "[❯](bold red)"
     #[test]
     fn build_emits_parseable_palette_and_theme() {
         let model = parse(SAMPLE).unwrap();
-        let artifacts = build(&model, "demo");
+        let artifacts = build(&model, "demo").expect("build");
 
         // Serialized-text checks: the provenance header is only observable in
         // the rendered TOML.
@@ -240,7 +310,7 @@ error_symbol = "[❯](bold red)"
     fn build_carries_recommended_directory_layout() {
         let source = "\n[directory]\ntruncation_length = 3\ntruncation_symbol = \"…\"\n";
         let model = parse(source).unwrap();
-        let artifacts = build(&model, "demo");
+        let artifacts = build(&model, "demo").expect("build");
         let theme_toml = artifacts.theme_toml().expect("theme serializes");
         assert!(
             theme_toml.contains("[ui.recommended.directory]"),
@@ -289,7 +359,7 @@ error_symbol = "[❯](bold red)"
         // `truncation_symbol` explicitly — SAMPLE's `[directory]` table only
         // sets `format`/`style`, matching that case.
         let model = parse(SAMPLE).unwrap();
-        let artifacts = build(&model, "demo");
+        let artifacts = build(&model, "demo").expect("build");
         let theme_toml = artifacts.theme_toml().expect("theme serializes");
         assert!(
             theme_toml.contains("[ui.recommended.directory]"),
@@ -312,7 +382,7 @@ error_symbol = "[❯](bold red)"
     #[test]
     fn build_derives_recommended_segments() {
         let model = parse(SAMPLE).unwrap();
-        let artifacts = build(&model, "demo");
+        let artifacts = build(&model, "demo").expect("build");
         assert_eq!(
             artifacts.segments,
             vec!["directory", "git", "language", "duration", "character"]

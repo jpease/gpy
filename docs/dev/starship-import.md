@@ -54,13 +54,21 @@ If you also want to adopt the imported segment order, either:
 The importer translates Starship modules to GPY segments. Modules that have no
 GPY equivalent are skipped with a warning.
 
+Every segment starts from the builtin `starship` preset
+(`config/themes/starship.toml`), which encodes Starship's default rendering.
+A module the source configures replaces its segment; a module the source
+leaves out keeps the preset's look. For example, a `starship.toml` that only
+sets `[character]` still imports the default git, directory, duration,
+hostname, username, and language formats. The preset's `[ui]` and
+`[ui.recommended]` are not copied.
+
 | Starship module(s) | GPY segment | Notes |
 |---|---|---|
 | `directory` | `directory` | `format`, `style`, `read_only`, `truncation_symbol` → GPY `format`. `$style` is inlined with the module's literal style value. |
-| `git_branch` + `git_status` + `git_state` | `git` | Composed into one GPY git `format`. `$all_status` → `$status`; Starship per-flag variables → GPY `$status`. `git_state` is lossy (GPY has no state overlay); produces a warning. |
+| `git_branch` + `git_status` + `git_state` | `git` | Composed into one GPY git `format`. `$all_status` → `$status`; Starship per-flag variables → GPY `$status`. When only one of `git_branch` / `git_status` is present, the other half uses Starship's default `format` and `style`; when both are absent the preset's git format applies. `git_state` is lossy (GPY has no state overlay); produces a warning. |
 | `cmd_duration` | `duration` | `min_time` (ms) → `show_if_exceeds_ms`; `format` / `style` → GPY duration `format`. |
 | `character` | `character` | `success_symbol` / `error_symbol` (e.g. `[❯](bold green)`) → GPY `success_symbol`, `error_symbol`, `success_color`, `error_color`, `format`. |
-| `rust`, `python`, `nodejs`, `golang`, `java`, `ruby`, `php`, `swift`, `elixir`, `c`, `cpp`, `csharp`, `erlang`, … | `language` | Per-language `style` → palette entry + `{lang}_bg_color` (color) + `{lang}_style` (attributes, exposed as `$attr`). One shared GPY language `format` approximating Starship's `via [$symbol($version )]`. Per-language `symbol` overrides are lossy (they live in `[language.icons]`, not the prompt theme); each produces a warning. |
+| `rust`, `python`, `nodejs`, `golang`, `java`, `ruby`, `php`, `swift`, `elixir`, `c`, `cpp`, `csharp`, `erlang`, … | `language` | Starts from the preset's language theme (format `via [$symbol( v$version)]($attr fg:$color) `, per-language colors, symbols, `enabled_languages`). Per-language `style` → palette entry + `{lang}_bg_color` (color) + `{lang}_style` (attributes, exposed as `$attr`). Per-language `symbol` overrides are lossy (they live in `[language.icons]`, not the prompt theme): each produces a warning and drops the preset's symbol for that language so `[language.icons]` applies. |
 | `time` | `clock` | `time_format` (strftime) → GPY `time_format` (`"12"` or `"24"`) + `show_seconds` on a best-effort basis. Non-representable formats produce a warning. |
 | `username`, `hostname`, `kubernetes`, `aws`, `docker_context`, `package`, `memory_usage`, `battery`, custom modules, and everything else | — | Skipped with a warning: `module 'X' has no GPY equivalent; omitted from layout`. |
 
@@ -118,6 +126,9 @@ The importer determines the active Starship palette from the top-level
 `name → value` pair is color-validated; invalid values are dropped with a
 warning. Colors discovered from module `style` fields (language colors) are
 merged into the same palette so the emitted artifacts are self-contained.
+Palette roles that the preset's language colors reference (`orange`,
+`bright_magenta`, `bright_green`, …) are added with the `starship` palette's
+values when the source palette does not define them.
 
 If the source defines no palette (no `palette =` key), the importer emits a
 palette from discovered colors only and warns:

@@ -61,6 +61,14 @@
 #   documented, empirically-confirmed divergence point below, which is
 #   reported (with exact escapes) but never gated.
 #
+# VISIBILITY (username/hostname)
+#   The agent renders username/hostname whenever it is asked; whether the
+#   segment shows at all is the shell's segment_username_detect /
+#   segment_hostname_detect (root/sudo/SSH, or the theme's show_always). The
+#   GPY side applies those same predicates for this harness's local, non-SSH,
+#   non-sudo session, with show_always read from the imported theme, so
+#   both renderers are compared as a user would see them.
+#
 # DELIBERATE EXCLUSION (inherited from the preset itself, nothing to gate)
 #   * Pure Preset's format has no `package` module (unlike starship_parity.
 #     test.fish's baseline, which explicitly disables it) — nothing to
@@ -186,6 +194,13 @@ if not $spi_gpy_bin palette use pure-preset >/dev/null 2>&1
     exit 1
 end
 
+# Shell-side visibility predicates for username/hostname (see VISIBILITY).
+source $spi_repo_root/fish/segments/username.fish
+source $spi_repo_root/fish/segments/hostname.fish
+set -g spi_theme_file $SPI_ISO/gpy/themes/pure-preset.toml
+set -g spi_is_root 0
+test (id -u) -eq 0; and set spi_is_root 1
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -230,6 +245,24 @@ function __spi_color_sig --argument-names raw
     end
 end
 
+# Echo 1 when `key = true` is set in the imported theme's [segments.<seg>]
+# table, else 0 (an absent key takes the theme model's default, false).
+function __spi_theme_flag --argument-names seg key
+    set -l in_section 0
+    for line in (cat $spi_theme_file)
+        if string match -qr '^\s*\[' -- $line
+            set in_section 0
+            test (string trim -- $line) = "[segments.$seg]"; and set in_section 1
+            continue
+        end
+        if test $in_section -eq 1; and string match -qr "^\s*$key\s*=\s*true\b" -- $line
+            echo 1
+            return
+        end
+    end
+    echo 0
+end
+
 # Render one GPY segment for a directory. Echoes the raw (ANSI) output, or
 # nothing when the segment does not apply (empty or JSON error response).
 function __spi_gpy_seg --argument-names seg dir
@@ -240,8 +273,10 @@ function __spi_gpy_seg --argument-names seg dir
         case duration
             set out ($spi_agent_bin oneshot duration --duration-ms $SPI_DURATION --format ansi --not-last 2>/dev/null | string collect)
         case hostname
+            __gpy_hostname_should_show 0 (__spi_theme_flag hostname show_always); or return 0
             set out ($spi_agent_bin oneshot hostname --hostname $spi_hostname --format ansi --not-last 2>/dev/null | string collect)
         case username
+            __gpy_username_should_show $spi_is_root 0 (__spi_theme_flag username show_always); or return 0
             set out ($spi_agent_bin oneshot username --username $spi_username --format ansi --not-last 2>/dev/null | string collect)
         case character
             set out ($spi_agent_bin oneshot character --exit-code $SPI_STATUS --format ansi 2>/dev/null | string collect)

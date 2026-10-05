@@ -14,6 +14,13 @@ pub enum ImportError {
         /// Human-readable parser message (from the `toml` crate).
         message: String,
     },
+    /// The embedded builtin `starship` preset, the baseline every import
+    /// starts from, failed to parse.
+    #[error("failed to load the builtin starship preset: {message}")]
+    Preset {
+        /// Human-readable parser message.
+        message: String,
+    },
 }
 
 /// Convenience alias for importer translation results.

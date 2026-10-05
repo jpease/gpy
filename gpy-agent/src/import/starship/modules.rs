@@ -342,6 +342,12 @@ pub fn translate_directory_layout(
 /// Starship `$all_status` and `${all_status}` are remapped to `$status`; `$remote_branch`,
 /// `$remote_name`, and any `git_state`-only variable are dropped with a
 /// [`WarningKind::LossyMapping`] warning.
+///
+/// When only one of `branch` / `status` is present, the other half is
+/// translated from an empty table, so Starship's default `format` and `style`
+/// for that module still apply (Starship renders both modules by default).
+/// When both are absent the returned `format` is `None`; the caller keeps the
+/// preset's git rendering in that case.
 #[must_use]
 pub fn translate_git(
     branch: Option<&toml::value::Table>,
@@ -349,7 +355,17 @@ pub fn translate_git(
     state: Option<&toml::value::Table>,
     warnings: &mut Warnings,
 ) -> GitTheme {
-    let branch_part = branch.map_or_else(String::new, |table| {
+    let empty = toml::value::Table::new();
+    let (branch_table, status_table) = if branch.is_none() && status.is_none() {
+        (None, None)
+    } else {
+        (
+            Some(branch.unwrap_or(&empty)),
+            Some(status.unwrap_or(&empty)),
+        )
+    };
+
+    let branch_part = branch_table.map_or_else(String::new, |table| {
         let filled = with_default_style(table, "style", "bold purple");
         let raw = table
             .get("format")
@@ -365,7 +381,7 @@ pub fn translate_git(
         .replace("(:)", "")
     });
 
-    let status_part = status.map_or_else(String::new, |table| {
+    let status_part = status_table.map_or_else(String::new, |table| {
         let filled = with_default_style(table, "style", "bold red");
         let raw = table
             .get("format")
@@ -486,13 +502,20 @@ pub fn attr_tokens(style: &str) -> Vec<&str> {
         .collect()
 }
 
-/// Translate all known Starship language modules into one GPY language theme.
+/// Translate all known Starship language modules onto `base`, the language
+/// theme the import starts from (the builtin `starship` preset's, which
+/// encodes Starship's per-language defaults).
+///
+/// Only languages whose module table is present are touched: a module `style`
+/// replaces that language's color and attributes, and a module `symbol` drops
+/// the base's symbol for that language so `[language.icons]` config applies.
 #[must_use]
-pub fn translate_languages(model: &StarshipConfig, warnings: &mut Warnings) -> LanguageTranslation {
-    let mut theme = LanguageTheme {
-        format: Some("[$symbol( $version)]($attr fg:$color) ".to_owned()),
-        ..Default::default()
-    };
+pub fn translate_languages(
+    model: &StarshipConfig,
+    base: LanguageTheme,
+    warnings: &mut Warnings,
+) -> LanguageTranslation {
+    let mut theme = base;
     let mut palette_colors: BTreeMap<String, String> = BTreeMap::new();
     for (starship_name, canonical) in LANGUAGE_MODULES {
         let Some(table) = model.module_table(starship_name) else {
@@ -518,14 +541,17 @@ pub fn translate_languages(model: &StarshipConfig, warnings: &mut Warnings) -> L
             // Capture attribute tokens. The renderer defaults to `bold`, so only
             // emit `<lang>_style` when the attrs differ (an empty string here is
             // intentional: it suppresses the bold default for a bare-color style).
+            // A plain `bold` style clears any non-bold attrs inherited from `base`.
             let attrs = attr_tokens(style);
-            if attrs != ["bold"] {
-                theme
-                    .styles
-                    .insert(format!("{canonical}_style"), attrs.join(" "));
+            let style_key = format!("{canonical}_style");
+            if attrs == ["bold"] {
+                theme.styles.remove(&style_key);
+            } else {
+                theme.styles.insert(style_key, attrs.join(" "));
             }
         }
         if table.get("symbol").and_then(toml::Value::as_str).is_some() {
+            theme.symbols.remove(&format!("{canonical}_symbol"));
             warnings.push(
                 WarningKind::LossyMapping,
                 format!("language {starship_name}: per-language symbol is set in [language.icons] config, not the prompt theme; not transferred"),
@@ -760,6 +786,7 @@ mod tests {
     #![allow(missing_docs)]
 
     use super::{Token, inline_style_vars, retain_known_vars, tokens, translate_directory};
+    use crate::config::LanguageTheme;
     use crate::config::types::{ColorSpec, DirectoryTruncationLength, DirectoryTruncationSymbol};
     use crate::import::starship::Warnings;
 
@@ -1132,6 +1159,28 @@ mod tests {
     }
 
     #[test]
+    fn translate_git_fills_missing_half_with_starship_defaults() {
+        use super::translate_git;
+        let branch = table("symbol = \"x\"\n");
+        let mut warnings = Warnings::new();
+        let branch_only = translate_git(Some(&branch), None, None, &mut warnings);
+        assert_eq!(
+            branch_only.format.as_deref(),
+            Some(r"on [$symbol$branch](bold purple) ([\[$status$ahead_behind\]](bold red) )")
+        );
+
+        let status = table("style = \"red\"\n");
+        let status_only = translate_git(None, Some(&status), None, &mut warnings);
+        assert_eq!(
+            status_only.format.as_deref(),
+            Some(r"on [$symbol$branch](bold purple) ([\[$status$ahead_behind\]](red) )")
+        );
+
+        let neither = translate_git(None, None, None, &mut warnings);
+        assert_eq!(neither.format, None);
+    }
+
+    #[test]
     fn first_color_token_skips_attributes() {
         use super::first_color_token;
         assert_eq!(first_color_token("bold green"), Some("green"));
@@ -1157,11 +1206,7 @@ mod tests {
         )
         .unwrap();
         let mut warnings = Warnings::new();
-        let result = translate_languages(&model, &mut warnings);
-        assert_eq!(
-            result.theme.format.as_deref(),
-            Some("[$symbol( $version)]($attr fg:$color) ")
-        );
+        let result = translate_languages(&model, LanguageTheme::default(), &mut warnings);
         assert_eq!(
             result
                 .theme
@@ -1205,7 +1250,7 @@ mod tests {
         )
         .expect("parse");
         let mut warnings = Warnings::new();
-        let result = translate_languages(&model, &mut warnings);
+        let result = translate_languages(&model, LanguageTheme::default(), &mut warnings);
         assert_eq!(
             result.theme.styles.get("java_style").map(String::as_str),
             Some("dimmed")
@@ -1214,6 +1259,44 @@ mod tests {
         assert_eq!(
             result.theme.styles.get("go_style").map(String::as_str),
             Some("")
+        );
+    }
+
+    #[test]
+    fn translate_languages_overlays_only_configured_languages_on_base() {
+        use super::translate_languages;
+        use crate::import::starship::model::parse;
+        let mut base = LanguageTheme {
+            format: Some("via [$symbol]($attr fg:$color) ".to_owned()),
+            ..LanguageTheme::default()
+        };
+        for (key, color) in [("java_bg_color", "red"), ("swift_bg_color", "orange")] {
+            base.overrides
+                .insert(key.to_owned(), ColorSpec::new(color).unwrap());
+        }
+        base.styles
+            .insert("java_style".to_owned(), "dimmed".to_owned());
+        base.symbols
+            .insert("java_symbol".to_owned(), "☕".to_owned());
+        base.symbols
+            .insert("swift_symbol".to_owned(), "🐦".to_owned());
+        // java: a plain-bold style clears the base's `dimmed`; a source symbol
+        // drops the base symbol so `[language.icons]` applies. swift: untouched.
+        let model = parse("[java]\nstyle = \"bold blue\"\nsymbol = \"J \"\n").expect("parse");
+        let mut warnings = Warnings::new();
+        let result = translate_languages(&model, base, &mut warnings);
+        assert_eq!(
+            result.theme.format.as_deref(),
+            Some("via [$symbol]($attr fg:$color) ")
+        );
+        let color = |key: &str| result.theme.overrides.get(key).map(ColorSpec::as_str);
+        assert_eq!(color("java_bg_color"), Some("blue"));
+        assert_eq!(color("swift_bg_color"), Some("orange"));
+        assert!(!result.theme.styles.contains_key("java_style"));
+        assert!(!result.theme.symbols.contains_key("java_symbol"));
+        assert_eq!(
+            result.theme.symbols.get("swift_symbol").map(String::as_str),
+            Some("🐦")
         );
     }
 

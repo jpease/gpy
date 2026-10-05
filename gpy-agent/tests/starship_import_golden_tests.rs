@@ -19,7 +19,7 @@ fn import(fixture_name: &str, name: &str) -> ImportArtifacts {
     let input = std::fs::read_to_string(&path)
         .unwrap_or_else(|_| panic!("fixture not found: {}", path.display()));
     let model = parse(&input).expect("parse starship fixture");
-    build(&model, name)
+    build(&model, name).expect("build import artifacts")
 }
 
 #[test]
@@ -177,4 +177,85 @@ fn real_world_powerline_preset_survives_import_with_documented_lossy_warnings() 
     );
 
     assert_eq!(artifacts.warnings.len(), 27, "pin total warning count");
+}
+
+#[test]
+fn missing_module_tables_fall_back_to_starship_defaults() {
+    // #690: a module the source leaves out keeps Starship's default rendering
+    // (the builtin `starship` preset), instead of a `None` format that makes
+    // git/directory/duration render nothing.
+    let artifacts = import("import_character_only.toml", "onlychar");
+    let builtin = gpy_agent::theme::parse(
+        gpy_agent::config::defaults::STARSHIP_THEME_CONTENT,
+        "starship",
+    )
+    .expect("builtin starship theme parses");
+
+    let imported = &artifacts.theme.segments;
+    let preset = &builtin.segments;
+    for (segment, got, want) in [
+        ("git", &imported.git.format, &preset.git.format),
+        (
+            "directory",
+            &imported.directory.format,
+            &preset.directory.format,
+        ),
+        (
+            "duration",
+            &imported.duration.format,
+            &preset.duration.format,
+        ),
+        (
+            "hostname",
+            &imported.hostname.format,
+            &preset.hostname.format,
+        ),
+        (
+            "username",
+            &imported.username.format,
+            &preset.username.format,
+        ),
+        (
+            "language",
+            &imported.language.format,
+            &preset.language.format,
+        ),
+    ] {
+        assert!(got.is_some(), "{segment} format must be set");
+        assert_eq!(got, want, "{segment} format must match the builtin preset");
+    }
+
+    // The configured module still overrides the preset.
+    assert_eq!(imported.character.success_symbol, ">");
+
+    // The preset's language colors reference palette roles (e.g. swift's
+    // `orange`); the emitted palette must resolve them.
+    assert_eq!(
+        artifacts
+            .palette
+            .colors
+            .get("orange")
+            .map(ColorSpec::as_str),
+        Some("202")
+    );
+    validate_segment_templates(&artifacts.theme, &artifacts.palette.to_template_palette())
+        .expect("imported theme validates against its own palette");
+}
+
+#[test]
+fn git_branch_only_keeps_default_status_group() {
+    // #690: Starship renders `git_status` with its defaults even when only
+    // `[git_branch]` is configured.
+    let model = parse("[git_branch]\nsymbol = \"x\"\n").expect("parse inline snippet");
+    let artifacts = build(&model, "branch-only").expect("build import artifacts");
+    let format = artifacts
+        .theme
+        .segments
+        .git
+        .format
+        .expect("git format is set");
+    assert!(
+        format.contains("$status"),
+        "git format lost the default status group: {format}"
+    );
 }
