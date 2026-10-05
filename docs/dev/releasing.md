@@ -113,10 +113,12 @@ Everything below runs on `main`, with a clean tree.
 | Tag matches all three version-bearing files | `release.yml`, `validate` |
 | Full Rust + shell gate, `just lint`, and the performance budgets (`just bench-ci`) pass at the tagged commit | `release.yml`, `validate` |
 | The packaged binaries actually run: the archive's `install.sh`, both `--version`s, a oneshot render, a responding agent, one prompt each from fish, zsh and bash (Linux); both `.exe` `--version`s and `gpy --help` (Windows). A failure here blocks `create-release` | `release.yml`, `smoke` → `scripts/smoke-release.sh` |
+| No Linux binary (either arch) references a glibc newer than `GPY_GLIBC_FLOOR` (2.31); the Linux legs link against that floor with `cargo zigbuild --target <triple>.2.31`, and the packaged x86_64 binaries run their `--version` in `ubuntu:20.04` | `release.yml`, `build` → `scripts/check-glibc-floor.sh`; `smoke` |
 | Release notes are non-empty and CHANGELOG-derived | `scripts/release-notes.sh` |
 | Archives contain the files the installers reach for | `scripts/package-release.sh` |
 | Build matrix agrees with both installers' asset names | `tests/bash/release_asset_contract.test.bash` |
 | Packaging and note generation still work | `tests/bash/release_packaging.test.bash` |
+| The Linux legs stay pinned to the glibc floor, the gate checks it, and `docs/INSTALL.md` states the same floor | `tests/bash/release_glibc_floor.test.bash` |
 | One version declared, no advertised dead channel | `tests/bash/release_version_claims.test.bash` |
 | The smoke run passes on the real debug binaries and fails on an agent that answers `--version` but nothing else | `tests/bash/release_smoke.test.bash` |
 | A stock `ubuntu:24.04` container with an empty `$HOME` installs from an archive built from the checkout and renders one prompt per shell | `scripts/test-fresh-install.sh` (`tests/docker/Dockerfile.fresh-install`; the `fresh-install` job in `pr-gate.yml`) |
