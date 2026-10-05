@@ -52,6 +52,7 @@
 
 use crate::cache::bounded::INSTANT_PROMPT_LAST_WRITTEN_CAPACITY;
 use crate::config::Config;
+use crate::debug_log;
 use crate::formatter::{
     FishAnsiFormatter, Formatter, IsFirst, IsLast, PromptDialect, RenderContext, SegmentPosition,
 };
@@ -447,33 +448,52 @@ impl InstantPromptCache {
         contexts.clone()
     }
 
-    /// Remove rendered language prompt cache files.
+    /// Remove rendered language prompt cache files, in every position variant
+    /// (`lang`, `lang_last`, `lang_first`, `lang_first_last`).
     ///
-    /// # Errors
-    ///
-    /// Returns an error if the cache directory cannot be scanned or a matching
-    /// cache file cannot be removed.
-    pub fn clear_language_files(&self) -> Result<()> {
-        for entry in std::fs::read_dir(&self.cache_dir)? {
-            let path = entry?.path();
-            let Some(file_name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
-                continue;
-            };
+    /// Best-effort, like [`prune_stale_entries`]: an unreadable directory or
+    /// an entry that cannot be removed (including `NotFound` from another
+    /// agent clearing the same directory concurrently, #815) is logged and
+    /// skipped, never fatal to agent startup (#773).
+    pub fn clear_language_files(&self) {
+        let bases = SEGMENT_POSITIONS.map(|pos| variant_suffix("lang", pos.is_last, pos.is_first));
 
-            // Cache files are named `{key}.{base}.{token}.{ext}`. Neither the
-            // base (`lang`/`lang_last`/...), the token nor the dialect
-            // extension contains a dot, so stripping the extension, then the
-            // trailing `.{token}`, then the trailing `.{base}` isolates the
-            // base for an exact match (the key may itself contain dots).
-            if let Some((stem, ext)) = file_name.rsplit_once('.')
-                && PromptDialect::ALL
-                    .iter()
-                    .any(|dialect| dialect.cache_ext() == ext)
-                && let Some((without_token, _token)) = stem.rsplit_once('.')
-                && let Some((_key, base)) = without_token.rsplit_once('.')
-                && (base == "lang" || base == "lang_last")
-            {
-                std::fs::remove_file(&path)?;
+        match std::fs::read_dir(&self.cache_dir) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let Some(file_name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
+                        continue;
+                    };
+
+                    // Cache files are named `{key}.{base}.{token}.{ext}`. Neither
+                    // the base, the token nor the dialect extension contains a
+                    // dot, so stripping the extension, then the trailing
+                    // `.{token}`, then the trailing `.{base}` isolates the base
+                    // for an exact match (the key may itself contain dots).
+                    if let Some((stem, ext)) = file_name.rsplit_once('.')
+                        && PromptDialect::ALL
+                            .iter()
+                            .any(|dialect| dialect.cache_ext() == ext)
+                        && let Some((without_token, _token)) = stem.rsplit_once('.')
+                        && let Some((_key, base)) = without_token.rsplit_once('.')
+                        && bases.iter().any(|lang_base| lang_base == base)
+                        && let Err(e) = std::fs::remove_file(&path)
+                    {
+                        debug_log!(
+                            "cache",
+                            "Could not remove language cache {}: {e}",
+                            path.display()
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                debug_log!(
+                    "cache",
+                    "Could not scan {} to clear language caches: {e}",
+                    self.cache_dir.display()
+                );
             }
         }
 
@@ -486,10 +506,12 @@ impl InstantPromptCache {
                 // map_key is `{cache_key}:{base}.{token}.{ext}`; the cache key has no
                 // colon (path separators are escaped), so split on the first one.
                 let suffix = map_key.split_once(':').map_or("", |(_key, s)| s);
-                !(suffix.starts_with("lang.") || suffix.starts_with("lang_last."))
+                !bases.iter().any(|base| {
+                    suffix
+                        .strip_prefix(base.as_str())
+                        .is_some_and(|rest| rest.starts_with('.'))
+                })
             });
-
-        Ok(())
     }
 
     /// Write a single cache file atomically, skipping the write when the content
@@ -1686,9 +1708,15 @@ mod tests {
             cache
                 .write_cache_file("repo", "lang_last.blue", dialect, "ruby 4.0.5")
                 .expect("write lang_last cache");
+            cache
+                .write_cache_file("repo", "lang_first.none", dialect, "ruby 4.0.5")
+                .expect("write lang_first cache");
+            cache
+                .write_cache_file("repo", "lang_first_last.blue", dialect, "ruby 4.0.5")
+                .expect("write lang_first_last cache");
         }
 
-        cache.clear_language_files().expect("clear language caches");
+        cache.clear_language_files();
 
         for dialect in PromptDialect::ALL {
             assert!(cache.cache_file_path("repo", "git.none", dialect).exists());
@@ -1698,7 +1726,38 @@ mod tests {
                     .cache_file_path("repo", "lang_last.blue", dialect)
                     .exists()
             );
+            for name in ["lang_first.none", "lang_first_last.blue"] {
+                assert!(
+                    !cache.cache_file_path("repo", name, dialect).exists(),
+                    "{name} must be cleared like lang/lang_last (#773)"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn clear_language_files_skips_unremovable_entries() {
+        let temp_dir = tempfile::TempDir::new().expect("temp cache dir");
+        let cache_dir = temp_dir.path().join("instant-prompts");
+        let cache = InstantPromptCache::new_in_dir(cache_dir.clone()).expect("cache");
+
+        // A directory whose name matches the language-cache pattern cannot be
+        // removed with `remove_file`; it must not abort the sweep (#773).
+        let blocker = cache_dir.join("x.lang.none.ansi");
+        std::fs::create_dir_all(&blocker).expect("create blocking dir");
+        cache
+            .write_cache_file("repo", "lang.none", PromptDialect::Ansi, "ruby 4.0.5")
+            .expect("write lang cache");
+
+        cache.clear_language_files();
+
+        assert!(
+            !cache
+                .cache_file_path("repo", "lang.none", PromptDialect::Ansi)
+                .exists(),
+            "the regular language cache file is removed"
+        );
+        assert!(blocker.is_dir(), "the unremovable entry is left in place");
     }
 
     #[test]

@@ -747,7 +747,7 @@ impl Agent {
         }
 
         let instant_cache_inner = crate::cache::InstantPromptCache::new()?;
-        instant_cache_inner.clear_language_files()?;
+        instant_cache_inner.clear_language_files();
         let instant_cache = Arc::new(instant_cache_inner);
 
         // The initial theme-export cache is written by a background task in
