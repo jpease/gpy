@@ -9,6 +9,20 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
+# Hermetic when run directly (#820): the developer's theme export
+# ($XDG_CACHE_HOME/gpy/theme-export.bash) and exported GPY_* settings (e.g.
+# GPY_LANGUAGE_ENABLED=0) would otherwise override the built-in defaults
+# these checks assert on. quality-check.sh sets its own XDG dirs; this makes
+# a direct `bash tests/bash/parity.test.bash` behave the same.
+for gpy_var in $(compgen -e); do
+    [[ "$gpy_var" == GPY_* ]] && unset "$gpy_var"
+done
+unset gpy_var
+parity_xdg_root="$(mktemp -d "${TMPDIR:-/tmp}/gpy-parity-xdg.XXXXXX")"
+trap 'rm -rf "$parity_xdg_root"' EXIT
+mkdir -p "$parity_xdg_root/cache" "$parity_xdg_root/config"
+export XDG_CACHE_HOME="$parity_xdg_root/cache" XDG_CONFIG_HOME="$parity_xdg_root/config"
+
 echo "=== Checking Feature Parity with Fish/Zsh ==="
 
 # List of expected segments
