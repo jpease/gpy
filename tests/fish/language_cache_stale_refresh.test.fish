@@ -87,26 +87,24 @@ end
 # Detecting staleness is only half the self-heal: the refresh it fires has to
 # leave the shell. `__gpy_request` short-circuits on any instant-cache hit —
 # correct for rendering, fatal here, since the stale entry it would serve is
-# exactly the one being replaced. `__gpy_trigger_data_refresh` exists to
-# bypass that. These tests mock `__gpy_ipc_send` and assert on what actually
-# reaches it, so no running agent is needed.
+# exactly the one being replaced. `__gpy_maybe_refresh` sends the data op
+# straight to the agent through `__gpy_ipc_send_detached` instead. These tests
+# mock that sender and assert on what actually reaches it, so no running agent
+# is needed.
 source "$repo_root/fish/segments/language.fish"
 
 set -g __gpy_test_ipc_marker "$tmp_dir/ipc_sent"
 
-# Stand in for a resolvable agent binary: both segment_language_render and
-# __gpy_trigger_data_refresh gate their refresh on this.
+# Stand in for a resolvable agent binary: segment_language_render's refresh
+# (__gpy_maybe_refresh) is gated on this.
 function __gpy_resolve_agent_binary
     echo "$__gpy_test_ipc_marker.binary"
     return 0
 end
 
-# Record every payload that would leave the shell. Echoing a non-empty reply
-# keeps __gpy_request off its oneshot-fallback path, which would otherwise try
-# to exec the fake agent binary above and spray errors over the test output.
-function __gpy_ipc_send
+# Record every refresh payload that would leave the shell.
+function __gpy_ipc_send_detached
     echo "$argv[1]" >>"$__gpy_test_ipc_marker"
-    echo '{}'
 end
 
 # Wait for the backgrounded (and disowned, so unwaitable) refresh to record a

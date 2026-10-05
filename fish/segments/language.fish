@@ -73,14 +73,10 @@ function segment_language_render --argument-names is_last is_first
     set -l cache_status $status
 
     if test "$cache_status" -eq 1
-        # 2. Cache miss - trigger background refresh
-        # This prevents blocking the prompt on slow language detection (~80ms)
-        # The agent will write the cache and send SIGURG when done, causing a repaint.
-        # Deliberately uses mode=request (__gpy_request, not
-        # __gpy_trigger_data_refresh): the cache read genuinely missed here, so
-        # there is no stale entry that __gpy_request's own cache check could
-        # wrongly re-serve (contrast with the stale-refresh path below, #458).
-        __gpy_maybe_refresh lang "$root" "$cache_suffix" "$is_last" "$prev_bg" "$is_first" request
+        # 2. Cache miss - fire a throttled background refresh and render
+        # nothing this time. The agent writes the cache and sends SIGURG when
+        # done, causing a repaint.
+        __gpy_maybe_refresh lang "$root" "$cache_suffix" "$is_last" "$prev_bg" "$is_first"
         return
     end
 
@@ -116,21 +112,18 @@ function segment_language_render --argument-names is_last is_first
     # correction request per 500ms.
     if __gpy_cache_status_variant $cache_status
         set -l token (__gpy_prev_bg_token "$prev_bg")
-        __gpy_maybe_refresh lang "$root" "$cache_suffix" "$is_last" "$prev_bg" "$is_first" refresh "$token"
+        __gpy_maybe_refresh lang "$root" "$cache_suffix" "$is_last" "$prev_bg" "$is_first" "$token"
     end
 
     # 4. If the cache is stale, trigger a background refresh while still showing
     # the cached result (no flicker). The agent will write a fresh cache file and
     # send SIGURG, causing a repaint with updated versions.
     #
-    # Must bypass the instant cache (#458, mode=refresh -> __gpy_trigger_data_refresh).
+    # Must bypass the instant cache (#458; __gpy_maybe_refresh always does).
     # `__gpy_request` reads it first and returns early on any hit, which is right
     # for rendering but would short-circuit on the very stale entry this refresh
     # exists to replace -- no IPC would ever leave the shell and the version could
-    # stay stale indefinitely. The cold-miss path above can keep using mode=request
-    # precisely because its cache read genuinely misses. `is_first` is not
-    # forwarded by mode=refresh (__gpy_trigger_data_refresh takes no such
-    # argument) and does not need to be: the reply is discarded, and the agent's
+    # stay stale indefinitely. The reply is discarded, and the agent's
     # write_language_variants rewrites all four is_last/is_first variants
     # regardless of which one was requested. Matches the variant-fallback path
     # above and the bash/zsh segments.
