@@ -6,6 +6,20 @@
 ROOT=${0:a:h:h:h}
 cd "$ROOT"
 
+# Hermetic when run directly (#820): the developer's theme export
+# ($XDG_CACHE_HOME/gpy/theme-export.zsh) and exported GPY_* settings (e.g.
+# GPY_LANGUAGE_ENABLED=0) would otherwise override the built-in defaults
+# these checks assert on. quality-check.sh sets its own XDG dirs; this makes
+# a direct `zsh tests/zsh/parity.test.zsh` behave the same.
+for gpy_var in ${(k)parameters[(I)GPY_*]}; do
+    unset "$gpy_var"
+done
+unset gpy_var
+parity_xdg_root="$(mktemp -d "${TMPDIR:-/tmp}/gpy-parity-xdg.XXXXXX")"
+trap 'rm -rf "$parity_xdg_root"' EXIT
+mkdir -p "$parity_xdg_root/cache" "$parity_xdg_root/config"
+export XDG_CACHE_HOME="$parity_xdg_root/cache" XDG_CONFIG_HOME="$parity_xdg_root/config"
+
 echo "=== Checking Feature Parity with Fish ==="
 
 # List of expected segments
