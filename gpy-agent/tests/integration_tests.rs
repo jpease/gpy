@@ -140,13 +140,11 @@ fn test_language_detection_integration() {
     let version_result = detect_language_release(&node_detector);
 
     // Version detection might fail if node isn't installed, but shouldn't panic
-    if let Ok(Some(version)) = version_result {
+    if let Some(version) = version_result {
         assert!(
             !version.is_empty(),
             "Detected Node version should not be empty string"
         );
-    } else {
-        // Node not installed or detection failed - acceptable
     }
 }
 
