@@ -31,5 +31,5 @@ function __gpy_segment_username() {
     local fg=${__color_username_fg:-white}
     [[ $bg == transparent ]] && bg=default
     [[ $fg == transparent ]] && fg=default
-    echo "%K{$bg}%F{$fg} $label %f%k"
+    print -r -- "%K{$bg}%F{$fg} $label %f%k"
 }

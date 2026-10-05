@@ -150,13 +150,13 @@ function __gpy_build_register_payload() {
     local json_cwd
     json_cwd=$(__gpy_escape_json "$PWD")
     local shell_version="$ZSH_VERSION"
-    echo "{\"op\":\"register\",\"pid\":$$,\"cwd\":\"$json_cwd\",\"shell\":\"zsh\",\"shell_version\":\"$shell_version\"}"
+    print -r -- "{\"op\":\"register\",\"pid\":$$,\"cwd\":\"$json_cwd\",\"shell\":\"zsh\",\"shell_version\":\"$shell_version\"}"
 }
 
 function __gpy_build_workspace_payload() {
     local json_cwd
     json_cwd=$(__gpy_escape_json "$PWD")
-    echo "{\"op\":\"workspace\",\"pid\":$$,\"cwd\":\"$json_cwd\"}"
+    print -r -- "{\"op\":\"workspace\",\"pid\":$$,\"cwd\":\"$json_cwd\"}"
 }
 
 function __gpy_sync_workspace() {
@@ -404,7 +404,7 @@ function __gpy_render_prompt() {
         p+="%F{$__prompt_color}${__icon_prompt}%f "
     fi
 
-    echo "$p"
+    print -r -- "$p"
 }
 
 add-zsh-hook precmd __gpy_precmd

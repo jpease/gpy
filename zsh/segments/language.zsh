@@ -49,7 +49,7 @@ function __gpy_segment_language() {
         return 0
     fi
 
-    echo "$response"
+    print -r -- "$response"
 
     # 3. Stale hit (bit 2 set: status 2 or 6): serve above, refresh in background
     if (( (cache_status & 2) != 0 )); then

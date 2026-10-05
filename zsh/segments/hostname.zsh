@@ -35,5 +35,5 @@ function __gpy_segment_hostname() {
     # Escape literal % so prompt_subst doesn't reinterpret a %-containing
     # hostname as a prompt escape sequence (#324).
     local escaped_label=${label//\%/%%}
-    echo "%K{$bg}%F{$fg} $escaped_label %f%k"
+    print -r -- "%K{$bg}%F{$fg} $escaped_label %f%k"
 }
