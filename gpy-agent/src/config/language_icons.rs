@@ -37,8 +37,8 @@ pub struct LanguageIcons {
 /// to the segment-level defaults for unknown languages.
 #[derive(Debug, Clone, Serialize)]
 pub struct LanguageTheme {
-    /// Optional Starship-style template controlling how this segment renders.
-    /// `None` selects the legacy formatter path (byte-identical output).
+    /// Starship-style template controlling how this segment renders.
+    /// The language segment is always agent-rendered, so `None` renders nothing.
     #[serde(default)]
     pub format: Option<String>,
     // Delimiter configurations

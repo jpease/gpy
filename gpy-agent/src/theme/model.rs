@@ -276,7 +276,8 @@ pub struct CharacterTheme {
     /// Optional Starship-compatible format template.
     ///
     /// When `Some`, the agent renders the character symbol via the template engine and
-    /// returns pre-formatted ANSI. `None` selects the legacy (shell-side) rendering path.
+    /// returns pre-formatted ANSI. `None` makes the agent emit nothing, so the shell
+    /// falls back to its local (`set_color`-style) character rendering.
     #[serde(default)]
     pub format: Option<String>,
     /// Symbol shown when the last command succeeded (default: `❯`)
@@ -315,7 +316,8 @@ pub struct HostnameTheme {
     /// Optional Starship-compatible format template.
     ///
     /// When `Some`, the agent renders the hostname via the template engine and
-    /// returns pre-formatted ANSI. `None` selects the pure-fish rendering path.
+    /// returns pre-formatted ANSI. `None` makes the agent emit nothing; the shell
+    /// renders the hostname itself (GPY pill colors).
     #[serde(default)]
     pub format: Option<String>,
     /// Icon/symbol shown before the hostname (default: none, matching Starship)
@@ -366,7 +368,8 @@ pub struct UsernameTheme {
     /// Optional Starship-compatible format template.
     ///
     /// When `Some`, the agent renders the username via the template engine and
-    /// returns pre-formatted ANSI. `None` selects the pure-shell rendering path.
+    /// returns pre-formatted ANSI. `None` makes the agent emit nothing; the shell
+    /// renders the username itself (GPY pill colors).
     #[serde(default)]
     pub format: Option<String>,
     /// Icon/symbol shown before the username (default: none, matching Starship)
@@ -449,8 +452,8 @@ impl Default for ClockTheme {
 /// Directory segment colors
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirectoryTheme {
-    /// Optional Starship-style template controlling how this segment renders.
-    /// `None` selects the legacy (shell-side) rendering path.
+    /// Starship-style template controlling how this segment renders.
+    /// The directory is always agent-rendered (#199), so `None` renders nothing.
     #[serde(default)]
     pub format: Option<String>,
     /// Open delimiter configuration (supports fg/bg colors)
@@ -486,11 +489,10 @@ impl Default for DirectoryTheme {
 /// Duration segment colors
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DurationTheme {
-    /// Optional Starship-compatible format template.
+    /// Starship-compatible template controlling how this segment renders.
     ///
-    /// When `Some`, the agent renders the duration via the template engine and
-    /// returns pre-formatted ANSI. `None` selects the legacy (shell-side)
-    /// rendering path.
+    /// The duration is always agent-rendered (#199): `Some` returns
+    /// pre-formatted ANSI via the template engine, `None` renders nothing.
     #[serde(default)]
     pub format: Option<String>,
     /// Icon shown before command duration (default: "󰑧")
@@ -563,8 +565,8 @@ impl Default for StatusTheme {
 /// Git segment color configuration with hierarchical fallbacks
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitTheme {
-    /// Optional Starship-style template controlling how this segment renders.
-    /// `None` selects the legacy formatter path (byte-identical output).
+    /// Starship-style template controlling how this segment renders.
+    /// The git segment is always agent-rendered (#199), so `None` renders nothing.
     #[serde(default)]
     pub format: Option<String>,
     // Delimiter configurations

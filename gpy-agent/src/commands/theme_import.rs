@@ -74,7 +74,7 @@ pub fn run(opts: &ImportOptions<'_>) -> Result<()> {
             "invalid artifact name '{name}': must not contain path separators, '..', or control characters"
         )));
     }
-    let artifacts = build(&model, &name);
+    let artifacts = build(&model, &name).map_err(|error| Error::config(error.to_string()))?;
 
     if opts.output == ImportOutput::Stdout {
         print_stdout(&artifacts)?;
