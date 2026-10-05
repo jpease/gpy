@@ -3,6 +3,7 @@
 //! Integrates with the notify crate to provide efficient file system
 //! monitoring with proper event filtering and error handling.
 
+use super::watch_set::{OsOp, WatchMode, WatchSet};
 use super::{
     DelayedEventScheduler, PendingCallback, PendingEvent, WatchRegistry,
     multi_repo::MultiRepoWatcher, should_trigger_update,
@@ -13,7 +14,7 @@ use crate::{Error, Result};
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use notify::event::{CreateKind, EventKind, Flag, MetadataKind, ModifyKind};
 use notify::{Event, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -92,6 +93,40 @@ impl BackendKind {
             Self::Poll => "poll",
         }
     }
+
+    /// Whether removing one watch on this backend can also remove watches on
+    /// other, overlapping paths (#687). See [`WatchSet`].
+    const fn removal_cascades(self) -> bool {
+        match self {
+            Self::Native => NATIVE_REMOVAL_CASCADES,
+            Self::Poll => false,
+        }
+    }
+}
+
+/// Whether the platform's native `notify` backend shares OS watches between
+/// overlapping registrations, so that removing one path also removes watches
+/// another registration depends on (#687).
+///
+/// inotify keeps one descriptor per directory, shared by every registration
+/// whose walk reached it, and `notify` removes every descriptor under a
+/// recursive entry; kqueue likewise walks and removes the whole subtree.
+/// `FSEvents` (macOS, built with `macos_fsevent`) and `ReadDirectoryChangesW`
+/// (Windows) keep one independent entry per watched path.
+const NATIVE_REMOVAL_CASCADES: bool = !cfg!(any(target_os = "macos", target_os = "windows"));
+
+/// One logical watch registration: a `(path, mode)` pair as passed to
+/// `watch`/`watch_shallow`, held by `owners` callers (#687).
+#[derive(Debug)]
+struct Registration {
+    /// How many `watch` calls for this pair have not yet been matched by an
+    /// `unwatch`.
+    owners: u32,
+    /// The OS-level `(path, mode)` pairs this registration holds in
+    /// [`WatcherBackend::os`]: the path itself on the native backend, the
+    /// `.gitignore`-pruned directory expansion of a recursive directory watch
+    /// on the poll backend (#463, see [`FileSystemWatcher::poll_watch_targets`]).
+    targets: Vec<(PathBuf, WatchMode)>,
 }
 
 /// The armed notify backend plus the set of paths it must be watching.
@@ -110,27 +145,18 @@ impl BackendKind {
 struct WatcherBackend {
     /// `None` once [`FileSystemWatcher::stop`] has torn the backend down.
     watcher: Option<Box<dyn Watcher + Send>>,
-    watched_paths: Vec<PathBuf>,
-    /// For `BackendKind::Poll` only: maps each logical watched directory (as
-    /// passed to `watch`/`unwatch`, i.e. one entry per `watched_paths` dir
-    /// entry) to the `.gitignore`-pruned set of paths actually registered
-    /// with the underlying `PollWatcher` (#463) — see
-    /// [`FileSystemWatcher::poll_watch_targets`]. `watched_paths` itself
-    /// keeps recording the one logical root callers registered, unchanged,
-    /// so unwatch and backend-swap re-arm bookkeeping do not need to know
-    /// about the expansion; only the actual `notify` `watch`/`unwatch` calls
-    /// do. Unused (and left empty) under `BackendKind::Native`, which always
-    /// arms one direct recursive watch per registered path.
-    poll_expansion: HashMap<PathBuf, Vec<PathBuf>>,
-    /// Subset of `watched_paths` armed `NonRecursive` by
-    /// [`FileSystemWatcher::watch_shallow`] (#468). Kept as a separate set so
-    /// `watched_paths` stays the single ordered record of every registered
-    /// path, while the two places that must know the difference can ask:
-    /// [`FileSystemWatcher::rearm_poll_paths`], which would otherwise re-arm a
-    /// shallow watch recursively after a backend swap and expand it into
-    /// `objects/**` (#463), and [`FileSystemWatcher::covers`], for which a
-    /// shallow watch covers only the directory itself, never its descendants.
-    shallow_paths: HashSet<PathBuf>,
+    /// Every logical registration, keyed by `(path, mode)`. The single source
+    /// of truth for what callers asked to watch (#687): `covers`, unwatch
+    /// bookkeeping and the backend-swap re-arm all read it. A shallow and a
+    /// recursive registration of one path are separate keys, each with its own
+    /// owner count.
+    registrations: BTreeMap<(PathBuf, WatchMode), Registration>,
+    /// Reference-counted OS-level watches, shared by every registration whose
+    /// targets overlap (the poll expansions of nested roots, a common
+    /// directory armed shallow by a worktree and recursively by its main
+    /// checkout). Only this set talks to `watcher`, so one owner's unwatch
+    /// never removes a watch another owner still holds.
+    os: WatchSet,
     kind: BackendKind,
 }
 
@@ -139,11 +165,165 @@ impl WatcherBackend {
     fn armed(watcher: Box<dyn Watcher + Send>, kind: BackendKind) -> Self {
         Self {
             watcher: Some(watcher),
-            watched_paths: Vec::new(),
-            poll_expansion: HashMap::new(),
-            shallow_paths: HashSet::new(),
+            registrations: BTreeMap::new(),
+            os: WatchSet::new(kind.removal_cascades()),
             kind,
         }
+    }
+
+    /// The OS-level targets a `(path, mode)` registration arms on a `kind`
+    /// backend. `poll_targets` is the precomputed directory expansion for a
+    /// recursive directory watch on the poll backend; without one the path
+    /// itself is armed.
+    fn targets_for(
+        kind: BackendKind,
+        path: &Path,
+        mode: WatchMode,
+        poll_targets: Option<Vec<PathBuf>>,
+    ) -> Vec<(PathBuf, WatchMode)> {
+        match (kind, mode, poll_targets) {
+            // The descent already happened in `poll_watch_targets`, so each
+            // directory is armed shallow: `PollWatcher` never walks deeper than
+            // one level per registered directory (#463).
+            (BackendKind::Poll, WatchMode::Recursive, Some(targets)) => targets
+                .into_iter()
+                .map(|target| (target, WatchMode::Shallow))
+                .collect(),
+            _ => vec![(path.to_path_buf(), mode)],
+        }
+    }
+
+    /// Add one owner of `(path, mode)`, arming whatever OS watches that newly
+    /// requires. A no-op once the backend has been stopped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error, with every OS change rolled back, if the backend
+    /// rejects one of this registration's own targets.
+    fn acquire(
+        &mut self,
+        path: &Path,
+        mode: WatchMode,
+        poll_targets: Option<Vec<PathBuf>>,
+    ) -> Result<()> {
+        if self.watcher.is_none() {
+            return Ok(());
+        }
+        let key = (path.to_path_buf(), mode);
+        if let Some(registration) = self.registrations.get_mut(&key) {
+            registration.owners = registration.owners.saturating_add(1);
+            return Ok(());
+        }
+
+        let targets = Self::targets_for(self.kind, path, mode, poll_targets);
+        let mut ops = Vec::new();
+        for (target, target_mode) in &targets {
+            ops.extend(self.os.acquire(target, *target_mode));
+        }
+        let failures = self.apply(ops);
+        let own_failure = failures
+            .into_iter()
+            .find(|(failed, _)| targets.iter().any(|(target, _)| target == failed));
+        if let Some((_, error)) = own_failure {
+            let mut rollback = Vec::new();
+            for (target, target_mode) in &targets {
+                rollback.extend(self.os.release(target, *target_mode).unwrap_or_default());
+            }
+            self.apply(rollback);
+            return Err(Error::watcher(format!("Failed to watch path: {error}")));
+        }
+
+        self.registrations
+            .insert(key, Registration { owners: 1, targets });
+        Ok(())
+    }
+
+    /// Drop one owner of `(path, mode)`. OS watches are removed only once no
+    /// registration targets them any more; everything another owner still
+    /// holds stays armed. A no-op once the backend has been stopped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no owner holds `(path, mode)`.
+    fn release(&mut self, path: &Path, mode: WatchMode) -> Result<()> {
+        if self.watcher.is_none() {
+            return Ok(());
+        }
+        let key = (path.to_path_buf(), mode);
+        let Some(registration) = self.registrations.get_mut(&key) else {
+            return Err(Error::watcher(format!(
+                "Failed to unwatch path: {} is not watched ({mode:?})",
+                path.display()
+            )));
+        };
+        if registration.owners > 1 {
+            registration.owners = registration.owners.saturating_sub(1);
+            return Ok(());
+        }
+        let Some(released) = self.registrations.remove(&key) else {
+            return Ok(());
+        };
+        let mut ops = Vec::new();
+        for (target, target_mode) in &released.targets {
+            ops.extend(self.os.release(target, *target_mode).unwrap_or_default());
+        }
+        self.apply(ops);
+        Ok(())
+    }
+
+    /// Apply `ops` to the backend as one batch -- one `FSEventStream` rebuild
+    /// on macOS however many paths change (#388) -- returning every path whose
+    /// add failed. Those are also marked unarmed in [`WatcherBackend::os`].
+    /// Removal failures are only logged: the watch is gone either way.
+    fn apply(&mut self, ops: Vec<OsOp>) -> Vec<(PathBuf, notify::Error)> {
+        let mut failures = Vec::new();
+        if ops.is_empty() {
+            return failures;
+        }
+        let Some(watcher) = self.watcher.as_mut() else {
+            return failures;
+        };
+        let mut batch = watcher.paths_mut();
+        for op in ops {
+            match op {
+                OsOp::Add(path, mode) => {
+                    if let Err(error) = batch.add(&path, mode.recursive_mode()) {
+                        crate::debug::write_debug_log(
+                            "watcher",
+                            &format!("failed to watch {} ({mode:?}): {error}", path.display()),
+                        );
+                        failures.push((path, error));
+                    }
+                }
+                OsOp::Remove(path) => {
+                    if let Err(error) = batch.remove(&path) {
+                        crate::debug::write_debug_log(
+                            "watcher",
+                            &format!("failed to unwatch {}: {error}", path.display()),
+                        );
+                    }
+                }
+            }
+        }
+        if let Err(error) = batch.commit() {
+            crate::debug::write_debug_log(
+                "watcher",
+                &format!("failed to commit watch changes: {error}"),
+            );
+        }
+        for (path, _) in &failures {
+            self.os.mark_unarmed(path);
+        }
+        failures
+    }
+
+    /// Whether a registration delivers events for `target`: a recursive one
+    /// covers itself and every descendant, a shallow one only itself.
+    fn covers(&self, target: &Path) -> bool {
+        self.registrations.keys().any(|(watched, mode)| match mode {
+            WatchMode::Recursive => target.starts_with(watched),
+            WatchMode::Shallow => watched == target,
+        })
     }
 }
 
@@ -179,18 +359,6 @@ struct FollowupHandoff {
 struct ProbeTiming {
     probe_timeout: Duration,
     poll_interval: Duration,
-}
-
-/// A `watched_paths` / `shallow_paths` snapshot for the native -> poll swap.
-///
-/// [`FileSystemWatcher::poll_swap_snapshot`] reads this under a short lock and
-/// [`FileSystemWatcher::engage_poll_fallback`] then uses it, lock-free, to
-/// compute the poll-target expansion (#618). Bundled rather than a
-/// two-element tuple so the `Option<...>` return type stays under clippy's
-/// type-complexity limit.
-struct PollSwapSnapshot {
-    watched_paths: Vec<PathBuf>,
-    shallow_paths: HashSet<PathBuf>,
 }
 
 /// A poll watcher built and ready to install, plus its interval.
@@ -608,15 +776,16 @@ impl FileSystemWatcher {
 
     /// Phase 1 of [`FileSystemWatcher::engage_poll_fallback`] (#618): bail out
     /// under a short lock if the swap is no longer needed or safe, otherwise
-    /// return a snapshot of the paths (and shallow subset) to re-arm. Nothing
-    /// is mutated here -- the actual swap happens in
+    /// return the paths of every recursive registration, whose poll-target
+    /// expansion the caller computes with no lock held. Nothing is mutated
+    /// here -- the actual swap happens in
     /// [`FileSystemWatcher::apply_poll_swap`], atomically with the re-arm.
     /// Split out to keep `engage_poll_fallback` under clippy's line-count
     /// limit.
     fn poll_swap_snapshot(
         backend: &Arc<Mutex<WatcherBackend>>,
         stop_flag: &AtomicBool,
-    ) -> Option<PollSwapSnapshot> {
+    ) -> Option<Vec<PathBuf>> {
         let Ok(snapshot_guard) = backend.lock() else {
             crate::debug::write_debug_log(
                 "watcher",
@@ -630,10 +799,14 @@ impl FileSystemWatcher {
         if snapshot_guard.kind == BackendKind::Poll {
             return None;
         }
-        Some(PollSwapSnapshot {
-            watched_paths: snapshot_guard.watched_paths.clone(),
-            shallow_paths: snapshot_guard.shallow_paths.clone(),
-        })
+        Some(
+            snapshot_guard
+                .registrations
+                .keys()
+                .filter(|(_, mode)| *mode == WatchMode::Recursive)
+                .map(|(path, _)| path.clone())
+                .collect(),
+        )
     }
 
     /// Phase 3 of [`FileSystemWatcher::engage_poll_fallback`] (#618): re-lock,
@@ -670,8 +843,7 @@ impl FileSystemWatcher {
         backend_guard.watcher = Some(armed.watcher);
         backend_guard.kind = BackendKind::Poll;
 
-        let paths = backend_guard.watched_paths.clone();
-        Self::rearm_poll_paths(&mut backend_guard, &paths, registry, precomputed);
+        let paths = Self::rearm_poll_paths(&mut backend_guard, registry, precomputed);
         crate::debug::write_debug_log(
             "watcher",
             &format!(
@@ -695,8 +867,8 @@ impl FileSystemWatcher {
     /// The expensive part -- computing each directory path's poll-target
     /// expansion, which transitively walks the tree and can run `git
     /// ls-files` for a repo's first force-added lookup (#618) -- happens
-    /// BEFORE that lock is taken, keyed by a snapshot of `watched_paths` /
-    /// `shallow_paths` read under a short separate lock
+    /// BEFORE that lock is taken, keyed by a snapshot of the recursive
+    /// registrations read under a short separate lock
     /// ([`FileSystemWatcher::poll_swap_snapshot`]). `self.backend` is the one
     /// mutex shared by every repo this watcher serves, so doing that walk
     /// while holding it would let one repo's cold start stall
@@ -739,20 +911,20 @@ impl FileSystemWatcher {
             }
         };
 
-        let Some(snapshot) = Self::poll_swap_snapshot(backend, stop_flag) else {
+        let Some(recursive_paths) = Self::poll_swap_snapshot(backend, stop_flag) else {
             return;
         };
 
         // No lock held: compute the poll-target expansion (and any
-        // transitive `git ls-files`, #618) for each non-shallow directory
-        // path in the snapshot -- exactly the work `rearm_poll_paths` used to
-        // do while holding the lock.
-        let mut precomputed = HashMap::with_capacity(snapshot.watched_paths.len());
-        for path in &snapshot.watched_paths {
-            if snapshot.shallow_paths.contains(path) || !path.is_dir() {
-                continue;
+        // transitive `git ls-files`, #618) for each recursive directory
+        // registration in the snapshot -- exactly the work `rearm_poll_paths`
+        // used to do while holding the lock.
+        let mut precomputed = HashMap::with_capacity(recursive_paths.len());
+        for path in recursive_paths {
+            if path.is_dir() {
+                let targets = Self::poll_watch_targets(&path, registry);
+                precomputed.insert(path, targets);
             }
-            precomputed.insert(path.clone(), Self::poll_watch_targets(path, registry));
         }
 
         let armed = ArmedPollWatcher {
@@ -772,72 +944,59 @@ impl FileSystemWatcher {
         }
     }
 
-    /// Re-arm every entry of `paths` against the `PollWatcher` now installed
-    /// in `state`, populating `state.poll_expansion` for directory paths
-    /// (#463) exactly as [`FileSystemWatcher::watch`] does for a single new
-    /// path. Split out of [`FileSystemWatcher::engage_poll_fallback`] to keep
-    /// it under clippy's line-count limit.
+    /// Rebuild `state`'s OS-level watch set against the `PollWatcher` now
+    /// installed in it, from the logical registrations alone (#687): every
+    /// registration is re-expanded for the poll backend (#463) and its
+    /// targets re-counted in a fresh [`WatchSet`], so targets shared by
+    /// overlapping roots stay armed until the last root releases them.
+    /// Returns each re-armed path once, for the caller's synthetic rescans.
+    /// Split out of [`FileSystemWatcher::engage_poll_fallback`] to keep it
+    /// under clippy's line-count limit.
     ///
     /// `precomputed` holds the poll-target expansion
     /// [`FileSystemWatcher::engage_poll_fallback`] already computed, with
-    /// `state`'s lock released, for every directory path in its pre-swap
-    /// snapshot (#618). A path present in `paths` but absent from
-    /// `precomputed` was registered by a concurrent `watch()` call after that
-    /// snapshot was taken; `watch()` already arms such a path directly onto
-    /// whichever backend it observes, so this is normally a no-op finding
-    /// nothing left to do for it. It is computed here, still under `state`'s
-    /// lock, only as a defensive fallback so a rearm can never silently skip
-    /// a path -- the same rare case #618 otherwise leaves running
-    /// transitively under the lock, but bounded to at most the paths added in
-    /// one narrow race window rather than every path on every swap.
+    /// `state`'s lock released, for every recursive directory registration in
+    /// its pre-swap snapshot (#618). A registration absent from `precomputed`
+    /// was added by a concurrent `watch()` call after that snapshot was
+    /// taken. Its expansion is computed here, still under `state`'s lock, only
+    /// as a defensive fallback so a rearm can never silently skip a path --
+    /// the same rare case #618 otherwise leaves running transitively under
+    /// the lock, but bounded to at most the paths added in one narrow race
+    /// window rather than every path on every swap.
     fn rearm_poll_paths(
         state: &mut WatcherBackend,
-        paths: &[PathBuf],
         registry: &Arc<WatchRegistry>,
         precomputed: &HashMap<PathBuf, Vec<PathBuf>>,
-    ) {
-        // Cloned so `watcher` can be borrowed mutably below; the set holds at
-        // most one entry per registered common directory and this runs once per
-        // backend swap.
-        let shallow = state.shallow_paths.clone();
-        let Some(watcher) = state.watcher.as_mut() else {
-            return;
-        };
-        for path in paths {
-            if shallow.contains(path) {
-                // Re-arming this recursively would expand it into `objects/**`
-                // for a 2s stat walk (#463) -- the exact reason it is shallow.
-                if let Err(error) = watcher.watch(path, RecursiveMode::NonRecursive) {
-                    crate::debug::write_debug_log(
-                        "watcher",
-                        &format!("poll fallback could not re-arm {}: {error}", path.display()),
-                    );
-                }
-                continue;
-            }
-            if path.is_dir() {
-                let targets = precomputed
+    ) -> Vec<PathBuf> {
+        state.os = WatchSet::new(state.kind.removal_cascades());
+        let mut ops = Vec::new();
+        let mut paths: Vec<PathBuf> = Vec::new();
+        for ((path, mode), registration) in &mut state.registrations {
+            // A shallow registration is never expanded: re-arming it
+            // recursively would expand it into `objects/**` for a 2s stat
+            // walk (#463) -- the exact reason it is shallow.
+            let poll_targets = (*mode == WatchMode::Recursive && path.is_dir()).then(|| {
+                precomputed
                     .get(path)
-                    .map_or_else(|| Self::poll_watch_targets(path, registry), Clone::clone);
-                for target in &targets {
-                    if let Err(error) = watcher.watch(target, RecursiveMode::NonRecursive) {
-                        crate::debug::write_debug_log(
-                            "watcher",
-                            &format!(
-                                "poll fallback could not re-arm {}: {error}",
-                                target.display()
-                            ),
-                        );
-                    }
-                }
-                state.poll_expansion.insert(path.clone(), targets);
-            } else if let Err(error) = watcher.watch(path, RecursiveMode::Recursive) {
-                crate::debug::write_debug_log(
-                    "watcher",
-                    &format!("poll fallback could not re-arm {}: {error}", path.display()),
-                );
+                    .map_or_else(|| Self::poll_watch_targets(path, registry), Clone::clone)
+            });
+            registration.targets =
+                WatcherBackend::targets_for(state.kind, path, *mode, poll_targets);
+            for (target, target_mode) in &registration.targets {
+                ops.extend(state.os.acquire(target, *target_mode));
             }
+            // Keys are ordered by path first, so a path registered in both
+            // modes is adjacent and `dedup` below keeps it once.
+            paths.push(path.clone());
         }
+        paths.dedup();
+        for (path, error) in state.apply(ops) {
+            crate::debug::write_debug_log(
+                "watcher",
+                &format!("poll fallback could not re-arm {}: {error}", path.display()),
+            );
+        }
+        paths
     }
 
     /// Start watching a directory recursively
@@ -880,29 +1039,7 @@ impl FileSystemWatcher {
                 drop(backend_guard);
                 continue;
             }
-            // One explicit reborrow so the fields below split disjointly under
-            // the borrow checker: repeatedly projecting straight off
-            // `backend_guard` (a `MutexGuard`) re-derefs it on every access,
-            // which the checker cannot split the way it can plain struct fields.
-            let state = &mut *backend_guard;
-            if let Some(watcher) = state.watcher.as_mut() {
-                if let Some(targets) = poll_targets {
-                    for target in &targets {
-                        watcher
-                            .watch(target, RecursiveMode::NonRecursive)
-                            .map_err(|e| Error::watcher(format!("Failed to watch path: {e}")))?;
-                    }
-                    state.poll_expansion.insert(path_buf.clone(), targets);
-                } else {
-                    watcher
-                        .watch(&path_buf, RecursiveMode::Recursive)
-                        .map_err(|e| Error::watcher(format!("Failed to watch path: {e}")))?;
-                }
-
-                state.watched_paths.push(path_buf);
-            }
-
-            return Ok(());
+            return backend_guard.acquire(&path_buf, WatchMode::Recursive, poll_targets);
         }
     }
 
@@ -921,24 +1058,12 @@ impl FileSystemWatcher {
     ///
     /// Returns an error if the path cannot be watched.
     pub fn watch_shallow<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let path_buf = path.as_ref().to_path_buf();
-
         let Ok(mut backend_guard) = self.backend.lock() else {
             return Err(Error::watcher("Watcher backend lock poisoned".to_owned()));
         };
-        let state = &mut *backend_guard;
-        if let Some(watcher) = state.watcher.as_mut() {
-            // No `poll_expansion` entry: a shallow watch is already exactly one
-            // `NonRecursive` registration on both backends, so `unwatch`'s
-            // no-expansion branch reverses it correctly as-is.
-            watcher
-                .watch(&path_buf, RecursiveMode::NonRecursive)
-                .map_err(|e| Error::watcher(format!("Failed to watch path: {e}")))?;
-            state.shallow_paths.insert(path_buf.clone());
-            state.watched_paths.push(path_buf);
-        }
-
-        Ok(())
+        // Never expanded, on either backend: a shallow watch is exactly one
+        // `NonRecursive` OS registration.
+        backend_guard.acquire(path.as_ref(), WatchMode::Shallow, None)
     }
 
     /// Whether an already-armed watch delivers events for `path`.
@@ -949,54 +1074,44 @@ impl FileSystemWatcher {
     /// macOS, where notify cannot add a path to a live `FSEventStream` and instead
     /// tears it down and rebuilds it, and the rebuilt stream can silently drop
     /// its first event (#388).
+    ///
+    /// Answered from the logical registrations, which the reference-counted
+    /// OS watch set keeps armed for as long as any of them holds (#687).
     #[must_use]
     pub fn covers<P: AsRef<Path>>(&self, path: P) -> bool {
-        let target = path.as_ref();
-        let Ok(guard) = self.backend.lock() else {
-            return false;
-        };
-        guard.watched_paths.iter().any(|watched| {
-            if guard.shallow_paths.contains(watched) {
-                watched == target
-            } else {
-                target.starts_with(watched)
-            }
-        })
+        self.backend
+            .lock()
+            .is_ok_and(|guard| guard.covers(path.as_ref()))
     }
 
-    /// Stop watching a directory
+    /// Release one recursive [`FileSystemWatcher::watch`] of `path`.
+    ///
+    /// Undoes only that one registration: OS watches another registration
+    /// still needs -- the same path watched by another owner, a nested or
+    /// enclosing repository, a shared poll-expansion directory -- stay armed
+    /// (#687).
     ///
     /// # Errors
     ///
-    /// Returns an error if the path cannot be unwatched.
+    /// Returns an error if `path` is not watched recursively.
     pub fn unwatch<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let path_buf = path.as_ref().to_path_buf();
-
         let Ok(mut backend_guard) = self.backend.lock() else {
             return Err(Error::watcher("Watcher backend lock poisoned".to_owned()));
         };
-        let state = &mut *backend_guard;
-        if let Some(watcher) = state.watcher.as_mut() {
-            if let Some(targets) = state.poll_expansion.remove(&path_buf) {
-                for target in &targets {
-                    if let Err(error) = watcher.unwatch(target) {
-                        crate::debug::write_debug_log(
-                            "watcher",
-                            &format!("failed to unwatch {}: {error}", target.display()),
-                        );
-                    }
-                }
-            } else {
-                watcher
-                    .unwatch(&path_buf)
-                    .map_err(|e| Error::watcher(format!("Failed to unwatch path: {e}")))?;
-            }
+        backend_guard.release(path.as_ref(), WatchMode::Recursive)
+    }
 
-            state.watched_paths.retain(|p| p != &path_buf);
-            state.shallow_paths.remove(&path_buf);
-        }
-
-        Ok(())
+    /// Release one [`FileSystemWatcher::watch_shallow`] of `path`, with the
+    /// same ownership rules as [`FileSystemWatcher::unwatch`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `path` is not watched shallowly.
+    pub fn unwatch_shallow<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let Ok(mut backend_guard) = self.backend.lock() else {
+            return Err(Error::watcher("Watcher backend lock poisoned".to_owned()));
+        };
+        backend_guard.release(path.as_ref(), WatchMode::Shallow)
     }
 
     /// Process a notify event and trigger callback if relevant
@@ -3401,7 +3516,7 @@ mod tests {
     /// onto the production swap path) mid-flight -- after its pre-swap
     /// snapshot (phase 1) but before the swap itself (phase 3). While parked,
     /// `watch()` for repo B is guaranteed to observe `kind == Native` and arm
-    /// natively; repo B is then in `watched_paths` but was never part of the
+    /// natively; repo B is then a registration that was never part of the
     /// swap's pre-swap snapshot, so ending up correctly re-armed on the poll
     /// backend exercises `rearm_poll_paths`'s defensive fallback (#618) for a
     /// path added between the snapshot and the final lock.
@@ -3480,14 +3595,16 @@ mod tests {
             "the swap must have completed"
         );
         let guard = watcher.backend.lock().expect("backend lock");
+        let registration = guard
+            .registrations
+            .get(&(repo_b.clone(), WatchMode::Recursive))
+            .expect("repo B must still be a watched path after the swap");
         assert!(
-            guard.watched_paths.contains(&repo_b),
-            "repo B must still be a watched path after the swap"
-        );
-        assert!(
-            guard.poll_expansion.contains_key(&repo_b),
+            registration.targets.contains(&(repo_b, WatchMode::Shallow)),
             "repo B, added while the swap was mid-flight and so absent from its \
-             pre-swap snapshot, must still end up re-armed on the poll backend (#618)"
+             pre-swap snapshot, must still end up re-armed on the poll backend \
+             with its expansion (#618), got: {:?}",
+            registration.targets
         );
         drop(guard);
     }
@@ -4399,6 +4516,59 @@ mod tests {
         );
     }
 
+    /// Regression test for #687: unwatching an outer poll root keeps a nested root armed.
+    ///
+    /// Under the poll backend the outer root's expansion includes every
+    /// directory of the nested root. Unwatching the outer root used to unwatch
+    /// all of them, leaving the still-watched inner root blind.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the temp repo cannot be created or the watcher cannot arm.
+    #[test]
+    fn poll_unwatch_of_outer_keeps_inner_expansion() {
+        let (mut watcher, outer, events) = real_repo_watcher(FallbackPolicy::ForcePoll {
+            poll_interval: Duration::from_millis(200),
+        });
+        let inner = outer.join("inner");
+        let sub = inner.join("sub");
+        std::fs::create_dir_all(&sub).expect("create inner/sub");
+        let tracked = sub.join("f.txt");
+        std::fs::write(&tracked, b"seed\n").expect("seed inner file");
+
+        watcher.watch(&outer).expect("watch outer");
+        watcher.watch(&inner).expect("watch inner");
+        watcher.unwatch(&outer).expect("unwatch outer");
+        let still_covered = watcher.covers(&sub);
+        events.lock().unwrap().clear();
+
+        // Re-append until delivered, for the same baseline race as
+        // `poll_fallback_backend_delivers_edits_to_existing_files`.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut delivered = false;
+        while Instant::now() < deadline {
+            let mut handle = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&tracked)
+                .expect("open inner file for append");
+            std::io::Write::write_all(&mut handle, b"modified\n").expect("append");
+            drop(handle);
+
+            if wait_for_any_event(&events, Duration::from_millis(500)) {
+                delivered = true;
+                break;
+            }
+        }
+        watcher.stop();
+        let _ = std::fs::remove_dir_all(&outer);
+
+        assert!(still_covered, "the inner root still covers its subtree");
+        assert!(
+            delivered,
+            "unwatching the outer root must not remove the inner root's poll targets"
+        );
+    }
+
     /// Companion to the test above at the classification level (#447): a
     /// metadata-only event for a worktree file must reach the Git path.
     ///
@@ -4493,7 +4663,7 @@ mod tests {
     ///
     /// #442's biggest correctness trap: swapping the backend must re-arm every
     /// directory that was ALREADY registered against the old one. A swap that
-    /// forgot `watched_paths` would leave live repos silently unwatched — the
+    /// forgot the existing registrations would leave live repos silently unwatched — the
     /// exact failure the fallback exists to fix, just moved.
     ///
     /// The file is written only AFTER the swap, so delivery here can only come
