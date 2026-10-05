@@ -254,6 +254,65 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Fixed
 
+- Zsh prints IPC requests, replies and cached output verbatim (#676).
+  `echo` and `print` without `-r` interpreted backslash escapes, so a path
+  containing `\` reached the agent as invalid JSON and replies containing
+  `\c` or `\b` were truncated. Every site now uses `print -r --`.
+
+- Bash no longer re-renders the prompt from a SIGURG trap (#678). The
+  doorbell trap ran a full render re-entrantly, which hung bash 5 and looped
+  bash 3.2 at an idle prompt, and it made `wait` return 144. Bash now has no
+  URG trap; the agent's reload/reregister flag files are consumed at the next
+  prompt, before it renders.
+
+- Bash keeps `$_` across the DEBUG trap (#682), so `mkdir -p dir && cd $_`
+  works on bash 4+.
+
+- Bash measures the duration of the whole command line (#684). The start
+  time is armed by a hook kept last in `PROMPT_COMMAND` and recorded once per
+  command line, so other `PROMPT_COMMAND` entries, each simple command of a
+  list or loop, and doorbells no longer reset it.
+
+- Fish background git/language refreshes no longer block the prompt (#685).
+  They are sent through a detached `socat`/`nc` pipeline, and with the agent
+  down they fork nothing, so the directory segment still renders.
+
+- Incremental git updates count conflicted files once and keep a staged
+  deletion shadowed by an untracked file at the same path (#686). Counts are
+  now derived from the per-file status map, as a full scan does.
+
+- Unwatching one repository no longer removes another repository's
+  overlapping OS watches (#687): nested repositories, submodules and linked
+  worktrees keep their live updates. Watches are reference-counted per owner
+  on every backend.
+
+- The Python segment falls back to `python3` when `python` is not on `PATH`
+  (#688), as on stock macOS, Debian/Ubuntu and Homebrew.
+
+- A failing or hung version probe is cached for 60 seconds instead of being
+  re-spawned on every render or kept for 24 hours (#689). A hung tool no
+  longer drops the IPC reply.
+
+- `gpy theme import` fills modules absent from `starship.toml` from the
+  builtin `starship` preset (#690), so git, directory and duration render
+  instead of printing nothing.
+
+- `gpy theme import` and `gpy palette import` refuse to shadow a builtin or
+  plugin theme or palette unless `--force` is given (#691). The README's
+  `gpy theme import ~/.config/starship.toml` example now passes `--name`.
+
+- The wizard keeps git and language in `ui.enabled_segments` on save, and
+  `gpy enable git|language` restores a segment missing from the list (#692).
+
+- `install-dev.fish` deletes shadowing `gpy`/`gpy-agent` binaries only under
+  `$HOME`, and deletes nothing when its install directory is not on `PATH`
+  (#693).
+
+- Linux release binaries are built against glibc 2.31 with
+  `cargo zigbuild`, and a release gate rejects any binary that needs a newer
+  glibc (#694). They previously required glibc 2.39 and failed on
+  Ubuntu 20.04/22.04 and Debian 11/12.
+
 - Failed prompt segments no longer print protocol JSON into the prompt
   (#680). An `ansi`, `bash-prompt` or `zsh-prompt` request that fails (a
   denylisted `cwd` such as `/etc`, a broken `.git`, git disabled, or no
