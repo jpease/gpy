@@ -12,8 +12,6 @@ use super::connection::ConnectionHandler;
 use crate::debug_log;
 #[cfg(unix)]
 use crate::ipc::Response;
-#[cfg(unix)]
-use crate::ipc::protocol;
 use crate::ipc::{
     ClientDirectory,
     handlers::{
@@ -779,7 +777,7 @@ impl EndpointHandle {
             // forever behind slow-loris connections that never release
             // their permit. `try_acquire()` rejects immediately instead.
             let Ok(_permit) = semaphore.try_acquire() else {
-                Self::reject_connection_busy(stream).await;
+                Self::reject_connection_busy(stream);
                 return;
             };
 
@@ -809,42 +807,22 @@ impl EndpointHandle {
         });
     }
 
-    /// Write a fast-fail error response and close the connection because the
-    /// concurrent-connection semaphore is saturated (#316).
+    /// Close the connection without replying because the concurrent-connection
+    /// semaphore is saturated (#316).
     ///
-    /// Mirrors the existing `Response::Error` fast-fail pattern used for PID
-    /// validation failures (see `route_request_secure`), but writes directly
-    /// to the raw stream since no per-client `EndpointHandle` is constructed
-    /// for a rejected connection.
+    /// The request is never read, so its response format is unknown, and any
+    /// reply line would be printed verbatim into a prompt that asked for a
+    /// rendered segment (#680). Closing instead is the fast-fail signal: the
+    /// shells treat a missing reply exactly like an unreachable agent and
+    /// fall back, and `gpy-agent` CLI clients report that the agent closed
+    /// the connection without replying.
     #[cfg(unix)]
-    async fn reject_connection_busy(mut stream: UnixStream) {
-        use tokio::io::AsyncWriteExt;
-
-        let response = Response::Error {
-            message: "server busy: too many concurrent connections".to_owned(),
-        };
-        let payload = match protocol::serialize_response(&response) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                warn_log!(
-                    "server",
-                    "Failed to serialize connection-busy response: {e}"
-                );
-                return;
-            }
-        };
-
-        if let Err(e) = stream.write_all(&payload).await {
-            warn_log!("server", "Failed to write connection-busy response: {e}");
-            return;
-        }
-        if let Err(e) = stream.write_all(b"\n").await {
-            warn_log!("server", "Failed to write connection-busy response: {e}");
-            return;
-        }
-        if let Err(e) = stream.flush().await {
-            warn_log!("server", "Failed to flush connection-busy response: {e}");
-        }
+    fn reject_connection_busy(stream: UnixStream) {
+        debug_log!(
+            "server",
+            "Rejecting connection: too many concurrent connections"
+        );
+        drop(stream);
     }
 
     /// Notify live-update subscribers about a response, if live updates are
