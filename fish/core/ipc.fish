@@ -212,6 +212,35 @@ function __gpy_ipc_send --argument-names payload timeout_ms
     return 1
 end
 
+# Fire-and-forget send for background refreshes (#685). Mirrors
+# __gpy_ipc_send's client selection but discards the reply and never waits for
+# it. Fish does not fork for functions, so `some_function &` runs in the
+# foreground with `$last_pid` unset; only a pipeline whose last element is an
+# external command becomes a real background job. The client is therefore
+# invoked through `command` (a user function cannot shadow it and turn the job
+# back into a foreground one), and the payload is built by the caller in the
+# foreground. With no socket there is nothing to send, so nothing is forked.
+function __gpy_ipc_send_detached --argument-names payload timeout_ms --description 'Send an IPC payload in a detached background job, discarding the reply'
+    set -q timeout_ms[1]; or set timeout_ms $GPY_IPC_TIMEOUT_MS
+    set -l sock (__gpy_ipc_endpoint)
+    test -S "$sock"; or return 1
+
+    if command -q socat
+        set -l secs (math "$timeout_ms / 1000")
+        printf '%s\n' $payload | command socat -T $secs - UNIX-CONNECT:$sock >/dev/null 2>&1 &
+    else if command -q nc
+        __gpy_nc_probe_capabilities
+        test "$__gpy_nc_supports_unix" -eq 1; or return 1
+        set -l nc_w_secs (math "max(1, ceil($timeout_ms / 1000))")
+        printf '%s\n' $payload | command nc -U $sock -w $nc_w_secs >/dev/null 2>&1 &
+    else
+        return 1
+    end
+    # Without disown an interactive fish prints "Job ... has ended" later.
+    disown $last_pid 2>/dev/null
+    return 0
+end
+
 # Helper function to properly escape strings for JSON
 function __gpy_json_escape --argument-names str --description 'Escape a string for safe JSON inclusion'
     # Replace backslash first to avoid double-escaping; quote arg so lists collapse safely
@@ -757,51 +786,28 @@ function __gpy_request --argument-names op cwd is_last prev_bg is_first --descri
     printf '%s\n' $result
 end
 
-# Force a fresh data request to the agent, bypassing the instant-prompt cache.
-#
-# `__gpy_request` short-circuits to the instant cache on a hit, which is correct
-# for rendering but means a stale-but-present cache would never be refreshed.
-# This helper sends the data op straight to the agent so it recomputes, rewrites
-# the instant cache, and (when the rendered output changed) repaints live shells
-# via the SIGURG doorbell. Output is intentionally ignored — only the agent side effects
-# matter. There is no one-shot fallback: with no daemon there is nothing to send
-# a repaint signal, so the already-served stale prompt simply remains until the
-# daemon returns.
-function __gpy_trigger_data_refresh --argument-names op cwd is_last prev_bg --description 'Force an agent data refresh, bypassing the instant cache'
-    __gpy_resolve_agent_binary >/dev/null; or return
-    switch $op
-        case git lang directory
-            set -l payload (__gpy_build_data_payload $op $cwd ansi $is_last $prev_bg)
-            __gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS >/dev/null 2>&1
-        case '*'
-            return 1
-    end
-end
-
 # Shared throttled background refresh dispatcher (#612). Replaces
 # __gpy_maybe_refresh_git (segments/git.fish) and three near-identical inline
 # copies in segments/language.fish (cold-miss, variant-fallback, stale) that
-# differed only in throttle-var bookkeeping and which request helper they
-# dispatched through.
+# differed only in throttle-var bookkeeping.
+#
+# The refresh goes straight to the agent, bypassing the instant cache: a
+# stale-but-present entry must not be re-served instead of refreshed (#458).
+# The agent recomputes, rewrites the instant cache and, when the rendered
+# output changed, repaints live shells via the SIGURG doorbell. The reply is
+# discarded, so there is never a oneshot fallback: with no daemon there is
+# nothing to refresh, and forking `gpy-agent oneshot` here would block the
+# prompt and spend the per-render oneshot budget a visible segment needs
+# (#324, #685).
 #
 # Arguments:
-#   op                 — git|lang: the throttle-var prefix and the op
-#                        forwarded to __gpy_request/__gpy_trigger_data_refresh.
+#   op                 — git|lang: the throttle-var prefix and the data op.
 #   root               — cwd/repo root the refresh is for.
 #   cache_suffix       — e.g. "git_last" / "lang_first" (see
 #                        __gpy_cache_variant_suffix).
-#   is_last, prev_bg   — pass-through render-context flags.
-#   is_first           — pass-through "true"/"" flag; consulted only when
-#                        mode is "request".
-#   mode               — "refresh" (default): bypasses the instant cache via
-#                        __gpy_trigger_data_refresh, for a stale/cold entry
-#                        that must actually reach the agent (#458 --
-#                        __gpy_request would just re-serve the very entry
-#                        being replaced).
-#                        "request": dispatches via __gpy_request instead, for
-#                        the language cold-miss path, which deliberately
-#                        keeps using the cache-aware helper because its cache
-#                        read genuinely missed (nothing stale to bypass).
+#   is_last, prev_bg,
+#   is_first           — pass-through render-context flags, so the refresh
+#                        asks for the same cache variant the render read.
 #   throttle_key_extra — optional extra token appended to the throttle
 #                        variable name. The language variant-fallback path
 #                        needs a throttle keyed by prev_bg TOKEN as well as
@@ -809,25 +815,25 @@ end
 #                        DIFFERENT prev_bg context must not starve this
 #                        context's correction, and vice versa); passing the
 #                        token here keeps that throttle bucket distinct from
-#                        the plain refresh/request throttle without a second
-#                        copy of the bookkeeping below.
+#                        the plain refresh throttle without a second copy of
+#                        the bookkeeping below.
 #
-# __gpy_register_with_agent runs here (foreground, before backgrounding the
-# actual request) for BOTH ops: it's a cheap no-op once already registered
-# (#419) and records success via a global that would not propagate back from
-# a backgrounded `&` child, so it must run before the fork regardless of op.
-# Previously only git's throttle helper called it; language's three inline
-# copies never did -- that was a latent asymmetry (language refreshes never
-# opportunistically recovered a stale registration after an agent restart),
-# not a deliberate difference, so consolidating picks up the git behavior for
-# language too.
-function __gpy_maybe_refresh --argument-names op root cache_suffix is_last prev_bg is_first mode throttle_key_extra --description 'Shared throttled background refresh dispatcher for git/lang segments'
+# Everything except the IPC client runs in the foreground: fish does not fork
+# for functions, so the only thing put in the background is the external
+# client pipeline in __gpy_ipc_send_detached (#685).
+# __gpy_register_with_agent runs here for BOTH ops: it's a cheap no-op once
+# already registered (#419) and records success via a global, so it must stay
+# in-process. Previously only git's throttle helper called it; language's
+# three inline copies never did -- that was a latent asymmetry (language
+# refreshes never opportunistically recovered a stale registration after an
+# agent restart), not a deliberate difference, so consolidating picks up the
+# git behavior for language too.
+function __gpy_maybe_refresh --argument-names op root cache_suffix is_last prev_bg is_first throttle_key_extra --description 'Shared throttled background refresh dispatcher for git/lang segments'
     __gpy_resolve_agent_binary >/dev/null; or return
 
     set -q is_last[1]; or set is_last ""
     set -q prev_bg[1]; or set prev_bg ""
     set -q is_first[1]; or set is_first ""
-    set -q mode[1]; or set mode refresh
     set -q throttle_key_extra[1]; or set throttle_key_extra ""
 
     set -l safe_path (string replace -ra '[^a-zA-Z0-9_]' _ "$root")
@@ -845,15 +851,8 @@ function __gpy_maybe_refresh --argument-names op root cache_suffix is_last prev_
 
     __gpy_register_with_agent >/dev/null 2>&1
 
-    # Background the request and ignore output: the goal is the agent's side
-    # effects (recompute, instant-cache write, repaint-on-change).
-    switch $mode
-        case request
-            __gpy_request $op "$root" "$is_last" "$prev_bg" "$is_first" >/dev/null 2>&1 &
-        case '*'
-            __gpy_trigger_data_refresh $op "$root" "$is_last" "$prev_bg" >/dev/null 2>&1 &
-    end
-    disown $last_pid 2>/dev/null
+    set -l payload (__gpy_build_data_payload $op "$root" ansi "$is_last" "$prev_bg" "$is_first")
+    __gpy_ipc_send_detached $payload $GPY_IPC_TIMEOUT_MS
 end
 
 # Helper function to get the agent version and protocol version

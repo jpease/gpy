@@ -41,6 +41,7 @@ This directory contains integration tests for the Fish shell prompt and GPY init
 - **`theme_prompt_render.test.fish`** - Tests theme rendering
 - **`ipc_security.test.fish`** - Tests IPC security features
 - **`ipc_nc_fallback_timeout.test.fish`** - Tests the `nc` fallback bounds its wait against a wedged agent (#299)
+- **`maybe_refresh_nonblocking.test.fish`** - Background git/language refreshes return at once against a slow agent, and with the agent down never fork `gpy-agent oneshot` or hide the directory segment (#685)
 - **`main.test.fish`** - Basic smoke tests
 
 ### Every file in this directory
@@ -91,6 +92,7 @@ sections above describe the ones worth reading first.
 - `json_escape_vectors.test.fish`
 - `json_extract_and_protocol_stdout.test.fish`
 - `json_flags_tail.test.fish`
+- `maybe_refresh_nonblocking.test.fish`
 - `path_parity.test.fish`
 - `policy_helpers.test.fish`
 - `prompt_autostart_backoff.test.fish`
