@@ -45,7 +45,7 @@ fn render_response(theme: &ThemeConfig, response: &Response, is_last: bool) -> S
         SegmentPosition::MIDDLE
     };
     let ctx = RenderContext::new(&config, theme, position).with_palette(palette);
-    let formatter = gpy_agent::formatter::FishAnsiFormatter;
+    let formatter = gpy_agent::formatter::FishAnsiFormatter::default();
     formatter.render(response, &ctx).expect("render segment")
 }
 

@@ -18,6 +18,16 @@ use std::collections::HashMap;
 pub trait VariableResolver {
     /// Return the value for `name`, or `None` if unset/empty.
     fn resolve(&self, name: &str) -> Option<String>;
+
+    /// Whether `name` resolves to a shell prompt-expansion token that the
+    /// shell must interpret (the clock's `\D{…}`/`%D{…}` live time).
+    ///
+    /// Such values become [`SpanKind::PromptToken`] spans, which the bash and
+    /// zsh prompt encoders emit unescaped. Every other value is data and is
+    /// escaped so the shell displays it literally (#677).
+    fn is_prompt_token(&self, _name: &str) -> bool {
+        false
+    }
 }
 
 /// A simple in-memory resolver, primarily for tests and the importer.
@@ -134,6 +144,18 @@ impl<'a> RenderContext<'a> {
     }
 }
 
+/// Whether a span's text is display data or a shell prompt-expansion token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpanKind {
+    /// Literal text to display as-is. Prompt encoders escape it so the shell
+    /// never expands it.
+    #[default]
+    Text,
+    /// A prompt-expansion token the shell must interpret (e.g. `%D{%H:%M}`).
+    /// Prompt encoders copy it unescaped.
+    PromptToken,
+}
+
 /// A run of text sharing one resolved style.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Span {
@@ -141,6 +163,8 @@ pub struct Span {
     pub text: String,
     /// The style applied to `text`.
     pub style: Style,
+    /// Whether `text` is display data or a prompt-expansion token.
+    pub kind: SpanKind,
 }
 
 /// Parse and evaluate `template` against `ctx`.
@@ -174,10 +198,15 @@ fn eval_nodes(
     for node in nodes {
         let mut buf: Vec<Span> = Vec::new();
         match node {
-            Node::Literal(text) => push_text(&mut buf, text, inherited),
+            Node::Literal(text) => push_text(&mut buf, text, inherited, SpanKind::Text),
             Node::Var(name) => {
                 if let Some(value) = ctx.resolver.resolve(name) {
-                    push_text(&mut buf, &sanitize_control_chars(&value), inherited);
+                    let kind = if ctx.resolver.is_prompt_token(name) {
+                        SpanKind::PromptToken
+                    } else {
+                        SpanKind::Text
+                    };
+                    push_text(&mut buf, &sanitize_control_chars(&value), inherited, kind);
                 }
             }
             Node::Styled {
@@ -252,13 +281,14 @@ fn sanitize_control_chars(value: &str) -> String {
     }
 }
 
-fn push_text(out: &mut Vec<Span>, text: &str, style: &Style) {
+fn push_text(out: &mut Vec<Span>, text: &str, style: &Style, kind: SpanKind) {
     if text.is_empty() {
         return;
     }
     out.push(Span {
         text: text.to_owned(),
         style: style.clone(),
+        kind,
     });
 }
 

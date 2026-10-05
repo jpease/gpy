@@ -51,15 +51,15 @@ RESOLVED_ROOT="$(realpath "$FAKE_REPO" 2>/dev/null || echo "$FAKE_REPO")"
 CACHE_KEY="$(__gpy_path_to_cache_key "$RESOLVED_ROOT")"
 
 # Distinct sentinel bytes per variant so a mismatch is unambiguous.
-printf 'GIT-NORMAL' >"$CACHE_DIR/$CACHE_KEY.git.none.ansi"
-printf 'GIT-LAST' >"$CACHE_DIR/$CACHE_KEY.git_last.none.ansi"
-printf 'GIT-FIRST' >"$CACHE_DIR/$CACHE_KEY.git_first.none.ansi"
-printf 'GIT-FIRST-LAST' >"$CACHE_DIR/$CACHE_KEY.git_first_last.none.ansi"
+printf 'GIT-NORMAL' >"$CACHE_DIR/$CACHE_KEY.git.none.bash"
+printf 'GIT-LAST' >"$CACHE_DIR/$CACHE_KEY.git_last.none.bash"
+printf 'GIT-FIRST' >"$CACHE_DIR/$CACHE_KEY.git_first.none.bash"
+printf 'GIT-FIRST-LAST' >"$CACHE_DIR/$CACHE_KEY.git_first_last.none.bash"
 
-printf 'LANG-NORMAL' >"$CACHE_DIR/$CACHE_KEY.lang.none.ansi"
-printf 'LANG-LAST' >"$CACHE_DIR/$CACHE_KEY.lang_last.none.ansi"
-printf 'LANG-FIRST' >"$CACHE_DIR/$CACHE_KEY.lang_first.none.ansi"
-printf 'LANG-FIRST-LAST' >"$CACHE_DIR/$CACHE_KEY.lang_first_last.none.ansi"
+printf 'LANG-NORMAL' >"$CACHE_DIR/$CACHE_KEY.lang.none.bash"
+printf 'LANG-LAST' >"$CACHE_DIR/$CACHE_KEY.lang_last.none.bash"
+printf 'LANG-FIRST' >"$CACHE_DIR/$CACHE_KEY.lang_first.none.bash"
+printf 'LANG-FIRST-LAST' >"$CACHE_DIR/$CACHE_KEY.lang_first_last.none.bash"
 
 # #613: segment functions now receive is_last/is_first as "true"/"" (not the
 # old "last"/"first" literals) -- call arguments updated, assertions about

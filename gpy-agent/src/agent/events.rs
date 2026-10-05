@@ -3154,20 +3154,29 @@ mod tests {
 
         let git_none = files
             .iter()
-            .find(|f| f.contains(".git.none.ansi"))
+            .find(|f| f.ends_with(".git.none.ansi"))
             .expect("context-free git cache must be regenerated");
-        // A non-`none` git token file proves the new-theme prev_bg context was
-        // seeded, so the post-reload shell request resolves a warm file instead of
-        // cold-missing on a token it has never used before.
-        assert!(
-            files.iter().any(|f| {
-                f.contains(".git.")
-                    && f.contains(".ansi")
-                    && !f.contains(".git.none.")
-                    && !f.contains(".git_last.none.")
-            }),
-            "a seeded prev_bg git cache must exist: {files:?}"
-        );
+        for dialect in crate::formatter::PromptDialect::ALL {
+            let ext = format!(".{}", dialect.cache_ext());
+            assert!(
+                files
+                    .iter()
+                    .any(|f| f.contains(".git.none.") && f.ends_with(&ext)),
+                "context-free {ext} git cache must be regenerated: {files:?}"
+            );
+            // A non-`none` git token file proves the new-theme prev_bg context
+            // was seeded, so the post-reload shell request resolves a warm file
+            // instead of cold-missing on a token it has never used before.
+            assert!(
+                files.iter().any(|f| {
+                    f.contains(".git.")
+                        && f.ends_with(&ext)
+                        && !f.contains(".git.none.")
+                        && !f.contains(".git_last.none.")
+                }),
+                "a seeded prev_bg {ext} git cache must exist: {files:?}"
+            );
+        }
 
         let rendered = fs::read_to_string(cache_tmp.path().join(git_none)).expect("read git cache");
         assert!(
@@ -3208,20 +3217,25 @@ mod tests {
         assert!(wrote, "first language regen must report a write");
 
         let files = cache_file_names(cache_tmp.path());
-        assert!(
-            files.iter().any(|f| f.contains(".lang.none.ansi")),
-            "context-free language cache must be regenerated: {files:?}"
-        );
-        // A non-`none` token file proves the new-theme prev_bg context was seeded.
-        assert!(
-            files.iter().any(|f| {
-                f.contains(".lang.")
-                    && f.contains(".ansi")
-                    && !f.contains(".lang.none.")
-                    && !f.contains(".lang_last.none.")
-            }),
-            "a seeded prev_bg language cache must exist: {files:?}"
-        );
+        for dialect in crate::formatter::PromptDialect::ALL {
+            let ext = format!(".{}", dialect.cache_ext());
+            assert!(
+                files
+                    .iter()
+                    .any(|f| f.contains(".lang.none.") && f.ends_with(&ext)),
+                "context-free {ext} language cache must be regenerated: {files:?}"
+            );
+            // A non-`none` token file proves the new-theme prev_bg context was seeded.
+            assert!(
+                files.iter().any(|f| {
+                    f.contains(".lang.")
+                        && f.ends_with(&ext)
+                        && !f.contains(".lang.none.")
+                        && !f.contains(".lang_last.none.")
+                }),
+                "a seeded prev_bg {ext} language cache must exist: {files:?}"
+            );
+        }
     }
 
     /// A language regen for a path with no warm data is a no-op (no write, no

@@ -347,6 +347,18 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Security
 
+- Bash and Zsh prompts no longer expand directory, branch or theme text as
+  prompt code (#677). A directory or branch named `$(cmd)`, `` `cmd` ``,
+  `$VAR`, or containing `\u`/`%_` prompt escapes ran or expanded on every
+  prompt draw. The agent gained `bash-prompt` and `zsh-prompt` output formats
+  that render the same colors as `ansi` but escape all segment text for the
+  consuming shell; only the clock's `\D{…}`/`%D{…}` live-time token is left
+  for the shell to expand. Bash and Zsh request these formats (including the
+  oneshot fallback), the instant-prompt cache writes one file per format
+  (`.ansi`, `.bash`, `.zsh`) and each shell reads only its own, and the
+  integrations pin `promptvars` (Bash) and `prompt_subst`, `prompt_percent`,
+  `no_prompt_bang` (Zsh). Fish output (`ansi`) is unchanged.
+
 - Release downloads are verified, and installation fails closed when they
   cannot be (#494). Every release now publishes a SHA-256 sidecar beside each
   binary and archive, an aggregate `SHA256SUMS` manifest, a CycloneDX SBOM

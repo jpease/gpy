@@ -73,8 +73,13 @@ pub fn resolved_paths() -> Vec<(&'static str, String)> {
     // file's parent rather than re-deriving the precedence here. The cache root
     // is that directory's parent, which is how `get_gpy_cache_dir` relates to
     // it in `cache::instant_prompt`.
-    let instant_prompt_file =
-        crate::cache::InstantPromptCache::cache_file_for_dir(Path::new("/"), "git", None).ok();
+    let instant_prompt_file = crate::cache::InstantPromptCache::cache_file_for_dir(
+        Path::new("/"),
+        "git",
+        None,
+        crate::formatter::PromptDialect::Ansi,
+    )
+    .ok();
     let instant_prompts_dir = instant_prompt_file
         .as_deref()
         .and_then(Path::parent)

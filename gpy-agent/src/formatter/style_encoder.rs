@@ -3,9 +3,56 @@
 //! One grammar, N encoders. `Palette`/`PrevFg`/`PrevBg` colors are resolved
 //! away by the evaluator before reaching here; the encoder treats any residual
 //! unresolved variant as a no-op so it can never panic.
+//!
+//! The live prompt path uses one SGR encoder in three [`PromptDialect`]s. All
+//! three emit the same color bytes; they differ only in how span text is
+//! escaped for the consuming shell (#677).
 
-use crate::template::{Attr, Color, Span, Style};
+use crate::template::{Attr, Color, Span, SpanKind, Style};
 use std::fmt::Write as _;
+
+/// Output dialect for template-rendered prompt text.
+///
+/// Bash and zsh paste agent output into `PS1`/`PROMPT`, which they expand as
+/// prompt source code on every draw. The prompt dialects escape span text so
+/// the shell displays it literally; [`Self::Ansi`] (fish, which prints its
+/// prompt verbatim) emits text unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PromptDialect {
+    /// Raw ANSI SGR with text verbatim (fish and generic terminals).
+    #[default]
+    Ansi,
+    /// Bash `PS1` source (assumes `shopt -s promptvars`).
+    BashPrompt,
+    /// Zsh `PROMPT` source (assumes `prompt_subst`, `prompt_percent` and
+    /// `no_prompt_bang`).
+    ZshPrompt,
+}
+
+impl PromptDialect {
+    /// Every dialect, in a fixed order (the instant cache renders all three).
+    pub const ALL: [Self; 3] = [Self::Ansi, Self::BashPrompt, Self::ZshPrompt];
+
+    /// Encode `spans` in this dialect.
+    #[must_use]
+    pub fn encode(self, spans: &[Span]) -> String {
+        match self {
+            Self::Ansi => encode_ansi(spans),
+            Self::BashPrompt => encode_bash_prompt(spans),
+            Self::ZshPrompt => encode_zsh_prompt(spans),
+        }
+    }
+
+    /// File extension of this dialect's instant-cache entries.
+    #[must_use]
+    pub const fn cache_ext(self) -> &'static str {
+        match self {
+            Self::Ansi => "ansi",
+            Self::BashPrompt => "bash",
+            Self::ZshPrompt => "zsh",
+        }
+    }
+}
 
 /// Encode `spans` as raw ANSI SGR sequences (the live fish-ansi / ansi path).
 ///
@@ -20,25 +67,103 @@ use std::fmt::Write as _;
 /// are unaffected.
 #[must_use]
 pub fn encode_ansi(spans: &[Span]) -> String {
+    encode_sgr(spans, push_sgr, |out, span| out.push_str(&span.text))
+}
+
+/// Encode `spans` as bash `PS1` source.
+///
+/// Same SGR bytes as [`encode_ansi`]; `Text` spans are escaped so bash's
+/// prompt decoding plus `promptvars` expansion yields the literal text.
+/// `PromptToken` spans (the clock's `\D{…}`) are emitted raw.
+#[must_use]
+pub fn encode_bash_prompt(spans: &[Span]) -> String {
+    encode_sgr(spans, push_sgr, push_bash_text)
+}
+
+/// Encode `spans` as zsh `PROMPT` source.
+///
+/// Same SGR bytes as [`encode_ansi`]; `Text` spans are escaped so zsh's
+/// `prompt_subst` expansion and `%` escapes yield the literal text.
+/// `PromptToken` spans (the clock's `%D{…}`) are emitted raw.
+#[must_use]
+pub fn encode_zsh_prompt(spans: &[Span]) -> String {
+    encode_sgr(spans, push_sgr, push_zsh_text)
+}
+
+/// The span walk shared by every SGR encoder.
+///
+/// `sgr` writes one SGR sequence for a `;`-joined code list; `text` writes a
+/// span's text. A styled span emits its SGR before its text; a default-style
+/// span following a styled one emits a reset first, and a trailing reset
+/// closes the last styled span (#288).
+fn encode_sgr(
+    spans: &[Span],
+    sgr: impl Fn(&mut String, &str),
+    text: impl Fn(&mut String, &Span),
+) -> String {
     let mut out = String::with_capacity(64_usize);
     let mut active = false;
     for span in spans {
         let codes = ansi_codes(&span.style);
         if codes.is_empty() {
             if active {
-                out.push_str("\x1b[0m");
+                sgr(&mut out, "0");
                 active = false;
             }
-            out.push_str(&span.text);
         } else {
-            let _ = write!(out, "\x1b[{}m{}", codes.join(";"), span.text);
+            sgr(&mut out, &codes.join(";"));
             active = true;
         }
+        text(&mut out, span);
     }
     if active {
-        out.push_str("\x1b[0m");
+        sgr(&mut out, "0");
     }
     out
+}
+
+/// Write one raw SGR sequence, `ESC [ codes m`.
+fn push_sgr(out: &mut String, codes: &str) {
+    let _ = write!(out, "\x1b[{codes}m");
+}
+
+/// Write a span's text escaped for bash `PS1` with `promptvars` on.
+///
+/// Bash first decodes backslash prompt escapes (`\\` → `\`), then expands
+/// `$`, `` ` `` and `\` as inside double quotes. So `\` needs four
+/// backslashes and `$`/`` ` `` need `\\`. `\$` alone is not used for `$`:
+/// prompt decoding turns it into `#` when euid is 0.
+fn push_bash_text(out: &mut String, span: &Span) {
+    if span.kind == SpanKind::PromptToken {
+        out.push_str(&span.text);
+        return;
+    }
+    for ch in span.text.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\\\\\"),
+            '$' => out.push_str("\\\\$"),
+            '`' => out.push_str("\\\\`"),
+            _ => out.push(ch),
+        }
+    }
+}
+
+/// Write a span's text escaped for zsh `PROMPT` with `prompt_subst` and
+/// `prompt_percent` on: backslash-quote `\`, `$` and `` ` ``, and double `%`.
+fn push_zsh_text(out: &mut String, span: &Span) {
+    if span.kind == SpanKind::PromptToken {
+        out.push_str(&span.text);
+        return;
+    }
+    for ch in span.text.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '$' => out.push_str("\\$"),
+            '`' => out.push_str("\\`"),
+            '%' => out.push_str("%%"),
+            _ => out.push(ch),
+        }
+    }
 }
 
 /// Collect SGR numeric codes (as strings) for one style, in attr→fg→bg order.
@@ -253,14 +378,79 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::missing_panics_doc)]
 
-    use super::encode_ansi;
-    use crate::template::{Attr, Color, Span, Style};
+    use super::{encode_ansi, encode_bash_prompt, encode_zsh_prompt};
+    use crate::template::{Attr, Color, Span, SpanKind, Style};
 
     fn span(text: &str, style: Style) -> Span {
         Span {
             text: text.to_owned(),
             style,
+            kind: SpanKind::Text,
         }
+    }
+
+    fn token(text: &str, style: Style) -> Span {
+        Span {
+            kind: SpanKind::PromptToken,
+            ..span(text, style)
+        }
+    }
+
+    /// Regression for #677: data text must reach bash as literal text, not
+    /// as `$(...)`, backtick or `\x` prompt code.
+    #[test]
+    fn bash_prompt_escapes_expansion_chars() {
+        let spans = [span("a\\b$(x)`y`%", Style::default())];
+        assert_eq!(encode_bash_prompt(&spans), "a\\\\\\\\b\\\\$(x)\\\\`y\\\\`%");
+    }
+
+    /// Regression for #677: data text must reach zsh as literal text, not as
+    /// `$(...)`, backtick or `%x` prompt code.
+    #[test]
+    fn zsh_prompt_escapes_expansion_chars() {
+        let spans = [span("a\\b$(x)`y`%", Style::default())];
+        assert_eq!(encode_zsh_prompt(&spans), "a\\\\b\\$(x)\\`y\\`%%");
+    }
+
+    #[test]
+    fn prompt_token_span_is_not_escaped() {
+        let zsh = [token("%D{%H:%M}", Style::default())];
+        assert_eq!(encode_zsh_prompt(&zsh), "%D{%H:%M}");
+        let bash = [token("\\D{%H:%M}", Style::default())];
+        assert_eq!(encode_bash_prompt(&bash), "\\D{%H:%M}");
+    }
+
+    #[test]
+    fn ansi_encoder_ignores_span_kind() {
+        let style = Style {
+            fg: Some(Color::Named("green".to_owned())),
+            bg: None,
+            attrs: vec![],
+        };
+        let text_spans = [span("$x\\%", style.clone())];
+        let token_spans = [token("$x\\%", style)];
+        assert_eq!(encode_ansi(&text_spans), "\x1b[32m$x\\%\x1b[0m");
+        assert_eq!(encode_ansi(&token_spans), encode_ansi(&text_spans));
+    }
+
+    /// The prompt dialects change only text escaping, never the colors.
+    #[test]
+    fn prompt_dialects_emit_the_same_sgr_as_ansi() {
+        let spans = [
+            span(
+                "a",
+                Style {
+                    fg: Some(Color::Named("green".to_owned())),
+                    bg: Some(Color::Named("black".to_owned())),
+                    attrs: vec![Attr::Bold],
+                },
+            ),
+            span(" b", Style::default()),
+        ];
+        let ansi = encode_ansi(&spans);
+        assert_eq!(ansi, "\x1b[1;32;40ma\x1b[0m b");
+        assert_eq!(encode_bash_prompt(&spans), ansi);
+        assert_eq!(encode_zsh_prompt(&spans), ansi);
     }
 
     #[test]

@@ -1,32 +1,51 @@
-//! Fish shell ANSI formatter
+//! Template-rendered ANSI prompt formatter
 //!
 //! Renders agent responses as pre-formatted ANSI escape sequences via the
 //! template engine. Each segment is rendered from its `format` template; when a
 //! segment has no `format` (or its template errors) the agent emits nothing.
+//! The formatter's [`PromptDialect`] selects how span text is escaped: verbatim
+//! for Fish (`ansi`), or for bash/zsh prompt expansion (`bash-prompt`,
+//! `zsh-prompt`, #677).
 
 use crate::Result;
 use crate::config::Config;
-use crate::formatter::{Formatter, RenderContext};
+use crate::formatter::{Formatter, PromptDialect, RenderContext};
 use crate::git::RepositoryStatus;
 use crate::ipc::{LanguageInfo, Response, protocol};
 use crate::theme::ThemeConfig;
 
-/// Format responses as ANSI-rendered Fish prompt segments.
-pub struct FishAnsiFormatter;
+/// Format responses as ANSI-rendered prompt segments in one [`PromptDialect`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FishAnsiFormatter {
+    dialect: PromptDialect,
+}
+
+impl FishAnsiFormatter {
+    /// A formatter that encodes segment text for `dialect`.
+    #[must_use]
+    pub const fn new(dialect: PromptDialect) -> Self {
+        Self { dialect }
+    }
+}
 
 impl Formatter for FishAnsiFormatter {
     fn render(&self, response: &Response, ctx: &RenderContext<'_>) -> Result<String> {
+        let dialect = self.dialect;
         match response {
-            Response::RepositoryStatus(repo) => Ok(render_git_segment(repo, ctx)),
-            Response::Language { languages } => Ok(render_language_segment(languages, ctx)),
-            Response::Directory { cwd, read_only } => {
-                Ok(render_directory_segment(cwd, *read_only, ctx))
+            Response::RepositoryStatus(repo) => Ok(render_git_segment(repo, ctx, dialect)),
+            Response::Language { languages } => {
+                Ok(render_language_segment(languages, ctx, dialect))
             }
-            Response::Clock { shell } => Ok(render_clock_segment(*shell, ctx)),
-            Response::Duration { duration_ms } => Ok(render_duration_segment(*duration_ms, ctx)),
-            Response::Character { success } => Ok(render_character_segment(*success, ctx)),
-            Response::Hostname { hostname } => Ok(render_hostname_segment(hostname, ctx)),
-            Response::Username { username } => Ok(render_username_segment(username, ctx)),
+            Response::Directory { cwd, read_only } => {
+                Ok(render_directory_segment(cwd, *read_only, ctx, dialect))
+            }
+            Response::Clock { shell } => Ok(render_clock_segment(*shell, ctx, dialect)),
+            Response::Duration { duration_ms } => {
+                Ok(render_duration_segment(*duration_ms, ctx, dialect))
+            }
+            Response::Character { success } => Ok(render_character_segment(*success, ctx, dialect)),
+            Response::Hostname { hostname } => Ok(render_hostname_segment(hostname, ctx, dialect)),
+            Response::Username { username } => Ok(render_username_segment(username, ctx, dialect)),
             // For other response types, fall back to the protocol serializer
             _ => protocol::serialize_response(response)
                 .map_err(|e| crate::Error::ipc(format!("Serialization error: {e}")))
@@ -39,11 +58,11 @@ impl Formatter for FishAnsiFormatter {
     }
 }
 
-/// Render `resolver` through the template engine + ANSI encoder.
+/// Render `resolver` through the template engine and encode it for `dialect`.
 ///
 /// This is the single shared tail for every `render_X_via_template` function:
 /// build the template context (inheriting `ctx`'s previous colors and
-/// palette), render `format` against `resolver`, and ANSI-encode the result.
+/// palette), render `format` against `resolver`, and encode the result.
 ///
 /// # Errors
 ///
@@ -51,16 +70,16 @@ impl Formatter for FishAnsiFormatter {
 fn render_via_template(
     resolver: &dyn crate::template::VariableResolver,
     ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
     format: &str,
 ) -> crate::template::Result<String> {
-    use crate::formatter::encode_ansi;
     use crate::template::{RenderContext as TemplateContext, render};
 
     let template_ctx = TemplateContext::new(resolver)
         .with_prev_colors(ctx.prev_fg.clone(), ctx.prev_bg.clone())
         .with_palette(ctx.palette.clone());
     let spans = render(format, &template_ctx)?;
-    Ok(encode_ansi(&spans))
+    Ok(dialect.encode(&spans))
 }
 
 /// Resolve a segment's template result to a string, warning on error.
@@ -83,12 +102,19 @@ fn render_or_warn(component: &str, result: crate::template::Result<String>) -> S
 
 /// Render the git segment via the template engine. No format (or a template
 /// error) yields an empty segment — the legacy color path no longer exists.
-fn render_git_segment(status: &RepositoryStatus, ctx: &RenderContext<'_>) -> String {
+fn render_git_segment(
+    status: &RepositoryStatus,
+    ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
+) -> String {
     let Some(format) = ctx.theme.segments.git.format.as_deref() else {
         // No format configured: nothing to render (legacy color path removed).
         return String::new();
     };
-    render_or_warn("git segment", render_git_via_template(status, ctx, format))
+    render_or_warn(
+        "git segment",
+        render_git_via_template(status, ctx, dialect, format),
+    )
 }
 
 /// Render the git segment through the template engine + ANSI encoder.
@@ -99,26 +125,31 @@ fn render_git_segment(status: &RepositoryStatus, ctx: &RenderContext<'_>) -> Str
 fn render_git_via_template(
     status: &RepositoryStatus,
     ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
     format: &str,
 ) -> crate::template::Result<String> {
     use crate::formatter::git_resolver::GitResolver;
 
     let state = crate::theme::GitState::from_status(status);
     let resolver = GitResolver::new(status, ctx.config, ctx.theme, state, ctx.position);
-    render_via_template(&resolver, ctx, format)
+    render_via_template(&resolver, ctx, dialect, format)
 }
 
 /// Render the language segment via the template engine. No format (or a
 /// template error) yields an empty segment — the legacy color path no longer
 /// exists.
-fn render_language_segment(languages: &[LanguageInfo], ctx: &RenderContext<'_>) -> String {
+fn render_language_segment(
+    languages: &[LanguageInfo],
+    ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
+) -> String {
     let Some(format) = ctx.theme.segments.language.format.as_deref() else {
         // No format configured: nothing to render (legacy color path removed).
         return String::new();
     };
     render_or_warn(
         "language segment",
-        render_languages_via_template(languages, ctx, format),
+        render_languages_via_template(languages, ctx, dialect, format),
     )
 }
 
@@ -172,6 +203,7 @@ pub(crate) fn select_languages<'a>(
 fn render_languages_via_template(
     languages: &[LanguageInfo],
     ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
     format: &str,
 ) -> crate::template::Result<String> {
     use crate::formatter::language_resolver::LanguageResolver;
@@ -180,21 +212,26 @@ fn render_languages_via_template(
     let mut output = String::with_capacity(160);
     for lang in selected {
         let resolver = LanguageResolver::new(lang, ctx.config, ctx.theme, ctx.position);
-        output.push_str(&render_via_template(&resolver, ctx, format)?);
+        output.push_str(&render_via_template(&resolver, ctx, dialect, format)?);
     }
     Ok(output)
 }
 
 /// Entry point: template path when a `format` is set and renders cleanly,
 /// otherwise the agent emits nothing (shell renders directory locally).
-fn render_directory_segment(cwd: &str, read_only: bool, ctx: &RenderContext<'_>) -> String {
+fn render_directory_segment(
+    cwd: &str,
+    read_only: bool,
+    ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
+) -> String {
     let Some(format) = ctx.theme.segments.directory.format.as_deref() else {
         // No format set: shell renders directory locally; agent emits nothing.
         return String::new();
     };
     render_or_warn(
         "directory segment",
-        render_directory_via_template(cwd, read_only, ctx, format),
+        render_directory_via_template(cwd, read_only, ctx, dialect, format),
     )
 }
 
@@ -207,12 +244,13 @@ fn render_directory_via_template(
     cwd: &str,
     read_only: bool,
     ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
     format: &str,
 ) -> crate::template::Result<String> {
     use crate::formatter::directory_resolver::DirectoryResolver;
 
     let resolver = DirectoryResolver::new(cwd, read_only, ctx.config, ctx.theme, ctx.position);
-    render_via_template(&resolver, ctx, format)
+    render_via_template(&resolver, ctx, dialect, format)
 }
 
 /// Entry point: render the clock via the template engine when a `format` is set.
@@ -220,14 +258,18 @@ fn render_directory_via_template(
 /// When no format template is configured the agent emits nothing and the shell
 /// renders the clock locally — which is what Fish always does, and what Zsh and
 /// Bash did for every theme before this segment gained a template.
-fn render_clock_segment(shell: crate::shell::Shell, ctx: &RenderContext<'_>) -> String {
+fn render_clock_segment(
+    shell: crate::shell::Shell,
+    ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
+) -> String {
     let Some(format) = ctx.theme.segments.clock.format.as_deref() else {
         // No format set: shell renders the clock locally; agent emits nothing.
         return String::new();
     };
     render_or_warn(
         "clock segment",
-        render_clock_via_template(shell, ctx, format),
+        render_clock_via_template(shell, ctx, dialect, format),
     )
 }
 
@@ -239,12 +281,13 @@ fn render_clock_segment(shell: crate::shell::Shell, ctx: &RenderContext<'_>) -> 
 fn render_clock_via_template(
     shell: crate::shell::Shell,
     ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
     format: &str,
 ) -> crate::template::Result<String> {
     use crate::formatter::clock_resolver::ClockResolver;
 
     let resolver = ClockResolver::new(shell, ctx.theme, ctx.position);
-    render_via_template(&resolver, ctx, format)
+    render_via_template(&resolver, ctx, dialect, format)
 }
 
 /// Entry point: render via template engine when a `format` is set.
@@ -252,14 +295,18 @@ fn render_clock_via_template(
 /// When no format template is configured the agent emits nothing and the
 /// shell renders the duration segment locally (byte-identical to pre-#192
 /// behavior). A malformed template also falls back to empty.
-fn render_duration_segment(duration_ms: u64, ctx: &RenderContext<'_>) -> String {
+fn render_duration_segment(
+    duration_ms: u64,
+    ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
+) -> String {
     let Some(format) = ctx.theme.segments.duration.format.as_deref() else {
         // No format set: shell renders duration locally; agent emits nothing.
         return String::new();
     };
     render_or_warn(
         "duration segment",
-        render_duration_via_template(duration_ms, ctx, format),
+        render_duration_via_template(duration_ms, ctx, dialect, format),
     )
 }
 
@@ -271,12 +318,13 @@ fn render_duration_segment(duration_ms: u64, ctx: &RenderContext<'_>) -> String 
 fn render_duration_via_template(
     duration_ms: u64,
     ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
     format: &str,
 ) -> crate::template::Result<String> {
     use crate::formatter::duration_resolver::DurationResolver;
 
     let resolver = DurationResolver::new(duration_ms, ctx.theme, ctx.position);
-    render_via_template(&resolver, ctx, format)
+    render_via_template(&resolver, ctx, dialect, format)
 }
 
 /// Entry point: render via template engine when a `format` is set.
@@ -284,14 +332,18 @@ fn render_duration_via_template(
 /// When no format template is configured the agent emits nothing and the
 /// shell renders the character segment locally (byte-identical to pre-#193
 /// behavior). A malformed template also falls back to empty.
-fn render_character_segment(success: bool, ctx: &RenderContext<'_>) -> String {
+fn render_character_segment(
+    success: bool,
+    ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
+) -> String {
     let Some(format) = ctx.theme.segments.character.format.as_deref() else {
         // No format set: shell renders character locally; agent emits nothing.
         return String::new();
     };
     render_or_warn(
         "character segment",
-        render_character_via_template(success, ctx, format),
+        render_character_via_template(success, ctx, dialect, format),
     )
 }
 
@@ -303,12 +355,13 @@ fn render_character_segment(success: bool, ctx: &RenderContext<'_>) -> String {
 fn render_character_via_template(
     success: bool,
     ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
     format: &str,
 ) -> crate::template::Result<String> {
     use crate::formatter::character_resolver::CharacterResolver;
 
     let resolver = CharacterResolver::new(success, ctx.theme, ctx.position);
-    render_via_template(&resolver, ctx, format)
+    render_via_template(&resolver, ctx, dialect, format)
 }
 
 /// Entry point: render via template engine when a `format` is set.
@@ -316,14 +369,18 @@ fn render_character_via_template(
 /// When no format template is configured the agent emits nothing and the
 /// shell renders the hostname segment locally. A malformed template also
 /// falls back to empty.
-fn render_hostname_segment(hostname: &str, ctx: &RenderContext<'_>) -> String {
+fn render_hostname_segment(
+    hostname: &str,
+    ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
+) -> String {
     let Some(format) = ctx.theme.segments.hostname.format.as_deref() else {
         // No format set: shell renders hostname locally; agent emits nothing.
         return String::new();
     };
     render_or_warn(
         "hostname segment",
-        render_hostname_via_template(hostname, ctx, format),
+        render_hostname_via_template(hostname, ctx, dialect, format),
     )
 }
 
@@ -335,12 +392,13 @@ fn render_hostname_segment(hostname: &str, ctx: &RenderContext<'_>) -> String {
 fn render_hostname_via_template(
     hostname: &str,
     ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
     format: &str,
 ) -> crate::template::Result<String> {
     use crate::formatter::hostname_resolver::HostnameResolver;
 
     let resolver = HostnameResolver::new(hostname.to_owned(), ctx.theme, ctx.position);
-    render_via_template(&resolver, ctx, format)
+    render_via_template(&resolver, ctx, dialect, format)
 }
 
 /// Entry point: render the username segment via the template engine when a
@@ -349,14 +407,18 @@ fn render_hostname_via_template(
 /// When no format template is configured the agent emits nothing and the shell
 /// renders the username segment locally (pure-shell pill path). A malformed
 /// template also falls back to empty.
-fn render_username_segment(username: &str, ctx: &RenderContext<'_>) -> String {
+fn render_username_segment(
+    username: &str,
+    ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
+) -> String {
     let Some(format) = ctx.theme.segments.username.format.as_deref() else {
         // No format set: shell renders username locally; agent emits nothing.
         return String::new();
     };
     render_or_warn(
         "username segment",
-        render_username_via_template(username, ctx, format),
+        render_username_via_template(username, ctx, dialect, format),
     )
 }
 
@@ -368,12 +430,13 @@ fn render_username_segment(username: &str, ctx: &RenderContext<'_>) -> String {
 fn render_username_via_template(
     username: &str,
     ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
     format: &str,
 ) -> crate::template::Result<String> {
     use crate::formatter::username_resolver::UsernameResolver;
 
     let resolver = UsernameResolver::new(username.to_owned(), ctx.theme, ctx.position);
-    render_via_template(&resolver, ctx, format)
+    render_via_template(&resolver, ctx, dialect, format)
 }
 
 /// Resolve the display text for a language (icon or name) used by resolvers.
@@ -413,7 +476,7 @@ mod tests {
     #[test]
     fn git_without_format_emits_empty() {
         // Post-migration contract: no format → agent emits nothing (no legacy path).
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, theme) = ctx();
         assert!(theme.segments.git.format.is_none());
         let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
@@ -439,7 +502,7 @@ mod tests {
 
     #[test]
     fn git_malformed_format_emits_empty() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, mut theme) = ctx();
         theme.segments.git.format = Some("on [$branch(green)".to_owned()); // unbalanced
         let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
@@ -468,7 +531,7 @@ mod tests {
 
     #[test]
     fn format_some_renders_via_engine() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, mut theme) = ctx();
         theme.segments.git.format = Some("on [$branch](bold green)".to_owned());
         let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
@@ -495,7 +558,7 @@ mod tests {
 
     #[test]
     fn style_indirection_renders_via_engine() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, mut theme) = ctx();
         theme.segments.git.format = Some("[$branch]($style)".to_owned());
         let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
@@ -536,7 +599,7 @@ mod tests {
     #[test]
     fn language_without_format_emits_empty() {
         // Post-migration contract: no format → agent emits nothing (no legacy path).
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, theme) = ctx();
         assert!(theme.segments.language.format.is_none());
         let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
@@ -546,7 +609,7 @@ mod tests {
 
     #[test]
     fn language_malformed_format_emits_empty() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, mut theme) = ctx();
         theme.segments.language.format = Some("[$symbol(green)".to_owned()); // unbalanced
         let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
@@ -559,7 +622,7 @@ mod tests {
 
     #[test]
     fn language_format_some_renders_via_engine() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, mut theme) = ctx();
         theme.segments.language.format = Some("[$symbol $version](bold green)".to_owned());
         let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
@@ -578,7 +641,7 @@ mod tests {
 
     #[test]
     fn language_format_caps_at_three() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, mut theme) = ctx();
         theme.segments.language.format = Some("[$version ](green)".to_owned());
         let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
@@ -605,7 +668,7 @@ mod tests {
 
     #[test]
     fn directory_format_none_emits_empty() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, theme) = ctx();
         assert!(theme.segments.directory.format.is_none());
         let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -617,9 +680,66 @@ mod tests {
         assert_eq!(got, "", "no format → agent emits nothing");
     }
 
+    /// #677: the clock's live-time token reaches each shell unescaped, so the
+    /// shell still expands it on every draw, while the theme literal around
+    /// it is escaped like any other text.
+    #[test]
+    fn clock_prompt_token_is_left_for_the_shell_to_expand() {
+        use crate::shell::Shell;
+        let (config, mut theme) = ctx();
+        theme.segments.clock.format = Some(r"[\$ $time](fg:white)".to_owned());
+        let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
+
+        let bash = FishAnsiFormatter::new(PromptDialect::BashPrompt)
+            .render(&Response::Clock { shell: Shell::Bash }, &rc)
+            .expect("render bash");
+        // Each span re-emits its SGR, so check the literal and the token apart.
+        assert!(bash.contains("\\\\$ \x1b"), "{bash:?}");
+        assert!(bash.contains("m\\D{%-I:%M %p}\x1b"), "{bash:?}");
+
+        let zsh = FishAnsiFormatter::new(PromptDialect::ZshPrompt)
+            .render(&Response::Clock { shell: Shell::Zsh }, &rc)
+            .expect("render zsh");
+        assert!(zsh.contains("\\$ \x1b"), "{zsh:?}");
+        assert!(zsh.contains("m%D{%-I:%M %p}\x1b"), "{zsh:?}");
+    }
+
+    /// #677: directory data and theme literals are escaped for the
+    /// requested shell; the `ansi` format stays verbatim for fish.
+    #[test]
+    fn directory_text_is_escaped_per_dialect() {
+        let (config, mut theme) = ctx();
+        theme.segments.directory.format = Some("[$path 100%](fg:green)".to_owned());
+        let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
+        let response = Response::Directory {
+            cwd: "/w/$(echo X)".to_owned(),
+            read_only: false,
+        };
+        let render = |dialect| {
+            FishAnsiFormatter::new(dialect)
+                .render(&response, &rc)
+                .expect("render")
+        };
+        let ansi = render(PromptDialect::Ansi);
+        assert!(
+            ansi.contains("m$(echo X)") && ansi.contains(" 100%"),
+            "{ansi:?}"
+        );
+        let bash = render(PromptDialect::BashPrompt);
+        assert!(
+            bash.contains("m\\\\$(echo X)") && bash.contains(" 100%"),
+            "{bash:?}"
+        );
+        let zsh = render(PromptDialect::ZshPrompt);
+        assert!(
+            zsh.contains("m\\$(echo X)") && zsh.contains(" 100%%"),
+            "{zsh:?}"
+        );
+    }
+
     #[test]
     fn directory_format_some_renders_via_engine() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, mut theme) = ctx();
         theme.segments.directory.format = Some("[$path](bold green)".to_owned());
         let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -642,7 +762,7 @@ mod tests {
 
     #[test]
     fn directory_malformed_format_emits_empty() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, mut theme) = ctx();
         theme.segments.directory.format = Some("[$path(green)".to_owned()); // unbalanced '['
         let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -656,7 +776,7 @@ mod tests {
 
     #[test]
     fn duration_format_none_emits_empty() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, theme) = ctx();
         assert!(theme.segments.duration.format.is_none());
         let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -669,7 +789,7 @@ mod tests {
 
     #[test]
     fn duration_format_some_renders_via_engine() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, mut theme) = ctx();
         theme.segments.duration.format = Some("[$duration]($style)".to_owned());
         let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -688,7 +808,7 @@ mod tests {
 
     #[test]
     fn duration_malformed_format_emits_empty() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, mut theme) = ctx();
         theme.segments.duration.format = Some("[$duration(green)".to_owned()); // unbalanced '['
         let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -701,7 +821,7 @@ mod tests {
 
     #[test]
     fn character_format_none_emits_empty() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, theme) = ctx();
         assert!(theme.segments.character.format.is_none());
         let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -712,7 +832,7 @@ mod tests {
 
     #[test]
     fn character_format_success_renders_symbol_with_ansi() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, mut theme) = ctx();
         theme.segments.character.format = Some("[$symbol]($style)".to_owned());
         let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -734,7 +854,7 @@ mod tests {
 
     #[test]
     fn character_format_error_renders_red() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, mut theme) = ctx();
         theme.segments.character.format = Some("[$symbol]($style)".to_owned());
         let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -751,7 +871,7 @@ mod tests {
 
     #[test]
     fn character_malformed_format_emits_empty() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, mut theme) = ctx();
         theme.segments.character.format = Some("[$symbol(green)".to_owned()); // unbalanced '['
         let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -762,7 +882,7 @@ mod tests {
 
     #[test]
     fn hostname_format_none_emits_empty() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, theme) = ctx();
         assert!(theme.segments.hostname.format.is_none());
         let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -775,7 +895,7 @@ mod tests {
 
     #[test]
     fn hostname_format_some_renders_trimmed_name_with_ansi() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, mut theme) = ctx();
         theme.segments.hostname.format = Some("on [$symbol$hostname](bold green) ".to_owned());
         let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -802,7 +922,7 @@ mod tests {
 
     #[test]
     fn hostname_malformed_format_emits_empty() {
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, mut theme) = ctx();
         theme.segments.hostname.format = Some("[$hostname(green)".to_owned()); // unbalanced '['
         let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -818,7 +938,7 @@ mod tests {
         use crate::template::{Color, Palette};
         use std::collections::HashMap;
 
-        let formatter = FishAnsiFormatter;
+        let formatter = FishAnsiFormatter::default();
         let (config, mut theme) = ctx();
         // Reference a palette-only color name in the git format.
         theme.segments.git.format = Some("[$branch](fg:accent)".to_owned());

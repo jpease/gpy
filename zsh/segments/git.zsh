@@ -27,7 +27,7 @@ function __gpy_segment_git() {
 
     if [[ $cache_status -eq 1 ]]; then
         # Cold miss: fall through to a full IPC request, with oneshot fallback.
-        __gpy_request "git" "$root" "ansi" "$is_last" "$prev_bg" "$is_first"
+        __gpy_request "git" "$root" "zsh-prompt" "$is_last" "$prev_bg" "$is_first"
         return
     fi
 
@@ -54,7 +54,7 @@ function __gpy_segment_git() {
     fi
 
     local fresh oneshot_status
-    fresh="$(__gpy_fallback_oneshot "git" "$root" "ansi" "$is_last" "$is_first")"
+    fresh="$(__gpy_fallback_oneshot "git" "$root" "zsh-prompt" "$is_last" "$is_first")"
     oneshot_status=$?
     if [[ -n "$fresh" ]]; then
         printf '%s' "$fresh"

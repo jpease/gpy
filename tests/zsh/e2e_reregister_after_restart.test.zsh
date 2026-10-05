@@ -88,7 +88,7 @@ scanned() {
     [ "${now:-0}" -gt "$scans_before" ]
 }
 shell_e2e_poll 5 scanned || fail "the restarted agent never scanned the repo after re-registration"
-cache_file="$(ls "$XDG_CACHE_HOME"/gpy/instant-prompts/*.git.*.ansi 2>/dev/null | head -n 1)"
+cache_file="$(ls "$XDG_CACHE_HOME"/gpy/instant-prompts/*.git.*.zsh 2>/dev/null | head -n 1)"
 cp "$cache_file" "$SHELL_E2E_ROOT/before.ansi" 2>/dev/null || true
 echo dirty >>"$SHELL_E2E_REPO/tracked.txt"
 cache_changed() { [ -n "$cache_file" ] && ! cmp -s "$cache_file" "$SHELL_E2E_ROOT/before.ansi"; }

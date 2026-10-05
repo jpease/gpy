@@ -10,5 +10,5 @@ function __gpy_segment_directory() {
     # prev_bg: threaded by the render loop for the opening powerline chevron.
     local prev_bg="${2:-}"
     local is_first="${3:-}"
-    __gpy_request "directory" "$PWD" "ansi" "$is_last" "$prev_bg" "$is_first"
+    __gpy_request "directory" "$PWD" "zsh-prompt" "$is_last" "$prev_bg" "$is_first"
 }

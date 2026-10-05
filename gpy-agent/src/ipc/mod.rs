@@ -221,7 +221,7 @@ pub enum Message {
     /// # Examples
     ///
     /// ```json
-    /// {"op":"clock","shell":"zsh","format":"ansi","is_last":false}
+    /// {"op":"clock","shell":"zsh","format":"zsh-prompt","is_last":false}
     /// ```
     ClockRequest {
         /// Shell whose live-time prompt token the render should embed.

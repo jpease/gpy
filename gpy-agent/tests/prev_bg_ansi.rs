@@ -46,7 +46,7 @@ fn git_clean() -> RepositoryStatus {
 /// Task 3 actually reaches the template engine and encodes correctly.
 #[test]
 fn prev_bg_blue_produces_ansi_blue_fg_in_render() {
-    let formatter = FishAnsiFormatter;
+    let formatter = FishAnsiFormatter::default();
     let config = Config::default();
     let mut theme = ThemeConfig::default();
     // Use a format that applies fg:prev_bg so the previous segment's background

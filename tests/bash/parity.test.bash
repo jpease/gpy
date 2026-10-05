@@ -84,7 +84,7 @@ git -C "$tmpdir" commit --allow-empty -m init -q \
 tmpdir_real=$(realpath "$tmpdir" 2>/dev/null || echo "$tmpdir")
 # Cache files are keyed by prev_bg token; a read with no prev_bg resolves "none".
 cache_key="$(__gpy_path_to_cache_key "$tmpdir_real")"
-cache_file="$cache_dir/$cache_key.git.none.ansi"
+cache_file="$cache_dir/$cache_key.git.none.bash"
 
 # Write a sentinel value into the cache file
 sentinel="cached-git-output-sentinel"
@@ -182,7 +182,7 @@ touch "$nongit/package.json"
 nongit_real=$(realpath "$nongit" 2>/dev/null || echo "$nongit")
 nongit_key="$(__gpy_path_to_cache_key "$nongit_real")"
 
-lang_file="$cache_dir/$nongit_key.lang.none.ansi"
+lang_file="$cache_dir/$nongit_key.lang.none.bash"
 lang_sentinel="cached-lang-output-sentinel"
 echo "$lang_sentinel" > "$lang_file"
 
@@ -195,7 +195,7 @@ fi
 echo "✓ language cache served in non-git project"
 
 # Git cache must NOT use the path fallback (requires a real Git root).
-git_nongit_file="$cache_dir/$nongit_key.git.none.ansi"
+git_nongit_file="$cache_dir/$nongit_key.git.none.bash"
 echo "should-not-be-served" > "$git_nongit_file"
 git_nongit_result="$(__gpy_read_instant_cache "git" "$nongit")"
 if [[ -n "$git_nongit_result" ]]; then
@@ -259,20 +259,20 @@ pb_repo=$(mktemp -d)
 git -C "$pb_repo" init -q
 pb_real=$(realpath "$pb_repo" 2>/dev/null || echo "$pb_repo")
 pb_key="$(__gpy_path_to_cache_key "$pb_real")"
-echo "blue-render" > "$cache_dir/$pb_key.git.blue.ansi"
-echo "none-render" > "$cache_dir/$pb_key.git.none.ansi"
+echo "blue-render" > "$cache_dir/$pb_key.git.blue.bash"
+echo "none-render" > "$cache_dir/$pb_key.git.none.bash"
 
 got_blue="$(__gpy_read_instant_cache "git" "$pb_repo" "blue")"
-[[ "$got_blue" == "blue-render" ]] || { echo "FAIL: prev_bg=blue did not read .git.blue.ansi (got '$got_blue')"; rm -rf "$pb_repo"; exit 1; }
+[[ "$got_blue" == "blue-render" ]] || { echo "FAIL: prev_bg=blue did not read .git.blue.bash (got '$got_blue')"; rm -rf "$pb_repo"; exit 1; }
 echo "✓ cache read selects prev_bg-specific file"
 
-rm -f "$cache_dir/$pb_key.git.blue.ansi"
+rm -f "$cache_dir/$pb_key.git.blue.bash"
 got_fallback="$(__gpy_read_instant_cache "git" "$pb_repo" "blue")"
 [[ "$got_fallback" == "none-render" ]] || { echo "FAIL: missing context file did not fall back to none (got '$got_fallback')"; rm -rf "$pb_repo"; exit 1; }
 echo "✓ cache read falls back to none render when context file absent"
 
 rm -rf "$pb_repo"
-rm -f "$cache_dir/$pb_key.git.none.ansi"
+rm -f "$cache_dir/$pb_key.git.none.bash"
 
 # Request payloads MUST carry prev_bg (the bug: bash omitted it). Stub the
 # transport to capture the JSON to a file — duration/character send inside a
@@ -295,7 +295,7 @@ __gpy_trigger_data_refresh "git" "$PWD" "false" "magenta"
 assert_payload_has_prev_bg "data refresh" "magenta"
 
 : > "$__gpy_capture_file"
-__gpy_request "directory" "$PWD" "ansi" "false" "cyan" >/dev/null 2>&1
+__gpy_request "directory" "$PWD" "bash-prompt" "false" "cyan" >/dev/null 2>&1
 assert_payload_has_prev_bg "directory request" "cyan"
 
 : > "$__gpy_capture_file"

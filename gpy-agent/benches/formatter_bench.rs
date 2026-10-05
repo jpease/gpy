@@ -22,7 +22,7 @@ use std::hint::black_box;
 fn bench_git_status_rendering(c: &mut Criterion) {
     let config = Config::default();
     let theme = ThemeConfig::default();
-    let formatter = FishAnsiFormatter;
+    let formatter = FishAnsiFormatter::default();
 
     c.bench_function("git_status_ansi_short_branch", |b| {
         let response = Response::RepositoryStatus(gpy_agent::git::RepositoryStatus {
@@ -138,7 +138,7 @@ fn bench_fish_source_rendering(c: &mut Criterion) {
 fn bench_language_rendering(c: &mut Criterion) {
     let config = Config::default();
     let theme = ThemeConfig::default();
-    let formatter = FishAnsiFormatter;
+    let formatter = FishAnsiFormatter::default();
 
     c.bench_function("language_ansi_single", |b| {
         let response = Response::Language {

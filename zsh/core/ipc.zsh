@@ -435,14 +435,16 @@ function __gpy_read_instant_cache() {
     local cache_key token
     cache_key=$(__gpy_path_to_cache_key "$key_path")
     token=$(__gpy_prev_bg_token "$prev_bg")
-    local cache_file="$cache_dir/$cache_key.$suffix.$token.ansi"
+    # `.zsh`: the agent's zsh-prompt dialect, escaped for PROMPT (#677). The
+    # `.ansi` files are fish's and must never reach PROMPT.
+    local cache_file="$cache_dir/$cache_key.$suffix.$token.zsh"
     # Track whether this read is about to fall back to the `.none` variant
     # instead of serving the requested token's own file (bit 4 below): the
     # content is still correct, but its opening chevron was rendered without
     # this render's real prev_bg context.
     local used_variant_fallback=0
     if [[ ! -f "$cache_file" && "$token" != "none" ]]; then
-        cache_file="$cache_dir/$cache_key.$suffix.none.ansi"
+        cache_file="$cache_dir/$cache_key.$suffix.none.zsh"
         used_variant_fallback=1
     fi
 
@@ -483,8 +485,8 @@ function __gpy_read_instant_cache() {
 
         # `$(<file)` is zsh's built-in fast-path for reading a whole file --
         # reads directly in-process instead of forking `cat` (#614). Every
-        # instant-cache file is written by the Rust ansi formatter
-        # (gpy-agent/src/formatter/ansi.rs), which never appends a trailing
+        # instant-cache file is written by the Rust prompt formatter
+        # (gpy-agent/src/formatter/fish_ansi.rs), which never appends a trailing
         # newline, so there is nothing for the newline-stripping command
         # substitution below to change (mirrors bash/core/ipc.bash).
         printf '%s' "$(<"$cache_file")"
@@ -532,7 +534,7 @@ function __gpy_trigger_data_refresh() {
     # Forward the activated virtualenv for language detection (see fish/core/ipc.fish).
     [[ "$op" == "lang" && -n "${VIRTUAL_ENV:-}" ]] \
         && venv_json=",\"virtual_env\":\"$(__gpy_escape_json "$VIRTUAL_ENV")\""
-    local request="{\"op\":\"$op\",\"cwd\":\"$json_cwd\",\"format\":\"ansi\"${flags_tail}${venv_json}}"
+    local request="{\"op\":\"$op\",\"cwd\":\"$json_cwd\",\"format\":\"zsh-prompt\"${flags_tail}${venv_json}}"
     __gpy_send_json "$request" >/dev/null 2>&1
 }
 
@@ -659,7 +661,7 @@ function __gpy_request_duration() {
 
     local flags_tail
     flags_tail=$(__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg")
-    local request="{\"op\":\"duration\",\"duration_ms\":${duration_ms},\"format\":\"ansi\"${flags_tail}}"
+    local request="{\"op\":\"duration\",\"duration_ms\":${duration_ms},\"format\":\"zsh-prompt\"${flags_tail}}"
 
     local result
     result=$(__gpy_send_json "$request")
@@ -670,7 +672,7 @@ function __gpy_request_duration() {
     if [[ -z "$result" ]] && (( $+commands[gpy-agent] )) && __gpy_oneshot_claim; then
         used_oneshot=1
         local -a args
-        args=(duration --duration-ms "$duration_ms" --format ansi)
+        args=(duration --duration-ms "$duration_ms" --format zsh-prompt)
         if [[ "$is_last" != "true" ]]; then
             args+=(--not-last)
         fi
@@ -706,7 +708,7 @@ function __gpy_request_clock() {
 
     local flags_tail
     flags_tail=$(__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg")
-    local request="{\"op\":\"clock\",\"shell\":\"zsh\",\"format\":\"ansi\"${flags_tail}}"
+    local request="{\"op\":\"clock\",\"shell\":\"zsh\",\"format\":\"zsh-prompt\"${flags_tail}}"
 
     local result
     result=$(__gpy_send_json "$request")
@@ -736,7 +738,7 @@ function __gpy_request_hostname() {
     local json_hostname flags_tail
     json_hostname=$(__gpy_escape_json "$hostname")
     flags_tail=$(__gpy_json_flags_tail "$is_last" "" "$prev_bg")
-    local request="{\"op\":\"hostname\",\"hostname\":\"${json_hostname}\",\"format\":\"ansi\"${flags_tail}}"
+    local request="{\"op\":\"hostname\",\"hostname\":\"${json_hostname}\",\"format\":\"zsh-prompt\"${flags_tail}}"
 
     local result
     result=$(__gpy_send_json "$request")
@@ -762,7 +764,7 @@ function __gpy_request_username() {
     local json_username flags_tail
     json_username=$(__gpy_escape_json "$username")
     flags_tail=$(__gpy_json_flags_tail "$is_last" "" "$prev_bg")
-    local request="{\"op\":\"username\",\"username\":\"${json_username}\",\"format\":\"ansi\"${flags_tail}}"
+    local request="{\"op\":\"username\",\"username\":\"${json_username}\",\"format\":\"zsh-prompt\"${flags_tail}}"
 
     local result
     result=$(__gpy_send_json "$request")
@@ -788,7 +790,7 @@ function __gpy_request_character() {
 
     local flags_tail
     flags_tail=$(__gpy_json_flags_tail "$is_last" "" "$prev_bg")
-    local request="{\"op\":\"character\",\"success\":${success_val},\"format\":\"ansi\"${flags_tail}}"
+    local request="{\"op\":\"character\",\"success\":${success_val},\"format\":\"zsh-prompt\"${flags_tail}}"
 
     local result used_oneshot=0
     result=$(__gpy_send_json "$request")
@@ -798,7 +800,7 @@ function __gpy_request_character() {
         local exit_code=1
         [[ "$success" == "1" ]] && exit_code=0
         local -a args
-        args=(character --exit-code "$exit_code" --format ansi)
+        args=(character --exit-code "$exit_code" --format zsh-prompt)
         if [[ "$is_last" != "true" ]]; then
             args+=(--not-last)
         fi

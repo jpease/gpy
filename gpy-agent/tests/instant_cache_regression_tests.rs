@@ -12,7 +12,7 @@
 
 use gpy_agent::cache::InstantPromptCache;
 use gpy_agent::config::manager::ConfigManager;
-use gpy_agent::formatter::Format;
+use gpy_agent::formatter::{Format, PromptDialect};
 use gpy_agent::git::cache::GitStatusCache;
 use gpy_agent::git::{RepositoryState, RepositoryStatus};
 use gpy_agent::ipc::Message;
@@ -111,8 +111,13 @@ fn test_git_handler_writes_instant_cache_on_ipc_request() {
         .path()
         .canonicalize()
         .unwrap_or_else(|_| repo.path().to_path_buf());
-    let cache_file = InstantPromptCache::cache_file_for_dir(&canonical_repo_path, "git", None)
-        .expect("cache path");
+    let cache_file = InstantPromptCache::cache_file_for_dir(
+        &canonical_repo_path,
+        "git",
+        None,
+        PromptDialect::Ansi,
+    )
+    .expect("cache path");
 
     // Clean up any existing cache file
     let _ = std::fs::remove_file(&cache_file);
@@ -210,8 +215,13 @@ fn test_git_handler_writes_instant_cache_even_with_stale_git_cache() {
         .path()
         .canonicalize()
         .unwrap_or_else(|_| repo.path().to_path_buf());
-    let cache_file = InstantPromptCache::cache_file_for_dir(&canonical_repo_path, "git", None)
-        .expect("cache path");
+    let cache_file = InstantPromptCache::cache_file_for_dir(
+        &canonical_repo_path,
+        "git",
+        None,
+        PromptDialect::Ansi,
+    )
+    .expect("cache path");
     let _ = std::fs::remove_file(&cache_file);
     assert!(!cache_file.exists(), "Cache should be deleted");
 
@@ -278,8 +288,13 @@ fn test_client_handler_triggers_initial_scan_on_registration() {
         .path()
         .canonicalize()
         .unwrap_or_else(|_| repo.path().to_path_buf());
-    let cache_file = InstantPromptCache::cache_file_for_dir(&canonical_repo_path, "git", None)
-        .expect("cache path");
+    let cache_file = InstantPromptCache::cache_file_for_dir(
+        &canonical_repo_path,
+        "git",
+        None,
+        PromptDialect::Ansi,
+    )
+    .expect("cache path");
     let _ = std::fs::remove_file(&cache_file);
     assert!(!cache_file.exists(), "Cache should not exist yet");
 
@@ -341,8 +356,13 @@ fn test_instant_cache_updates_on_status_change() {
         .path()
         .canonicalize()
         .unwrap_or_else(|_| repo.path().to_path_buf());
-    let cache_file = InstantPromptCache::cache_file_for_dir(&canonical_repo_path, "git", None)
-        .expect("cache path");
+    let cache_file = InstantPromptCache::cache_file_for_dir(
+        &canonical_repo_path,
+        "git",
+        None,
+        PromptDialect::Ansi,
+    )
+    .expect("cache path");
     let _ = std::fs::remove_file(&cache_file);
 
     // First request - clean repo

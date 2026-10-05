@@ -77,6 +77,20 @@ these three:
 - Nothing else. There is no signature check at load time and no integrity check
   on the cache file.
 
+**Prompt data is escaped for the shell that draws it.** Bash and Zsh paste the
+agent's prompt output into `PS1`/`PROMPT`, and both shells expand prompt
+strings on every draw. Directory names, git branch names, language and
+virtualenv names, hostnames, usernames and theme literals are untrusted text —
+a cloned repository or an unpacked archive chooses them — so the agent escapes
+every character the shell would expand in them (`\`, `$` and backticks for
+Bash; those plus `%` for Zsh) through the `bash-prompt` and `zsh-prompt` output
+formats (`gpy-agent/src/formatter/style_encoder.rs`, #677). The instant-prompt
+cache keeps a separate file per format. The integrations pin the prompt options
+that escaping relies on: `shopt -s promptvars` in Bash, and `prompt_subst`,
+`prompt_percent` and `no_prompt_bang` in Zsh. The clock's live-time token
+(`\D{…}`/`%D{…}`) is the only agent text left for the shell to expand. Fish
+prints its prompt literally and receives the unescaped `ansi` format.
+
 **The agent trusts whoever can open its socket.** The socket is chmod'ed to
 `0600` immediately after bind, and the agent refuses to bind at all if its
 runtime directory is owned by another user or is group- or world-writable

@@ -40,7 +40,7 @@ shell_e2e_poll 5 registered || fail "client $client_pid never registered"
 # The clean-state cache entry the agent wrote for this repo.
 cache_file=""
 find_cache() {
-    cache_file="$(ls "$XDG_CACHE_HOME"/gpy/instant-prompts/*.git.*.ansi 2>/dev/null | head -n 1)"
+    cache_file="$(ls "$XDG_CACHE_HOME"/gpy/instant-prompts/*.git.*.zsh 2>/dev/null | head -n 1)"
     [ -n "$cache_file" ]
 }
 if shell_e2e_poll 5 find_cache; then

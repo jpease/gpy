@@ -32,7 +32,7 @@ use crate::formatter::language_resolver::LanguageResolver;
 use crate::formatter::username_resolver::UsernameResolver;
 use crate::template::{
     Attr, Color as TemplateColor, RenderContext as TemplateRenderContext, Span as TemplateSpan,
-    Style as TemplateStyle, VariableResolver,
+    SpanKind, Style as TemplateStyle, VariableResolver,
 };
 use crate::theme::{GitState, ThemeConfig};
 use ratatui::style::{Color as RatatuiColor, Modifier, Style as RatatuiStyle};
@@ -483,6 +483,7 @@ fn clock_demo_spans(theme: &ThemeConfig, is_first: IsFirst, is_last: IsLast) -> 
             bg: Some(TemplateColor::Named(clock_bg.to_owned())),
             attrs: Vec::new(),
         },
+        kind: SpanKind::Text,
     });
 
     // Same-background gap space before a non-last closing cap: mirrors
@@ -496,6 +497,7 @@ fn clock_demo_spans(theme: &ThemeConfig, is_first: IsFirst, is_last: IsLast) -> 
                 bg: Some(TemplateColor::Named(clock_bg.to_owned())),
                 attrs: Vec::new(),
             },
+            kind: SpanKind::Text,
         });
     }
 
@@ -564,6 +566,7 @@ fn clock_cap_span(
             bg: resolve_clock_cap_color(bg_color, clock_bg, clock_fg),
             attrs: Vec::new(),
         },
+        kind: SpanKind::Text,
     })
 }
 
@@ -804,6 +807,7 @@ mod tests {
                 bg: Some(TemplateColor::Rgb { r: 1, g: 2, b: 3 }),
                 attrs: vec![Attr::Bold],
             },
+            kind: SpanKind::Text,
         };
 
         let got = to_ratatui_span(&span);

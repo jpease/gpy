@@ -484,7 +484,12 @@ impl ConnectionHandler {
             Format::BashSource | Format::ZshSource => Err(Error::ipc(format!(
                 "IPC format {format:?} is not yet implemented for socket clients."
             ))),
-            Format::Ansi | Format::Json | Format::FishSource | Format::Zsh => {
+            Format::Ansi
+            | Format::BashPrompt
+            | Format::ZshPrompt
+            | Format::Json
+            | Format::FishSource
+            | Format::Zsh => {
                 let config = self.config_manager.get();
                 let theme = self.theme_manager.get();
                 let palette = self.palette_cache.get();
@@ -625,10 +630,13 @@ mod tests {
             result.response
         );
 
+        // 4 position variants, each written once per output dialect (#677).
+        let expected = 4 * crate::formatter::PromptDialect::ALL.len();
         let calls = instant_cache.write_call_count() - before;
         assert_eq!(
-            calls, 4,
-            "one language request must write each of the 4 variant files exactly once, not twice (#570)"
+            calls,
+            u64::try_from(expected).expect("small count"),
+            "one language request must write each of the 4 variant files exactly once per dialect, not twice (#570)"
         );
     }
 }

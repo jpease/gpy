@@ -85,5 +85,8 @@ function __gpy_segment_bg() {
 # marker file under ${TMPDIR:-/tmp}.
 typeset -g GPY_SEG_STATUS_ONESHOT=3
 
-# Ensure prompt substitution is enabled
-setopt prompt_subst
+# Ensure prompt substitution is enabled, and pin the prompt options the
+# agent's zsh-prompt escaping assumes (#677): `%` escapes on (data `%` is sent
+# as `%%`), and `prompt_bang` off (a `!` in data would otherwise become the
+# history number; the escaping cannot know the option's state).
+setopt prompt_subst prompt_percent no_prompt_bang

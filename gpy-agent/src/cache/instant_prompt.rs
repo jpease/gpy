@@ -20,20 +20,24 @@
 //!
 //! ## Cache Files
 //!
-//! Prompts are cached in `~/.cache/gpy/instant-prompts/{hash}.{suffix}.{token}.ansi`:
+//! Prompts are cached in `~/.cache/gpy/instant-prompts/{hash}.{suffix}.{token}.{ext}`:
 //! - `{hash}`: encoded repository root path (see [`path_to_cache_key`])
 //! - `{suffix}`: `git`, `git_last`, `lang`, or `lang_last`
 //! - `{token}`: previous-segment background the entry was rendered with (see
 //!   [`prev_bg_token`]); `none` for context-free writers. Because the rendered
 //!   ANSI bakes in the `fg:prev_bg` opening chevron, the token is part of the key
 //!   so a render is only served to the context it was produced for.
-//! - Format: ANSI escape codes (works across Fish, Zsh, Bash)
+//! - `{ext}`: the output dialect ([`PromptDialect::cache_ext`]): `ansi` (Fish,
+//!   text verbatim), `bash` (escaped for `PS1`) or `zsh` (escaped for
+//!   `PROMPT`). Each shell reads only its own dialect, so a cache hit is
+//!   escaped exactly like a fresh render (#677).
 //!
 //! Example:
 //! ```text
 //! ~/.cache/gpy/instant-prompts/
-//!   ├── a1b2c3d4.git.none.ansi       # Git status, no prev_bg context
-//!   ├── a1b2c3d4.git.blue.ansi       # Git status, prev segment bg = blue
+//!   ├── a1b2c3d4.git.none.ansi       # Git status, no prev_bg context (Fish)
+//!   ├── a1b2c3d4.git.none.bash       # Same entry, bash dialect
+//!   ├── a1b2c3d4.git.blue.zsh        # Git status, prev segment bg = blue, zsh
 //!   ├── a1b2c3d4.lang.none.ansi      # Language segment (non-last)
 //!   ├── a1b2c3d4.lang_last.none.ansi # Language segment (last)
 //!   └── ...
@@ -48,7 +52,9 @@
 
 use crate::cache::bounded::INSTANT_PROMPT_LAST_WRITTEN_CAPACITY;
 use crate::config::Config;
-use crate::formatter::{Format, IsFirst, IsLast, RenderContext, SegmentPosition, create_formatter};
+use crate::formatter::{
+    FishAnsiFormatter, Formatter, IsFirst, IsLast, PromptDialect, RenderContext, SegmentPosition,
+};
 use crate::git::RepositoryStatus;
 use crate::ipc::Response;
 use crate::template::{Color, Palette, parse_color};
@@ -247,10 +253,10 @@ impl InstantPromptCache {
         self.write_calls.load(Ordering::Relaxed)
     }
 
-    /// Write instant-prompt cache with ANSI format (shell-agnostic)
+    /// Write instant-prompt cache files in every [`PromptDialect`]
     ///
-    /// Renders the git status as a prompt using ANSI escape codes, then writes
-    /// it to a cache file that any shell can read instantly.
+    /// Renders the git status as a prompt using ANSI escape codes, once per
+    /// dialect, and writes each to the cache file its shell reads instantly.
     ///
     /// Writes all four `is_last`/`is_first` combinations (`git`, `git_last`,
     /// `git_first`, `git_first_last`) regardless of the requesting client's own
@@ -298,9 +304,13 @@ impl InstantPromptCache {
             let color = ctx_prev_bg.as_deref().and_then(|s| parse_color(s).ok());
 
             for pos in SEGMENT_POSITIONS {
-                let prompt = render_git_prompt(status, config, theme, pos, color.clone(), palette)?;
+                let prompts =
+                    render_git_prompts(status, config, theme, pos, color.clone(), palette)?;
                 let suffix = variant_suffix("git", pos.is_last, pos.is_first);
-                wrote_any |= self.write_cache_file(&key, &format!("{suffix}.{token}"), &prompt)?;
+                let suffix_token = format!("{suffix}.{token}");
+                for (dialect, prompt) in prompts {
+                    wrote_any |= self.write_cache_file(&key, &suffix_token, dialect, &prompt)?;
+                }
             }
         }
         Ok(wrote_any)
@@ -345,7 +355,7 @@ impl InstantPromptCache {
         for ctx_prev_bg in self.known_contexts(&key, prev_bg) {
             let token = prev_bg_token(ctx_prev_bg.as_deref());
             let color = ctx_prev_bg.as_deref().and_then(|s| parse_color(s).ok());
-            let prompt = render_language_prompt(
+            let prompts = render_language_prompts(
                 languages,
                 config,
                 theme,
@@ -355,7 +365,10 @@ impl InstantPromptCache {
                 palette,
                 virtual_env,
             )?;
-            wrote_any |= self.write_cache_file(&key, &format!("{base}.{token}"), &prompt)?;
+            let base_token = format!("{base}.{token}");
+            for (dialect, prompt) in prompts {
+                wrote_any |= self.write_cache_file(&key, &base_token, dialect, &prompt)?;
+            }
         }
         Ok(wrote_any)
     }
@@ -447,11 +460,15 @@ impl InstantPromptCache {
                 continue;
             };
 
-            // Cache files are named `{key}.{base}.{token}.ansi`. Neither the base
-            // (`lang`/`lang_last`/...) nor the token contains a dot, so stripping
-            // `.ansi`, then the trailing `.{token}`, then the trailing `.{base}`
-            // isolates the base for an exact match (the key may itself contain dots).
-            if let Some(stem) = file_name.strip_suffix(".ansi")
+            // Cache files are named `{key}.{base}.{token}.{ext}`. Neither the
+            // base (`lang`/`lang_last`/...), the token nor the dialect
+            // extension contains a dot, so stripping the extension, then the
+            // trailing `.{token}`, then the trailing `.{base}` isolates the
+            // base for an exact match (the key may itself contain dots).
+            if let Some((stem, ext)) = file_name.rsplit_once('.')
+                && PromptDialect::ALL
+                    .iter()
+                    .any(|dialect| dialect.cache_ext() == ext)
                 && let Some((without_token, _token)) = stem.rsplit_once('.')
                 && let Some((_key, base)) = without_token.rsplit_once('.')
                 && (base == "lang" || base == "lang_last")
@@ -466,7 +483,7 @@ impl InstantPromptCache {
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .retain(|map_key, _content| {
-                // map_key is `{cache_key}:{base}.{token}`; the cache key has no
+                // map_key is `{cache_key}:{base}.{token}.{ext}`; the cache key has no
                 // colon (path separators are escaped), so split on the first one.
                 let suffix = map_key.split_once(':').map_or("", |(_key, s)| s);
                 !(suffix.starts_with("lang.") || suffix.starts_with("lang_last."))
@@ -486,12 +503,19 @@ impl InstantPromptCache {
     /// # Errors
     ///
     /// Returns an error if the cache file cannot be written.
-    fn write_cache_file(&self, key: &str, suffix: &str, content: &str) -> Result<bool> {
+    fn write_cache_file(
+        &self,
+        key: &str,
+        suffix: &str,
+        dialect: PromptDialect,
+        content: &str,
+    ) -> Result<bool> {
         #[cfg(test)]
         self.write_calls.fetch_add(1, Ordering::Relaxed);
 
-        let map_key = format!("{key}:{suffix}");
-        let cache_file = self.cache_file_path(key, suffix);
+        let ext = dialect.cache_ext();
+        let map_key = format!("{key}:{suffix}.{ext}");
+        let cache_file = self.cache_file_path(key, suffix, dialect);
 
         // Poison policy (#591, see `last_written`'s doc comment): recover via
         // `into_inner` rather than silently skip the dedup check on a
@@ -510,7 +534,7 @@ impl InstantPromptCache {
             }
         }
 
-        write_atomic(&self.cache_dir, &format!("{key}.{suffix}.ansi"), content)?;
+        write_atomic(&self.cache_dir, &format!("{key}.{suffix}.{ext}"), content)?;
 
         // Same poison policy as the read above: recover, don't skip the record.
         let mut cache = self
@@ -519,8 +543,8 @@ impl InstantPromptCache {
             .unwrap_or_else(PoisonError::into_inner);
         cache.insert(map_key, content.to_owned());
         // Evict arbitrary entries to keep the in-memory dedup table bounded.
-        // The map is keyed by "{cache_key}:{suffix}" so the number of entries
-        // scales with distinct (repo, variant) pairs. Evict by draining to
+        // The map is keyed by "{cache_key}:{suffix}.{ext}" so the number of entries
+        // scales with distinct (repo, variant, dialect) triples. Evict by draining to
         // the capacity limit using retain (stable-order not required here).
         if cache.len() > INSTANT_PROMPT_LAST_WRITTEN_CAPACITY {
             let excess = cache
@@ -536,23 +560,31 @@ impl InstantPromptCache {
         Ok(true)
     }
 
-    /// Get the cache file path for a given cache key and suffix
-    fn cache_file_path(&self, key: &str, suffix: &str) -> PathBuf {
-        self.cache_dir.join(format!("{key}.{suffix}.ansi"))
+    /// Get the cache file path for a given cache key, suffix and dialect
+    fn cache_file_path(&self, key: &str, suffix: &str, dialect: PromptDialect) -> PathBuf {
+        let ext = dialect.cache_ext();
+        self.cache_dir.join(format!("{key}.{suffix}.{ext}"))
     }
 
     /// Get the cache file path that a shell should read for a given directory
     ///
     /// This is the public API for shells to determine which cache file to read.
+    /// `dialect` is the reading shell's output dialect (`Ansi` for Fish).
     ///
     /// # Errors
     ///
     /// Returns an error if the cache directory cannot be determined.
-    pub fn cache_file_for_dir(dir: &Path, suffix: &str, prev_bg: Option<&str>) -> Result<PathBuf> {
+    pub fn cache_file_for_dir(
+        dir: &Path,
+        suffix: &str,
+        prev_bg: Option<&str>,
+        dialect: PromptDialect,
+    ) -> Result<PathBuf> {
         let cache_dir = get_instant_cache_dir()?;
         let key = path_to_cache_key(dir);
         let token = prev_bg_token(prev_bg);
-        Ok(cache_dir.join(format!("{key}.{suffix}.{token}.ansi")))
+        let ext = dialect.cache_ext();
+        Ok(cache_dir.join(format!("{key}.{suffix}.{token}.{ext}")))
     }
 }
 
@@ -585,7 +617,27 @@ fn variant_suffix(base: &str, is_last: IsLast, is_first: IsFirst) -> String {
     }
 }
 
-/// Render a git status as a formatted prompt string
+/// A rendered cache entry for each [`PromptDialect`].
+type DialectPrompts = Vec<(PromptDialect, String)>;
+
+/// Render `response` once per [`PromptDialect`].
+///
+/// # Errors
+///
+/// Returns an error if prompt rendering fails.
+fn render_all_dialects(response: &Response, ctx: &RenderContext<'_>) -> Result<DialectPrompts> {
+    PromptDialect::ALL
+        .iter()
+        .map(|&dialect| {
+            Ok((
+                dialect,
+                FishAnsiFormatter::new(dialect).render(response, ctx)?,
+            ))
+        })
+        .collect()
+}
+
+/// Render a git status as a formatted prompt string in every dialect
 ///
 /// # Errors
 ///
@@ -594,14 +646,14 @@ fn variant_suffix(base: &str, is_last: IsLast, is_first: IsFirst) -> String {
     clippy::too_many_arguments,
     reason = "6 params: status + config + theme + pos + prev_bg + palette; a struct would add construction overhead without clarity"
 )]
-fn render_git_prompt(
+fn render_git_prompts(
     status: &RepositoryStatus,
     config: &Config,
     theme: &ThemeConfig,
     pos: SegmentPosition,
     prev_bg: Option<Color>,
     palette: &Palette,
-) -> Result<String> {
+) -> Result<DialectPrompts> {
     let ctx = RenderContext::new(config, theme, pos)
         .with_palette(palette.clone())
         .with_prev_colors(None, prev_bg);
@@ -613,11 +665,11 @@ fn render_git_prompt(
     };
 
     let response = Response::RepositoryStatus(response_status);
-
-    let formatter = create_formatter(Format::Ansi)?;
-    formatter.render(&response, &ctx)
+    render_all_dialects(&response, &ctx)
 }
 
+/// Render the language segment in every dialect.
+///
 /// # Errors
 ///
 /// Returns an error if prompt rendering fails.
@@ -625,7 +677,7 @@ fn render_git_prompt(
     clippy::too_many_arguments,
     reason = "7 params: languages + config + theme + pos + root + prev_bg + palette + virtual_env; each is an independent piece of render context, and a struct would add construction overhead without clarity"
 )]
-fn render_language_prompt(
+fn render_language_prompts(
     languages: &[crate::language::DetectedLanguage],
     config: &Config,
     theme: &ThemeConfig,
@@ -634,7 +686,7 @@ fn render_language_prompt(
     prev_bg: Option<Color>,
     palette: &Palette,
     virtual_env: Option<&Path>,
-) -> Result<String> {
+) -> Result<DialectPrompts> {
     let ctx = RenderContext::new(config, theme, pos)
         .with_palette(palette.clone())
         .with_prev_colors(None, prev_bg);
@@ -649,8 +701,7 @@ fn render_language_prompt(
     );
 
     let response = Response::Language { languages: langs };
-    let formatter = create_formatter(Format::Ansi)?;
-    formatter.render(&response, &ctx)
+    render_all_dialects(&response, &ctx)
 }
 
 /// Get the GPY base cache directory (`~/.cache/gpy/` or XDG equivalent; on
@@ -786,7 +837,7 @@ fn prune_stale_entries(dir: &Path, now: SystemTime) -> (u64, u64) {
 /// The rendered ANSI bakes in the opening powerline chevron, whose color is
 /// `fg:prev_bg`. A cache entry is therefore only valid for the `prev_bg` it was
 /// rendered with, so the token becomes part of the cache filename
-/// (`{key}.{suffix}.{token}.ansi`). `None`/empty → `"none"` (context-free writers:
+/// (`{key}.{suffix}.{token}.{ext}`). `None`/empty → `"none"` (context-free writers:
 /// watcher, registration, background jobs). Otherwise every byte that is not
 /// ASCII-alphanumeric is replaced with `_`.
 ///
@@ -794,7 +845,7 @@ fn prune_stale_entries(dir: &Path, now: SystemTime) -> (u64, u64) {
 /// `prev_bg`, so both sides resolve the identical cache file without a subprocess.
 /// The Fish/Bash/Zsh implementations (`__gpy_prev_bg_token`) MUST stay in lockstep
 /// with this rule. Tokens never contain a `.`, which `clear_language_files` relies
-/// on to parse `{key}.{base}.{token}.ansi` filenames.
+/// on to parse `{key}.{base}.{token}.{ext}` filenames.
 fn prev_bg_token(prev_bg: Option<&str>) -> String {
     match prev_bg {
         Some(s) if !s.is_empty() => s
@@ -810,15 +861,16 @@ fn prev_bg_token(prev_bg: Option<&str>) -> String {
 /// hash-tail (see that function) instead of returning it whole.
 ///
 /// Sized against `cache_file_for_dir`'s actual filename shape,
-/// `"{key}.{suffix}.{token}.ansi"`: the longest `suffix` in this codebase is
-/// `variant_suffix`'s `"lang_first_last"` (16 chars), and the extension plus
-/// its three separator dots add another 9 characters on top of that. Add the
+/// `"{key}.{suffix}.{token}.{ext}"`: the longest `suffix` in this codebase is
+/// `variant_suffix`'s `"lang_first_last"` (16 chars), and the longest
+/// dialect extension (`ansi`/`bash`; `zsh` is shorter) plus the three
+/// separator dots add another 7 characters on top of that. Add the
 /// hash-tail overhead (`"_h"` plus 16 hex digits, 18 characters) to a
 /// 200-char truncated prefix and the key alone tops out at 218, leaving
 /// roughly 37 characters of headroom under Windows' 255-char
 /// filename-component limit for the rest of the filename (`suffix`, dots,
-/// `token`, and `ansi`) -- comfortably covering the 16-char `suffix` and
-/// its `ansi`/dots overhead, with room left over for realistic `prev_bg`
+/// `token`, and `ext`) -- comfortably covering the 16-char `suffix` and
+/// its extension/dots overhead, with room left over for realistic `prev_bg`
 /// tokens.
 const WINDOWS_CACHE_KEY_MAX_LEN: usize = 200;
 
@@ -1081,7 +1133,7 @@ mod tests {
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
         cache
-            .write_cache_file("repo", "git", "hello world")
+            .write_cache_file("repo", "git", PromptDialect::Ansi, "hello world")
             .expect("write");
 
         // No .tmp files should remain after a successful write
@@ -1096,7 +1148,9 @@ mod tests {
         );
 
         // Content must be exact
-        let content = std::fs::read_to_string(cache.cache_file_path("repo", "git")).expect("read");
+        let content =
+            std::fs::read_to_string(cache.cache_file_path("repo", "git", PromptDialect::Ansi))
+                .expect("read");
         assert_eq!(content, "hello world");
     }
 
@@ -1191,31 +1245,32 @@ mod tests {
         // First write of new content is reported as written (changed).
         assert!(
             cache
-                .write_cache_file("repo", "git", "alpha")
+                .write_cache_file("repo", "git", PromptDialect::Ansi, "alpha")
                 .expect("write"),
             "first write of new content should report a change"
         );
         // Identical content with the file present is a no-op.
         assert!(
             !cache
-                .write_cache_file("repo", "git", "alpha")
+                .write_cache_file("repo", "git", PromptDialect::Ansi, "alpha")
                 .expect("write"),
             "rewriting identical content should report no change"
         );
         // Different content is reported as changed.
         assert!(
             cache
-                .write_cache_file("repo", "git", "beta")
+                .write_cache_file("repo", "git", PromptDialect::Ansi, "beta")
                 .expect("write"),
             "writing different content should report a change"
         );
         // A missing file is rewritten and reported as changed even when the
         // last-written content matches, so serve-stale readers that saw nothing
         // still get a repaint.
-        std::fs::remove_file(cache.cache_file_path("repo", "git")).expect("remove");
+        std::fs::remove_file(cache.cache_file_path("repo", "git", PromptDialect::Ansi))
+            .expect("remove");
         assert!(
             cache
-                .write_cache_file("repo", "git", "beta")
+                .write_cache_file("repo", "git", PromptDialect::Ansi, "beta")
                 .expect("write"),
             "rewriting a missing file should report a change"
         );
@@ -1539,7 +1594,7 @@ mod tests {
             )
             .expect("write lang");
         let key = path_to_cache_key(&repo_root);
-        let lang_path = cache.cache_file_path(&key, "lang.none");
+        let lang_path = cache.cache_file_path(&key, "lang.none", PromptDialect::Ansi);
         assert!(lang_path.exists(), "lang cache file should exist");
 
         cache
@@ -1554,7 +1609,7 @@ mod tests {
                 None,
             )
             .expect("write lang_last");
-        let lang_last_path = cache.cache_file_path(&key, "lang_last.none");
+        let lang_last_path = cache.cache_file_path(&key, "lang_last.none", PromptDialect::Ansi);
         assert!(lang_last_path.exists(), "lang_last cache file should exist");
     }
 
@@ -1588,8 +1643,8 @@ mod tests {
             .expect("write variants");
 
         let key = path_to_cache_key(&repo_root);
-        let lang_path = cache.cache_file_path(&key, "lang.none");
-        let lang_last_path = cache.cache_file_path(&key, "lang_last.none");
+        let lang_path = cache.cache_file_path(&key, "lang.none", PromptDialect::Ansi);
+        let lang_last_path = cache.cache_file_path(&key, "lang_last.none", PromptDialect::Ansi);
 
         std::fs::remove_file(&lang_path).expect("remove lang cache");
         std::fs::remove_file(&lang_last_path).expect("remove lang_last cache");
@@ -1619,23 +1674,31 @@ mod tests {
         let cache =
             InstantPromptCache::new_in_dir(temp_dir.path().join("instant-prompts")).expect("cache");
 
-        // Use the real `{base}.{token}` suffix scheme so the clear logic is
-        // exercised against the filenames the writers actually produce.
-        cache
-            .write_cache_file("repo", "git.none", "git status")
-            .expect("write git cache");
-        cache
-            .write_cache_file("repo", "lang.none", "ruby 4.0.5")
-            .expect("write lang cache");
-        cache
-            .write_cache_file("repo", "lang_last.blue", "ruby 4.0.5")
-            .expect("write lang_last cache");
+        // Use the real `{base}.{token}.{ext}` scheme, in every dialect, so the
+        // clear logic is exercised against the filenames the writers produce.
+        for dialect in PromptDialect::ALL {
+            cache
+                .write_cache_file("repo", "git.none", dialect, "git status")
+                .expect("write git cache");
+            cache
+                .write_cache_file("repo", "lang.none", dialect, "ruby 4.0.5")
+                .expect("write lang cache");
+            cache
+                .write_cache_file("repo", "lang_last.blue", dialect, "ruby 4.0.5")
+                .expect("write lang_last cache");
+        }
 
         cache.clear_language_files().expect("clear language caches");
 
-        assert!(cache.cache_file_path("repo", "git.none").exists());
-        assert!(!cache.cache_file_path("repo", "lang.none").exists());
-        assert!(!cache.cache_file_path("repo", "lang_last.blue").exists());
+        for dialect in PromptDialect::ALL {
+            assert!(cache.cache_file_path("repo", "git.none", dialect).exists());
+            assert!(!cache.cache_file_path("repo", "lang.none", dialect).exists());
+            assert!(
+                !cache
+                    .cache_file_path("repo", "lang_last.blue", dialect)
+                    .exists()
+            );
+        }
     }
 
     #[test]
@@ -1677,8 +1740,8 @@ mod tests {
             .expect("write git");
 
         let key = path_to_cache_key(&std::fs::canonicalize(&repo_root).expect("canonicalize"));
-        let git_path = cache.cache_file_path(&key, "git.none");
-        let git_last_path = cache.cache_file_path(&key, "git_last.none");
+        let git_path = cache.cache_file_path(&key, "git.none", PromptDialect::Ansi);
+        let git_last_path = cache.cache_file_path(&key, "git_last.none", PromptDialect::Ansi);
 
         assert!(git_path.exists(), "git.none.ansi must exist");
         assert!(git_last_path.exists(), "git_last.none.ansi must exist");
@@ -1724,7 +1787,7 @@ mod tests {
 
         let key = path_to_cache_key(&std::fs::canonicalize(&repo_root).expect("canonicalize"));
         let read = |suffix: &str| {
-            std::fs::read_to_string(cache.cache_file_path(&key, suffix))
+            std::fs::read_to_string(cache.cache_file_path(&key, suffix, PromptDialect::Ansi))
                 .unwrap_or_else(|_| panic!("read {suffix}"))
         };
 
@@ -1735,7 +1798,9 @@ mod tests {
             "git_first_last.none",
         ] {
             assert!(
-                cache.cache_file_path(&key, suffix).exists(),
+                cache
+                    .cache_file_path(&key, suffix, PromptDialect::Ansi)
+                    .exists(),
                 "{suffix}.ansi must exist"
             );
         }
@@ -1794,7 +1859,7 @@ mod tests {
 
         let key = path_to_cache_key(&std::fs::canonicalize(&repo_root).expect("canonicalize"));
         let read = |suffix: &str| {
-            std::fs::read_to_string(cache.cache_file_path(&key, suffix))
+            std::fs::read_to_string(cache.cache_file_path(&key, suffix, PromptDialect::Ansi))
                 .unwrap_or_else(|_| panic!("read {suffix}"))
         };
 
@@ -1805,7 +1870,9 @@ mod tests {
             "lang_first_last.none",
         ] {
             assert!(
-                cache.cache_file_path(&key, suffix).exists(),
+                cache
+                    .cache_file_path(&key, suffix, PromptDialect::Ansi)
+                    .exists(),
                 "{suffix}.ansi must exist"
             );
         }
@@ -1826,7 +1893,7 @@ mod tests {
     }
 
     /// Part A: the instant-prompt cache must contain the branch name AND ANSI escapes,
-    /// confirming that the active palette flows through `render_git_prompt` and produces
+    /// confirming that the active palette flows through `render_git_prompts` and produces
     /// styled output.
     ///
     /// Uses `ThemeManager::builtin` to bypass `~/.config` (hermetic).
@@ -1873,7 +1940,8 @@ mod tests {
 
         let key = path_to_cache_key(&std::fs::canonicalize(&repo_root).expect("canon"));
         let rendered =
-            std::fs::read_to_string(cache.cache_file_path(&key, "git.none")).expect("read cache");
+            std::fs::read_to_string(cache.cache_file_path(&key, "git.none", PromptDialect::Ansi))
+                .expect("read cache");
 
         assert!(
             rendered.contains("main"),
@@ -1883,6 +1951,58 @@ mod tests {
             rendered.contains('\u{1b}'),
             "cached git prompt must contain ANSI escape: {rendered:?}"
         );
+    }
+
+    /// Regression for #677: each dialect's cache file escapes the branch for
+    /// its own shell, so an instant-cache hit is as safe as a fresh render.
+    #[test]
+    fn write_git_writes_each_dialect_escaped_for_its_shell() {
+        use crate::git::{RepositoryState, RepositoryStatus};
+
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+        let repo_root = temp_dir.path().join("repo");
+        std::fs::create_dir_all(repo_root.join(".git")).expect("git dir");
+
+        let status = RepositoryStatus {
+            branch: "feat/$HOME-100%_x".to_owned(),
+            ahead: 0,
+            behind: 0,
+            ahead_capped: false,
+            behind_capped: false,
+            staged: 0,
+            unstaged: 0,
+            untracked: 0,
+            conflicts: 0,
+            state: RepositoryState::Clean,
+            stash_count: 0,
+            detached: false,
+            rebase_progress: None,
+        };
+        let config = Config::default();
+        let theme_mgr =
+            crate::theme::ThemeManager::builtin("default").expect("builtin default theme");
+        let theme_arc = theme_mgr.get();
+
+        cache
+            .write_git(
+                &repo_root,
+                &status,
+                &config,
+                &theme_arc,
+                None,
+                &crate::palette::active_palette(&config),
+            )
+            .expect("write git");
+
+        let key = path_to_cache_key(&std::fs::canonicalize(&repo_root).expect("canon"));
+        let read = |dialect| {
+            std::fs::read_to_string(cache.cache_file_path(&key, "git.none", dialect))
+                .expect("read cache")
+        };
+        assert!(read(PromptDialect::Ansi).contains("feat/$HOME-100%_x"));
+        assert!(read(PromptDialect::BashPrompt).contains("feat/\\\\$HOME-100%_x"));
+        assert!(read(PromptDialect::ZshPrompt).contains("feat/\\$HOME-100%%_x"));
     }
 
     /// Watcher-triggered cache writes pass `prev_bg = None` (no per-request color context).
@@ -1933,7 +2053,8 @@ mod tests {
 
         let key = path_to_cache_key(&std::fs::canonicalize(&repo_root).expect("canon"));
         let rendered =
-            std::fs::read_to_string(cache.cache_file_path(&key, "git.none")).expect("read cache");
+            std::fs::read_to_string(cache.cache_file_path(&key, "git.none", PromptDialect::Ansi))
+                .expect("read cache");
 
         assert!(
             !rendered.is_empty(),
@@ -2121,15 +2242,15 @@ mod tests {
             .expect("write none");
 
         let key = path_to_cache_key(&std::fs::canonicalize(&repo_root).expect("canon"));
+        let path = |suffix: &str| cache.cache_file_path(&key, suffix, PromptDialect::Ansi);
         let read = |suffix: &str| {
-            std::fs::read_to_string(cache.cache_file_path(&key, suffix))
-                .unwrap_or_else(|_| panic!("read {suffix}"))
+            std::fs::read_to_string(path(suffix)).unwrap_or_else(|_| panic!("read {suffix}"))
         };
 
         // All three context files coexist.
-        assert!(cache.cache_file_path(&key, "git.blue").exists());
-        assert!(cache.cache_file_path(&key, "git.green").exists());
-        assert!(cache.cache_file_path(&key, "git.none").exists());
+        assert!(path("git.blue").exists());
+        assert!(path("git.green").exists());
+        assert!(path("git.none").exists());
 
         let blue = read("git.blue");
         let green = read("git.green");
@@ -2168,7 +2289,8 @@ mod tests {
             .expect("write blue");
         let key = path_to_cache_key(&std::fs::canonicalize(&repo_root).expect("canon"));
         let blue_before =
-            std::fs::read_to_string(cache.cache_file_path(&key, "git.blue")).expect("read blue");
+            std::fs::read_to_string(cache.cache_file_path(&key, "git.blue", PromptDialect::Ansi))
+                .expect("read blue");
 
         // A watcher-style None write must land on `git.none`, leaving `git.blue` intact.
         cache
@@ -2183,13 +2305,16 @@ mod tests {
             .expect("write none");
 
         let blue_after =
-            std::fs::read_to_string(cache.cache_file_path(&key, "git.blue")).expect("read blue");
+            std::fs::read_to_string(cache.cache_file_path(&key, "git.blue", PromptDialect::Ansi))
+                .expect("read blue");
         assert_eq!(
             blue_before, blue_after,
             "a None write must not clobber the context-specific cache file"
         );
         assert!(
-            cache.cache_file_path(&key, "git.none").exists(),
+            cache
+                .cache_file_path(&key, "git.none", PromptDialect::Ansi)
+                .exists(),
             "the None write must populate its own token file"
         );
     }
@@ -2241,13 +2366,23 @@ mod tests {
             .expect("write green");
 
         let key = path_to_cache_key(&std::fs::canonicalize(&repo_root).expect("canon"));
-        assert!(cache.cache_file_path(&key, "lang.blue").exists());
-        assert!(cache.cache_file_path(&key, "lang.green").exists());
+        assert!(
+            cache
+                .cache_file_path(&key, "lang.blue", PromptDialect::Ansi)
+                .exists()
+        );
+        assert!(
+            cache
+                .cache_file_path(&key, "lang.green", PromptDialect::Ansi)
+                .exists()
+        );
 
         let blue =
-            std::fs::read_to_string(cache.cache_file_path(&key, "lang.blue")).expect("read blue");
+            std::fs::read_to_string(cache.cache_file_path(&key, "lang.blue", PromptDialect::Ansi))
+                .expect("read blue");
         let green =
-            std::fs::read_to_string(cache.cache_file_path(&key, "lang.green")).expect("read green");
+            std::fs::read_to_string(cache.cache_file_path(&key, "lang.green", PromptDialect::Ansi))
+                .expect("read green");
         assert_eq!(blue, green);
     }
 
@@ -2270,7 +2405,7 @@ mod tests {
         let theme = theme_mgr.get();
         let key = path_to_cache_key(&std::fs::canonicalize(&repo_root).expect("canon"));
         let read = |suffix: &str| {
-            std::fs::read_to_string(cache.cache_file_path(&key, suffix))
+            std::fs::read_to_string(cache.cache_file_path(&key, suffix, PromptDialect::Ansi))
                 .unwrap_or_else(|_| panic!("read {suffix}"))
         };
 
