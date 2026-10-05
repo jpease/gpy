@@ -254,6 +254,12 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Fixed
 
+- Bash and Zsh prompts mark agent color escapes as zero-width (#679): the
+  `bash-prompt` and `zsh-prompt` formats wrap every SGR sequence in `\[ \]`
+  and `%{ %}`, so readline and ZLE no longer count escape bytes as columns.
+  Typed input no longer wraps early, and Ctrl-A, history recall and
+  completion keep the cursor on the input line.
+
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

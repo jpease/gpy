@@ -693,15 +693,17 @@ mod tests {
         let bash = FishAnsiFormatter::new(PromptDialect::BashPrompt)
             .render(&Response::Clock { shell: Shell::Bash }, &rc)
             .expect("render bash");
-        // Each span re-emits its SGR, so check the literal and the token apart.
-        assert!(bash.contains("\\\\$ \x1b"), "{bash:?}");
-        assert!(bash.contains("m\\D{%-I:%M %p}\x1b"), "{bash:?}");
+        // Each span re-emits its SGR (inside the zero-width markers, #679),
+        // so check the literal and the token apart. The token is visible
+        // text and sits outside the markers.
+        assert!(bash.contains("\\\\$ \\["), "{bash:?}");
+        assert!(bash.contains("\\]\\D{%-I:%M %p}\\["), "{bash:?}");
 
         let zsh = FishAnsiFormatter::new(PromptDialect::ZshPrompt)
             .render(&Response::Clock { shell: Shell::Zsh }, &rc)
             .expect("render zsh");
-        assert!(zsh.contains("\\$ \x1b"), "{zsh:?}");
-        assert!(zsh.contains("m%D{%-I:%M %p}\x1b"), "{zsh:?}");
+        assert!(zsh.contains("\\$ %{"), "{zsh:?}");
+        assert!(zsh.contains("%}%D{%-I:%M %p}%{"), "{zsh:?}");
     }
 
     /// #677: directory data and theme literals are escaped for the
@@ -727,12 +729,12 @@ mod tests {
         );
         let bash = render(PromptDialect::BashPrompt);
         assert!(
-            bash.contains("m\\\\$(echo X)") && bash.contains(" 100%"),
+            bash.contains("\\]\\\\$(echo X)") && bash.contains(" 100%"),
             "{bash:?}"
         );
         let zsh = render(PromptDialect::ZshPrompt);
         assert!(
-            zsh.contains("m\\$(echo X)") && zsh.contains(" 100%%"),
+            zsh.contains("%}\\$(echo X)") && zsh.contains(" 100%%"),
             "{zsh:?}"
         );
     }
