@@ -178,6 +178,30 @@ mod tests {
     }
 
     #[test]
+    fn save_to_round_trip_keeps_git_and_language_rendered() {
+        // #692: saving without touching anything must keep git/language in
+        // the list the prompt export iterates.
+        let (_dir, path) = write_starting_config(
+            "[ui]\ntheme = \"default\"\npalette = \"default\"\nenabled_segments = [\"clock\", \"duration\", \"language\", \"directory\", \"git\"]\n",
+        );
+
+        let config = load_active_config(&path).expect("load starting config");
+        let state = test_state(config);
+
+        save_to(&state, &path).expect("save_to should succeed");
+
+        let saved = fs::read_to_string(&path).expect("read saved config");
+        let reloaded: Config = toml::from_str(&saved).expect("parse saved config");
+
+        assert_eq!(
+            reloaded.ui.enabled_segments,
+            vec!["clock", "duration", "language", "directory", "git"]
+        );
+        assert!(reloaded.git.enabled);
+        assert!(reloaded.language.enabled);
+    }
+
+    #[test]
     fn save_to_preserves_untouched_config_fields() {
         let (_dir, path) = write_starting_config(
             "[git]\ntimeout_seconds = 42\n\n[ui]\ntheme = \"default\"\npalette = \"default\"\n",

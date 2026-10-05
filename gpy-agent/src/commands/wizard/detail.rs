@@ -12,10 +12,11 @@ use ratatui::text::Line;
 
 /// Static metadata about a builtin segment, shown in its detail panel entry.
 struct SegmentDetail {
-    /// Dotted config path that controls this segment, as shown to the user
-    /// (e.g. `"git.enabled"`). Mirrors `WizardState::apply_to`'s special
-    /// casing: `git`/`language` are dedicated booleans, everything else is
-    /// list membership in `ui.enabled_segments`.
+    /// Dotted config path(s) that control this segment, as shown to the user
+    /// (e.g. `"git.enabled + ui.enabled_segments"`). `git`/`language` render
+    /// only with both their dedicated boolean and list membership (see
+    /// `commands::segments::is_effectively_enabled`); everything else is list
+    /// membership in `ui.enabled_segments`.
     config_field: &'static str,
     /// One-line description of what the segment adds to the preview.
     preview_contribution: &'static str,
@@ -44,7 +45,7 @@ fn segment_detail(segment: &str) -> SegmentDetail {
             caveat: Some("Preview uses a representative sample duration, not a real command."),
         },
         Ok(BuiltinSegment::Language) => SegmentDetail {
-            config_field: "language.enabled",
+            config_field: "language.enabled + ui.enabled_segments",
             preview_contribution: "Shows the detected language and version for the current directory.",
             caveat: Some("Only shown when a supported language is detected in the directory."),
         },
@@ -54,7 +55,7 @@ fn segment_detail(segment: &str) -> SegmentDetail {
             caveat: None,
         },
         Ok(BuiltinSegment::Git) => SegmentDetail {
-            config_field: "git.enabled",
+            config_field: "git.enabled + ui.enabled_segments",
             preview_contribution: "Shows git branch, ahead/behind counts, and working-tree status.",
             caveat: Some("Only shown inside a git repository."),
         },
@@ -546,7 +547,7 @@ mod tests {
             "git"
         );
         assert!(lines.contains(&"Enabled".to_owned()));
-        assert!(lines.contains(&"Config field: git.enabled".to_owned()));
+        assert!(lines.contains(&"Config field: git.enabled + ui.enabled_segments".to_owned()));
         assert!(
             lines
                 .iter()

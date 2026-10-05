@@ -781,13 +781,16 @@ impl WizardState {
 
     /// Apply the current selection onto `config`.
     ///
-    /// Shares the git/language special-casing and `BUILTIN_ORDER` rebuild
-    /// with `commands::segments::add_to_enabled_segments` via
+    /// Shares the `BUILTIN_ORDER` rebuild with `gpy enable` via
     /// `commands::segments::rebuild_enabled_segments` (not just a mirrored
     /// copy of the same logic), so a save through the wizard produces the
     /// same shape of config a sequence of `gpy enable`/`gpy disable`/`gpy
-    /// theme use`/`gpy palette use` calls would.
+    /// theme use`/`gpy palette use` calls would: a selected `git`/`language`
+    /// is listed with its flag set, and a deselected one has its flag cleared
+    /// while an existing list entry is kept (like `gpy disable`).
     pub(crate) fn apply_to(&self, config: &mut Config) {
+        use crate::commands::segments::BuiltinSegment;
+
         if let Some(theme) = crate::config::types::ThemeName::new(self.selected_theme.clone()) {
             config.ui.theme = theme;
         }
@@ -799,36 +802,37 @@ impl WizardState {
         config.language.display = self.selected_language_display;
         config.language.show_versions = self.selected_language_show_versions;
 
-        config.git.enabled =
-            self.is_segment_enabled(crate::commands::segments::BuiltinSegment::Git.as_str());
-        config.language.enabled =
-            self.is_segment_enabled(crate::commands::segments::BuiltinSegment::Language.as_str());
+        config.git.enabled = self.is_segment_enabled(BuiltinSegment::Git.as_str());
+        config.language.enabled = self.is_segment_enabled(BuiltinSegment::Language.as_str());
 
         // Rebuild ui.enabled_segments preserving BUILTIN_ORDER for builtin
         // segments and appending any non-builtin (plugin) segments the
-        // selection still includes, in `available_segments`'s order. Shares
-        // its rebuild implementation with `commands::segments::
-        // add_to_enabled_segments` via `rebuild_enabled_segments`, so a save
-        // through the wizard produces the same shape of config a sequence of
-        // `gpy enable`/`gpy disable`/`gpy theme use`/`gpy palette use` calls
-        // would.
+        // selection still includes, in `available_segments`'s order.
         let plugin_segments: Vec<String> = self
             .available_segments
             .iter()
             .filter(|segment| {
-                crate::commands::segments::BuiltinSegment::try_from(segment.as_str()).is_err()
+                BuiltinSegment::try_from(segment.as_str()).is_err()
                     && self.is_segment_enabled(segment)
             })
             .cloned()
             .collect();
-        config.ui.enabled_segments = crate::commands::segments::rebuild_enabled_segments(
+        let previously_listed = |builtin: BuiltinSegment| {
+            config
+                .ui
+                .enabled_segments
+                .iter()
+                .any(|s| s == builtin.as_str())
+        };
+        let rebuilt = crate::commands::segments::rebuild_enabled_segments(
             |builtin| {
-                builtin != crate::commands::segments::BuiltinSegment::Git
-                    && builtin != crate::commands::segments::BuiltinSegment::Language
-                    && self.is_segment_enabled(builtin.as_str())
+                self.is_segment_enabled(builtin.as_str())
+                    || (matches!(builtin, BuiltinSegment::Git | BuiltinSegment::Language)
+                        && previously_listed(builtin))
             },
             plugin_segments,
         );
+        config.ui.enabled_segments = rebuilt;
     }
 }
 
@@ -875,21 +879,14 @@ const fn prev_language_display(current: LanguageDisplay) -> LanguageDisplay {
 
 /// Compute the starting enabled-segment set from `config`.
 ///
-/// Applies the same git/language special-casing as `commands::segments::list`
-/// (`gpy-agent/src/commands/segments.rs`, its own enabled check): `git` and
-/// `language` reflect their dedicated `config.git.enabled` /
-/// `config.language.enabled` booleans, every other segment reflects
-/// membership in `config.ui.enabled_segments`.
+/// Uses `commands::segments::is_effectively_enabled`, the same rule
+/// `gpy segments` and the prompt export apply, so the wizard starts from
+/// what the prompt actually renders (`git`/`language` need both list
+/// membership and their feature flag).
 fn initial_enabled_segments(config: &Config, available: &[String]) -> BTreeSet<String> {
     available
         .iter()
-        .filter(|segment| {
-            match crate::commands::segments::BuiltinSegment::try_from(segment.as_str()) {
-                Ok(crate::commands::segments::BuiltinSegment::Git) => config.git.enabled,
-                Ok(crate::commands::segments::BuiltinSegment::Language) => config.language.enabled,
-                _ => config.ui.enabled_segments.iter().any(|s| s == *segment),
-            }
-        })
+        .filter(|segment| crate::commands::segments::is_effectively_enabled(config, segment))
         .cloned()
         .collect()
 }
@@ -1041,9 +1038,10 @@ mod tests {
     }
 
     #[test]
-    fn new_reflects_git_and_language_enabled_flags_not_segment_list() {
-        // git/language deliberately absent from enabled_segments to prove the
-        // special-case booleans, not list membership, drive the result.
+    fn new_reflects_flag_and_list_membership_for_git_and_language() {
+        // language's flag is on but it is absent from enabled_segments, so the
+        // prompt does not render it: the wizard must start with it unchecked.
+        // git is listed but its flag is off: also unchecked.
         let config = make_config(
             "default",
             "default",
@@ -1051,13 +1049,26 @@ mod tests {
                 git: false,
                 language: true,
             },
-            &["directory"],
+            &["directory", "git"],
         );
         let state = test_state(config);
 
         assert!(!state.is_segment_enabled("git"));
-        assert!(state.is_segment_enabled("language"));
+        assert!(!state.is_segment_enabled("language"));
         assert!(state.is_segment_enabled("directory"));
+
+        let both = make_config(
+            "default",
+            "default",
+            GitLanguageFlags {
+                git: true,
+                language: true,
+            },
+            &["language", "directory", "git"],
+        );
+        let both_state = test_state(both);
+        assert!(both_state.is_segment_enabled("git"));
+        assert!(both_state.is_segment_enabled("language"));
     }
 
     #[test]
@@ -1278,10 +1289,44 @@ mod tests {
                 .enabled_segments
                 .contains(&"directory".to_owned())
         );
-        // git/language are driven by their dedicated booleans, never by
-        // enabled_segments list membership.
-        assert!(!applied.ui.enabled_segments.contains(&"git".to_owned()));
-        assert!(!applied.ui.enabled_segments.contains(&"language".to_owned()));
+        // A selected git/language is listed (the export needs both the list
+        // entry and the flag), in BUILTIN_ORDER.
+        assert_eq!(
+            applied.ui.enabled_segments,
+            vec!["language", "directory", "git"]
+        );
+    }
+
+    #[test]
+    fn apply_to_keeps_default_git_and_language_in_enabled_segments() {
+        // #692: a wizard save with no changes must not drop git/language from
+        // the rendered prompt.
+        let state = test_state(Config::default());
+        let mut applied = Config::default();
+        state.apply_to(&mut applied);
+
+        assert_eq!(
+            applied.ui.enabled_segments,
+            Config::default().ui.enabled_segments
+        );
+        assert!(applied.git.enabled);
+        assert!(applied.language.enabled);
+    }
+
+    #[test]
+    fn apply_to_deselected_git_clears_flag_and_keeps_list_entry() {
+        // Same config shape as `gpy disable git`: flag off, entry kept so a
+        // later enable restores its position.
+        let mut state = test_state(Config::default());
+        state.toggle_segment("git");
+        let mut applied = Config::default();
+        state.apply_to(&mut applied);
+
+        assert!(!applied.git.enabled);
+        assert_eq!(
+            applied.ui.enabled_segments,
+            Config::default().ui.enabled_segments
+        );
     }
 
     /// Move the Segments cursor onto `"directory"` — the only place
@@ -2043,13 +2088,16 @@ mod tests {
             },
             &[],
         );
-        let mut state = test_state(config);
+        let mut state = test_state(config.clone());
 
         for segment in ["status", "clock", "directory", "duration"] {
             state.toggle_segment(segment);
         }
 
-        let mut applied = Config::default();
+        // Apply onto the config the wizard started from, as `save_to` does: a
+        // deselected git/language keeps any existing list entry (#692), so a
+        // `Config::default()` target would legitimately retain them.
+        let mut applied = config;
         state.apply_to(&mut applied);
 
         assert_eq!(
