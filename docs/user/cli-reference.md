@@ -532,7 +532,7 @@ The imported palette is written to `~/.config/gpy/palettes/<name>.toml`. If the 
 
 Enable a prompt segment.
 
-For special segments like `git` and `language`, this sets the corresponding feature flag in the configuration. For other segments (`clock`, `duration`, `directory`), this adds them to the enabled segments list.
+A segment renders when it is listed in `ui.enabled_segments`; `git` and `language` additionally need their feature flag (`git.enabled` / `language.enabled`). `gpy enable` adds the segment to `ui.enabled_segments` if it is missing, and for `git` and `language` also sets the feature flag to `true`, in a single config save.
 
 **Valid Segments:**
 - `git` - Git repository status
@@ -559,7 +559,7 @@ gpy enable clock
 
 Disable a prompt segment.
 
-Removes the segment from the prompt display without deleting any configuration.
+Removes the segment from the prompt display without deleting any configuration. Most segments are removed from `ui.enabled_segments`. For `git` and `language`, only the feature flag (`git.enabled` / `language.enabled`) is set to `false`; the list entry stays, so a later `gpy enable` puts the segment back in its original position.
 
 **Example:**
 ```bash
@@ -578,7 +578,7 @@ gpy disable git
 
 List all available segments and their current status.
 
-Shows which segments are currently enabled (✓) or disabled ( ).
+Shows which segments the prompt will actually render (✓) and which it won't ( ). `git` and `language` show ✓ only when they are listed in `ui.enabled_segments` **and** their feature flag is on; every other segment shows ✓ when it is listed. `gpy config wizard` starts its segment checkboxes from the same rule.
 
 **Example:**
 ```bash

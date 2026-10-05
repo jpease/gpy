@@ -8,6 +8,7 @@
 use super::utils::{
     active_config_path, load_active_config, read_config, reload_agent_and_notify, save_config_to,
 };
+use crate::config::Config;
 use crate::plugin::{SegmentName, discover_plugins};
 use crate::{Error, Result};
 use std::collections::BTreeSet;
@@ -82,10 +83,11 @@ pub(crate) const BUILTIN_ORDER: &[BuiltinSegment] = &[
     BuiltinSegment::Status,
 ];
 
-/// A builtin segment whose enabled state lives on a dedicated config field.
+/// A builtin segment whose enabled state also depends on a dedicated config field.
 ///
-/// `git` and `language` store their enabled state in `config.git.enabled` /
-/// `config.language.enabled` rather than in the `ui.enabled_segments` list.
+/// `git` and `language` render only when they are listed in
+/// `ui.enabled_segments` **and** `config.git.enabled` /
+/// `config.language.enabled` is set (see [`is_effectively_enabled`]).
 /// [`BuiltinSegment`] has four other variants (clock/duration/directory/
 /// status) with no such field, so this is a separate, exhaustively-matched
 /// type rather than widening `set_feature_enabled` to accept a
@@ -96,7 +98,28 @@ enum FeatureToggle {
     Language,
 }
 
+/// Whether the prompt will actually render `name` under `config`.
+///
+/// Mirrors the authoritative filter in `theme::export` (the list every shell
+/// iterates): a segment must be listed in `ui.enabled_segments`, and `git` /
+/// `language` additionally need `config.git.enabled` /
+/// `config.language.enabled`. `gpy segments` and the wizard's starting
+/// selection use this so they report what the prompt renders.
+#[must_use]
+pub(crate) fn is_effectively_enabled(config: &Config, name: &str) -> bool {
+    let listed = config.ui.enabled_segments.iter().any(|s| s == name);
+    listed
+        && match BuiltinSegment::try_from(name) {
+            Ok(BuiltinSegment::Git) => config.git.enabled,
+            Ok(BuiltinSegment::Language) => config.language.enabled,
+            _ => true,
+        }
+}
+
 /// Enable a prompt segment
+///
+/// `git` / `language` also get their feature flag set, so the segment renders
+/// even when only one of the two conditions was missing.
 ///
 /// # Errors
 ///
@@ -105,11 +128,10 @@ pub fn enable(segment: &str) -> Result<()> {
     let canonical = canonicalize_segment(segment)?;
     ensure_segment_known(&canonical, true)?;
 
-    match BuiltinSegment::try_from(canonical.as_str()) {
-        Ok(BuiltinSegment::Git) => set_feature_enabled(FeatureToggle::Git, true)?,
-        Ok(BuiltinSegment::Language) => set_feature_enabled(FeatureToggle::Language, true)?,
-        _ => add_to_enabled_segments(&canonical)?,
-    }
+    let path = active_config_path()?;
+    let mut config = load_active_config(&path)?;
+    apply_enable(&mut config, &canonical);
+    save_config_to(&config, &path)?;
 
     println!("✅ Enabled {canonical} segment");
     reload_agent_and_notify();
@@ -117,6 +139,9 @@ pub fn enable(segment: &str) -> Result<()> {
 }
 
 /// Disable a prompt segment
+///
+/// `git` / `language` only have their feature flag cleared: the list entry is
+/// kept so a later `gpy enable` restores the original position.
 ///
 /// # Errors
 ///
@@ -150,11 +175,7 @@ pub fn list() -> Result<()> {
     println!("================\n");
 
     for segment in &available {
-        let enabled = match BuiltinSegment::try_from(segment.as_str()) {
-            Ok(BuiltinSegment::Git) => config.git.enabled,
-            Ok(BuiltinSegment::Language) => config.language.enabled,
-            _ => config.ui.enabled_segments.contains(segment),
-        };
+        let enabled = is_effectively_enabled(&config, segment);
 
         let status = if enabled { "✓" } else { " " };
         println!("[{status}] {segment}");
@@ -211,17 +232,29 @@ fn set_feature_enabled(feature: FeatureToggle, enabled: bool) -> Result<()> {
     Ok(())
 }
 
-/// Add a segment to enabled segments list
+/// Apply `gpy enable <segment>` to an in-memory config.
 ///
-/// # Errors
-///
-/// Returns an error if config cannot be saved.
-fn add_to_enabled_segments(segment: &str) -> Result<()> {
-    let path = active_config_path()?;
-    let mut config = load_active_config(&path)?;
+/// Sets the `git` / `language` feature flag when `segment` is one of them,
+/// then inserts `segment` into `ui.enabled_segments` if absent. Pure (no I/O)
+/// so the enable rule is unit-testable and lands in one load/save cycle.
+fn apply_enable(config: &mut Config, segment: &str) {
+    match BuiltinSegment::try_from(segment) {
+        Ok(BuiltinSegment::Git) => apply_feature_toggle(config, FeatureToggle::Git, true),
+        Ok(BuiltinSegment::Language) => {
+            apply_feature_toggle(config, FeatureToggle::Language, true);
+        }
+        _ => {}
+    }
+    insert_enabled_segment(config, segment);
+}
 
-    if config.ui.enabled_segments.contains(&segment.to_owned()) {
-        return Ok(());
+/// Add `segment` to `ui.enabled_segments` if it is not already listed.
+///
+/// Builtins are placed in [`BUILTIN_ORDER`] (see [`rebuild_enabled_segments`]);
+/// any other segment is appended.
+fn insert_enabled_segment(config: &mut Config, segment: &str) {
+    if config.ui.enabled_segments.iter().any(|s| s == segment) {
+        return;
     }
 
     if let Ok(builtin_segment) = BuiltinSegment::try_from(segment) {
@@ -246,19 +279,16 @@ fn add_to_enabled_segments(segment: &str) -> Result<()> {
     } else {
         config.ui.enabled_segments.push(segment.to_owned());
     }
-    save_config_to(&config, &path)?;
-
-    Ok(())
 }
 
 /// Rebuild an ordered `enabled_segments` list: builtins from [`BUILTIN_ORDER`]
 /// that `is_enabled` accepts, in `BUILTIN_ORDER`'s order, followed by
 /// `plugin_segments` in the order given.
 ///
-/// Pure — no I/O, no config reads — so both `add_to_enabled_segments` (the
-/// `gpy enable`/`gpy disable` CLI path) and `WizardState::apply_to` (the
-/// wizard's save path) can share one rebuild implementation instead of
-/// maintaining two near-identical copies.
+/// Pure — no I/O, no config reads — so both `insert_enabled_segment` (the
+/// `gpy enable` CLI path) and `WizardState::apply_to` (the wizard's save
+/// path) can share one rebuild implementation instead of maintaining two
+/// near-identical copies.
 pub(crate) fn rebuild_enabled_segments(
     is_enabled: impl Fn(BuiltinSegment) -> bool,
     plugin_segments: impl IntoIterator<Item = String>,
@@ -399,6 +429,57 @@ mod tests {
 
         apply_feature_toggle(&mut config, FeatureToggle::Language, true);
         assert!(config.language.enabled);
+    }
+
+    /// A config listing `segments`, with both `git.enabled` and
+    /// `language.enabled` set to `flags`.
+    fn config_with(segments: &[&str], flags: bool) -> Config {
+        let mut config = Config::default();
+        config.ui.enabled_segments = segments.iter().map(|s| (*s).to_owned()).collect();
+        config.git.enabled = flags;
+        config.language.enabled = flags;
+        config
+    }
+
+    #[test]
+    fn is_effectively_enabled_requires_flag_and_list_membership() {
+        // flag true + absent from the list: not rendered.
+        let absent = config_with(&["directory"], true);
+        assert!(!is_effectively_enabled(&absent, "git"));
+        assert!(!is_effectively_enabled(&absent, "language"));
+
+        // flag false + present in the list: not rendered.
+        let flag_off = config_with(&["language", "directory", "git"], false);
+        assert!(!is_effectively_enabled(&flag_off, "git"));
+        assert!(!is_effectively_enabled(&flag_off, "language"));
+
+        // flag true + present: rendered.
+        let both = config_with(&["language", "directory", "git"], true);
+        assert!(is_effectively_enabled(&both, "git"));
+        assert!(is_effectively_enabled(&both, "language"));
+
+        // Other segments are plain list membership.
+        assert!(is_effectively_enabled(&absent, "directory"));
+        assert!(!is_effectively_enabled(&absent, "clock"));
+    }
+
+    #[test]
+    fn apply_enable_git_sets_flag_and_restores_list_entry() {
+        let mut config = config_with(&["clock", "duration", "directory"], false);
+        apply_enable(&mut config, "git");
+        assert!(config.git.enabled);
+        assert_eq!(
+            config.ui.enabled_segments,
+            vec!["clock", "duration", "directory", "git"]
+        );
+        assert!(is_effectively_enabled(&config, "git"));
+
+        apply_enable(&mut config, "language");
+        assert!(config.language.enabled);
+        assert_eq!(
+            config.ui.enabled_segments,
+            vec!["clock", "duration", "language", "directory", "git"]
+        );
     }
 
     #[test]
