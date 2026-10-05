@@ -2631,6 +2631,131 @@ mod tests {
         );
     }
 
+    /// Run `git <args>` in `repo`, returning whether it exited successfully.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `git` cannot be spawned.
+    fn git_in(repo: &Path, args: &[&str]) -> bool {
+        std::process::Command::new("git")
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(repo)
+            .output()
+            .expect("spawn git")
+            .status
+            .success()
+    }
+
+    /// Warm the cache with a full scan, edit `other.txt`, deliver a
+    /// single-path event for it, and return `(incremental, full)` statuses.
+    ///
+    /// # Panics
+    ///
+    /// Panics if writing `other.txt` fails or the cache stays empty.
+    fn incremental_and_full_after_other_edit(
+        ctx: &AgentContext,
+        repo: &Path,
+        config: &Config,
+    ) -> (RepositoryStatus, RepositoryStatus) {
+        handle_file_event(ctx, &whole_repo_event(repo), config);
+        assert!(ctx.cache.get(repo).is_some(), "warm cache");
+
+        let other = repo.join("other.txt");
+        fs::write(&other, "edit\n").expect("modify other.txt");
+        let edit = DebouncedEvent {
+            event: FileEvent::Git {
+                paths: GitPaths::single(other),
+            },
+            repo: repo.to_path_buf(),
+        };
+        handle_file_event(ctx, &edit, config);
+        let incremental = ctx.cache.get(repo).expect("status after edit");
+
+        ctx.cache.invalidate(repo);
+        handle_file_event(ctx, &whole_repo_event(repo), config);
+        let full = ctx.cache.get(repo).expect("status after full scan");
+        (incremental, full)
+    }
+
+    #[test]
+    /// # Panics
+    ///
+    /// Panics if building the conflicted repository fails.
+    ///
+    /// Regression test for #686: an incremental refresh during a merge
+    /// conflict counted every conflicted file as staged and unstaged too.
+    fn incremental_refresh_matches_full_scan_during_merge_conflict() {
+        let (_tmp, repo) = create_temp_repo();
+        let ctx = make_agent_context();
+        let config = Config::default();
+
+        fs::write(repo.join("a"), "base\n").expect("write a");
+        fs::write(repo.join("b"), "base\n").expect("write b");
+        fs::write(repo.join("other.txt"), "o\n").expect("write other.txt");
+        commit_all(&repo);
+        assert!(git_in(&repo, &["checkout", "-qb", "side"]));
+        fs::write(repo.join("a"), "side\n").expect("write a");
+        fs::write(repo.join("b"), "side\n").expect("write b");
+        assert!(git_in(&repo, &["commit", "-qam", "side"]));
+        assert!(git_in(&repo, &["checkout", "-q", "-"]));
+        fs::write(repo.join("a"), "main\n").expect("write a");
+        fs::write(repo.join("b"), "main\n").expect("write b");
+        assert!(git_in(&repo, &["commit", "-qam", "main"]));
+        // The merge conflicts by design, so its non-zero exit is expected.
+        let _conflicted = git_in(&repo, &["merge", "side"]);
+
+        let (incremental, full) = incremental_and_full_after_other_edit(&ctx, &repo, &config);
+
+        assert_eq!(
+            incremental, full,
+            "incremental refresh must match a full scan"
+        );
+        assert_eq!(
+            (
+                incremental.staged,
+                incremental.unstaged,
+                incremental.conflicts
+            ),
+            (0, 1, 2)
+        );
+    }
+
+    #[test]
+    /// # Panics
+    ///
+    /// Panics if building the repository fails.
+    ///
+    /// Regression test for #686: `git rm --cached f` reports a staged deletion
+    /// and an untracked record for the same path; the untracked record used
+    /// to overwrite the deletion in the file map, losing it on the next
+    /// incremental refresh.
+    fn incremental_refresh_keeps_staged_delete_with_untracked_same_path() {
+        let (_tmp, repo) = create_temp_repo();
+        let ctx = make_agent_context();
+        let config = Config::default();
+
+        fs::write(repo.join("secret.env"), "s\n").expect("write secret.env");
+        fs::write(repo.join("other.txt"), "o\n").expect("write other.txt");
+        commit_all(&repo);
+        assert!(git_in(&repo, &["rm", "-q", "--cached", "secret.env"]));
+
+        let (incremental, full) = incremental_and_full_after_other_edit(&ctx, &repo, &config);
+
+        assert_eq!(
+            incremental, full,
+            "incremental refresh must match a full scan"
+        );
+        assert_eq!(
+            (
+                incremental.staged,
+                incremental.unstaged,
+                incremental.untracked
+            ),
+            (1, 1, 1)
+        );
+    }
+
     #[test]
     fn git_events_are_skipped_when_git_disabled() {
         let (_tmp, repo) = create_temp_repo();

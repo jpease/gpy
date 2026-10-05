@@ -5,7 +5,7 @@
 //! into GPY's prompt-focused status counts and per-file flags. Keeping parsing
 //! separate from process execution makes edge cases easy to unit test.
 
-use crate::git::FileStatus;
+use crate::git::{FileStatus, StatusAggregate};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -121,15 +121,8 @@ pub struct V2ParseState {
     pub ahead_capped: bool,
     /// Whether the behind count was capped due to `max_ahead_behind`.
     pub behind_capped: bool,
-    /// Number of staged changes.
-    pub staged: u32,
-    /// Number of unstaged changes.
-    pub unstaged: u32,
-    /// Number of untracked files.
-    pub untracked: u32,
-    /// Number of conflicted files.
-    pub conflicts: u32,
-    /// Map of file paths to their status.
+    /// Map of file paths to their status. The single source of truth for the
+    /// staged/unstaged/untracked/conflict counts (#686).
     pub files: HashMap<PathBuf, FileStatus>,
 }
 
@@ -140,65 +133,44 @@ impl V2ParseState {
         Self::default()
     }
 
-    /// Processes untracked file information, updating counts and file map.
+    /// Records an untracked file in the file map.
+    ///
+    /// Merges into any existing entry for the same path: `git rm --cached f`
+    /// reports both a staged deletion (`1 D.`) and an untracked record for
+    /// `f`, and both must survive (#686).
     pub(crate) fn process_untracked(&mut self, path: PathBuf) {
-        #[expect(
-            clippy::arithmetic_side_effects,
-            reason = "count of untracked files reported by one `git status` call; cannot realistically approach u32::MAX"
-        )]
-        {
-            self.untracked += 1;
-        }
-        let status = FileStatus {
-            untracked: true,
-            ..Default::default()
-        };
-        self.files.insert(path, status);
+        self.files.entry(path).or_default().untracked = true;
     }
 
-    /// Processes changed file information (staged/unstaged/conflicted), updating counts and file map.
+    /// Records changed file information (staged/unstaged/conflicted) in the
+    /// file map, merging into any existing entry for the same path (#686).
     pub(crate) fn process_changed(&mut self, parsed: ParsedChangedFile) {
         let ParsedChangedFile { path, status } = parsed;
-
-        if status.conflicted {
-            #[expect(
-                clippy::arithmetic_side_effects,
-                reason = "count of conflicted files reported by one `git status` call; cannot realistically approach u32::MAX"
-            )]
-            {
-                self.conflicts += 1;
-            }
-        } else {
-            #[expect(
-                clippy::arithmetic_side_effects,
-                reason = "counts of staged/unstaged files reported by one `git status` call; cannot realistically approach u32::MAX"
-            )]
-            {
-                if status.staged {
-                    self.staged += 1;
-                }
-                if status.unstaged {
-                    self.unstaged += 1;
-                }
-            }
-        }
-
-        self.files.insert(path, status);
+        let entry = self.files.entry(path).or_default();
+        entry.staged |= status.staged;
+        entry.unstaged |= status.unstaged;
+        entry.untracked |= status.untracked;
+        entry.conflicted |= status.conflicted;
     }
 
     /// Converts the accumulated state into a `V2ParseRecords`.
+    ///
+    /// The counts are derived from the file map with the same
+    /// [`StatusAggregate`] the cache uses for incremental updates, so a full
+    /// scan and an incremental recount cannot disagree (#686).
     #[must_use]
     pub fn into_records(self) -> V2ParseRecords {
+        let aggregate = StatusAggregate::from_file_statuses(self.files.values());
         V2ParseRecords {
             branch: self.branch,
             ahead: self.ahead,
             behind: self.behind,
             ahead_capped: self.ahead_capped,
             behind_capped: self.behind_capped,
-            staged: self.staged,
-            unstaged: self.unstaged,
-            untracked: self.untracked,
-            conflicts: self.conflicts,
+            staged: aggregate.staged,
+            unstaged: aggregate.unstaged,
+            untracked: aggregate.untracked,
+            conflicts: aggregate.conflicts,
             files: self.files,
         }
     }
@@ -212,10 +184,6 @@ impl Default for V2ParseState {
             behind: 0,
             ahead_capped: false,
             behind_capped: false,
-            staged: 0,
-            unstaged: 0,
-            untracked: 0,
-            conflicts: 0,
             files: HashMap::new(),
         }
     }
@@ -412,16 +380,21 @@ pub fn parse_v2_changed_line(line: &str) -> Option<ParsedChangedFile> {
 
     let (is_conflict, is_staged, is_unstaged) = parse_v2_file_status(xy);
 
-    let mut status = FileStatus::default();
-    if is_conflict {
-        status.conflicted = true;
-    }
-    if is_staged {
-        status.staged = true;
-    }
-    if is_unstaged {
-        status.unstaged = true;
-    }
+    // A conflicted entry is only conflicted: its X/Y letters describe the
+    // merge sides, not index/worktree changes, so it must not also count as
+    // staged or unstaged (#686).
+    let status = if is_conflict {
+        FileStatus {
+            conflicted: true,
+            ..FileStatus::default()
+        }
+    } else {
+        FileStatus {
+            staged: is_staged,
+            unstaged: is_unstaged,
+            ..FileStatus::default()
+        }
+    };
 
     Some(ParsedChangedFile { path, status })
 }
@@ -523,6 +496,10 @@ mod tests {
         let parsed = parse_v2_changed_line(record).expect("unmerged record parses");
         assert_eq!(parsed.path, PathBuf::from("conflicted file.txt"));
         assert!(parsed.status.conflicted);
+        assert!(
+            !parsed.status.staged && !parsed.status.unstaged,
+            "a conflicted entry must not also count as staged or unstaged (#686)"
+        );
     }
 
     #[test]
@@ -569,5 +546,46 @@ mod tests {
         let output = "# branch.head (initial)\0";
         let result = parse_v2_records(output, 0);
         assert_eq!(result.branch, BranchHead::Initial);
+    }
+
+    // --- #686: counts derive from the file map ------------------------------
+
+    #[test]
+    fn aggregate_from_file_map_matches_record_counts() {
+        // A conflict, a staged deletion shadowed by an untracked record for the
+        // same path (`git rm --cached f`), and an ordinary worktree edit.
+        let output = concat!(
+            "# branch.head main\0",
+            "u UU N... 100644 100644 100644 100644 aaaa bbbb cccc c.txt\0",
+            "1 D. N... 100644 000000 000000 dddd 0000 f\0",
+            "1 .M N... 100644 100644 100644 eeee eeee g\0",
+            "? f\0",
+        );
+        let records = parse_v2_records(output, 0);
+        assert_eq!(
+            (
+                records.staged,
+                records.unstaged,
+                records.untracked,
+                records.conflicts
+            ),
+            (1, 1, 1, 1)
+        );
+        let aggregate = StatusAggregate::from_file_statuses(records.files.values());
+        assert_eq!(
+            (
+                aggregate.staged,
+                aggregate.unstaged,
+                aggregate.untracked,
+                aggregate.conflicts
+            ),
+            (
+                records.staged,
+                records.unstaged,
+                records.untracked,
+                records.conflicts
+            ),
+            "record counts must equal the aggregate of the file map"
+        );
     }
 }
