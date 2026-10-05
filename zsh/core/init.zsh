@@ -28,9 +28,11 @@ if [[ -n "${SUDO_USER:-}" ]]; then
     __gpy_is_sudo=1
 fi
 
-# Duration tracking
-typeset -g __gpy_cmd_start_time=0
-typeset -g __gpy_cmd_duration=0
+# Duration tracking. Integers (-i): EPOCHREALTIME is a float, and the agent's
+# `duration_ms` is a u64, so a float here made every duration request invalid
+# (#681). Arithmetic assigned into an integer parameter truncates.
+typeset -gi __gpy_cmd_start_time=0
+typeset -gi __gpy_cmd_duration=0
 typeset -g __duration_threshold_ms=2000  # milliseconds; overwritten by `gpy theme export`
 
 # Character/directory render memoization (#343): keyed by the full input
