@@ -41,7 +41,7 @@ shell_e2e_poll 5 registered || fail "client $client_pid never registered"
 cache_file=""
 find_cache() {
     # shellcheck disable=SC2012  # the agent names these files itself; no odd characters
-    cache_file="$(ls "$XDG_CACHE_HOME"/gpy/instant-prompts/*.git.*.ansi 2>/dev/null | head -n 1)"
+    cache_file="$(ls "$XDG_CACHE_HOME"/gpy/instant-prompts/*.git.*.bash 2>/dev/null | head -n 1)"
     [ -n "$cache_file" ]
 }
 if shell_e2e_poll 5 find_cache; then

@@ -10,13 +10,13 @@ codes or Fish-specific quoting anymore; it simply builds an `ipc::Response` and 
 - `formatter/json.rs` handles the JSON wire format used by tests, CLI tooling, and IPC default paths
 - `formatter/fish.rs` produces space-separated `--flag value` arguments for the fish function wrappers; re-exported as both `FishFormatter` and `ZshFormatter` since Zsh's argument-based rendering is byte-identical
 - `formatter/fish_source.rs` emits `set -g` assignments so Fish can populate its session variables
-- `formatter/fish_ansi.rs` renders the fully-coloured prompt segments through the Starship-compatible template engine (`src/template/`); re-exported as `AnsiFormatter`, the shell-agnostic ANSI format
-- `formatter/style_encoder.rs` encodes the template engine's format-agnostic `Span`s into shell-specific escape sequences (one shared implementation instead of per-shell copies, #586)
+- `formatter/fish_ansi.rs` renders the fully-coloured prompt segments through the Starship-compatible template engine (`src/template/`); re-exported as `AnsiFormatter`. It serves three formats that share one color encoding and differ only in how segment text is escaped (`PromptDialect`): `ansi` (Fish, text verbatim), `bash-prompt` (escaped for `PS1` with `promptvars`) and `zsh-prompt` (escaped for `PROMPT` with `prompt_subst`/`prompt_percent`), so data such as directory and branch names is never expanded as prompt code (#677)
+- `formatter/style_encoder.rs` encodes the template engine's format-agnostic `Span`s into shell-specific escape sequences (one shared implementation instead of per-shell copies, #586). A span is either `Text` (escaped by the prompt dialects) or a `PromptToken` (the clock's `\D{…}`/`%D{…}`, emitted raw so the shell keeps it ticking)
 - `formatter/separator.rs` is the single powerline-separator implementation shared by every segment resolver (#586)
 - `formatter/*_resolver.rs` (`character`, `directory`, `duration`, `git`, `hostname`, `language`, `username`) each map one segment's data to Starship-exact template variable names, so Starship `format` strings can be dropped in verbatim (#186)
 
 `Format::BashSource` and `Format::ZshSource` are declared but not yet implemented; `create_formatter`
-returns a config error naming `ansi`/`json` as the working alternative rather than silently
+returns a config error naming `ansi`/`bash-prompt`/`zsh-prompt`/`json` as the working alternatives rather than silently
 substituting one.
 
 All formatters receive the same `RenderContext`, which carries the active `Config`, `ThemeConfig`,

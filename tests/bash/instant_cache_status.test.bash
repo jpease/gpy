@@ -69,7 +69,7 @@ for row in "git 5" "lang 30"; do
     read -r suffix ttl <<<"$row"
 
     # --- Fresh, exact-token hit (status 0) ---
-    token_file="$CACHE_DIR/$CACHE_KEY.$suffix.mytoken.ansi"
+    token_file="$CACHE_DIR/$CACHE_KEY.$suffix.mytoken.bash"
     printf '%s content' "$suffix" >"$token_file"
     out="$(__gpy_read_instant_cache "$suffix" "$REPO" mytoken)"; status=$?
     check "$suffix: fresh exact-token hit status" 0 "$status"
@@ -87,7 +87,7 @@ for row in "git 5" "lang 30"; do
     rm -f "$token_file"
 
     # --- Fresh via .none variant fallback (status 4) ---
-    none_file="$CACHE_DIR/$CACHE_KEY.$suffix.none.ansi"
+    none_file="$CACHE_DIR/$CACHE_KEY.$suffix.none.bash"
     printf '%s none-content' "$suffix" >"$none_file"
     out="$(__gpy_read_instant_cache "$suffix" "$REPO" mytoken)"; status=$?
     check "$suffix: fresh variant-fallback status" 4 "$status"

@@ -15,7 +15,7 @@
 #
 # The instant-cache key encoding is checked the same way, against reality:
 # the file the agent writes for a repository must be exactly
-# `<shell key for that repo>.git*.ansi`, so the hand-copied vectors the
+# `<shell key for that repo>.git*.bash`, so the hand-copied vectors the
 # suite used to carry can no longer drift from the Rust encoder unnoticed.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -88,7 +88,7 @@ source "$ROOT/bash/gpy.bash"
 __gpy_request git "$PWD" ansi true "" true >/dev/null
 resolved="$(realpath "$SHELL_E2E_REPO" 2>/dev/null || echo "$SHELL_E2E_REPO")"
 key="$(__gpy_path_to_cache_key "$resolved")"
-written() { ls "$XDG_CACHE_HOME/gpy/instant-prompts/$key".git*.ansi >/dev/null 2>&1; }
+written() { ls "$XDG_CACHE_HOME/gpy/instant-prompts/$key".git*.bash >/dev/null 2>&1; }
 if shell_e2e_poll 5 written; then
     pass "the agent's cache file name starts with bash's key for the repo ($key)"
 else

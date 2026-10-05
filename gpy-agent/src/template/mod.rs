@@ -26,6 +26,6 @@ pub(crate) mod parse;
 mod style;
 
 pub use error::{Result, TemplateError};
-pub use eval::{MapResolver, RenderContext, Span, VariableResolver, render};
+pub use eval::{MapResolver, RenderContext, Span, SpanKind, VariableResolver, render};
 pub(crate) use style::parse_color;
 pub use style::{Attr, Color, Palette, Style, parse_style};

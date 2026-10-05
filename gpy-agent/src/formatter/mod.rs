@@ -62,7 +62,9 @@ pub use fish_ansi::FishAnsiFormatter;
 pub(crate) use fish_ansi::{get_language_display, select_languages};
 pub use fish_source::FishSourceFormatter;
 pub use json::JsonFormatter;
-pub use style_encoder::{encode_ansi, encode_zsh};
+pub use style_encoder::{
+    PromptDialect, encode_ansi, encode_bash_prompt, encode_zsh, encode_zsh_prompt,
+};
 
 use crate::Result;
 use crate::config::Config;
@@ -78,9 +80,15 @@ pub enum Format {
     /// JSON format (default)
     #[default]
     Json,
-    /// Shell-agnostic ANSI escape codes (works with Fish, Zsh, Bash)
-    /// This is the recommended format for shell integration.
+    /// ANSI escape codes with text verbatim, for shells that print the prompt
+    /// literally (Fish). This is the recommended format for Fish integration.
     Ansi,
+    /// The same ANSI colors as [`Self::Ansi`], with text escaped for bash
+    /// `PS1` so data is never expanded as prompt code (#677).
+    BashPrompt,
+    /// The same ANSI colors as [`Self::Ansi`], with text escaped for zsh
+    /// `PROMPT` so data is never expanded as prompt code (#677).
+    ZshPrompt,
     /// Fish shell arguments (space-separated flags)
     Fish,
     /// Fish shell source code (variable assignments)
@@ -100,6 +108,8 @@ impl Format {
         match self {
             Self::Json => "json",
             Self::Ansi => "ansi",
+            Self::BashPrompt => "bash-prompt",
+            Self::ZshPrompt => "zsh-prompt",
             Self::Fish => "fish",
             Self::FishSource => "fish-source",
             Self::BashSource => "bash-source",
@@ -135,7 +145,13 @@ impl Format {
     #[must_use]
     pub const fn is_renderable(self) -> bool {
         match self {
-            Self::Json | Self::Ansi | Self::Fish | Self::FishSource | Self::Zsh => true,
+            Self::Json
+            | Self::Ansi
+            | Self::BashPrompt
+            | Self::ZshPrompt
+            | Self::Fish
+            | Self::FishSource
+            | Self::Zsh => true,
             Self::BashSource | Self::ZshSource => false,
         }
     }
@@ -154,6 +170,8 @@ impl std::str::FromStr for Format {
         match s {
             "json" => Ok(Self::Json),
             "ansi" => Ok(Self::Ansi),
+            "bash-prompt" => Ok(Self::BashPrompt),
+            "zsh-prompt" => Ok(Self::ZshPrompt),
             "fish" => Ok(Self::Fish),
             "fish-source" => Ok(Self::FishSource),
             "bash-source" => Ok(Self::BashSource),
@@ -169,6 +187,8 @@ impl ValueEnum for Format {
         &[
             Self::Json,
             Self::Ansi,
+            Self::BashPrompt,
+            Self::ZshPrompt,
             Self::Fish,
             Self::FishSource,
             Self::Zsh,
@@ -180,6 +200,8 @@ impl ValueEnum for Format {
         Some(match self {
             Self::Json => PossibleValue::new("json"),
             Self::Ansi => PossibleValue::new("ansi"),
+            Self::BashPrompt => PossibleValue::new("bash-prompt"),
+            Self::ZshPrompt => PossibleValue::new("zsh-prompt"),
             Self::Fish => PossibleValue::new("fish"),
             Self::FishSource => PossibleValue::new("fish-source"),
             Self::BashSource => PossibleValue::new("bash-source"),
@@ -359,12 +381,14 @@ pub trait Formatter {
 pub fn create_formatter(format: Format) -> Result<Box<dyn Formatter>> {
     match format {
         Format::Json => Ok(Box::new(JsonFormatter)),
-        Format::Ansi => Ok(Box::new(AnsiFormatter)),
+        Format::Ansi => Ok(Box::new(AnsiFormatter::new(PromptDialect::Ansi))),
+        Format::BashPrompt => Ok(Box::new(AnsiFormatter::new(PromptDialect::BashPrompt))),
+        Format::ZshPrompt => Ok(Box::new(AnsiFormatter::new(PromptDialect::ZshPrompt))),
         Format::Fish => Ok(Box::new(FishFormatter)),
         Format::FishSource => Ok(Box::new(FishSourceFormatter)),
         Format::Zsh => Ok(Box::new(ZshFormatter)),
         Format::BashSource | Format::ZshSource => Err(crate::Error::config(format!(
-            "Format '{format}' not yet implemented. Use 'ansi' (works with all shells) or 'json'.",
+            "Format '{format}' not yet implemented. Use 'ansi' (fish), 'bash-prompt', 'zsh-prompt' or 'json'.",
         ))),
     }
 }

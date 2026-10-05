@@ -455,7 +455,11 @@ __gpy_render_prompt() {
         prompt_output+="\[\033[${color_code}m\]${__icon_prompt}\[\033[0m\] "
     fi
 
-    # Set PS1
+    # Set PS1. The agent's bash-prompt output escapes data text on the
+    # assumption that promptvars is on (#677); with it off, every escaped
+    # `\`, `$` and backtick would show its extra backslashes. Re-assert it on
+    # every render so a later `shopt -u promptvars` cannot skew the display.
+    shopt -s promptvars
     PS1="$prompt_output"
 }
 

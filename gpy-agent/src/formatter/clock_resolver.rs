@@ -107,6 +107,12 @@ impl VariableResolver for ClockResolver<'_> {
             _ => None,
         }
     }
+
+    /// `time` is the shell's live-time token (`\D{…}`/`%D{…}`), which the
+    /// shell must expand on every draw, so prompt encoders leave it unescaped.
+    fn is_prompt_token(&self, name: &str) -> bool {
+        name == "time"
+    }
 }
 
 #[cfg(test)]
