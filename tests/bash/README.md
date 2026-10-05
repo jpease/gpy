@@ -55,9 +55,10 @@ integration: `agent_tooling_privacy_claims`, `cleanup_test_agents`,
 `dependency_advisory_claims`, `doc_links`, `gengo_gix_free`,
 `install_checksum_verification`, `install_from_source_docs`,
 `install_oneline_verification`, `msrv_consistency`, `nextest_retry_policy`,
-`privacy_patterns`, `release_asset_contract`, `release_packaging`,
-`release_sbom`, `release_version_claims`, `security_trust_boundary_claims`,
-`toolchain_pin_scope`, `windows_shell_support_claims`.
+`privacy_patterns`, `release_asset_contract`, `release_glibc_floor`,
+`release_packaging`, `release_sbom`, `release_version_claims`,
+`security_trust_boundary_claims`, `toolchain_pin_scope`,
+`windows_shell_support_claims`.
 
 ## Running
 

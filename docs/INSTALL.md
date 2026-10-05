@@ -22,7 +22,7 @@ restating it.
 
 | OS | Support |
 |----|---------|
-| Linux (x86_64, aarch64) | Build- and unit-tested in CI; a fresh install into an empty `$HOME` on a stock `ubuntu:24.04` container renders a first prompt in fish, zsh and bash (`scripts/test-fresh-install.sh`). The shell end-to-end tier has not yet had a recorded green Linux run in Actions (#651 tracks the first one, after which this row becomes "Full") |
+| Linux (x86_64, aarch64) | Release binaries need glibc 2.31 or newer (e.g. Ubuntu 20.04+, Debian 11+); the release job rejects a binary that references a newer glibc and runs the x86_64 binaries in `ubuntu:20.04` (`GPY_GLIBC_FLOOR` in `.github/workflows/release.yml`, #694). Build- and unit-tested in CI; a fresh install into an empty `$HOME` on a stock `ubuntu:24.04` container renders a first prompt in fish, zsh and bash (`scripts/test-fresh-install.sh`). The shell end-to-end tier has not yet had a recorded green Linux run in Actions (#651 tracks the first one, after which this row becomes "Full") |
 | macOS 11+ (Intel and Apple Silicon) | Full: every tier, including the shell end-to-end suites, runs on the maintainer's pre-push gate |
 | Windows, via WSL | Recommended — run the Linux instructions inside WSL |
 | Windows, native | CLI-only; the prompt integration does not run there. The claim is backed by the five CLI integration targets the Windows gate runs (`gpy_cli_tests`, `cli_config_mutation_tests`, `theme_import_tests`, `init_command_tests`, `cli_integration_tests`; `.github/workflows/windows-gate.yml`), once that leg has a recorded green run (#653). See [Windows (WSL)](#windows-wsl) below for what "not supported" covers. |
@@ -554,7 +554,7 @@ exec fish  # or zsh, bash
 
 ### Linux
 
-- Tested on Ubuntu 20.04+, Debian 11+, Arch Linux, Fedora 36+
+- Release binaries need glibc 2.31 or newer: Ubuntu 20.04+, Debian 11+, Fedora 32+, RHEL/Rocky 9+, and current Arch Linux. The release job enforces the floor and runs the x86_64 binaries on Ubuntu 20.04; the other distros are not run in CI. Older or musl-based systems (e.g. Alpine) need a build from source
 - Works on both x86_64 and aarch64 (ARM64)
 - SELinux may require additional permissions for the socket
 

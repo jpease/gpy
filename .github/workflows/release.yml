@@ -27,6 +27,14 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: ""
+  # Oldest glibc the Linux release binaries may require (#694): Ubuntu 20.04
+  # and Debian 11 ship 2.31. The Linux legs link against it with
+  # cargo-zigbuild, scripts/check-glibc-floor.sh enforces it on every Linux
+  # binary, the smoke job runs the x86_64 binaries in GPY_GLIBC_FLOOR_IMAGE
+  # (a distro whose glibc IS the floor), and docs/INSTALL.md states it.
+  # tests/bash/release_glibc_floor.test.bash keeps all four in step.
+  GPY_GLIBC_FLOOR: "2.31"
+  GPY_GLIBC_FLOOR_IMAGE: ubuntu:20.04
 
 jobs:
   validate:
@@ -215,23 +223,55 @@ jobs:
         shell: bash
         run: ./scripts/check-active-toolchain.sh
 
-      - name: Install cross-compilation dependencies
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+      # Linux legs link against the glibc floor instead of the runner's own
+      # glibc (#694): a plain `cargo build` on ubuntu-latest (glibc 2.39)
+      # produced binaries that do not start on Ubuntu 22.04/20.04 or Debian
+      # 11/12. cargo-zigbuild links against zig's glibc stubs for the version
+      # in the `<triple>.<glibc>` target suffix, and cross-links aarch64
+      # without a gcc cross toolchain. Versions are pinned to a pair
+      # cargo-zigbuild's own CI tests together.
+      - name: Install zig (Linux)
+        if: endsWith(matrix.target, '-unknown-linux-gnu')
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Install cargo-zigbuild (Linux)
+        if: endsWith(matrix.target, '-unknown-linux-gnu')
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild@0.23.4
 
       - name: Build release binary
         working-directory: gpy-agent
         # --locked: Cargo.lock is committed, so a release build is reproducible
         # and fails loudly if the lock has drifted from Cargo.toml.
+        # zigbuild drops the `.<glibc>` suffix from the output directory, so
+        # the artifacts stay at target/<triple>/release-dist/ for every leg.
         run: |
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
-            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-          fi
-          cargo build --locked --profile release-dist --target ${{ matrix.target }}
+          case "${{ matrix.target }}" in
+            *-unknown-linux-gnu)
+              cargo zigbuild --locked --profile release-dist --target "${{ matrix.target }}.${GPY_GLIBC_FLOOR}"
+              ;;
+            *)
+              cargo build --locked --profile release-dist --target ${{ matrix.target }}
+              ;;
+          esac
         shell: bash
+
+      # Release-blocking: a Linux binary that needs a newer glibc than the
+      # documented floor fails here instead of on the user's machine. Also
+      # proves Rust std's pidfd_spawnp/pidfd_getpid (GLIBC_2.39) did not end
+      # up as hard references against the stub libc (they link weak and
+      # unversioned). The runner's stock objdump reads the aarch64 binaries'
+      # dynamic symbol table too, so no cross binutils are needed.
+      - name: Enforce the glibc floor (Linux)
+        if: endsWith(matrix.target, '-unknown-linux-gnu')
+        shell: bash
+        run: |
+          for bin in ${{ matrix.artifact_name }} ${{ matrix.cli_artifact_name }}; do
+            ./scripts/check-glibc-floor.sh "gpy-agent/target/${{ matrix.target }}/release-dist/$bin" "$GPY_GLIBC_FLOOR"
+          done
 
       - name: Upload agent binary artifact
         uses: actions/upload-artifact@v4
@@ -346,6 +386,23 @@ jobs:
         env:
           VERSION: ${{ needs.validate.outputs.version }}
         run: ./scripts/smoke-release.sh --package dist --version "$VERSION"
+
+      # The packaged x86_64 binaries must start on the oldest distro the docs
+      # promise (#694), not just on the runner's glibc 2.39. Docker on the
+      # Linux runner costs no extra minutes. The aarch64 binaries are covered
+      # by the build job's objdump floor check, which needs no qemu. Taken
+      # from the archive because download-artifact drops the exec bit.
+      - name: Run the x86_64 binaries on the glibc floor (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          floor_dir="$(mktemp -d)"
+          tar -xzf dist/gpy-release.tar.gz -C "$floor_dir"
+          docker run --rm -v "$floor_dir/gpy-release/bin:/b:ro" "$GPY_GLIBC_FLOOR_IMAGE" sh -ec '
+            ldd --version | head -n 1
+            /b/gpy-agent-linux-x86_64 --version
+            /b/gpy-linux-x86_64 --version
+          '
 
   create-release:
     name: Create GitHub Release
