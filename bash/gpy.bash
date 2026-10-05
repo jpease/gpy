@@ -1,3 +1,4 @@
+# shellcheck shell=bash source-path=SCRIPTDIR
 # gpy.bash - Entry point for Bash integration
 # Requires Bash 4.0+
 
@@ -34,6 +35,8 @@ __gpy_load_theme &>/dev/null
 
 # Source all segments
 for segment in "$GPY_BASH_ROOT"/segments/*.bash; do
+    # Segments are discovered by glob; the gate shellchecks each one directly.
+    # shellcheck source=/dev/null
     [[ -f "$segment" ]] && source "$segment"
 done
 
@@ -54,5 +57,7 @@ done
 # per command, and the dynamic file's registration must be the one that
 # wins (it delegates to `_gpy` for non-dynamic positions), so structural is
 # sourced first here.
+# completions/gpy.bash is generated at install time; it is not in the tree.
+# shellcheck source=/dev/null
 [[ -f "$GPY_BASH_ROOT/completions/gpy.bash" ]] && source "$GPY_BASH_ROOT/completions/gpy.bash"
 [[ -f "$GPY_BASH_ROOT/completions/gpy-dynamic.bash" ]] && source "$GPY_BASH_ROOT/completions/gpy-dynamic.bash"

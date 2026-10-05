@@ -59,5 +59,5 @@ __gpy_segment_username() {
         *) fg_code="37" ;;
     esac
 
-    echo "\[\033[${bg_code};${fg_code}m\] ${label} \[\033[0m\]"
+    printf '%s\n' "\[\033[${bg_code};${fg_code}m\] ${label} \[\033[0m\]"
 }

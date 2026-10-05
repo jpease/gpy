@@ -77,4 +77,6 @@ __gpy_segment_bg() {
 # __gpy_oneshot_used variable, so a dead daemon costs at most ONE oneshot fork
 # per prompt render -- replacing the old predictable `.gpy_oneshot_used_$$`
 # marker file under ${TMPDIR:-/tmp}.
+# Read by init.bash, ipc.bash and segments/*.bash.
+# shellcheck disable=SC2034
 GPY_SEG_STATUS_ONESHOT=3

@@ -61,5 +61,5 @@ __gpy_segment_hostname() {
         *) fg_code="30" ;;
     esac
 
-    echo "\[\033[${bg_code};${fg_code}m\] ${label} \[\033[0m\]"
+    printf '%s\n' "\[\033[${bg_code};${fg_code}m\] ${label} \[\033[0m\]"
 }
