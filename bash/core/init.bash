@@ -462,7 +462,10 @@ __gpy_sync_workspace() {
 # silently clobbers it (#320).
 __gpy_prev_debug_trap=""
 
-# Bash preexec emulation using DEBUG trap
+# Bash preexec emulation using DEBUG trap. Installed as
+# `__gpy_debug_trap "$_"`: bash sets `$_` to the last argument of every
+# simple command, the trap's own included, so the trap must end on the
+# user's `$_` to leave it unchanged (#682). $1 is that value.
 __gpy_debug_trap() {
     # Only execute for interactive commands. COMP_LINE/PROMPT_COMMAND are
     # unset outside completion/before PROMPT_COMMAND is assigned, so guard
@@ -477,6 +480,8 @@ __gpy_debug_trap() {
     # function's exit status 0 instead of leaking the failed test's 1 as the
     # DEBUG trap's own status.
     if [[ -n "$__gpy_prev_debug_trap" ]]; then
+        # Hand the prior trap the user's `$_`, not this function's.
+        : "${1-}"
         eval "$__gpy_prev_debug_trap"
     fi
 }
@@ -501,7 +506,7 @@ __gpy_setup_hooks() {
             existing_trap="${existing_trap#trap -- \'}"
             __gpy_prev_debug_trap="${existing_trap%\' DEBUG}"
         fi
-        trap '__gpy_debug_trap' DEBUG
+        trap '__gpy_debug_trap "$_"' DEBUG
     fi
 }
 
