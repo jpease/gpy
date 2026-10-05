@@ -22,7 +22,7 @@ __gpy_segment_status() {
             white) color_code="37" ;;
             *) color_code="32" ;;
         esac
-        echo "\[\033[${color_code}m\]${icon_ok}\[\033[0m\]"
+        printf '%s\n' "\[\033[${color_code}m\]${icon_ok}\[\033[0m\]"
     else
         case "$color_fail" in
             red) color_code="31" ;;
@@ -34,6 +34,6 @@ __gpy_segment_status() {
             white) color_code="37" ;;
             *) color_code="31" ;;
         esac
-        echo "\[\033[${color_code}m\]${icon_fail}\[\033[0m\]"
+        printf '%s\n' "\[\033[${color_code}m\]${icon_fail}\[\033[0m\]"
     fi
 }

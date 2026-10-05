@@ -244,6 +244,9 @@ shellcheck_targets() {
     printf '%s\n' install.sh install-oneline.sh
     # Nullglob is not assumed: the -f guard in the loop skips a stale match.
     printf '%s\n' scripts/*.sh tests/bash/*.test.bash
+    # The shipped Bash integration is sourced into every interactive shell
+    # (#819).
+    printf '%s\n' bash/*.bash bash/*/*.bash
 }
 
 # Dispatched by name through run_check, which evals its second argument,

@@ -73,6 +73,16 @@ __gpy_complete_cached() {
     __gpy_complete_result="$cache_val"
 }
 
+# Fill COMPREPLY with the words in $__gpy_complete_result that match $1, one
+# per line, without word-splitting or globbing them (bash 3.2 has no mapfile).
+__gpy_complete_reply() {
+    local word
+    COMPREPLY=()
+    while IFS= read -r word; do
+        COMPREPLY+=("$word")
+    done < <(compgen -W "$__gpy_complete_result" -- "$1")
+}
+
 _gpy_dynamic() {
     local cur
     if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
@@ -92,7 +102,7 @@ _gpy_dynamic() {
                 use | validate)
                     if [[ "$COMP_CWORD" -eq 3 ]]; then
                         __gpy_complete_cached theme
-                        COMPREPLY=($(compgen -W "$__gpy_complete_result" -- "$cur"))
+                        __gpy_complete_reply "$cur"
                         return 0
                     fi
                     ;;
@@ -103,7 +113,7 @@ _gpy_dynamic() {
                 use | validate)
                     if [[ "$COMP_CWORD" -eq 3 ]]; then
                         __gpy_complete_cached palette
-                        COMPREPLY=($(compgen -W "$__gpy_complete_result" -- "$cur"))
+                        __gpy_complete_reply "$cur"
                         return 0
                     fi
                     ;;
@@ -112,7 +122,7 @@ _gpy_dynamic() {
         enable | disable)
             if [[ "$COMP_CWORD" -eq 2 ]]; then
                 __gpy_complete_cached segment
-                COMPREPLY=($(compgen -W "$__gpy_complete_result" -- "$cur"))
+                __gpy_complete_reply "$cur"
                 return 0
             fi
             ;;

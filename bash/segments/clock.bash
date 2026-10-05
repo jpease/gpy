@@ -85,5 +85,5 @@ __gpy_segment_clock() {
         *) fg_code="30" ;;
     esac
 
-    echo "\[\033[${bg_code};${fg_code}m\] ${icon} \D{$(__gpy_clock_time_spec)} \[\033[0m\]"
+    printf '%s\n' "\[\033[${bg_code};${fg_code}m\] ${icon} \D{$(__gpy_clock_time_spec)} \[\033[0m\]"
 }

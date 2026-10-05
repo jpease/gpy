@@ -84,6 +84,8 @@ __gpy_load_theme() {
     local cache_path
     cache_path="$(__gpy_theme_export_cache_path)"
     if [[ -n "$cache_path" && -f "$cache_path" ]]; then
+        # Generated at runtime by `gpy-agent theme export`; not in the tree.
+        # shellcheck source=/dev/null
         source "$cache_path"
         return $?
     fi
@@ -155,6 +157,8 @@ __gpy_keep_arm_hook_last() {
     while [[ "$pc" == *[\;[:space:]] ]]; do
         pc="${pc%?}"
     done
+    # String form only: the array form returned above (#684).
+    # shellcheck disable=SC2178
     PROMPT_COMMAND="${pc:+$pc; }$hook"
 }
 
@@ -206,7 +210,8 @@ __gpy_precmd() {
                 __gpy_cmd_duration=$(awk "BEGIN {printf \"%.0f\", ($end_time - $__gpy_cmd_start_time) * 1000}")
             fi
         elif [[ $__gpy_duration_method == "date" ]]; then
-            local end_time=$(date +%s%N)
+            local end_time
+            end_time=$(date +%s%N)
             # Nanoseconds to milliseconds
             __gpy_cmd_duration=$(( (end_time - __gpy_cmd_start_time) / 1000000 ))
         fi
@@ -328,6 +333,9 @@ __gpy_render_prompt() {
     local segments_to_render=()
     local segment
 
+    # Space-separated on purpose; set by constants.bash, overridden by the
+    # theme export.
+    # shellcheck disable=SC2154
     for segment in $__enabled_segments; do
         if __gpy_segment_would_render "$segment"; then
             segments_to_render+=("$segment")
@@ -443,6 +451,8 @@ __gpy_render_prompt() {
     else
         # Fallback prompt character
         local color_code
+        # Set by constants.bash, overridden by the theme export.
+        # shellcheck disable=SC2154
         case "$__prompt_color" in
             red) color_code="31" ;;
             green) color_code="32" ;;
@@ -452,6 +462,7 @@ __gpy_render_prompt() {
             cyan) color_code="36" ;;
             *) color_code="32" ;;
         esac
+        # shellcheck disable=SC2154
         prompt_output+="\[\033[${color_code}m\]${__icon_prompt}\[\033[0m\] "
     fi
 
@@ -560,6 +571,9 @@ __gpy_setup_hooks() {
     # unset until a prompt framework assigns it, and an unguarded reference
     # errors under `set -u` (#320).
     if [[ ! "${PROMPT_COMMAND:-}" =~ __gpy_precmd ]]; then
+        # On bash >= 5.1 an array PROMPT_COMMAND keeps its other elements;
+        # gpy's hook is prepended to element 0, which is what this reads.
+        # shellcheck disable=SC2128,SC2178
         PROMPT_COMMAND="__gpy_precmd${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
     fi
 
