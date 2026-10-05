@@ -137,6 +137,23 @@ pub(crate) fn insert_toml_dir(
     }
 }
 
+/// Describe the builtin or plugin artifact that `name` resolves to in
+/// `discovered`, e.g. `"builtin"` or `"plugin 'acme'"`.
+///
+/// Returns `None` when nothing named `name` exists or the winning entry is a
+/// user file. Imports use this to refuse silently shadowing a shipped
+/// artifact with a new user file (#691).
+pub(crate) fn shadowed_provider(discovered: &[Discovered], name: &str) -> Option<String> {
+    discovered
+        .iter()
+        .find(|entry| entry.name == name)
+        .and_then(|entry| match &entry.source {
+            Source::Builtin => Some("builtin".to_owned()),
+            Source::Plugin { plugin_id } => Some(format!("plugin '{plugin_id}'")),
+            Source::User => None,
+        })
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]

@@ -16,6 +16,7 @@
 mod common;
 
 use common::{CliCommandResult, CliTestEnv};
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 /// The base16 scheme fixture shared with the import golden tests.
@@ -208,6 +209,39 @@ fn import_names_the_palette_after_the_scheme_and_refuses_to_overwrite() {
         .run_gpy(&["palette", "import", fixture.to_str().unwrap(), "--force"])
         .expect("spawn gpy");
     forced.assert_success("import --force");
+}
+
+#[test]
+fn import_refuses_to_shadow_builtin_palette_without_force() {
+    // #691: a scheme named `Nord` imports as `nord`, a builtin palette; the
+    // user file would silently shadow it.
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let slots = (0_u8..16_u8).fold(String::new(), |mut acc, slot| {
+        writeln!(acc, "  base0{slot:X}: \"#2E3440\"").expect("write to String");
+        acc
+    });
+    let scheme = env.root().join("nord.yaml");
+    std::fs::write(
+        &scheme,
+        format!("system: \"base16\"\nname: \"Nord\"\npalette:\n{slots}"),
+    )
+    .expect("write scheme");
+    let dest = env.config_dir().join("palettes").join("nord.toml");
+
+    let refused = env
+        .run_gpy(&["palette", "import", scheme.to_str().unwrap()])
+        .expect("spawn gpy");
+    assert_error_names(&refused, "builtin", "import over builtin nord");
+    assert!(refused.stderr.contains("--name"), "{refused:?}");
+    assert!(!dest.exists(), "no palette file written");
+
+    let listed = env.run_gpy(&["palette", "list"]).expect("spawn gpy");
+    assert!(listed.stdout.contains("  nord [builtin]"), "{listed:?}");
+
+    env.run_gpy(&["palette", "import", scheme.to_str().unwrap(), "--force"])
+        .expect("spawn gpy")
+        .assert_success("import --force");
+    assert!(dest.exists(), "--force writes the palette");
 }
 
 #[test]

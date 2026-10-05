@@ -205,7 +205,9 @@ fn validate_palette_file(path: &Path) -> Result<()> {
 /// # Errors
 ///
 /// Returns an error if the file cannot be read, the scheme cannot be parsed,
-/// or the destination cannot be written (and `--force` was not given on overwrite).
+/// or the destination cannot be written. Without `--force`, also errors when
+/// the name matches a builtin or plugin palette (the user file would shadow
+/// it) or the destination already exists.
 pub fn import(file: &Path, name_override: Option<&str>, force: bool) -> Result<()> {
     let input = std::fs::read_to_string(file)
         .map_err(|e| Error::config(format!("Failed to read scheme file: {e}")))?;
@@ -218,6 +220,16 @@ pub fn import(file: &Path, name_override: Option<&str>, force: bool) -> Result<(
     if !config::types::is_safe_config_name(&stem) {
         return Err(Error::config(format!(
             "Invalid palette name derived from scheme: '{stem}'"
+        )));
+    }
+    if !force
+        && let Some(provider) = config::discovery::shadowed_provider(
+            &PaletteManager::discover_available_palettes(),
+            &stem,
+        )
+    {
+        return Err(Error::config(format!(
+            "'{stem}' is a {provider} palette; importing would shadow it. Pass --name <other>, or --force to override"
         )));
     }
     let dest = PaletteManager::palette_path(&stem);

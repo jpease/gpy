@@ -254,7 +254,8 @@ The migration guide is in [Migrating from Starship](migrating-from-starship.md).
 **Options:**
 - `--name <name>` - Base name for the emitted palette and theme (default:
   the file stem)
-- `--force` - Overwrite existing artifacts of the same name
+- `--force` - Overwrite existing artifacts of the same name, or shadow a
+  builtin/plugin theme or palette of that name (without it, both are refused)
 - `--stdout` - Print both artifacts instead of writing files
 - `--apply-layout` - Also write the derived `enabled_segments` into the
   active config
@@ -509,7 +510,7 @@ Accepts both the modern nested layout (`system:`, `name:`, `variant:`, then a `p
 
 **Flags:**
 - `--name <name>` - Override the palette name (defaults to the scheme's declared `name`/`scheme` field, falling back to `imported` if the scheme declares none)
-- `--force` - Overwrite an existing palette of the same name; without it, import fails if the destination already exists
+- `--force` - Overwrite an existing palette of the same name, or shadow a builtin palette of that name; without it, import fails if the destination already exists or the name belongs to a builtin palette
 
 **Example:**
 ```bash

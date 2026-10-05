@@ -13,7 +13,7 @@ gpy theme import <path/to/starship.toml> [--name <name>] [--force] [--stdout] [-
 |---|---|
 | `<path>` | Required. Path to the source `starship.toml`. |
 | `--name <name>` | Base name for the emitted artifacts. Defaults to the file stem (e.g. `starship` from `starship.toml`), then `starship-import` if the stem is empty. |
-| `--force` | Overwrite existing files of the same name. |
+| `--force` | Overwrite existing files of the same name, or intentionally shadow a builtin/plugin theme or palette of that name. |
 | `--stdout` | Print both artifacts to stdout (with `# ---- palette ----` / `# ---- theme ----` headers) instead of writing files. Useful for inspection. |
 | `--apply-layout` | Also write the derived `enabled_segments` order into the active `config.toml`. Default: print the suggested order only. |
 
@@ -184,6 +184,7 @@ These Starship constructs cannot be fully represented in a GPY artifact:
 | Source file not found or unreadable | Hard error; non-zero exit. |
 | Invalid TOML in source file | Hard error with parse location; non-zero exit. |
 | Output files exist without `--force` | Error listing conflicting paths and suggesting `--force`; non-zero exit. |
+| Name matches a builtin or plugin theme/palette without `--force` (e.g. the default name `starship` from `starship.toml`) | Error naming the shadowed artifact and suggesting `--name <other>` or `--force`; nothing is written; non-zero exit. |
 | Per-construct translation problems | Warning collected; import continues; exit 0. |
 
 ## Migration from Starship (#88)
