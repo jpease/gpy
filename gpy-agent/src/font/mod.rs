@@ -204,8 +204,8 @@ fn run_fc_list() -> Option<String> {
 #[cfg(target_os = "linux")]
 fn linux_font_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = PathBuf::from(home);
+    if let Some(home_os) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home_os);
         dirs.push(home.join(".local/share/fonts"));
         dirs.push(home.join(".fonts"));
     }
