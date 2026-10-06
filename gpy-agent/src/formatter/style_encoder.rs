@@ -100,31 +100,57 @@ pub fn encode_zsh_prompt(spans: &[Span]) -> String {
 /// `sgr` writes one SGR sequence for a `;`-joined code list; `text` writes a
 /// span's text. A styled span emits its SGR before its text; a default-style
 /// span following a styled one emits a reset first, and a trailing reset
-/// closes the last styled span (#288).
+/// closes the last styled span (#288). A styled span following a styled span
+/// whose attributes or colors it would inherit folds a reset into its own
+/// sequence (`0;<codes>`, #752); every other adjacent pair keeps just the
+/// new codes, so spans that fully override each other add no bytes.
 fn encode_sgr(
     spans: &[Span],
     sgr: impl Fn(&mut String, &str),
     text: impl Fn(&mut String, &Span),
 ) -> String {
     let mut out = String::with_capacity(64_usize);
-    let mut active = false;
+    let mut open: Option<&Style> = None;
     for span in spans {
         let codes = ansi_codes(&span.style);
         if codes.is_empty() {
-            if active {
+            if open.take().is_some() {
                 sgr(&mut out, "0");
-                active = false;
             }
         } else {
-            sgr(&mut out, &codes.join(";"));
-            active = true;
+            let joined = codes.join(";");
+            if open.is_some_and(|before| leaks_into(before, &span.style)) {
+                sgr(&mut out, &format!("0;{joined}"));
+            } else {
+                sgr(&mut out, &joined);
+            }
+            open = Some(&span.style);
         }
         text(&mut out, span);
     }
-    if active {
+    if open.is_some() {
         sgr(&mut out, "0");
     }
     out
+}
+
+/// Whether `next`, written right after `prev` with no reset, inherits from it.
+///
+/// SGR codes are additive, so an attribute, foreground or background that
+/// `prev` set and `next` does not itself set stays active.
+fn leaks_into(prev: &Style, next: &Style) -> bool {
+    prev.attrs.iter().any(|attr| !next.attrs.contains(attr))
+        || (sets_color(prev.fg.as_ref(), false) && !sets_color(next.fg.as_ref(), false))
+        || (sets_color(prev.bg.as_ref(), true) && !sets_color(next.bg.as_ref(), true))
+}
+
+/// Whether `color` emits any SGR code (unresolved variants emit none).
+fn sets_color(color: Option<&Color>, bg: bool) -> bool {
+    color.is_some_and(|value| {
+        let mut codes = Vec::new();
+        push_color(&mut codes, value, bg);
+        !codes.is_empty()
+    })
 }
 
 /// Write one raw SGR sequence, `ESC [ codes m`.
@@ -319,16 +345,23 @@ impl ZshResetState {
 pub fn encode_zsh(spans: &[Span]) -> String {
     let mut out = String::with_capacity(64_usize);
     let mut state = ZshResetState::default();
+    let mut open: Option<&Style> = None;
     for span in spans {
         let prelude = zsh_prelude(&span.style);
         if prelude.is_empty() {
             state.flush(&mut out);
+            open = None;
         } else {
+            // A group that would inherit what the open one set closes first (#752).
+            if open.is_some_and(|before| leaks_into(before, &span.style)) {
+                state.flush(&mut out);
+            }
             out.push_str(&prelude);
             state.active = true;
             for attr in &span.style.attrs {
                 state.note_attr(*attr);
             }
+            open = Some(&span.style);
         }
         out.push_str(&span.text);
     }
@@ -622,6 +655,82 @@ mod tests {
         assert_eq!(encode_ansi(&spans), "\x1b[32ma\x1b[32mb\x1b[0m");
     }
 
+    /// #752: a styled span following one whose bold the new style lacks must
+    /// reset, or `b` would render bold.
+    #[test]
+    fn adjacent_styled_spans_reset_dropped_attrs() {
+        let spans = [
+            span(
+                "a",
+                Style {
+                    fg: Some(Color::Named("green".to_owned())),
+                    bg: None,
+                    attrs: vec![Attr::Bold],
+                },
+            ),
+            span(
+                "b",
+                Style {
+                    fg: Some(Color::Named("blue".to_owned())),
+                    bg: None,
+                    attrs: vec![],
+                },
+            ),
+        ];
+        assert_eq!(encode_ansi(&spans), "\x1b[1;32ma\x1b[0;34mb\x1b[0m");
+    }
+
+    /// #752: a background the next style does not set must be reset, or `b`
+    /// would render on the previous span's blue.
+    #[test]
+    fn adjacent_styled_spans_reset_dropped_background() {
+        let spans = [
+            span(
+                "a",
+                Style {
+                    fg: None,
+                    bg: Some(Color::Named("blue".to_owned())),
+                    attrs: vec![],
+                },
+            ),
+            span(
+                "b",
+                Style {
+                    fg: Some(Color::Named("red".to_owned())),
+                    bg: None,
+                    attrs: vec![],
+                },
+            ),
+        ];
+        assert_eq!(encode_ansi(&spans), "\x1b[44ma\x1b[0;31mb\x1b[0m");
+    }
+
+    /// #752: when the next style overrides everything the previous one set,
+    /// nothing leaks and the bytes stay exactly as before the fix (no reset
+    /// between every pair of styled spans).
+    #[test]
+    fn adjacent_styled_spans_without_leak_emit_no_reset() {
+        let spans = [
+            span(
+                "a",
+                Style {
+                    fg: Some(Color::Named("white".to_owned())),
+                    bg: Some(Color::Named("black".to_owned())),
+                    attrs: vec![],
+                },
+            ),
+            span(
+                "b",
+                Style {
+                    fg: Some(Color::Named("black".to_owned())),
+                    bg: Some(Color::Named("green".to_owned())),
+                    attrs: vec![],
+                },
+            ),
+        ];
+        assert_eq!(encode_ansi(&spans), "\x1b[37;40ma\x1b[30;42mb\x1b[0m");
+    }
+
     #[test]
     fn bright_named_uses_90s() {
         let spans = [span(
@@ -838,6 +947,32 @@ mod tests {
         };
         let spans = [span("a", style.clone()), span("b", style)];
         assert_eq!(encode_zsh(&spans), "%F{green}a%F{green}b%f%k%b");
+    }
+
+    /// #752: zsh's group reset fires before a styled span that would inherit
+    /// the previous span's bold (`%b` clears it), not only before a default span.
+    #[test]
+    fn zsh_adjacent_styled_spans_reset_dropped_attrs() {
+        use super::encode_zsh;
+        let spans = [
+            span(
+                "a",
+                Style {
+                    fg: Some(Color::Named("green".to_owned())),
+                    bg: None,
+                    attrs: vec![Attr::Bold],
+                },
+            ),
+            span(
+                "b",
+                Style {
+                    fg: Some(Color::Named("blue".to_owned())),
+                    bg: None,
+                    attrs: vec![],
+                },
+            ),
+        ];
+        assert_eq!(encode_zsh(&spans), "%B%F{green}a%f%k%b%F{blue}b%f%k%b");
     }
 
     /// Default-only spans never open a group, so no reset is emitted.

@@ -64,6 +64,7 @@ The unit tests live next to the code in `src/`.
 | `palette_swap_tests.rs` | SP4: swapping ui.palette recolors languages while the starship palette is vanilla |
 | `plugin_extensibility_e2e_tests.rs` | Plugin discovery, manifest validation and a real Fish runtime load of a plugin segment (needs Fish 4) |
 | `plugin_performance_tests.rs` | Plugin discovery stays within its performance budget |
+| `prompt_encoder_property_tests.rs` | Property test (#752): arbitrary span sequences through every `PromptDialect`; each visible character keeps exactly its span's style, checked with an SGR interpreter, bash `${PS1@P}` and zsh `print -rP` |
 | `prev_bg_ansi.rs` | Integration test: `prev_bg` threads through the render pipeline and produces |
 | `schema_validation.rs` | Serde round-trips for IPC examples, plus `schemas/message.json` and `response.json` checked against `Format`, the `into_wire_message` op table and real JSON replies (#760) |
 | `signal_tests.rs` | SIGURG doorbell delivery to registered client PIDs (reloads add `<pid>.reload` flag files) |
