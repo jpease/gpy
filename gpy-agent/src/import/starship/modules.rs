@@ -5,7 +5,7 @@ use crate::config::types::{ColorSpec, DirectoryTruncationLength, DirectoryTrunca
 use crate::import::starship::model::StarshipConfig;
 use crate::import::starship::{WarningKind, Warnings};
 use crate::template::ast::Node;
-use crate::template::{Color, TemplateError, parse_style};
+use crate::template::{Attr, Color, TemplateError, parse_style};
 use crate::theme::{
     CharacterTheme, ClockTheme, DirectoryTheme, DurationTheme, GitTheme, HostnameTheme,
     RecommendedDirectory, UsernameTheme,
@@ -479,18 +479,6 @@ pub fn canonical_language(module_name: &str) -> Option<&'static str> {
         .map(|(_, canonical)| *canonical)
 }
 
-/// The eight style attributes recognized in a Starship `style` string.
-const STYLE_ATTRS: [&str; 8_usize] = [
-    "bold",
-    "italic",
-    "underline",
-    "dimmed",
-    "inverted",
-    "blink",
-    "hidden",
-    "strikethrough",
-];
-
 /// The colors of a Starship `style` string, resolved to concrete GPY colors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StyleColor {
@@ -548,14 +536,32 @@ pub fn style_color<S: BuildHasher>(
     }
 }
 
-/// Return the attribute tokens of a style string (everything `first_color_token`
-/// skips), in declaration order.
+/// Return the attribute keywords of a style string, in declaration order.
+///
+/// Derived from the template engine's own [`parse_style`], so attribute
+/// detection is case-insensitive and `none` clears them, exactly as the
+/// renderer reads the style. A style `parse_style` rejects yields no attributes
+/// (its invalid color is reported by [`style_color`]).
 #[must_use]
-pub fn attr_tokens(style: &str) -> Vec<&str> {
-    style
-        .split_whitespace()
-        .filter(|token| STYLE_ATTRS.contains(token))
-        .collect()
+pub fn attr_tokens(style: &str) -> Vec<&'static str> {
+    parse_style(style)
+        .map(|parsed| {
+            parsed
+                .attrs
+                .into_iter()
+                .map(|attr| match attr {
+                    Attr::Bold => "bold",
+                    Attr::Italic => "italic",
+                    Attr::Underline => "underline",
+                    Attr::Dimmed => "dimmed",
+                    Attr::Inverted => "inverted",
+                    Attr::Blink => "blink",
+                    Attr::Hidden => "hidden",
+                    Attr::Strikethrough => "strikethrough",
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Translate all known Starship language modules onto `base`, the language
@@ -1539,6 +1545,22 @@ mod tests {
         assert_eq!(attr_tokens("bold italic red"), vec!["bold", "italic"]);
         assert_eq!(attr_tokens("red"), Vec::<&str>::new());
         assert_eq!(attr_tokens("bold"), vec!["bold"]);
+    }
+
+    #[test]
+    fn attr_tokens_are_case_insensitive() {
+        use super::attr_tokens;
+        assert_eq!(attr_tokens("Bold green"), vec!["bold"]);
+        assert_eq!(
+            attr_tokens("ITALIC Underline red"),
+            vec!["italic", "underline"]
+        );
+    }
+
+    #[test]
+    fn styled_symbol_capitalized_bold_is_bold() {
+        let (_, _, bold) = super::parse_styled_symbol("[❯](Bold green)").expect("parses");
+        assert!(bold);
     }
 
     #[test]
