@@ -91,7 +91,9 @@ pub struct WatchSet {
     /// it, and removing a recursive entry also drops every descriptor under
     /// it. False for `FSEvents` (each stream entry is independent; only
     /// entries equal to the path are removed) and for `PollWatcher` (exact
-    /// key removal).
+    /// key removal). The same per-directory walk is why a failed recursive
+    /// add can leave part of a tree armed (#722, see
+    /// [`WatchSet::record_failed_add`]).
     removal_cascades: bool,
 }
 
@@ -137,10 +139,29 @@ impl WatchSet {
     /// believes it armed. A later [`WatchSet::release`] or
     /// [`WatchSet::acquire`] of the path then re-adds whatever mode is still
     /// wanted.
-    pub fn mark_unarmed(&mut self, path: &Path) {
+    fn mark_unarmed(&mut self, path: &Path) {
         if let Some(entry) = self.entries.get_mut(path) {
             entry.armed = None;
         }
+    }
+
+    /// Record that the backend rejected [`OsOp::Add`] of `(path, mode)`.
+    ///
+    /// Usually nothing was armed, so `path` is marked unarmed and the next
+    /// reconcile re-adds whatever mode is still wanted. A recursive add on a
+    /// backend whose removal cascades is the exception (#722): inotify and
+    /// kqueue arm the tree one directory at a time and stop at the first one
+    /// they cannot watch, without undoing the ones already armed. `path` then
+    /// stays armed here, so the reconcile that drops its last owner removes
+    /// that partial tree -- one removal of `path` takes every descriptor under
+    /// it -- and re-arms the overlapping watches the removal took with it,
+    /// exactly as for a fully armed watch. When nothing was armed at all, that
+    /// removal finds no watch, which the caller only logs.
+    pub fn record_failed_add(&mut self, path: &Path, mode: WatchMode) {
+        if mode == WatchMode::Recursive && self.removal_cascades {
+            return;
+        }
+        self.mark_unarmed(path);
     }
 
     /// Bring the backend's watch on `path` in line with its owner counts.
@@ -328,6 +349,24 @@ mod tests {
         assert_eq!(
             set.release(Path::new("/c"), REC),
             Some(vec![add("/c", SHALLOW)])
+        );
+    }
+
+    /// #722: a partially armed recursive tree is still removed with its owner.
+    ///
+    /// inotify arms a recursive watch one directory at a time and stops at the
+    /// first one it cannot watch, without undoing the ones already armed.
+    /// Releasing the failed path must remove that partial tree, and re-arm
+    /// the nested watch the removal takes with it.
+    #[test]
+    fn failed_recursive_add_on_cascading_backend_is_still_removed() {
+        let mut set = WatchSet::new(true);
+        set.acquire(Path::new("/r/inner"), REC);
+        assert_eq!(set.acquire(Path::new("/r"), REC), vec![add("/r", REC)]);
+        set.record_failed_add(Path::new("/r"), REC);
+        assert_eq!(
+            set.release(Path::new("/r"), REC),
+            Some(vec![remove("/r"), add("/r/inner", REC)])
         );
     }
 }

@@ -2092,3 +2092,137 @@ whose gitlink is about to move"
         "a submodule rebase must wake the submodule and its registered superproject and nothing else"
     );
 }
+
+// ============================================================================
+// Partially armed recursive watches (#722)
+// ============================================================================
+
+/// An unreadable directory, made readable again on drop.
+///
+/// inotify needs read permission on a directory to watch it, so a recursive
+/// watch over its parent fails part-way through the walk (#722). Restoring
+/// the mode on drop lets the `TempDir` above it be removed even when an
+/// assertion fails first.
+#[cfg(target_os = "linux")]
+struct UnreadableDir(PathBuf);
+
+#[cfg(target_os = "linux")]
+impl UnreadableDir {
+    fn create(dir: PathBuf) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::create_dir_all(dir.join("sub")).expect("create locked dir");
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o000)).expect("lock dir");
+        Self(dir)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for UnreadableDir {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Best effort: failing here only leaves the temp dir behind.
+        let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
+    }
+}
+
+/// #722: inotify arms a recursive watch one directory at a time and stops at
+/// the first one it cannot read, without undoing the directories it already
+/// armed. The failed worktree watch degrades the repository to `.git`-only
+/// watching (#158), and the partial tree it left behind used to stay live
+/// for the life of the agent, delivering events for a repository no client
+/// was registered for any more.
+#[cfg(target_os = "linux")]
+#[test]
+#[serial_test::file_serial(watcher_fsevents_bootstrap)]
+fn failed_recursive_watch_leaves_no_live_watches_after_unregister() {
+    if nix::unistd::geteuid().is_root() {
+        eprintln!("skipped: root bypasses the EACCES that fails the recursive watch");
+        return;
+    }
+    let temp = tempdir().expect("create temp dir");
+    let repo = fs::canonicalize(create_git_repo(temp.path(), "partial")).expect("canonical repo");
+    for index in 0_u8..5_u8 {
+        fs::create_dir(repo.join(format!("dir{index}"))).expect("create subdirectory");
+    }
+    let _locked = UnreadableDir::create(repo.join("locked"));
+
+    let (watcher, events) = recording_watcher();
+    let pid = std::process::id();
+    watcher
+        .register_client(pid, &repo)
+        .expect("register degraded repo");
+    settle();
+
+    git(&repo, &["checkout", "-q", "-b", "feature"]);
+    assert!(
+        wait_for_repo(&events, &repo, Duration::from_secs(10)),
+        "the degraded repository must still hear its .git while registered (#158)"
+    );
+
+    watcher.unregister_client(pid).expect("unregister");
+    settle();
+    events.lock().unwrap().clear();
+
+    fs::write(repo.join("README.md"), b"after unregister\n").expect("edit root file");
+    fs::write(repo.join("dir0").join("x.txt"), b"x\n").expect("create nested file");
+    thread::sleep(Duration::from_secs(3));
+
+    let delivered = events.lock().unwrap().clone();
+    assert_eq!(
+        delivered,
+        Vec::<PathBuf>::new(),
+        "no watch may outlive the repository's last client"
+    );
+}
+
+/// #722: rolling back a partially armed recursive watch removes every inotify
+/// descriptor under its root, including the ones a nested repository
+/// registered earlier relies on. Those must be re-armed, and the outer
+/// repository's partial tree must still be gone once it unregisters.
+#[cfg(target_os = "linux")]
+#[test]
+#[serial_test::file_serial(watcher_fsevents_bootstrap)]
+fn failed_recursive_watch_rollback_keeps_nested_repo_events() {
+    if nix::unistd::geteuid().is_root() {
+        eprintln!("skipped: root bypasses the EACCES that fails the recursive watch");
+        return;
+    }
+    let temp = tempdir().expect("create temp dir");
+    let (outer, inner) = nested_repos(temp.path());
+    let _locked = UnreadableDir::create(outer.join("locked"));
+
+    let (watcher, events) = recording_watcher();
+    let inner_pid = std::process::id();
+    let outer_pid = inner_pid + 1;
+    watcher
+        .register_client(inner_pid, &inner)
+        .expect("register inner");
+    watcher
+        .register_client(outer_pid, &outer)
+        .expect("register degraded outer");
+    settle();
+    watcher
+        .unregister_client(outer_pid)
+        .expect("unregister outer");
+    settle();
+    events.lock().unwrap().clear();
+
+    fs::write(outer.join("README.md"), b"after unregister\n").expect("edit outer file");
+    fs::write(inner.join("README.md"), b"changed content here\n").expect("edit inner file");
+    let inner_heard = wait_for_repo(&events, &inner, Duration::from_secs(20));
+    thread::sleep(Duration::from_secs(3));
+
+    let delivered = events.lock().unwrap().clone();
+    assert!(
+        inner_heard,
+        "the nested repository registered earlier must keep its events after the outer \
+         repository's failed watch is rolled back, got: {delivered:?}"
+    );
+    assert!(
+        !delivered.contains(&outer),
+        "the outer repository's partial watch must not outlive its last client, \
+         got: {delivered:?}"
+    );
+}
