@@ -115,6 +115,11 @@ __gpy_sync_workspace
 __ws_check "next cd sends a workspace op" (test (__ws_count workspace) = 2; and echo 1; or echo 0) "workspace ops=$(__ws_count workspace)"
 __ws_check "next cd records __gpy_last_workspace" (test "$__gpy_last_workspace" = "$__ws_tmp/other"; and echo 1; or echo 0) "last_workspace=$__gpy_last_workspace"
 
+# 2b. Fish syncs once per cd (never per prompt, #833); cd away and back re-sends.
+cd $__ws_tmp/denied
+__gpy_sync_workspace
+__ws_check "cd back into rejected dir re-sends" (test (__ws_count workspace) = 3; and echo 1; or echo 0) "workspace ops=$(__ws_count workspace)"
+
 # 3. "not registered" still clears and re-registers.
 cd $__ws_tmp/lost
 __gpy_sync_workspace

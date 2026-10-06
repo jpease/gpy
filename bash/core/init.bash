@@ -37,6 +37,8 @@ __gpy_cmd_start_time=""
 __gpy_cmd_duration=""
 __gpy_registered=""
 __gpy_last_workspace=""
+# Directory whose workspace sync the agent rejected; not re-sent until $PWD changes (#833)
+__gpy_rejected_workspace=""
 
 # Character/directory render memoization (#343): keyed by the full input
 # tuple + theme identity, cleared on reload (bash/core/signals.bash). A cache
@@ -529,6 +531,8 @@ __gpy_build_workspace_payload() {
 
 __gpy_sync_workspace() {
     [[ -n "$__gpy_registered" ]] || return 0
+    [[ "$__gpy_rejected_workspace" != "$PWD" ]] || return 0
+    __gpy_rejected_workspace=""
     [[ "$__gpy_last_workspace" != "$PWD" ]] || return 0
 
     local workspace_json response
@@ -545,7 +549,10 @@ __gpy_sync_workspace() {
         __gpy_register_with_agent
         return
     fi
-    [[ "$response" != *'"error"'* ]] || return 0
+    if [[ "$response" == *'"error"'* ]]; then
+        __gpy_rejected_workspace="$PWD"
+        return 0
+    fi
 
     __gpy_last_workspace="$PWD"
 }
