@@ -44,11 +44,6 @@ use parser::{BranchHead, V2ParseResult};
 /// Cache of repositories where we've already checked/enabled untracked cache
 static UNTRACKED_CACHE_CHECKED: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
 
-/// Cap on `.git/config` reads: can grow with many remotes/submodules/includes,
-/// so this is sized generously above a typical config rather than pinned to a
-/// single-line file's size class.
-const GIT_CONFIG_READ_CAP: usize = 65_536;
-
 /// Cap on `.git` gitdir-pointer file reads: a single-line pointer file by
 /// construction.
 const GITDIR_POINTER_READ_CAP: usize = 4_096;
@@ -59,17 +54,6 @@ const MSGNUM_READ_CAP: usize = 4_096;
 /// Cap on `rebase-merge/git-rebase-todo` reads: an interactive rebase of
 /// hundreds of commits can produce a todo file well beyond a few KB.
 const REBASE_TODO_READ_CAP: usize = 65_536;
-
-/// Whether `content` (a `.git/config` file's contents) has
-/// `untrackedcache = true` set.
-///
-/// A substring heuristic, not a real INI parse — deliberately so; see
-/// [`NativeGitBackend::is_untracked_cache_enabled`]'s doc for why a false
-/// negative here is harmless (the caller just retries enabling it).
-#[must_use]
-fn config_has_untracked_cache_true(content: &str) -> bool {
-    content.to_lowercase().contains("untrackedcache = true")
-}
 
 /// Parse a `msgnum` file's contents (a bare integer, the current step number
 /// in an `am`-style rebase).
@@ -126,23 +110,14 @@ impl NativeGitBackend {
         run_git_with_timeout(repo_path, args, timeout).ok()
     }
 
-    /// Check if untracked cache is enabled for this repository
-    fn is_untracked_cache_enabled(repo_path: &Path) -> bool {
-        // Optimization: Check local config directly to avoid subprocess overhead (~3ms)
-        let Some(git_dir) = Self::resolve_git_dir_opt(repo_path) else {
-            return false;
-        };
-
-        let config_path = git_dir.join("config");
-        let Ok(content) = crate::fs_util::read_small_file(&config_path, GIT_CONFIG_READ_CAP) else {
-            return false;
-        };
-
-        // If not found locally, return false.
-        // We skip checking global config via `git config` to save the subprocess cost.
-        // If it's enabled globally but not locally, we will "re-enable" it locally,
-        // which is harmless and makes future checks fast.
-        config_has_untracked_cache_true(&content)
+    /// Whether the user has set `core.untrackedCache` at any scope
+    /// (local, global, system, includes), to any value.
+    ///
+    /// An unset key makes `git config --get` exit non-zero, which
+    /// `run_git_optional` maps to `None`.
+    fn is_untracked_cache_configured(repo_path: &Path) -> bool {
+        Self::run_git_optional(repo_path, &["config", "--get", "core.untrackedCache"])
+            .is_some_and(|value| !value.trim().is_empty())
     }
 
     /// Enable untracked cache for this repository
@@ -184,7 +159,7 @@ impl NativeGitBackend {
         }
 
         // Check and enable if needed (slow operations, no lock)
-        if !Self::is_untracked_cache_enabled(repo_path) {
+        if !Self::is_untracked_cache_configured(repo_path) {
             // Silently try to enable it - don't fail if it doesn't work
             let _ = Self::enable_untracked_cache(repo_path);
         }
@@ -717,23 +692,44 @@ mod tests {
     use crate::git::RebaseProgress;
     use tempfile::TempDir;
 
+    /// `git config --local --get-all core.untrackedCache` as seen from `path`.
+    fn untracked_cache_values(path: &Path) -> String {
+        let output = Command::new("git")
+            .args(["config", "--local", "--get-all", "core.untrackedCache"])
+            .current_dir(path)
+            .output()
+            .expect("run git config");
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
     #[test]
-    fn config_has_untracked_cache_true_table() {
-        let cases: &[(&str, bool)] = &[
-            ("[core]\n\tuntrackedcache = true\n", true),
-            ("[core]\n\tUNTRACKEDCACHE = TRUE\n", true),
-            ("[core]\n\tuntrackedCache = true\n", true),
-            ("[core]\n\tuntrackedcache = false\n", false),
-            ("[core]\n\tfsmonitor = true\n", false),
-            ("", false),
-        ];
-        for (input, expected) in cases {
-            assert_eq!(
-                config_has_untracked_cache_true(input),
-                *expected,
-                "input: {input:?}"
-            );
+    fn does_not_override_explicit_untracked_cache_false() {
+        let (_dir, path) = init_test_repo();
+        let status = Command::new("git")
+            .args(["config", "core.untrackedCache", "false"])
+            .current_dir(&path)
+            .status()
+            .expect("run git config");
+        assert!(status.success());
+
+        NativeGitBackend::get_complete_status(&path, None, 100, false, Duration::from_secs(5))
+            .expect("status");
+
+        assert_eq!(untracked_cache_values(&path), "false");
+    }
+
+    #[test]
+    fn enables_untracked_cache_when_unset() {
+        let (_dir, path) = init_test_repo();
+        // A user/system-level setting would (correctly) stop gpy enabling it.
+        if NativeGitBackend::is_untracked_cache_configured(&path) {
+            return;
         }
+
+        NativeGitBackend::get_complete_status(&path, None, 100, false, Duration::from_secs(5))
+            .expect("status");
+
+        assert_eq!(untracked_cache_values(&path), "true");
     }
 
     #[test]

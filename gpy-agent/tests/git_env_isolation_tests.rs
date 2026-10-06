@@ -183,3 +183,78 @@ fn test_git_status_is_independent_of_inherited_git_env() {
         failures.join("\n")
     );
 }
+
+/// (label, local setting, `GIT_CONFIG_GLOBAL` for the agent, expected local values)
+type CacheRow = (
+    &'static str,
+    Option<&'static str>,
+    String,
+    Vec<&'static str>,
+);
+
+/// `git config --local --get-all core.untrackedCache` values, one per entry.
+fn local_untracked_cache(repo: &Path) -> Vec<String> {
+    let output = Command::new("git")
+        .args(["config", "--local", "--get-all", "core.untrackedCache"])
+        .current_dir(repo)
+        .output()
+        .expect("spawn git");
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// #715: gpy must never override a `core.untrackedCache` the user set at any
+/// scope, but still enables it when it is unset everywhere.
+#[test]
+fn test_agent_respects_user_untracked_cache_setting() {
+    let env = CliTestEnv::new().expect("env");
+    let global_false = env.root().join("global_false.gitconfig");
+    fs::write(&global_false, "[core]\n\tuntrackedCache = false\n").expect("write gitconfig");
+    let global_empty = env.root().join("global_empty.gitconfig");
+    fs::write(&global_empty, "").expect("write gitconfig");
+    let global_false_str = global_false.to_string_lossy().into_owned();
+    let global_empty_str = global_empty.to_string_lossy().into_owned();
+
+    let rows: Vec<CacheRow> = vec![
+        (
+            "local false",
+            Some("false"),
+            global_empty_str.clone(),
+            vec!["false"],
+        ),
+        ("global false", None, global_false_str, vec![]),
+        ("unset everywhere", None, global_empty_str, vec!["true"]),
+    ];
+    let mut failures = Vec::new();
+    for (index, (label, local, global, expected)) in rows.into_iter().enumerate() {
+        let repo = env.root().join(format!("uc{index}"));
+        fs::create_dir_all(&repo).expect("mkdir");
+        git(&repo, &["init", "-q", "-b", "main"]);
+        fs::write(repo.join("f"), "x\n").expect("write");
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "init"]);
+        fs::write(repo.join("untracked.txt"), "z\n").expect("write");
+        if let Some(value) = local {
+            git(&repo, &["config", "core.untrackedCache", value]);
+        }
+        let vars = [("GIT_CONFIG_GLOBAL", global)];
+        match oneshot_status(&env, &repo, &vars) {
+            Ok(status) if status.get("untracked") == Some(&serde_json::json!(1_i32)) => {}
+            Ok(status) => failures.push(format!("{label}: wrong status {status}")),
+            Err(err) => failures.push(format!("{label}: agent failed: {err}")),
+        }
+        let actual = local_untracked_cache(&repo);
+        if actual != expected {
+            failures.push(format!(
+                "{label}: local core.untrackedCache {actual:?}, expected {expected:?}"
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "untrackedCache policy violated:\n{}",
+        failures.join("\n")
+    );
+}
