@@ -598,6 +598,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   case differs from git's on case-insensitive repositories (#713).
 - `gpy debug prompt` exits 1 with an `Error:` line when no agent is running,
   and its help and docs describe the round trips it actually times (#804).
+- Editing `.node-version`, `.nvmrc`, `mise.toml` or `.mise.toml` refreshes
+  the displayed language version immediately (#725).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
