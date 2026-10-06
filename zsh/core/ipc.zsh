@@ -413,6 +413,44 @@ function __gpy_cache_variant_suffix() {
     print -r -- "$suffix"
 }
 
+# Resolve the path an instant-cache entry for `suffix` (git* or lang*) under
+# `cwd` is keyed by into the variable named by $3 (empty, status 1, when there
+# is none). Git caches are keyed by the repository root. Language caches
+# additionally cover non-Git project directories (detected by package.json,
+# Cargo.toml, etc.), which the agent keys by the canonical request path.
+# Mirror that fallback so warm language caches are consumed outside Git
+# repositories instead of cold-missing forever (#173). Out-var, not `$(...)`,
+# so callers pay no extra subshell on the prompt path.
+function __gpy_instant_cache_key_path() {
+    local suffix=$1 cwd=$2 __gpy_kp
+    __gpy_kp=$(__gpy_find_git_root "$cwd")
+    if [[ -z "$__gpy_kp" && "$suffix" == lang* ]]; then
+        # No Git root: language cache is keyed by the canonical request path.
+        __gpy_kp=$(realpath "$cwd" 2>/dev/null)
+    fi
+    printf -v "$3" '%s' "$__gpy_kp"
+    [[ -n "$__gpy_kp" ]]
+}
+
+# Return 0 iff any instant-cache entry exists for `base` (git|lang) under
+# `cwd`, in any position variant or prev_bg context (#766). The agent writes
+# every is_last/is_first variant at once, but the context-free `.none` token
+# only when some request carried no prev_bg, so a probe of `.none` alone
+# would miss a cache populated only by contextual requests. No resolvable
+# cache directory counts as no entry, matching __gpy_read_instant_cache.
+function __gpy_instant_cache_present() {
+    # Default glob semantics regardless of the user's options; `(N)` makes an
+    # unmatched pattern an empty list instead of a NOMATCH error.
+    emulate -L zsh
+    local base=$1 cwd=${2:-$PWD} key_path cache_dir cache_key
+    __gpy_instant_cache_key_path "$base" "$cwd" key_path || return 1
+    cache_dir=$(__gpy_instant_cache_dir) || return 1
+    cache_key=$(__gpy_path_to_cache_key "$key_path")
+    # `<key>.<base>.<token>.zsh` and `<key>.<base>_<position>.<token>.zsh`.
+    local -a hits=("$cache_dir/$cache_key.$base."*.zsh(N) "$cache_dir/$cache_key.${base}_"*.zsh(N))
+    (( ${#hits} > 0 ))
+}
+
 # Read instant-prompt cache if available (serve-stale model: always serve).
 # Status is carried ENTIRELY by the exit code (#614, mirrors the contract
 # #612 gave Fish -- see fish/core/ipc.fish's __gpy_read_instant_cache doc
@@ -430,20 +468,10 @@ function __gpy_read_instant_cache() {
     local cwd=${2:-$PWD}
     local prev_bg=${3:-}
 
-    # Resolve the cache-key path. Git caches are keyed by the repository root.
-    # Language caches additionally cover non-Git project directories (detected by
-    # package.json, Cargo.toml, etc.), which the agent keys by the canonical
-    # request path. Mirror that fallback so warm language caches are consumed
-    # outside Git repositories instead of cold-missing forever (#173).
+    # Resolve the cache-key path (git root, or the canonical project path for
+    # language caches outside Git).
     local key_path
-    key_path=$(__gpy_find_git_root "$cwd")
-    if [[ -z "$key_path" && "$suffix" == lang* ]]; then
-        # No Git root: language cache is keyed by the canonical request path.
-        key_path=$(realpath "$cwd" 2>/dev/null)
-    fi
-    if [[ -z "$key_path" ]]; then
-        return 1
-    fi
+    __gpy_instant_cache_key_path "$suffix" "$cwd" key_path || return 1
 
     # Compute cache directory
     local cache_dir

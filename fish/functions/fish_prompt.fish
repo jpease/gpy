@@ -77,10 +77,18 @@ function fish_prompt
     # Reset segment position tracker
     set -g __gpy_segment_position first
 
-    # Build list of segments to render (for position tracking)
+    # Build list of segments to render (for position tracking). Positions are
+    # assigned from this list before anything renders and are baked into agent
+    # ANSI, so a segment that passes detect but is certain to print nothing
+    # this render (an optional segment_<name>_omit returning 0, e.g. a git or
+    # language cold miss) is left out here; otherwise its neighbour would end
+    # with a dangling separator or lose its first-segment form (#766).
     set -l segments_to_render
     for segment in $__enabled_segments
         if functions -q segment_{$segment}_detect; and segment_{$segment}_detect
+            if functions -q segment_{$segment}_omit; and segment_{$segment}_omit
+                continue
+            end
             set -a segments_to_render $segment
         end
     end

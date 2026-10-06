@@ -210,6 +210,12 @@ function __gpy_sync_workspace() {
     __gpy_last_workspace="$PWD"
 }
 
+# Positions are assigned from the segments this accepts, before anything
+# renders, and are baked into agent output. A segment whose detect passes but
+# that is certain to print nothing this render (an optional
+# __gpy_segment_<name>_omit returning 0, e.g. a language cold miss) is
+# rejected here; otherwise its neighbour would end with a dangling separator
+# or lose its first-segment form (#766).
 function __gpy_segment_would_render() {
     local seg=$1
     if (( ! $+functions[__gpy_segment_$seg] )); then
@@ -218,8 +224,11 @@ function __gpy_segment_would_render() {
 
     local detect_fn="__gpy_segment_${seg}_detect"
     if (( $+functions[$detect_fn] )); then
-        "$detect_fn"
-        return
+        "$detect_fn" || return 1
+    fi
+    local omit_fn="__gpy_segment_${seg}_omit"
+    if (( $+functions[$omit_fn] )) && "$omit_fn"; then
+        return 1
     fi
 
     return 0

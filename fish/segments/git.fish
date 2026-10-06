@@ -33,6 +33,17 @@ function segment_git_detect
     return 1
 end
 
+# Called by fish_prompt after segment_git_detect passes, before any position is
+# assigned: returns 0 when this render is certain to print nothing, so the
+# segment never takes a first/last position it cannot fill (#766). That is the
+# cold miss with the agent down: no instant-cache entry for this repo in any
+# variant and no socket, where segment_git_render can only omit (and its
+# background refresh has no listener). Builtin-only, since it runs on every
+# prompt.
+function segment_git_omit
+    not __gpy_instant_cache_present git $PWD; and not test -S (__gpy_ipc_endpoint)
+end
+
 # Renders Git status from the instant-prompt cache (serve-stale, issue #160).
 #
 # A fresh entry is read from the agent-maintained instant cache (0ms, no IPC).
@@ -99,6 +110,14 @@ function segment_git_render --argument-names is_last is_first
         # keep today's behavior -- omit the segment and refresh in the
         # background. The agent repaints via SIGURG when the data lands.
         # Omitting output is a successful render, so always return 0.
+        #
+        # segment_git_omit already dropped the agent-down cold miss before
+        # positions were assigned (#766). What still reaches this omit after
+        # the previous segment was drawn as not-last, leaving a trailing
+        # separator until the repaint: a bounded query that times out with
+        # the agent up, and cache entries that exist only for other prev_bg
+        # contexts (no `.none`) while the agent is down, which lasts until
+        # the agent returns.
         __gpy_maybe_refresh git "$root" "$cache_suffix" "$is_last" "$prev_bg" "$is_first"
         return 0
     end

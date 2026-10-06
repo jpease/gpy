@@ -631,6 +631,43 @@ function __gpy_cache_variant_suffix --argument-names base is_last is_first --des
     printf '%s' $suffix
 end
 
+# Resolve the path an instant-cache entry for `suffix` (git* or lang*) under
+# `cwd` is keyed by, or print nothing and return 1 when there is none. Git
+# caches are keyed by the repository root. Language caches additionally cover
+# non-Git project directories (detected by package.json, Cargo.toml, etc.),
+# which the agent keys by the canonical request path. Mirror that fallback so
+# warm language caches are consumed outside Git repositories instead of
+# cold-missing forever (#173). Builtin-only (memoized git root, `path
+# resolve`): it runs on every prompt (#766).
+function __gpy_instant_cache_key_path --argument-names suffix cwd --description 'Path an instant-cache entry is keyed by'
+    set -l key_path (__gpy_memoized_git_root $cwd)
+    if test -z "$key_path"; and string match -q 'lang*' -- $suffix
+        # No Git root: language cache is keyed by the canonical request path.
+        # `path resolve` mirrors the agent's `canonicalize` (resolves symlinks).
+        set key_path (path resolve -- "$cwd" 2>/dev/null)
+    end
+    test -n "$key_path"; or return 1
+    printf '%s' "$key_path"
+end
+
+# Return 0 iff any instant-cache entry exists for `base` (git|lang) under
+# `cwd`, in any position variant or prev_bg context (#766). The agent writes
+# every is_last/is_first variant at once (write_git / write_language_variants),
+# but the context-free `.none` token only when some request carried no
+# prev_bg, so a probe of `.none` alone would miss a cache populated only by
+# contextual requests. No resolvable cache directory counts as no entry,
+# matching __gpy_read_instant_cache's miss. Fork-free: a glob that matches
+# nothing in `set` is an empty list, not an error.
+function __gpy_instant_cache_present --argument-names base cwd --description 'Whether any instant-cache entry exists for git|lang under cwd'
+    set -l key_path (__gpy_instant_cache_key_path $base $cwd); or return 1
+    set -l cache_dir (__gpy_instant_cache_dir)
+    test -n "$cache_dir"; or return 1
+    set -l cache_key (__gpy_path_to_cache_key $key_path)
+    # `<key>.<base>.<token>.ansi` and `<key>.<base>_<position>.<token>.ansi`.
+    set -l hits $cache_dir/$cache_key.$base.*.ansi $cache_dir/$cache_key.$base"_"*.ansi
+    set -q hits[1]
+end
+
 # Read the instant-prompt cache for a git repository or language project.
 #
 # Content (when found) is printed to stdout exactly as before. Status is now
@@ -654,20 +691,9 @@ function __gpy_read_instant_cache --argument-names suffix cwd prev_bg --descript
         set suffix git
     end
 
-    # Resolve the cache-key path. Git caches are keyed by the repository root.
-    # Language caches additionally cover non-Git project directories (detected by
-    # package.json, Cargo.toml, etc.), which the agent keys by the canonical
-    # request path. Mirror that fallback so warm language caches are consumed
-    # outside Git repositories instead of cold-missing forever (#173).
-    set -l key_path (__gpy_memoized_git_root $cwd)
-    if test -z "$key_path"; and string match -q 'lang*' -- $suffix
-        # No Git root: language cache is keyed by the canonical request path.
-        # `path resolve` mirrors the agent's `canonicalize` (resolves symlinks).
-        set key_path (path resolve -- "$cwd" 2>/dev/null)
-    end
-    if test -z "$key_path"
-        return 1
-    end
+    # Resolve the cache-key path (git root, or the canonical project path for
+    # language caches outside Git).
+    set -l key_path (__gpy_instant_cache_key_path $suffix $cwd); or return 1
 
     # Compute cache directory
     set -l cache_dir (__gpy_instant_cache_dir)
