@@ -246,6 +246,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Removed
 
+- `install-dev.fish --bundle`, which produced payloads `install.sh` rejected
+  (#810); use `just build-all-platforms`.
 - Fish `prompt-config`, `prompt-theme` and `prompt-perf`, which always
   failed with exit 127 (#768).
 - The `gpy_setup` and `gpy_config_validate` Fish functions, dead since
@@ -643,6 +645,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - Non-git projects show their language in subdirectories without source
   files (#727): detection runs at the nearest ancestor with a project marker
   file, never above `$HOME`.
+- `just install` runs `install-dev.fish` from a checkout, and
+  `just build-all-platforms` stages the agent and `gpy` CLI with `.sha256`
+  sidecars that `install.sh` accepts (#810).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
