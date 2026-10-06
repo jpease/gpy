@@ -71,9 +71,12 @@ oneshot_calls=$(wc -c <"$COUNTER_FILE" | tr -d ' ')
 check "at most one oneshot fork per render" 1 "$oneshot_calls"
 
 # No leftover predictable-name marker/flag file under TMPDIR for this PID.
+# The shell's own private relay directory (gpy_cache_<pid>_<random>, 0700,
+# #763) carries the PID by design and is not a marker file.
 leftover_count=0
 setopt local_options nullglob dotglob
 for f in "${TMPDIR:-/tmp}"/*gpy*_$$*; do
+    [[ -n "${__gpy_cache_dir:-}" && "${f:A}" == "${__gpy_cache_dir:A}" ]] && continue
     leftover_count=$((leftover_count + 1))
     echo "  leftover: $f"
 done
