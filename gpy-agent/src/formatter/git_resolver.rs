@@ -195,11 +195,14 @@ impl<'a> GitResolver<'a> {
     fn ahead_behind(&self) -> Option<String> {
         let mut text = String::new();
         let icons = &self.config.git.icons;
-        if self.status.ahead > 0 {
-            let _ = write!(text, "{}{}", icons.ahead, self.status.ahead);
-        }
-        if self.status.behind > 0 {
-            let _ = write!(text, "{}{}", icons.behind, self.status.behind);
+        for (count, capped, icon) in [
+            (self.status.ahead, self.status.ahead_capped, &icons.ahead),
+            (self.status.behind, self.status.behind_capped, &icons.behind),
+        ] {
+            if count > 0 {
+                let suffix = if capped { "+" } else { "" };
+                let _ = write!(text, "{icon}{count}{suffix}");
+            }
         }
         (!text.is_empty()).then_some(text)
     }
@@ -327,6 +330,48 @@ mod tests {
         assert!(resolver.resolve("ahead_behind").is_some());
         assert!(resolver.resolve("status").is_some());
         assert!(resolver.resolve("style").is_some());
+    }
+
+    #[test]
+    fn ahead_behind_marks_capped_counts_with_plus() {
+        let mut st = status();
+        st.ahead = 2;
+        st.ahead_capped = true;
+        st.behind = 100;
+        st.behind_capped = true;
+        let (config, theme) = (Config::default(), ThemeConfig::default());
+        let resolver = GitResolver::new(
+            &st,
+            &config,
+            &theme,
+            GitState::AheadBehind,
+            SegmentPosition::new(IsLast::No, IsFirst::No),
+        );
+        assert_eq!(
+            resolver.resolve("ahead_behind"),
+            Some(format!(
+                "{}2+{}100+",
+                config.git.icons.ahead, config.git.icons.behind
+            ))
+        );
+    }
+
+    #[test]
+    fn ahead_behind_uncapped_has_no_plus() {
+        let mut st = status();
+        st.ahead = 2;
+        st.ahead_capped = false;
+        st.behind = 1;
+        let (config, theme) = (Config::default(), ThemeConfig::default());
+        let resolver = GitResolver::new(
+            &st,
+            &config,
+            &theme,
+            GitState::AheadBehind,
+            SegmentPosition::new(IsLast::No, IsFirst::No),
+        );
+        let text = resolver.resolve("ahead_behind").unwrap_or_default();
+        assert!(!text.is_empty() && !text.contains('+'), "got {text:?}");
     }
 
     #[test]
