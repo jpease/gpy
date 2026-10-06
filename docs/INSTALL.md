@@ -344,7 +344,7 @@ If you want to build GPY yourself or contribute to development:
 
 ### Prerequisites
 
-- **Rust**: 1.98 or later — the `rust-version` declared in `gpy-agent/Cargo.toml`, which is what `cargo build` enforces
+- **Rust**: 1.99 or later — the `rust-version` declared in `gpy-agent/Cargo.toml`, which is what `cargo build` enforces
 - **Git**: 2.0 or later
 - **Shell**: see [Supported Platforms and Shells](#supported-platforms-and-shells)
 

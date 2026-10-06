@@ -50,7 +50,7 @@ allow-print-in-tests = true               # Tests can print
 # rust-toolchain.toml. A stale value here silently disables every lint
 # gated on a newer MSRV -- this sat at 1.90 against a declared 1.98 and
 # suppressed clippy::duration_suboptimal_units at three sites (#516).
-msrv = "1.98"
+msrv = "1.99"
 
 # === PERFORMANCE OPTIMIZATIONS ===
 avoid-breaking-exported-api = false      # Allow breaking changes for better APIs

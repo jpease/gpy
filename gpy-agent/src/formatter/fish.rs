@@ -152,7 +152,7 @@ mod tests {
 
         let response = Response::Language { languages: vec![] };
         let output = formatter.render(&response, &ctx).expect("render failed");
-        assert!(output.is_empty());
+        assert_eq!(output, "");
     }
 
     #[test]

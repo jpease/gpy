@@ -1704,9 +1704,9 @@ mod prune_reconcile_tests {
         let pruned = prune_dead_clients(&fx.registry, &fx.slot);
 
         assert_eq!(pruned, vec![pid], "reconciled pid is reported once");
-        assert!(fx.watcher.client_pids().is_empty());
+        assert_eq!(fx.watcher.client_pids(), Vec::<u32>::new());
         assert_eq!(fx.watcher.watched_repo_count(), 0);
-        assert!(fx.watcher.watched_roots().is_empty());
+        assert_eq!(fx.watcher.watched_roots(), Vec::<std::path::PathBuf>::new());
     }
 
     proptest::proptest! {

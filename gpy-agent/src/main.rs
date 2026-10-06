@@ -581,7 +581,6 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
             let config = config::loader::load_config()?;
             let value = config::metadata::get_config_value(&config, &key)?;
             println!("{value}");
-            Ok(())
         }
         ConfigCommands::Reload => {
             use gpy_agent::agent::lifecycle::get_socket_path;
@@ -600,14 +599,12 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
             } else {
                 println!("Config reload request sent (agent may not have acknowledged).");
             }
-
-            Ok(())
         }
         ConfigCommands::List { filter } => {
             list(filter.as_deref());
-            Ok(())
         }
     }
+    Ok(())
 }
 
 /// Handle theme subcommands (export, validate, import).

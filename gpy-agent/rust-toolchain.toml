@@ -40,5 +40,5 @@
 # `.clippy.toml`'s msrv and `Cargo.toml`'s rust-version in the same commit --
 # the MSRV consistency test requires the first two to match exactly.
 [toolchain]
-channel = "1.98.1"
+channel = "1.99.0"
 components = ["clippy", "rustfmt"]

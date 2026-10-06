@@ -4,7 +4,7 @@ name = "gpy-agent"
 description = "Fast, cross-platform agent for Git status and language detection used by the GPY prompt for Bash, Fish, and Zsh"
 
 version = "0.1.0"
-rust-version = "1.98"
+rust-version = "1.99"
 edition = "2024"
 authors = ["Justin Pease <536+jpease@users.noreply.github.com>"]
 license = "GPL-3.0-or-later"

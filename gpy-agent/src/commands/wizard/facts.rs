@@ -240,12 +240,12 @@ mod tests {
 
     #[test]
     fn local_hostname_is_non_empty() {
-        assert!(!local_hostname().is_empty());
+        assert_ne!(local_hostname(), "");
     }
 
     #[test]
     fn local_username_is_non_empty() {
-        assert!(!local_username().is_empty());
+        assert_ne!(local_username(), "");
     }
 
     #[test]

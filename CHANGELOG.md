@@ -203,6 +203,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The pinned Rust toolchain and the minimum supported Rust version are now
+  1.99 (`rust-toolchain.toml`, `rust-version`, clippy `msrv`). Rust 1.99's
+  `clippy::assert_is_empty` and `branches_sharing_code` findings are fixed.
 - Language detection now runs on `gengo-language`'s matcher tables instead of
   `hyperpolyglot`, which is no longer a dependency (#523, epic #519). The
   reported languages and confidences are unchanged by design: detection keeps
