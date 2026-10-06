@@ -974,6 +974,18 @@ impl Agent {
         let _pruned_pids = prune_dead_clients(&self.ctx.registry, &self.watcher);
     }
 
+    /// Stop the repository, theme and config watchers. Shared by both exits
+    /// of [`Self::start_background`] (shutdown signal, server stopped).
+    fn stop_watchers(&self) {
+        if let Ok(mut guard) = self.watcher.lock()
+            && let Some(watcher) = guard.take()
+        {
+            watcher.stop();
+        }
+        self.ctx.theme_manager.stop_watching();
+        self.ctx.config_manager.stop_watching();
+    }
+
     /// Start the agent in background mode
     ///
     /// # Errors
@@ -1065,14 +1077,19 @@ impl Agent {
         loop {
             tokio::select! {
                 result = &mut server_future => {
+                    // The accept loop ends on an IPC `Shutdown` or when it
+                    // finds its socket removed or rebound (#779); both are
+                    // expected exits that release resources like a signal.
                     match &result {
                         Ok(()) => {
-                            debug_log!("agent", "Server completed successfully - this shouldn't happen");
+                            debug_log!("agent", "Server stopped; shutting down");
                         }
                         Err(e) => {
                             debug_log!("agent", "Server failed with error: {e}");
                         }
                     }
+                    drop(server_future);
+                    self.stop_watchers();
                     return result;
                 }
                 shutdown_result = &mut shutdown_signal => {
@@ -1080,13 +1097,6 @@ impl Agent {
 
                     // Graceful shutdown
                     debug_log!("agent", "Received shutdown signal");
-                    if let Ok(mut guard) = self.watcher.lock()
-                        && let Some(watcher) = guard.take()
-                    {
-                        watcher.stop();
-                    }
-                    self.ctx.theme_manager.stop_watching();
-                    self.ctx.config_manager.stop_watching();
 
                     // Drop the in-flight server future first: it holds the only
                     // mutable borrow of `self.server`, and stop() needs one to
@@ -1095,6 +1105,7 @@ impl Agent {
                     // that normally only runs at the end of `accept_loop` (which
                     // requires an IPC `Shutdown` message, not a signal).
                     drop(server_future);
+                    self.stop_watchers();
                     if let Err(e) = self.server.stop() {
                         debug_log!("agent", "Failed to stop IPC server cleanly: {e}");
                     }

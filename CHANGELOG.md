@@ -274,6 +274,11 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   `~` contraction, and macOS `/tmp` showed as `/private/tmp`; IPC and oneshot
   output now match. Path validation, read-only checks and push-delivery
   matching still use the canonical path; the wire format is unchanged.
+- An agent whose socket was removed or taken over by another agent now
+  exits within 30 seconds (#779). A wedged agent that recovered after being
+  evicted, or one whose socket was deleted, used to run forever where no
+  command could reach or stop it. It never removes the newcomer's socket.
+
 - `gpy start` and `gpy-agent start` return only once the agent answers on
   its socket (#741), and exit `1` with an `Error:` line when it dies or
   does not answer within 5 seconds. They used to exit `0` right after

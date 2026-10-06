@@ -59,6 +59,8 @@ pub struct EndpointHandleBuilder {
     language_cache: Option<crate::language::DetectionCache>,
     security_config: Option<GuardSettings>,
     palette_cache: Option<Arc<PaletteCache>>,
+    #[cfg(unix)]
+    socket_ownership_check: Option<std::time::Duration>,
 }
 
 impl EndpointHandleBuilder {
@@ -72,6 +74,15 @@ impl EndpointHandleBuilder {
     #[must_use]
     pub fn socket_path(mut self, path: PathBuf) -> Self {
         self.socket_path = Some(path);
+        self
+    }
+
+    /// Shorten the accept loop's socket-ownership check period (#779), so
+    /// tests need not wait the production 30 s.
+    #[cfg(all(unix, test))]
+    #[must_use]
+    pub(crate) const fn socket_ownership_check(mut self, period: std::time::Duration) -> Self {
+        self.socket_ownership_check = Some(period);
         self
     }
 
@@ -242,7 +253,11 @@ impl EndpointHandleBuilder {
         });
 
         // Use the existing with_path_and_state constructor
-        Ok(EndpointHandle::with_path_and_state(
+        #[cfg_attr(
+            not(unix),
+            expect(unused_mut, reason = "only unix applies the ownership-check override")
+        )]
+        let mut handle = EndpointHandle::with_path_and_state(
             socket_path,
             ServerDeps {
                 client_registry,
@@ -256,6 +271,11 @@ impl EndpointHandleBuilder {
             },
             watcher_slot,
             security_config,
-        ))
+        );
+        #[cfg(unix)]
+        if let Some(period) = self.socket_ownership_check {
+            handle.socket_ownership_check = period;
+        }
+        Ok(handle)
     }
 }
