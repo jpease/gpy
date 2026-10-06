@@ -591,8 +591,11 @@ function _verify_installation
         echo ""
         echo "🔄 Testing config hot-reload..."
 
-        # Set debug logging and start agent
-        set -l debug_log /tmp/gpy-verify-$fish_pid.log
+        # Probe with a private temp dir and a throwaway debug-logged agent.
+        # The agent reopens GPY_DEBUG_LOG on every line, so the daemon that
+        # outlives this script must never be the one carrying it (#743).
+        set -l probe_dir (mktemp -d)
+        set -l debug_log $probe_dir/agent.log
         env GPY_DEBUG_LOG=$debug_log gpy-agent start >/dev/null 2>&1
 
         # Poll for the hot-reload success line instead of a fixed sleep: the
@@ -613,15 +616,18 @@ function _verify_installation
                 echo "✅ Config hot-reload: ENABLED (1-second debounce)"
             else
                 echo "⚠️  Config hot-reload: UNKNOWN STATUS"
-                echo "   Debug log: $debug_log"
+                echo "   Debug log: $debug_log (removed after the probe)"
             end
 
-            # Cleanup debug log
-            rm -f $debug_log
         else
             echo "⚠️  Could not verify hot-reload (debug log not created)"
             echo "   Agent may not have started - check: gpy-agent status"
         end
+
+        # Replace the debug-logged probe agent with a clean long-lived one.
+        gpy-agent stop >/dev/null 2>&1
+        rm -rf $probe_dir
+        env -u GPY_DEBUG_LOG -u GPY_AGENT_ENABLED -u GPY_AGENT_SUPERVISOR_ENABLED gpy-agent start >/dev/null 2>&1
     end
 
     return 0
