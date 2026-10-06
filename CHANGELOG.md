@@ -503,6 +503,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   "not registered" reply triggers re-registration.
 - Fish shell-rendered segments (status, clock, hostname, username) that
   follow an agent-rendered segment keep their opening cap (#765).
+- The bash/zsh basic and parity test suites no longer leak a `gpy-agent`
+  daemon on every gate run (#750); the gate also runs them against the
+  checkout's debug binary instead of whichever `gpy-agent` is on `PATH`.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
