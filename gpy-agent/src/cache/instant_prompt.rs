@@ -570,7 +570,18 @@ impl InstantPromptCache {
             }
         }
 
-        write_atomic(&self.cache_dir, &format!("{key}.{suffix}.{ext}"), content)?;
+        let file_name = format!("{key}.{suffix}.{ext}");
+        // The directory is created at construction only; if something removed
+        // it since (cache cleaner, `rm -rf ~/.cache/gpy`), recreate it and retry
+        // exactly once, inside the same guard so the record is never ahead of
+        // disk (#707). Not done up front: it would cost a `stat` per write.
+        match write_atomic(&self.cache_dir, &file_name, content) {
+            Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir_all(&self.cache_dir)?;
+                write_atomic(&self.cache_dir, &file_name, content)?;
+            }
+            result => result?,
+        }
 
         cache.insert(map_key, content.to_owned());
         // Evict arbitrary entries to keep the in-memory dedup table bounded.
@@ -1328,6 +1339,8 @@ mod tests {
         /// `threads` writers released together by a `Barrier`, thread `i`
         /// writing `versions[i % versions.len()]` for `(key, suffix)` (#706).
         Concurrent(&'static str, &'static str, &'static [&'static str], usize),
+        /// Remove the whole cache directory, as `rm -rf ~/.cache/gpy` would (#707).
+        DeleteDir,
     }
 
     struct CacheHarness {
@@ -1353,6 +1366,13 @@ mod tests {
 
         fn apply(&mut self, op: &Op) {
             match *op {
+                Op::DeleteDir => {
+                    std::fs::remove_dir_all(&self.cache.cache_dir).expect("remove dir");
+                    self.expected.clear();
+                    self.touched = None;
+                    // Nothing to compare: the directory is legitimately absent.
+                    return;
+                }
                 Op::Write(key, suffix, content) => {
                     self.cache
                         .write_cache_file(key, suffix, PromptDialect::Ansi, content)
@@ -1453,6 +1473,42 @@ mod tests {
         h.apply(&Op::Write("repo", "git.red", "v"));
         h.apply(&Op::Age(60));
         h.apply(&Op::Write("repo", "git.none", "y"));
+    }
+
+    #[test]
+    fn instant_cache_recovers_after_directory_deleted() {
+        let mut h = CacheHarness::new();
+        h.apply(&Op::Write("repo", "git.none", "x"));
+        h.apply(&Op::DeleteDir);
+        // Changed value: write path recreates the directory.
+        h.apply(&Op::Write("repo", "git.none", "y"));
+        h.apply(&Op::DeleteDir);
+        // Identical to the recorded value: dedup finds the file gone and rewrites.
+        h.apply(&Op::Write("repo", "git.none", "y"));
+        h.apply(&Op::Write("repo", "git.red", "v"));
+        h.apply(&Op::DeleteDir);
+        h.apply(&Op::Write("repo", "git.red", "v"));
+        h.apply(&Op::Write("repo", "git.none", "z"));
+    }
+
+    #[test]
+    fn write_cache_file_recreates_missing_cache_dir() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let cache =
+            InstantPromptCache::new_in_dir(dir.path().join("instant-prompts")).expect("cache");
+        std::fs::remove_dir_all(dir.path().join("instant-prompts")).expect("remove dir");
+
+        assert!(
+            cache
+                .write_cache_file("repo", "git.none", PromptDialect::Ansi, "x")
+                .expect("write after dir removal"),
+            "first write after removal reports a change"
+        );
+        assert_eq!(
+            std::fs::read_to_string(cache.cache_file_path("repo", "git.none", PromptDialect::Ansi))
+                .expect("read"),
+            "x"
+        );
     }
 
     #[test]

@@ -382,6 +382,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - The instant-prompt cache no longer shows a stale git or language segment
   indefinitely after concurrent writes for the same repository (#706); the
   dedup record now always matches the file on disk.
+- The agent recreates its instant-prompts cache directory when it is
+  deleted while running (#707), instead of failing every cache write until
+  restart.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
