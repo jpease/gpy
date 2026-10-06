@@ -418,25 +418,27 @@ case "$CURRENT_SHELL" in
             mkdir -p "$SHELL_CONFIG_DIR/$dir"
         done
 
-        # Download core files. Core files are required for GPY to function
-        # (unlike segments/functions below, which are best-effort) -- a
-        # failed download must stop the install before any rc file is
-        # touched, so a partial install never leaves rc files pointing at an
-        # incomplete shell integration (#309).
+        # Core files, the conf.d/gpy_init.fish entry point (sourced by the
+        # config.fish block) and the functions below (fish_prompt.fish is the
+        # prompt symlink target) are required for GPY to function (unlike
+        # segments, which are best-effort) -- a failed download must stop the
+        # install before any rc file is touched, so a partial install never
+        # leaves rc files pointing at an incomplete shell integration (#309,
+        # #808).
         for file in $FISH_CORE_FILES; do
             fetch_to "$SHELL_FILES_BASE_URL/core/$file" "$SHELL_CONFIG_DIR/core/$file" || die "Failed to download core file: $file"
         done
 
-        fetch_to "https://raw.githubusercontent.com/$REPO/$VERSION/fish/conf.d/gpy_init.fish" "$SHELL_CONFIG_DIR/conf.d/gpy_init.fish" || warn "Could not download gpy_init.fish"
+        fetch_to "https://raw.githubusercontent.com/$REPO/$VERSION/fish/conf.d/gpy_init.fish" "$SHELL_CONFIG_DIR/conf.d/gpy_init.fish" || die "Failed to download gpy_init.fish"
 
         # Download segments
         for segment in $FISH_SEGMENT_FILES; do
             fetch_to "$SHELL_FILES_BASE_URL/segments/$segment" "$SHELL_CONFIG_DIR/segments/$segment" || warn "Could not download $segment"
         done
 
-        # Download functions
+        # Download functions (required: the prompt symlink targets them)
         for func in $FISH_FUNCTION_FILES; do
-            fetch_to "$SHELL_FILES_BASE_URL/functions/$func" "$SHELL_CONFIG_DIR/functions/$func" || warn "Could not download $func"
+            fetch_to "$SHELL_FILES_BASE_URL/functions/$func" "$SHELL_CONFIG_DIR/functions/$func" || die "Failed to download $func"
         done
 
         # Install Fish completions as ONE autoloadable file,
