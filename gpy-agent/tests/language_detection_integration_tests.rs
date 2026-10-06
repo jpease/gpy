@@ -524,3 +524,39 @@ fn test_oneshot_lang_uses_git_root_in_subdirectory() {
     );
     assert_eq!(at_sub, at_root, "subdirectory must match the repo root");
 }
+
+// Outside git, `oneshot lang` in a project subdirectory with no source files of
+// its own must resolve the nearest marker ancestor as the project root, so
+// `docs/` shows the same language as the project (#727).
+#[test]
+fn test_nongit_subdirectory_inherits_project_language() {
+    let (home_env, config_path) = setup_test_env();
+    // Under the isolated HOME, so no enclosing git repo is ever found.
+    let project = home_env.path().join("nongit");
+    fs::create_dir_all(project.join("src")).expect("Failed to create src");
+    fs::create_dir_all(project.join("docs")).expect("Failed to create docs");
+    fs::write(project.join("package.json"), "{}").expect("Failed to write package.json");
+    fs::write(project.join("src/index.js"), "x\n").expect("Failed to write index.js");
+    fs::write(project.join("docs/README.md"), "# d\n").expect("Failed to write README.md");
+
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_gpy-agent"));
+    command.args(["oneshot", "lang", "--cwd"]);
+    command.arg(project.join("docs"));
+    command.args(["--format", "json"]);
+    configure_command_env(&mut command, &home_env, &config_path);
+    let output = command.output().expect("Failed to execute gpy-agent");
+    assert!(output.status.success(), "oneshot lang failed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Failed to parse JSON");
+    let found = json
+        .get("languages")
+        .and_then(|v| v.as_array())
+        .expect("languages should be an array")
+        .iter()
+        .any(|l| l.get("name").and_then(|n| n.as_str()) == Some("node"));
+    assert!(
+        found,
+        "a non-git docs/ subdirectory must inherit the project's node: {stdout}"
+    );
+}

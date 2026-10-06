@@ -13,7 +13,6 @@ use crate::ipc::{Message, Response};
 use crate::language::DetectionCache;
 use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
 use crate::language::display::build_language_display_info_at;
-use crate::watcher::multi_repo::MultiRepoWatcher;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -63,9 +62,18 @@ impl LanguageHandler {
         // Use the shared theme manager instead of loading from disk
         let theme = self.render.theme_manager.get();
         let request_path = path.as_path();
-        let git_root = MultiRepoWatcher::find_git_root(request_path);
-        let in_git_repo = git_root.is_some();
-        let repo_root = git_root.unwrap_or_else(|| request_path.to_path_buf());
+        // Detect at the project root: the git root, else the nearest marker
+        // ancestor (#727). The instant cache stays keyed by the request path
+        // outside git, because the shells look it up by `realpath $PWD` there;
+        // inside git both are the repo root.
+        let project_root = crate::language::project_root(request_path);
+        let in_git_repo = project_root.is_git();
+        let repo_root = project_root.into_path();
+        let cache_path = if in_git_repo {
+            repo_root.as_path()
+        } else {
+            request_path
+        };
 
         // Resolve the forwarded venv (if any) against this repo and stash it so
         // the background detection job renders the same interpreter version,
@@ -82,6 +90,11 @@ impl LanguageHandler {
             Some(venv) => crate::language::venv::stash_project_venv(&repo_root, venv),
             None => crate::language::venv::clear_project_venv(&repo_root),
         }
+        // The venv the reply renders with, resolved against the project root:
+        // the instant cache is written for `cache_path`, which outside git
+        // may be a subdirectory without the project's `.venv`.
+        let project_venv =
+            forwarded_venv.or_else(|| crate::language::venv::resolve_python_venv(&repo_root, None));
 
         // Check the in-memory cache first. On a cold miss, wait on the single-flight
         // detection job only up to a bounded budget so a slow scan never blocks the
@@ -117,15 +130,15 @@ impl LanguageHandler {
         // `publish_and_repaint` (#624).
         let palette = self.render.palette_cache.get();
         let result = self.render.instant_cache.write_language_variants(
-            &repo_root,
+            cache_path,
             &detected_languages,
             &config,
             &theme,
             prev_bg,
             &palette,
-            forwarded_venv.as_deref(),
+            project_venv.as_deref(),
         );
-        notify_if_changed(&self.render.client_registry, &repo_root, result, "language");
+        notify_if_changed(&self.render.client_registry, cache_path, result, "language");
 
         if detected_languages.is_empty() {
             return Ok(Response::Language { languages: vec![] });
@@ -136,7 +149,7 @@ impl LanguageHandler {
             &theme,
             &config.language,
             Some(&repo_root),
-            forwarded_venv.as_deref(),
+            project_venv.as_deref(),
         );
 
         Ok(Response::Language { languages })
@@ -270,6 +283,12 @@ mod tests {
     use crate::theme::ThemeManager;
 
     fn make_handler() -> (LanguageHandler, Arc<ClientDirectory>) {
+        make_handler_with_cache(InstantPromptCache::new_for_test())
+    }
+
+    fn make_handler_with_cache(
+        instant_cache: InstantPromptCache,
+    ) -> (LanguageHandler, Arc<ClientDirectory>) {
         let registry = ClientDirectory::new().shared();
         let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
         let palette_cache = Arc::new(PaletteCache::from_config(&config_manager.get()));
@@ -280,7 +299,7 @@ mod tests {
             // git_handler's equivalent fixture.
             theme_manager: Arc::new(ThemeManager::builtin("default").expect("theme")),
             palette_cache,
-            instant_cache: Arc::new(InstantPromptCache::new_for_test()),
+            instant_cache: Arc::new(instant_cache),
             client_registry: Arc::clone(&registry),
         };
         let handler = LanguageHandler::new(render, DetectionCache::new());
@@ -502,6 +521,51 @@ mod tests {
                 .get(&root)
                 .is_some_and(|langs| langs.is_empty()),
             "a git root's entry must be left untouched by a stale hit"
+        );
+    }
+
+    /// #727: a non-git subdirectory reports its project's languages.
+    ///
+    /// Detection (and its cache) runs at the nearest marker ancestor, while the
+    /// instant cache stays keyed by the request path the shells read.
+    #[test]
+    fn non_git_subdirectory_detects_at_marker_ancestor() {
+        let cache_dir = tempfile::TempDir::new().expect("cache dir");
+        let (handler, _registry) = make_handler_with_cache(
+            InstantPromptCache::new_in_dir(cache_dir.path().to_path_buf()).expect("cache"),
+        );
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let root = std::fs::canonicalize(temp_dir.path()).expect("canonicalize");
+        write_rust_project(&root);
+        let docs = root.join("docs");
+        std::fs::create_dir_all(&docs).expect("docs dir");
+        std::fs::write(docs.join("README.md"), "# d\n").expect("README.md");
+
+        let response = handler
+            .handle(&language_detect_request(&docs))
+            .expect("docs request");
+        assert!(
+            matches!(&response, Response::Language { languages }
+                if languages.iter().any(|l| l.name == "rust")),
+            "docs/ must report the project's rust: {response:?}"
+        );
+        assert!(
+            handler.language_cache.get(&root).is_some(),
+            "detection must be cached under the marker ancestor"
+        );
+
+        // The synchronous reply's render must land in the request path's
+        // entries (key ends `_sdocs`), not only in the project root's.
+        let docs_entry_rendered = std::fs::read_dir(cache_dir.path())
+            .expect("read cache dir")
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().contains("_sdocs.lang"))
+            .any(|entry| {
+                std::fs::read_to_string(entry.path()).is_ok_and(|prompt| !prompt.is_empty())
+            });
+        assert!(
+            docs_entry_rendered,
+            "the instant cache must stay keyed by the request path"
         );
     }
 }

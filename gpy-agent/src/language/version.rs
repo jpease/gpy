@@ -248,12 +248,13 @@ fn has_tool_version_config(path: &Path) -> bool {
     present
 }
 
-/// Upper bound on how many ancestor directories the mise walk inspects.
+/// Upper bound on how many ancestor directories the mise walk (and the non-git
+/// project-root walk in [`crate::language::project_root`]) inspects.
 ///
 /// Applies when the path is not anchored under `$HOME`. Deep enough to cover
 /// any realistic project nesting; a guard against pathological paths, not a
 /// functional limit.
-const MAX_TOOL_VERSION_ANCESTORS: usize = 64;
+pub(super) const MAX_TOOL_VERSION_ANCESTORS: usize = 64;
 
 /// Bounded ancestor walk backing [`has_tool_version_config`].
 fn compute_has_tool_version_config(path: &Path, home: Option<&Path>) -> bool {
