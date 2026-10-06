@@ -613,6 +613,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - The language segment in non-git directories picks up added or removed
   project files within about 30 seconds instead of keeping the first
   detection until the agent restarts (#709).
+- A deactivated Python virtualenv no longer reappears in the prompt after
+  background refreshes (#726).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

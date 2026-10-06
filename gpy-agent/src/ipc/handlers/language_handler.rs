@@ -70,11 +70,17 @@ impl LanguageHandler {
         // Resolve the forwarded venv (if any) against this repo and stash it so
         // the background detection job renders the same interpreter version,
         // preventing a flip-flop between the synchronous reply and later refreshes.
+        // The stash mirrors the most recent request: shells omit `virtual_env`
+        // once the venv is deactivated, so a request without a usable one clears
+        // it (#726). Known limitation: the instant-cache files are keyed by repo,
+        // not venv, so two shells in one repo with different venv states share one
+        // rendered result and the most recent request wins.
         let forwarded_venv = virtual_env
             .map(std::path::Path::new)
             .and_then(|env| crate::language::venv::resolve_python_venv(&repo_root, Some(env)));
-        if let Some(venv) = forwarded_venv.as_deref() {
-            crate::language::venv::stash_project_venv(&repo_root, venv);
+        match forwarded_venv.as_deref() {
+            Some(venv) => crate::language::venv::stash_project_venv(&repo_root, venv),
+            None => crate::language::venv::clear_project_venv(&repo_root),
         }
 
         // Check the in-memory cache first. On a cold miss, wait on the single-flight
@@ -291,6 +297,71 @@ mod tests {
             is_first: false,
             prev_bg: None,
             virtual_env: None,
+        }
+    }
+
+    /// Same as [`language_detect_request`] but forwarding `virtual_env`.
+    fn language_detect_request_with_venv(repo_root: &Path, venv: Option<&Path>) -> Message {
+        Message::LanguageDetect {
+            path: crate::security::SafePath::new(repo_root.to_str().expect("utf8 path"))
+                .expect("safe path"),
+            format: Format::default(),
+            is_last: false,
+            is_first: false,
+            prev_bg: None,
+            virtual_env: venv.map(|v| v.to_str().expect("utf8 path").to_owned()),
+        }
+    }
+
+    /// #726: the stash mirrors the most recent request, so a request that
+    /// carries no usable `virtual_env` (shell ran `deactivate`, or the value is
+    /// not a venv dir) must clear it for background refreshes.
+    #[test]
+    fn request_without_virtual_env_clears_stash() {
+        let (handler, _registry) = make_handler();
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let repo_dir = temp_dir.path().join("repo");
+        std::fs::create_dir_all(repo_dir.join(".git")).expect("git dir");
+        std::fs::write(repo_dir.join("pyproject.toml"), "[project]\nname=\"x\"\n")
+            .expect("pyproject");
+        std::fs::write(repo_dir.join("m.py"), "p = 1\n").expect("py file");
+        let repo_root = std::fs::canonicalize(&repo_dir).expect("canonicalize repo root");
+        let ext_venv = temp_dir.path().join("extvenv");
+        std::fs::create_dir_all(&ext_venv).expect("venv dir");
+        std::fs::write(ext_venv.join("pyvenv.cfg"), "home = /x\nversion = 3.9.9\n")
+            .expect("pyvenv.cfg");
+        let not_a_venv = temp_dir.path().join("plain");
+        std::fs::create_dir_all(&not_a_venv).expect("plain dir");
+
+        handler.language_cache.set(
+            &repo_root,
+            vec![DetectedLanguage {
+                name: "python".to_owned(),
+                confidence: 1.0,
+                file_count: 1,
+                total_bytes: 6,
+            }],
+        );
+
+        for follow_up in [None, Some(not_a_venv.as_path())] {
+            handler
+                .handle(&language_detect_request_with_venv(
+                    &repo_root,
+                    Some(&ext_venv),
+                ))
+                .expect("request with venv");
+            assert!(
+                crate::language::venv::stashed_project_venv(&repo_root).is_some(),
+                "a forwarded venv must be stashed"
+            );
+            handler
+                .handle(&language_detect_request_with_venv(&repo_root, follow_up))
+                .expect("request without usable venv");
+            assert_eq!(
+                crate::language::venv::stashed_project_venv(&repo_root),
+                None,
+                "a request without a usable virtual_env must clear the stash"
+            );
         }
     }
 
