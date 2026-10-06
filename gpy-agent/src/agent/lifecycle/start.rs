@@ -12,10 +12,12 @@ use crate::{agent::Agent, debug_log};
 #[cfg(unix)]
 use std::path::PathBuf;
 #[cfg(unix)]
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 #[cfg(unix)]
-use crate::ipc::registry::{ShellFlag, default_shell_dir, ring_doorbell, write_shell_flag};
+use crate::ipc::registry::{
+    ShellFlag, default_shell_dir, process_start_time_secs, ring_doorbell, write_shell_flag,
+};
 #[cfg(unix)]
 use fork::Fork;
 #[cfg(unix)]
@@ -135,6 +137,11 @@ impl ShellRenudger {
     /// orphan flags whose tracking file is already gone. A PID seen
     /// registered has its attempt budget cleared, so a later restart that
     /// strands it again starts from a full budget instead of an exhausted one.
+    ///
+    /// `is_alive` receives the tracking file's mtime (`None` for flag files
+    /// and when it cannot be read), so it can also reject a PID recycled to a
+    /// process that started after the file was written (#781); such a PID's
+    /// tracking file and flags are removed by name in the same pass.
     pub(crate) fn pids_to_nudge<R, A>(
         &mut self,
         shell_dir: &std::path::Path,
@@ -143,7 +150,7 @@ impl ShellRenudger {
     ) -> Vec<u32>
     where
         R: Fn(u32) -> bool,
-        A: Fn(u32) -> bool,
+        A: Fn(u32, Option<SystemTime>) -> bool,
     {
         let Ok(entries) = std::fs::read_dir(shell_dir) else {
             return Vec::new();
@@ -164,7 +171,7 @@ impl ShellRenudger {
                     || suffix == ShellFlag::Reregister.suffix();
                 if is_flag
                     && let Ok(flag_pid) = stem.parse::<u32>()
-                    && !is_alive(flag_pid)
+                    && !is_alive(flag_pid, None)
                 {
                     let _ = std::fs::remove_file(&path);
                 }
@@ -175,8 +182,13 @@ impl ShellRenudger {
             };
             tracked.insert(pid);
 
-            if !is_alive(pid) {
+            let modified = entry.metadata().and_then(|m| m.modified()).ok();
+            if !is_alive(pid, modified) {
                 let _ = std::fs::remove_file(&path);
+                for flag in [ShellFlag::Reload, ShellFlag::Reregister] {
+                    let _ =
+                        std::fs::remove_file(shell_dir.join(format!("{pid}.{}", flag.suffix())));
+                }
                 continue;
             }
 
@@ -199,6 +211,39 @@ impl ShellRenudger {
 
         targets
     }
+}
+
+/// Production liveness for tracked shells (#781).
+///
+/// The PID is alive ([`crate::ipc::ClientDirectory::is_client_alive`]) and its
+/// process did not start more than 1 s after the tracking file was last
+/// written. Every shell rewrites its file on each registration, so a newer
+/// process means the PID was recycled. A failed start-time lookup or
+/// unreadable mtime counts as alive (the #432 rule). One `sysinfo::System`
+/// serves the whole scan.
+#[cfg(unix)]
+fn tracked_shell_liveness() -> impl Fn(u32, Option<SystemTime>) -> bool {
+    let sys = std::cell::RefCell::new(sysinfo::System::new());
+    move |pid, tracked_mtime| {
+        if !crate::ipc::ClientDirectory::is_client_alive(pid) {
+            return false;
+        }
+        let Some(written) = tracked_mtime else {
+            return true;
+        };
+        process_start_time_secs(&mut sys.borrow_mut(), pid)
+            .is_none_or(|started| !started_after_tracking(started, written))
+    }
+}
+
+/// Whether a process that started at `started_secs` (whole seconds since the
+/// epoch) started after a tracking file last written at `modified`, with one
+/// second of slack for sysinfo's whole-second start time.
+#[cfg(unix)]
+fn started_after_tracking(started_secs: u64, modified: SystemTime) -> bool {
+    modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .is_ok_and(|written| started_secs > written.as_secs().saturating_add(1))
 }
 
 /// Re-send the restart nudge to every tracked shell that is alive but
@@ -224,7 +269,7 @@ fn renudge_unregistered_shells_in(
     let pids = renudger.pids_to_nudge(
         shell_dir,
         |pid| registry.is_registered(pid),
-        crate::ipc::ClientDirectory::is_client_alive,
+        tracked_shell_liveness(),
     );
 
     for pid in pids {
@@ -325,17 +370,13 @@ pub(crate) fn notify_existing_shells_of_restart() {
 ///   exists to bound the *periodic* caller, which reuses one renudger for the
 ///   agent's lifetime.
 ///
-/// Liveness comes from [`crate::ipc::ClientDirectory::is_client_alive`],
-/// which treats `EPERM` as alive, so a live shell we merely lack permission to
-/// signal keeps its tracking file instead of having it deleted.
+/// Liveness comes from [`tracked_shell_liveness`]: `is_client_alive` (which
+/// treats `EPERM` as alive, so a live shell we merely lack permission to
+/// signal keeps its tracking file) plus the recycled-PID check (#781).
 #[cfg(unix)]
 fn nudge_all_tracked_shells_in(shell_dir: &std::path::Path) {
     let mut renudger = ShellRenudger::default();
-    let pids = renudger.pids_to_nudge(
-        shell_dir,
-        |_| false,
-        crate::ipc::ClientDirectory::is_client_alive,
-    );
+    let pids = renudger.pids_to_nudge(shell_dir, |_| false, tracked_shell_liveness());
 
     for pid in pids {
         debug_log!("agent", "Nudging tracked shell {pid} after agent restart");
@@ -550,7 +591,7 @@ mod tests {
         track_shells(dir.path(), &[100_u32, 200_u32]);
 
         let mut renudger = super::ShellRenudger::default();
-        let targets = renudger.pids_to_nudge(dir.path(), |pid| pid == 100_u32, |_| true);
+        let targets = renudger.pids_to_nudge(dir.path(), |pid| pid == 100_u32, |_, _| true);
 
         assert_eq!(
             targets,
@@ -568,7 +609,7 @@ mod tests {
         track_shells(dir.path(), &[300_u32]);
 
         let mut renudger = super::ShellRenudger::default();
-        let targets = renudger.pids_to_nudge(dir.path(), |_| false, |_| false);
+        let targets = renudger.pids_to_nudge(dir.path(), |_| false, |_, _| false);
 
         assert!(targets.is_empty(), "a dead shell must not be signalled");
         assert!(
@@ -633,7 +674,7 @@ mod tests {
         let targets = renudger.pids_to_nudge(
             dir.path(),
             |_| false,
-            crate::ipc::ClientDirectory::is_client_alive,
+            |tracked_pid, _| crate::ipc::ClientDirectory::is_client_alive(tracked_pid),
         );
 
         assert_eq!(
@@ -645,6 +686,44 @@ mod tests {
             dir.path().join(pid.to_string()).exists(),
             "an alive shell's tracking file must survive (only dead ones are cleaned up)"
         );
+    }
+
+    /// #781: a tracking file written long before its PID's current process
+    /// started belongs to a recycled PID. It is removed and never nudged.
+    #[cfg(unix)]
+    #[test]
+    fn nudge_skips_and_removes_tracking_file_older_than_its_process() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let pid = std::process::id();
+        track_shells(dir.path(), &[pid]);
+        let tracking = dir.path().join(pid.to_string());
+        std::fs::File::options()
+            .write(true)
+            .open(&tracking)
+            .expect("open tracking file")
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1000))
+            .expect("backdate tracking file");
+
+        super::nudge_all_tracked_shells_in(dir.path());
+
+        assert!(
+            !dir.path().join(format!("{pid}.reregister")).exists(),
+            "a recycled PID must not get a reregister flag"
+        );
+        assert!(
+            !tracking.exists(),
+            "a recycled PID's tracking file must be removed"
+        );
+    }
+
+    /// #781: an unknown start time or mtime never makes a PID look recycled.
+    #[cfg(unix)]
+    #[test]
+    fn started_after_tracking_needs_more_than_a_second() {
+        let written = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+        assert!(!super::started_after_tracking(1000, written));
+        assert!(!super::started_after_tracking(1001, written));
+        assert!(super::started_after_tracking(1002, written));
     }
 
     /// A shell that can never register (Fish-side gpy disabled or broken, but
@@ -661,7 +740,7 @@ mod tests {
         for _ in 0_u32..(super::MAX_RENUDGE_ATTEMPTS + 3_u32) {
             nudges += u32::try_from(
                 renudger
-                    .pids_to_nudge(dir.path(), |_| false, |_| true)
+                    .pids_to_nudge(dir.path(), |_| false, |_, _| true)
                     .len(),
             )
             .expect("nudge count fits in u32");
@@ -685,20 +764,20 @@ mod tests {
 
         let mut renudger = super::ShellRenudger::default();
         for _ in 0_u32..super::MAX_RENUDGE_ATTEMPTS {
-            let _ = renudger.pids_to_nudge(dir.path(), |_| false, |_| true);
+            let _ = renudger.pids_to_nudge(dir.path(), |_| false, |_, _| true);
         }
         assert!(
             renudger
-                .pids_to_nudge(dir.path(), |_| false, |_| true)
+                .pids_to_nudge(dir.path(), |_| false, |_, _| true)
                 .is_empty(),
             "budget should be exhausted before the recovery round"
         );
 
         // Recovered: the agent now knows this PID again.
-        let _ = renudger.pids_to_nudge(dir.path(), |_| true, |_| true);
+        let _ = renudger.pids_to_nudge(dir.path(), |_| true, |_, _| true);
 
         assert_eq!(
-            renudger.pids_to_nudge(dir.path(), |_| false, |_| true),
+            renudger.pids_to_nudge(dir.path(), |_| false, |_, _| true),
             vec![500_u32],
             "a shell that recovered and was stranded again should get a fresh budget"
         );

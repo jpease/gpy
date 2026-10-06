@@ -35,6 +35,18 @@ pub(super) fn create_clock_timer() -> tokio::time::Interval {
     clock_timer
 }
 
+/// Creates the 60 s pruning and shell re-nudge timer.
+///
+/// Its first tick lands at +60 s, not at t=0: the restart-nudge task is the
+/// only nudge at agent start, so a tracked shell is nudged once per start
+/// and no re-nudge attempt is spent at t=0 (#781).
+pub(super) fn create_pruning_timer() -> tokio::time::Interval {
+    let mut pruning_timer = tokio::time::interval(Duration::from_secs(60));
+    pruning_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    pruning_timer.reset();
+    pruning_timer
+}
+
 /// Creates a shutdown signal handler for graceful shutdown.
 ///
 /// Listens for both SIGINT (ctrl-c) and SIGTERM, since SIGTERM is what
@@ -129,6 +141,17 @@ mod tests {
     use super::*;
     use nix::sys::signal::{Signal, raise};
     use serial_test::serial;
+
+    /// #781: the restart nudge must be the only nudge at t=0.
+    #[tokio::test]
+    async fn pruning_timer_first_tick_is_not_immediate() {
+        let mut timer = create_pruning_timer();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), timer.tick())
+                .await
+                .is_err()
+        );
+    }
 
     /// SIGTERM must resolve the shutdown future instead of hitting the
     /// default disposition (instant process death). Self-raises SIGTERM

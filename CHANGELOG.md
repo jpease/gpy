@@ -274,6 +274,12 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   `~` contraction, and macOS `/tmp` showed as `/private/tmp`; IPC and oneshot
   output now match. Path validation, read-only checks and push-delivery
   matching still use the canonical path; the wire format is unchanged.
+- The agent no longer signals an unrelated process that reused a dead
+  shell's PID (#781). A shell tracking file older than its PID's current
+  process is now removed with its flags instead of getting a `.reregister`
+  flag and `SIGURG`. Each tracked shell is also nudged once per agent start
+  instead of twice; the first periodic re-nudge comes 60 seconds later.
+
 - An agent whose socket was removed or taken over by another agent now
   exits within 30 seconds (#779). A wedged agent that recovered after being
   evicted, or one whose socket was deleted, used to run forever where no

@@ -99,6 +99,17 @@ pub(crate) fn ring_doorbell(pid: u32) -> nix::Result<()> {
     kill(Pid::from_raw(pid_i32), DOORBELL)
 }
 
+/// Start time (seconds since the epoch) of the process occupying `pid`.
+///
+/// `None` if it can't be determined (process gone, or a transient lookup
+/// failure). Shared by the client registry and the shell-tracking scan (#781).
+#[cfg(unix)]
+pub(crate) fn process_start_time_secs(sys: &mut sysinfo::System, pid: u32) -> Option<u64> {
+    let sys_pid = sysinfo::Pid::from_u32(pid);
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sys_pid]), true);
+    sys.process(sys_pid).map(sysinfo::Process::start_time)
+}
+
 /// Default throttle interval in milliseconds between signals to the same client
 const DEFAULT_THROTTLE_MS: u64 = 150;
 
@@ -258,10 +269,8 @@ impl ClientDirectory {
     /// (process gone, or a transient lookup failure).
     #[cfg(unix)]
     fn process_start_time(&self, pid: u32) -> Option<u64> {
-        let sys_pid = sysinfo::Pid::from_u32(pid);
         let mut sys = self.sysinfo.lock().ok()?;
-        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sys_pid]), true);
-        sys.process(sys_pid).map(sysinfo::Process::start_time)
+        process_start_time_secs(&mut sys, pid)
     }
 
     #[cfg(not(unix))]
