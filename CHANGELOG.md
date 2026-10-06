@@ -365,6 +365,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - A symlinked `config.toml` (stow/dotfiles layout) hot-reloads when it is
   edited through the link or at its target, or when the link is retargeted
   (#720).
+- The agent picks up edits to the active palette file (and
+  `gpy palette use <same name>`) without a restart, regenerating instant caches
+  and repainting open shells (#772).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

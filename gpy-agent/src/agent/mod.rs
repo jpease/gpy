@@ -1225,6 +1225,13 @@ impl Agent {
         })
     }
 
+    /// The palette the agent currently renders with, for integration testing.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn active_palette_for_testing(&self) -> crate::template::Palette {
+        self.ctx.palette_cache.get()
+    }
+
     /// Register a test client for integration testing
     #[doc(hidden)]
     pub fn register_test_client(&self, pid: u32, repo_path: &std::path::Path) {
