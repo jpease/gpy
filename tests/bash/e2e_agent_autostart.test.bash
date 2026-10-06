@@ -146,10 +146,10 @@ fi
 # --- 4. workspace sync ---------------------------------------------------------------
 echo "--- 4. workspace op ---"
 # A workspace op re-registers the PID's watch at its new cwd, which the
-# watcher logs as `register_client: pid=<pid>, cwd=<repo>`; the first
+# watcher logs as `attach_pid_to: pid=<pid>, cwd=<repo>` (#718); the first
 # registration logged the home directory, so a line naming the repo can only
 # come from the workspace update.
-if grep -q "register_client: pid=$client_pid, cwd=.*$(basename "$SHELL_E2E_REPO")" "$GPY_DEBUG_LOG" 2>/dev/null; then
+if grep -q "attach_pid_to: pid=$client_pid, cwd=.*$(basename "$SHELL_E2E_REPO")" "$GPY_DEBUG_LOG" 2>/dev/null; then
     pass "a workspace op for PID $client_pid moved its watch to the repository"
 else
     fail "no workspace update for PID $client_pid in the agent log"
