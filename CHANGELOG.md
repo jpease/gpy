@@ -416,6 +416,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   as valid TOML (`skip_paths = []`).
 - The shipped `config/config.toml` sets `language.confidence_threshold` to
   its 0.1 default instead of 0.0 (#790).
+- `gpy-agent oneshot --help` lists only formats the agent can render: the
+  rejected `fish-ansi` and the unimplemented `zsh-source` are gone, and the new
+  `bash-prompt` / `zsh-prompt` values appear (#756).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
