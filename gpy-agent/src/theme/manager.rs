@@ -1088,16 +1088,6 @@ mod tests {
     }
 
     #[test]
-    fn theme_source_content_returns_raw_builtin_content() {
-        let content = ThemeManager::theme_source_content("default")
-            .expect("builtin default theme content should resolve");
-        assert_eq!(
-            content, DEFAULT_THEME_CONTENT,
-            "should return the exact embedded builtin content, not a re-serialized copy"
-        );
-    }
-
-    #[test]
     fn theme_source_content_rejects_unknown_theme_name() {
         let message = match ThemeManager::theme_source_content("no-such-theme-xyz") {
             Ok(_) => panic!("unknown theme name must be rejected"),

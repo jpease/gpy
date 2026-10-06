@@ -1641,3 +1641,29 @@ fn concurrent_export_never_pairs_one_themes_name_with_anothers_colors() {
          valid pairs are {valid_pairs:?}, observed {torn:?}"
     );
 }
+
+/// #838: the builtin's raw source comes back verbatim. Runs with an empty
+/// config root so an installed `~/.config/gpy/themes/default.toml` cannot
+/// shadow the builtin.
+#[test]
+#[serial]
+fn theme_source_content_returns_raw_builtin_content() {
+    let temp_dir = TempDir::new().unwrap();
+
+    unsafe {
+        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        std::env::remove_var("GPY_BUNDLED_PLUGIN_DIR");
+    }
+
+    let content = ThemeManager::theme_source_content("default");
+
+    unsafe {
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    assert_eq!(
+        content.expect("builtin default theme content should resolve"),
+        ThemeManager::default_theme_template(),
+        "should return the exact embedded builtin content, not a re-serialized copy"
+    );
+}
