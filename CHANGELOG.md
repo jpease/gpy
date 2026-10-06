@@ -348,6 +348,10 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   (#822): tests pass paths to child shells as arguments instead of
   interpolating them into `-c` code, and a meta-check rejects any
   interpolating `-c` string under `tests/` and `scripts/`.
+- Local Rust hooks, `just lint` and `quality-check.sh` fail fast when the
+  active toolchain is not the pin in `gpy-agent/rust-toolchain.toml` (#823),
+  naming the override (e.g. a stray `RUSTUP_TOOLCHAIN`), instead of reporting
+  lint findings from the wrong compiler.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

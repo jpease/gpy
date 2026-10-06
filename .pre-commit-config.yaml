@@ -24,7 +24,7 @@ repos:
         pass_filenames: false
     -   id: rustfmt
         name: rustfmt
-        entry: rustfmt --edition 2024
+        entry: bash -c './scripts/check-active-toolchain.sh && rustfmt --edition 2024 "$@"' --
         language: system
         types: [rust]
         files: ^gpy-agent/
