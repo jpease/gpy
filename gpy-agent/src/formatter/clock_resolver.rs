@@ -19,7 +19,7 @@
 //! second.
 
 use crate::formatter::SegmentPosition;
-use crate::formatter::separator::{SeparatorStyle, resolve_separator};
+use crate::formatter::separator::{Glyphs, SeparatorStyle, resolve_separator};
 use crate::shell::Shell;
 use crate::template::VariableResolver;
 use crate::theme::ThemeConfig;
@@ -29,13 +29,26 @@ pub struct ClockResolver<'a> {
     shell: Shell,
     theme: &'a ThemeConfig,
     pos: SegmentPosition,
+    glyphs: Glyphs,
 }
 
 impl<'a> ClockResolver<'a> {
     /// Build a resolver for one clock segment render.
     #[must_use]
     pub const fn new(shell: Shell, theme: &'a ThemeConfig, pos: SegmentPosition) -> Self {
-        Self { shell, theme, pos }
+        Self {
+            shell,
+            theme,
+            pos,
+            glyphs: Glyphs::Nerd,
+        }
+    }
+
+    /// Draw this segment with `glyphs` instead of the default [`Glyphs::Nerd`];
+    /// callers holding a `Config` pass `Glyphs::from(&config.ui)` (#695).
+    #[must_use]
+    pub const fn with_glyphs(self, glyphs: Glyphs) -> Self {
+        Self { glyphs, ..self }
     }
 
     /// Build the `strftime(3)` spec for the configured clock format.
@@ -95,13 +108,13 @@ impl VariableResolver for ClockResolver<'_> {
             "time" => Some(self.time_token()),
             "style" => Some(self.style()),
             "bg" => Some(self.theme.segments.clock.bg_color.as_str().to_owned()),
-            "sep_gap" => resolve_separator(self.pos, SeparatorStyle::Chained)
+            "sep_gap" => resolve_separator(self.pos, SeparatorStyle::Chained, self.glyphs)
                 .gap
                 .map(str::to_owned),
-            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Chained)
+            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Chained, self.glyphs)
                 .close
                 .map(str::to_owned),
-            "sep_open" => resolve_separator(self.pos, SeparatorStyle::Chained)
+            "sep_open" => resolve_separator(self.pos, SeparatorStyle::Chained, self.glyphs)
                 .open
                 .map(str::to_owned),
             _ => None,

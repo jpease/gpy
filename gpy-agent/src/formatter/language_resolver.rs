@@ -6,7 +6,7 @@
 //! `version`, and `style`.
 
 use crate::config::Config;
-use crate::formatter::separator::{SeparatorStyle, resolve_separator};
+use crate::formatter::separator::{Glyphs, SeparatorStyle, resolve_separator};
 use crate::formatter::{SegmentPosition, get_language_display};
 use crate::ipc::LanguageInfo;
 use crate::template::VariableResolver;
@@ -48,6 +48,7 @@ impl<'a> LanguageResolver<'a> {
 
 impl VariableResolver for LanguageResolver<'_> {
     fn resolve(&self, name: &str) -> Option<String> {
+        let glyphs = Glyphs::from(&self.config.ui);
         match name {
             // The displayed glyph (icon) or the language name when icons are off —
             // the same text the legacy renderer emits before the version.
@@ -83,13 +84,13 @@ impl VariableResolver for LanguageResolver<'_> {
                     .get_style(&self.lang.name)
                     .to_owned(),
             ),
-            "sep_gap" => resolve_separator(self.pos, SeparatorStyle::Chained)
+            "sep_gap" => resolve_separator(self.pos, SeparatorStyle::Chained, glyphs)
                 .gap
                 .map(str::to_owned),
-            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Chained)
+            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Chained, glyphs)
                 .close
                 .map(str::to_owned),
-            "sep_open" => resolve_separator(self.pos, SeparatorStyle::Chained)
+            "sep_open" => resolve_separator(self.pos, SeparatorStyle::Chained, glyphs)
                 .open
                 .map(str::to_owned),
             _ => None,

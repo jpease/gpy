@@ -654,6 +654,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   repository was armed (#721), including new branch ref directories.
 - `git.skip_paths` honours `~/` and symlinked entries and is applied by the
   registration scan, watcher refreshes and the oneshot fallback too (#696).
+- `ui.show_icons = false` no longer emits Nerd Font powerline caps or
+  private-use segment delimiters (#695), so prompts render without a Nerd
+  Font.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

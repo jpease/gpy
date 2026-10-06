@@ -8,7 +8,7 @@
 //! hardcode literal colors rather than referencing `$style`.
 
 use crate::formatter::SegmentPosition;
-use crate::formatter::separator::{SeparatorStyle, resolve_separator};
+use crate::formatter::separator::{Glyphs, SeparatorStyle, resolve_separator};
 use crate::template::VariableResolver;
 use crate::theme::ThemeConfig;
 
@@ -17,6 +17,7 @@ pub struct HostnameResolver<'a> {
     hostname: String,
     theme: &'a ThemeConfig,
     pos: SegmentPosition,
+    glyphs: Glyphs,
 }
 
 impl<'a> HostnameResolver<'a> {
@@ -27,7 +28,15 @@ impl<'a> HostnameResolver<'a> {
             hostname,
             theme,
             pos,
+            glyphs: Glyphs::Nerd,
         }
+    }
+
+    /// Draw this segment with `glyphs` instead of the default [`Glyphs::Nerd`];
+    /// callers holding a `Config` pass `Glyphs::from(&config.ui)` (#695).
+    #[must_use]
+    pub fn with_glyphs(self, glyphs: Glyphs) -> Self {
+        Self { glyphs, ..self }
     }
 
     /// The hostname trimmed at the first occurrence of `trim_at`; unchanged
@@ -56,7 +65,7 @@ impl VariableResolver for HostnameResolver<'_> {
                     .unwrap_or("")
                     .to_owned(),
             ),
-            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Terminal)
+            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Terminal, self.glyphs)
                 .close
                 .map(str::to_owned),
             _ => None,

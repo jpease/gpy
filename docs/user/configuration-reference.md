@@ -228,7 +228,7 @@ Controls top-level layout: theme selection and which segments render.
 
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|
-| `show_icons` | bool | `true` | — | Shows icons (language, git, etc.) instead of falling back to text-only rendering where supported. |
+| `show_icons` | bool | `true` | — | Shows icons (language, git, etc.) instead of falling back to text-only rendering where supported. Setting it to `false` also drops the Nerd Font powerline caps (U+E0BA, U+E0BC, U+E0B4) and any private-use delimiter glyph the theme exports to the shell, leaving flat colored blocks that render in any font. Plain-text delimiters such as `[`/`]` are kept. |
 | `theme` | string | `"default"` | any theme file stem under `~/.config/gpy/themes/` (no path separators, no `..`, no control characters) | Selects which theme file controls colors and segment templates. |
 | `palette` | string | `"default"` | any palette file stem under `~/.config/gpy/palettes/` (same naming rules as `theme`) | Selects the named-color set (e.g. `nord`, `catppuccin-mocha`, `gruvbox-dark-medium`) used when a theme references colors by name. |
 | `enabled_segments` | array of strings | `["clock", "duration", "language", "directory", "git"]` | segment names, alphanumeric/underscore/hyphen only | The segments to render, in order. Segment names not on the built-in list must still pass the naming check (a plugin can register additional segment names). |

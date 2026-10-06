@@ -7,6 +7,7 @@
 //! without constructing a [`crate::theme::manager::ThemeManager`].
 
 use crate::config::{Config, DelimiterConfig};
+use crate::formatter::separator::Glyphs;
 use crate::shell::{Shell, VariableSyntax};
 use crate::theme::model::{PluginSegmentTheme, ThemeConfig};
 use std::collections::BTreeMap;
@@ -235,16 +236,21 @@ fn append_global_assignments(
     } else {
         "ascii"
     };
-    let powerline_start = theme
-        .ui
-        .segment_open
-        .as_ref()
-        .map_or("", |cfg| cfg.icon.as_str());
-    let powerline_end = theme
-        .ui
-        .segment_close
-        .as_ref()
-        .map_or("", |cfg| cfg.icon.as_str());
+    let glyphs = Glyphs::from(&config.ui);
+    let powerline_start = glyphs.delimiter(
+        theme
+            .ui
+            .segment_open
+            .as_ref()
+            .map_or("", |cfg| cfg.icon.as_str()),
+    );
+    let powerline_end = glyphs.delimiter(
+        theme
+            .ui
+            .segment_close
+            .as_ref()
+            .map_or("", |cfg| cfg.icon.as_str()),
+    );
 
     let mut assignments = vec![ShellAssignment::local(
         "__gpy_theme_name",
@@ -600,13 +606,23 @@ fn delimiter_colors(delimiter: Option<&DelimiterConfig>) -> (&str, &str) {
 }
 
 /// The four delimiter glyphs and the prompt/segment delimiter colors.
+///
+/// With [`Glyphs::Plain`] (`ui.show_icons = false`) a delimiter holding a
+/// private-use Nerd Font glyph is exported empty, so the shell-drawn segments
+/// (clock, status, plugins) show no tofu either (#695). The variable names
+/// and the colors are unchanged.
 #[expect(
     clippy::similar_names,
     reason = "fg/bg color pairs (seg_delim_fg/seg_delim_bg, prompt_open_fg/prompt_open_bg, prompt_close_fg/prompt_close_bg) are deliberately paired names, not accidental near-collisions"
 )]
-fn append_delimiter_assignments(output: &mut String, shell: Shell, theme: &ThemeConfig) {
+fn append_delimiter_assignments(
+    output: &mut String,
+    shell: Shell,
+    theme: &ThemeConfig,
+    glyphs: Glyphs,
+) {
     let syntax = shell.variable_syntax();
-    let escape = |text: &str| escape_shell_value(text, shell);
+    let escape = |text: &str| escape_shell_value(glyphs.delimiter(text), shell);
 
     let (prompt_open_fg, prompt_open_bg) = delimiter_colors(theme.ui.prompt_open.as_ref());
     let (prompt_close_fg, prompt_close_bg) = delimiter_colors(theme.ui.prompt_close.as_ref());
@@ -1046,7 +1062,7 @@ pub(crate) fn theme_to_shell(
     append_username_assignments(&mut output, shell, theme);
     append_status_assignments(&mut output, shell, theme);
     append_git_language_color_assignments(&mut output, shell, theme);
-    append_delimiter_assignments(&mut output, shell, theme);
+    append_delimiter_assignments(&mut output, shell, theme, Glyphs::from(&config.ui));
 
     append_plugin_segment_assignments(&mut output, shell, theme);
 
@@ -1285,6 +1301,75 @@ max_length = 42
             .expect("marker line shape");
             let got: Vec<&str> = body.split(' ').collect();
             assert_eq!(got, expected, "{shell}");
+        }
+    }
+
+    /// #695: `ui.show_icons = false` exports the delimiter glyphs empty.
+    ///
+    /// The variable names are unchanged, so the shell-drawn clock/status and
+    /// plugin segments draw no tofu; plain-text delimiters survive.
+    #[test]
+    fn export_drops_private_use_delimiters_when_icons_are_off() {
+        const DELIMITER_VARS: [&str; 6] = [
+            "__segment_delim_start",
+            "__segment_delim_end",
+            "__icon_powerline_segment_start",
+            "__icon_powerline_segment_end",
+            "__segment_delim_first",
+            "__segment_delim_last",
+        ];
+        let has_private_use =
+            |text: &str| text.chars().any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c));
+        let mut icons_off = golden_config();
+        icons_off.ui.show_icons = false;
+        let mut icons_on = golden_config();
+        icons_on.ui.show_icons = true;
+        for shell in [Shell::Fish, Shell::Bash, Shell::Zsh] {
+            let export = |config: &Config| {
+                theme_to_shell(
+                    &golden_theme(),
+                    GOLDEN_THEME_NAME,
+                    config,
+                    shell,
+                    &golden_plugin_segment_files(),
+                )
+            };
+            let line_of = |script: &str, name: &str| {
+                script
+                    .lines()
+                    .find(|l| l.contains(&format!("{name} ")) || l.contains(&format!("{name}=")))
+                    .unwrap_or_else(|| panic!("{shell}: no `{name}` line in export"))
+                    .to_owned()
+            };
+            let on = export(&icons_on);
+            let off = export(&icons_off);
+            for name in DELIMITER_VARS {
+                assert!(
+                    !has_private_use(&line_of(&off, name)),
+                    "{shell}: show_icons=false still exports a private-use glyph in {name}"
+                );
+            }
+            for name in [
+                "__segment_delim_start",
+                "__segment_delim_end",
+                "__icon_powerline_segment_start",
+                "__icon_powerline_segment_end",
+            ] {
+                assert!(
+                    has_private_use(&line_of(&on, name)),
+                    "{shell}: show_icons=true control: {name} must keep its glyph"
+                );
+            }
+            // The plain-text delimiters of the fixture are untouched.
+            for (name, text) in [
+                ("__segment_delim_first", "["),
+                ("__segment_delim_last", "]"),
+            ] {
+                assert!(
+                    line_of(&off, name).contains(text),
+                    "{shell}: {name} lost {text:?}"
+                );
+            }
         }
     }
 

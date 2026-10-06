@@ -9,6 +9,7 @@
 
 use crate::Result;
 use crate::config::Config;
+use crate::formatter::separator::Glyphs;
 use crate::formatter::{Formatter, PromptDialect, RenderContext};
 use crate::git::RepositoryStatus;
 use crate::ipc::{LanguageInfo, Response, protocol};
@@ -309,7 +310,8 @@ fn render_clock_via_template(
 ) -> crate::template::Result<String> {
     use crate::formatter::clock_resolver::ClockResolver;
 
-    let resolver = ClockResolver::new(shell, ctx.theme, ctx.position);
+    let resolver = ClockResolver::new(shell, ctx.theme, ctx.position)
+        .with_glyphs(Glyphs::from(&ctx.config.ui));
     render_via_template(&resolver, ctx, dialect, format)
 }
 
@@ -346,7 +348,8 @@ fn render_duration_via_template(
 ) -> crate::template::Result<String> {
     use crate::formatter::duration_resolver::DurationResolver;
 
-    let resolver = DurationResolver::new(duration_ms, ctx.theme, ctx.position);
+    let resolver = DurationResolver::new(duration_ms, ctx.theme, ctx.position)
+        .with_glyphs(Glyphs::from(&ctx.config.ui));
     render_via_template(&resolver, ctx, dialect, format)
 }
 
@@ -383,7 +386,8 @@ fn render_character_via_template(
 ) -> crate::template::Result<String> {
     use crate::formatter::character_resolver::CharacterResolver;
 
-    let resolver = CharacterResolver::new(success, ctx.theme, ctx.position);
+    let resolver = CharacterResolver::new(success, ctx.theme, ctx.position)
+        .with_glyphs(Glyphs::from(&ctx.config.ui));
     render_via_template(&resolver, ctx, dialect, format)
 }
 
@@ -420,7 +424,8 @@ fn render_hostname_via_template(
 ) -> crate::template::Result<String> {
     use crate::formatter::hostname_resolver::HostnameResolver;
 
-    let resolver = HostnameResolver::new(hostname.to_owned(), ctx.theme, ctx.position);
+    let resolver = HostnameResolver::new(hostname.to_owned(), ctx.theme, ctx.position)
+        .with_glyphs(Glyphs::from(&ctx.config.ui));
     render_via_template(&resolver, ctx, dialect, format)
 }
 
@@ -458,7 +463,8 @@ fn render_username_via_template(
 ) -> crate::template::Result<String> {
     use crate::formatter::username_resolver::UsernameResolver;
 
-    let resolver = UsernameResolver::new(username.to_owned(), ctx.theme, ctx.position);
+    let resolver = UsernameResolver::new(username.to_owned(), ctx.theme, ctx.position)
+        .with_glyphs(Glyphs::from(&ctx.config.ui));
     render_via_template(&resolver, ctx, dialect, format)
 }
 
@@ -1152,5 +1158,106 @@ mod tests {
     fn render_or_warn_passes_through_ok_value_unchanged() {
         let got = render_or_warn("directory segment", Ok("rendered".to_owned()));
         assert_eq!(got, "rendered", "Ok(value) must pass through unchanged");
+    }
+
+    /// Every `Response` variant the formatter renders through a segment
+    /// template, each paired with a position-independent sample payload.
+    fn separator_bearing_responses() -> Vec<Response> {
+        use crate::shell::Shell;
+        vec![
+            Response::RepositoryStatus(crate::git::RepositoryStatus {
+                branch: "main".to_owned(),
+                ahead: 0,
+                behind: 0,
+                ahead_capped: false,
+                behind_capped: false,
+                staged: 0,
+                unstaged: 0,
+                untracked: 0,
+                conflicts: 0,
+                state: crate::git::RepositoryState::Clean,
+                stash_count: 0,
+                detached: false,
+                rebase_progress: None,
+            }),
+            rust_response(),
+            Response::Directory {
+                cwd: "/home/user/project".to_owned(),
+                read_only: false,
+            },
+            Response::Clock { shell: Shell::Fish },
+            Response::Duration { duration_ms: 5000 },
+            Response::Character { success: true },
+            Response::Hostname {
+                hostname: "box".to_owned(),
+            },
+            Response::Username {
+                username: "ada".to_owned(),
+            },
+        ]
+    }
+
+    /// The shipped default theme with `$sep_close` formats added.
+    ///
+    /// Hostname/username ship without a template and character without a
+    /// closing cap, so every response variant needs one to draw caps at all.
+    fn default_theme_with_terminal_caps() -> ThemeConfig {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/themes/default.toml");
+        let mut theme = crate::config::loader::load_theme_from_path(path).expect("default theme");
+        let cap = "([$sep_close](fg:white bg:default))";
+        theme.segments.hostname.format = Some(format!("[ $hostname](fg:white bg:black){cap}"));
+        theme.segments.username.format = Some(format!("[ $username](fg:white bg:red){cap}"));
+        theme.segments.character.format = Some(format!("[$symbol](fg:green){cap}"));
+        theme
+    }
+
+    fn has_private_use(text: &str) -> bool {
+        text.chars().any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c))
+    }
+
+    /// #695: `ui.show_icons = false` promises a prompt that renders on any
+    /// terminal, so no segment may emit the Nerd Font powerline caps.
+    #[test]
+    fn show_icons_false_renders_no_private_use_glyphs() {
+        use crate::formatter::{Format, create_formatter};
+        let theme = default_theme_with_terminal_caps();
+        let formatter = create_formatter(Format::Ansi).expect("ansi formatter");
+        let positions = [
+            SegmentPosition::FIRST,
+            SegmentPosition::MIDDLE,
+            SegmentPosition::LAST,
+            SegmentPosition::ONLY,
+        ];
+        for show_icons in [true, false] {
+            let mut config = Config::default();
+            config.ui.show_icons = show_icons;
+            for response in separator_bearing_responses() {
+                for position in positions {
+                    let rc = RenderContext::new(&config, &theme, position);
+                    let out = formatter.render(&response, &rc).expect("render");
+                    assert!(
+                        !out.is_empty(),
+                        "{response:?} at {position:?} must render something"
+                    );
+                    if !show_icons {
+                        assert!(
+                            !has_private_use(&out),
+                            "show_icons=false: {response:?} at {position:?} leaked a \
+                             private-use glyph: {out:?}"
+                        );
+                    }
+                }
+                // Control: with icons on, the closing cap really is drawn at
+                // LAST, so the `false` arm above is not passing vacuously.
+                if show_icons {
+                    let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
+                    let out = formatter.render(&response, &rc).expect("render");
+                    assert!(
+                        has_private_use(&out),
+                        "show_icons=true control: {response:?} at LAST drew no cap: {out:?}"
+                    );
+                }
+            }
+        }
     }
 }

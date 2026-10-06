@@ -3385,6 +3385,58 @@ mod tests {
         );
     }
 
+    /// #695: toggling `ui.show_icons` off must re-render the git instant caches
+    /// without the Nerd Font powerline caps, overwriting the capped files a
+    /// previous `show_icons = true` render left behind.
+    #[test]
+    fn show_icons_toggle_regenerates_git_caches_without_caps() {
+        use crate::git::RepositoryState;
+        use std::collections::HashMap;
+
+        let (_tmp, repo) = create_temp_repo();
+        let cache_tmp = tempdir().expect("cache dir");
+        let ctx = make_hermetic_ctx(cache_tmp.path());
+        ctx.registry.register(4321, Some(repo.clone()));
+        ctx.cache
+            .set(&repo, status(0, RepositoryState::Clean), HashMap::new());
+
+        let git_cache_text = || -> String {
+            cache_file_names(cache_tmp.path())
+                .iter()
+                .filter(|f| {
+                    f.contains(".git.")
+                        && Path::new(f)
+                            .extension()
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("ansi"))
+                })
+                .map(|f| fs::read_to_string(cache_tmp.path().join(f)).expect("read git cache"))
+                .collect()
+        };
+        let has_private_use =
+            |text: &str| text.chars().any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c));
+
+        let mut config = Config::default();
+        config.ui.show_icons = true;
+        regenerate_instant_caches_for_theme_change(&ctx, &config);
+        let with_icons = git_cache_text();
+        assert!(
+            with_icons.contains("main") && has_private_use(&with_icons),
+            "control: show_icons=true cache must carry the caps: {with_icons:?}"
+        );
+
+        config.ui.show_icons = false;
+        regenerate_instant_caches_for_theme_change(&ctx, &config);
+        let without_icons = git_cache_text();
+        assert!(
+            without_icons.contains("main"),
+            "regenerated cache must still carry the branch: {without_icons:?}"
+        );
+        assert!(
+            !has_private_use(&without_icons),
+            "show_icons=false cache must not contain private-use glyphs: {without_icons:?}"
+        );
+    }
+
     /// #223: the deferred language regeneration body re-renders the cached language
     /// data into the instant caches (context-free fallback + the new theme's
     /// `prev_bg` token) and reports that a repaint is warranted.

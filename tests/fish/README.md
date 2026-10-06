@@ -29,7 +29,7 @@ This directory contains integration tests for the Fish shell prompt and GPY init
 
 ### End-to-End Tests
 
-- **`e2e_prompt_content.test.fish`** - Renders `fish_prompt` through a real agent from a real repository and asserts the exact git (branch, ahead, dirty, untracked, stash, detached, rebase), language (names, venv version) and directory (every display mode) tokens, plus the prompt frame (#644)
+- **`e2e_prompt_content.test.fish`** - Renders `fish_prompt` through a real agent from a real repository and asserts the exact git (branch, ahead, dirty, untracked, stash, detached, rebase), language (names, venv version) and directory (every display mode) tokens, plus the prompt frame (#644) and that `show_icons = false` draws no powerline caps (#695)
 - **`e2e_interactive_session.test.fish`** - Drives real interactive `fish -i` sessions on a pseudo-terminal through `tests/lib/pty_session.py`: a tracked-file edit repaints the idle prompt with no keystroke, two shells share one agent and both repaint after a commit typed in one of them, a `config.toml` edit reaches a Fish client via the `.reload` doorbell (theme switch, new segment, icons off) without a keypress (#645), and an `exec fish` survives the agent's notifications during its startup (#674)
 - **`e2e_agent_autostart.test.fish`** - Tests agent auto-start behavior
 - **`e2e_live_updates_signal.test.fish`** - Tests live prompt updates via the SIGURG doorbell
