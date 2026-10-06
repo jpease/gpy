@@ -30,6 +30,9 @@
 #   (c) the Fish integration is installed under $XDG_CONFIG_HOME/fish
 #   (d) INSTALL.md's Zsh/Bash block exits 0 and both integrations source
 #       cleanly in their shells
+#   (d2) the rc lines those steps wrote sit inside `# >>> gpy-init >>>` blocks
+#       and scripts/uninstall.sh leaves no gpy line behind (#809); and every
+#       rc append in docs/INSTALL.md is marker-wrapped
 #   (e) nothing was written outside the sandbox HOME
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -91,6 +94,26 @@ install_block="$(doc_bash_blocks "$ROOT/docs/INSTALL.md" "### Install Locally")"
 [[ -n "$install_block" ]] || fail "docs/INSTALL.md has no bash block under '### Install Locally'"
 if [[ $failures -gt 0 ]]; then
     exit 1
+fi
+
+# Every documented rc append (Fish config.fish, Zsh, Bash) must sit in a
+# fenced snippet that also writes the gpy-init markers, or scripts/uninstall.*
+# leave a dangling `source` line behind (#809).
+unmarked_appends="$(awk '
+    /^```/ {
+        if (infence) { if (append && !marked) printf "%s", snippet; infence = 0 }
+        else { infence = 1; append = 0; marked = 0; snippet = "" }
+        next
+    }
+    infence {
+        snippet = snippet FNR ": " $0 "\n"
+        if ($0 ~ />>[ ]*[^ ]*(\.zshrc|\.bashrc|config\.fish)/) append = 1
+        if (index($0, "# >>> gpy-init >>>")) marked = 1
+    }
+' "$ROOT/docs/INSTALL.md")"
+if [[ -n "$unmarked_appends" ]]; then
+    fail "docs/INSTALL.md appends to an rc file without the gpy-init markers:
+$unmarked_appends"
 fi
 
 # The README block clones from GitHub; a test must not touch the network, so
@@ -245,6 +268,23 @@ if ! env -i "${sandbox_env[@]}" GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED
     bash -c 'source ~/.config/gpy/bash/gpy.bash && declare -F __gpy_debug_paths >/dev/null' >"$SANDBOX/bash-source.log" 2>&1; then
     fail "sourcing the installed Bash integration failed: $(cat "$SANDBOX/bash-source.log")"
 fi
+
+# --- (d2) the documented rc lines are marker-wrapped and uninstallable (#809) ---
+
+for rc in .zshrc .bashrc; do
+    grep -qF '# >>> gpy-init >>>' "$SANDBOX_HOME/$rc" 2>/dev/null || fail "$rc line is not wrapped in the gpy-init markers"
+    grep -qF '# <<< gpy-init <<<' "$SANDBOX_HOME/$rc" 2>/dev/null || fail "$rc block has no closing gpy-init marker"
+done
+for shell_name in zsh bash; do
+    if ! printf '\n' | env -i "${sandbox_env[@]}" GPY_SHELL="$shell_name" sh "$SRC/scripts/uninstall.sh" >"$SANDBOX/uninstall-$shell_name.log" 2>&1; then
+        fail "scripts/uninstall.sh (GPY_SHELL=$shell_name) failed: $(cat "$SANDBOX/uninstall-$shell_name.log")"
+    fi
+done
+for rc in .zshrc .bashrc; do
+    if [[ -f "$SANDBOX_HOME/$rc" ]] && grep -q gpy "$SANDBOX_HOME/$rc"; then
+        fail "uninstall left a gpy line in $rc: $(grep gpy "$SANDBOX_HOME/$rc")"
+    fi
+done
 
 # --- (e) nothing escaped the sandbox ---------------------------------------------------
 

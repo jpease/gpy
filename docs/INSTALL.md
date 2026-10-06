@@ -309,10 +309,8 @@ ln -sf ~/.config/fish/gpy/functions/fish_prompt.fish ~/.config/fish/functions/fi
 mkdir -p ~/.config/gpy/zsh
 cp -r /tmp/gpy/zsh/* ~/.config/gpy/zsh/
 
-# Add to .zshrc
-echo '
-# GPY Prompt Enhancement
-source ~/.config/gpy/zsh/gpy.zsh' >> ~/.zshrc
+# Add to .zshrc (the marker lines are what scripts/uninstall.sh removes)
+printf '\n# >>> gpy-init >>>\n# GPY Prompt Enhancement\nsource ~/.config/gpy/zsh/gpy.zsh\n# <<< gpy-init <<<\n' >> "${ZDOTDIR:-$HOME}/.zshrc"
 ```
 
 **For Bash:**
@@ -320,10 +318,8 @@ source ~/.config/gpy/zsh/gpy.zsh' >> ~/.zshrc
 mkdir -p ~/.config/gpy/bash
 cp -r /tmp/gpy/bash/* ~/.config/gpy/bash/
 
-# Add to .bashrc
-echo '
-# GPY Prompt Enhancement
-source ~/.config/gpy/bash/gpy.bash' >> ~/.bashrc
+# Add to .bashrc (the marker lines are what scripts/uninstall.sh removes)
+printf '\n# >>> gpy-init >>>\n# GPY Prompt Enhancement\nsource ~/.config/gpy/bash/gpy.bash\n# <<< gpy-init <<<\n' >> ~/.bashrc
 ```
 
 ### 3. Verify Installation
@@ -393,12 +389,12 @@ install -m 755 gpy-agent/target/release/gpy-agent gpy-agent/target/release/gpy ~
 # For Zsh:
 mkdir -p ~/.config/gpy/zsh
 cp -r zsh/* ~/.config/gpy/zsh/
-echo 'source ~/.config/gpy/zsh/gpy.zsh' >> ~/.zshrc
+printf '\n# >>> gpy-init >>>\n# GPY Prompt Enhancement\nsource ~/.config/gpy/zsh/gpy.zsh\n# <<< gpy-init <<<\n' >> "${ZDOTDIR:-$HOME}/.zshrc"
 
 # For Bash:
 mkdir -p ~/.config/gpy/bash
 cp -r bash/* ~/.config/gpy/bash/
-echo 'source ~/.config/gpy/bash/gpy.bash' >> ~/.bashrc
+printf '\n# >>> gpy-init >>>\n# GPY Prompt Enhancement\nsource ~/.config/gpy/bash/gpy.bash\n# <<< gpy-init <<<\n' >> ~/.bashrc
 ```
 
 Make sure `~/.local/bin` is on your `PATH` (see
