@@ -1,11 +1,16 @@
 //! Derive a GPY `enabled_segments` order from Starship's top-level `format`.
 
+use crate::config::defaults::default_enabled_segments;
 use crate::import::starship::modules::canonical_language;
 use crate::import::starship::{WarningKind, Warnings};
 
 /// Starship's module that breaks the prompt onto a new line. It is not a
 /// segment: it maps to the theme's `ui.two_line` instead.
 const LINE_BREAK: &str = "line_break";
+
+/// Starship's catch-all module: every module not named elsewhere in `format`.
+/// GPY maps it to its default segment order.
+const ALL: &str = "all";
 
 /// Whether `format` breaks the prompt onto a second line: it references
 /// `$line_break`, or `$all`, which expands to every module including it.
@@ -14,7 +19,7 @@ const LINE_BREAK: &str = "line_break";
 pub fn has_line_break(format: &str) -> bool {
     module_refs(format)
         .iter()
-        .any(|module| module == LINE_BREAK || module == "all")
+        .any(|module| module == LINE_BREAK || module == ALL)
 }
 
 /// Map a Starship module reference to its GPY segment name.
@@ -39,6 +44,14 @@ pub fn derive_segments(format: &str, warnings: &mut Warnings) -> Vec<String> {
     let mut warned: Vec<String> = Vec::new();
     for module in module_refs(format) {
         if module == LINE_BREAK {
+            continue;
+        }
+        if module == ALL {
+            for segment in default_enabled_segments() {
+                if !result.contains(&segment) {
+                    result.push(segment);
+                }
+            }
             continue;
         }
         match map_module(&module) {
@@ -109,6 +122,7 @@ mod tests {
     #![allow(missing_docs)]
 
     use super::{derive_segments, has_line_break, map_module};
+    use crate::config::defaults::default_enabled_segments;
     use crate::import::starship::Warnings;
 
     #[test]
@@ -163,6 +177,24 @@ mod tests {
         let mut warnings = Warnings::new();
         let segments = derive_segments("$directory$line_break$character", &mut warnings);
         assert_eq!(segments, vec!["directory", "character"]);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn all_expands_to_default_order_without_warning() {
+        let mut warnings = Warnings::new();
+        let segments = derive_segments("$all", &mut warnings);
+        assert_eq!(segments, default_enabled_segments());
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn all_keeps_position_and_dedupes() {
+        let mut warnings = Warnings::new();
+        let segments = derive_segments("$character$all", &mut warnings);
+        let mut expected = vec!["character".to_owned()];
+        expected.extend(default_enabled_segments());
+        assert_eq!(segments, expected);
         assert!(warnings.is_empty());
     }
 

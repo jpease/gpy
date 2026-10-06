@@ -471,6 +471,7 @@ parity_rows! {
     layout_add_newline_false: Scenario::Layout, "add_newline = false\n";
     layout_format_with_line_break: Scenario::Layout, "format = \"$directory$line_break$character\"\n";
     layout_format_with_line_break_no_newline: Scenario::Layout, "add_newline = false\nformat = \"$directory$git_branch$cmd_duration$line_break$character\"\n";
+    layout_format_all: Scenario::Layout, "format = \"$all\"\n";
     layout_format_without_line_break: Scenario::Layout, "format = \"$directory$character\"\n";
     layout_format_without_line_break_no_newline: Scenario::Layout, "add_newline = false\nformat = \"$directory$character\"\n";
     // #795: `$git_branch$git_status` joins with nothing between the two.
