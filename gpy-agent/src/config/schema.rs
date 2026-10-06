@@ -126,14 +126,14 @@ pub fn config_candidates_for(
 /// included, stores, reports, and watches the same absolute path (#733, #724).
 #[must_use]
 pub fn get_config_paths() -> Vec<String> {
-    let custom_path = std::env::var_os("GPY_CONFIG_PATH").map(|value| {
+    let custom_path = crate::paths::root_var_os("GPY_CONFIG_PATH").map(|value| {
         crate::paths::absolutize(std::path::Path::new(&value))
             .to_string_lossy()
             .into_owned()
     });
     let home = crate::paths::home_dir();
-    let xdg_config =
-        std::env::var_os("XDG_CONFIG_HOME").map(|value| value.to_string_lossy().into_owned());
+    let xdg_config = crate::paths::root_var_os("XDG_CONFIG_HOME")
+        .map(|value| value.to_string_lossy().into_owned());
 
     config_candidates_for(
         custom_path.as_deref(),

@@ -15,7 +15,6 @@ use crate::Error;
 use crate::{Result, VERSION};
 #[cfg(unix)]
 use std::cmp::Ordering;
-use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -47,8 +46,8 @@ pub static SOCKET_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
 /// Returns an error if the runtime directory cannot be created.
 pub fn get_runtime_dir() -> Result<PathBuf> {
     let path = crate::paths::runtime_root_for(
-        env::var("XDG_RUNTIME_DIR").ok().as_deref(),
-        env::var("XDG_CACHE_HOME").ok().as_deref(),
+        crate::paths::root_var("XDG_RUNTIME_DIR").as_deref(),
+        crate::paths::root_var("XDG_CACHE_HOME").as_deref(),
         crate::paths::home_dir().as_deref(),
     );
     std::fs::create_dir_all(&path)?;

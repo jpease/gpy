@@ -7,14 +7,13 @@
 //!
 //! - [`TempGitRepo`] - Creates temporary git repositories with configurable state
 //! - [`MockConfig`] - Creates test configurations with sensible defaults
-//! - [`TestAgent`] - Spawns agent in test mode with automatic cleanup
 //! - [`TempSocket`] - Creates temporary Unix socket paths with auto-cleanup
 //! - [`ServerGuard`] - Wraps tokio `JoinHandle` with automatic abort on drop
 //!
 //! # Example Usage
 //!
 //! ```rust,no_run
-//! use gpy_agent::tests::common::fixtures::{TempGitRepo, TestAgent};
+//! use gpy_agent::tests::common::fixtures::TempGitRepo;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create a git repo with specific state
@@ -23,10 +22,6 @@
 //!     .with_commits(3)?
 //!     .with_staged("file.txt")?
 //!     .build()?;
-//!
-//! // Spawn agent and test
-//! let agent = TestAgent::start()?;
-//! let response = agent.send_request(/* ... */)?;
 //!
 //! // Cleanup happens automatically on drop
 //! # Ok(())
@@ -50,10 +45,8 @@
 #![allow(clippy::mem_forget)] // Intentional leak of TempDir to keep socket path alive
 
 use gpy_agent::config::Config;
-use gpy_agent::ipc::{Message, Response};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
 use std::thread;
 use std::time::Duration;
 
@@ -119,157 +112,6 @@ impl MockConfig {
     #[must_use]
     pub fn build(self) -> Config {
         self.config
-    }
-}
-
-// Parses a raw IPC response string from the production agent, handling both the native
-// serde format ("Ack") and the Fish-compatible format ({"status":"ok"}) the binary emits.
-fn parse_agent_response(response_str: &str) -> std::io::Result<Response> {
-    if let Ok(response) = serde_json::from_str::<Response>(response_str) {
-        return Ok(response);
-    }
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(response_str) {
-        if val.get("status").and_then(|v| v.as_str()) == Some("ok") {
-            return Ok(Response::Ack);
-        }
-        if let Some(msg) = val.get("error").and_then(|v| v.as_str()) {
-            return Ok(Response::Error {
-                message: msg.to_owned(),
-            });
-        }
-    }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::InvalidData,
-        format!("Could not parse IPC response: {response_str}"),
-    ))
-}
-
-/// Spawns agent in test mode with automatic cleanup
-///
-/// Provides a test agent that can be used for integration testing.
-/// The agent process is automatically terminated when dropped.
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use gpy_agent::tests::common::fixtures::TestAgent;
-/// use gpy_agent::ipc::Message;
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let agent = TestAgent::start()?;
-///
-/// // Wait for agent to be ready
-/// agent.wait_for_ready(std::time::Duration::from_secs(5))?;
-///
-/// // Send request
-/// let response = agent.send_request(Message::Ping)?;
-///
-/// // Agent stops automatically on drop
-/// # Ok(())
-/// # }
-/// ```
-pub struct TestAgent {
-    child: Child,
-    socket_path: PathBuf,
-}
-
-impl TestAgent {
-    /// Start test agent with default configuration
-    ///
-    /// # Errors
-    ///
-    /// Returns error if agent fails to start
-    pub fn start() -> std::io::Result<Self> {
-        Self::with_config(MockConfig::default().build())
-    }
-
-    /// Start test agent with custom configuration
-    ///
-    /// # Errors
-    ///
-    /// Returns error if agent fails to start
-    pub fn with_config(_config: Config) -> std::io::Result<Self> {
-        // Get path to gpy-agent binary
-        let agent_path = env!("CARGO_BIN_EXE_gpy-agent");
-
-        // Create temp socket path
-        let socket_path = create_temp_socket_path()?;
-
-        // Start agent process
-        let child = Command::new(agent_path)
-            .arg("start")
-            .env("GPY_AGENT_SOCKET_PATH", &socket_path)
-            .spawn()?;
-
-        Ok(Self { child, socket_path })
-    }
-
-    /// Wait for agent to be ready to accept connections
-    ///
-    /// # Errors
-    ///
-    /// Returns error if agent doesn't become ready within timeout
-    pub fn wait_for_ready(&self, timeout: Duration) -> std::io::Result<()> {
-        wait_for_agent_ready(&self.socket_path, timeout)
-    }
-
-    /// Send IPC request to the running agent using the production newline-delimited JSON protocol.
-    ///
-    /// Serializes the message as JSON, appends a newline, writes it to the socket, and reads the
-    /// JSON response. Uses the same wire format as the Fish shell integration.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if the socket connection fails, serialization fails, or the response cannot
-    /// be parsed.
-    pub fn send_request(&self, message: &Message) -> std::io::Result<Response> {
-        use std::io::{Read, Write};
-        use std::os::unix::net::UnixStream;
-
-        let mut stream = UnixStream::connect(&self.socket_path)?;
-        stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-
-        let json = serde_json::to_string(&message)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-
-        // Production protocol: JSON payload followed by a newline delimiter
-        stream.write_all(json.as_bytes())?;
-        stream.write_all(b"\n")?;
-        stream.flush()?;
-
-        let mut response_buf = vec![0u8; 8192];
-        let n = stream.read(&mut response_buf)?;
-
-        if n == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "Agent closed connection without sending a response",
-            ));
-        }
-
-        let bytes = response_buf.get(..n).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "read returned out-of-range length",
-            )
-        })?;
-        let response_str = std::str::from_utf8(bytes)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-
-        parse_agent_response(response_str.trim())
-    }
-
-    /// Get socket path for direct IPC access
-    #[must_use]
-    pub fn socket_path(&self) -> &Path {
-        &self.socket_path
-    }
-}
-
-impl Drop for TestAgent {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 
@@ -524,32 +366,5 @@ mod tests {
     fn test_temp_socket() {
         let socket = TempSocket::new().unwrap();
         assert!(!socket.path().to_string_lossy().is_empty());
-    }
-
-    #[test]
-    fn test_parse_agent_response_native_ack() {
-        let result = parse_agent_response(r#""Ack""#);
-        assert!(matches!(result, Ok(Response::Ack)));
-    }
-
-    #[test]
-    fn test_parse_agent_response_fish_compatible_ok() {
-        // Production agent returns {"status":"ok"} for Ping — must map to Response::Ack
-        let result = parse_agent_response(r#"{"status":"ok"}"#);
-        assert!(matches!(result, Ok(Response::Ack)));
-    }
-
-    #[test]
-    fn test_parse_agent_response_error_variant() {
-        let result = parse_agent_response(r#"{"error":"something went wrong"}"#);
-        assert!(
-            matches!(result, Ok(Response::Error { message }) if message == "something went wrong")
-        );
-    }
-
-    #[test]
-    fn test_parse_agent_response_invalid() {
-        let result = parse_agent_response("not json at all");
-        assert!(result.is_err());
     }
 }

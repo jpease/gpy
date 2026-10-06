@@ -84,8 +84,7 @@ fn test_ipc_server_creation() {
     let watcher = None; // No watcher for this test
     let theme_manager =
         Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
-    let instant_cache =
-        Arc::new(gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"));
+    let instant_cache = Arc::new(gpy_agent::cache::InstantPromptCache::new_for_test());
     let latency_tracker = Arc::new(LatencyTracker::new(100));
     let language_cache = gpy_agent::language::DetectionCache::new();
     let _server = EndpointHandle::builder()
@@ -250,8 +249,7 @@ async fn test_message_size_limit_enforced() {
     let watcher = None;
     let theme_manager =
         Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
-    let instant_cache =
-        Arc::new(gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"));
+    let instant_cache = Arc::new(gpy_agent::cache::InstantPromptCache::new_for_test());
     let latency_tracker = Arc::new(LatencyTracker::new(100));
     let config_manager =
         Arc::new(ConfigManager::with_defaults().expect("default config should load"));
@@ -478,8 +476,7 @@ async fn test_concurrent_connection_limit() {
     let watcher = None;
     let theme_manager =
         Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
-    let instant_cache =
-        Arc::new(gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"));
+    let instant_cache = Arc::new(gpy_agent::cache::InstantPromptCache::new_for_test());
     let latency_tracker = Arc::new(LatencyTracker::new(100));
     let config_manager =
         Arc::new(ConfigManager::with_defaults().expect("default config should load"));
@@ -624,8 +621,7 @@ async fn test_workspace_update_requires_registration() {
     let watcher = None;
     let theme_manager =
         Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
-    let instant_cache =
-        Arc::new(gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"));
+    let instant_cache = Arc::new(gpy_agent::cache::InstantPromptCache::new_for_test());
     let latency_tracker = Arc::new(LatencyTracker::new(100));
     let config_manager =
         Arc::new(ConfigManager::with_defaults().expect("default config should load"));
@@ -746,7 +742,7 @@ async fn ansi_error_replies_are_empty_lines() {
             ThemeManager::builtin("default").expect("default theme should load"),
         ))
         .instant_cache(Arc::new(
-            gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"),
+            gpy_agent::cache::InstantPromptCache::new_for_test(),
         ))
         .latency_tracker(Arc::new(LatencyTracker::new(100)))
         .language_cache(gpy_agent::language::DetectionCache::new())
@@ -804,7 +800,7 @@ async fn unsupported_socket_format_gets_json_error() {
             ThemeManager::builtin("default").expect("default theme should load"),
         ))
         .instant_cache(Arc::new(
-            gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"),
+            gpy_agent::cache::InstantPromptCache::new_for_test(),
         ))
         .latency_tracker(Arc::new(LatencyTracker::new(100)))
         .language_cache(gpy_agent::language::DetectionCache::new())

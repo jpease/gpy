@@ -234,10 +234,10 @@ impl InstantPromptCache {
     /// callers build a cache inside a helper that has nowhere to keep a guard,
     /// and a dropped guard would delete the directory out from under them.
     ///
-    /// Not `#[cfg(test)]`: `EndpointHandle::new_test_handle` is a
-    /// `#[doc(hidden)]` helper compiled into the real lib (integration tests in
-    /// `tests/` link the crate normally and cannot see `cfg(test)` items), and
-    /// it needs a hermetic cache too.
+    /// Not `#[cfg(test)]`, and `pub`: `EndpointHandle::new_test_handle` is a
+    /// `#[doc(hidden)]` helper compiled into the real lib, and integration
+    /// tests in `tests/` link the crate normally and cannot see `cfg(test)` or
+    /// `pub(crate)` items; both need a hermetic cache too (#839).
     ///
     /// # Panics
     ///
@@ -248,7 +248,8 @@ impl InstantPromptCache {
         clippy::expect_used,
         reason = "test-only helper returning Self (not Result); a failed temp-dir create means the test environment itself is unusable, so panicking with a descriptive message is the sanctioned pattern here, not a shortcut"
     )]
-    pub(crate) fn new_for_test() -> Self {
+    #[must_use]
+    pub fn new_for_test() -> Self {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
 
         let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -823,7 +824,7 @@ pub(super) fn get_gpy_cache_dir() -> Result<PathBuf> {
         (crate::paths::Os::Unix, crate::paths::home_dir(), None);
 
     crate::paths::cache_root_for(
-        std::env::var("XDG_CACHE_HOME").ok().as_deref(),
+        crate::paths::root_var("XDG_CACHE_HOME").as_deref(),
         home.as_deref(),
         local_app_data.as_deref(),
         os,

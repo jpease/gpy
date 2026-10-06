@@ -426,8 +426,8 @@ impl EndpointHandle {
         // (#626): an empty or relative `XDG_*` value is "unset" per the XDG
         // spec, so the branch selection below and the resolver below it must
         // agree about which variables actually count.
-        let xdg_runtime_raw = std::env::var("XDG_RUNTIME_DIR").ok();
-        let xdg_cache_raw = std::env::var("XDG_CACHE_HOME").ok();
+        let xdg_runtime_raw = crate::paths::root_var("XDG_RUNTIME_DIR");
+        let xdg_cache_raw = crate::paths::root_var("XDG_CACHE_HOME");
         let xdg_runtime =
             crate::paths::xdg_value(xdg_runtime_raw.as_deref(), crate::paths::Os::Unix);
         let xdg_cache = crate::paths::xdg_value(xdg_cache_raw.as_deref(), crate::paths::Os::Unix);

@@ -143,7 +143,71 @@ fn is_absolute_windows(value: &str) -> bool {
 /// keeps `/tmp/gpy` alive as [`runtime_root_for`]'s last resort.
 #[must_use]
 pub fn home_dir() -> Option<String> {
-    std::env::home_dir().map(|path| path.to_string_lossy().into_owned())
+    ambient_home().map(|path| path.to_string_lossy().into_owned())
+}
+
+#[cfg(not(test))]
+fn ambient_home() -> Option<PathBuf> {
+    std::env::home_dir()
+}
+
+/// The [`root_var_os`] test seam's stand-in for HOME (#839).
+#[cfg(test)]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "mirrors the non-test variant's signature, which can return None"
+)]
+fn ambient_home() -> Option<PathBuf> {
+    Some(test_root().join("home"))
+}
+
+/// `std::env::var_os(key)` for the variables that locate GPY's roots:
+/// `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR`, `GPY_CONFIG_PATH`.
+///
+/// Every ambient read of those variables goes through here or [`root_var`],
+/// and with [`home_dir`] this is the crate's one test seam for them (#839):
+/// lib unit tests cannot redirect the environment (`std::env::set_var` needs
+/// the `unsafe` this crate forbids), so under `cfg(test)` the XDG variables
+/// point inside a per-process temp root and every other key reads as unset.
+/// Without that, lib tests read the developer's `~/.config/gpy` and wrote
+/// theme exports into their `~/.cache/gpy`.
+#[must_use]
+pub fn root_var_os(key: &str) -> Option<std::ffi::OsString> {
+    #[cfg(test)]
+    {
+        let subdir = match key {
+            "XDG_CONFIG_HOME" => "config",
+            "XDG_CACHE_HOME" => "cache",
+            "XDG_RUNTIME_DIR" => "run",
+            _ => return None,
+        };
+        Some(test_root().join(subdir).into_os_string())
+    }
+    #[cfg(not(test))]
+    std::env::var_os(key)
+}
+
+/// [`root_var_os`] as UTF-8, matching `std::env::var(key).ok()`.
+#[must_use]
+pub fn root_var(key: &str) -> Option<String> {
+    root_var_os(key).and_then(|value| value.into_string().ok())
+}
+
+/// The per-process stand-in for HOME and the XDG roots in lib unit tests.
+///
+/// Keyed by pid and emptied on first use, so a recycled pid never inherits a
+/// previous run's files. Left behind afterwards, like
+/// `InstantPromptCache::new_for_test`'s directories.
+#[cfg(test)]
+static TEST_ROOT: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
+    let root = std::env::temp_dir().join(format!("gpy-lib-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    root
+});
+
+#[cfg(test)]
+fn test_root() -> &'static Path {
+    &TEST_ROOT
 }
 
 /// Which OS's precedence rules a pure resolver in this module should apply.
