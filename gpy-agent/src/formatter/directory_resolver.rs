@@ -58,7 +58,7 @@ impl<'a> DirectoryResolver<'a> {
     ) -> Self {
         let home = std::env::var("HOME").ok();
         let canonical_cwd = std::fs::canonicalize(cwd).unwrap_or_else(|_| PathBuf::from(cwd));
-        let repo_root = crate::git::find_repo_root(Path::new(cwd));
+        let repo_root = enclosing_anchor_root(cwd, config, home.as_deref());
         Self {
             cwd: normalize_cwd(cwd),
             read_only,
@@ -154,6 +154,33 @@ fn normalize_cwd(cwd: &str) -> String {
     } else {
         normalized.to_string_lossy().into_owned()
     }
+}
+
+/// Enclosing git repo root for `cwd`, minus a root that is `$HOME`.
+///
+/// `$HOME` and the root are canonicalized only when `truncate_to_repo` is on
+/// and a root was found, keeping the #603 I/O budget.
+fn enclosing_anchor_root(cwd: &str, config: &Config, home: Option<&str>) -> Option<PathBuf> {
+    let found_root = crate::git::find_repo_root(Path::new(cwd));
+    let canonical_home = found_root
+        .as_ref()
+        .filter(|_| config.ui.directory.truncate_to_repo)
+        .and(home)
+        .and_then(|h| std::fs::canonicalize(h).ok());
+    anchor_root(found_root, canonical_home.as_deref())
+}
+
+/// Drop `repo_root` when it is the home directory (dotfiles repo): Starship
+/// does not anchor there, so the normal display mode (`~/…`) applies.
+///
+/// `canonical_home` must already be canonical; `repo_root` is canonicalized
+/// here (only reached when a root was found and anchoring is on).
+fn anchor_root(repo_root: Option<PathBuf>, canonical_home: Option<&Path>) -> Option<PathBuf> {
+    let root = repo_root?;
+    let is_home = canonical_home.is_some_and(|home| {
+        root == home || std::fs::canonicalize(&root).is_ok_and(|canonical| canonical == home)
+    });
+    (!is_home).then_some(root)
 }
 
 /// Contract a `$HOME` prefix on `cwd` to `~`.
@@ -632,7 +659,9 @@ mod tests {
     }
 
     use super::abbreviate_path;
+    use super::anchor_root;
     use super::contract_home;
+    use super::enclosing_anchor_root;
     use super::normalize_cwd;
     use super::repo_anchored_path;
     use super::truncate_to_components;
@@ -1021,5 +1050,89 @@ mod tests {
         );
         // Full + not in repo -> home-contracted absolute path unchanged.
         assert_eq!(resolver.resolve("path").expect("path present"), cwd);
+    }
+
+    #[test]
+    fn anchor_root_ignores_repo_rooted_at_home() {
+        let tmp = tempdir().expect("temp dir");
+        let home = fs::canonicalize(tmp.path()).expect("canonicalize");
+        fs::create_dir_all(home.join(".git")).expect("mk .git");
+        let proj = home.join("src/proj");
+        fs::create_dir_all(proj.join(".git")).expect("mk proj");
+
+        assert_eq!(anchor_root(Some(home.clone()), Some(&home)), None);
+        assert_eq!(anchor_root(Some(proj.clone()), Some(&home)), Some(proj));
+        assert_eq!(anchor_root(None, Some(&home)), None);
+        assert_eq!(anchor_root(Some(home.clone()), None), Some(home));
+    }
+
+    /// Resolver as `new` builds it, but with an injected `$HOME` (no env mutation).
+    fn resolver_with_home<'a>(
+        cwd: &'a str,
+        config: &'a Config,
+        theme: &'a ThemeConfig,
+        home: &str,
+    ) -> DirectoryResolver<'a> {
+        let mut resolver = DirectoryResolver::new(
+            cwd,
+            false,
+            config,
+            theme,
+            SegmentPosition::new(IsLast::No, IsFirst::No),
+        );
+        resolver.home = Some(home.to_owned());
+        resolver.repo_root = enclosing_anchor_root(cwd, config, Some(home));
+        resolver
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn anchor_root_compares_canonical_forms_through_symlink() {
+        let tmp = tempdir().expect("temp dir");
+        let real = fs::canonicalize(tmp.path()).expect("canonicalize");
+        let home = real.join("home");
+        fs::create_dir_all(home.join(".git")).expect("mk home");
+        let link = real.join("link");
+        std::os::unix::fs::symlink(&home, &link).expect("symlink");
+
+        // Repo root reported via a symlink, home canonical.
+        assert_eq!(anchor_root(Some(link), Some(&home)), None);
+    }
+
+    #[test]
+    fn truncate_to_repo_ignores_repo_rooted_at_home_via_resolver() {
+        let tmp = tempdir().expect("temp dir");
+        let home = fs::canonicalize(tmp.path()).expect("canonicalize");
+        fs::create_dir_all(home.join(".git")).expect("mk .git");
+        let cwd_path = home.join("src/x");
+        fs::create_dir_all(&cwd_path).expect("mk cwd");
+        let cwd = cwd_path.to_str().expect("utf8 cwd");
+        let home_str = home.to_str().expect("utf8 home").to_owned();
+
+        let config = config_with_truncate_to_repo(crate::config::types::DirectoryDisplay::Full);
+        let theme = ThemeConfig::default();
+        let resolver = resolver_with_home(cwd, &config, &theme, &home_str);
+        assert_eq!(resolver.resolve("path").expect("path present"), "~/src/x");
+
+        let at_home = resolver_with_home(&home_str, &config, &theme, &home_str);
+        assert_eq!(at_home.resolve("path").expect("path present"), "~");
+    }
+
+    #[test]
+    fn truncate_to_repo_still_anchors_repo_below_home_via_resolver() {
+        let tmp = tempdir().expect("temp dir");
+        let home = fs::canonicalize(tmp.path()).expect("canonicalize");
+        fs::create_dir_all(home.join(".git")).expect("mk home .git");
+        let proj = home.join("src/proj");
+        fs::create_dir_all(proj.join(".git")).expect("mk proj .git");
+        let cwd_path = proj.join("lib");
+        fs::create_dir_all(&cwd_path).expect("mk cwd");
+        let cwd = cwd_path.to_str().expect("utf8 cwd");
+        let home_str = home.to_str().expect("utf8 home").to_owned();
+
+        let config = config_with_truncate_to_repo(crate::config::types::DirectoryDisplay::Full);
+        let theme = ThemeConfig::default();
+        let resolver = resolver_with_home(cwd, &config, &theme, &home_str);
+        assert_eq!(resolver.resolve("path").expect("path present"), "proj/lib");
     }
 }
