@@ -586,6 +586,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   (`curl … | GPY_VERSION=v1.2.3 sh`), where the installer sees them (#745).
 - `docs/dev/palettes.md` and `docs/dev/starship-import.md` describe the
   palette and Starship-import behaviour the code actually has (#798).
+- A `.ruby-version` written as `ruby-3.2.2` or `ruby-3.2.2@gemset` shows
+  `ruby 3.2.2` instead of `ruby ruby-3.2.2` (#786).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
