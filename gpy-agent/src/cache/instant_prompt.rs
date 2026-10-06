@@ -133,9 +133,11 @@ type SeenContexts = HashMap<String, Vec<Option<String>>>;
 pub struct InstantPromptCache {
     cache_dir: PathBuf,
     /// In-memory record of the content last written for each `{cache_key}:{suffix}`,
-    /// used to skip a redundant write when nothing changed. A pure performance
-    /// optimization: a lost or stale read/record here means at most an
-    /// occasional redundant write, never incorrect cache content.
+    /// used to skip a redundant content write when nothing changed. The dedup
+    /// path still bumps the file's mtime: shells read the mtime as "last write
+    /// or last verification" for their TTL check (#704). A lost or stale
+    /// record here means at most an occasional redundant write, never
+    /// incorrect cache content.
     ///
     /// Poison policy (#591): every access recovers via
     /// `unwrap_or_else(PoisonError::into_inner)` rather than silently skipping
@@ -550,9 +552,19 @@ impl InstantPromptCache {
                 .unwrap_or_else(PoisonError::into_inner);
             if let Some(cached_content) = cache.get(&map_key)
                 && cached_content == content
-                && cache_file.exists()
             {
-                return Ok(false);
+                // Verified unchanged: refresh the mtime, which shells read as
+                // "last write or last verification" (#704). A file that
+                // vanished falls through to a rewrite; other touch errors are
+                // ignored (the content on disk is still correct).
+                match std::fs::File::options()
+                    .write(true)
+                    .open(&cache_file)
+                    .and_then(|f| f.set_modified(SystemTime::now()))
+                {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Ok(()) | Err(_) => return Ok(false),
+                }
             }
         }
 
@@ -775,6 +787,9 @@ fn get_instant_cache_dir() -> Result<PathBuf> {
 }
 
 /// How long an unused cache entry is kept before the startup sweep removes it.
+///
+/// "Unused" is measured from the file's mtime, which means "last write or last
+/// verification" (an unchanged re-write refreshes it, #704).
 ///
 /// Entries are pure derived data — a miss costs one render, not correctness —
 /// so this only has to be long enough that a directory someone returns to
@@ -1296,6 +1311,117 @@ mod tests {
                 .expect("write"),
             "rewriting a missing file should report a change"
         );
+    }
+
+    // ---- INSTANT-CACHE TEST harness (#704) ------------------------------------
+    //
+    // Invariant: the instant-prompts dir equals what a fresh render of the
+    // latest inputs would write (same file set, same bytes), every file touched
+    // by the last operation has an mtime reflecting that write-or-verification,
+    // and no temp/orphan files remain. Later rows (concurrent writers #706,
+    // deleted dir #707, ~220-byte repo paths #708) extend `Op` and reuse `check`.
+
+    /// One step applied to the cache under test.
+    enum Op {
+        /// Write `content` for `(key, suffix)` (Ansi dialect).
+        Write(&'static str, &'static str, &'static str),
+        /// Backdate every file in the directory by this many seconds, standing
+        /// in for the clock advancing.
+        Age(u64),
+    }
+
+    struct CacheHarness {
+        _dir: tempfile::TempDir,
+        cache: InstantPromptCache,
+        /// Independently computed expected directory: file name -> bytes.
+        expected: HashMap<String, String>,
+        /// Files the most recent `Write` wrote or verified.
+        touched: Option<String>,
+    }
+
+    impl CacheHarness {
+        fn new() -> Self {
+            let dir = tempfile::TempDir::new().expect("temp dir");
+            let cache = InstantPromptCache::new_in_dir(dir.path().join("ip")).expect("cache");
+            Self {
+                _dir: dir,
+                cache,
+                expected: HashMap::new(),
+                touched: None,
+            }
+        }
+
+        fn apply(&mut self, op: &Op) {
+            match *op {
+                Op::Write(key, suffix, content) => {
+                    self.cache
+                        .write_cache_file(key, suffix, PromptDialect::Ansi, content)
+                        .expect("write");
+                    let name = format!("{key}.{suffix}.ansi");
+                    self.expected.insert(name.clone(), content.to_owned());
+                    self.touched = Some(name);
+                }
+                Op::Age(secs) => {
+                    let when = SystemTime::now()
+                        .checked_sub(Duration::from_secs(secs))
+                        .expect("backdating within range");
+                    for name in self.expected.keys() {
+                        set_mtime(&self.cache.cache_dir.join(name), when);
+                    }
+                    self.touched = None;
+                }
+            }
+            self.check();
+        }
+
+        fn check(&self) {
+            let mut actual = HashMap::new();
+            for dir_entry in std::fs::read_dir(&self.cache.cache_dir).expect("read dir") {
+                let entry = dir_entry.expect("dir entry");
+                actual.insert(
+                    entry.file_name().to_string_lossy().into_owned(),
+                    std::fs::read_to_string(entry.path()).expect("read file"),
+                );
+            }
+            assert_eq!(
+                actual, self.expected,
+                "directory must equal a fresh render (no temp/orphan files)"
+            );
+            if let Some(name) = &self.touched {
+                let mtime = std::fs::metadata(self.cache.cache_dir.join(name))
+                    .and_then(|m| m.modified())
+                    .expect("mtime");
+                let floor = SystemTime::now()
+                    .checked_sub(Duration::from_secs(2))
+                    .expect("floor within range");
+                assert!(
+                    mtime >= floor,
+                    "{name}: mtime must reflect the last write-or-verification"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn instant_cache_dedup_after_aging_keeps_mtime_fresh() {
+        let mut h = CacheHarness::new();
+        h.apply(&Op::Write("repo", "git.none", "x"));
+        h.apply(&Op::Age(60));
+        h.apply(&Op::Write("repo", "git.none", "x"));
+        h.apply(&Op::Age(600));
+        h.apply(&Op::Write("repo", "git.none", "x"));
+    }
+
+    #[test]
+    fn instant_cache_content_change_rewrites_and_variants_stay_independent() {
+        let mut h = CacheHarness::new();
+        h.apply(&Op::Write("repo", "git.none", "x"));
+        h.apply(&Op::Write("repo", "git.red", "v"));
+        h.apply(&Op::Age(60));
+        h.apply(&Op::Write("repo", "git.none", "y"));
+        h.apply(&Op::Write("repo", "git.red", "v"));
+        h.apply(&Op::Age(60));
+        h.apply(&Op::Write("repo", "git.none", "y"));
     }
 
     #[test]
