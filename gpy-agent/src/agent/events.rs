@@ -850,10 +850,12 @@ fn try_incremental_update_with<B: GitBackend>(
         Ok(Some(CompleteStatus {
             files: file_map, ..
         })) => {
-            let Some(updated_status) =
-                ctx.cache
-                    .update_paths_canonical(git_root, &relative_paths, &file_map)
-            else {
+            let Some(updated_status) = ctx.cache.update_paths_canonical(
+                git_root,
+                &relative_paths,
+                &file_map,
+                NativeGitBackend::ignores_case(git_root),
+            ) else {
                 return not_attempted;
             };
             debug_log!(
@@ -3984,6 +3986,192 @@ mod tests {
                         (vec![sub.join("s.txt")], "commit in submodule")
                     }
                 };
+                log.push(op);
+                let hint = git_paths_hint(&GitPaths::Paths(reported), &repo);
+                let refreshed =
+                    refresh_repo_status_with(&backend, &ctx, &repo, &config, hint.as_deref());
+                let status = refreshed.status.expect("repository status");
+                let want_files = oracle_files(&repo);
+                let got_files = ctx.cache.files_for_test(&repo).unwrap_or_default();
+                assert_eq!(
+                    got_files, want_files,
+                    "seed {seed}: cached file map diverged from git after {log:#?}"
+                );
+                assert_eq!(
+                    StatusAggregate {
+                        staged: status.staged,
+                        unstaged: status.unstaged,
+                        untracked: status.untracked,
+                        conflicts: status.conflicts,
+                    },
+                    StatusAggregate::from_file_statuses(want_files.values()),
+                    "seed {seed}: status counts diverged from git after {log:#?}"
+                );
+            }
+        }
+    }
+
+    /// Whether git treats `repo` as case-insensitive (`core.ignorecase=true`),
+    /// the setting `git init` derives from the volume.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `git config` cannot be spawned.
+    fn repo_ignores_case(repo: &Path) -> bool {
+        let output = std::process::Command::new("git")
+            .args(["config", "--type=bool", "--default", "false"])
+            .arg("core.ignorecase")
+            .current_dir(repo)
+            .output()
+            .expect("git config");
+        String::from_utf8_lossy(&output.stdout).trim() == "true"
+    }
+
+    /// Rename `from` to `to` (which differ only in case) via a temporary
+    /// name, as the issue's reproduction does, so it works on every volume.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either rename fails.
+    fn rename_via_temp(repo: &Path, from: &str, to: &str) {
+        let temp = repo.join("case-rename.tmp");
+        fs::rename(repo.join(from), &temp).expect("rename to temp");
+        fs::rename(&temp, repo.join(to)).expect("rename from temp");
+    }
+
+    #[test]
+    /// Regression test for #713: git indexes `Readme.md` while the disk (and
+    /// so the watcher) spells it `README.md`. On a case-insensitive repository
+    /// the edit must still be seen, and the revert must clear it.
+    fn incremental_refresh_handles_index_case_mismatch() {
+        let (_tmp, repo) = create_temp_repo();
+        if !repo_ignores_case(&repo) {
+            return;
+        }
+        fs::write(repo.join("Readme.md"), "a\n").expect("write Readme.md");
+        commit_all(&repo);
+        rename_via_temp(&repo, "Readme.md", "README.md");
+
+        let ctx = make_agent_context();
+        let config = Config::default();
+        handle_file_event(&ctx, &whole_repo_event(&repo), &config);
+        assert_eq!(
+            ctx.cache.get(&repo).expect("warm").state,
+            RepositoryState::Clean
+        );
+
+        let file = repo.join("README.md");
+        fs::write(&file, "b\n").expect("modify README.md");
+        let edited = deliver_path(&ctx, &repo, &config, file.clone());
+        assert_eq!(edited.unstaged, 1, "the edit must be seen incrementally");
+        ctx.cache.invalidate(&repo);
+        handle_file_event(&ctx, &whole_repo_event(&repo), &config);
+        assert_eq!(edited, ctx.cache.get(&repo).expect("full scan"));
+
+        fs::write(&file, "a\n").expect("restore README.md");
+        let reverted = deliver_path(&ctx, &repo, &config, file);
+        assert_eq!(
+            reverted.state,
+            RepositoryState::Clean,
+            "the revert must clear the entry cached under the index spelling"
+        );
+        ctx.cache.invalidate(&repo);
+        handle_file_event(&ctx, &whole_repo_event(&repo), &config);
+        assert_eq!(reverted, ctx.cache.get(&repo).expect("full scan"));
+    }
+
+    /// A tracked path that the case-variant differential test can respell on
+    /// disk: `index` as committed, `variant` the other spelling of its first
+    /// component, `tail` the unchanged remainder below it.
+    struct CaseSlot {
+        index: &'static str,
+        variant: &'static str,
+        tail: &'static str,
+        on_disk: &'static str,
+    }
+
+    impl CaseSlot {
+        fn file(&self, repo: &Path) -> PathBuf {
+            repo.join(format!("{}{}", self.on_disk, self.tail))
+        }
+    }
+
+    /// Apply one random mutation to the case-variant scenario and return the
+    /// paths a watcher would report for it, plus a description for the log.
+    fn apply_case_op(rng: &mut Rng, repo: &Path, slots: &mut [CaseSlot]) -> (Vec<PathBuf>, String) {
+        let choice = rng.below(slots.len());
+        let slot = slots.get_mut(choice).expect("slot in range");
+        match rng.below(7) {
+            0 | 1 => {
+                let file = slot.file(repo);
+                fs::write(&file, format!("{}\n", rng.below(1000))).expect("write");
+                (vec![file], format!("edit {}", slot.on_disk))
+            }
+            2 => {
+                let file = slot.file(repo);
+                fs::write(&file, "orig\n").expect("restore");
+                (vec![file], format!("revert {}", slot.on_disk))
+            }
+            3 | 4 => {
+                let old = repo.join(slot.on_disk);
+                let target = if slot.on_disk == slot.index {
+                    slot.variant
+                } else {
+                    slot.index
+                };
+                rename_via_temp(repo, slot.on_disk, target);
+                let op = format!("rename {} -> {target}", slot.on_disk);
+                slot.on_disk = target;
+                (vec![old, repo.join(target), slot.file(repo)], op)
+            }
+            5 => {
+                git_in(repo, &["add", "-u"]);
+                (vec![repo.join(".git/index")], "git add -u".to_owned())
+            }
+            _ => {
+                git_in(repo, &["commit", "-q", "-m", "step", "--allow-empty"]);
+                (vec![repo.join(".git/index")], "git commit".to_owned())
+            }
+        }
+    }
+
+    #[test]
+    /// Differential scenario for #713: random edits, reverts, case-only
+    /// renames of files and of a directory, `git add -u` and commits, reported
+    /// as the on-disk spellings a watcher sees, must leave the cached file map
+    /// equal to a fresh `git status` on a case-insensitive repository.
+    fn incremental_refresh_matches_git_status_for_case_variant_edits() {
+        for seed in 1..=12_u64 {
+            let (_tmp, repo) = create_temp_repo();
+            if !repo_ignores_case(&repo) {
+                return;
+            }
+            let mut slots = [
+                ("Readme.md", "README.md", ""),
+                ("Notes.txt", "NOTES.TXT", ""),
+                ("Src", "SRC", "/lib.txt"),
+            ]
+            .map(|(index, variant, tail)| CaseSlot {
+                index,
+                variant,
+                tail,
+                on_disk: index,
+            });
+            fs::create_dir_all(repo.join("Src")).expect("src dir");
+            for slot in &slots {
+                fs::write(slot.file(&repo), "orig\n").expect("seed file");
+            }
+            commit_all(&repo);
+
+            let ctx = make_agent_context();
+            let config = Config::default();
+            let backend = NativeGitBackend;
+            refresh_repo_status_with(&backend, &ctx, &repo, &config, None);
+
+            let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+            let mut log = Vec::new();
+            for _ in 0_u32..14_u32 {
+                let (reported, op) = apply_case_op(&mut rng, &repo, &mut slots);
                 log.push(op);
                 let hint = git_paths_hint(&GitPaths::Paths(reported), &repo);
                 let refreshed =
