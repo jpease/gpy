@@ -256,7 +256,9 @@ mkdir -p "$INSTALL_DIR"
 # fix both (#324).
 BINARY_URL="https://github.com/$REPO/releases/download/$VERSION/$BINARY_NAME"
 TEMP_BINARY=$(mktemp "${TMPDIR:-/tmp}/gpy-agent.XXXXXX") || die "Failed to create a temp file for the download"
-trap 'rm -f "$TEMP_BINARY" 2>/dev/null' EXIT
+STAGED_AGENT="$INSTALL_DIR/.gpy-agent.new.$$"
+STAGED_CLI="$INSTALL_DIR/.gpy.new.$$"
+trap 'rm -f "$TEMP_BINARY" "$STAGED_AGENT" 2>/dev/null' EXIT
 
 # A failed download used to fall back to
 # raw.githubusercontent.com/$REPO/main/bin/$BINARY_NAME. That path has never
@@ -270,24 +272,34 @@ fi
 
 verify_download "$TEMP_BINARY" "$BINARY_URL" "$BINARY_NAME"
 
-# Back up only once there is a verified replacement to install. Backing up
-# first meant a failed download or a failed verification still littered
-# ~/.local/bin with a backup copy of a binary that was never replaced (#494).
+# Stage the verified download beside its destination and run it there BEFORE
+# it replaces the installed agent (#806). Staging in $INSTALL_DIR rather than
+# $TMPDIR avoids a noexec /tmp and keeps the final mv an atomic same-filesystem
+# rename. A binary that cannot run on this host (newer glibc, wrong libc or
+# userland) is dropped and the working install is left exactly as it was.
+chmod +x "$TEMP_BINARY"
+mv "$TEMP_BINARY" "$STAGED_AGENT"
+clear_quarantine "$STAGED_AGENT"
+
+if ! "$STAGED_AGENT" --version >/dev/null 2>&1; then
+    rm -f "$STAGED_AGENT"
+    die "Agent binary installation failed (binary not functional); the existing install was left untouched"
+fi
+
+# Back up only once there is a verified, working replacement to install.
+# Backing up first meant a failed download or a failed verification still
+# littered ~/.local/bin with a backup copy of a binary that was never
+# replaced (#494).
 if [ -f "$INSTALL_DIR/gpy-agent" ]; then
     BACKUP_PATH="$INSTALL_DIR/gpy-agent.backup.$(date +%Y%m%d_%H%M%S)"
     info "Backing up existing agent to $BACKUP_PATH"
     cp "$INSTALL_DIR/gpy-agent" "$BACKUP_PATH"
 fi
 
-# Install binary
-chmod +x "$TEMP_BINARY"
-mv "$TEMP_BINARY" "$INSTALL_DIR/gpy-agent"
+# mv, not cp: a rename replaces the directory entry, so it is ETXTBSY-safe
+# while the old agent is running (#307).
+mv "$STAGED_AGENT" "$INSTALL_DIR/gpy-agent"
 clear_quarantine "$INSTALL_DIR/gpy-agent"
-
-# Verify binary works
-if ! "$INSTALL_DIR/gpy-agent" --version >/dev/null 2>&1; then
-    die "Agent binary installation failed (binary not functional)"
-fi
 
 success "Agent binary installed to $INSTALL_DIR/gpy-agent"
 
@@ -303,7 +315,7 @@ info "Installing GPY CLI (gpy)..."
 
 CLI_BINARY_URL="https://github.com/$REPO/releases/download/$VERSION/$CLI_BINARY_NAME"
 TEMP_CLI_BINARY=$(mktemp "${TMPDIR:-/tmp}/gpy-cli.XXXXXX") || die "Failed to create a temp file for the CLI download"
-trap 'rm -f "$TEMP_BINARY" "$TEMP_CLI_BINARY" 2>/dev/null' EXIT
+trap 'rm -f "$TEMP_BINARY" "$TEMP_CLI_BINARY" "$STAGED_AGENT" "$STAGED_CLI" 2>/dev/null' EXIT
 
 CLI_DOWNLOADED=0
 info "Downloading CLI from $CLI_BINARY_URL..."
@@ -313,23 +325,29 @@ fi
 
 if [ "$CLI_DOWNLOADED" -eq 1 ]; then
     verify_download "$TEMP_CLI_BINARY" "$CLI_BINARY_URL" "$CLI_BINARY_NAME"
+
+    # Stage next to the destination and check it there before it replaces
+    # the installed gpy (#806); the CLI stays optional, so a staged binary
+    # that cannot run is dropped with a warning and the old gpy is kept.
     chmod +x "$TEMP_CLI_BINARY"
+    mv "$TEMP_CLI_BINARY" "$STAGED_CLI"
+    clear_quarantine "$STAGED_CLI"
 
-    if [ -f "$INSTALL_DIR/gpy" ]; then
-        CLI_BACKUP_PATH="$INSTALL_DIR/gpy.backup.$(date +%Y%m%d_%H%M%S)"
-        info "Backing up existing CLI to $CLI_BACKUP_PATH"
-        cp "$INSTALL_DIR/gpy" "$CLI_BACKUP_PATH"
-    fi
+    if "$STAGED_CLI" --version >/dev/null 2>&1; then
+        if [ -f "$INSTALL_DIR/gpy" ]; then
+            CLI_BACKUP_PATH="$INSTALL_DIR/gpy.backup.$(date +%Y%m%d_%H%M%S)"
+            info "Backing up existing CLI to $CLI_BACKUP_PATH"
+            cp "$INSTALL_DIR/gpy" "$CLI_BACKUP_PATH"
+        fi
 
-    # mv (atomic rename) replaces the directory entry rather than overwriting
-    # the inode in place, so it's ETXTBSY-safe if an old gpy is mid-execution.
-    mv "$TEMP_CLI_BINARY" "$INSTALL_DIR/gpy"
-    clear_quarantine "$INSTALL_DIR/gpy"
-
-    if "$INSTALL_DIR/gpy" --version >/dev/null 2>&1; then
+        # mv (atomic rename) replaces the directory entry rather than overwriting
+        # the inode in place, so it's ETXTBSY-safe if an old gpy is mid-execution.
+        mv "$STAGED_CLI" "$INSTALL_DIR/gpy"
+        clear_quarantine "$INSTALL_DIR/gpy"
         success "CLI binary installed to $INSTALL_DIR/gpy"
     else
-        warn "CLI binary installed but not functional; shell completions may be unavailable"
+        rm -f "$STAGED_CLI"
+        warn "Downloaded CLI binary is not functional on this host; the existing gpy (if any) was left untouched and shell completions may be unavailable"
     fi
 else
     warn "Could not download the gpy CLI ($CLI_BINARY_NAME); shell completions will be unavailable"
@@ -361,7 +379,7 @@ SHELL_FILES_BASE_URL="https://raw.githubusercontent.com/$REPO/$VERSION/$CURRENT_
 # TEMP_BINARY above; the trap replaces the earlier one and cleans up both
 # temps together (#324).
 TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/gpy-install.XXXXXX") || die "Failed to create a temp directory for downloads"
-trap 'rm -f "$TEMP_BINARY" "$TEMP_CLI_BINARY" 2>/dev/null; rm -rf "$TEMP_DIR" 2>/dev/null' EXIT
+trap 'rm -f "$TEMP_BINARY" "$TEMP_CLI_BINARY" "$STAGED_AGENT" "$STAGED_CLI" 2>/dev/null; rm -rf "$TEMP_DIR" 2>/dev/null' EXIT
 
 # Per-shell file lists. Kept in named variables (instead of inline in the
 # for-loops below) so tests/fish/install_oneline_file_lists.test.fish can
