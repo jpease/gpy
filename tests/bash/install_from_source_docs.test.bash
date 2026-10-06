@@ -107,22 +107,8 @@ readme_commands="$(grep -v '^git clone ' <<<"$readme_block" | grep -v '^cd gpy$'
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-from-source.XXXXXX")"
 SRC="$SANDBOX/gpy"
 SANDBOX_HOME="$SANDBOX/home"
-mkdir -p "$SRC" "$SANDBOX_HOME" "$SANDBOX/runtime"
-
-cleanup() {
-    # install-dev.fish starts the freshly installed agent to verify hot
-    # reload; stop it before the sandbox goes away.
-    if [[ -x "$SANDBOX_HOME/.local/bin/gpy-agent" ]]; then
-        "$SANDBOX_HOME/.local/bin/gpy-agent" stop >/dev/null 2>&1 || true
-    fi
-    rm -rf "$SANDBOX"
-}
-trap cleanup EXIT
-
-git -C "$ROOT" archive --format=tar HEAD | tar -x -C "$SRC"
-# Warm dependency cache (see the header); the crate itself still builds.
-mkdir -p "$ROOT/gpy-agent/target"
-ln -s "$ROOT/gpy-agent/target" "$SRC/gpy-agent/target"
+mkdir -p "$SRC" "$SANDBOX_HOME" "$SANDBOX/runtime" "$SANDBOX/tmp"
+chmod 700 "$SANDBOX/runtime"
 
 # The sandboxed HOME hides the developer's Rust toolchain (rustup and mise
 # both resolve through $HOME), so hand the real toolchain to the sandbox:
@@ -133,23 +119,88 @@ real_cargo="$(rustup which cargo 2>/dev/null || command -v cargo)"
 real_cargo_dir="$(dirname "$real_cargo")"
 real_home="$HOME"
 
+# Resolve every tool the documented commands launch by name BEFORE sealing,
+# so the sandbox PATH can be built from these directories alone (#749).
+tool_dirs=""
+for tool in fish zsh bash git rsync; do
+    tool_path="$(command -v "$tool" 2>/dev/null)" || continue
+    tool_dir="$(dirname "$tool_path")"
+    case ":$tool_dirs:" in
+        *":$tool_dir:"*) ;;
+        *) tool_dirs="$tool_dirs:$tool_dir" ;;
+    esac
+done
+sandbox_path="$SANDBOX_HOME/.local/bin:$real_cargo_dir$tool_dirs:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# Every sandboxed command runs under `env -i "${sandbox_env[@]}"`: nothing
+# from the caller (fish_user_paths, GPY_*, XDG_DATA_DIRS, PATH) leaks in.
 sandbox_env=(
     "HOME=$SANDBOX_HOME"
     "XDG_CONFIG_HOME=$SANDBOX_HOME/.config"
     "XDG_CACHE_HOME=$SANDBOX_HOME/.cache"
     "XDG_RUNTIME_DIR=$SANDBOX/runtime"
-    "PATH=$SANDBOX_HOME/.local/bin:$real_cargo_dir:$PATH"
+    "TMPDIR=$SANDBOX/tmp"
+    "PATH=$sandbox_path"
     "CARGO_HOME=${CARGO_HOME:-$real_home/.cargo}"
     "RUSTUP_HOME=${RUSTUP_HOME:-$real_home/.rustup}"
     "GPY_NERD_FONT=none"
     "RUSTC_WRAPPER="
+    "TERM=${TERM:-dumb}"
+    "LANG=${LANG:-C.UTF-8}"
 )
+
+# Stop exactly the agent this test started: ask through the sandbox's own
+# socket (sandbox env, not the caller's), then TERM/KILL whatever still holds
+# that socket. Never a name-based kill (#484).
+stop_sandbox_agent() {
+    local sock="$SANDBOX/runtime/gpy/gpy.sock" agent="$SANDBOX_HOME/.local/bin/gpy-agent" pid i
+    if [[ -x "$agent" ]]; then
+        env -i "${sandbox_env[@]}" "$agent" stop >/dev/null 2>&1 || true
+    fi
+    command -v lsof >/dev/null 2>&1 || return 0
+    for ((i = 0; i < 30; i++)); do
+        [[ -n "$(lsof -t "$sock" 2>/dev/null)" ]] || return 0
+        sleep 0.1
+    done
+    for pid in $(lsof -t "$sock" 2>/dev/null); do kill -TERM "$pid" 2>/dev/null || true; done
+    for ((i = 0; i < 30; i++)); do
+        [[ -n "$(lsof -t "$sock" 2>/dev/null)" ]] || return 0
+        sleep 0.1
+    done
+    for pid in $(lsof -t "$sock" 2>/dev/null); do kill -KILL "$pid" 2>/dev/null || true; done
+}
+
+cleanup() {
+    # install-dev.fish starts the freshly installed agent to verify hot
+    # reload; stop it before the sandbox goes away.
+    stop_sandbox_agent
+    rm -rf "$SANDBOX"
+}
+trap cleanup EXIT
+
+# Tripwire: any gpy/gpy-agent the caller's PATH resolves outside the sandbox
+# must be byte-for-byte the same file afterwards (#693 deleted real ones).
+caller_binaries_snapshot() {
+    local name found
+    for name in gpy gpy-agent; do
+        while IFS= read -r found; do
+            case "$found" in "$SANDBOX"/*) continue ;; esac
+            ls -li "$found" 2>&1
+        done < <(type -aP "$name" 2>/dev/null)
+    done
+}
+caller_binaries_before="$(caller_binaries_snapshot)"
+
+git -C "$ROOT" archive --format=tar HEAD | tar -x -C "$SRC"
+# Warm dependency cache (see the header); the crate itself still builds.
+mkdir -p "$ROOT/gpy-agent/target"
+ln -s "$ROOT/gpy-agent/target" "$SRC/gpy-agent/target"
 
 run_documented() {
     local label="$1" commands="$2"
     echo "--- running documented commands: $label ---"
     local log="$SANDBOX/$label.log"
-    if (cd "$SRC" && env "${sandbox_env[@]}" bash -e -c "$commands") >"$log" 2>&1; then
+    if (cd "$SRC" && env -i "${sandbox_env[@]}" bash -e -c "$commands") >"$log" 2>&1; then
         return 0
     fi
     fail "$label commands failed; last 40 lines:"
@@ -186,11 +237,11 @@ grep -q 'source ~/.config/gpy/bash/gpy.bash' "$SANDBOX_HOME/.bashrc" 2>/dev/null
 
 # Each integration must source without error in its shell; the agent is kept
 # off so sourcing never spawns a daemon from inside this test.
-if ! env "${sandbox_env[@]}" GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
+if ! env -i "${sandbox_env[@]}" GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
     zsh -c 'source ~/.config/gpy/zsh/gpy.zsh && whence -w __gpy_debug_paths >/dev/null' >"$SANDBOX/zsh-source.log" 2>&1; then
     fail "sourcing the installed Zsh integration failed: $(cat "$SANDBOX/zsh-source.log")"
 fi
-if ! env "${sandbox_env[@]}" GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
+if ! env -i "${sandbox_env[@]}" GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
     bash -c 'source ~/.config/gpy/bash/gpy.bash && declare -F __gpy_debug_paths >/dev/null' >"$SANDBOX/bash-source.log" 2>&1; then
     fail "sourcing the installed Bash integration failed: $(cat "$SANDBOX/bash-source.log")"
 fi
@@ -199,6 +250,13 @@ fi
 
 if [[ -n "$(git -C "$ROOT" status --porcelain -- bin 2>/dev/null)" ]]; then
     fail "the from-source install wrote into this checkout's bin/"
+fi
+
+if [[ "$(caller_binaries_snapshot)" != "$caller_binaries_before" ]]; then
+    fail "the from-source install changed or removed a gpy/gpy-agent outside the sandbox (before/after):
+$caller_binaries_before
+--
+$(caller_binaries_snapshot)"
 fi
 
 if [[ $failures -gt 0 ]]; then
