@@ -49,14 +49,15 @@ use crate::commands::utils::{
 /// parsed, or validated; if the selected theme or palette fails validation;
 /// or if the write fails.
 pub fn save_to(state: &WizardState, path: &str) -> Result<()> {
-    let mut config = load_active_config(path)?;
+    let original = load_active_config(path)?;
+    let mut config = original.clone();
 
     state.apply_to(&mut config);
 
     theme::validate_by_name(state.selected_theme())?;
     palette::validate_by_name(state.selected_palette())?;
 
-    save_config_to(&config, path)?;
+    save_config_to(path, &original, &config, &[])?;
     Ok(())
 }
 

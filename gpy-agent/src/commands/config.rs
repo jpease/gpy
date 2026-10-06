@@ -12,6 +12,9 @@ use crate::{Error, Result, config};
 use std::path::PathBuf;
 use std::process::Command;
 
+/// Contents of a config file freshly created by `gpy config open`.
+const NEW_CONFIG_HEADER: &str = "# GPY configuration\n# Every key is optional; omitted keys use built-in defaults.\n# See docs/user/configuration-reference.md for all available settings.\n";
+
 /// Show config section or all sections
 ///
 /// # Errors
@@ -144,12 +147,13 @@ pub fn get(key: &str) -> Result<()> {
 /// parsed, or validated.
 pub fn set(key: &str, value: &str) -> Result<()> {
     let path = active_config_path()?;
-    let mut config = load_active_config(&path)?;
+    let original = load_active_config(&path)?;
+    let mut config = original.clone();
 
     config::metadata::set_config_value(&mut config, key, value)?;
     validate_resource_backed_key(key, &config)?;
 
-    save_config_to(&config, &path)?;
+    save_config_to(&path, &original, &config, &[key])?;
     println!("✅ Set {key} = {value}");
 
     reload_agent_and_notify();
@@ -217,7 +221,8 @@ fn validate_theme_selection(name: &str) -> Result<()> {
 
 /// Open the config file in the user's editor.
 ///
-/// Creates the config file with default contents if it does not exist yet.
+/// Creates a comment-only config file pointing at the configuration reference
+/// if it does not exist yet; defaults are not written out.
 ///
 /// # Errors
 ///
@@ -227,7 +232,7 @@ pub fn open() -> Result<()> {
     let config_path = PathBuf::from(active_config_path()?);
 
     if !config_path.exists() {
-        config::loader::save_config(&config::Config::default(), &config_path.to_string_lossy())?;
+        config::loader::write_new_config(&config_path.to_string_lossy(), NEW_CONFIG_HEADER)?;
     }
 
     launch_editor(&config_path)?;

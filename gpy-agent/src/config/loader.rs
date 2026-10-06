@@ -5,7 +5,8 @@
 
 use super::{Config, schema, validation};
 use crate::{Error, Result};
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 /// Config loading with XDG path discovery.
 ///
@@ -90,34 +91,316 @@ const fn apply_defaults(config: Config) -> Config {
     config
 }
 
-/// Save configuration to file
+/// Save the changes between `original` and `updated` into the config file at
+/// `path`, editing the document on disk instead of regenerating it.
+///
+/// Only leaf values that differ between the two configs, plus every dotted
+/// path in `explicit_keys`, are written; comments, blank lines, key order,
+/// unknown keys, and keys the user never wrote are left as they were. A
+/// missing file is created from an empty document. A symlinked `path` is
+/// resolved first, so the link target receives the change and the link stays
+/// a link. Nothing is written when the resulting text equals the existing text.
 ///
 /// # Errors
 ///
-/// Returns an error if the configuration is invalid or if the file cannot be written.
-pub fn save_config(config: &Config, path: &str) -> Result<()> {
-    // Validate before saving
-    validation::validate_config(config)?;
+/// Returns an error if `updated` is invalid, the existing file cannot be read
+/// or parsed as TOML, or the file cannot be written.
+pub fn save_config(
+    path: &str,
+    original: &Config,
+    updated: &Config,
+    explicit_keys: &[&str],
+) -> Result<()> {
+    write_config(path, original, updated, explicit_keys, false)
+}
 
-    // Serialize configuration to TOML
-    let toml_content = toml::to_string_pretty(config)
-        .map_err(|e| Error::config(format!("Failed to serialize config to TOML: {e}")))?;
+/// Like [`save_config`], but discards whatever the file at `path` currently
+/// holds and starts from an empty document (`gpy-agent init --force`).
+///
+/// # Errors
+///
+/// Returns an error if `updated` is invalid or the file cannot be written.
+pub fn overwrite_config(
+    path: &str,
+    original: &Config,
+    updated: &Config,
+    explicit_keys: &[&str],
+) -> Result<()> {
+    write_config(path, original, updated, explicit_keys, true)
+}
 
-    // Ensure parent directory exists
-    if let Some(parent) = Path::new(path).parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| Error::config(format!("Failed to create config directory: {e}")))?;
+/// Create the config file at `path` with literal `contents` (used by
+/// `config open` to bootstrap a comment-only file).
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be written.
+pub fn write_new_config(path: &str, contents: &str) -> Result<()> {
+    write_atomically(Path::new(path), contents)
+}
+
+/// Shared body of [`save_config`] and [`overwrite_config`].
+///
+/// # Errors
+///
+/// Returns an error if `updated` is invalid, the existing file cannot be read
+/// or parsed, or the file cannot be written.
+fn write_config(
+    path: &str,
+    original: &Config,
+    updated: &Config,
+    explicit_keys: &[&str],
+    start_empty: bool,
+) -> Result<()> {
+    validation::validate_config(updated)?;
+
+    let original_leaves = config_leaves(original)?;
+    let updated_leaves = config_leaves(updated)?;
+
+    let target = resolve_write_target(Path::new(path))?;
+    let existing = if start_empty {
+        None
+    } else {
+        read_existing(&target)?
+    };
+    let mut document: toml_edit::DocumentMut = match existing.as_deref() {
+        Some(text) => text
+            .parse()
+            .map_err(|e| Error::config(format!("Failed to parse existing config {path}: {e}")))?,
+        None => toml_edit::DocumentMut::new(),
+    };
+
+    // `BTreeMap` iteration is sorted, so application order (and the order of
+    // newly created keys) is deterministic regardless of `HashMap` seeds.
+    let mut changes: BTreeMap<Vec<String>, Option<&toml::Value>> = BTreeMap::new();
+    for (leaf, value) in &updated_leaves {
+        if original_leaves.get(leaf) != Some(value) {
+            changes.insert(leaf.clone(), Some(value));
+        }
+    }
+    for leaf in original_leaves.keys() {
+        if !updated_leaves.contains_key(leaf) {
+            changes.insert(leaf.clone(), None);
+        }
+    }
+    for key in explicit_keys {
+        let leaf: Vec<String> = key.split('.').map(str::to_owned).collect();
+        if let Some(value) = updated_leaves.get(&leaf) {
+            changes.insert(leaf, Some(value));
+        }
     }
 
-    // Write the configuration with a header comment
-    let content_with_header = format!(
-        "# GPY Agent Configuration\n# Generated automatically - edit carefully\n\n{toml_content}"
-    );
+    for (leaf, change) in &changes {
+        match change {
+            Some(value) => set_leaf(&mut document, leaf, value)?,
+            None => remove_leaf(&mut document, leaf),
+        }
+    }
 
-    std::fs::write(path, content_with_header)
-        .map_err(|e| Error::config(format!("Failed to write config file: {e}")))?;
+    let rendered = document.to_string();
+    if existing.as_deref() == Some(rendered.as_str()) || (existing.is_none() && changes.is_empty())
+    {
+        return Ok(());
+    }
+    write_atomically(&target, &rendered)
+}
 
+/// Flatten a config into sorted `dotted-path -> leaf value` pairs. Arrays are
+/// single leaves; every entry of a table (including each `language.icons`
+/// entry) is its own leaf.
+///
+/// # Errors
+///
+/// Returns an error if the config cannot be converted to a TOML table.
+fn config_leaves(config: &Config) -> Result<BTreeMap<Vec<String>, toml::Value>> {
+    let table = toml::Table::try_from(config)
+        .map_err(|e| Error::config(format!("Failed to serialize config to TOML: {e}")))?;
+    let mut leaves = BTreeMap::new();
+    flatten_table(&table, &mut Vec::new(), &mut leaves);
+    Ok(leaves)
+}
+
+fn flatten_table(
+    table: &toml::Table,
+    prefix: &mut Vec<String>,
+    out: &mut BTreeMap<Vec<String>, toml::Value>,
+) {
+    for (key, value) in table {
+        prefix.push(key.clone());
+        match value {
+            toml::Value::Table(inner) => flatten_table(inner, prefix, out),
+            leaf => {
+                out.insert(prefix.clone(), leaf.clone());
+            }
+        }
+        prefix.pop();
+    }
+}
+
+/// Convert a leaf value into its `toml_edit` equivalent.
+///
+/// # Errors
+///
+/// Returns an error if a datetime value cannot be converted.
+fn to_edit_value(value: &toml::Value) -> Result<toml_edit::Value> {
+    Ok(match value {
+        toml::Value::String(s) => toml_edit::Value::from(s.as_str()),
+        toml::Value::Integer(i) => toml_edit::Value::from(*i),
+        toml::Value::Float(f) => toml_edit::Value::from(*f),
+        toml::Value::Boolean(b) => toml_edit::Value::from(*b),
+        toml::Value::Datetime(dt) => {
+            let parsed: toml_edit::Datetime = dt.to_string().parse().map_err(|e| {
+                Error::config(format!("Failed to convert datetime config value: {e}"))
+            })?;
+            toml_edit::Value::from(parsed)
+        }
+        toml::Value::Array(items) => {
+            let mut array = toml_edit::Array::new();
+            for item in items {
+                array.push(to_edit_value(item)?);
+            }
+            toml_edit::Value::Array(array)
+        }
+        toml::Value::Table(table) => {
+            let mut inline = toml_edit::InlineTable::new();
+            for (key, item) in table {
+                inline.insert(key, to_edit_value(item)?);
+            }
+            toml_edit::Value::InlineTable(inline)
+        }
+    })
+}
+
+/// Set the value at `leaf`, creating missing parent tables.
+///
+/// # Errors
+///
+/// Returns an error if a parent key exists but is not a table, or the value
+/// cannot be converted.
+fn set_leaf(
+    document: &mut toml_edit::DocumentMut,
+    leaf: &[String],
+    value: &toml::Value,
+) -> Result<()> {
+    let Some((key, parents)) = leaf.split_last() else {
+        return Ok(());
+    };
+    let mut new_value = to_edit_value(value)?;
+    let mut current: &mut dyn toml_edit::TableLike = document.as_table_mut();
+    for segment in parents {
+        if !current.contains_key(segment) {
+            let mut table = toml_edit::Table::new();
+            table.set_implicit(true);
+            current.insert(segment, toml_edit::Item::Table(table));
+        }
+        current = current
+            .get_mut(segment)
+            .and_then(toml_edit::Item::as_table_like_mut)
+            .ok_or_else(|| {
+                Error::config(format!(
+                    "Cannot set {}: `{segment}` exists in the config file but is not a table",
+                    leaf.join(".")
+                ))
+            })?;
+    }
+    // Keep the existing value's surrounding whitespace and trailing comment.
+    if let Some(old) = current.get_mut(key) {
+        if let Some(old_value) = old.as_value() {
+            *new_value.decor_mut() = old_value.decor().clone();
+        }
+        *old = toml_edit::Item::Value(new_value);
+    } else {
+        current.insert(key, toml_edit::Item::Value(new_value));
+    }
     Ok(())
+}
+
+fn remove_leaf(document: &mut toml_edit::DocumentMut, leaf: &[String]) {
+    let Some((key, parents)) = leaf.split_last() else {
+        return;
+    };
+    let mut current: &mut dyn toml_edit::TableLike = document.as_table_mut();
+    for segment in parents {
+        let Some(next) = current
+            .get_mut(segment)
+            .and_then(toml_edit::Item::as_table_like_mut)
+        else {
+            return;
+        };
+        current = next;
+    }
+    current.remove(key);
+}
+
+/// Resolve a symlinked config path to its target so the link survives a write.
+///
+/// # Errors
+///
+/// Returns an error if `path` is a symlink that cannot be resolved.
+fn resolve_write_target(path: &Path) -> Result<PathBuf> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => std::fs::canonicalize(path).map_err(|e| {
+            Error::config(format!(
+                "Failed to resolve config symlink {}: {e}",
+                path.display()
+            ))
+        }),
+        _ => Ok(path.to_path_buf()),
+    }
+}
+
+/// Read the file if present; `Ok(None)` when it does not exist.
+///
+/// # Errors
+///
+/// Returns an error if the file exists but cannot be read.
+fn read_existing(path: &Path) -> Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(Error::config(format!(
+            "Failed to read config file {}: {e}",
+            path.display()
+        ))),
+    }
+}
+
+/// Write `contents` to a temp file next to `target`, then rename it over
+/// `target`, keeping the existing file's permissions.
+///
+/// # Errors
+///
+/// Returns an error if the directory, temp file, or rename fails.
+fn write_atomically(target: &Path, contents: &str) -> Result<()> {
+    use std::io::Write as _;
+
+    let parent = target
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)
+        .map_err(|e| Error::config(format!("Failed to create config directory: {e}")))?;
+
+    let file_name = target.file_name().map_or_else(
+        || "config.toml".into(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    let temp = parent.join(format!(".{file_name}.tmp.{}", std::process::id()));
+
+    let write_result = (|| -> std::io::Result<()> {
+        let mut file = std::fs::File::create(&temp)?;
+        file.write_all(contents.as_bytes())?;
+        if let Ok(meta) = std::fs::metadata(target) {
+            file.set_permissions(meta.permissions())?;
+        }
+        file.sync_all()?;
+        std::fs::rename(&temp, target)
+    })();
+
+    write_result.map_err(|e| {
+        drop(std::fs::remove_file(&temp));
+        Error::config(format!("Failed to write config file: {e}"))
+    })
 }
 
 /// Load theme configuration from ~/.`config/gpy/themes/{theme_name}.toml`

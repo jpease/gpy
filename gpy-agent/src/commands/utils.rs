@@ -56,14 +56,20 @@ pub fn load_active_config(path: &str) -> Result<config::Config> {
     }
 }
 
-/// Save config to the given active path with validation.
+/// Save the difference between `original` and `updated` to the given active
+/// path with validation, preserving everything else in the file.
 ///
 /// # Errors
 ///
 /// Returns an error if validation fails, directory creation fails, or write fails.
-pub fn save_config_to(config: &config::Config, path: &str) -> Result<()> {
+pub fn save_config_to(
+    path: &str,
+    original: &config::Config,
+    updated: &config::Config,
+    explicit_keys: &[&str],
+) -> Result<()> {
     // Use the config loader's save function which validates before writing.
-    config::loader::save_config(config, path)
+    config::loader::save_config(path, original, updated, explicit_keys)
 }
 
 /// Load the active configuration for a read-only command.

@@ -79,6 +79,7 @@ serde_json = "1.0"
 
 # Configuration
 toml = "1.1.2"
+toml_edit = "0.25.15"
 
 # Language detection: linguist-grade matcher tables (extensions, filenames,
 # path globs, interpreters, content heuristics). Only the language tables are

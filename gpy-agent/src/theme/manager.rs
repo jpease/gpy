@@ -536,8 +536,9 @@ impl ThemeManager {
     /// (#407): the caller loads the currently-active theme, mutates only the
     /// field(s) a picker edited, and hands the whole `ThemeConfig` here to be
     /// written back. Every unrelated field is carried through by value, so on
-    /// reload nothing but the edited field(s) differs — the same round-trip
-    /// guarantee `config::loader::save_config` gives for `config.toml`.
+    /// reload nothing but the edited field(s) differs — the same guarantee
+    /// (that only what was edited changes) `config::loader::save_config`
+    /// gives for `config.toml`.
     ///
     /// It only ever writes under the user themes directory: a builtin
     /// (embedded `config/themes/*.toml`) or plugin theme file on disk is never
