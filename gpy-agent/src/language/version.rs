@@ -333,15 +333,22 @@ pub(crate) fn resolve_ruby_version_file(cwd: &Path) -> Option<String> {
 /// bounding a maliciously or accidentally huge one.
 const RUBY_VERSION_READ_CAP: usize = 4_096;
 
-/// Parse a `.ruby-version` file's contents: the first non-empty, non-comment
-/// (`#`) line, trimmed. `None` if every line is blank or a comment.
+/// Parse a `.ruby-version` file's contents.
+///
+/// Takes the first non-empty, non-comment (`#`) line, trimmed, with one leading
+/// `ruby-` engine prefix and any RVM `@gemset` suffix removed
+/// (`ruby-3.2.2@app` -> `3.2.2`). Other engines (`jruby-9.4.5.0`) are kept as
+/// written. `None` if every line is blank or a comment, or nothing remains
+/// after stripping.
 #[must_use]
 fn parse_ruby_version(contents: &str) -> Option<String> {
-    contents
+    let first = contents
         .lines()
         .map(str::trim)
-        .find(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(std::borrow::ToOwned::to_owned)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))?;
+    let unprefixed = first.strip_prefix("ruby-").unwrap_or(first);
+    let (version, _gemset) = unprefixed.split_once('@').unwrap_or((unprefixed, ""));
+    (!version.trim().is_empty()).then(|| version.trim().to_owned())
 }
 
 fn parse_version_output<P: ReleaseSource + ?Sized>(
@@ -802,6 +809,12 @@ mod tests {
             ("# only comments\n#more\n", None),
             ("\n\n\n", None),
             ("", None),
+            ("ruby-3.2.2\n", Some("3.2.2")),
+            ("ruby-3.2.2@app\n", Some("3.2.2")),
+            ("3.3.0@app", Some("3.3.0")),
+            ("jruby-9.4.5.0", Some("jruby-9.4.5.0")),
+            ("ruby-", None),
+            ("@app", None),
         ];
         for (input, expected) in cases {
             assert_eq!(
