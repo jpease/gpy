@@ -42,10 +42,17 @@ function __gpy_resolve_agent_binary --description 'Resolve the gpy-agent binary 
     return 1
 end
 
+# Mirrors `config::schema::get_config_paths`: no project-local `.gpy.toml`
+# (#733), and a relative GPY_CONFIG_PATH is joined onto the physical cwd the
+# way the agent joins it onto `std::env::current_dir()`.
 function __gpy_user_config_candidates
     set -l candidates
     if set -q GPY_CONFIG_PATH; and test -n "$GPY_CONFIG_PATH"
-        set candidates $GPY_CONFIG_PATH
+        if string match -q '/*' -- "$GPY_CONFIG_PATH"
+            set candidates $GPY_CONFIG_PATH
+        else
+            set candidates (string trim -r -c / -- (pwd -P))/$GPY_CONFIG_PATH
+        end
     end
     if set -q XDG_CONFIG_HOME; and test -n "$XDG_CONFIG_HOME"; and string match -q '/*' -- "$XDG_CONFIG_HOME"
         set -a candidates "$XDG_CONFIG_HOME/gpy/config.toml"
@@ -53,7 +60,6 @@ function __gpy_user_config_candidates
     if set -q HOME; and test -n "$HOME"
         set -a candidates "$HOME/.config/gpy/config.toml"
     end
-    set -a candidates ".gpy.toml"
     printf '%s\n' $candidates
 end
 

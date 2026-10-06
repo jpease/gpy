@@ -21,11 +21,12 @@ This document covers `config.toml` only — the file that controls agent behavio
 
 The agent searches for a config file in this order and uses the first one found:
 
-1. `$GPY_CONFIG_PATH` (explicit override)
+1. `$GPY_CONFIG_PATH` (explicit override; a relative path is resolved against the directory you run the command or start the agent from)
 2. `$XDG_CONFIG_HOME/gpy/config.toml`
 3. `~/.config/gpy/config.toml` (fallback when `XDG_CONFIG_HOME` is unset)
-4. `.gpy.toml` (project-local override in the current directory)
-5. Built-in defaults, if no file exists anywhere above
+4. Built-in defaults, if no file exists anywhere above
+
+There is no per-directory config: a `.gpy.toml` in the current directory is not read.
 
 Every field below is optional — anything you omit falls back to its default, so a minimal or even empty `config.toml` is valid.
 

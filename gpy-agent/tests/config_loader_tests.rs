@@ -323,25 +323,23 @@ fn test_get_config_paths() {
 
     // Should include common config locations
     let paths_string = paths.join(" ");
-    assert!(paths_string.contains(".config/gpy/config.toml") || paths_string.contains(".gpy.toml"));
+    assert!(paths_string.contains(".config/gpy/config.toml"));
 }
 
 #[test]
 fn test_config_path_priority_order() {
     let paths = get_config_paths();
 
-    // Should have at least 2 paths (home config and local override)
-    // (Removed legacy ~/.gpy.toml path, so count reduced by 1)
-    assert!(paths.len() >= 2);
+    // No project-local `.gpy.toml` (#733): every candidate is absolute, so the
+    // agent never resolves one against the directory it was started from.
+    assert!(
+        paths.iter().all(|p| std::path::Path::new(p).is_absolute()),
+        "every config candidate must be absolute: {paths:?}"
+    );
+    assert!(!paths.iter().any(|p| p.ends_with(".gpy.toml")));
 
-    // Project-local config should be last (lowest priority)
-    assert!(paths.last().unwrap().ends_with(".gpy.toml"));
-
-    // User config paths should come before project-local
-    let has_user_config = paths
-        .iter()
-        .any(|p| p.contains(".config/gpy") || p.contains("XDG_CONFIG"));
-    assert!(has_user_config);
+    // The user config path is the lowest-priority candidate.
+    assert!(paths.last().unwrap().ends_with(".config/gpy/config.toml"));
 }
 
 #[test]

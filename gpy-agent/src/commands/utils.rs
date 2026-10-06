@@ -13,7 +13,7 @@ use std::path::Path;
 ///
 /// The active path is the highest-priority **existing** config file, matching
 /// the discovery order used by [`config::loader::load_config`]
-/// (`GPY_CONFIG_PATH`, then XDG, HOME, and `.gpy.toml`). When no config file
+/// (`GPY_CONFIG_PATH`, then XDG, then HOME). When no config file
 /// exists yet, the highest-priority candidate is returned so a new file is
 /// created where it will actually be loaded from — never at a lower-priority
 /// location that would be shadowed by an active higher-priority source.
