@@ -12,7 +12,7 @@ cd "$ROOT" || exit 1
 source zsh/core/ipc.zsh
 
 FIXTURE="$ROOT/tests/fixtures/xdg_absoluteness_vectors.tsv"
-FAKE_HOME="/home/fixture-home"
+FAKE_HOME="/home/user"
 test_result=0
 vector_count=0
 

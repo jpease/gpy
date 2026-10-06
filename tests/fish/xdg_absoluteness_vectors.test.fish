@@ -42,7 +42,7 @@ if not test -r "$fixture"
     exit 1
 end
 set -l vector_count 0
-set -gx HOME /home/fixture-home
+set -gx HOME /home/user
 set -e GPY_AGENT_SOCKET_PATH
 
 while read -d \t -la cols
