@@ -35,10 +35,16 @@ impl Default for MiscHandler {
 impl RequestHandler for MiscHandler {
     fn handle(&self, message: &Message) -> Result<Response, HandlerError> {
         match message {
-            Message::DirectoryRequest { path, .. } => {
-                let cwd = path.to_string();
-                let read_only = crate::fs_util::directory_is_read_only(std::path::Path::new(&cwd));
-                Ok(Response::Directory { cwd, read_only })
+            Message::DirectoryRequest {
+                path, display_path, ..
+            } => {
+                let canonical = path.to_string();
+                let read_only =
+                    crate::fs_util::directory_is_read_only(std::path::Path::new(&canonical));
+                Ok(Response::Directory {
+                    cwd: display_path.clone(),
+                    read_only,
+                })
             }
             Message::ClockRequest { shell, .. } => Ok(Response::Clock { shell: *shell }),
             Message::DurationRequest { duration_ms, .. } => Ok(Response::Duration {
@@ -110,25 +116,19 @@ mod tests {
     #[test]
     fn handles_directory_request() {
         // A `tempfile::TempDir` rather than a hardcoded "/tmp": that literal
-        // canonicalizes to `\\?\D:\tmp` on Windows (#482), so the suffix
-        // assertion below was unconditionally wrong there regardless of
-        // whether a `D:\tmp` happened to exist on the runner image. A real,
-        // platform-appropriate temp directory exercises the handler without
-        // asserting anything about the host's temp-directory layout.
+        // canonicalizes to `\\?\D:\tmp` on Windows (#482). The response
+        // `cwd` is the requested path, not its canonical form (#697).
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
-        let temp_path = temp_dir
+        let requested = temp_dir
             .path()
-            .canonicalize()
-            .expect("canonicalize temp dir");
+            .to_str()
+            .expect("temp dir path must be valid UTF-8")
+            .to_owned();
         let handler = MiscHandler::new();
-        let path = crate::security::SafePath::new(
-            temp_path
-                .to_str()
-                .expect("temp dir path must be valid UTF-8"),
-        )
-        .expect("valid path");
+        let path = crate::security::SafePath::new(&requested).expect("valid path");
         let msg = Message::DirectoryRequest {
             path,
+            display_path: requested.clone(),
             format: Format::Json,
             is_last: false,
             is_first: false,
@@ -136,10 +136,33 @@ mod tests {
         };
         let response = handler.handle(&msg).expect("handling must succeed");
         match response {
+            Response::Directory { cwd, .. } => {
+                assert_eq!(cwd, requested, "expected cwd to echo the requested path");
+            }
+            other => panic!("expected Response::Directory, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_request_preserves_logical_symlink_path() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let target = temp_dir.path().join("real").join("target");
+        std::fs::create_dir_all(&target).expect("create target");
+        let link = temp_dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).expect("create symlink");
+        let link_str = link.to_str().expect("link path must be valid UTF-8");
+        let msg = crate::ipc::protocol::deserialize_message(
+            format!(r#"{{"op":"directory","cwd":"{link_str}","format":"json"}}"#).as_bytes(),
+        )
+        .expect("directory request must parse");
+        let response = MiscHandler::new()
+            .handle(&msg)
+            .expect("handling must succeed");
+        match response {
             Response::Directory { cwd, .. } => assert_eq!(
-                cwd,
-                temp_path.to_string_lossy(),
-                "expected cwd to resolve to the temp dir's own (canonicalized) path"
+                cwd, link_str,
+                "cwd must be the logical (symlink) path, not the resolved target"
             ),
             other => panic!("expected Response::Directory, got {other:?}"),
         }

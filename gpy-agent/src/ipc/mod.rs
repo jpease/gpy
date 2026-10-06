@@ -190,8 +190,15 @@ pub enum Message {
     /// {"op":"directory","cwd":"/home/user","format":"ansi","is_last":false}
     /// ```
     DirectoryRequest {
-        /// The working directory to render.
+        /// The working directory to render, canonicalized and validated.
+        /// Used for read-only checks and push-delivery matching.
         path: crate::security::SafePath,
+        /// The path exactly as the client sent it (the shell's logical
+        /// `$PWD`), kept only after `path` validated it. Rendered as the
+        /// response `cwd` so symlinked directories and `~` contraction match
+        /// oneshot output (#697). Internal: never on the wire.
+        #[serde(skip)]
+        display_path: String,
         /// Desired response format.
         #[serde(default)]
         #[serde(skip_serializing_if = "Format::is_json_ref")]

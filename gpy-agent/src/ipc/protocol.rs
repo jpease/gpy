@@ -155,6 +155,7 @@ fn resolve(wire: WireMessage) -> Result<Message> {
         } => Ok(Message::DirectoryRequest {
             path: crate::security::SafePath::new(&path)
                 .map_err(|e| Error::ipc(format!("Invalid path: {e}")))?,
+            display_path: path,
             format,
             is_last,
             is_first,
