@@ -48,6 +48,15 @@ write_sidecar() {
     printf '%s  %s\n' "$(sha256_of "$file")" "$(basename "$file")" >"$file.sha256"
 }
 
+# Linux binaries are pinned to the release workflow's glibc floor (#694, #818):
+# a plain `cargo build` links the build host's glibc. The floor is read from
+# GPY_GLIBC_FLOOR in release.yml so there is one source of truth.
+GLIBC_FLOOR=$(sed -n 's/^  GPY_GLIBC_FLOOR: "\([0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' ../.github/workflows/release.yml)
+if [ -z "$GLIBC_FLOOR" ]; then
+    error "could not read GPY_GLIBC_FLOOR from .github/workflows/release.yml"
+    exit 1
+fi
+
 # Function to build for a target
 build_target() {
     local target=$1
@@ -64,8 +73,20 @@ build_target() {
         }
     fi
 
-    # Build (release-dist: opt-level 3 + thin LTO, see gpy-agent/Cargo.toml)
-    if cargo build --profile release-dist --locked --target "$target"; then
+    # Build (release-dist: opt-level 3 + thin LTO, see gpy-agent/Cargo.toml).
+    # Linux targets use cargo-zigbuild with the glibc-floor suffix, exactly as
+    # the release workflow does; zigbuild keeps the output at target/<triple>/.
+    local build_cmd=(cargo build --profile release-dist --locked --target "$target")
+    case "$target" in
+        *-unknown-linux-gnu)
+            if ! command -v cargo-zigbuild >/dev/null 2>&1 || ! command -v zig >/dev/null 2>&1; then
+                warn "Linux release binaries need cargo-zigbuild and zig (glibc $GLIBC_FLOOR floor, #694); install both or use the release workflow"
+                return 1
+            fi
+            build_cmd=(cargo zigbuild --profile release-dist --locked --target "$target.$GLIBC_FLOOR")
+            ;;
+    esac
+    if "${build_cmd[@]}"; then
         # install.sh needs BOTH the agent and the CLI per platform, each with a
         # .sha256 sidecar (#327, #494), so stage the pair with its sidecars.
         local agent_path="target/$target/release-dist/gpy-agent"
@@ -85,6 +106,17 @@ build_target() {
                 return 1
             fi
         done
+
+        case "$target" in
+            *-unknown-linux-gnu)
+                for path in "$agent_path" "$cli_path"; do
+                    if ! ../scripts/check-glibc-floor.sh "$path" "$GLIBC_FLOOR"; then
+                        error "$path exceeds the glibc $GLIBC_FLOOR floor; not staging $target"
+                        return 1
+                    fi
+                done
+                ;;
+        esac
 
         # release-dist already strips symbols (strip = true), so no manual
         # strip step is needed here.
@@ -183,7 +215,7 @@ echo "     - Upload all binaries"
 echo ""
 
 info "Cross-compilation tips:"
-echo "  • Linux aarch64: Install gcc-aarch64-linux-gnu"
+echo "  • Linux: Install zig and cargo-zigbuild (no gcc cross toolchain needed)"
 echo "  • Windows: Install mingw-w64 or use cross"
 echo "  • macOS: Requires macOS SDK and proper toolchain"
 echo "  • Easiest: Use GitHub Actions (already configured!)"
