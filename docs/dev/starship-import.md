@@ -56,21 +56,40 @@ GPY equivalent are skipped with a warning.
 
 Every segment starts from the builtin `starship` preset
 (`config/themes/starship.toml`), which encodes Starship's default rendering.
-A module the source configures replaces its segment; a module the source
-leaves out keeps the preset's look. For example, a `starship.toml` that only
+A module the source configures replaces what Starship's own keys control (the
+`format`, and `min_time` for `cmd_duration`); everything Starship has no key for
+(colors, git status icons, `show_counts`) keeps the preset's value, so a partial
+`[git_branch]`, `[git_status]`, `[directory]` or `[cmd_duration]` table does not
+reset the rest of its segment. A module the source leaves out keeps the preset's
+look. Where a module sets no `style`, Starship's default applies (`bold cyan`
+directory with a `red` read-only marker, `bold yellow` duration, `bold purple`
+git branch, `bold red` git status, `bold dimmed green` hostname). For example, a `starship.toml` that only
 sets `[character]` still imports the default git, directory, duration,
 hostname, username, and language formats. The preset's `[ui]` and
 `[ui.recommended]` are not copied.
 
 | Starship module(s) | GPY segment | Notes |
 |---|---|---|
-| `directory` | `directory` | `format`, `style`, `read_only`, `truncation_symbol` → GPY `format`. `$style` is inlined with the module's literal style value. |
+| `directory` | `directory` | `format`, `style`, `read_only`, `read_only_style`, `truncation_symbol` → GPY `format`. `$style` is inlined with the module's literal style value (default `bold cyan`; `read_only_style` defaults to `red`). |
 | `git_branch` + `git_status` + `git_state` | `git` | Composed into one GPY git `format`. `$all_status` → `$status`; Starship per-flag variables → GPY `$status`. When only one of `git_branch` / `git_status` is present, the other half uses Starship's default `format` and `style`; when both are absent the preset's git format applies. `git_state` is lossy (GPY has no state overlay); produces a warning. |
 | `cmd_duration` | `duration` | `min_time` (ms) → `show_if_exceeds_ms`; `format` / `style` → GPY duration `format`. |
-| `character` | `character` | `success_symbol` / `error_symbol` (e.g. `[❯](bold green)`) → GPY `success_symbol`, `error_symbol`, `success_color`, `error_color`, `format`. |
+| `character` | `character` | `success_symbol` / `error_symbol` (e.g. `[❯](bold green)` or `[➜](bold green) `) → GPY `success_symbol`, `error_symbol`, `success_color`, `error_color`, `format`. Text around the styled group is kept in the symbol (`➜ `); bold maps to `[$symbol](bold $style) `. A symbol that is not exactly one styled group (e.g. two groups with different styles) keeps the default symbol and emits a `LossyMapping` warning naming the raw value. |
 | `rust`, `python`, `nodejs`, `golang`, `java`, `ruby`, `php`, `swift`, `elixir`, `c`, `cpp`, `csharp`, `erlang`, … | `language` | Starts from the preset's language theme (format `via [$symbol( v$version)]($attr fg:$color) `, per-language colors, symbols, `enabled_languages`). Per-language `style` → palette entry + `{lang}_bg_color` (foreground color, `fg:` prefix optional, palette aliases resolved to the selected Starship palette's value) + `{lang}_style` (attributes, exposed as `$attr`). GPY has one shared language format, so a style's `bg:` color is dropped with a `LossyMapping` warning, and a module's own `format` is not carried over (also a `LossyMapping` warning). Per-language `symbol` overrides are lossy (they live in `[language.icons]`, not the prompt theme): each produces a warning and drops the preset's symbol for that language so `[language.icons]` applies. |
 | `time` | `clock` | `time_format` (strftime) → GPY `time_format` (`"12"` or `"24"`) + `show_seconds` on a best-effort basis. Non-representable formats produce a warning. |
-| `username`, `hostname`, `kubernetes`, `aws`, `docker_context`, `package`, `memory_usage`, `battery`, custom modules, and everything else | — | Skipped with a warning: `module 'X' has no GPY equivalent; omitted from layout`. |
+| `username` | `username` | `format`, with `$user` → `$username`; `$style` is inlined from `style_root` (default `bold red`); `show_always` (default `false`). |
+| `hostname` | `hostname` | `format`, with `$ssh_symbol` → `$symbol`; `$style` is inlined from `style` (default `bold dimmed green`); `ssh_symbol` → `icon`; `ssh_only` (default `true`) inverted onto `show_always`; `trim_at`. |
+| `line_break` | — | Not a segment and never warned about: it sets the theme's `two_line` (see [Layout](#layout)). |
+| `kubernetes`, `aws`, `docker_context`, `package`, `memory_usage`, `battery`, custom modules, and everything else | — | Skipped with a warning: `module 'X' has no GPY equivalent; omitted from layout`. |
+
+## Layout
+
+The top-level keys that shape the prompt as a whole map onto the theme's `[ui]`:
+
+| Starship | GPY | Notes |
+|---|---|---|
+| `add_newline` | `ui.add_newline` | Defaults to `true` when absent. |
+| `format` referencing `$line_break` or `$all`, or no `format` at all | `ui.two_line = true` | Starship's default layout is two-line. Escaped references (`\$line_break`) do not count; otherwise `two_line = false`. |
+| `format` | `enabled_segments` | Printed as a suggestion, or written with `--apply-layout`. Module references are mapped through the table above; modules without a GPY segment are skipped with a warning. |
 
 ## Style translation
 
