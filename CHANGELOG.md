@@ -309,6 +309,10 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   until the new daemon has bound, and eviction only ever removes the socket
   (and version marker) it judged old. A start that finds the old agent
   already replaced by a responsive one exits `0` without forking.
+- The Fish agent supervisor no longer writes to the terminal that started it
+  (#767). Its stdin, stdout and stderr are now `/dev/null` and its working
+  directory is `/`. Before, with `GPY_VERBOSE`/`GPY_DEBUG` set, its restart
+  messages appeared in that terminal at random times.
 
 - `gpy-agent start` no longer evicts a newer running agent (#780). It
   replaced the daemon on any version difference, so two installs could flip
