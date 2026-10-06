@@ -545,6 +545,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - uv and virtualenv venvs (`pyvenv.cfg` `version_info`) are read without
   spawning Python, and the interpreter fallback for other venvs is memoized
   instead of running on every render (#728).
+- The git segment shows `cherry-picking`/`reverting` when a multi-commit
+  sequence is in progress after a manual commit, and in reftable repositories
+  (#716).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

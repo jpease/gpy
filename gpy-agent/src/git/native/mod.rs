@@ -80,6 +80,25 @@ fn count_todo_lines(contents: &str) -> Option<u32> {
     u32::try_from(count).ok()
 }
 
+/// Cap on `sequencer/todo` reads: the remaining picks/reverts of a
+/// multi-commit sequence, one short line each.
+const SEQUENCER_TODO_READ_CAP: usize = 65_536;
+
+/// Classify a `sequencer/todo` file by its first non-blank, non-comment
+/// line, mirroring git's `sequencer_get_last_command`.
+#[must_use]
+fn parse_sequencer_command(contents: &str) -> Option<RepositoryState> {
+    let line = contents
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with('#'))?;
+    match line.split_whitespace().next()? {
+        "pick" | "p" => Some(RepositoryState::CherryPicking),
+        "revert" => Some(RepositoryState::Reverting),
+        _ => None,
+    }
+}
+
 /// Native git backend using subprocess calls
 pub struct NativeGitBackend;
 
@@ -357,12 +376,27 @@ impl NativeGitBackend {
             return Some(RepositoryState::Rebasing);
         }
 
-        if git_dir.join("CHERRY_PICK_HEAD").exists() {
+        let reftable = git_dir.join("reftable").is_dir();
+        if git_dir.join("CHERRY_PICK_HEAD").exists()
+            || (reftable && Self::pseudoref_exists(repo_path, "CHERRY_PICK_HEAD"))
+        {
             return Some(RepositoryState::CherryPicking);
         }
 
-        if git_dir.join("REVERT_HEAD").exists() {
+        if git_dir.join("REVERT_HEAD").exists()
+            || (reftable && Self::pseudoref_exists(repo_path, "REVERT_HEAD"))
+        {
             return Some(RepositoryState::Reverting);
+        }
+
+        // A multi-commit sequence survives a manual `git commit`: the
+        // pseudoref is gone but `sequencer/todo` still lists remaining steps.
+        if let Ok(todo) = crate::fs_util::read_small_file(
+            &git_dir.join("sequencer").join("todo"),
+            SEQUENCER_TODO_READ_CAP,
+        ) && let Some(state) = parse_sequencer_command(&todo)
+        {
+            return Some(state);
         }
 
         if git_dir.join("BISECT_LOG").exists() {
@@ -370,6 +404,12 @@ impl NativeGitBackend {
         }
 
         None
+    }
+
+    /// Whether a pseudoref exists, asking git because reftable repos keep
+    /// them in the ref database rather than as loose files.
+    fn pseudoref_exists(repo_path: &Path, name: &str) -> bool {
+        Self::run_git_optional(repo_path, &["rev-parse", "--verify", "--quiet", name]).is_some()
     }
 
     /// Count stashed changesets via `git stash list -z` (NUL-delimited entries).
@@ -757,6 +797,26 @@ mod tests {
         ];
         for (input, expected) in cases {
             assert_eq!(count_todo_lines(input), *expected, "input: {input:?}");
+        }
+    }
+
+    #[test]
+    fn parse_sequencer_command_table() {
+        let cases: &[(&str, Option<RepositoryState>)] = &[
+            ("pick abc x\n", Some(RepositoryState::CherryPicking)),
+            ("# c\nrevert abc x\n", Some(RepositoryState::Reverting)),
+            ("p abc\n", Some(RepositoryState::CherryPicking)),
+            ("\n  \nrevert abc\n", Some(RepositoryState::Reverting)),
+            ("exec true\n", None),
+            ("# only\n", None),
+            ("", None),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                parse_sequencer_command(input),
+                *expected,
+                "input: {input:?}"
+            );
         }
     }
 
@@ -1234,6 +1294,142 @@ mv "$tmp" "$todo""#,
         assert!(
             status.rebase_progress.is_none(),
             "am-style rebase-apply must not populate step/total"
+        );
+    }
+
+    /// Run git in `path`, returning whether it succeeded (conflicting
+    /// cherry-picks/reverts exit non-zero by design).
+    fn git_status_ok(path: &Path, args: &[&str]) -> bool {
+        Command::new("git")
+            .args(["-c", "commit.gpgsign=false", "-c", "core.editor=true"])
+            .args(args)
+            .current_dir(path)
+            .output()
+            .unwrap_or_else(|e| panic!("failed to run git {args:?}: {e}"))
+            .status
+            .success()
+    }
+
+    /// Build `main` (conflicting edit of `file.txt`) and `other` (three
+    /// commits, the first conflicting), leaving `main` checked out.
+    fn setup_multi_commit_conflict(path: &Path) {
+        for (args, file, body) in [
+            (&["checkout", "-q", "-b", "other"][..], None, ""),
+            (&["commit", "-q", "-am", "o1"][..], Some("file.txt"), "o1\n"),
+            (&["add", "g"][..], Some("g"), "o2\n"),
+            (&["commit", "-q", "-m", "o2"][..], None, ""),
+            (&["add", "h"][..], Some("h"), "o3\n"),
+            (&["commit", "-q", "-m", "o3"][..], None, ""),
+            (&["checkout", "-q", "main"][..], None, ""),
+            (&["commit", "-q", "-am", "m"][..], Some("file.txt"), "m\n"),
+        ] {
+            if let Some(name) = file {
+                fs::write(path.join(name), body).expect("write fixture file");
+            }
+            assert!(git_status_ok(path, args), "git {args:?} failed");
+        }
+    }
+
+    #[test]
+    fn get_repo_state_detects_cherry_pick_sequencer_after_manual_commit() {
+        let (_dir, path) = init_test_repo();
+        setup_multi_commit_conflict(&path);
+
+        assert!(
+            !git_status_ok(&path, &["cherry-pick", "other~2", "other~1", "other"]),
+            "first pick must conflict"
+        );
+        assert_eq!(
+            NativeGitBackend::get_repo_state(&path),
+            Some(RepositoryState::CherryPicking)
+        );
+        fs::write(path.join("file.txt"), "resolved\n").expect("resolve conflict");
+        assert!(git_status_ok(&path, &["add", "file.txt"]));
+        assert!(git_status_ok(&path, &["commit", "-q", "--no-edit"]));
+        assert!(
+            !path.join(".git").join("CHERRY_PICK_HEAD").exists(),
+            "manual commit removes CHERRY_PICK_HEAD"
+        );
+        assert_eq!(
+            NativeGitBackend::get_repo_state(&path),
+            Some(RepositoryState::CherryPicking)
+        );
+        assert!(git_status_ok(&path, &["cherry-pick", "--quit"]));
+        assert_eq!(NativeGitBackend::get_repo_state(&path), None);
+    }
+
+    #[test]
+    fn get_repo_state_detects_revert_sequencer_after_manual_commit() {
+        let (_dir, path) = init_test_repo();
+        for (name, body, msg) in [
+            ("file.txt", "a1\n", "A"),
+            ("g", "b\n", "B"),
+            ("file.txt", "c\n", "C"),
+        ] {
+            fs::write(path.join(name), body).expect("write fixture file");
+            assert!(git_status_ok(&path, &["add", name]));
+            assert!(git_status_ok(&path, &["commit", "-q", "-m", msg]));
+        }
+        // Reverting A conflicts with C; B remains in the sequence.
+        assert!(
+            !git_status_ok(&path, &["revert", "HEAD~2", "HEAD~1"]),
+            "first revert must conflict"
+        );
+        fs::write(path.join("file.txt"), "resolved\n").expect("resolve conflict");
+        assert!(git_status_ok(&path, &["add", "file.txt"]));
+        assert!(git_status_ok(&path, &["commit", "-q", "--no-edit"]));
+        assert!(
+            !path.join(".git").join("REVERT_HEAD").exists(),
+            "manual commit removes REVERT_HEAD"
+        );
+        assert_eq!(
+            NativeGitBackend::get_repo_state(&path),
+            Some(RepositoryState::Reverting)
+        );
+    }
+
+    #[test]
+    fn get_repo_state_detects_reftable_cherry_pick_and_revert() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = fs::canonicalize(dir.path()).expect("canonicalize temp dir");
+        if !git_status_ok(&path, &["init", "-q", "--ref-format=reftable"]) {
+            return; // git too old for reftable
+        }
+        for args in [
+            &["config", "user.name", "T"][..],
+            &["config", "user.email", "t@e"][..],
+            &["symbolic-ref", "HEAD", "refs/heads/main"][..],
+        ] {
+            assert!(git_status_ok(&path, args));
+        }
+        for (args, body) in [
+            (&["commit", "-q", "-am", "base"][..], "base\n"),
+            (&["checkout", "-q", "-b", "other"][..], ""),
+            (&["commit", "-q", "-am", "o"][..], "o\n"),
+            (&["checkout", "-q", "main"][..], ""),
+            (&["commit", "-q", "-am", "m"][..], "m\n"),
+        ] {
+            if !body.is_empty() {
+                fs::write(path.join("f"), body).expect("write f");
+                if args.contains(&"base") {
+                    assert!(git_status_ok(&path, &["add", "f"]));
+                }
+            }
+            assert!(git_status_ok(&path, args), "git {args:?} failed");
+        }
+        assert!(!git_status_ok(&path, &["cherry-pick", "other"]));
+        fs::write(path.join("f"), "r\n").expect("resolve");
+        assert!(git_status_ok(&path, &["add", "f"]));
+        assert_eq!(
+            NativeGitBackend::get_repo_state(&path),
+            Some(RepositoryState::CherryPicking)
+        );
+        assert!(git_status_ok(&path, &["cherry-pick", "--abort"]));
+        assert_eq!(NativeGitBackend::get_repo_state(&path), None);
+        assert!(git_status_ok(&path, &["revert", "--no-commit", "HEAD"]));
+        assert_eq!(
+            NativeGitBackend::get_repo_state(&path),
+            Some(RepositoryState::Reverting)
         );
     }
 

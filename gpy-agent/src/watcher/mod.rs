@@ -697,6 +697,16 @@ fn is_git_significant_relative(relative: &Path) -> bool {
     {
         return true;
     }
+    // Sequencer and reftable state (#716): `get_repo_state` reads
+    // `sequencer/todo`, and reftable repos keep pseudorefs such as
+    // `CHERRY_PICK_HEAD` (and every branch ref) behind `reftable/tables.list`,
+    // which git rewrites on each ref transaction.
+    if relative == Path::new("sequencer")
+        || relative == Path::new("sequencer/todo")
+        || relative == Path::new("reftable/tables.list")
+    {
+        return true;
+    }
     // Remaining significant files sit directly under the git dir.
     let is_top_level = relative.parent().is_none_or(|p| p.as_os_str().is_empty());
     if !is_top_level {
@@ -1718,6 +1728,28 @@ mod tests {
             "rebase-apply/msg",
         ];
         for rel in insignificant {
+            assert!(
+                !is_git_significant_relative(Path::new(rel)),
+                "{rel} must not be git-significant"
+            );
+        }
+    }
+
+    /// `get_repo_state` reads `sequencer/todo` and, in reftable repos, asks git
+    /// for pseudorefs that live in `reftable/tables.list` (#716).
+    #[test]
+    fn sequencer_and_reftable_significant_relative_predicate() {
+        for rel in ["sequencer", "sequencer/todo", "reftable/tables.list"] {
+            assert!(
+                is_git_significant_relative(Path::new(rel)),
+                "{rel} should be git-significant"
+            );
+        }
+        for rel in [
+            "sequencer/head",
+            "sequencer/abort-safety",
+            "reftable/0x1-0x2-ab.ref",
+        ] {
             assert!(
                 !is_git_significant_relative(Path::new(rel)),
                 "{rel} must not be git-significant"
