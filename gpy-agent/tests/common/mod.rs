@@ -8,7 +8,7 @@ pub mod fixtures;
 
 #[allow(unused_imports)]
 pub use fixtures::{
-    MockConfig, ServerGuard, TempSocket, TestAgent, create_temp_socket_path, gpy_test_root,
+    MockConfig, ServerGuard, TempSocket, create_temp_socket_path, gpy_test_root,
     wait_for_agent_ready,
 };
 

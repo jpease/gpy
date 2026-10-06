@@ -70,8 +70,8 @@ impl ShellFlag {
 #[must_use]
 pub(crate) fn default_shell_dir() -> PathBuf {
     crate::paths::runtime_root_for(
-        std::env::var("XDG_RUNTIME_DIR").ok().as_deref(),
-        std::env::var("XDG_CACHE_HOME").ok().as_deref(),
+        crate::paths::root_var("XDG_RUNTIME_DIR").as_deref(),
+        crate::paths::root_var("XDG_CACHE_HOME").as_deref(),
         crate::paths::home_dir().as_deref(),
     )
     .join("shells")

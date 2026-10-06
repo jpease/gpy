@@ -72,7 +72,7 @@ async fn start_server_with(
             .watcher_slot(Arc::new(std::sync::Mutex::new(None)))
             .theme_manager(Arc::new(ThemeManager::builtin("default").expect("theme")))
             .instant_cache(Arc::new(
-                gpy_agent::cache::InstantPromptCache::new().expect("instant cache"),
+                gpy_agent::cache::InstantPromptCache::new_for_test(),
             ))
             .latency_tracker(Arc::new(LatencyTracker::new(1000)))
             .language_cache(gpy_agent::language::DetectionCache::new())

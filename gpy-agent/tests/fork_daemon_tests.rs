@@ -41,8 +41,7 @@ async fn test_socket_permissions() -> Result<()> {
     let watcher = None;
     let theme_manager =
         Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
-    let instant_cache =
-        Arc::new(gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"));
+    let instant_cache = Arc::new(gpy_agent::cache::InstantPromptCache::new_for_test());
     let latency_tracker = Arc::new(LatencyTracker::new(100));
     let config_manager =
         Arc::new(ConfigManager::with_defaults().expect("default config should load"));
@@ -104,8 +103,7 @@ async fn test_socket_binding_variations() -> Result<()> {
     let watcher = None;
     let theme_manager =
         Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
-    let instant_cache =
-        Arc::new(gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"));
+    let instant_cache = Arc::new(gpy_agent::cache::InstantPromptCache::new_for_test());
     let latency_tracker = Arc::new(LatencyTracker::new(100));
     let config_manager =
         Arc::new(ConfigManager::with_defaults().expect("default config should load"));
@@ -132,8 +130,7 @@ async fn test_socket_binding_variations() -> Result<()> {
     let watcher2 = None;
     let theme_manager2 =
         Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
-    let instant_cache2 =
-        Arc::new(gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"));
+    let instant_cache2 = Arc::new(gpy_agent::cache::InstantPromptCache::new_for_test());
     let latency_tracker = Arc::new(LatencyTracker::new(100));
     let config_manager2 =
         Arc::new(ConfigManager::with_defaults().expect("default config should load"));
@@ -160,8 +157,7 @@ async fn test_socket_binding_variations() -> Result<()> {
     let watcher3 = None;
     let theme_manager =
         Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
-    let instant_cache3 =
-        Arc::new(gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"));
+    let instant_cache3 = Arc::new(gpy_agent::cache::InstantPromptCache::new_for_test());
     let latency_tracker = Arc::new(LatencyTracker::new(100));
     let config_manager3 =
         Arc::new(ConfigManager::with_defaults().expect("default config should load"));
@@ -196,9 +192,7 @@ async fn test_rapid_socket_lifecycle() -> Result<()> {
         let watcher = None;
         let theme_manager =
             Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
-        let instant_cache = Arc::new(
-            gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"),
-        );
+        let instant_cache = Arc::new(gpy_agent::cache::InstantPromptCache::new_for_test());
         let latency_tracker = Arc::new(LatencyTracker::new(100));
         let config_manager =
             Arc::new(ConfigManager::with_defaults().expect("default config should load"));
@@ -254,9 +248,7 @@ async fn test_concurrent_connections() -> Result<()> {
     let config_manager =
         Arc::new(ConfigManager::with_defaults().expect("default config should load"));
     let server_handle = tokio::spawn(async move {
-        let instant_cache = Arc::new(
-            gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"),
-        );
+        let instant_cache = Arc::new(gpy_agent::cache::InstantPromptCache::new_for_test());
         let mut server = EndpointHandle::builder()
             .socket_path(server_socket_path)
             .client_registry(server_registry)
@@ -329,9 +321,7 @@ async fn test_socket_cleanup_on_termination() -> Result<()> {
         let watcher = None;
         let theme_manager =
             Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
-        let instant_cache = Arc::new(
-            gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"),
-        );
+        let instant_cache = Arc::new(gpy_agent::cache::InstantPromptCache::new_for_test());
         let latency_tracker = Arc::new(LatencyTracker::new(100));
         let config_manager =
             Arc::new(ConfigManager::with_defaults().expect("default config should load"));
@@ -430,9 +420,7 @@ async fn test_ipc_under_load() -> Result<()> {
     let config_manager =
         Arc::new(ConfigManager::with_defaults().expect("default config should load"));
     let server_handle = tokio::spawn(async move {
-        let instant_cache = Arc::new(
-            gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"),
-        );
+        let instant_cache = Arc::new(gpy_agent::cache::InstantPromptCache::new_for_test());
         let mut server = EndpointHandle::builder()
             .socket_path(server_socket_path)
             .client_registry(server_registry)
@@ -529,9 +517,7 @@ async fn test_socket_binding_errors() -> Result<()> {
         let watcher = None;
         let theme_manager =
             Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
-        let instant_cache = Arc::new(
-            gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"),
-        );
+        let instant_cache = Arc::new(gpy_agent::cache::InstantPromptCache::new_for_test());
         let latency_tracker = Arc::new(LatencyTracker::new(100));
         let config_manager =
             Arc::new(ConfigManager::with_defaults().expect("default config should load"));
@@ -571,8 +557,7 @@ async fn test_socket_binding_errors() -> Result<()> {
     let watcher = None;
     let theme_manager =
         Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
-    let instant_cache =
-        Arc::new(gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"));
+    let instant_cache = Arc::new(gpy_agent::cache::InstantPromptCache::new_for_test());
     let latency_tracker = Arc::new(LatencyTracker::new(100));
     let config_manager =
         Arc::new(ConfigManager::with_defaults().expect("default config should load"));

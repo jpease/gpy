@@ -99,9 +99,7 @@ async fn start_test_ipc_server(
     let latency_tracker = Arc::new(LatencyTracker::new(100));
 
     let server_handle = tokio::spawn(async move {
-        let instant_cache = Arc::new(
-            gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"),
-        );
+        let instant_cache = Arc::new(gpy_agent::cache::InstantPromptCache::new_for_test());
         let mut server = EndpointHandle::builder()
             .socket_path(server_socket_path)
             .client_registry(server_registry)

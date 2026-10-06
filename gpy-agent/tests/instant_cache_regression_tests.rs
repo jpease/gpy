@@ -20,9 +20,29 @@ use gpy_agent::ipc::handlers::{GitHandler, RenderDeps, RequestHandler};
 use gpy_agent::ipc::registry::ClientDirectory;
 use gpy_agent::security::SafePath;
 use gpy_agent::theme::ThemeManager;
+use serial_test::serial;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::TempDir;
+
+/// Point `XDG_CACHE_HOME` and `XDG_CONFIG_HOME` into a fresh temp dir and
+/// return its guard.
+///
+/// These tests read the cache file back through the shell-facing
+/// `InstantPromptCache::cache_file_for_dir`, which resolves the cache root
+/// from the environment, so the cache must be built with `new()` on that same
+/// root rather than `new_for_test()`. Without the redirect they wrote into
+/// the developer's `~/.cache/gpy/instant-prompts` and rendered with their
+/// `~/.config/gpy` palette (#839). `#[serial]` keeps the env mutation from
+/// racing.
+fn isolate_user_dirs() -> TempDir {
+    let dir = TempDir::new().expect("create temp dir");
+    unsafe {
+        std::env::set_var("XDG_CACHE_HOME", dir.path().join("cache"));
+        std::env::set_var("XDG_CONFIG_HOME", dir.path().join("config"));
+    }
+    dir
+}
 
 /// Helper to create a test git repository
 fn create_git_repo() -> TempDir {
@@ -89,6 +109,7 @@ fn render_deps(
 /// - Stale status (after 100ms timeout, using stale git cache)
 /// - Delayed status (after 100ms timeout, no stale cache available)
 #[test]
+#[serial]
 fn test_git_handler_writes_instant_cache_on_ipc_request() {
     let repo = create_git_repo();
     let repo_path = repo.path().to_str().expect("valid utf8 path");
@@ -96,6 +117,7 @@ fn test_git_handler_writes_instant_cache_on_ipc_request() {
     // Create dependencies
     let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
     let git_cache = Arc::new(GitStatusCache::new());
+    let _user_dirs = isolate_user_dirs();
     let instant_cache = Arc::new(InstantPromptCache::new().expect("instant cache"));
 
     // Create GitHandler
@@ -175,6 +197,7 @@ fn test_git_handler_writes_instant_cache_on_ipc_request() {
 /// Bug: Even if git_cache has stale data, instant-prompt cache should be updated.
 /// This test specifically covers the "cache hit" path in GitHandler.
 #[test]
+#[serial]
 fn test_git_handler_writes_instant_cache_even_with_stale_git_cache() {
     let repo = create_git_repo();
     let repo_path = repo.path().to_str().expect("valid utf8 path");
@@ -182,6 +205,7 @@ fn test_git_handler_writes_instant_cache_even_with_stale_git_cache() {
     // Create dependencies
     let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
     let git_cache = Arc::new(GitStatusCache::new());
+    let _user_dirs = isolate_user_dirs();
     let instant_cache = Arc::new(InstantPromptCache::new().expect("instant cache"));
 
     // Pre-populate git_cache with stale data
@@ -258,6 +282,7 @@ fn test_git_handler_writes_instant_cache_even_with_stale_git_cache() {
 /// Fix: ClientHandler now calls trigger_initial_scan() after registering with watcher,
 /// which spawns a background thread to scan git status and write instant-prompt cache.
 #[test]
+#[serial]
 fn test_client_handler_triggers_initial_scan_on_registration() {
     use gpy_agent::ipc::handlers::ClientHandler;
     use gpy_agent::ipc::{LatencyTracker, registry::ClientDirectory};
@@ -271,6 +296,7 @@ fn test_client_handler_triggers_initial_scan_on_registration() {
     let client_registry = Arc::new(ClientDirectory::new());
     let git_cache = Arc::new(GitStatusCache::new());
     let watcher = Arc::new(Mutex::new(None)); // No watcher for this test
+    let _user_dirs = isolate_user_dirs();
     let instant_cache = Arc::new(InstantPromptCache::new().expect("instant cache"));
     let latency_tracker = Arc::new(LatencyTracker::new(100));
 
@@ -336,6 +362,7 @@ fn test_client_handler_triggers_initial_scan_on_registration() {
 /// 2. Git status changes (new file)
 /// 3. Subsequent IPC request updates cache with new status
 #[test]
+#[serial]
 fn test_instant_cache_updates_on_status_change() {
     let repo = create_git_repo();
     let repo_path = repo.path().to_str().expect("valid utf8 path");
@@ -343,6 +370,7 @@ fn test_instant_cache_updates_on_status_change() {
     // Create dependencies
     let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
     let git_cache = Arc::new(GitStatusCache::new());
+    let _user_dirs = isolate_user_dirs();
     let instant_cache = Arc::new(InstantPromptCache::new().expect("instant cache"));
 
     let client_registry = Arc::new(ClientDirectory::new());
