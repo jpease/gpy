@@ -65,6 +65,8 @@ pub mod metadata;
 /// Recommended-layout reconciliation engine for `gpy theme use --force`.
 pub mod recommended_layout;
 pub mod schema;
+/// Shared matcher for `git.skip_paths`.
+pub mod skip_paths;
 /// Type-safe configuration primitives.
 pub mod types;
 /// Configuration validation logic.
@@ -175,7 +177,10 @@ pub struct GitSettings {
     /// a fresh status before falling back to stale/cached data.
     #[serde(default)]
     pub timeout_seconds: types::GitTimeout,
-    /// Paths to skip git detection (e.g., `["/tmp", "/var", "/usr"]`)
+    /// Directories where git detection is skipped entirely (e.g.,
+    /// `["~/work/monorepo/vendor", "/mnt/network-share"]`). Entries are matched
+    /// after `~` expansion and symlink resolution; see
+    /// [`GitSettings::is_path_skipped`].
     #[serde(default)]
     pub skip_paths: Vec<String>,
     /// Maximum branch name length to display (0 = unlimited)

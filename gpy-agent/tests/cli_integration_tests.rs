@@ -648,6 +648,65 @@ fn test_cli_oneshot_git_invalid_path() {
     assert!(stdout.contains(r#""error":"Not in a git repository""#));
 }
 
+/// #696: `git.skip_paths` entries written as `~/...` or through a symlink must
+/// suppress `oneshot git` (JSON error, empty ANSI), while an unrelated repo
+/// under the same config still reports status.
+#[cfg(unix)]
+#[test]
+fn test_cli_oneshot_git_honors_tilde_and_symlinked_skip_paths() {
+    let env = CliTestEnv::new().expect("failed to create CLI test env");
+    let root = env.root().to_path_buf();
+    let real = root.join("real");
+    env.write_config(&format!(
+        "[git]\nskip_paths = [\"~/big\", \"{}\"]\n",
+        root.join("link").display()
+    ))
+    .expect("write config");
+    std::os::unix::fs::symlink(&real, root.join("link")).expect("symlink");
+
+    let init = |repo: &std::path::Path| {
+        fs::create_dir_all(repo).expect("mkdir");
+        let status = Command::new("git")
+            .args(["-c", "commit.gpgsign=false", "init", "-q", "-b", "main"])
+            .arg(repo)
+            .status()
+            .expect("spawn git");
+        assert!(status.success(), "git init failed");
+    };
+    let big = root.join("big");
+    let linked = real.join("repo");
+    let kept = root.join("kept");
+    for repo in [&big, &linked, &kept] {
+        init(repo);
+    }
+
+    for skipped in [&big, &linked] {
+        let cwd = skipped.to_string_lossy();
+        let json = env
+            .run_gpy_agent(&["oneshot", "git", "--cwd", &cwd, "--format", "json"])
+            .expect("run gpy-agent");
+        assert!(
+            json.stdout.contains("Git segment disabled via config"),
+            "{cwd} must be skipped, got: {}",
+            json.stdout
+        );
+        let ansi = env
+            .run_gpy_agent(&["oneshot", "git", "--cwd", &cwd, "--format", "ansi"])
+            .expect("run gpy-agent");
+        assert_eq!(ansi.stdout, "\n", "{cwd} must render an empty segment");
+    }
+
+    let cwd = kept.to_string_lossy();
+    let json = env
+        .run_gpy_agent(&["oneshot", "git", "--cwd", &cwd, "--format", "json"])
+        .expect("run gpy-agent");
+    assert!(
+        json.stdout.contains("\"branch\""),
+        "unrelated repo must still report status, got: {}",
+        json.stdout
+    );
+}
+
 /// #680: the oneshot fallback prints an empty prompt segment for a git error.
 ///
 /// Both outside a repository and with the git segment disabled, a prompt

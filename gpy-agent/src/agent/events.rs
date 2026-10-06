@@ -202,6 +202,14 @@ pub fn handle_file_event(ctx: &AgentContext, event: &DebouncedEvent, config: &Co
             // `event.repo` is already canonical (find_git_root canonicalizes), so the
             // cache `*_canonical` fast paths apply.
             let git_root = event.repo.clone();
+            if config.git.is_path_skipped(&git_root) {
+                debug_log!(
+                    "agent",
+                    "Skipping git event for {} (git.skip_paths)",
+                    git_root.display()
+                );
+                return;
+            }
             let paths_hint = git_paths_hint(paths, &git_root);
             refresh_and_notify_coalesced(ctx, &git_root, config, paths_hint.as_deref());
         }
@@ -1712,6 +1720,33 @@ mod tests {
         assert!(
             updated_status.untracked >= 1,
             "expected untracked file to be reflected immediately"
+        );
+    }
+
+    /// #696: a watcher git event for a repo under `git.skip_paths` (written as
+    /// a plain absolute entry covering the repo's parent) must refresh nothing.
+    #[test]
+    fn git_event_for_skipped_repo_writes_no_cache() {
+        let (tmp, repo) = create_temp_repo();
+        let ctx = make_agent_context();
+        let mut config = Config::default();
+        config.git.skip_paths = vec![
+            fs::canonicalize(tmp.path())
+                .expect("canonical tmp")
+                .to_string_lossy()
+                .into_owned(),
+        ];
+
+        handle_file_event(&ctx, &whole_repo_event(&repo), &config);
+        assert!(
+            ctx.cache.get(&repo).is_none(),
+            "a skipped repo must not gain a git cache entry from a watcher event"
+        );
+
+        handle_file_event(&ctx, &whole_repo_event(&repo), &Config::default());
+        assert!(
+            ctx.cache.get(&repo).is_some(),
+            "control: the same event refreshes the cache without the skip entry"
         );
     }
 

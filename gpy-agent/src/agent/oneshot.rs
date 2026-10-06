@@ -187,7 +187,12 @@ fn handle_oneshot_git_parsed(request: &OneshotRequest) -> Result<String> {
         return Ok(String::new());
     }
 
-    if !config.git.enabled {
+    // Match against the canonical path (best effort), like the IPC `SafePath`,
+    // so `~/` and symlinked `git.skip_paths` entries apply here too (#696).
+    let request_path = Path::new(&request.path);
+    let canonical_request_path =
+        std::fs::canonicalize(request_path).unwrap_or_else(|_| request_path.to_path_buf());
+    if !config.git.enabled || config.git.is_path_skipped(&canonical_request_path) {
         let response = Response::Error {
             message: "Git segment disabled via config".to_owned(),
         };
