@@ -631,7 +631,7 @@ static VERSION_CACHE: TtlMap<String, Option<String>> = TtlMap::new(VERSION_CACHE
 /// Long enough that a hung or broken tool is not re-spawned on every render,
 /// short enough that a freshly installed or repaired tool shows up within
 /// about a minute without an agent restart.
-const VERSION_FAILURE_TTL: Duration = Duration::from_secs(60);
+pub(crate) const VERSION_FAILURE_TTL: Duration = Duration::from_secs(60);
 
 /// Negative cache of failed version probes, keyed like [`VERSION_CACHE`].
 ///
