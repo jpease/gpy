@@ -673,6 +673,3 @@ __gpy_init() {
     # Setup prompt hooks
     __gpy_setup_hooks
 }
-
-# Run initialization
-__gpy_init

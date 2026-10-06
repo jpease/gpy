@@ -335,6 +335,12 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   removed itself before registering, so a shell outside git and project
   directories never got live updates. Only the restart loop is skipped now.
 
+- Bash honours `[agent] enabled = false` and `[agent.supervisor] enabled =
+  false` at startup (#837). It ran its one startup `gpy-agent start` while
+  sourcing `core/init.bash`, before the theme export had set the flags from
+  config.toml; `bash/gpy.bash` now runs `__gpy_init` after the export, as
+  Zsh does.
+
 - Zsh honours `[agent.supervisor] enabled = false`, and Bash and Zsh honour
   `check_interval_seconds` and `max_restart_attempts` (#762). Zsh decided
   whether to supervise before the theme export had loaded, so it kept
