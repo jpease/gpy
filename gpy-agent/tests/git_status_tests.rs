@@ -78,7 +78,7 @@ fn test_git_status_current_directory() {
     let Ok(git_status) = result else { return };
     assert!(git_status.is_some());
     let Some(status) = git_status else { return };
-    assert!(!status.status.branch.is_empty());
+    assert_ne!(status.status.branch, "");
 }
 
 #[test]
@@ -256,7 +256,7 @@ fn test_git_status_absolute_path() {
     let Ok(git_status) = result else { return };
     assert!(git_status.is_some());
     let Some(status) = git_status else { return };
-    assert!(!status.status.branch.is_empty());
+    assert_ne!(status.status.branch, "");
 }
 
 #[test]
@@ -269,7 +269,7 @@ fn test_git_status_relative_path() {
     let Ok(git_status) = result else { return };
     assert!(git_status.is_some());
     let Some(status) = git_status else { return };
-    assert!(!status.status.branch.is_empty());
+    assert_ne!(status.status.branch, "");
 }
 
 #[test]

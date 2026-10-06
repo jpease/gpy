@@ -563,14 +563,14 @@ error_symbol = "[❯](bold red)"
             artifacts.palette.colors.get("peach").map(ColorSpec::as_str),
             Some("#fab387")
         );
-        assert!(invalid_color_warnings(&artifacts).is_empty());
+        assert_eq!(invalid_color_warnings(&artifacts), Vec::<&str>::new());
     }
 
     #[test]
     fn language_bg_only_style_is_lossy_not_invalid() {
         let model = parse("[rust]\nstyle = \"bg:#212736\"\n").unwrap();
         let artifacts = build(&model, "demo").expect("build");
-        assert!(invalid_color_warnings(&artifacts).is_empty());
+        assert_eq!(invalid_color_warnings(&artifacts), Vec::<&str>::new());
         let lossy = lossy_warnings(&artifacts);
         assert_eq!(lossy.len(), 1_usize, "{lossy:?}");
         assert!(lossy.iter().all(|m| m.contains("language rust")));
@@ -614,7 +614,7 @@ error_symbol = "[❯](bold red)"
             Some("white")
         );
         assert_eq!(lossy_warnings(&artifacts).len(), 1_usize);
-        assert!(invalid_color_warnings(&artifacts).is_empty());
+        assert_eq!(invalid_color_warnings(&artifacts), Vec::<&str>::new());
     }
 
     #[test]
@@ -625,7 +625,7 @@ error_symbol = "[❯](bold red)"
             artifacts.theme.segments.character.success_color.as_str(),
             "green"
         );
-        assert!(invalid_color_warnings(&artifacts).is_empty());
+        assert_eq!(invalid_color_warnings(&artifacts), Vec::<&str>::new());
     }
 
     #[test]
@@ -638,7 +638,7 @@ error_symbol = "[❯](bold red)"
         let character = &artifacts.theme.segments.character;
         assert_eq!(character.success_color.as_str(), "#fab387");
         assert_eq!(character.error_color.as_str(), "#fab387");
-        assert!(invalid_color_warnings(&artifacts).is_empty());
+        assert_eq!(invalid_color_warnings(&artifacts), Vec::<&str>::new());
     }
 
     #[test]
@@ -654,7 +654,7 @@ error_symbol = "[❯](bold red)"
             character.format.as_deref(),
             Some("[$symbol]($style bg:blue) ")
         );
-        assert!(invalid_color_warnings(&artifacts).is_empty());
+        assert_eq!(invalid_color_warnings(&artifacts), Vec::<&str>::new());
     }
 
     #[test]

@@ -771,7 +771,7 @@ mod tests {
         let config = manager.get();
 
         // Should be able to access config fields
-        assert!(!config.ui.theme.as_str().is_empty());
+        assert_ne!(config.ui.theme.as_str(), "");
         assert!(config.agent.timeout_seconds.get() > 0);
     }
 
@@ -896,7 +896,7 @@ theme = "other"
         // Should have default values
         assert_eq!(config.agent.timeout_seconds.get(), 5);
         assert_eq!(config.ui.theme.as_str(), "default");
-        assert!(config.git.skip_paths.is_empty());
+        assert_eq!(config.git.skip_paths, Vec::<String>::new());
     }
 
     #[test]

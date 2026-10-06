@@ -484,6 +484,6 @@ mod tests {
         while git_cache_files(&cache_dir).is_empty() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(50));
         }
-        assert!(!git_cache_files(&cache_dir).is_empty());
+        assert_ne!(git_cache_files(&cache_dir), Vec::<String>::new());
     }
 }

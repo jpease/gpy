@@ -1423,7 +1423,7 @@ mod tests {
 
         directory.register_with_started_at_for_test(pid, None, None);
 
-        assert!(directory.prune_dead_clients().is_empty());
+        assert_eq!(directory.prune_dead_clients(), Vec::<u32>::new());
         assert_eq!(directory.len(), 1);
     }
 

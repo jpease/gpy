@@ -47,7 +47,7 @@ and ASCII icons otherwise. Switch with `gpy config set ui.show_icons true` (or
 
 ### From source
 
-Needs Rust 1.98+ and Fish:
+Needs Rust 1.99+ and Fish:
 
 ```bash
 git clone https://github.com/jpease/gpy.git

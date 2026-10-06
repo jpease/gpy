@@ -34,7 +34,7 @@ fn test_language_defaults() {
     assert!(config.language.enabled);
     assert!(config.language.show_versions);
     assert_eq!(config.language.cache_ttl_hours.get(), 24);
-    assert!(config.language.enabled_languages.is_empty());
+    assert_eq!(config.language.enabled_languages, Vec::<String>::new());
 }
 
 #[test]
@@ -226,7 +226,7 @@ fn test_language_config_empty_languages() {
         icons: LanguageIcons::default(),
     };
 
-    assert!(language_config.enabled_languages.is_empty());
+    assert_eq!(language_config.enabled_languages, Vec::<String>::new());
 }
 
 #[test]

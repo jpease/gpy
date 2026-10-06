@@ -2486,7 +2486,7 @@ mod tests {
 
         assert_eq!(state.filter_query(), "dir");
         let indices = state.filtered_indices(Section::Segments);
-        assert!(!indices.is_empty());
+        assert_ne!(indices, Vec::<usize>::new());
         assert!(
             indices.iter().all(|&i| state
                 .available_segments()
@@ -2649,7 +2649,10 @@ mod tests {
         for c in "zzzznotarealsegment".chars() {
             state.push_filter_char(c);
         }
-        assert!(state.filtered_indices(Section::Segments).is_empty());
+        assert_eq!(
+            state.filtered_indices(Section::Segments),
+            Vec::<usize>::new()
+        );
 
         state.move_cursor_up();
         state.move_cursor_down();

@@ -611,7 +611,7 @@ fn test_cli_invalid_command() {
     let (exit_code, _stdout, stderr) = run_gpy_agent(&["invalid-command"]);
 
     assert_ne!(exit_code, 0_i32);
-    assert!(!stderr.is_empty());
+    assert_ne!(stderr, "");
 }
 
 #[test]
@@ -620,7 +620,7 @@ fn test_cli_oneshot_missing_operation() {
     let (exit_code, _stdout, stderr) = run_gpy_agent(&["oneshot"]);
 
     assert_ne!(exit_code, 0_i32);
-    assert!(!stderr.is_empty());
+    assert_ne!(stderr, "");
 }
 
 #[test]
@@ -629,7 +629,7 @@ fn test_cli_oneshot_invalid_operation() {
     let (exit_code, _stdout, stderr) = run_gpy_agent(&["oneshot", "invalid-op"]);
 
     assert_ne!(exit_code, 0_i32);
-    assert!(!stderr.is_empty());
+    assert_ne!(stderr, "");
 }
 
 #[test]
@@ -1070,7 +1070,7 @@ fn test_theme_export_fish_syntax_valid() {
     let (exit_code, stdout, _stderr) = run_gpy_agent(&["theme", "export", "--format", "fish"]);
 
     assert_eq!(exit_code, 0_i32);
-    assert!(!stdout.is_empty());
+    assert_ne!(stdout, "");
 
     // Every line should be either:
     // - Empty

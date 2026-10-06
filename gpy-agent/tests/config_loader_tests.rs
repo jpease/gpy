@@ -64,7 +64,7 @@ fn test_example_config_language_values() {
     assert!(config.language.enabled);
     assert!(config.language.show_versions);
     assert_eq!(config.language.cache_ttl_hours.get(), 24);
-    assert!(config.language.enabled_languages.is_empty());
+    assert_eq!(config.language.enabled_languages, Vec::<String>::new());
 }
 
 #[test]
@@ -319,7 +319,7 @@ fn test_get_config_paths() {
     let paths = get_config_paths();
 
     // Should return multiple paths in priority order
-    assert!(!paths.is_empty());
+    assert_ne!(paths, Vec::<String>::new());
 
     // Should include common config locations
     let paths_string = paths.join(" ");
@@ -446,9 +446,9 @@ fn shipped_config_toml_matches_builtin_defaults() {
     let config = load_config_from_file(shipped_config_path).unwrap();
 
     // Verify language.confidence_threshold matches the built-in default
-    assert_eq!(
-        config.language.confidence_threshold.get(),
-        types::ConfidenceThreshold::DEFAULT,
+    assert!(
+        (config.language.confidence_threshold.get() - types::ConfidenceThreshold::DEFAULT).abs()
+            < f32::EPSILON,
         "shipped config confidence_threshold must equal built-in default 0.1"
     );
 

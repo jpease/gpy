@@ -28,7 +28,7 @@ async fn test_transport_creation() {
 #[serial]
 async fn test_transport_address() {
     let address = Transport::address();
-    assert!(!address.is_empty());
+    assert_ne!(address, "");
 
     // Should be a Unix socket path ending with .sock
     assert!(address.contains(".sock") || address.contains("gpy"));

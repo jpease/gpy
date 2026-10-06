@@ -220,7 +220,7 @@ mod tests {
     fn second_owner_of_a_path_changes_nothing_on_the_backend() {
         let mut set = WatchSet::new(false);
         assert_eq!(set.acquire(Path::new("/r"), REC), vec![add("/r", REC)]);
-        assert!(set.acquire(Path::new("/r"), REC).is_empty());
+        assert_eq!(set.acquire(Path::new("/r"), REC), Vec::<OsOp>::new());
         assert_eq!(set.release(Path::new("/r"), REC), Some(Vec::new()));
         assert_eq!(set.release(Path::new("/r"), REC), Some(vec![remove("/r")]));
         assert_eq!(set.release(Path::new("/r"), REC), None);
