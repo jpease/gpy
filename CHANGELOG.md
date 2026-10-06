@@ -551,6 +551,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `gpy doctor` no longer reports a missing or unparsable theme as
   "Invalid template" with template-fix advice; the template check shows as
   skipped because the theme failed to load (#803).
+- The `install_from_source_docs` test runs sealed from the caller's
+  environment and stops only its own sandbox agent (#749).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
