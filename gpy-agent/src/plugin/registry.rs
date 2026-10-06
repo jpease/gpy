@@ -105,17 +105,10 @@ fn first_party_plugins() -> Vec<DiscoveredPlugin> {
     let Ok(plugin_id) = PluginId::new("gpy-core") else {
         return Vec::new();
     };
-    let provided_segments: Vec<SegmentName> = [
-        "clock",
-        "duration",
-        "language",
-        "directory",
-        "git",
-        "status",
-    ]
-    .iter()
-    .filter_map(|name| SegmentName::new(name).ok())
-    .collect();
+    let provided_segments: Vec<SegmentName> = super::BUILTIN_ORDER
+        .iter()
+        .filter_map(|builtin| SegmentName::new(builtin.as_str()).ok())
+        .collect();
     if provided_segments.is_empty() {
         return Vec::new();
     }
@@ -504,5 +497,19 @@ entry_type = "command"
                 "first-party metadata should include '{segment}'"
             );
         }
+    }
+
+    #[test]
+    fn first_party_manifest_provides_exactly_the_builtin_segments() {
+        let provided: Vec<String> = first_party_plugins()
+            .iter()
+            .flat_map(|plugin| plugin.manifest.provided_segments.iter())
+            .map(ToString::to_string)
+            .collect();
+        let builtin: Vec<String> = crate::plugin::BUILTIN_ORDER
+            .iter()
+            .map(|segment| segment.as_str().to_owned())
+            .collect();
+        assert_eq!(provided, builtin);
     }
 }

@@ -81,17 +81,11 @@ mod tests {
     #[test]
     fn segment_names_match_builtin_order_and_are_undecorated() {
         let segments = names(CompleteKind::Segment);
-        assert_eq!(
-            segments,
-            vec![
-                "clock",
-                "duration",
-                "language",
-                "directory",
-                "git",
-                "status"
-            ],
-        );
+        let expected: Vec<&str> = crate::plugin::BUILTIN_ORDER
+            .iter()
+            .map(|segment| segment.as_str())
+            .collect();
+        assert_eq!(segments, expected);
         assert_undecorated(&segments);
     }
 

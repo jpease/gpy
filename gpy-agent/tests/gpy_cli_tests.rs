@@ -282,7 +282,9 @@ fn test_complete_segment_emits_expected_builtins() {
             "language",
             "directory",
             "git",
-            "status"
+            "status",
+            "username",
+            "hostname"
         ]
     );
 }
@@ -454,6 +456,64 @@ enabled_segments = ["duration", "language", "directory", "git"]
     assert!(
         stdout.contains("Disabled clock"),
         "Should confirm clock segment disabled"
+    );
+}
+
+#[test]
+fn test_enable_hostname_segment() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    fs::write(
+        env.config_path(),
+        "[ui]\nenabled_segments = [\"directory\"]\n",
+    )
+    .expect("Failed to write config");
+
+    let output = env
+        .run_gpy(&["enable", "hostname"])
+        .expect("Failed to run gpy enable hostname");
+    output.assert_success("gpy enable hostname");
+
+    let output = env
+        .run_gpy(&["config", "get", "ui.enabled_segments"])
+        .expect("Failed to run gpy config get ui.enabled_segments");
+    output.assert_success("gpy config get ui.enabled_segments");
+    assert!(
+        output.stdout.contains("hostname"),
+        "ui.enabled_segments should list hostname: {:?}",
+        output.stdout
+    );
+}
+
+#[test]
+fn test_doctor_accepts_starship_recommended_segments() {
+    // The default CliTestEnv config pins `ui.enabled_segments`, and `theme use`
+    // never overrides a user-set layout field, so the starship order would not
+    // be applied and this test would pass vacuously. Start from a config that
+    // leaves the layout unset.
+    let env = CliTestEnv::with_config("[ui]\ntheme = \"default\"\n")
+        .expect("Failed to create isolated CLI test environment");
+
+    let output = env
+        .run_gpy(&["theme", "use", "starship", "--force"])
+        .expect("Failed to run gpy theme use starship --force");
+    output.assert_success("gpy theme use starship --force");
+    assert!(
+        output.stdout.contains("segment order (username, hostname"),
+        "starship layout should have been applied: {:?}",
+        output.stdout
+    );
+
+    // No agent runs in CliTestEnv, so doctor's exit code is not asserted.
+    let output = env.run_gpy(&["doctor"]).expect("Failed to run gpy doctor");
+    assert!(
+        output.stdout.contains("✅ All segments recognized"),
+        "doctor should accept the starship layout: {:?}",
+        output.stdout
+    );
+    assert!(
+        !output.stdout.contains("Unrecognized segments"),
+        "doctor should not flag shipped segments: {:?}",
+        output.stdout
     );
 }
 

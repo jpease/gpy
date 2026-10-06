@@ -913,7 +913,7 @@ fn append_enabled_segments(output: &mut String, shell: Shell, config: &Config) {
 /// it to generate the Bash/Zsh case table (#614), replacing the four
 /// hand-copied `case "$segment" in ... esac` tables that used to be split
 /// across `bash/core/init.bash` and `zsh/core/init.zsh`. Not the same set as
-/// [`crate::commands::segments::BuiltinSegment`] (git/clock/duration/
+/// [`crate::plugin::BuiltinSegment`] (git/clock/duration/
 /// language/directory/status): that type's "six builtin segments" is a
 /// config/CLI concept, while a chevron background is a distinct, Bash/Zsh-only
 /// rendering concern that also covers hostname/username but has no `status`
