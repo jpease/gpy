@@ -10,6 +10,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+/// Rate limit for re-detection of a cached language entry.
+///
+/// Shared by the git-status-driven refresh in `agent::events` and the language
+/// handler's stale-hit revalidation for non-git directories, so both agree on
+/// how old an entry must be before it is re-detected.
+pub(crate) const LANGUAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+
 struct DetectionEntry {
     languages: Vec<DetectedLanguage>,
     last_refresh: Instant,
@@ -40,6 +47,28 @@ impl DetectionCache {
         // Clone the results because DetectedLanguage is relatively small
         // and we want to avoid holding the lock
         cache.get(path).map(|entry| entry.languages.clone())
+    }
+
+    /// Get cached detection results together with the time since the entry was
+    /// last refreshed, so callers can revalidate stale hits.
+    #[must_use]
+    pub fn get_with_age(&self, path: &Path) -> Option<(Vec<DetectedLanguage>, Duration)> {
+        let cache = self.cache.read().ok()?;
+        cache
+            .get(path)
+            .map(|entry| (entry.languages.clone(), entry.last_refresh.elapsed()))
+    }
+
+    /// Test-only helper: pretend the entry for `path` was last refreshed `by`
+    /// ago, so stale-hit behaviour can be exercised without sleeping. No-op if
+    /// the path has no entry.
+    #[cfg(test)]
+    pub(crate) fn age_entry_for_test(&self, path: &Path, by: Duration) {
+        if let Ok(mut cache) = self.cache.write()
+            && let Some(entry) = cache.get_mut(path)
+        {
+            entry.last_refresh = Instant::now().checked_sub(by).unwrap_or_else(Instant::now);
+        }
     }
 
     /// Set cached detection results for a directory
