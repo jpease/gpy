@@ -215,19 +215,29 @@ shell_e2e_socket_gone() {
     [ ! -S "$GPY_AGENT_SOCKET_PATH" ]
 }
 
-# Stop the agent through its own socket, then force-kill whatever still
-# holds that socket open (never a name-based kill; see #484).
+# Stop the agent through its own socket, then TERM, and as a last resort
+# KILL, whatever still holds that socket open (never a name-based kill; see
+# #484).
 shell_e2e_stop_agent() {
     [ -S "$GPY_AGENT_SOCKET_PATH" ] || return 0
     "$SHELL_E2E_AGENT_BIN" stop >/dev/null 2>&1 || true
-    if ! shell_e2e_poll 3 shell_e2e_socket_gone; then
-        if command -v lsof >/dev/null 2>&1; then
-            for _pid in $(lsof -t "$GPY_AGENT_SOCKET_PATH" 2>/dev/null); do
-                kill -9 "$_pid" 2>/dev/null || true
-            done
-        fi
-        rm -f "$GPY_AGENT_SOCKET_PATH"
-    fi
+    shell_e2e_poll 3 shell_e2e_socket_gone && return 0
+    shell_e2e_term_then_kill_holders "$GPY_AGENT_SOCKET_PATH"
+    rm -f "$GPY_AGENT_SOCKET_PATH"
+    return 0
+}
+
+# TERM every process holding the socket at $1, wait (bounded) for it to be
+# released, then KILL whatever still holds it. A no-op without lsof.
+shell_e2e_term_then_kill_holders() {
+    command -v lsof >/dev/null 2>&1 || return 0
+    lsof -t "$1" 2>/dev/null | while read -r _pid; do
+        kill "$_pid" 2>/dev/null || true
+    done
+    shell_e2e_poll 2 shell_e2e_path_unbound "$1" && return 0
+    lsof -t "$1" 2>/dev/null | while read -r _pid; do
+        kill -9 "$_pid" 2>/dev/null || true
+    done
     return 0
 }
 
@@ -245,14 +255,7 @@ shell_e2e_stop_agent_under() {
     shell_e2e_poll 3 test -S "$_sock" || return 0
     XDG_CACHE_HOME="$1" XDG_CONFIG_HOME="$2" gpy-agent stop >/dev/null 2>&1 || true
     shell_e2e_poll 3 shell_e2e_path_unbound "$_sock" && return 0
-    command -v lsof >/dev/null 2>&1 || return 0
-    lsof -t "$_sock" 2>/dev/null | while read -r _pid; do
-        kill "$_pid" 2>/dev/null || true
-    done
-    shell_e2e_poll 2 shell_e2e_path_unbound "$_sock" && return 0
-    lsof -t "$_sock" 2>/dev/null | while read -r _pid; do
-        kill -9 "$_pid" 2>/dev/null || true
-    done
+    shell_e2e_term_then_kill_holders "$_sock"
     return 0
 }
 
