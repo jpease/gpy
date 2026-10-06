@@ -172,7 +172,7 @@ fn check_segments(enabled_segments: &[String], discovery: &crate::plugin::Plugin
 }
 
 fn valid_segment_names(discovery: &crate::plugin::PluginDiscovery) -> HashSet<&str> {
-    let mut valid_segments: HashSet<&str> = crate::commands::segments::BUILTIN_ORDER
+    let mut valid_segments: HashSet<&str> = crate::plugin::BUILTIN_ORDER
         .iter()
         .map(|builtin| builtin.as_str())
         .collect();

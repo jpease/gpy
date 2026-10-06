@@ -9,89 +9,20 @@ use super::utils::{
     active_config_path, load_active_config, read_config, reload_agent_and_notify, save_config_to,
 };
 use crate::config::Config;
-use crate::plugin::{SegmentName, discover_plugins};
+use crate::plugin::{BUILTIN_ORDER, BuiltinSegment, SegmentName, discover_plugins};
 use crate::{Error, Result};
 use std::collections::BTreeSet;
-use std::fmt;
-
-/// A built-in prompt segment name — the fixed six segments GPY ships,
-/// distinct from user- or plugin-provided segment names (see
-/// [`crate::plugin::SegmentName`]).
-///
-/// This is the single source of truth for builtin segment identity: no bare
-/// string literal should name a builtin segment for dispatch/comparison
-/// purposes anywhere else in this crate. Parse into this type at the
-/// boundary where a segment name first enters from config/CLI/user input
-/// (via [`BuiltinSegment::try_from`]), then work with the typed value from
-/// there on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum BuiltinSegment {
-    Clock,
-    Duration,
-    Language,
-    Directory,
-    Git,
-    Status,
-}
-
-impl BuiltinSegment {
-    /// The segment's canonical lowercase name, matching config/CLI spelling.
-    #[must_use]
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Clock => "clock",
-            Self::Duration => "duration",
-            Self::Language => "language",
-            Self::Directory => "directory",
-            Self::Git => "git",
-            Self::Status => "status",
-        }
-    }
-}
-
-impl fmt::Display for BuiltinSegment {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl TryFrom<&str> for BuiltinSegment {
-    type Error = ();
-
-    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
-        match value {
-            "clock" => Ok(Self::Clock),
-            "duration" => Ok(Self::Duration),
-            "language" => Ok(Self::Language),
-            "directory" => Ok(Self::Directory),
-            "git" => Ok(Self::Git),
-            "status" => Ok(Self::Status),
-            _ => Err(()),
-        }
-    }
-}
-
-/// Canonical ordering for the six builtin segments — the single source of
-/// truth used throughout the wizard/CLI (e.g. rebuilding
-/// `ui.enabled_segments`, see [`rebuild_enabled_segments`]).
-pub(crate) const BUILTIN_ORDER: &[BuiltinSegment] = &[
-    BuiltinSegment::Clock,
-    BuiltinSegment::Duration,
-    BuiltinSegment::Language,
-    BuiltinSegment::Directory,
-    BuiltinSegment::Git,
-    BuiltinSegment::Status,
-];
 
 /// A builtin segment whose enabled state also depends on a dedicated config field.
 ///
 /// `git` and `language` render only when they are listed in
 /// `ui.enabled_segments` **and** `config.git.enabled` /
 /// `config.language.enabled` is set (see [`is_effectively_enabled`]).
-/// [`BuiltinSegment`] has four other variants (clock/duration/directory/
-/// status) with no such field, so this is a separate, exhaustively-matched
-/// type rather than widening `set_feature_enabled` to accept a
-/// `BuiltinSegment` directly and needing a dead/unreachable arm for them.
+/// [`BuiltinSegment`] has other variants (clock/duration/directory/status/
+/// username/hostname) with no such field, so this is a separate,
+/// exhaustively-matched type rather than widening `set_feature_enabled` to
+/// accept a `BuiltinSegment` directly and needing a dead/unreachable arm for
+/// them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FeatureToggle {
     Git,
@@ -508,7 +439,9 @@ mod tests {
                 "language",
                 "directory",
                 "git",
-                "status"
+                "status",
+                "username",
+                "hostname"
             ],
             "with no user plugin dir, available_segments() must equal BUILTIN_ORDER exactly"
         );

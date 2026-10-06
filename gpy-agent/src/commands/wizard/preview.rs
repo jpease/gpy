@@ -15,7 +15,6 @@
 //! `wizard/mod.rs`'s render loop constructs a [`WizardState`], config, and
 //! theme and calls [`render_preview_line`] from its draw closure each frame.
 
-use crate::commands::segments::BuiltinSegment;
 use crate::commands::wizard::facts::PreviewFacts;
 use crate::commands::wizard::state::WizardState;
 use crate::config::Config;
@@ -30,6 +29,7 @@ use crate::formatter::git_resolver::GitResolver;
 use crate::formatter::hostname_resolver::HostnameResolver;
 use crate::formatter::language_resolver::LanguageResolver;
 use crate::formatter::username_resolver::UsernameResolver;
+use crate::plugin::BuiltinSegment;
 use crate::template::{
     Attr, Color as TemplateColor, RenderContext as TemplateRenderContext, Span as TemplateSpan,
     SpanKind, Style as TemplateStyle, VariableResolver,
@@ -340,7 +340,7 @@ fn render_directory_span(
 ///
 /// Segment names are the ones `commands::segments::available_segments()`
 /// (via `BUILTIN_ORDER`) produces: `clock`, `duration`, `language`,
-/// `directory`, `git`, `status`. Note the mismatch between the `"status"`
+/// `directory`, `git`, `status`, `username`, `hostname`. Note the mismatch between the `"status"`
 /// segment name and its theme field, `theme.segments.character` — `"status"`
 /// is the built-in prompt-symbol segment's *segment* name, while
 /// `SegmentThemes::status` (`StatusTheme`) is an unrelated, non-template
@@ -355,64 +355,61 @@ fn render_segment(
     facts: &PreviewFacts,
     ctx: &FormatterRenderContext<'_>,
 ) -> Option<Vec<TemplateSpan>> {
-    if let Ok(builtin) = BuiltinSegment::try_from(segment) {
-        return match builtin {
-            BuiltinSegment::Git => render_git_span(config, theme, facts, ctx),
-            BuiltinSegment::Language => {
-                let format = theme.segments.language.format.as_deref()?;
-                // Real rendering (`fish_ansi.rs::render_languages_via_template`)
-                // concatenates up to three selected languages; the preview keeps
-                // this simple and renders just the first *selected* one — running
-                // `select_languages` first (rather than taking `facts.languages`
-                // raw) so toggling `language.show_versions` in the wizard is
-                // reflected here exactly as it would be in the real prompt: with
-                // it on, a versionless first-detected language is dropped and the
-                // segment vanishes (or the next qualifying language takes its
-                // place), matching `select_languages`'s doc comment.
-                let lang =
-                    *crate::formatter::select_languages(config, theme, &facts.languages).first()?;
-                let resolver = LanguageResolver::new(lang, config, theme, ctx.position);
-                crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
-            }
-            BuiltinSegment::Directory => render_directory_span(config, theme, ctx),
-            BuiltinSegment::Duration => {
-                let format = theme.segments.duration.format.as_deref()?;
-                let resolver = DurationResolver::new(facts.sample_duration_ms, theme, ctx.position);
-                crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
-            }
-            BuiltinSegment::Status => {
-                let format = theme.segments.character.format.as_deref()?;
-                let resolver =
-                    CharacterResolver::new(facts.sample_character_success, theme, ctx.position);
-                crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
-            }
-            // Clock has no `format`/template — it's rendered entirely Fish-side
-            // against live wall-clock time (see `fish/segments/clock.fish`), which
-            // this static preview pane can't demo. Show a fixed representative
-            // time instead (see `clock_demo_spans`'s doc comment) rather than
-            // leaving the segment invisible whenever it's enabled.
-            BuiltinSegment::Clock => Some(clock_demo_spans(
-                theme,
-                ctx.position.is_first,
-                ctx.position.is_last,
-            )),
-        };
-    }
-
-    match segment {
-        "hostname" => {
+    // Any non-builtin (e.g. plugin) segment name yields no preview: plugin
+    // segments render in Fish, not in this preview — out of scope.
+    let Ok(builtin) = BuiltinSegment::try_from(segment) else {
+        return None;
+    };
+    match builtin {
+        BuiltinSegment::Git => render_git_span(config, theme, facts, ctx),
+        BuiltinSegment::Language => {
+            let format = theme.segments.language.format.as_deref()?;
+            // Real rendering (`fish_ansi.rs::render_languages_via_template`)
+            // concatenates up to three selected languages; the preview keeps
+            // this simple and renders just the first *selected* one — running
+            // `select_languages` first (rather than taking `facts.languages`
+            // raw) so toggling `language.show_versions` in the wizard is
+            // reflected here exactly as it would be in the real prompt: with
+            // it on, a versionless first-detected language is dropped and the
+            // segment vanishes (or the next qualifying language takes its
+            // place), matching `select_languages`'s doc comment.
+            let lang =
+                *crate::formatter::select_languages(config, theme, &facts.languages).first()?;
+            let resolver = LanguageResolver::new(lang, config, theme, ctx.position);
+            crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
+        }
+        BuiltinSegment::Directory => render_directory_span(config, theme, ctx),
+        BuiltinSegment::Duration => {
+            let format = theme.segments.duration.format.as_deref()?;
+            let resolver = DurationResolver::new(facts.sample_duration_ms, theme, ctx.position);
+            crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
+        }
+        BuiltinSegment::Status => {
+            let format = theme.segments.character.format.as_deref()?;
+            let resolver =
+                CharacterResolver::new(facts.sample_character_success, theme, ctx.position);
+            crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
+        }
+        // Clock has no `format`/template — it's rendered entirely Fish-side
+        // against live wall-clock time (see `fish/segments/clock.fish`), which
+        // this static preview pane can't demo. Show a fixed representative
+        // time instead (see `clock_demo_spans`'s doc comment) rather than
+        // leaving the segment invisible whenever it's enabled.
+        BuiltinSegment::Clock => Some(clock_demo_spans(
+            theme,
+            ctx.position.is_first,
+            ctx.position.is_last,
+        )),
+        BuiltinSegment::Hostname => {
             let format = theme.segments.hostname.format.as_deref()?;
             let resolver = HostnameResolver::new(facts.hostname.clone(), theme, ctx.position);
             crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
         }
-        "username" => {
+        BuiltinSegment::Username => {
             let format = theme.segments.username.format.as_deref()?;
             let resolver = UsernameResolver::new(facts.username.clone(), theme, ctx.position);
             crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
         }
-        // Any other/unrecognized (e.g. plugin) segment name falls here;
-        // plugin segments render in Fish, not in this preview — out of scope.
-        _ => None,
     }
 }
 

@@ -237,15 +237,13 @@ impl WizardState {
     /// `toggle_git_show_branch`/`toggle_git_show_ahead_behind`/
     /// `toggle_git_show_stash`) compares against, replacing what used to be
     /// five near-identical `is_*_segment_focused` predicates.
-    pub(crate) fn focused_builtin(&self) -> Option<crate::commands::segments::BuiltinSegment> {
+    pub(crate) fn focused_builtin(&self) -> Option<crate::plugin::BuiltinSegment> {
         if self.focus != Section::Segments {
             return None;
         }
         self.available_segments
             .get(self.segment_cursor)
-            .and_then(|name| {
-                crate::commands::segments::BuiltinSegment::try_from(name.as_str()).ok()
-            })
+            .and_then(|name| crate::plugin::BuiltinSegment::try_from(name.as_str()).ok())
     }
 
     /// The language segment's currently selected display style (icon vs text).
@@ -472,7 +470,7 @@ impl WizardState {
     /// `activate_cursor`'s pattern of guarding inside the transition itself
     /// rather than trusting the caller (`keys.rs`) to check first.
     pub(crate) fn cycle_directory_display(&mut self, forward: bool) {
-        if self.focused_builtin() != Some(crate::commands::segments::BuiltinSegment::Directory) {
+        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Directory) {
             return;
         }
         self.selected_directory_display = if forward {
@@ -492,7 +490,7 @@ impl WizardState {
     /// than a plain toggle) so `keys.rs`'s shared `[`/`]` handler can call
     /// this and `cycle_directory_display` identically.
     pub(crate) fn cycle_language_display(&mut self, forward: bool) {
-        if self.focused_builtin() != Some(crate::commands::segments::BuiltinSegment::Language) {
+        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Language) {
             return;
         }
         self.selected_language_display = if forward {
@@ -508,7 +506,7 @@ impl WizardState {
     /// `focused_builtin`) — mirrors `cycle_directory_display`/
     /// `toggle_segment`'s guard-inside-the-transition pattern.
     pub(crate) fn toggle_language_show_versions(&mut self) {
-        if self.focused_builtin() != Some(crate::commands::segments::BuiltinSegment::Language) {
+        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Language) {
             return;
         }
         self.selected_language_show_versions = !self.selected_language_show_versions;
@@ -526,7 +524,7 @@ impl WizardState {
     /// `[`/`]` handler flips to the other one either way, same as
     /// `cycle_language_display`.
     pub(crate) fn cycle_clock_time_format(&mut self, base: &ThemeConfig) {
-        if self.focused_builtin() != Some(crate::commands::segments::BuiltinSegment::Clock) {
+        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Clock) {
             return;
         }
         let next = if self.clock_time_format(base) == "24" {
@@ -546,7 +544,7 @@ impl WizardState {
     /// `focused_builtin`) — mirrors `toggle_language_show_versions`'s
     /// guard-inside-the-transition pattern.
     pub(crate) fn toggle_clock_show_seconds(&mut self, base: &ThemeConfig) {
-        if self.focused_builtin() != Some(crate::commands::segments::BuiltinSegment::Clock) {
+        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Clock) {
             return;
         }
         let next = !self.clock_show_seconds(base);
@@ -563,7 +561,7 @@ impl WizardState {
     /// `focused_builtin`) — mirrors
     /// `toggle_clock_show_seconds`'s guard-inside-the-transition pattern.
     pub(crate) fn toggle_duration_show_milliseconds(&mut self, base: &ThemeConfig) {
-        if self.focused_builtin() != Some(crate::commands::segments::BuiltinSegment::Duration) {
+        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Duration) {
             return;
         }
         let next = !self.duration_show_milliseconds(base);
@@ -582,7 +580,7 @@ impl WizardState {
     /// `focused_builtin`) — mirrors `toggle_clock_show_seconds`'s
     /// guard-inside-the-transition pattern.
     pub(crate) fn toggle_git_show_branch(&mut self, base: &ThemeConfig) {
-        if self.focused_builtin() != Some(crate::commands::segments::BuiltinSegment::Git) {
+        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Git) {
             return;
         }
         let next = !self.git_show_branch(base);
@@ -597,7 +595,7 @@ impl WizardState {
     /// A no-op unless `Section::Segments`'s cursor is on `"git"` (see
     /// `focused_builtin`).
     pub(crate) fn toggle_git_show_ahead_behind(&mut self, base: &ThemeConfig) {
-        if self.focused_builtin() != Some(crate::commands::segments::BuiltinSegment::Git) {
+        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Git) {
             return;
         }
         let next = !self.git_show_ahead_behind(base);
@@ -612,7 +610,7 @@ impl WizardState {
     /// A no-op unless `Section::Segments`'s cursor is on `"git"` (see
     /// `focused_builtin`).
     pub(crate) fn toggle_git_show_stash(&mut self, base: &ThemeConfig) {
-        if self.focused_builtin() != Some(crate::commands::segments::BuiltinSegment::Git) {
+        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Git) {
             return;
         }
         let next = !self.git_show_stash(base);
@@ -789,7 +787,7 @@ impl WizardState {
     /// is listed with its flag set, and a deselected one has its flag cleared
     /// while an existing list entry is kept (like `gpy disable`).
     pub(crate) fn apply_to(&self, config: &mut Config) {
-        use crate::commands::segments::BuiltinSegment;
+        use crate::plugin::BuiltinSegment;
 
         if let Some(theme) = crate::config::types::ThemeName::new(self.selected_theme.clone()) {
             config.ui.theme = theme;

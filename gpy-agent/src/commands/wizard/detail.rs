@@ -31,7 +31,7 @@ struct SegmentDetail {
 /// which have no curated copy) get a generic fallback rather than an
 /// `Option::None` — the detail panel always has something to show.
 fn segment_detail(segment: &str) -> SegmentDetail {
-    use crate::commands::segments::BuiltinSegment;
+    use crate::plugin::BuiltinSegment;
 
     match BuiltinSegment::try_from(segment) {
         Ok(BuiltinSegment::Clock) => SegmentDetail {
@@ -63,6 +63,16 @@ fn segment_detail(segment: &str) -> SegmentDetail {
             config_field: "ui.enabled_segments",
             preview_contribution: "Shows the previous command's exit status on its own line.",
             caveat: Some("Preview uses a representative sample status, not a real command result."),
+        },
+        Ok(BuiltinSegment::Hostname) => SegmentDetail {
+            config_field: "ui.enabled_segments",
+            preview_contribution: "Shows the machine's hostname.",
+            caveat: Some("Shown only over SSH unless `segments.hostname.show_always` is set."),
+        },
+        Ok(BuiltinSegment::Username) => SegmentDetail {
+            config_field: "ui.enabled_segments",
+            preview_contribution: "Shows the current user name.",
+            caveat: Some("Shown only when running as root or under sudo."),
         },
         Err(()) => SegmentDetail {
             config_field: "ui.enabled_segments",
@@ -157,23 +167,28 @@ fn segment_lines(state: &WizardState, theme: &ThemeConfig) -> Vec<Line<'static>>
     if let Some(caveat) = detail.caveat {
         lines.push(Line::from(format!("Caveat: {caveat}")));
     }
-    match crate::commands::segments::BuiltinSegment::try_from(segment.as_str()) {
-        Ok(crate::commands::segments::BuiltinSegment::Directory) => {
+    match crate::plugin::BuiltinSegment::try_from(segment.as_str()) {
+        Ok(crate::plugin::BuiltinSegment::Directory) => {
             lines.extend(directory_display_lines(state));
         }
-        Ok(crate::commands::segments::BuiltinSegment::Language) => {
+        Ok(crate::plugin::BuiltinSegment::Language) => {
             lines.extend(language_display_lines(state));
         }
-        Ok(crate::commands::segments::BuiltinSegment::Clock) => {
+        Ok(crate::plugin::BuiltinSegment::Clock) => {
             lines.extend(clock_display_lines(state, theme));
         }
-        Ok(crate::commands::segments::BuiltinSegment::Duration) => {
+        Ok(crate::plugin::BuiltinSegment::Duration) => {
             lines.extend(duration_display_lines(state, theme));
         }
-        Ok(crate::commands::segments::BuiltinSegment::Git) => {
+        Ok(crate::plugin::BuiltinSegment::Git) => {
             lines.extend(git_display_lines(state, theme));
         }
-        Ok(crate::commands::segments::BuiltinSegment::Status) | Err(()) => {}
+        Ok(
+            crate::plugin::BuiltinSegment::Status
+            | crate::plugin::BuiltinSegment::Username
+            | crate::plugin::BuiltinSegment::Hostname,
+        )
+        | Err(()) => {}
     }
     lines
 }

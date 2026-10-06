@@ -592,7 +592,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 /// `preview::clock_demo_spans`). Naming that in the title is honest about it
 /// without porting that Fish-only rendering path into Rust.
 fn preview_title(state: &WizardState) -> String {
-    if state.is_segment_enabled(crate::commands::segments::BuiltinSegment::Clock.as_str()) {
+    if state.is_segment_enabled(crate::plugin::BuiltinSegment::Clock.as_str()) {
         "Preview (clock shows a fixed demo time)".to_owned()
     } else {
         "Preview".to_owned()
@@ -689,7 +689,7 @@ mod tests {
     #[test]
     fn preview_title_is_plain_when_clock_disabled() {
         let mut state = make_state();
-        let clock = crate::commands::segments::BuiltinSegment::Clock.as_str();
+        let clock = crate::plugin::BuiltinSegment::Clock.as_str();
         if state.is_segment_enabled(clock) {
             state.toggle_segment(clock);
         }
@@ -700,7 +700,7 @@ mod tests {
     #[test]
     fn preview_title_flags_clock_when_enabled() {
         let mut state = make_state();
-        let clock = crate::commands::segments::BuiltinSegment::Clock.as_str();
+        let clock = crate::plugin::BuiltinSegment::Clock.as_str();
         if !state.is_segment_enabled(clock) {
             state.toggle_segment(clock);
         }
