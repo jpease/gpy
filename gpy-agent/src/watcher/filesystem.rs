@@ -12,9 +12,9 @@ use crate::cache::bounded::IGNORE_CACHE_CAPACITY;
 use crate::git::native::NativeGitBackend;
 use crate::{Error, Result};
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use notify::event::{CreateKind, EventKind, Flag, MetadataKind, ModifyKind};
+use notify::event::{CreateKind, EventKind, Flag, MetadataKind, ModifyKind, RemoveKind};
 use notify::{Event, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -126,7 +126,10 @@ struct Registration {
     /// [`WatcherBackend::os`]: the path itself on the native backend, the
     /// `.gitignore`-pruned directory expansion of a recursive directory watch
     /// on the poll backend (#463, see [`FileSystemWatcher::poll_watch_targets`]).
-    targets: Vec<(PathBuf, WatchMode)>,
+    /// A poll expansion follows the tree as directories are created and
+    /// removed under it (#721), so this is a set: ordered, so a removed
+    /// directory's subtree is one contiguous range.
+    targets: BTreeSet<(PathBuf, WatchMode)>,
 }
 
 /// The armed notify backend plus the set of paths it must be watching.
@@ -141,7 +144,8 @@ struct Registration {
 /// Lock discipline: this is a LEAF lock. Nothing taken while it is held ever
 /// reaches back into `MultiRepoWatcher`'s `ops_lock` / `watched_repos` /
 /// `watcher` locks, so it cannot participate in a cycle with them. The event
-/// thread never takes it at all.
+/// thread takes it only to keep the poll expansion in step with the tree
+/// (#721): never while walking it, never while invoking a callback.
 struct WatcherBackend {
     /// `None` once [`FileSystemWatcher::stop`] has torn the backend down.
     watcher: Option<Box<dyn Watcher + Send>>,
@@ -180,7 +184,7 @@ impl WatcherBackend {
         path: &Path,
         mode: WatchMode,
         poll_targets: Option<Vec<PathBuf>>,
-    ) -> Vec<(PathBuf, WatchMode)> {
+    ) -> BTreeSet<(PathBuf, WatchMode)> {
         match (kind, mode, poll_targets) {
             // The descent already happened in `poll_watch_targets`, so each
             // directory is armed shallow: `PollWatcher` never walks deeper than
@@ -189,7 +193,7 @@ impl WatcherBackend {
                 .into_iter()
                 .map(|target| (target, WatchMode::Shallow))
                 .collect(),
-            _ => vec![(path.to_path_buf(), mode)],
+            _ => BTreeSet::from([(path.to_path_buf(), mode)]),
         }
     }
 
@@ -325,6 +329,99 @@ impl WatcherBackend {
             WatchMode::Shallow => watched == target,
         })
     }
+
+    /// The recursive registrations whose poll expansion (#463) the directory
+    /// `dir`, created after they were armed, belongs in (#721): every one
+    /// whose expansion holds `dir`'s parent but not yet `dir`. Overlapping
+    /// roots each take it, so the reference counts (#687) keep it armed until
+    /// the last of them releases it. Empty off the poll backend.
+    fn poll_expansion_owners(&self, dir: &Path) -> Vec<PathBuf> {
+        if self.kind != BackendKind::Poll || self.watcher.is_none() {
+            return Vec::new();
+        }
+        let Some(parent) = dir.parent() else {
+            return Vec::new();
+        };
+        let parent_target = (parent.to_path_buf(), WatchMode::Shallow);
+        let dir_target = (dir.to_path_buf(), WatchMode::Shallow);
+        self.registrations
+            .iter()
+            .filter(|((_, mode), registration)| {
+                *mode == WatchMode::Recursive
+                    && registration.targets.contains(&parent_target)
+                    && !registration.targets.contains(&dir_target)
+            })
+            .map(|((root, _), _)| root.clone())
+            .collect()
+    }
+
+    /// Add each root's newly found directories to its poll expansion, arming
+    /// whichever no other registration already holds (#721). `expansions`
+    /// pairs a root from [`WatcherBackend::poll_expansion_owners`] with
+    /// [`FileSystemWatcher::poll_watch_targets_within`]'s walk for it. A root
+    /// released since then is skipped, and a directory a root already holds
+    /// is not counted twice.
+    fn extend_poll_expansion(&mut self, expansions: Vec<(PathBuf, Vec<PathBuf>)>) {
+        if self.kind != BackendKind::Poll || self.watcher.is_none() {
+            return;
+        }
+        let mut ops = Vec::new();
+        for (root, dirs) in expansions {
+            let Some(registration) = self.registrations.get_mut(&(root, WatchMode::Recursive))
+            else {
+                continue;
+            };
+            for dir in dirs {
+                let target = (dir, WatchMode::Shallow);
+                if registration.targets.contains(&target) {
+                    continue;
+                }
+                ops.extend(self.os.acquire(&target.0, WatchMode::Shallow));
+                registration.targets.insert(target);
+            }
+        }
+        // Kept in the expansion either way, as `rearm_poll_paths` does: the
+        // parent's scan reports the directory's removal, which drops it.
+        for (path, error) in self.apply(ops) {
+            crate::debug::write_debug_log(
+                "watcher",
+                &format!("poll backend could not arm new {}: {error}", path.display()),
+            );
+        }
+    }
+
+    /// Drop `removed` and everything under it from every recursive
+    /// registration's poll expansion, unwatching whatever no other
+    /// registration still holds (#721), so the expansion does not grow across
+    /// mkdir/rmdir cycles. A registration's own root stays: `PollWatcher`
+    /// watches by path, so it reports the root's entries again if the
+    /// directory is recreated.
+    fn drop_poll_expansion(&mut self, removed: &Path) {
+        if self.kind != BackendKind::Poll || self.watcher.is_none() {
+            return;
+        }
+        let mut ops = Vec::new();
+        for ((root, mode), registration) in &mut self.registrations {
+            if *mode != WatchMode::Recursive {
+                continue;
+            }
+            // Paths order component-wise, so `removed`'s subtree is the
+            // contiguous run of keys starting at `removed` itself.
+            let gone: Vec<(PathBuf, WatchMode)> = registration
+                .targets
+                .range((removed.to_path_buf(), WatchMode::Shallow)..)
+                .take_while(|(target, _)| target.starts_with(removed))
+                .filter(|(target, _)| target != root)
+                .cloned()
+                .collect();
+            for gone_target in &gone {
+                registration.targets.remove(gone_target);
+                let (target, target_mode) = gone_target;
+                ops.extend(self.os.release(target, *target_mode).unwrap_or_default());
+            }
+        }
+        self.apply(ops);
+    }
 }
 
 /// One raw event path already attributed to a repository root by the third arm
@@ -349,6 +446,17 @@ struct AttributedWorktreeEvent<'a> {
 struct FollowupHandoff {
     delay: Duration,
     schedule: DelayedEventScheduler,
+}
+
+/// The watcher state the event thread shares beyond its channel and stop flag.
+///
+/// The registry `process_event` attributes against, and the backend whose
+/// poll expansion it keeps in step with the tree (#721). Bundled so
+/// [`FileSystemWatcher::spawn_event_thread`] stays under clippy's
+/// argument-count limit.
+struct EventThreadState {
+    registry: Arc<WatchRegistry>,
+    backend: Arc<Mutex<WatcherBackend>>,
 }
 
 /// The two durations [`FallbackPolicy::ProbeThenFallback`] carries.
@@ -552,7 +660,10 @@ impl FileSystemWatcher {
             event_rx,
             callback,
             &stop_flag,
-            &shared_registry,
+            EventThreadState {
+                registry: Arc::clone(&shared_registry),
+                backend: Arc::clone(&backend),
+            },
             FollowupHandoff {
                 delay: followup_delay,
                 schedule: schedule_delayed,
@@ -587,7 +698,9 @@ impl FileSystemWatcher {
     }
 
     /// Spawn the thread that drains the shared event channel into
-    /// [`FileSystemWatcher::process_event`].
+    /// [`FileSystemWatcher::process_event`], first keeping the poll
+    /// expansion in step with any directory the event creates or removes
+    /// (#721).
     ///
     /// Split out of [`FileSystemWatcher::with_fallback_policy`] purely to keep
     /// that constructor under clippy's line limit; it owns nothing the
@@ -596,12 +709,11 @@ impl FileSystemWatcher {
         event_rx: Receiver<Event>,
         callback: PendingCallback,
         stop_flag: &Arc<AtomicBool>,
-        registry: &Arc<WatchRegistry>,
+        state: EventThreadState,
         followup: FollowupHandoff,
     ) -> thread::JoinHandle<()> {
         let callback_arc = Arc::new(callback);
         let stop_flag_thread = Arc::clone(stop_flag);
-        let registry_for_events = Arc::clone(registry);
         thread::spawn(move || {
             loop {
                 if stop_flag_thread.load(Ordering::Relaxed) {
@@ -609,13 +721,19 @@ impl FileSystemWatcher {
                 }
 
                 match event_rx.recv_timeout(Duration::from_millis(100)) {
-                    Ok(event) => Self::process_event(
-                        &event,
-                        &callback_arc,
-                        &registry_for_events,
-                        followup.delay,
-                        &followup.schedule,
-                    ),
+                    Ok(event) => {
+                        // Before classification, so a new directory is armed
+                        // before any refresh it triggers -- its
+                        // directory-create follow-up included -- scans it.
+                        Self::track_poll_expansion(&event, &state.backend, &state.registry);
+                        Self::process_event(
+                            &event,
+                            &callback_arc,
+                            &state.registry,
+                            followup.delay,
+                            &followup.schedule,
+                        );
+                    }
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
@@ -706,8 +824,33 @@ impl FileSystemWatcher {
     /// `PollWatcher` never needs to walk deeper than one level per registered
     /// directory.
     fn poll_watch_targets(root: &Path, registry: &Arc<WatchRegistry>) -> Vec<PathBuf> {
-        let mut targets = vec![root.to_path_buf()];
-        let mut stack = vec![root.to_path_buf()];
+        Self::poll_targets_from(root, root, registry)
+    }
+
+    /// What a directory `dir`, created under `root` after `root` was armed,
+    /// adds to `root`'s poll expansion (#721): `dir` and every directory
+    /// below it, pruned by `root`'s ignore rules exactly as
+    /// [`FileSystemWatcher::poll_watch_targets`] would prune them. Empty when
+    /// `dir` is pruned itself, or is not a real directory by now -- gone
+    /// again, or a symlink, which the arm-time walk does not follow either.
+    fn poll_watch_targets_within(
+        root: &Path,
+        dir: &Path,
+        registry: &Arc<WatchRegistry>,
+    ) -> Vec<PathBuf> {
+        let is_real_dir = std::fs::symlink_metadata(dir).is_ok_and(|meta| meta.is_dir());
+        if !is_real_dir || Self::poll_prunes(root, dir, registry) {
+            return Vec::new();
+        }
+        Self::poll_targets_from(root, dir, registry)
+    }
+
+    /// `start` followed by every directory below it that `root`'s poll
+    /// expansion keeps: the descent [`FileSystemWatcher::poll_watch_targets`]
+    /// describes.
+    fn poll_targets_from(root: &Path, start: &Path, registry: &Arc<WatchRegistry>) -> Vec<PathBuf> {
+        let mut targets = vec![start.to_path_buf()];
+        let mut stack = vec![start.to_path_buf()];
 
         while let Some(dir) = stack.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -721,7 +864,7 @@ impl FileSystemWatcher {
                     continue;
                 }
                 let path = entry.path();
-                if !is_in_git_dir(&path) && path_is_gitignored(root, &path, registry) {
+                if Self::poll_prunes(root, &path, registry) {
                     continue;
                 }
                 targets.push(path.clone());
@@ -730,6 +873,86 @@ impl FileSystemWatcher {
         }
 
         targets
+    }
+
+    /// Whether `root`'s poll expansion skips the directory `path` and
+    /// everything under it: gitignored, and not inside `.git`.
+    fn poll_prunes(root: &Path, path: &Path, registry: &Arc<WatchRegistry>) -> bool {
+        !is_in_git_dir(path) && path_is_gitignored(root, path, registry)
+    }
+
+    /// Keep the poll backend's directory expansion (#463) in step with the
+    /// tree (#721).
+    ///
+    /// `PollWatcher` scans each expanded directory one level deep, so a
+    /// directory created after arming appears only as an entry in its
+    /// parent's scan, and nothing inside it would ever be scanned. A created
+    /// directory therefore joins the expansion of every root whose expansion
+    /// holds its parent, and a removed one leaves it, subtree and all, so the
+    /// expansion does not grow across mkdir/rmdir cycles. `PollWatcher`
+    /// reports a rename as a remove plus a create, so those two kinds cover
+    /// it; native backends watch recursively and make both a no-op.
+    fn track_poll_expansion(
+        event: &Event,
+        backend: &Mutex<WatcherBackend>,
+        registry: &Arc<WatchRegistry>,
+    ) {
+        match event.kind {
+            EventKind::Create(_) => {
+                for path in &event.paths {
+                    if is_directory_create(event.kind, path) {
+                        Self::expand_poll_into(path, backend, registry);
+                    }
+                }
+            }
+            // A removed file was never an expansion target.
+            EventKind::Remove(kind) if kind != RemoveKind::File => {
+                let Ok(mut backend_guard) = backend.lock() else {
+                    return;
+                };
+                for path in &event.paths {
+                    backend_guard.drop_poll_expansion(path);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Add the newly created directory `dir`, and whatever it already
+    /// contains, to the poll expansion of every root it belongs to (#721).
+    ///
+    /// The walk runs with the backend lock released, as `watch` does (#618):
+    /// it can transitively run `git ls-files`, and the lock is shared by
+    /// every repo this watcher serves. Anything written into `dir` before its
+    /// watch takes its baseline is caught by the refresh `dir`'s own create
+    /// event triggers once `process_event` handles it after this returns:
+    /// the directory-create follow-up for a worktree directory (#416), the
+    /// Git classification itself for a ref directory.
+    fn expand_poll_into(
+        dir: &Path,
+        backend: &Mutex<WatcherBackend>,
+        registry: &Arc<WatchRegistry>,
+    ) {
+        let owners = {
+            let Ok(backend_guard) = backend.lock() else {
+                return;
+            };
+            backend_guard.poll_expansion_owners(dir)
+        };
+        if owners.is_empty() {
+            return;
+        }
+        let expansions: Vec<(PathBuf, Vec<PathBuf>)> = owners
+            .into_iter()
+            .map(|root| {
+                let dirs = Self::poll_watch_targets_within(&root, dir, registry);
+                (root, dirs)
+            })
+            .collect();
+        let Ok(mut backend_guard) = backend.lock() else {
+            return;
+        };
+        backend_guard.extend_poll_expansion(expansions);
     }
 
     /// Spawn the one-shot background health probe (#442).
@@ -1326,11 +1549,15 @@ impl FileSystemWatcher {
         // periodic reconcile (#416). Only directory-creates pay this
         // cost; plain file events take exactly the path they do today.
         //
-        // Residual gap: this does not attempt to re-arm watches or
-        // fully close the FSEvents stream-rebuild first-event drop
-        // (#388) — a single follow-up scan handles the common
-        // mkdir-then-write race, and the periodic reconcile owns
-        // anything that still slips through. See #388, kept separate.
+        // Watches themselves need no re-arming here: native watches are
+        // recursive, and on the poll backend the event thread has already
+        // added the directory to the expansion before this runs (#721), so
+        // the follow-up covers only what landed before that watch's
+        // baseline. Residual gap: this does not fully close the FSEvents
+        // stream-rebuild first-event drop (#388) — a single follow-up scan
+        // handles the common mkdir-then-write race, and the periodic
+        // reconcile owns anything that still slips through. See #388, kept
+        // separate.
         if is_directory_create(event.kind, path) {
             Self::schedule_directory_followup(
                 schedule_delayed,
@@ -4752,6 +4979,340 @@ mod tests {
         assert!(
             delivered,
             "unwatching the outer root must not remove the inner root's poll targets"
+        );
+    }
+
+    /// Whether `events` holds a Git event naming `path`.
+    fn has_git_event_for(events: &CapturedEvents, path: &Path) -> bool {
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|pending| match &pending.event {
+                FileEvent::Git { paths } => paths
+                    .as_slice()
+                    .is_some_and(|named| named.iter().any(|named_path| named_path == path)),
+                _ => false,
+            })
+    }
+
+    /// Poll `events` until it holds a Git event naming `path`, or `budget`
+    /// elapses.
+    fn wait_for_git_event_for(events: &CapturedEvents, path: &Path, budget: Duration) -> bool {
+        let deadline = Instant::now()
+            .checked_add(budget)
+            .unwrap_or_else(Instant::now);
+        while Instant::now() < deadline {
+            if has_git_event_for(events, path) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        false
+    }
+
+    /// The OS watches `watcher` holds armed, by path.
+    fn armed_dirs(watcher: &FileSystemWatcher) -> BTreeSet<PathBuf> {
+        watcher.held_watches().1.into_keys().collect()
+    }
+
+    /// The poll targets the recursive registration of `root` holds.
+    fn poll_targets_of(watcher: &FileSystemWatcher, root: &Path) -> BTreeSet<PathBuf> {
+        let guard = watcher.backend.lock().expect("backend lock");
+        guard
+            .registrations
+            .get(&(root.to_path_buf(), WatchMode::Recursive))
+            .map(|registration| {
+                registration
+                    .targets
+                    .iter()
+                    .map(|(target, _)| target.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The union of every registration's targets: exactly what must be armed
+    /// while the reference counts are right (#687, #721).
+    fn all_targets(watcher: &FileSystemWatcher) -> BTreeSet<PathBuf> {
+        let guard = watcher.backend.lock().expect("backend lock");
+        guard
+            .registrations
+            .values()
+            .flat_map(|registration| registration.targets.iter())
+            .map(|(target, _)| target.clone())
+            .collect()
+    }
+
+    /// Poll until `done` holds, or `budget` elapses.
+    fn wait_until(budget: Duration, done: impl Fn() -> bool) -> bool {
+        let deadline = Instant::now()
+            .checked_add(budget)
+            .unwrap_or_else(Instant::now);
+        while Instant::now() < deadline {
+            if done() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        false
+    }
+
+    /// Regression test for #721: under the poll backend, an edit inside a
+    /// directory created after the watch was armed is delivered.
+    ///
+    /// The poll expansion (#463) arms one shallow `PollWatcher` entry per
+    /// directory that existed at arm time, so a later directory showed up only
+    /// as an entry in its parent's one-level scan and nothing inside it was
+    /// ever scanned.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the temp repo cannot be created or the watcher cannot arm.
+    #[test]
+    fn poll_backend_watches_directories_created_after_arming() {
+        let (mut watcher, repo, events) = real_repo_watcher(FallbackPolicy::ForcePoll {
+            poll_interval: Duration::from_millis(200),
+        });
+        watcher.watch(&repo).expect("watch repo");
+
+        let new_dir = repo.join("newdir");
+        std::fs::create_dir_all(&new_dir).expect("create newdir");
+        let tracked = new_dir.join("a.txt");
+        std::fs::write(&tracked, b"seed\n").expect("seed newdir/a.txt");
+
+        // Let the creation be reported, plus two poll intervals for its
+        // stragglers, so only the edits below can satisfy the assertion.
+        let created = wait_for_any_event(&events, Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(400));
+        events.lock().unwrap().clear();
+
+        // Re-append until delivered: `PollWatcher` takes the new directory's
+        // baseline on its own schedule and compares whole-second mtimes, so
+        // only an append made after the baseline, in a later second, shows.
+        let deadline = Instant::now()
+            .checked_add(Duration::from_secs(10))
+            .unwrap_or_else(Instant::now);
+        let mut delivered = false;
+        while Instant::now() < deadline {
+            let mut handle = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&tracked)
+                .expect("open newdir/a.txt for append");
+            std::io::Write::write_all(&mut handle, b"modified\n").expect("append");
+            drop(handle);
+
+            if wait_for_git_event_for(&events, &tracked, Duration::from_millis(500)) {
+                delivered = true;
+                break;
+            }
+        }
+        watcher.stop();
+        let _ = std::fs::remove_dir_all(&repo);
+
+        assert!(created, "creating newdir must itself be reported");
+        assert!(
+            delivered,
+            "the poll backend must deliver edits inside a directory created after arming"
+        );
+    }
+
+    /// #721: a commit on a branch whose `refs/heads/<prefix>/` directory was
+    /// created after arming is detected under the poll backend.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the temp repo, git, or the watcher fails.
+    #[test]
+    fn poll_backend_detects_commit_on_branch_dir_created_after_arming() {
+        let (mut watcher, repo, events) = real_repo_watcher(FallbackPolicy::ForcePoll {
+            poll_interval: Duration::from_millis(200),
+        });
+        std::fs::remove_dir_all(repo.join(".git")).expect("drop the placeholder .git");
+        git_in(&repo, &["init", "-q"]);
+        git_in(&repo, &["config", "user.email", "test@example.com"]);
+        git_in(&repo, &["config", "user.name", "Test User"]);
+        git_in(&repo, &["config", "commit.gpgsign", "false"]);
+        git_in(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
+        watcher.watch(&repo).expect("watch repo");
+
+        // The first slash-named branch: creates `.git/refs/heads/feature/`
+        // after the watch was armed.
+        git_in(&repo, &["checkout", "-q", "-b", "feature/x"]);
+        let feature_ref = repo.join(".git/refs/heads/feature/x");
+
+        // Commit until one is reported, for the same baseline and
+        // whole-second-mtime reasons as the test above.
+        let deadline = Instant::now()
+            .checked_add(Duration::from_secs(10))
+            .unwrap_or_else(Instant::now);
+        let mut delivered = false;
+        while Instant::now() < deadline {
+            git_in(
+                &repo,
+                &["commit", "-q", "--allow-empty", "-m", "on feature"],
+            );
+            if wait_for_git_event_for(&events, &feature_ref, Duration::from_millis(500)) {
+                delivered = true;
+                break;
+            }
+        }
+        watcher.stop();
+        let _ = std::fs::remove_dir_all(&repo);
+
+        assert!(
+            delivered,
+            "a commit moving refs/heads/feature/x, whose directory was created \
+             after arming, must be delivered under the poll backend"
+        );
+    }
+
+    /// #721: removing a directory drops it, and everything under it, from the
+    /// poll expansion, so repeated mkdir/rmdir cycles return the expansion to
+    /// its baseline instead of growing it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the temp repo cannot be created or the watcher cannot arm.
+    #[test]
+    fn poll_backend_drops_expansion_for_removed_directory() {
+        let (mut watcher, repo, _events) = real_repo_watcher(FallbackPolicy::ForcePoll {
+            poll_interval: Duration::from_millis(200),
+        });
+        watcher.watch(&repo).expect("watch repo");
+        let baseline = poll_targets_of(&watcher, &repo);
+        let new_dir = repo.join("newdir");
+        let nested = new_dir.join("nested");
+
+        let mut cycles = Vec::new();
+        for _ in 0_u8..3_u8 {
+            std::fs::create_dir_all(&nested).expect("create newdir/nested");
+            let expanded = wait_until(Duration::from_secs(5), || {
+                let targets = poll_targets_of(&watcher, &repo);
+                targets.contains(&new_dir) && targets.contains(&nested)
+            });
+            let consistent_expanded = armed_dirs(&watcher) == all_targets(&watcher);
+
+            std::fs::remove_dir_all(&new_dir).expect("remove newdir");
+            let dropped = wait_until(Duration::from_secs(5), || {
+                poll_targets_of(&watcher, &repo) == baseline
+            });
+            let consistent_dropped = armed_dirs(&watcher) == all_targets(&watcher);
+            cycles.push((expanded, consistent_expanded, dropped, consistent_dropped));
+        }
+        let armed_after = armed_dirs(&watcher);
+        watcher.stop();
+        let _ = std::fs::remove_dir_all(&repo);
+
+        for (cycle, (expanded, consistent_expanded, dropped, consistent_dropped)) in
+            cycles.into_iter().enumerate()
+        {
+            assert!(
+                expanded,
+                "cycle {cycle}: newdir and newdir/nested must join the expansion"
+            );
+            assert!(
+                consistent_expanded,
+                "cycle {cycle}: the armed set must equal the registrations' targets"
+            );
+            assert!(
+                dropped,
+                "cycle {cycle}: removing newdir must return the expansion to its baseline"
+            );
+            assert!(
+                consistent_dropped,
+                "cycle {cycle}: removing newdir must unwatch what it dropped"
+            );
+        }
+        assert_eq!(
+            armed_after, baseline,
+            "repeated mkdir/rmdir cycles must leave the armed set at its baseline"
+        );
+    }
+
+    /// #721: a gitignored directory created after arming is not armed, by the
+    /// same pruning `poll_watch_targets` applies at arm time (#463).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the temp repo cannot be created or the watcher cannot arm.
+    #[test]
+    fn poll_backend_does_not_arm_gitignored_directory_created_after_arming() {
+        let (mut watcher, repo, _events) = real_repo_watcher(FallbackPolicy::ForcePoll {
+            poll_interval: Duration::from_millis(200),
+        });
+        std::fs::write(repo.join(".gitignore"), b"node_modules/\n").expect("write .gitignore");
+        watcher.watch(&repo).expect("watch repo");
+
+        let ignored = repo.join("node_modules");
+        let control = repo.join("src");
+        std::fs::create_dir_all(ignored.join("pkg")).expect("create node_modules/pkg");
+        std::fs::create_dir_all(&control).expect("create src");
+
+        // `src` joining proves the directory-create path ran; two more poll
+        // intervals let a `node_modules` create from the same scan land too.
+        let control_armed = wait_until(Duration::from_secs(5), || {
+            armed_dirs(&watcher).contains(&control)
+        });
+        std::thread::sleep(Duration::from_millis(400));
+        let armed = armed_dirs(&watcher);
+        watcher.stop();
+        let _ = std::fs::remove_dir_all(&repo);
+
+        assert!(control_armed, "a new non-ignored directory must be armed");
+        assert!(
+            !armed.iter().any(|path| path.starts_with(&ignored)),
+            "a new gitignored directory must not be armed, got: {armed:?}"
+        );
+    }
+
+    /// #721 on #687's reference counts: a directory created under two
+    /// overlapping roots joins both expansions, so unwatching either root
+    /// keeps it armed for the other, and releasing both unarms it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the temp repo cannot be created or the watcher cannot arm.
+    #[test]
+    fn poll_expansion_of_new_directory_is_held_by_every_covering_root() {
+        let (mut watcher, outer, _events) = real_repo_watcher(FallbackPolicy::ForcePoll {
+            poll_interval: Duration::from_millis(200),
+        });
+        let inner = outer.join("inner");
+        std::fs::create_dir_all(&inner).expect("create inner");
+        watcher.watch(&outer).expect("watch outer");
+        watcher.watch(&inner).expect("watch inner");
+
+        let new_dir = inner.join("newdir");
+        std::fs::create_dir_all(&new_dir).expect("create inner/newdir");
+        let held_by_both = wait_until(Duration::from_secs(5), || {
+            poll_targets_of(&watcher, &outer).contains(&new_dir)
+                && poll_targets_of(&watcher, &inner).contains(&new_dir)
+        });
+        let consistent = armed_dirs(&watcher) == all_targets(&watcher);
+
+        watcher.unwatch(&outer).expect("unwatch outer");
+        let kept = armed_dirs(&watcher).contains(&new_dir);
+        watcher.unwatch(&inner).expect("unwatch inner");
+        let left = armed_dirs(&watcher);
+        watcher.stop();
+        let _ = std::fs::remove_dir_all(&outer);
+
+        assert!(
+            held_by_both,
+            "the new directory must join both the outer and the inner expansion"
+        );
+        assert!(
+            consistent,
+            "the armed set must equal the registrations' targets"
+        );
+        assert!(
+            kept,
+            "unwatching the outer root must keep the inner root's new directory armed"
+        );
+        assert!(
+            left.is_empty(),
+            "releasing both roots must unarm the new directory too, got: {left:?}"
         );
     }
 

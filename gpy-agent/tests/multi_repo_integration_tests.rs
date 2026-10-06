@@ -840,10 +840,11 @@ struct WorktreeFixture {
 /// Seeds `refs/remotes/origin/main`, and leaves a second commit available so tests can
 /// advance that ref to a genuinely different object id.
 ///
-/// `refs/remotes/origin/main` is seeded *before* any client registers because
-/// the poll backend expands a recursive watch into the directories that exist
-/// at arm time (#463): a `refs/remotes/origin` created afterwards would not be
-/// covered, and the test would be measuring watch-arming, not fan-out.
+/// `refs/remotes/origin/main` is seeded *before* any client registers so the
+/// tests measure fan-out, not watch-arming: under the poll backend a
+/// `refs/remotes/origin` created afterwards is watched only once a poll scan
+/// has reported it and the expansion has grown to include it (#721), which
+/// adds up to a poll interval before the ref's own changes are seen.
 fn create_worktree_fixture(parent: &Path, name: &str, branches: &[&str]) -> WorktreeFixture {
     let main = create_git_repo(parent, name);
 
