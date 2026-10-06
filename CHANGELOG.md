@@ -640,6 +640,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `gpy theme validate` and `gpy theme use` reject broken `<lang>_style` and
   `git_style` values and name the field (#736), instead of activating a
   theme whose segment renders empty.
+- Non-git projects show their language in subdirectories without source
+  files (#727): detection runs at the nearest ancestor with a project marker
+  file, never above `$HOME`.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

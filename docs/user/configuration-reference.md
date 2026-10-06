@@ -187,6 +187,8 @@ in_progress = "↻"
 
 Controls programming-language/tool detection: what's shown, how confident it must be, and how it's displayed.
 
+Detection runs at the project root, so every subdirectory shows the project's languages: inside a git repository that is the repo root; outside git it is the nearest ancestor directory holding a project marker file (`package.json`, `Cargo.toml`, `go.mod`, …), searched up to but never including `$HOME`. A directory with no such ancestor is detected on its own.
+
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|
 | `enabled` | bool | `true` | — | Enables language detection entirely. |
