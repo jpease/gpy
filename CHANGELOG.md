@@ -650,6 +650,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   sidecars that `install.sh` accepts (#810).
 - Socket requests with format `fish`, `bash-source` or `zsh-source` get a
   JSON `{"error": ...}` reply instead of no reply (#759).
+- The poll watcher backend sees edits inside directories created after a
+  repository was armed (#721), including new branch ref directories.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
