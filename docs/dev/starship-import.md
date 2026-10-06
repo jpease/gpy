@@ -29,19 +29,19 @@ Two files are written to the user config directories:
 After writing, the command prints activation hints:
 
 ```
-gpy theme use <name>
 gpy palette use <name>
+gpy theme use <name>
 # recommended segment order (paste into config.toml, or re-run with --apply-layout):
 enabled_segments = ["directory", "git", "language", "duration", "character"]
 ```
 
 ## Activation after import
 
-Run both commands to apply the imported look:
+Run both commands, palette first, to apply the imported look (`gpy theme use` validates the theme against the active palette, so a theme that references colors from the imported palette fails if the palette is not active yet):
 
 ```bash
-gpy theme use <name>
 gpy palette use <name>
+gpy theme use <name>
 ```
 
 If you also want to adopt the imported segment order, either:
@@ -204,8 +204,8 @@ If you are migrating from Starship, the typical workflow is:
 gpy theme import ~/.config/starship.toml --name my-prompt --apply-layout
 
 # 2. Activate both artifacts
-gpy theme use my-prompt
 gpy palette use my-prompt
+gpy theme use my-prompt
 
 # 3. Review warnings and fix lossy mappings manually
 #    e.g. for per-language icon overrides:
