@@ -108,9 +108,13 @@ impl<'a> RenderContext<'a> {
             // Starship semantics: a palette entry shadows the standard ANSI name.
             // Palette miss → keep the standard named color unchanged.
             Color::Named(name) => Ok(self.palette.get(name).unwrap_or_else(|| color.clone())),
+            // A palette value that is itself an unresolved reference (a self- or
+            // cyclic reference) is an error, never passed on to an encoder that
+            // would silently drop it.
             Color::Palette(name) => self
                 .palette
                 .get(name)
+                .filter(|resolved| !matches!(resolved, Color::Palette(_)))
                 .ok_or_else(|| TemplateError::UnknownColor { name: name.clone() }),
             Color::PrevFg => Ok(self
                 .prev_fg

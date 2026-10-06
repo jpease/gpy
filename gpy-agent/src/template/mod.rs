@@ -27,5 +27,8 @@ mod style;
 
 pub use error::{Result, TemplateError};
 pub use eval::{MapResolver, RenderContext, Span, SpanKind, VariableResolver, render};
+pub use style::canonical_ansi_name;
 pub(crate) use style::parse_color;
+#[cfg(test)]
+pub(crate) use style::{ANSI_BASE_WORDS, BRIGHT_PREFIXES, is_named_color};
 pub use style::{Attr, Color, Palette, Style, parse_style};

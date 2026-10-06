@@ -9,7 +9,7 @@
 //! escaped for the consuming shell (#677) and in the zero-width markers the
 //! bash and zsh dialects put around each SGR sequence (#679).
 
-use crate::template::{Attr, Color, Span, SpanKind, Style};
+use crate::template::{Attr, Color, Span, SpanKind, Style, canonical_ansi_name};
 use std::fmt::Write as _;
 
 /// Output dialect for template-rendered prompt text.
@@ -258,7 +258,12 @@ fn push_color(codes: &mut Vec<String>, color: &Color, bg: bool) {
 
 /// Map an engine named color to its SGR code string, or `None` if unrecognized.
 fn named_code(name: &str, bg: bool) -> Option<String> {
-    let base: u16 = match name {
+    let canonical = if name == "default" {
+        name
+    } else {
+        canonical_ansi_name(name)?
+    };
+    let base: u16 = match canonical {
         "black" => 30,
         "red" => 31,
         "green" => 32,
@@ -1031,5 +1036,26 @@ mod tests {
             .with_prev_colors(None, Some(Color::Named("blue".to_owned())));
         let b_spans = render("[$y](bg:prev_bg)", &b_ctx).unwrap();
         assert_eq!(encode_ansi(&b_spans), "\x1b[44mB\x1b[0m");
+    }
+
+    #[test]
+    fn config_spelling_aliases_map_to_ansi_codes() {
+        let styled = |fg: &str, bg: &str| {
+            encode_ansi(&[span(
+                "x",
+                Style {
+                    fg: Some(Color::Named(fg.to_owned())),
+                    bg: Some(Color::Named(bg.to_owned())),
+                    attrs: Vec::new(),
+                },
+            )])
+        };
+        assert_eq!(styled("magenta", "bright_black"), "\x1b[35;100mx\x1b[0m");
+        assert_eq!(styled("gray", "grey"), "\x1b[90;100mx\x1b[0m");
+        assert_eq!(styled("brred", "brblack"), "\x1b[91;100mx\x1b[0m");
+        assert_eq!(
+            styled("bright_magenta", "bright_red"),
+            "\x1b[95;101mx\x1b[0m"
+        );
     }
 }

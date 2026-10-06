@@ -199,27 +199,57 @@ fn parse_hex(hex: &str) -> Result<Color> {
     })
 }
 
-/// Return `true` if `text` is one of the 16 standard ANSI color names.
-fn is_named_color(text: &str) -> bool {
-    const NAMES: &[&str] = &[
-        "black",
-        "red",
-        "green",
-        "yellow",
-        "blue",
-        "purple",
-        "cyan",
-        "white",
-        "bright-black",
-        "bright-red",
-        "bright-green",
-        "bright-yellow",
-        "bright-blue",
-        "bright-purple",
-        "bright-cyan",
-        "bright-white",
-    ];
-    NAMES.contains(&text)
+/// The base color words every ANSI spelling is built from. `magenta` is the
+/// config/Fish spelling of Starship's `purple`.
+pub const ANSI_BASE_WORDS: [&str; 9] = [
+    "black", "red", "green", "yellow", "blue", "purple", "magenta", "cyan", "white",
+];
+
+/// The spelling prefixes that select the bright variant of a base word:
+/// Starship's `bright-X` and the config/Fish `bright_X` / `brX`.
+pub const BRIGHT_PREFIXES: [&str; 3] = ["bright-", "bright_", "br"];
+
+/// Map any accepted ANSI color spelling to the canonical name the encoders
+/// understand, or `None` if `name` is not an ANSI color spelling.
+///
+/// Accepts the 8 base names, `magenta` (= `purple`), `bright-X` / `bright_X` /
+/// `brX` for each of them, and `gray` / `grey` (= `bright-black`). Input must
+/// already be lowercase. Palette keys are matched on the original spelling, so
+/// callers keep the spelling they parsed and canonicalize only to encode.
+#[must_use]
+pub fn canonical_ansi_name(name: &str) -> Option<&'static str> {
+    if matches!(name, "gray" | "grey") {
+        return Some("bright-black");
+    }
+    let (bright, word) = BRIGHT_PREFIXES
+        .iter()
+        .find_map(|prefix| name.strip_prefix(prefix))
+        .filter(|word| ANSI_BASE_WORDS.contains(word))
+        .map_or((false, name), |word| (true, word));
+    Some(match (bright, word) {
+        (false, "black") => "black",
+        (false, "red") => "red",
+        (false, "green") => "green",
+        (false, "yellow") => "yellow",
+        (false, "blue") => "blue",
+        (false, "purple" | "magenta") => "purple",
+        (false, "cyan") => "cyan",
+        (false, "white") => "white",
+        (true, "black") => "bright-black",
+        (true, "red") => "bright-red",
+        (true, "green") => "bright-green",
+        (true, "yellow") => "bright-yellow",
+        (true, "blue") => "bright-blue",
+        (true, "purple" | "magenta") => "bright-purple",
+        (true, "cyan") => "bright-cyan",
+        (true, "white") => "bright-white",
+        _ => return None,
+    })
+}
+
+/// Return `true` if `text` is an ANSI color spelling (see [`canonical_ansi_name`]).
+pub fn is_named_color(text: &str) -> bool {
+    canonical_ansi_name(text).is_some()
 }
 
 #[cfg(test)]

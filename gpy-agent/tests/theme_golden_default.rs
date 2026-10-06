@@ -205,3 +205,23 @@ fn sep_close_glyph_has_bg_reset_when_last() {
         "sep_close must include bg:default (SGR 49) so the half-circle is visible; got: {output:?}"
     );
 }
+
+// #732: `in_progress_bg_color = "magenta"` must render as SGR 45 (text pill) and
+// 35;49 (caps). It used to resolve to a palette self-reference and render uncolored.
+#[test]
+fn in_progress_git_uses_magenta_background() {
+    let theme = load_default_theme();
+    let status = RepositoryStatus {
+        state: RepositoryState::Rebasing,
+        ..git_clean()
+    };
+    let output = render_git(&theme, &status, true);
+    assert!(
+        output.contains("37;45m"),
+        "in-progress git text must use fg white on bg magenta; got: {output:?}"
+    );
+    assert!(
+        output.contains("35;49m"),
+        "in-progress git caps must use fg magenta on default bg; got: {output:?}"
+    );
+}
