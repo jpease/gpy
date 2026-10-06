@@ -1023,26 +1023,31 @@ fn path_to_cache_key(path: &Path) -> String {
 ///
 /// [`Os`]: crate::paths::Os
 fn path_to_cache_key_for(path_str: &str, os: crate::paths::Os) -> String {
-    // `std::fs::canonicalize` returns the `\\?\`-prefixed verbatim form on
-    // Windows, so every Windows-reserved filename character (not just the
-    // path separators) must be escaped here, or the resulting cache key is
-    // rejected by the filesystem with `ERROR_INVALID_NAME`.
+    // The five documented escapes apply on both arms; the shells implement exactly these
+    // (#705). `_` MUST be first so later tokens are not re-escaped.
     let escaped = path_str
         .replace('_', "__")
         .replace('/', "_s")
         .replace('\\', "_b")
         .replace(':', "_c")
-        .replace(' ', "_w")
-        .replace('?', "_q")
-        .replace('*', "_a")
-        .replace('<', "_l")
-        .replace('>', "_g")
-        .replace('"', "_d")
-        .replace('|', "_p");
+        .replace(' ', "_w");
 
     match os {
         crate::paths::Os::Unix => escaped,
-        crate::paths::Os::Windows => windows_harden_cache_key(&escaped),
+        // `std::fs::canonicalize` returns the `\\?\`-prefixed verbatim form on Windows, so
+        // every Windows-reserved filename character must also be escaped, or the
+        // filesystem rejects the key with `ERROR_INVALID_NAME`. Windows-only: no shell runs
+        // there, and on Unix these are ordinary filename bytes the shells leave alone.
+        // Done before hardening so the case-fold sees lowercase tokens.
+        crate::paths::Os::Windows => windows_harden_cache_key(
+            &escaped
+                .replace('?', "_q")
+                .replace('*', "_a")
+                .replace('<', "_l")
+                .replace('>', "_g")
+                .replace('"', "_d")
+                .replace('|', "_p"),
+        ),
     }
 }
 
@@ -1755,6 +1760,7 @@ mod tests {
             "/weird/__double__/under_scores",
             "C:\\Users\\foo\\bar",
             "/unicode/café/项目/repo",
+            "/odd/q?a*b<c>d\"e|f",
             "/very/long/path/that/keeps/going/on/and/on/for/a/while/repo",
         ];
         for path in paths {
@@ -1779,8 +1785,10 @@ mod tests {
     /// this crate is actually compiled and run on Windows.
     #[test]
     fn test_path_to_cache_key_unix_characterization() {
-        let cases: [(&str, &str); 4] = [
+        let cases: [(&str, &str); 6] = [
             ("/Users/foo/project", "_sUsers_sfoo_sproject"),
+            ("/tmp/what?proj", "_stmp_swhat?proj"),
+            ("/a*b<c>d\"e|f", "_sa*b<c>d\"e|f"),
             ("/home/user/my project", "_shome_suser_smy_wproject"),
             ("C:\\Users\\foo\\bar", "C_c_bUsers_bfoo_bbar"),
             (
@@ -1795,6 +1803,82 @@ mod tests {
                 "unix arm output for {input} must stay byte-for-byte identical"
             );
         }
+    }
+
+    /// The Windows arm escapes the reserved filename characters `? * < > " |`.
+    #[test]
+    fn test_path_to_cache_key_windows_escapes_reserved_chars() {
+        assert_eq!(
+            path_to_cache_key_for("a?*<>\"|b", crate::paths::Os::Windows),
+            "a_q_a_l_g_d_pb"
+        );
+        assert_eq!(
+            path_to_cache_key_for(r"C:\a?b", crate::paths::Os::Windows),
+            "c_c_ba_qb"
+        );
+    }
+
+    /// Shared vectors (`tests/fixtures/cache_key_vectors.tsv`, #705) also read by the
+    /// Bash/Zsh/Fish encoder tests: the Unix arm must match every row and round-trip.
+    #[test]
+    fn test_path_to_cache_key_shared_vectors() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/fixtures/cache_key_vectors.tsv");
+        let text = std::fs::read_to_string(&fixture)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", fixture.display()));
+        let unescape = |raw: &str| -> String {
+            let mut out = String::new();
+            let mut chars = raw.chars();
+            while let Some(c) = chars.next() {
+                if c == '\\' {
+                    match chars.next() {
+                        Some('\\') => out.push('\\'),
+                        Some('n') => out.push('\n'),
+                        Some('r') => out.push('\r'),
+                        Some('t') => out.push('\t'),
+                        other => panic!("bad fixture escape: \\{other:?}"),
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        };
+        let decode = |key: &str| -> String {
+            let mut out = String::new();
+            let mut chars = key.chars();
+            while let Some(c) = chars.next() {
+                if c == '_' {
+                    match chars.next() {
+                        Some('_') => out.push('_'),
+                        Some('s') => out.push('/'),
+                        Some('b') => out.push('\\'),
+                        Some('c') => out.push(':'),
+                        Some('w') => out.push(' '),
+                        other => panic!("malformed key token: _{other:?}"),
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        };
+        let mut count = 0_usize;
+        for line in text.lines() {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let mut cols = line.split('\t');
+            let (Some(raw_input), Some(expected)) = (cols.next(), cols.next()) else {
+                panic!("malformed vector row: {line:?}");
+            };
+            let input = unescape(raw_input);
+            let key = path_to_cache_key_for(&input, crate::paths::Os::Unix);
+            assert_eq!(key, expected, "vector for {raw_input}");
+            assert_eq!(decode(&key), input, "round-trip for {raw_input}");
+            count += 1;
+        }
+        assert!(count > 0, "no vectors read from {}", fixture.display());
     }
 
     /// Two differently-cased paths to the same Windows directory must collide to one cache key.

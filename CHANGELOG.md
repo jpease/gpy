@@ -388,6 +388,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - Instant-prompt cache writes no longer fail for repositories with long
   paths (~210–230 bytes), and one failing variant no longer stops the others
   from being written (#708).
+- The instant prompt cache hits for paths containing `? * < > " |` on Linux
+  and macOS (#705); the agent escaped those characters but the shells did
+  not, so the cache always missed there.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
