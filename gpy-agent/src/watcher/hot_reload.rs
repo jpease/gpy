@@ -111,6 +111,13 @@ impl HotReloadSlot {
         }
     }
 
+    /// A handle to the watcher slot, for a reload callback that must re-arm
+    /// watches. Callers must only `try_lock` it: [`stop`](Self::stop) holds the
+    /// lock while it joins the thread running that callback.
+    pub fn watcher_handle(&self) -> Arc<Mutex<Option<WatchCoordinator>>> {
+        Arc::clone(&self.watcher)
+    }
+
     /// Install the watcher `build` returns, unless one is already installed.
     ///
     /// Returns `Ok(false)` when a watcher was already running, in which case
