@@ -119,9 +119,11 @@ install_binary() {
 
     echo "🚀 Installing $label binary..."
 
+    new_backup=""
     if [ -f "$dest_path" ]; then
         echo "🔄 Backing up existing $label binary..."
-        cp "$dest_path" "$dest_path.backup.$(date +%Y%m%d_%H%M%S)"
+        new_backup="$dest_path.backup.$(date +%Y%m%d_%H%M%S)"
+        cp "$dest_path" "$new_backup"
     fi
 
     # Unlink the destination before writing the new binary. A previous process
@@ -155,6 +157,15 @@ install_binary() {
     # Verify binary works
     if "$dest_path" --version >/dev/null 2>&1; then
         echo "✅ $label binary installed and functional"
+        # Keep only the backup just written; older ones are never used (#807).
+        # Runs after the restore-on-failure branch below has had its chance.
+        if [ -n "$new_backup" ]; then
+            for old_backup in "$dest_path".backup.*; do
+                [ -e "$old_backup" ] || continue
+                [ "$old_backup" = "$new_backup" ] && continue
+                rm -f "$old_backup"
+            done
+        fi
     else
         echo "❌ $label binary installation failed or not functional"
         # `[ -f pattern* ]` breaks once >=2 backups exist: the shell expands the

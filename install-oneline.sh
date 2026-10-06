@@ -245,6 +245,19 @@ if [ "$VERSION" = "latest" ]; then
     success "Latest version: $VERSION"
 fi
 
+# Delete every "$1".backup.* except the one just written ($2): only the most
+# recent previous version is worth keeping, and each backup is a full binary
+# (#807). Compares names rather than mtimes (same-second stamps tie).
+prune_backups() {
+    prune_dest="$1"
+    prune_keep="$2"
+    for prune_file in "$prune_dest".backup.*; do
+        [ -e "$prune_file" ] || continue
+        [ "$prune_file" = "$prune_keep" ] && continue
+        rm -f "$prune_file"
+    done
+}
+
 # Install agent binary
 info "Installing GPY agent..."
 
@@ -294,6 +307,7 @@ if [ -f "$INSTALL_DIR/gpy-agent" ]; then
     BACKUP_PATH="$INSTALL_DIR/gpy-agent.backup.$(date +%Y%m%d_%H%M%S)"
     info "Backing up existing agent to $BACKUP_PATH"
     cp "$INSTALL_DIR/gpy-agent" "$BACKUP_PATH"
+    prune_backups "$INSTALL_DIR/gpy-agent" "$BACKUP_PATH"
 fi
 
 # mv, not cp: a rename replaces the directory entry, so it is ETXTBSY-safe
@@ -338,6 +352,7 @@ if [ "$CLI_DOWNLOADED" -eq 1 ]; then
             CLI_BACKUP_PATH="$INSTALL_DIR/gpy.backup.$(date +%Y%m%d_%H%M%S)"
             info "Backing up existing CLI to $CLI_BACKUP_PATH"
             cp "$INSTALL_DIR/gpy" "$CLI_BACKUP_PATH"
+            prune_backups "$INSTALL_DIR/gpy" "$CLI_BACKUP_PATH"
         fi
 
         # mv (atomic rename) replaces the directory entry rather than overwriting
