@@ -84,6 +84,8 @@ enum Scenario {
     Duration(u64),
     /// The `hostname` module, on this machine's hostname.
     Hostname,
+    /// The `character` module after a command that exited with this status.
+    Character(i32),
 }
 
 impl Scenario {
@@ -93,6 +95,7 @@ impl Scenario {
             Self::Directory(_) => "directory",
             Self::Duration(_) => "cmd_duration",
             Self::Hostname => "hostname",
+            Self::Character(_) => "character",
         }
     }
 
@@ -114,6 +117,11 @@ impl Scenario {
                 "hostname".to_owned(),
                 "--hostname".to_owned(),
                 hostname.to_owned(),
+            ]),
+            Self::Character(status) => args.extend([
+                "character".to_owned(),
+                "--exit-code".to_owned(),
+                status.to_string(),
             ]),
         }
         args.extend(["--format".to_owned(), "ansi".to_owned()]);
@@ -161,6 +169,9 @@ fn render_with_starship(env: &CliTestEnv, config: &Path, scenario: Scenario, cwd
         .args(["module", scenario.starship_module()]);
     if let Scenario::Duration(millis) = scenario {
         command.args(["--cmd-duration", &millis.to_string()]);
+    }
+    if let Scenario::Character(status) = scenario {
+        command.args(["--status", &status.to_string()]);
     }
     let output = command.output().expect("run starship");
     assert!(
@@ -244,7 +255,9 @@ fn check_row(name: &str, config: &str, scenario: Scenario) {
     fs::write(&config_path, config).expect("write starship config");
     let cwd = match scenario {
         Scenario::Directory(relative) => env.root().join(relative),
-        Scenario::Duration(_) | Scenario::Hostname => env.root().to_path_buf(),
+        Scenario::Duration(_) | Scenario::Hostname | Scenario::Character(_) => {
+            env.root().to_path_buf()
+        }
     };
     fs::create_dir_all(&cwd).expect("create fixture directory");
 
@@ -283,4 +296,9 @@ parity_rows! {
     directory_without_style: Scenario::Directory("work/proj"), "[directory]\ntruncation_length = 3\n";
     cmd_duration_without_style: Scenario::Duration(5_000), "[cmd_duration]\nmin_time = 500\n";
     hostname_without_style: Scenario::Hostname, "[hostname]\nssh_only = false\n";
+    // #735: character symbols with trailing text or several groups.
+    character_success_trailing_space: Scenario::Character(0), "[character]\nsuccess_symbol = \"[➜](bold green) \"\nerror_symbol = \"[✗](bold red) \"\n";
+    character_error_trailing_space: Scenario::Character(1), "[character]\nsuccess_symbol = \"[➜](bold green) \"\nerror_symbol = \"[✗](bold red) \"\n";
+    character_success_leading_trailing_space: Scenario::Character(0), "[character]\nsuccess_symbol = \" [➜](bold green)  \"\n";
+    character_success_not_bold_trailing_space: Scenario::Character(0), "[character]\nsuccess_symbol = \"[➜](green) \"\nerror_symbol = \"[✗](red) \"\n";
 }
