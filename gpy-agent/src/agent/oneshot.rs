@@ -12,6 +12,7 @@ use crate::formatter::{Format, IsFirst, IsLast, RenderContext, SegmentPosition, 
 use crate::ipc::Response;
 use crate::language::detector::Detector;
 use crate::theme::ThemeConfig;
+use crate::watcher::multi_repo::MultiRepoWatcher;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -254,8 +255,13 @@ fn handle_oneshot_language_parsed(request: &OneshotRequest) -> Result<String> {
         ThemeConfig::default()
     });
 
+    // Resolve the git root first, exactly like the agent's lang handler, so the
+    // fallback answer in a repo subdirectory matches the daemon's (#784).
+    let request_path = Path::new(&request.path);
+    let root =
+        MultiRepoWatcher::find_git_root(request_path).unwrap_or_else(|| request_path.to_path_buf());
     let detected_languages =
-        Detector::detect_directory_bounded(&request.path, config.language.detection_mode);
+        Detector::detect_directory_bounded(&root, config.language.detection_mode);
 
     if detected_languages.is_empty() {
         return match format {
@@ -268,7 +274,7 @@ fn handle_oneshot_language_parsed(request: &OneshotRequest) -> Result<String> {
         &detected_languages,
         &theme,
         &config.language,
-        Some(std::path::Path::new(&request.path)),
+        Some(root.as_path()),
         None,
     );
 
