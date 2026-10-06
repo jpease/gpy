@@ -30,6 +30,9 @@ T="$(mktemp -d "${TMPDIR:-/tmp}/gpy-lastarg.XXXXXX")"
 T="$(cd "$T" && pwd -P)"
 cleanup() { rm -rf "$T"; }
 trap cleanup EXIT
+# The child's XDG_CONFIG_HOME ($T/config) disables the supervisor: the theme
+# export would re-set the env flag below from config.toml (#836).
+source "$ROOT/tests/lib/supervisor_off.bash" "$T"
 
 # Scrub every GPY_* variable inherited from the developer's shell (#270).
 gpy_scrub=()

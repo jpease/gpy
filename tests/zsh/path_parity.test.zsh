@@ -85,6 +85,10 @@ compare socket_override HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/run" GPY_AGENT_SO
 # --- cache key encoding, against a file the agent wrote ----------------------------
 echo "--- cache key encoding ---"
 shell_e2e_init "$ROOT"
+# zsh keeps the script-level EXIT trap above when shell_e2e_init (a function)
+# sets its own, so the harness agent would outlive the test: re-arm one trap
+# that stops it and removes $tmp (#836).
+trap 'shell_e2e_cleanup; rm -rf "$tmp"' EXIT
 printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n\n[agent.supervisor]\nenabled = false\n' \
     >"$XDG_CONFIG_HOME/gpy/config.toml"
 shell_e2e_start_agent || exit 1

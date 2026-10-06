@@ -20,7 +20,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-hostile.XXXXXX")"
 cleanup() { rm -rf "$SANDBOX"; }
 trap cleanup EXIT
-mkdir -p "$SANDBOX/cfg" "$SANDBOX/cache" "$SANDBOX/run"
+# The child's XDG_CONFIG_HOME ($SANDBOX/config) disables the supervisor: the
+# theme export would re-set the env flag below from config.toml (#836).
+source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"
+mkdir -p "$SANDBOX/run"
 
 failures=0
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
@@ -39,7 +42,7 @@ run_child() {
     } >"$rc"
     CHILD_OUT="$(printf '%s\n' "$2" | env -i \
         PATH=/usr/bin:/bin TERM=dumb HOME="$SANDBOX" \
-        XDG_CONFIG_HOME="$SANDBOX/cfg" XDG_CACHE_HOME="$SANDBOX/cache" \
+        XDG_CONFIG_HOME="$SANDBOX/config" XDG_CACHE_HOME="$SANDBOX/cache" \
         XDG_RUNTIME_DIR="$SANDBOX/run" TMPDIR="$SANDBOX" \
         GPY_AGENT_SUPERVISOR_ENABLED=0 \
         GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock" \

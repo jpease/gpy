@@ -51,11 +51,11 @@ while IFS='=' read -r __gpy_env_name _; do
         GPY_*) unset "$__gpy_env_name" ;;
     esac
 done < <(env)
-export GPY_AGENT_SUPERVISOR_ENABLED=0
+# Supervisor off in a sandbox config: the theme export re-sets the flag (#836).
+source "$ROOT/tests/lib/supervisor_off.bash" "$T"
 export GPY_AGENT_SOCKET_PATH="$T/missing.sock"
-export HOME="$T/home" XDG_CACHE_HOME="$T/cache" XDG_CONFIG_HOME="$T/config"
-export XDG_RUNTIME_DIR="$T/run"
-mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR"
+export HOME="$T/home" XDG_RUNTIME_DIR="$T/run"
+mkdir -p "$HOME" "$XDG_RUNTIME_DIR"
 
 # The rc wraps __gpy_render_prompt with a depth counter (each render also
 # sleeps 0.1 s, widening the window a nested render needs), stubs

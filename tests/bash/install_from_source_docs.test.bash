@@ -259,12 +259,17 @@ grep -q 'source ~/.config/gpy/zsh/gpy.zsh' "$SANDBOX_HOME/.zshrc" 2>/dev/null ||
 grep -q 'source ~/.config/gpy/bash/gpy.bash' "$SANDBOX_HOME/.bashrc" 2>/dev/null || fail ".bashrc was not updated"
 
 # Each integration must source without error in its shell; the agent is kept
-# off so sourcing never spawns a daemon from inside this test.
-if ! env -i "${sandbox_env[@]}" GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
+# off so sourcing never spawns a daemon from inside this test. The theme
+# export re-sets the supervisor flag from config.toml (#836), so these two
+# runs also read a supervisor-off config through an empty cache of their own.
+mkdir -p "$SANDBOX/supervisor-off"
+(source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX/supervisor-off")
+supervisor_off_env=("XDG_CONFIG_HOME=$SANDBOX/supervisor-off/config" "XDG_CACHE_HOME=$SANDBOX/supervisor-off/cache")
+if ! env -i "${sandbox_env[@]}" "${supervisor_off_env[@]}" GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
     zsh -c 'source ~/.config/gpy/zsh/gpy.zsh && whence -w __gpy_debug_paths >/dev/null' >"$SANDBOX/zsh-source.log" 2>&1; then
     fail "sourcing the installed Zsh integration failed: $(cat "$SANDBOX/zsh-source.log")"
 fi
-if ! env -i "${sandbox_env[@]}" GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
+if ! env -i "${sandbox_env[@]}" "${supervisor_off_env[@]}" GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
     bash -c 'source ~/.config/gpy/bash/gpy.bash && declare -F __gpy_debug_paths >/dev/null' >"$SANDBOX/bash-source.log" 2>&1; then
     fail "sourcing the installed Bash integration failed: $(cat "$SANDBOX/bash-source.log")"
 fi

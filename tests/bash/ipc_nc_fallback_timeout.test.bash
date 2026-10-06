@@ -52,7 +52,8 @@ for tool in cat echo head; do
 done
 
 export GPY_AGENT_SOCKET_PATH="$sock"
-export GPY_AGENT_SUPERVISOR_ENABLED=0
+# Supervisor off in a sandbox config: the theme export re-sets the flag (#836).
+source "$ROOT/tests/lib/supervisor_off.bash" "$tmp"
 export GPY_IPC_TIMEOUT_MS=300
 source "$ROOT/bash/gpy.bash"
 

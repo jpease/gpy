@@ -20,8 +20,12 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
-export GPY_AGENT_SUPERVISOR_ENABLED=0
-export GPY_AGENT_SOCKET_PATH="$ROOT/.gpy-test-missing-json-flags-tail.sock"
+# The theme export re-sets the supervisor flag from config.toml, so disable
+# it in a sandbox config; the missing socket stays there too (#836).
+SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-json-flags-tail.XXXXXX")"
+trap 'rm -rf "$SANDBOX"' EXIT
+source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"
+export GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock"
 
 source bash/gpy.bash
 
