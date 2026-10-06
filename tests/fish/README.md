@@ -65,6 +65,10 @@ sections above describe the ones worth reading first.
 - `e2e_live_updates_signal.test.fish`
 - `e2e_prompt_content.test.fish`
 
+**Hostile environment**
+
+- `hostile_env.test.fish`
+
 **Installers, uninstallers and release plumbing**
 
 - `install_completions_wiring.test.fish`

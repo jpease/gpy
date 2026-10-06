@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Safe GPY entry point with fail-safe mechanisms
 
+# GPY is a prompt: non-interactive shells (fish -c, scripts, the supervisor's
+# own children) must not load it, define its handlers, or spawn an agent (#769).
+# fish/core/init.fish is deliberately NOT gated; tests and ci-bench source it.
+status is-interactive; or return
+
 # Whether this file ends up in "disabled mode" — by user choice or because the
 # install is broken — and therefore has to leave fish_prompt's globals in a
 # safe, defined state before returning. See the block at the bottom of this

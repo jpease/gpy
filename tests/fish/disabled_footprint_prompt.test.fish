@@ -76,8 +76,8 @@ ln -s "$repo_root/fish" "$scenario_a_home/.config/fish/gpy"
 set -l scenario_a_err (mktemp)
 set -l scenario_a_out (env HOME=$scenario_a_home XDG_CONFIG_HOME=$scenario_a_home/.config \
     GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
-    fish --no-config -c 'source fish/conf.d/gpy_init.fish; source fish/functions/fish_prompt.fish; fish_prompt' \
-    2>$scenario_a_err | string collect)
+    fish --no-config -i -c 'source fish/conf.d/gpy_init.fish; source fish/functions/fish_prompt.fish; fish_prompt' </dev/null \
+     2>$scenario_a_err | string collect)
 set -l scenario_a_status $status
 
 if test -s $scenario_a_err
@@ -165,8 +165,8 @@ mkdir -p "$scenario_d_home/.config/fish"
 set -l scenario_d_err (mktemp)
 set -l scenario_d_out (env HOME=$scenario_d_home XDG_CONFIG_HOME=$scenario_d_home/.config \
     GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1 \
-    fish --no-config -c 'source fish/conf.d/gpy_init.fish; source fish/functions/fish_prompt.fish; fish_prompt' \
-    2>$scenario_d_err | string collect)
+    fish --no-config -i -c 'source fish/conf.d/gpy_init.fish; source fish/functions/fish_prompt.fish; fish_prompt' </dev/null \
+     2>$scenario_d_err | string collect)
 set -l scenario_d_status $status
 
 if grep -q 'core files not found' $scenario_d_err
@@ -212,8 +212,8 @@ echo 'return 1' >"$scenario_e_home/.config/fish/gpy/core/init.fish"
 set -l scenario_e_err (mktemp)
 set -l scenario_e_out (env HOME=$scenario_e_home XDG_CONFIG_HOME=$scenario_e_home/.config \
     GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1 \
-    fish --no-config -c 'source fish/conf.d/gpy_init.fish; source fish/functions/fish_prompt.fish; fish_prompt' \
-    2>$scenario_e_err | string collect)
+    fish --no-config -i -c 'source fish/conf.d/gpy_init.fish; source fish/functions/fish_prompt.fish; fish_prompt' </dev/null \
+     2>$scenario_e_err | string collect)
 set -l scenario_e_status $status
 
 if grep -q 'using fallback mode' $scenario_e_err
