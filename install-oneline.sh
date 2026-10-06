@@ -584,15 +584,20 @@ EOF
         ;;
 
     zsh)
-        ZSH_RC="$HOME/.zshrc"
-        touch "$ZSH_RC"
+        # zsh reads ${ZDOTDIR:-$HOME}/.zshrc (#748). A file this installer
+        # creates is tagged `gpy-created-file` so the uninstaller can delete
+        # it again (#747).
+        ZSH_RC="${ZDOTDIR:-$HOME}/.zshrc"
+        ZSH_RC_NOTE=""
+        [ -e "$ZSH_RC" ] || ZSH_RC_NOTE=" (gpy-created-file)"
+        mkdir -p "$(dirname "$ZSH_RC")"
 
         SOURCE_LINE="source \"$SHELL_CONFIG_DIR/gpy.zsh\""
         if ! grep -qF "# >>> gpy-init >>>" "$ZSH_RC" 2>/dev/null; then
             cat >> "$ZSH_RC" << EOF
 
 # >>> gpy-init >>>
-# GPY Prompt Enhancement
+# GPY Prompt Enhancement$ZSH_RC_NOTE
 $SOURCE_LINE
 # <<< gpy-init <<<
 EOF
@@ -713,7 +718,7 @@ fi
 echo "   • Shell files: $SHELL_CONFIG_DIR"
 case "$CURRENT_SHELL" in
     fish) echo "   • Config: $FISH_CONFIG" ;;
-    zsh) echo "   • Config: $HOME/.zshrc" ;;
+    zsh) echo "   • Config: $ZSH_RC" ;;
     bash) echo "   • Config: $BASH_RC" ;;
 esac
 echo ""
@@ -726,7 +731,7 @@ case "$CURRENT_SHELL" in
         ;;
     zsh)
         echo "   1. Restart Zsh: exec zsh"
-        echo "   2. Or reload config: source ~/.zshrc"
+        echo "   2. Or reload config: source \"$ZSH_RC\""
         ;;
     bash)
         echo "   1. Restart Bash: exec bash"

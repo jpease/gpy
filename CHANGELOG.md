@@ -472,6 +472,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   `~/.profile`) when `~/.bashrc` is absent (#747). gpy loads from `~/.bashrc`
   in login and non-login shells, and uninstall removes startup files the
   installer created.
+- The oneline Zsh install and both uninstallers honour `ZDOTDIR`, using
+  `${ZDOTDIR:-$HOME}/.zshrc` instead of a `~/.zshrc` zsh never reads (#748).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

@@ -47,6 +47,12 @@ case "${XDG_RUNTIME_DIR:-}" in
 esac
 
 fish_config_dir="$config_home/fish"
+# zsh reads ${ZDOTDIR:-$HOME}/.zshrc; ZDOTDIR may be unset in the shell that
+# runs the uninstaller, so ~/.zshrc is cleaned too (#748).
+zdotdir_zshrc=""
+if [ -n "${ZDOTDIR:-}" ] && [ "$ZDOTDIR/.zshrc" != "$HOME/.zshrc" ]; then
+    zdotdir_zshrc="$ZDOTDIR/.zshrc"
+fi
 fish_prompt_dir="$fish_config_dir/gpy"
 fish_prompt_file="$fish_config_dir/functions/fish_prompt.fish"
 fish_conf_d="$fish_config_dir/conf.d/gpy_init.fish"
@@ -179,7 +185,7 @@ echo "  - Cache: $gpy_cache_dir"
 echo "  - Runtime: $runtime_root"
 echo "  - fish_prompt.fish (will restore previous backup if destination becomes absent)"
 echo "  - GPY init blocks from startup files (if present):"
-echo "    - $HOME/.bashrc, $HOME/.bash_profile, $HOME/.bash_login, $HOME/.profile, $HOME/.zshrc, $fish_config_dir/config.fish"
+echo "    - $HOME/.bashrc, $HOME/.bash_profile, $HOME/.bash_login, $HOME/.profile, ${zdotdir_zshrc:+$zdotdir_zshrc, }$HOME/.zshrc, $fish_config_dir/config.fish"
 echo ""
 echo "⚠️  This will also stop any running agent and supervisor processes"
 printf '%s' "Press Enter to continue or Ctrl-C to cancel: "
@@ -269,7 +275,7 @@ for completion in "$fish_completions_dir/gpy.fish" "$fish_completions_dir/gpy-dy
 done
 
 # Remove GPY init blocks from all supported startup files (#671)
-for rc_file in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile" "$HOME/.zshrc" "$fish_config_dir/config.fish"; do
+for rc_file in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile" ${zdotdir_zshrc:+"$zdotdir_zshrc"} "$HOME/.zshrc" "$fish_config_dir/config.fish"; do
     clean_rc_file "$rc_file"
 done
 
