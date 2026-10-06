@@ -622,6 +622,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   rooted at `$HOME` (dotfiles), so paths under home show as `~/…` (#753).
 - Repositories that track gpy themes, or are rooted at `gpy/themes`,
   live-refresh the git segment, including on `.git/HEAD` changes (#777).
+- `ui.directory.display = "abbreviated"` keeps a hidden directory's dot plus
+  one character (`~/.c/fish`) and no longer splits multi-codepoint leading
+  characters such as flag emoji (#754).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

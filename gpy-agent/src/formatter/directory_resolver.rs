@@ -310,7 +310,8 @@ fn repo_anchored_path(
     Some(format!("{root_name}/{symbol}{tail}"))
 }
 
-/// Shorten each non-final path component to its first character.
+/// Shorten each non-final path component to its first character (hidden
+/// components keep the leading `.` plus one more).
 ///
 /// The shells no longer abbreviate paths themselves (the Fish helper that
 /// mirrored this was dead code and removed in #644); this is the one
@@ -318,6 +319,7 @@ fn repo_anchored_path(
 /// `tests/fish/e2e_prompt_content.test.fish`.
 ///
 /// - `~/alpha/beta/project` → `~/a/b/project`
+/// - `~/.config/fish` → `~/.c/fish`
 /// - `/usr/local/bin` → `/u/l/bin`
 /// - `~` / `/` → unchanged
 fn abbreviate_path(home_contracted: &str) -> String {
@@ -348,12 +350,75 @@ fn abbreviate_path(home_contracted: &str) -> String {
             if i == last {
                 (*part).to_owned()
             } else {
-                part.chars().next().map_or_else(String::new, String::from)
+                abbreviate_component(part).to_owned()
             }
         })
         .collect();
 
     format!("{prefix}{}", abbreviated.join("/"))
+}
+
+/// Shorten one path component: its first character cluster, plus the next
+/// cluster when the component is a hidden name (`.config` → `.c`).
+/// `.` and `..` are returned whole.
+///
+/// Clusters are approximated with `char` rules (no segmentation dependency):
+/// a regional-indicator pair (flag), trailing combining marks / variation
+/// selectors / emoji modifiers / tag characters, and ZWJ-joined sequences stay
+/// together.
+fn abbreviate_component(part: &str) -> &str {
+    let first_end = cluster_end(part, 0);
+    let end = if part.starts_with('.') {
+        cluster_end(part, first_end)
+    } else {
+        first_end
+    };
+    part.get(..end).unwrap_or(part)
+}
+
+/// Byte offset just past the character cluster starting at byte `start`.
+fn cluster_end(text: &str, start: usize) -> usize {
+    let mut chars = text.get(start..).unwrap_or("").chars().peekable();
+    let Some(first) = chars.next() else {
+        return start;
+    };
+    let mut len = first.len_utf8();
+    if is_regional_indicator(first) && chars.peek().copied().is_some_and(is_regional_indicator) {
+        len = len.saturating_add(chars.next().map_or(0, char::len_utf8));
+    }
+    while let Some(next) = chars.peek().copied() {
+        if next == '\u{200D}' {
+            // Zero-width joiner glues the following character on.
+            chars.next();
+            len = len.saturating_add(next.len_utf8());
+            len = len.saturating_add(chars.next().map_or(0, char::len_utf8));
+        } else if is_cluster_extender(next) {
+            chars.next();
+            len = len.saturating_add(next.len_utf8());
+        } else {
+            break;
+        }
+    }
+    start.saturating_add(len)
+}
+
+const fn is_regional_indicator(c: char) -> bool {
+    matches!(c, '\u{1F1E6}'..='\u{1F1FF}')
+}
+
+/// Combining marks, variation selectors, emoji skin-tone modifiers, tag chars.
+const fn is_cluster_extender(c: char) -> bool {
+    matches!(
+        c,
+        '\u{0300}'..='\u{036F}'
+            | '\u{1AB0}'..='\u{1AFF}'
+            | '\u{1DC0}'..='\u{1DFF}'
+            | '\u{20D0}'..='\u{20FF}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FE20}'..='\u{FE2F}'
+            | '\u{1F3FB}'..='\u{1F3FF}'
+            | '\u{E0020}'..='\u{E007F}'
+    )
 }
 
 /// Join the repo-root basename with its in-repo sub-components by `/`.
@@ -837,6 +902,25 @@ mod tests {
     #[test]
     fn abbreviate_two_levels_under_home() {
         assert_eq!(abbreviate_path("~/src/main"), "~/s/main");
+    }
+
+    #[test]
+    fn abbreviate_keeps_dot_plus_first_char_for_hidden_dirs() {
+        assert_eq!(abbreviate_path("~/.config/fish"), "~/.c/fish");
+        assert_eq!(abbreviate_path("/.hidden/a/leaf"), "/.h/a/leaf");
+        assert_eq!(abbreviate_path("~/./a/leaf"), "~/./a/leaf");
+        assert_eq!(abbreviate_path("~/../a/leaf"), "~/../a/leaf");
+    }
+
+    #[test]
+    fn abbreviate_keeps_whole_leading_grapheme() {
+        assert_eq!(abbreviate_path("~/🇺🇸flags/x"), "~/🇺🇸/x");
+        assert_eq!(abbreviate_path("~/e\u{301}tc/x"), "~/e\u{301}/x");
+        assert_eq!(
+            abbreviate_path("~/👨\u{200D}👩\u{200D}👧home/x"),
+            "~/👨\u{200D}👩\u{200D}👧/x"
+        );
+        assert_eq!(abbreviate_path("~/.🇺🇸flags/x"), "~/.🇺🇸/x");
     }
 
     #[test]

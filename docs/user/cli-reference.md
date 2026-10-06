@@ -743,9 +743,9 @@ List-valued keys (`git.skip_paths`, `language.enabled_languages`, `ui.enabled_se
 
 **Directory display modes:**
 - `basename` - Show only the current directory name, for example `project`
-- `abbreviated` - Show the path with intermediate components shortened to their first letter, for example `~/w/p/project`
+- `abbreviated` - Show the path with intermediate components shortened to their first character, for example `~/w/p/project`; a hidden directory keeps its leading dot plus one character (`~/.c/fish`)
 - `truncated` - Keep the last `ui.directory.truncation_length` path components, prefixed with `ui.directory.truncation_symbol`, for example `…/work/project`
-- `full` - Show the full absolute path, for example `/Users/alice/work/project`
+- `full` - Show the whole path with your home directory shown as `~`, for example `~/work/project`
 
 `ui.directory.max_length` applies after the directory mode is rendered, so it can truncate a basename, abbreviated, truncated, or full path if needed.
 
