@@ -302,6 +302,19 @@ impl ClientDirectory {
         matches!((recorded, current), (Some(r), Some(c)) if r != c)
     }
 
+    /// Whether `pid` is confirmed to belong to a different process than the one
+    /// registered with `recorded` as its start time.
+    #[cfg(unix)]
+    fn is_recycled(&self, pid: u32, recorded: Option<u64>) -> bool {
+        recorded.is_some() && Self::is_confirmed_recycle(recorded, self.process_start_time(pid))
+    }
+
+    /// Native Windows has no start-time lookup, so nothing is ever recycled.
+    #[cfg(not(unix))]
+    fn is_recycled(&self, _pid: u32, _recorded: Option<u64>) -> bool {
+        false
+    }
+
     /// Decide whether `pid` must be skipped this broadcast round based on its
     /// registered identity, collecting a *confirmed* PID recycle into `stale`
     /// for pruning. Returns `true` when the caller must not signal this PID.
@@ -417,20 +430,19 @@ impl ClientDirectory {
 
     /// Prune dead clients from the registry.
     ///
-    /// This method checks all registered PIDs and removes those that no longer exist.
+    /// This method checks all registered PIDs and removes those that no longer
+    /// exist, or whose PID now belongs to a different process (a confirmed
+    /// recycle, judged like the broadcast path does: a failed start-time
+    /// lookup is not a recycle, #432).
     /// Returns a vector of PIDs that were pruned (so caller can clean up watchers, etc.).
     #[must_use]
     pub fn prune_dead_clients(&self) -> Vec<u32> {
-        let clients: Vec<u32> = self
-            .inner
-            .lock()
-            .map_or_else(|_| Vec::new(), |guard| guard.keys().copied().collect());
-
         let mut dead_pids = Vec::new();
 
-        for pid in clients {
-            if !Self::is_client_alive(pid) {
-                dead_pids.push(pid);
+        for client in self.client_snapshots() {
+            if !Self::is_client_alive(client.pid) || self.is_recycled(client.pid, client.started_at)
+            {
+                dead_pids.push(client.pid);
             }
         }
 
@@ -1378,6 +1390,41 @@ mod tests {
             !directory.clients().contains(&fake_pid),
             "Nonexistent PID should still be pruned via normal ESRCH handling"
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    /// The timer's `prune_dead_clients` must prune a live PID whose recorded
+    /// start time proves the PID now belongs to a different process (#782).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the recycled PID is not returned and removed.
+    fn prune_dead_clients_prunes_confirmed_recycle() {
+        let directory = ClientDirectory::new();
+        let pid = std::process::id();
+
+        directory.register_with_started_at_for_test(pid, None, Some(1));
+
+        assert_eq!(directory.prune_dead_clients(), vec![pid]);
+        assert_eq!(directory.len(), 0);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    /// A live PID with no recorded start time is never pruned by identity.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the unidentified live PID is pruned.
+    fn prune_dead_clients_keeps_live_pid_without_recorded_start_time() {
+        let directory = ClientDirectory::new();
+        let pid = std::process::id();
+
+        directory.register_with_started_at_for_test(pid, None, None);
+
+        assert!(directory.prune_dead_clients().is_empty());
+        assert_eq!(directory.len(), 1);
     }
 
     // --- #432: false-positive PID-identity prune (keep + skip-signal) ---

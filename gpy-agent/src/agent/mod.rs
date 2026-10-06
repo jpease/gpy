@@ -535,7 +535,7 @@ async fn run_reconcile_scan<R, F>(
 /// pruning arm and [`Agent::prune_dead_clients_and_cleanup`] share one
 /// implementation instead of two copies.
 fn prune_dead_clients(registry: &ClientDirectory, watcher_slot: &SharedWatcherSlot) -> Vec<u32> {
-    let pruned_pids = registry.prune_dead_clients();
+    let mut pruned_pids = registry.prune_dead_clients();
 
     // Also unregister from watcher to clean up filesystem watches
     if let Ok(guard) = watcher_slot.lock()
@@ -543,6 +543,18 @@ fn prune_dead_clients(registry: &ClientDirectory, watcher_slot: &SharedWatcherSl
     {
         for pid in &pruned_pids {
             let _ = watcher.unregister_client(*pid);
+        }
+
+        // A doorbell broadcast drops clients from the registry alone (#782);
+        // drop whatever the watcher still tracks for them. Snapshot first so
+        // the watcher is never called with registry state held.
+        for pid in watcher.client_pids() {
+            if !registry.is_registered(pid) {
+                let _ = watcher.unregister_client(pid);
+                if !pruned_pids.contains(&pid) {
+                    pruned_pids.push(pid);
+                }
+            }
         }
     }
 
@@ -1570,5 +1582,178 @@ mod reconcile_scan_tests {
             vec![PathBuf::from("/fresh/repo-added-after-snapshot")],
             "catch-up pass must use freshly-fetched roots, not the stale initial snapshot"
         );
+    }
+}
+
+/// The registry and the watcher must agree on who is registered after every
+/// pruning pass, even when a doorbell broadcast removed clients from the
+/// registry alone (#782).
+#[cfg(test)]
+mod prune_reconcile_tests {
+    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::missing_panics_doc)]
+
+    use super::{Arc, Mutex, PathBuf, prune_dead_clients};
+    use super::{ClientDirectory, MultiRepoWatcher, SharedWatcherSlot, WatcherConfig};
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::Path;
+    use std::process::Command;
+
+    fn init_repo(root: &Path) {
+        let status = Command::new("git")
+            .args(["-c", "commit.gpgsign=false", "init", "--quiet"])
+            .current_dir(root)
+            .status()
+            .expect("run git init");
+        assert!(status.success(), "git init must succeed");
+    }
+
+    fn watcher_slot() -> (SharedWatcherSlot, Arc<MultiRepoWatcher>) {
+        let watcher = Arc::new(
+            MultiRepoWatcher::builder()
+                .config(WatcherConfig::default())
+                .callback(Box::new(|_event| {}))
+                .build()
+                .expect("build watcher"),
+        );
+        (Arc::new(Mutex::new(Some(Arc::clone(&watcher)))), watcher)
+    }
+
+    /// Two canonical temp repos (the second with a subdirectory) plus the
+    /// registry and watcher under test.
+    struct Fixture {
+        _tmp: tempfile::TempDir,
+        repos: Vec<PathBuf>,
+        /// `(cwd, index into repos)`
+        cwds: Vec<(PathBuf, usize)>,
+        registry: ClientDirectory,
+        slot: SharedWatcherSlot,
+        watcher: Arc<MultiRepoWatcher>,
+    }
+
+    fn fixture() -> Fixture {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let base = std::fs::canonicalize(tmp.path()).expect("canonicalize temp dir");
+        let mut repos = Vec::new();
+        let mut cwds = Vec::new();
+        for (index, name) in ["repo-a", "repo-b"].into_iter().enumerate() {
+            let root = base.join(name);
+            std::fs::create_dir_all(root.join("sub")).expect("create repo dir");
+            init_repo(&root);
+            cwds.push((root.clone(), index));
+            cwds.push((root.join("sub"), index));
+            repos.push(root);
+        }
+        let shell_dir = base.join("shell");
+        std::fs::create_dir_all(&shell_dir).expect("create shell dir");
+        let (slot, watcher) = watcher_slot();
+        Fixture {
+            _tmp: tmp,
+            repos,
+            cwds,
+            registry: ClientDirectory::with_shell_dir(shell_dir),
+            slot,
+            watcher,
+        }
+    }
+
+    #[test]
+    fn prune_reconciles_watcher_with_registry_after_broadcast_drop() {
+        let fx = fixture();
+        let pid = std::process::id();
+        let repo = fx.repos.first().expect("repo").clone();
+
+        fx.registry
+            .register_with_started_at_for_test(pid, Some(repo.clone()), Some(1));
+        fx.watcher.register_client(pid, &repo).unwrap();
+        assert_eq!(fx.watcher.watched_repo_count(), 1);
+
+        // The broadcast path drops a confirmed recycle from the registry alone.
+        fx.registry.notify_repaint(None);
+        assert!(!fx.registry.is_registered(pid), "broadcast must drop it");
+        assert_eq!(
+            fx.watcher.client_pids(),
+            vec![pid],
+            "watcher still holds it"
+        );
+
+        let pruned = prune_dead_clients(&fx.registry, &fx.slot);
+
+        assert_eq!(pruned, vec![pid], "reconciled pid is reported once");
+        assert!(fx.watcher.client_pids().is_empty());
+        assert_eq!(fx.watcher.watched_repo_count(), 0);
+        assert!(fx.watcher.watched_roots().is_empty());
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig {
+            cases: 24,
+            failure_persistence: None,
+            ..proptest::prelude::ProptestConfig::default()
+        })]
+
+        /// Random register / workspace / unregister / registry-only drop
+        /// sequences, each followed (at random) by a prune pass, leave the
+        /// watcher tracking exactly the registered pids and watching exactly
+        /// the repos they are in.
+        #[test]
+        fn prune_keeps_watcher_matching_registry(
+            steps in proptest::collection::vec(
+                (0_u8..4_u8, 0_usize..2_usize, 0_usize..4_usize, proptest::bool::ANY),
+                1..=24,
+            ),
+        ) {
+            let fx = fixture();
+            // Two live pids, so registration with no recorded start time
+            // survives the liveness check in the prune pass.
+            let live = [std::process::id(), std::os::unix::process::parent_id()];
+            let mut model: BTreeMap<u32, usize> = BTreeMap::new();
+            for (done, (kind, pid_index, cwd_index, prune)) in steps.iter().copied().enumerate() {
+                let trace = steps.get(..=done).expect("in range");
+                let pid = *live.get(pid_index).expect("pid index");
+                let (cwd, repo_index) = fx.cwds.get(cwd_index).expect("cwd index");
+                match kind {
+                    0 => {
+                        fx.registry
+                            .register_with_started_at_for_test(pid, Some(cwd.clone()), None);
+                        fx.watcher.register_client(pid, cwd).unwrap();
+                        model.insert(pid, *repo_index);
+                    }
+                    1 => {
+                        if fx.registry.update_workspace(pid, cwd) {
+                            fx.watcher.update_client(pid, cwd).unwrap();
+                            model.insert(pid, *repo_index);
+                        }
+                    }
+                    2 => {
+                        fx.registry.unregister(pid);
+                        fx.watcher.unregister_client(pid).unwrap();
+                        model.remove(&pid);
+                    }
+                    _ => {
+                        // Registry-only drop, as the broadcast path does.
+                        fx.registry.unregister(pid);
+                        model.remove(&pid);
+                    }
+                }
+                if prune || trace.len() == steps.len() {
+                    let _ = prune_dead_clients(&fx.registry, &fx.slot);
+                    let mut registered = fx.registry.clients();
+                    registered.sort_unstable();
+                    assert_eq!(
+                        fx.watcher.client_pids(),
+                        registered,
+                        "watcher pids != registry pids after {trace:?}"
+                    );
+                    let wanted: BTreeSet<PathBuf> = model
+                        .values()
+                        .filter_map(|index| fx.repos.get(*index).cloned())
+                        .collect();
+                    let watched: BTreeSet<PathBuf> = fx.watcher.watched_roots().into_iter().collect();
+                    assert_eq!(watched, wanted, "watched repos != repos with a client after {trace:?}");
+                }
+            }
+        }
     }
 }
