@@ -1681,6 +1681,9 @@ mod prune_reconcile_tests {
         }
     }
 
+    // Relies on the broadcast dropping a recycled PID, which native Windows
+    // has no start-time lookup to detect.
+    #[cfg(unix)]
     #[test]
     fn prune_reconciles_watcher_with_registry_after_broadcast_drop() {
         let fx = fixture();
@@ -1730,7 +1733,12 @@ mod prune_reconcile_tests {
             let fx = fixture();
             // Two live pids, so registration with no recorded start time
             // survives the liveness check in the prune pass.
-            let live = [std::process::id(), std::os::unix::process::parent_id()];
+            #[cfg(unix)]
+            let second_pid = std::os::unix::process::parent_id();
+            // Native Windows reports every client alive, so any distinct id works.
+            #[cfg(not(unix))]
+            let second_pid = std::process::id().wrapping_add(1);
+            let live = [std::process::id(), second_pid];
             let mut model: BTreeMap<u32, usize> = BTreeMap::new();
             for (done, (kind, pid_index, cwd_index, prune)) in steps.iter().copied().enumerate() {
                 let trace = steps.get(..=done).expect("in range");

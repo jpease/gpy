@@ -105,11 +105,11 @@ const DEFAULT_THROTTLE_MS: u64 = 150;
 /// Snapshot of a registered client used while broadcasting a signal, mirroring
 /// the fields of [`ClientInfo`] that `notify_with_signal` needs after releasing
 /// the registry lock.
-#[cfg(unix)]
 struct ClientSnapshot {
     /// The client shell's process id.
     pid: u32,
     /// The client's working directory, when it reported one.
+    #[cfg_attr(not(unix), allow(dead_code))]
     cwd: Option<PathBuf>,
     /// Process start time, used to detect a recycled PID (#319/#432).
     started_at: Option<u64>,
@@ -177,13 +177,6 @@ impl Default for ClientDirectory {
     }
 }
 
-#[cfg_attr(
-    not(unix),
-    expect(
-        dead_code,
-        reason = "`started_at` is recorded on every platform but only read by the Unix PID-recycle check, which guards signal delivery (#319, #540)"
-    )
-)]
 #[derive(Clone, Debug)]
 struct ClientInfo {
     cwd: Option<PathBuf>,
@@ -504,7 +497,6 @@ impl ClientDirectory {
 
     /// Copy the registry's live clients out from under the lock, so the
     /// broadcast loop below never holds it while issuing syscalls.
-    #[cfg(unix)]
     fn client_snapshots(&self) -> Vec<ClientSnapshot> {
         self.inner.lock().map_or_else(
             |_| Vec::new(),
@@ -710,7 +702,6 @@ impl ClientDirectory {
             .and_then(|guard| guard.get(&pid).and_then(|info| info.cwd.clone()))
     }
 
-    #[cfg(unix)]
     /// Test-only helper: register a PID with an explicit (possibly
     /// fabricated) `started_at`, bypassing the real registration-time
     /// lookup. Lets tests exercise the PID-recycling defense in

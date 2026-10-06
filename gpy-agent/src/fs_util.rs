@@ -53,6 +53,7 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
 
     use super::{directory_is_read_only, read_small_file};
+    #[cfg(unix)]
     use std::path::Path;
 
     #[test]
@@ -97,6 +98,7 @@ mod tests {
     /// Skipped when running as root: root can write anywhere `access(2)`
     /// or not, so the assertion wouldn't hold and isn't testing anything
     /// meaningful in that context.
+    #[cfg(unix)]
     #[test]
     fn root_owned_755_directory_is_read_only_for_normal_user() {
         if nix::unistd::Uid::effective().is_root() {
