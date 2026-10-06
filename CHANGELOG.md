@@ -648,6 +648,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `just install` runs `install-dev.fish` from a checkout, and
   `just build-all-platforms` stages the agent and `gpy` CLI with `.sha256`
   sidecars that `install.sh` accepts (#810).
+- Socket requests with format `fish`, `bash-source` or `zsh-source` get a
+  JSON `{"error": ...}` reply instead of no reply (#759).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

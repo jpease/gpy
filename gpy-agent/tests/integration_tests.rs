@@ -772,6 +772,66 @@ async fn ansi_error_replies_are_empty_lines() {
 
     server_handle.abort();
 }
+
+/// #759: formats the socket does not serve (`fish`, `bash-source`,
+/// `zsh-source`) get one newline-terminated JSON error line naming the
+/// format, instead of silence until the client times out.
+#[tokio::test]
+async fn unsupported_socket_format_gets_json_error() {
+    use tokio::time::Duration;
+
+    let _env = set_test_env();
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let socket_path = temp_dir.path().join("test_unsupported_format.sock");
+
+    let mut server = EndpointHandle::builder()
+        .socket_path(socket_path.clone())
+        .client_registry(ClientDirectory::new().shared())
+        .git_cache(Arc::new(GitStatusCache::new()))
+        .config_manager(Arc::new(
+            ConfigManager::new().expect("default config should load"),
+        ))
+        .watcher_slot(Arc::new(std::sync::Mutex::new(None)))
+        .theme_manager(Arc::new(
+            ThemeManager::new("default").expect("default theme should load"),
+        ))
+        .instant_cache(Arc::new(
+            gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"),
+        ))
+        .latency_tracker(Arc::new(LatencyTracker::new(100)))
+        .language_cache(gpy_agent::language::DetectionCache::new())
+        .build()
+        .expect("server build");
+    let server_handle = tokio::spawn(async move {
+        let _ = server.start().await;
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    for (format, expected) in [
+        ("fish", "only available to local CLI oneshot"),
+        ("bash-source", "not yet implemented"),
+        ("zsh-source", "not yet implemented"),
+    ] {
+        let request = format!(r#"{{"op":"duration","duration_ms":5,"format":"{format}"}}"#);
+        let reply = request_reply_line(&socket_path, &request).await;
+        assert!(
+            reply.ends_with('\n'),
+            "reply must end with a newline: {reply:?}"
+        );
+        let value: serde_json::Value =
+            serde_json::from_str(&reply).expect("reply must be a JSON line");
+        let message = value
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_else(|| panic!("reply must carry an error string, got {reply}"));
+        assert!(
+            message.contains(expected),
+            "error for {format} must contain {expected:?}, got {message:?}"
+        );
+    }
+
+    server_handle.abort();
+}
 fn set_test_env() -> TestEnvGuard {
     let prev = std::env::var_os("GPY_CONFIG_PATH");
     unsafe {

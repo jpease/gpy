@@ -444,7 +444,21 @@ impl ConnectionHandler {
                 }
             }
         } else {
-            self.render_response(response, format, position, prev_bg)?
+            match self.render_response(response, format, position, prev_bg) {
+                Ok(rendered) => rendered,
+                Err(e) => {
+                    // The client asked for a format the socket does not serve:
+                    // answer with a JSON error rather than staying silent (#759).
+                    warn_log!("connection", "Failed to render response: {e}");
+                    let error = Response::Error {
+                        message: e.to_string(),
+                    };
+                    let config = self.config_manager.get();
+                    let theme = self.theme_manager.get();
+                    let ctx = RenderContext::new(&config, &theme, position);
+                    create_formatter(Format::Json)?.render(&error, &ctx)?
+                }
+            }
         };
 
         // Write response with timeout
