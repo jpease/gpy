@@ -584,6 +584,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - The installer environment overrides (`GPY_SHELL`, `GPY_VERSION`,
   `GPY_NERD_FONT`) are documented on the `sh` side of the pipe
   (`curl … | GPY_VERSION=v1.2.3 sh`), where the installer sees them (#745).
+- `docs/dev/palettes.md` and `docs/dev/starship-import.md` describe the
+  palette and Starship-import behaviour the code actually has (#798).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

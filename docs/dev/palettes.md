@@ -29,7 +29,6 @@ base24 standard slot (tinted-theming `base24/styling.md`):
 | `bright_cyan` | base15 | bright cyan |
 | `bright_blue` | base16 | bright blue |
 | `bright_magenta` | base17 | bright magenta |
-| `bg` / `surface` / `overlay` / `fg` *(optional)* | base01/02/04/06, base10/11 | background and foreground shades for powerline themes |
 
 `orange` (base09) and `brown` (base0F) are the only names that go beyond the 16
 standard ANSI names. Every other role is already familiar from terminal color
@@ -91,7 +90,7 @@ bright_magenta = "#b48ead"
 
 Color values may be:
 
-- Hex strings (`"#rrggbb"` or `"rrggbb"` — the `#` is optional)
+- Hex strings (`"#rrggbb"`; the leading `#` is required)
 - Standard ANSI names (`"red"`, `"bright_cyan"`, …) — useful in the `starship`
   palette where several slots map to the terminal's own ANSI colors
 - 256-color indices (`"202"`, `"147"`, …) — preserved for vanilla Starship parity
@@ -150,15 +149,19 @@ The importer:
 
 1. Parses the YAML (the constrained base16/base24 subset — no runtime YAML
    dependency; the file is converted to GPY TOML once at import time).
-2. Maps every slot through the §1 role table (1:1, no special cases).
-3. Writes `~/.config/gpy/palettes/<slug>.toml`.
+2. Maps the slots in the role table above 1:1 (base01, base02, base04, base06,
+   base10 and base11 have no GPY role and are ignored).
+3. Writes `~/.config/gpy/palettes/<slug>.toml`, where `<slug>` is the scheme's
+   `slug` field when present, else its `name`, lowercased with every run of
+   non-alphanumeric characters collapsed to one `-` (Unicode letters are kept:
+   `Rosé Pine` without a `slug` becomes `rosé-pine`).
 
 Flags:
 
 | Flag | Description |
 |---|---|
 | `<file>` | Required. Path to a `.yaml` or `.yml` scheme file. |
-| `--name <name>` | Override the palette name (defaults to the scheme's `name` field, slugified). |
+| `--name <name>` | Override the palette name (defaults to the scheme's `slug` field, else its `name` field, slugified). |
 | `--force` | Overwrite an existing palette of the same name. |
 
 After importing, activate the palette:
@@ -177,8 +180,9 @@ gpy palette list
 gpy palette use catppuccin-mocha
 
 # 3. Or import any tinted-theming scheme
-#    (download from https://github.com/tinted-theming/schemes)
-gpy palette import ~/Downloads/base16-ocean.yaml
+#    (download from https://github.com/tinted-theming/schemes; --name keeps the
+#    palette name independent of the scheme's own slug/name fields)
+gpy palette import ~/Downloads/base16-ocean.yaml --name base16-ocean
 gpy palette use base16-ocean
 
 # 4. Verify
