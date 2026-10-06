@@ -548,6 +548,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - The git segment shows `cherry-picking`/`reverting` when a multi-commit
   sequence is in progress after a manual commit, and in reftable repositories
   (#716).
+- `gpy doctor` no longer reports a missing or unparsable theme as
+  "Invalid template" with template-fix advice; the template check shows as
+  skipped because the theme failed to load (#803).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

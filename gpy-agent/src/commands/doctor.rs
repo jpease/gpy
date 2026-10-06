@@ -5,6 +5,7 @@
 //! prompt performance risks, and required binaries. It composes lower-level
 //! modules but keeps output formatting and remediation text local to the CLI.
 
+use crate::commands::theme::ThemeCheckError;
 use crate::plugin::discover_plugins;
 use crate::{Error, Result, config};
 use std::collections::{HashMap, HashSet};
@@ -118,7 +119,7 @@ fn check_config_and_theme(
     // covers both the "active theme" and "segment templates" checks below —
     // running it twice under two labels validated nothing extra, it just
     // repeated the same filesystem/parse work (#625).
-    let theme_result = crate::commands::theme::validate_by_name(theme_name);
+    let theme_result = crate::commands::theme::validate_by_name_detailed(theme_name);
     let theme_ok = match &theme_result {
         Ok(report) => {
             println!(
@@ -127,7 +128,7 @@ fn check_config_and_theme(
             );
             true
         }
-        Err(e) => {
+        Err(ThemeCheckError::Load(e) | ThemeCheckError::Templates(e)) => {
             println!("❌ Validation failed");
             crate::commands::theme::print_theme_validation_error("theme check", e);
             false
@@ -142,7 +143,12 @@ fn check_config_and_theme(
             println!("✅ Valid");
             true
         }
-        Err(e) => {
+        Err(ThemeCheckError::Load(_)) => {
+            // The theme check above already reported the failure.
+            println!("⏭  Skipped (theme failed to load)");
+            true
+        }
+        Err(ThemeCheckError::Templates(e)) => {
             println!("❌ Invalid template");
             println!("  Diagnostic: {e}");
             println!("  Remediation: Fix the segment `format` template named above.");
