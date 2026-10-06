@@ -240,6 +240,28 @@ pub enum GitIconSet {
     /// Nerd Font glyphs (requires a patched font).
     NerdFont,
 }
+impl std::fmt::Display for GitIconSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Unicode => "unicode",
+            Self::NerdFont => "nerd_font",
+        })
+    }
+}
+
+impl std::str::FromStr for GitIconSet {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "unicode" => Ok(Self::Unicode),
+            "nerd_font" => Ok(Self::NerdFont),
+            other => Err(format!(
+                "Invalid git.icon_set '{other}'. Use 'unicode' or 'nerd_font'"
+            )),
+        }
+    }
+}
 
 /// Git icons configuration (semantic icons)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

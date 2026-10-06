@@ -25,10 +25,10 @@ pub fn show(section: Option<&str>) -> Result<()> {
     let config = read_config()?;
 
     match section {
-        Some("agent") => show_agent_config(&config.agent),
-        Some("git") => show_git_config(&config.git),
-        Some("language") => show_language_config(&config.language),
-        Some("ui") => show_ui_config(&config.ui),
+        Some("agent") => show_section(&config, "agent", "Agent")?,
+        Some("git") => show_section(&config, "git", "Git")?,
+        Some("language") => show_section(&config, "language", "Language")?,
+        Some("ui") => show_section(&config, "ui", "UI")?,
         Some(other) => {
             return Err(Error::config(format!(
                 "Invalid section: {other}. Valid sections: agent, git, language, ui"
@@ -39,81 +39,44 @@ pub fn show(section: Option<&str>) -> Result<()> {
             // instead of recursing back into `show(Some(...))` — which would
             // re-resolve the active config path and re-parse the file once
             // per section (5 reads total for `show(None)` instead of 1).
-            show_agent_config(&config.agent);
+            show_section(&config, "agent", "Agent")?;
             println!();
-            show_git_config(&config.git);
+            show_section(&config, "git", "Git")?;
             println!();
-            show_language_config(&config.language);
+            show_section(&config, "language", "Language")?;
             println!();
-            show_ui_config(&config.ui);
+            show_section(&config, "ui", "UI")?;
         }
     }
 
     Ok(())
 }
 
-fn show_agent_config(agent: &config::AgentSettings) {
-    println!("Agent Configuration:");
-    println!("===================\n");
-    println!("enabled = {}", agent.enabled);
-    println!("timeout_seconds = {}", agent.timeout_seconds);
-    println!("live_updates = {}", agent.live_updates);
-    println!("supervisor.enabled = {}", agent.supervisor.enabled);
-    println!(
-        "supervisor.check_interval_seconds = {}",
-        agent.supervisor.check_interval_seconds
-    );
-    println!(
-        "supervisor.max_restart_attempts = {}",
-        agent.supervisor.max_restart_attempts
-    );
-}
-
-fn show_git_config(git: &config::GitSettings) {
-    println!("Git Configuration:");
-    println!("=================\n");
-    println!("enabled = {}", git.enabled);
-    println!("show_upstream = {}", git.show_upstream);
-    println!("timeout_seconds = {}", git.timeout_seconds);
-    println!("skip_paths = {}", git.skip_paths.join(", "));
-    println!("max_branch_length = {}", git.max_branch_length);
-}
-
-fn show_language_config(language: &config::LanguageSettings) {
-    println!("Language Configuration:");
-    println!("======================\n");
-    println!("enabled = {}", language.enabled);
-    println!("show_versions = {}", language.show_versions);
-    println!("cache_ttl_hours = {}", language.cache_ttl_hours);
-    println!("display = {}", language.display);
-    if !language.enabled_languages.is_empty() {
-        println!(
-            "enabled_languages = {}",
-            language.enabled_languages.join(", ")
-        );
+/// Print one `Config` section as TOML under a comment header.
+///
+/// The body is rendered from the serialized [`config::Config`] (sorted keys,
+/// scalars before sub-tables, lists as arrays), so every field is shown and a
+/// new field cannot be forgotten here. The headers are TOML comments, so the
+/// output of `gpy config show` parses as one TOML document.
+///
+/// # Errors
+///
+/// Returns an error if the config cannot be serialized to TOML.
+fn show_section(config: &config::Config, section: &str, title: &str) -> Result<()> {
+    let table = toml::Table::try_from(config)
+        .map_err(|e| Error::config(format!("Failed to serialize config to TOML: {e}")))?;
+    let mut selected = toml::Table::new();
+    if let Some(value) = table.get(section) {
+        selected.insert(section.to_owned(), value.clone());
     }
-}
+    let body = toml::to_string(&selected)
+        .map_err(|e| Error::config(format!("Failed to render config as TOML: {e}")))?;
 
-fn show_ui_config(ui: &config::UiSettings) {
-    println!("UI Configuration:");
-    println!("================\n");
-    println!("show_icons = {}", ui.show_icons);
-    println!("theme = {}", ui.theme);
-    println!("directory.display = {}", ui.directory.display);
-    println!(
-        "directory.truncation_length = {}",
-        ui.directory.truncation_length
-    );
-    println!(
-        "directory.truncation_symbol = {}",
-        ui.directory.truncation_symbol
-    );
-    println!("directory.max_length = {}", ui.directory.max_length);
-    println!(
-        "directory.truncate_to_repo = {}",
-        ui.directory.truncate_to_repo
-    );
-    println!("enabled_segments = {}", ui.enabled_segments.join(", "));
+    let heading = format!("{title} Configuration:");
+    println!("# {heading}");
+    println!("# {}\n", "=".repeat(heading.chars().count()));
+    println!("{}", body.trim_end());
+    Ok(())
 }
 
 /// Get a config value
@@ -134,7 +97,7 @@ pub fn get(key: &str) -> Result<()> {
 /// Loads, mutates, and saves the same active config file, so the requested
 /// change is written exactly where the agent will read it. A load failure aborts
 /// before any write, leaving an existing (possibly malformed) file untouched.
-/// Resource-backed keys (currently just `ui.theme`) are additionally checked
+/// Resource-backed keys (`ui.theme`, `ui.palette`) are additionally checked
 /// against the filesystem before the write — see
 /// [`validate_resource_backed_key`] — so a failed check also leaves the file
 /// untouched, the same as a load failure.
@@ -153,7 +116,8 @@ pub fn set(key: &str, value: &str) -> Result<()> {
     config::metadata::set_config_value(&mut config, key, value)?;
     validate_resource_backed_key(key, &config)?;
 
-    save_config_to(&path, &original, &config, &[key])?;
+    let explicit_key = config::metadata::canonical_config_key(key);
+    save_config_to(&path, &original, &config, &[explicit_key.as_str()])?;
     println!("✅ Set {key} = {value}");
 
     reload_agent_and_notify();
@@ -186,8 +150,27 @@ pub fn set(key: &str, value: &str) -> Result<()> {
 fn validate_resource_backed_key(key: &str, config: &config::Config) -> Result<()> {
     match key {
         "ui.theme" => validate_theme_selection(config.ui.theme.as_str()),
+        "ui.palette" => validate_palette_selection(config.ui.palette.as_str()),
         _ => Ok(()),
     }
+}
+
+/// Validate that `name` is a discoverable, parseable palette.
+///
+/// On failure, prints the same remediation-focused diagnostic
+/// `gpy palette validate` uses before returning a short, generic error.
+///
+/// # Errors
+///
+/// Returns an error if `name` is not a discovered palette, or if the
+/// discovered palette fails to parse or validate.
+fn validate_palette_selection(name: &str) -> Result<()> {
+    let Err(error) = crate::commands::palette::validate_by_name(name) else {
+        return Ok(());
+    };
+
+    crate::commands::palette::print_palette_validation_error("config set ui.palette", &error);
+    Err(Error::config("palette validation failed".to_owned()))
 }
 
 /// Validate that `name` is both a discoverable and a parseable theme.

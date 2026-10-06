@@ -410,6 +410,10 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `gpy theme use --force` replaces a palette written by the outgoing theme's
   recommendation, and lists a palette it kept under "Preserved your explicit
   settings" (#731).
+- `gpy config get/set/show` cover every config key (#789): `ui.palette`, the
+  git icon and ahead/behind keys, `language.detection_mode`, and the documented
+  `gpy config set language.icons.<lang>`. `gpy config show` prints every field
+  as valid TOML (`skip_paths = []`).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

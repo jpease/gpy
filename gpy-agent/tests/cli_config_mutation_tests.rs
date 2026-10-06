@@ -151,6 +151,94 @@ fn local_gpy_toml_is_updated_without_creating_a_global_config() {
     );
 }
 
+// --- #789: map keys and previously unregistered keys ---------------------------
+
+/// Resolve a dotted path in a parsed TOML table.
+fn lookup<'a>(table: &'a toml::Table, path: &str) -> Option<&'a toml::Value> {
+    let mut parts = path.split('.');
+    let mut value = table.get(parts.next()?)?;
+    for part in parts {
+        value = value.get(part)?;
+    }
+    Some(value)
+}
+
+#[test]
+fn config_set_language_icon_writes_map_entry() {
+    let (temp, home, xdg) = isolated_dirs();
+    let custom = temp.path().join("custom.toml");
+
+    let output = run_gpy(
+        &["config", "set", "language.icons.rs", "X"],
+        &home,
+        &xdg,
+        Some(&custom),
+        temp.path(),
+    );
+    assert!(
+        output.status.success(),
+        "config set should succeed; stderr: {}",
+        stderr_of(&output)
+    );
+
+    let parsed: toml::Table = fs::read_to_string(&custom).unwrap().parse().unwrap();
+    assert_eq!(
+        lookup(&parsed, "language.icons.rust").and_then(toml::Value::as_str),
+        Some("X"),
+        "alias must normalize to the canonical icon key: {parsed:?}"
+    );
+
+    let got = run_gpy(
+        &["config", "get", "language.icons.rust"],
+        &home,
+        &xdg,
+        Some(&custom),
+        temp.path(),
+    );
+    assert!(got.status.success(), "{}", stderr_of(&got));
+    assert_eq!(String::from_utf8_lossy(&got.stdout).trim(), "X");
+}
+
+#[test]
+fn config_set_unknown_palette_is_rejected_without_writing() {
+    let (temp, home, xdg) = isolated_dirs();
+    let custom = temp.path().join("custom.toml");
+
+    let output = run_gpy(
+        &["config", "set", "ui.palette", "nosuch"],
+        &home,
+        &xdg,
+        Some(&custom),
+        temp.path(),
+    );
+    assert!(!output.status.success(), "unknown palette must be rejected");
+    assert!(!custom.exists(), "no file may be written on rejection");
+}
+
+#[test]
+fn config_show_prints_valid_toml_with_every_field() {
+    let (temp, home, xdg) = isolated_dirs();
+    let custom = temp.path().join("custom.toml");
+
+    let output = run_gpy(&["config", "show"], &home, &xdg, Some(&custom), temp.path());
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: toml::Table = stdout.parse().expect("config show output must be TOML");
+    assert_eq!(
+        lookup(&parsed, "ui.palette").and_then(toml::Value::as_str),
+        Some("default")
+    );
+    assert_eq!(
+        lookup(&parsed, "git.skip_paths")
+            .and_then(toml::Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+    assert!(lookup(&parsed, "git.icons").is_some_and(toml::Value::is_table));
+    assert!(lookup(&parsed, "language.icons").is_some_and(toml::Value::is_table));
+    assert!(lookup(&parsed, "language.detection_mode").is_some_and(toml::Value::is_str));
+}
+
 // --- #182: malformed / invalid config handling ------------------------------
 
 /// Write `body` to the active XDG config path and return its location.
