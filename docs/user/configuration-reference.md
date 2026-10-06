@@ -139,6 +139,8 @@ Controls git status detection: what's computed, how it's capped, and which icons
 | `icon_set` | string | `"unicode"` | `"unicode"`, `"nerd_font"` | Glyph set for the stash, detached-HEAD, and in-progress indicators only (does **not** affect the staged/unstaged/untracked/conflicts icons below). An explicit `[git.icons]` override always wins regardless of this setting. |
 | `stash_enabled` | bool | `true` | — | Enables the `git stash list` subprocess call (and `$stash` rendering). Disabling it skips that extra call entirely — useful on very large repos. |
 
+gpy enables git's `core.untrackedCache` (a status speed-up) in repositories where it is unset at every scope. It never changes a value you have set, locally or globally; set `core.untrackedCache` to `false` to opt out.
+
 ### `[git.icons]`
 
 Semantic icon overrides. Each accepts any non-empty string without control characters (so multi-character glyphs and Nerd Font codepoints both work).
