@@ -92,7 +92,7 @@ pub fn build(model: &StarshipConfig, name: &str) -> Result<ImportArtifacts> {
         segments.username = translate_username(table, &mut warnings);
     }
 
-    let ui = build_ui(model.module_table("directory"), &mut warnings);
+    let ui = build_ui(model, &mut warnings);
     let theme = ThemeConfig { ui, segments };
 
     let selected = selected_palette(model, &mut warnings);
@@ -217,12 +217,17 @@ fn flat_ui() -> UiTheme {
     UiTheme::default()
 }
 
-/// Build the theme's `[ui]` block, including an advisory
-/// `[ui.recommended.directory]` truncation-layout block when `directory_table`
-/// (Starship's `[directory]` module, if present) specifies one.
-fn build_ui(directory_table: Option<&toml::value::Table>, warnings: &mut Warnings) -> UiTheme {
+/// Build the theme's `[ui]` block.
+///
+/// `add_newline` defaults to `true`; the layout is two-line when `format` is
+/// absent (Starship's default `$all` ends in `$line_break$character`) or
+/// references `$line_break`. An advisory `[ui.recommended.directory]`
+/// truncation-layout block is added when the `[directory]` module specifies one.
+fn build_ui(model: &StarshipConfig, warnings: &mut Warnings) -> UiTheme {
     let mut ui = flat_ui();
-    let Some(table) = directory_table else {
+    ui.add_newline = model.add_newline.unwrap_or(true);
+    ui.two_line = model.format.as_deref().is_none_or(layout::has_line_break);
+    let Some(table) = model.module_table("directory") else {
         return ui;
     };
     let layout = translate_directory_layout(table, warnings);
@@ -418,6 +423,57 @@ error_symbol = "[❯](bold red)"
             artifacts.segments,
             vec!["directory", "git", "language", "duration", "character"]
         );
+    }
+
+    #[test]
+    fn add_newline_false_is_carried_into_ui() {
+        let model = parse("add_newline = false\n").unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        assert!(!artifacts.theme.ui.add_newline);
+    }
+
+    #[test]
+    fn add_newline_defaults_to_true() {
+        let model = parse("[character]\n").unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        assert!(artifacts.theme.ui.add_newline);
+    }
+
+    #[test]
+    fn line_break_sets_two_line_without_warning() {
+        let model = parse("format = \"$directory$line_break$character\"\n").unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        assert!(artifacts.theme.ui.two_line);
+        assert!(
+            artifacts
+                .warnings
+                .iter()
+                .all(|warning| !warning.message.contains("line_break")),
+            "{:?}",
+            artifacts.warnings
+        );
+        assert_eq!(artifacts.segments, vec!["directory", "character"]);
+    }
+
+    #[test]
+    fn missing_format_defaults_to_two_line() {
+        let model = parse("[character]\n").unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        assert!(artifacts.theme.ui.two_line);
+    }
+
+    #[test]
+    fn format_without_line_break_is_single_line() {
+        let model = parse("format = \"$directory$character\"\n").unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        assert!(!artifacts.theme.ui.two_line);
+    }
+
+    #[test]
+    fn escaped_line_break_does_not_set_two_line() {
+        let model = parse("format = \"$directory\\\\$line_break$character\"\n").unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        assert!(!artifacts.theme.ui.two_line);
     }
 
     #[test]

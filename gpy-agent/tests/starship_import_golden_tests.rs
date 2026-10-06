@@ -168,15 +168,17 @@ fn real_world_powerline_preset_survives_import_with_documented_lossy_warnings() 
         .filter(|w| w.kind == WarningKind::UnsupportedModule)
         .map(|w| w.message.as_str())
         .collect();
-    assert_eq!(unsupported_modules.len(), 8, "{unsupported_modules:?}");
+    assert_eq!(unsupported_modules.len(), 7, "{unsupported_modules:?}");
     assert!(unsupported_modules.iter().any(|m| m.contains("'os'")));
     assert!(
-        unsupported_modules
+        !unsupported_modules
             .iter()
-            .any(|m| m.contains("'line_break'"))
+            .any(|m| m.contains("'line_break'")),
+        "#738: line_break maps to ui.two_line, not a warning"
     );
+    assert!(artifacts.theme.ui.two_line);
 
-    assert_eq!(artifacts.warnings.len(), 27, "pin total warning count");
+    assert_eq!(artifacts.warnings.len(), 26, "pin total warning count");
 }
 
 #[test]

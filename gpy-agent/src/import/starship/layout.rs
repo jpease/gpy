@@ -3,6 +3,20 @@
 use crate::import::starship::modules::canonical_language;
 use crate::import::starship::{WarningKind, Warnings};
 
+/// Starship's module that breaks the prompt onto a new line. It is not a
+/// segment: it maps to the theme's `ui.two_line` instead.
+const LINE_BREAK: &str = "line_break";
+
+/// Whether `format` breaks the prompt onto a second line: it references
+/// `$line_break`, or `$all`, which expands to every module including it.
+/// Escaped references (`\$line_break`) do not count.
+#[must_use]
+pub fn has_line_break(format: &str) -> bool {
+    module_refs(format)
+        .iter()
+        .any(|module| module == LINE_BREAK || module == "all")
+}
+
 /// Map a Starship module reference to its GPY segment name.
 #[must_use]
 pub fn map_module(name: &str) -> Option<&'static str> {
@@ -24,6 +38,9 @@ pub fn derive_segments(format: &str, warnings: &mut Warnings) -> Vec<String> {
     let mut result: Vec<String> = Vec::new();
     let mut warned: Vec<String> = Vec::new();
     for module in module_refs(format) {
+        if module == LINE_BREAK {
+            continue;
+        }
         match map_module(&module) {
             Some(segment) => {
                 let owned = segment.to_owned();
@@ -91,7 +108,7 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
     #![allow(missing_docs)]
 
-    use super::{derive_segments, map_module};
+    use super::{derive_segments, has_line_break, map_module};
     use crate::import::starship::Warnings;
 
     #[test]
@@ -139,5 +156,22 @@ mod tests {
             2_usize,
             "kubernetes + aws, kubernetes only once"
         );
+    }
+
+    #[test]
+    fn line_break_is_skipped_silently() {
+        let mut warnings = Warnings::new();
+        let segments = derive_segments("$directory$line_break$character", &mut warnings);
+        assert_eq!(segments, vec!["directory", "character"]);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn detects_line_break_references() {
+        assert!(has_line_break("$directory$line_break$character"));
+        assert!(has_line_break("$directory${line_break}$character"));
+        assert!(has_line_break("$all"));
+        assert!(!has_line_break("$directory$character"));
+        assert!(!has_line_break("$directory\\$line_break$character"));
     }
 }
