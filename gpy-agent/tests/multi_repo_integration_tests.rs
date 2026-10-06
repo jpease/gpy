@@ -988,7 +988,7 @@ fn main_checkout_index_write_wakes_zero_linked_worktrees() {
         .register_client(std::process::id(), &linked)
         .expect("register worktree client");
 
-    thread::sleep(Duration::from_millis(150));
+    drain_fixture_events(&events);
 
     // `git add` in the MAIN checkout rewrites `<common>/index` (plus its lock),
     // and nothing the linked worktree's status depends on.
@@ -1059,7 +1059,7 @@ fn per_worktree_head_write_wakes_zero_sibling_worktrees() {
         .register_client(std::process::id() + 1, &second)
         .expect("register second worktree");
 
-    thread::sleep(Duration::from_millis(150));
+    drain_fixture_events(&events);
 
     // Write the first worktree's own HEAD directly, so no shared ref under
     // `<common>/refs/heads` is touched alongside it. Detach it at its current
@@ -1190,6 +1190,18 @@ fn linked_worktree_keeps_common_coverage_after_main_checkout_unregisters() {
 /// Let freshly armed (or just released) watches settle before the next step.
 fn settle() {
     thread::sleep(Duration::from_millis(500));
+}
+
+/// Let freshly armed watches settle, then forget whatever they delivered.
+///
+/// `FSEvents` can deliver a fixture write made just before the watcher armed --
+/// typically the fixture's own `<common>/config` write -- after it armed. That
+/// is a genuine common-config fan-out to every registered worktree, so a
+/// zero-wake assertion that counted it would fail for a reason unrelated to
+/// its stimulus (#834).
+fn drain_fixture_events(events: &RepoEvents) {
+    settle();
+    events.lock().unwrap().clear();
 }
 
 /// An outer repository with a nested repository inside it, both canonical.
@@ -1436,7 +1448,7 @@ fn registered_main_checkout_still_wakes_on_its_own_gitdir_write() {
         .register_client(main_pid + 1, &linked)
         .expect("register worktree client");
 
-    thread::sleep(Duration::from_millis(150));
+    drain_fixture_events(&events);
 
     // Written directly rather than via `git add`: staging would also touch the
     // working tree, which wakes the main checkout through its own recursive
