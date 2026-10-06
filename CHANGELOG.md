@@ -683,6 +683,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - A relative `GPY_CONFIG_PATH` is resolved against the current directory
   when read, so `gpy-agent status` reports and watches an absolute path
   (#733).
+- The poll watcher fallback detects same-second rewrites of ref and config
+  files, and no longer wakes a repository for a directory's own mtime change
+  (#817).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
