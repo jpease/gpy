@@ -20,6 +20,25 @@ __gpy_escape_json() {
     echo "$s"
 }
 
+# The virtualenv to forward on `lang` requests: $VIRTUAL_ENV, else
+# $CONDA_PREFIX when $CONDA_DEFAULT_ENV is set and not `base` (#729; pinned by
+# tests/fixtures/venv_forwarding_vectors.tsv). Prints nothing when none applies.
+__gpy_forwarded_venv() {
+    if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+        printf '%s' "$VIRTUAL_ENV"
+    elif [[ -n "${CONDA_PREFIX:-}" && -n "${CONDA_DEFAULT_ENV:-}" && "$CONDA_DEFAULT_ENV" != "base" ]]; then
+        printf '%s' "$CONDA_PREFIX"
+    fi
+}
+
+# `,"virtual_env":"<venv>"` for a `lang` request, or nothing.
+__gpy_lang_venv_json() {
+    local venv
+    venv="$(__gpy_forwarded_venv)"
+    [[ -n "$venv" ]] && printf ',"virtual_env":"%s"' "$(__gpy_escape_json "$venv")"
+    return 0
+}
+
 # The home directory, with the passwd-database fallback the agent and the
 # other two shells apply (#626).
 #
@@ -555,8 +574,7 @@ __gpy_trigger_data_refresh() {
     json_cwd="$(__gpy_escape_json "$cwd")"
     flags_tail="$(__gpy_json_flags_tail "$is_last" "" "$prev_bg")"
     # Forward the activated virtualenv for language detection (see fish/core/ipc.fish).
-    [[ "$op" == "lang" && -n "${VIRTUAL_ENV:-}" ]] \
-        && venv_json=",\"virtual_env\":\"$(__gpy_escape_json "$VIRTUAL_ENV")\""
+    [[ "$op" == "lang" ]] && venv_json="$(__gpy_lang_venv_json)"
     local request="{\"op\":\"$op\",\"cwd\":\"$json_cwd\",\"format\":\"bash-prompt\"${flags_tail}${venv_json}}"
     __gpy_send_json "$request" >/dev/null 2>&1
 }
@@ -596,8 +614,7 @@ __gpy_request() {
     json_cwd="$(__gpy_escape_json "$context_path")"
     flags_tail="$(__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg")"
     # Forward the activated virtualenv for language detection (see fish/core/ipc.fish).
-    [[ "$op" == "lang" && -n "${VIRTUAL_ENV:-}" ]] \
-        && venv_json=",\"virtual_env\":\"$(__gpy_escape_json "$VIRTUAL_ENV")\""
+    [[ "$op" == "lang" ]] && venv_json="$(__gpy_lang_venv_json)"
 
     local request="{\"op\":\"$op\",\"cwd\":\"$json_cwd\",\"format\":\"$format\"${flags_tail}${venv_json}}"
 

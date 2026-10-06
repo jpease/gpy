@@ -559,6 +559,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   when loaded instead of rendering nothing.
 - `install-dev.fish` no longer leaves the agent running with `GPY_DEBUG_LOG`
   pointing at an ever-growing `/tmp/gpy-verify-<pid>.log` (#743).
+- The Python segment shows the active conda/mamba environment's version in
+  Bash, Zsh and Fish (#729): `CONDA_PREFIX` is forwarded for non-`base`
+  environments when `VIRTUAL_ENV` is unset.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
