@@ -274,6 +274,13 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   `~` contraction, and macOS `/tmp` showed as `/private/tmp`; IPC and oneshot
   output now match. Path validation, read-only checks and push-delivery
   matching still use the canonical path; the wire format is unchanged.
+- Concurrent `gpy-agent start` runs no longer orphan a daemon (#723). A
+  start that raced an eviction could unlink the replacement agent's socket
+  and fork a third daemon, leaving one running on an unreachable socket.
+  Starts on the same socket now serialize on a `<socket>.lock` file held
+  until the new daemon has bound, and eviction only ever removes the socket
+  (and version marker) it judged old. A start that finds the old agent
+  already replaced by a responsive one exits `0` without forking.
 
 - `gpy-agent start` no longer evicts a newer running agent (#780). It
   replaced the daemon on any version difference, so two installs could flip

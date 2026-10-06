@@ -323,6 +323,68 @@ fn gpy_start_status_stop_round_trip() {
     assert!(after.stdout.contains(NOT_RUNNING_LINE), "{after:?}");
 }
 
+/// PIDs of processes whose argv contains `needle` (`pgrep -f`).
+fn pids_matching(needle: &Path) -> Vec<String> {
+    let output = std::process::Command::new("pgrep")
+        .arg("-f")
+        .arg("--")
+        .arg(needle)
+        .output()
+        .expect("run pgrep");
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Sends `SIGTERM` to every daemon started with `--socket <path>`, so a
+/// failing run never leaks a duplicate agent the socket cannot reach.
+struct DaemonReaper(PathBuf);
+
+impl Drop for DaemonReaper {
+    fn drop(&mut self) {
+        for pid in pids_matching(&self.0) {
+            let _ = std::process::Command::new("kill").arg(&pid).status();
+        }
+    }
+}
+
+// #723: two starts racing an eviction must leave exactly one daemon.
+#[test]
+fn concurrent_starts_during_eviction_leave_one_daemon() {
+    let sandbox = AgentSandbox::new();
+    let socket = sandbox.socket_path.to_string_lossy().into_owned();
+    let _reaper = DaemonReaper(sandbox.socket_path.clone());
+    let start = || {
+        sandbox
+            .env
+            .gpy_agent_command()
+            .args(["start", "--socket", &socket])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn gpy-agent start")
+    };
+
+    assert!(start().wait().expect("first start").success());
+    sandbox.wait_until_responding();
+    std::fs::write(format!("{socket}.version"), "0.0.0-old").expect("age the running agent");
+
+    let mut first = start();
+    std::thread::sleep(Duration::from_millis(100));
+    let mut second = start();
+    let _ = first.wait().expect("first racing start");
+    let _ = second.wait().expect("second racing start");
+    std::thread::sleep(Duration::from_secs(1));
+
+    let daemons = pids_matching(&sandbox.socket_path);
+    assert_eq!(
+        daemons.len(),
+        1,
+        "exactly one daemon must survive: {daemons:?}"
+    );
+}
+
 #[test]
 fn gpy_stop_when_not_running_is_a_noop() {
     let sandbox = AgentSandbox::new();

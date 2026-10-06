@@ -19,42 +19,84 @@ use crate::ipc::registry::{ShellFlag, default_shell_dir, ring_doorbell, write_sh
 #[cfg(unix)]
 use fork::{Fork, daemon};
 #[cfg(unix)]
+use nix::errno::Errno;
+#[cfg(unix)]
+use nix::fcntl::{Flock, FlockArg};
+#[cfg(unix)]
 use nix::sys::signal::kill;
 #[cfg(unix)]
 use nix::unistd::Pid;
 
-/// Check agent compatibility and return socket path if agent should start
+/// Whether the agent is disabled via configuration (`agent.enabled = false`).
+#[cfg(unix)]
+fn agent_disabled() -> bool {
+    crate::config::loader::load_config().is_ok_and(|config| !config.agent.enabled)
+}
+
+/// Longest a start waits for another start on the same socket (#723).
+#[cfg(unix)]
+const START_LOCK_WAIT_MAX: Duration = Duration::from_secs(10);
+
+/// Poll interval while another start holds the lock.
+#[cfg(unix)]
+const START_LOCK_POLL: Duration = Duration::from_millis(50);
+
+/// Path of the per-socket start lock: `<socket>.lock`, so agents on different
+/// sockets never block each other. Never unlinked: removing a lock file races
+/// exactly like removing the socket does.
+#[cfg(unix)]
+fn start_lock_path(socket_path: &std::path::Path) -> PathBuf {
+    let mut lock = socket_path.as_os_str().to_owned();
+    lock.push(".lock");
+    PathBuf::from(lock)
+}
+
+/// Take the exclusive per-socket start lock (#723).
 ///
-/// # Returns
-///
-/// - `Ok(Some(socket_path))` if the agent should proceed with startup
-/// - `Ok(None)` if the agent is disabled or already running (idempotent success)
+/// Held across check → evict → fork → bind: the forked daemon inherits the
+/// open file description (flock locks belong to it, not to a process) and
+/// drops it once its socket is bound, or by dying. The wait is bounded so a
+/// daemon hung before binding cannot block every later start forever.
 ///
 /// # Errors
 ///
-/// Returns an error only if the socket path cannot be determined or if there's
-/// a genuine failure (not including "already running" or "disabled" cases).
+/// Returns an error if the lock file cannot be opened or locked, or if
+/// another start still holds it after [`START_LOCK_WAIT_MAX`].
 #[cfg(unix)]
-fn check_agent_compatibility() -> Result<Option<PathBuf>> {
-    use super::{check_and_cleanup_socket, get_socket_path};
+fn acquire_start_lock(socket_path: &std::path::Path) -> Result<Flock<std::fs::File>> {
+    use std::os::unix::fs::OpenOptionsExt;
 
-    // Check if agent is enabled via configuration
-    if let Ok(config) = crate::config::loader::load_config()
-        && !config.agent.enabled
-    {
-        eprintln!("GPY Agent disabled via config (agent.enabled = false); skipping start");
-        return Ok(None); // Successful no-op
+    let lock_path = start_lock_path(socket_path);
+    let lock_error = |detail: String| {
+        Error::process(
+            "start_lock".to_owned(),
+            format!("cannot take start lock {}: {detail}", lock_path.display()),
+        )
+    };
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .open(&lock_path)
+        .map_err(|e| lock_error(e.to_string()))?;
+    let deadline = std::time::Instant::now()
+        .checked_add(START_LOCK_WAIT_MAX)
+        .unwrap_or_else(std::time::Instant::now);
+    loop {
+        match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
+            Ok(lock) => return Ok(lock),
+            Err((unlocked, Errno::EWOULDBLOCK | Errno::EINTR)) => file = unlocked,
+            Err((_, errno)) => return Err(lock_error(errno.to_string())),
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(lock_error(format!(
+                "another gpy-agent start held it for more than {}s",
+                START_LOCK_WAIT_MAX.as_secs()
+            )));
+        }
+        std::thread::sleep(START_LOCK_POLL);
     }
-
-    let socket_path = get_socket_path()?;
-
-    // Check if an agent is already running and handle version compatibility
-    if check_and_cleanup_socket(&socket_path) {
-        // Agent already running - this is a successful no-op
-        return Ok(None);
-    }
-
-    Ok(Some(socket_path))
 }
 
 /// Defensive upper bound on re-nudges sent to one tracked shell PID over a
@@ -296,7 +338,7 @@ fn nudge_all_tracked_shells_in(shell_dir: &std::path::Path) {
 /// - Child process cannot initialize the tokio runtime
 /// - Agent initialization fails (see `Agent::new()` in `gpy-agent/src/agent.rs`)
 #[cfg(unix)]
-fn fork_agent(socket_path: &PathBuf) -> Result<()> {
+fn fork_agent(socket_path: &PathBuf, start_lock: Flock<std::fs::File>) -> Result<()> {
     use super::write_agent_version;
 
     // daemon(nochdir, noclose) - using daemon() function for daemonization
@@ -314,7 +356,10 @@ fn fork_agent(socket_path: &PathBuf) -> Result<()> {
                 .map_err(|e| Error::process("runtime".to_owned(), e.to_string()))?;
             let result = rt.block_on(async {
                 match Agent::new() {
-                    Ok(mut agent) => agent.start_background().await,
+                    Ok(mut agent) => {
+                        agent.server.hold_start_lock_until_bound(start_lock);
+                        agent.start_background().await
+                    }
                     Err(e) => {
                         crate::debug::write_debug_log(
                             "agent",
@@ -364,16 +409,25 @@ fn fork_agent(socket_path: &PathBuf) -> Result<()> {
 pub fn start_background_agent() -> Result<()> {
     #[cfg(unix)]
     {
-        // Step 1: Check agent compatibility (config enabled, version, etc.)
-        let Some(socket_path) = check_agent_compatibility()? else {
-            // Agent disabled or already running - successful no-op
+        if agent_disabled() {
+            eprintln!("GPY Agent disabled via config (agent.enabled = false); skipping start");
+            return Ok(()); // Successful no-op
+        }
+
+        let socket_path = super::get_socket_path()?;
+
+        // Serialize check → evict → fork → bind per socket (#723). The forked
+        // daemon inherits the lock and releases it once its socket is bound.
+        let start_lock = acquire_start_lock(&socket_path)?;
+
+        // An agent already running (or one we just found replaced by a
+        // responsive agent) is a successful no-op.
+        if super::check_and_cleanup_socket(&socket_path) {
             return Ok(());
-        };
+        }
 
         eprintln!("Starting GPY Agent in background...");
-
-        // Step 2: Fork and start the agent process
-        fork_agent(&socket_path)
+        fork_agent(&socket_path, start_lock)
     }
 
     #[cfg(not(unix))]

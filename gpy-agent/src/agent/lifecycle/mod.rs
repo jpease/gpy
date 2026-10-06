@@ -19,6 +19,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 #[cfg(unix)]
+use crate::ipc::socket_identity::SocketIdentity;
+#[cfg(unix)]
 use std::os::unix::net::UnixListener;
 
 /// Overrides the default Unix domain socket path for agent communication.
@@ -923,18 +925,95 @@ pub fn wait_for_agent_shutdown(_socket_path: &PathBuf) -> bool {
     false
 }
 
+/// What the identity-aware wait could establish about an evicted agent (#723).
+#[cfg(unix)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ShutdownWait {
+    /// The path is gone or now holds a different socket: the old agent left,
+    /// and whatever is there now is not ours to remove.
+    Released,
+    /// The captured socket is still at the path and no longer answers.
+    Stopped,
+    /// The captured socket still answers (or cannot be verified) at the deadline.
+    TimedOut,
+}
+
+/// Whether the socket captured as `identity` has left `socket_path`: the path
+/// is missing or holds a different inode. Any other `stat` failure is not
+/// evidence of release.
+#[cfg(unix)]
+fn socket_released(socket_path: &Path, identity: SocketIdentity) -> bool {
+    match SocketIdentity::at(socket_path) {
+        Ok(current) => current != identity,
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+    }
+}
+
+/// Wait until the socket captured as `identity` stops answering or leaves the
+/// path, bounded by `SHUTDOWN_WAIT_MAX` (#723).
+///
+/// Unlike [`wait_for_agent_shutdown`], which pings whatever is bound at the
+/// path, a replacement agent's answers are never read as the old agent
+/// still being alive: the moment the identity changes, the wait is over.
+#[cfg(unix)]
+pub(crate) fn wait_for_socket_release(
+    socket_path: &PathBuf,
+    identity: SocketIdentity,
+) -> ShutdownWait {
+    let deadline = std::time::Instant::now()
+        .checked_add(SHUTDOWN_WAIT_MAX)
+        .unwrap_or_else(std::time::Instant::now);
+    loop {
+        if socket_released(socket_path, identity) {
+            return ShutdownWait::Released;
+        }
+        if ping_agent_liveness(socket_path) == AgentLiveness::NotResponding {
+            // The round may have reached a replacement bound mid-round.
+            return if socket_released(socket_path, identity) {
+                ShutdownWait::Released
+            } else {
+                ShutdownWait::Stopped
+            };
+        }
+        if std::time::Instant::now() >= deadline {
+            return ShutdownWait::TimedOut;
+        }
+        std::thread::sleep(SHUTDOWN_WAIT_POLL);
+    }
+}
+
+/// Remove the socket and its version marker only while the path still holds
+/// the captured socket (#723).
+///
+/// Re-`stat`s immediately before unlinking; the residual check-then-unlink
+/// window is inherent (#317). When the identity changed, both files belong to
+/// a replacement and are left alone.
+#[cfg(unix)]
+fn remove_socket_if_unchanged(socket_path: &Path, identity: SocketIdentity) {
+    if socket_released(socket_path, identity) {
+        return;
+    }
+    let _ = std::fs::remove_file(socket_path);
+    if let Ok(version_path) = get_version_file_path() {
+        let _ = std::fs::remove_file(version_path);
+    }
+}
+
 /// Evict a wedged agent.
 ///
-/// Attempt a graceful shutdown, wait (bounded) for it to stop responding, then
-/// unlink its socket and version marker regardless of whether that shutdown was
-/// ever acknowledged, so a fresh agent can bind (#317).
+/// Attempt a graceful shutdown, wait (bounded) for the socket captured as
+/// `identity` to stop answering or leave the path, then unlink it and its
+/// version marker only if it is still the captured one (#317, #723).
+///
+/// Returns `true` when the old agent was already replaced by a responsive
+/// agent, so the caller must not fork another one.
 ///
 /// Shared by the version-mismatch branch (a live but incompatible agent) and
 /// the `AcceptedNoReply` branch (a live but unresponsive one, #548) -- both
 /// are "give the old agent one real chance to leave, then replace it
 /// regardless," and #548 reuses this rather than inventing a second path.
 #[cfg(unix)]
-fn evict_wedged_agent(socket_path: &PathBuf) {
+fn evict_wedged_agent(socket_path: &PathBuf, identity: SocketIdentity) -> bool {
     // Attempt graceful shutdown (best-effort; ignored on failure). A
     // current-thread runtime, matching ping_agent_outcome's fix (#539): one
     // connect-write-read behind a single `block_on` needs no worker pool, and
@@ -946,17 +1025,22 @@ fn evict_wedged_agent(socket_path: &PathBuf) {
         let _ = runtime.block_on(send_shutdown_command());
     }
 
-    // Wait for the old agent to actually stop responding before unlinking,
-    // rather than a fixed sleep that may unlink while it is still alive
-    // (#317). Bounded so a stuck old agent cannot hang us; proceed to clean
-    // up either way (bounded-fallback semantics).
-    let _ = wait_for_agent_shutdown(socket_path);
-
-    // Clean up socket and version file if they still exist.
-    let _ = std::fs::remove_file(socket_path);
-    if let Ok(version_path) = get_version_file_path() {
-        let _ = std::fs::remove_file(version_path);
+    // Bounded so a stuck old agent cannot hang us; proceed to clean up either
+    // way (bounded-fallback semantics), but only ever the captured socket.
+    if wait_for_socket_release(socket_path, identity) != ShutdownWait::Released {
+        remove_socket_if_unchanged(socket_path, identity);
+        return false;
     }
+
+    // The old agent is gone. If a different agent already holds the path and
+    // answers, it is the replacement: do not fork a second one over it.
+    if SocketIdentity::at(socket_path).is_ok()
+        && matches!(ping_agent_outcome(socket_path), Ok(PingOutcome::Answered))
+    {
+        eprintln!("GPY Agent is already running and responsive");
+        return true;
+    }
+    false
 }
 
 /// Check if agent is already running and clean up stale socket if needed
@@ -965,9 +1049,11 @@ fn evict_wedged_agent(socket_path: &PathBuf) {
 #[cfg(unix)]
 #[must_use]
 pub fn check_and_cleanup_socket(socket_path: &PathBuf) -> bool {
-    if !socket_path.exists() {
+    // Capture the socket's identity before the first ping (#723): every later
+    // wait and unlink is about *this* socket, never whatever replaces it.
+    let Ok(identity) = SocketIdentity::at(socket_path) else {
         return false;
-    }
+    };
 
     // Retry before declaring the socket stale (#317): a single missed 500ms
     // ping can happen to a live-but-busy agent. Only unlink its socket (and
@@ -995,8 +1081,7 @@ pub fn check_and_cleanup_socket(socket_path: &PathBuf) -> bool {
         eprintln!(
             "GPY agent accepted a connection but did not answer across every retry; evicting the wedged agent..."
         );
-        evict_wedged_agent(socket_path);
-        return false; // Allow new agent to start
+        return evict_wedged_agent(socket_path, identity);
     }
 
     if liveness == AgentLiveness::Responding {
@@ -1009,8 +1094,7 @@ pub fn check_and_cleanup_socket(socket_path: &PathBuf) -> bool {
                     "Detected version mismatch (running: {running_version}, binary: {VERSION})"
                 );
                 eprintln!("Restarting agent with this binary's version ({VERSION})...");
-                evict_wedged_agent(socket_path);
-                return false; // Allow new agent to start
+                return evict_wedged_agent(socket_path, identity);
             }
             eprintln!(
                 "A newer GPY agent ({running_version}) is already running; not replacing it with {VERSION}"
@@ -1022,12 +1106,10 @@ pub fn check_and_cleanup_socket(socket_path: &PathBuf) -> bool {
         true
     } else {
         // Socket exists but the agent is unresponsive across every retry -
-        // clean up the stale socket so a fresh agent can bind.
+        // clean up the stale socket so a fresh agent can bind, unless it was
+        // replaced in the meantime (#723).
         eprintln!("Cleaning up stale socket...");
-        let _ = std::fs::remove_file(socket_path);
-        if let Ok(version_path) = get_version_file_path() {
-            let _ = std::fs::remove_file(version_path);
-        }
+        remove_socket_if_unchanged(socket_path, identity);
         false
     }
 }
@@ -1130,6 +1212,32 @@ mod stale_socket_tests {
         assert!(
             elapsed < Duration::from_secs(1),
             "must not wait the full fallback budget when the agent is already gone, took {elapsed:?}"
+        );
+    }
+
+    /// #723: a socket rebound at the path is a release of the captured one,
+    /// even though something still answers there.
+    #[test]
+    fn wait_for_socket_release_sees_a_rebound_path_as_released() {
+        use super::{ShutdownWait, wait_for_socket_release};
+        use crate::ipc::socket_identity::SocketIdentity;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let socket_path = tmp.path().join("agent.sock");
+        let old = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        let identity = SocketIdentity::at(&socket_path).unwrap();
+        std::fs::remove_file(&socket_path).unwrap();
+        let _replacement = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        drop(old);
+
+        let started = Instant::now();
+        let outcome = wait_for_socket_release(&socket_path, identity);
+        let elapsed = started.elapsed();
+
+        assert_eq!(outcome, ShutdownWait::Released);
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "a rebound path must end the wait at once, took {elapsed:?}"
         );
     }
 
