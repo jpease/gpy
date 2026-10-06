@@ -586,7 +586,10 @@ EOF
         FISH_PROMPT_TARGET="$FISH_FUNCTIONS_DIR/fish_prompt.fish"
         FISH_PROMPT_SOURCE="$SHELL_CONFIG_DIR/functions/fish_prompt.fish"
 
-        if [ -e "$FISH_PROMPT_TARGET" ] && [ ! -L "$FISH_PROMPT_TARGET" ]; then
+        # Move aside anything that is not GPY's own link, foreign symlinks
+        # included; `mv` keeps a symlink a symlink (#744).
+        if { [ -e "$FISH_PROMPT_TARGET" ] || [ -L "$FISH_PROMPT_TARGET" ]; } \
+            && { [ ! -L "$FISH_PROMPT_TARGET" ] || [ "$(readlink "$FISH_PROMPT_TARGET")" != "$FISH_PROMPT_SOURCE" ]; }; then
             BACKUP="$FISH_PROMPT_TARGET.backup.$(date +%Y%m%d_%H%M%S)"
             info "Backing up existing fish_prompt to $BACKUP"
             mv "$FISH_PROMPT_TARGET" "$BACKUP"

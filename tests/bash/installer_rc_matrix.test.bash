@@ -156,6 +156,12 @@ layout_bash_nochain() { layout_plain; SEED_BASH=nochain; }
 layout_zdotdir() { layout_plain; ZDOTDIR="$SB/zdot"; }
 layout_zdotdir_absent() { layout_plain; ZDOTDIR="$SB/zdot"; SEED_ZSH=absent; }
 
+# #744: ~/.config/fish/functions/fish_prompt.fish is a symlink into a dotfiles
+# directory (stow/yadm/chezmoi). Install must move it aside as a symlink and
+# uninstall must put it back; the link text and the target's bytes are part of
+# the byte-identical snapshot.
+layout_fish_prompt_symlink() { layout_plain; SEED_PROMPT=symlink; }
+
 # The rc files that exist before install: the shell's own rc, and for bash a
 # ~/.bash_profile that chains to ~/.bashrc (as macOS and most distros ship),
 # so a login bash reaches the same file a non-login one does.
@@ -164,6 +170,11 @@ seed_user_files() {
         fish)
             mkdir -p "$XDG_CONFIG_HOME/fish"
             printf '# user rc before gpy\n' >"$XDG_CONFIG_HOME/fish/config.fish"
+            if [ "$SEED_PROMPT" = symlink ]; then
+                mkdir -p "$HOME/dotfiles" "$XDG_CONFIG_HOME/fish/functions"
+                printf 'function fish_prompt; echo mine; end\n' >"$HOME/dotfiles/fish_prompt.fish"
+                ln -s "$HOME/dotfiles/fish_prompt.fish" "$XDG_CONFIG_HOME/fish/functions/fish_prompt.fish"
+            fi
             ;;
         zsh)
             mkdir -p "${ZDOTDIR:-$HOME}"
@@ -193,8 +204,21 @@ check_profile_survives() {
     if [ "$got" = yes ]; then pass "$1: login startup file still runs"; else fail "$1: login startup file shadowed (FROM_PROFILE=$got)"; fi
 }
 
-# One line per candidate rc file: its checksum, or `absent`.
+# One line per candidate rc file: its checksum, or `absent`. The fish prompt
+# line records a symlink's text and its target's checksum (#744).
+prompt_snapshot() {
+    p="$XDG_CONFIG_HOME/fish/functions/fish_prompt.fish"
+    if [ -L "$p" ]; then
+        printf 'link %s %s\n' "$(readlink "$p")" "$(cksum <"$p" 2>/dev/null || echo dangling)"
+    elif [ -e "$p" ]; then
+        printf 'file %s\n' "$(cksum <"$p")"
+    else
+        printf 'absent\n'
+    fi
+}
+
 rc_snapshot() {
+    prompt_snapshot
     for f in "$HOME/.zshrc" "${ZDOTDIR:+$ZDOTDIR/.zshrc}" "$HOME/.zprofile" "$HOME/.zshenv" "$HOME/.zlogin" \
         "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile" \
         "$XDG_CONFIG_HOME/fish/config.fish"; do
@@ -248,6 +272,7 @@ row() {
     SB="$SHELL_E2E_ROOT"
     SEED_BASH=chain
     SEED_ZSH=present
+    SEED_PROMPT=none
     unset ZDOTDIR
     "layout_$layout"
     export HOME XDG_CONFIG_HOME
@@ -296,6 +321,13 @@ row() {
             check_start "$name [$mode]" "$shell" "$mode"
         done
         check_profile_survives "$name"
+        if [ "$SEED_PROMPT" = symlink ]; then
+            moved=""
+            for b in "$XDG_CONFIG_HOME"/fish/functions/fish_prompt.fish.*backup.*; do
+                [ -L "$b" ] && [ "$(readlink "$b")" = "$HOME/dotfiles/fish_prompt.fish" ] && moved="$b"
+            done
+            if [ -n "$moved" ]; then pass "$name: foreign symlink moved aside as a symlink"; else fail "$name: no symlink backup of the user's prompt"; fi
+        fi
         agent_stop
         if [ "$installer" = install.sh ] || [ "$uninstaller" = fish ]; then
             printf '\n' | fish "$ROOT/scripts/uninstall.fish" >"$SB/uninstall.log" 2>&1
@@ -337,6 +369,11 @@ row oneline zsh zdotdir ok
 row oneline zsh zdotdir ok fish
 row oneline zsh zdotdir_absent ok
 row oneline zsh zdotdir_absent ok fish
+
+# #744: a symlinked fish_prompt.fish survives install + uninstall
+row oneline fish fish_prompt_symlink ok
+row oneline fish fish_prompt_symlink ok fish
+row install.sh fish fish_prompt_symlink ok
 
 # #746: characters double quotes cannot protect are refused up front
 row oneline fish quote refuse

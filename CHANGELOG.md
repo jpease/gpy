@@ -569,6 +569,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   that reference palette colours.
 - The config wizard preview always shows the `❯` character line and draws
   `status` as a ✔/✖ pill in the segment chain (#800).
+- The installers no longer destroy a symlinked `fish_prompt.fish`, and
+  uninstall restores it and backups made by older `install-dev.fish` runs
+  (#744).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

@@ -523,12 +523,18 @@ preserves it byte-for-byte and leaves all backups untouched.
 
 When the prompt destination is absent (or becomes absent after removing the GPY
 symlink/implementation), the uninstaller restores the newest backup by comparing the
-timestamp suffix (`YYYYMMDD_HHMMSS`) across both naming conventions:
-- `fish_prompt.fish.backup.<stamp>` (from `install-oneline.sh`)
+timestamp suffix (`YYYYMMDD_HHMMSS`) across all accepted naming conventions:
+- `fish_prompt.fish.backup.<stamp>` (from `install-oneline.sh` and `install-dev.fish`)
 - `fish_prompt.fish.gpy-backup.<stamp>` (from `install.sh`)
+- `fish_prompt.fish.backup-YYYYMMDD-HHMMSS` (legacy, from earlier `install-dev.fish` runs)
 
 If timestamps are equal, `.gpy-backup.` is preferred deterministically. Older backups
 remain untouched.
+
+Every installer moves an existing prompt that is not GPY's own link aside with `mv`,
+so a symlinked prompt (stow, yadm, chezmoi) stays a symlink to the same dotfile and is
+restored as one. A backup that is a symlink into GPY's own prompt directory is never
+restored.
 
 ### Manual Removal Checklist
 

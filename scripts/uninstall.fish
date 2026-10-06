@@ -226,18 +226,32 @@ function uninstall_custom_prompt
         echo "🤔 fish_prompt.fish already exists; preserving current prompt and backups"
     else
         # install.sh writes `fish_prompt.fish.gpy-backup.<stamp>`, install-oneline.sh
-        # `fish_prompt.fish.backup.<stamp>`; both are ours to restore (#642).
+        # `fish_prompt.fish.backup.<stamp>`, and older install-dev.fish runs
+        # `fish_prompt.fish.backup-YYYYMMDD-HHMMSS`; all are ours to restore
+        # (#642, #744). The legacy stamp is normalised to `_`.
         # Compare timestamp suffix descending; on equal stamps, lexicographical
-        # order of the basename wins (.gpy-backup. over .backup.) (#670).
-        set -l backup_candidates "$prompt_function_file".backup.* "$prompt_function_file".gpy-backup.*
+        # order of the basename wins (.gpy-backup. over .backup. over .backup-) (#670).
+        # A backup may be a symlink (a stow/yadm prompt moved aside), valid or
+        # dangling, but never one pointing back into the GPY prompt dir.
+        set -l backup_candidates "$prompt_function_file".backup.* "$prompt_function_file".gpy-backup.* "$prompt_function_file".backup-*
         set -l eligible_backups
         for candidate in $backup_candidates
-            if test -f "$candidate" -a ! -L "$candidate"
+            if test -f "$candidate" -o -L "$candidate"
+                if test -L "$candidate"
+                    set -l candidate_target (readlink "$candidate")
+                    if string match -q -- "$prompt_dir/*" "$candidate_target"
+                        continue
+                    end
+                end
                 set -l bname (basename "$candidate")
                 set -l match (string match -r '^fish_prompt\.fish\.(backup|gpy-backup)\.([0-9]{8}_[0-9]{6})$' -- "$bname")
                 if test (count $match) -eq 3
-                    set -l stamp $match[3]
-                    set eligible_backups $eligible_backups (printf "%s\t%s\t%s" "$stamp" "$bname" "$candidate")
+                    set eligible_backups $eligible_backups (printf "%s\t%s\t%s" "$match[3]" "$bname" "$candidate")
+                else
+                    set match (string match -r '^fish_prompt\.fish\.backup-([0-9]{8})-([0-9]{6})$' -- "$bname")
+                    if test (count $match) -eq 3
+                        set eligible_backups $eligible_backups (printf "%s_%s\t%s\t%s" "$match[2]" "$match[3]" "$bname" "$candidate")
+                    end
                 end
             end
         end
