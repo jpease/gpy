@@ -13,6 +13,7 @@ pub use start::start_background_agent;
 #[cfg(unix)]
 use crate::Error;
 use crate::{Result, VERSION};
+#[cfg(unix)]
 use std::cmp::Ordering;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -121,9 +122,11 @@ fn version_file_for(socket_override: Option<&Path>, runtime_dir: &Path) -> PathB
 }
 
 /// A parsed `MAJOR.MINOR.PATCH[-prerelease]` version.
+#[cfg(unix)]
 type AgentVersion<'a> = ((u64, u64, u64), Option<&'a str>);
 
 /// Parse an agent version, ignoring surrounding whitespace.
+#[cfg(unix)]
 fn parse_agent_version(raw: &str) -> Option<AgentVersion<'_>> {
     let trimmed = raw.trim();
     let (core, pre) = match trimmed.split_once('-') {
@@ -142,6 +145,7 @@ fn parse_agent_version(raw: &str) -> Option<AgentVersion<'_>> {
 }
 
 /// Order two parsed versions; a pre-release sorts before its release.
+#[cfg(unix)]
 fn compare_agent_versions(left: &AgentVersion<'_>, right: &AgentVersion<'_>) -> Ordering {
     left.0.cmp(&right.0).then_with(|| match (left.1, right.1) {
         (None, None) => Ordering::Equal,
@@ -155,6 +159,7 @@ fn compare_agent_versions(left: &AgentVersion<'_>, right: &AgentVersion<'_>) -> 
 ///
 /// Only an older running version is replaced, or one whose recorded version
 /// does not parse, so a corrupt marker still self-heals (#780).
+#[cfg(unix)]
 fn should_replace(running: &str, binary: &str) -> bool {
     let Some(running_version) = parse_agent_version(running) else {
         return true;
@@ -1114,7 +1119,7 @@ pub fn check_and_cleanup_socket(socket_path: &PathBuf) -> bool {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod version_order_tests {
     use super::{should_replace, version_file_for};
     use std::path::{Path, PathBuf};
