@@ -28,16 +28,49 @@ __gpy_prior_trap() { __gpy_prior_trap_fired=1; }
 trap '__gpy_prior_trap' DEBUG
 
 source bash/gpy.bash
+# shellcheck disable=SC2154
+# (__gpy_debug_oneshot and __gpy_prev_debug_trap are set by gpy.bash above.)
 
-# Invoke the installed DEBUG trap the way bash would for a real command.
-BASH_COMMAND=':'
-__gpy_debug_trap
+if (( BASH_VERSINFO[0] < 4 )); then
+    echo "SKIP: bash $BASH_VERSION installs no gpy DEBUG trap; nothing to chain"
+else
+    # gpy installs its trap from the first PROMPT_COMMAND; run that one-shot
+    # entry here, at this script's top level, the way bash would.
+    eval "$__gpy_debug_oneshot"
+    # The prior trap also fired on the `source` line above; reset the flag so
+    # only a firing through gpy's chain can set it (#683).
+    __gpy_prior_trap_fired=0
+    if [[ "$__gpy_prev_debug_trap" != "__gpy_prior_trap" ]]; then
+        echo "FAIL: captured DEBUG body is [$__gpy_prev_debug_trap], want [__gpy_prior_trap]"
+        exit 1
+    fi
+    BASH_COMMAND=':'
+    __gpy_debug_trap
+    if [[ "$__gpy_prior_trap_fired" -ne 1 ]]; then
+        echo "FAIL: pre-existing DEBUG trap did not fire after gpy init"
+        exit 1
+    fi
+    echo "PASS: pre-existing DEBUG trap still fires after gpy init"
 
-if [[ "$__gpy_prior_trap_fired" -ne 1 ]]; then
-    echo "FAIL: pre-existing DEBUG trap did not fire after gpy init"
-    exit 1
+    captured="$__gpy_prev_debug_trap"
+    source bash/gpy.bash
+    eval "$__gpy_debug_oneshot"
+    if [[ "$__gpy_prev_debug_trap" != "$captured" ]]; then
+        echo "FAIL: re-sourcing changed the captured trap to [$__gpy_prev_debug_trap]"
+        exit 1
+    fi
+    echo "PASS: re-sourcing gpy.bash keeps the captured DEBUG trap"
 fi
-echo "PASS: pre-existing DEBUG trap still fires after gpy init"
+
+echo "=== Testing EXIT trap containing quotes chains ==="
+for gpy_bash_bin in /bin/bash "$BASH"; do
+    out=$("$gpy_bash_bin" -c 'trap "echo '"'"'bye'"'"'" EXIT; source "$1/bash/gpy.bash"; exit' _ "$ROOT" 2>&1)
+    if [[ "$out" != *bye* || "$out" == *"unexpected EOF"* ]]; then
+        echo "FAIL: EXIT trap with quotes under $gpy_bash_bin: $out"
+        exit 1
+    fi
+done
+echo "PASS: EXIT trap containing quotes runs at exit"
 
 echo "=== Testing DEBUG trap is safe under set -u ==="
 OUT_LOG="$(mktemp)"

@@ -432,6 +432,10 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - Bold, underline and background no longer leak from one styled template
   group into the next (#752). The encoder resets only when the previous style
   would leak, so the shipped themes' bytes are unchanged.
+- Bash chains a pre-existing DEBUG trap (e.g. bash-preexec) and EXIT traps
+  containing quotes (#683). gpy's DEBUG trap is now installed at the first
+  prompt, where bash exposes the prior trap; re-sourcing `gpy.bash` keeps the
+  chain.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

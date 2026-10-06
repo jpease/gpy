@@ -53,7 +53,15 @@ __gpy_consume_shell_flags() {
 # and Fish already do this from their exit hooks. Any EXIT trap the user or
 # a framework installed first is chained, never clobbered (#320's DEBUG
 # treatment, applied to EXIT).
-__gpy_prev_exit_trap=""
+: "${__gpy_prev_exit_trap=}"
+
+# __gpy_trap_body <trap -p output>: print the handler body ("" if none).
+# Lets the shell undo trap -p's quoting (including '\'' for embedded quotes).
+__gpy_trap_body() {
+    [[ -n "$1" ]] || return 0
+    eval "set -- $1"
+    printf '%s' "${3-}"
+}
 __gpy_handle_exit() {
     if [[ -n "$__gpy_registered" ]]; then
         __gpy_send_json "{\"op\":\"unregister\",\"pid\":$$}" &>/dev/null || true
@@ -75,8 +83,7 @@ __gpy_setup_signals() {
     local existing_exit
     existing_exit="$(trap -p EXIT)"
     if [[ -n "$existing_exit" && "$existing_exit" != *"__gpy_handle_exit"* ]]; then
-        existing_exit="${existing_exit#trap -- \'}"
-        __gpy_prev_exit_trap="${existing_exit%\' EXIT}"
+        __gpy_prev_exit_trap="$(__gpy_trap_body "$existing_exit")"
     fi
     trap '__gpy_handle_exit' EXIT
 }
