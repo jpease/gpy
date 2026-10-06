@@ -183,6 +183,18 @@ ARCH=$(uname -m)
 # (#324).
 FISH_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fish"
 
+# The config.fish block sources this path inside double quotes; `"`, `$`, a
+# backtick, a backslash or a newline would break out of them. Refuse before
+# anything is written rather than escape (#746).
+case "$FISH_CONFIG_DIR" in
+    *[\"\$\`\\]* | *"
+"*)
+        echo "❌ Cannot install: $FISH_CONFIG_DIR contains a quote, \$, backtick, backslash or newline,"
+        echo "   which cannot be sourced safely from config.fish. Use an XDG_CONFIG_HOME without those characters."
+        exit 1
+        ;;
+esac
+
 # Each platform/arch resolves BOTH the agent daemon binary ($BINARY) and the
 # user-facing CLI binary ($CLI_BINARY). They ship as a parallel pair of assets
 # (gpy-agent-<platform>-<arch> and gpy-<platform>-<arch>) and are installed
@@ -317,7 +329,7 @@ if ! grep -qF "# >>> gpy-init >>>" "$FISH_CONFIG" 2>/dev/null; then
 # >>> gpy-init >>>
 # GPY Prompt Enhancement
 if status is-interactive
-    source $FISH_CONFIG_DIR/gpy/conf.d/gpy_init.fish
+    source "$FISH_CONFIG_DIR/gpy/conf.d/gpy_init.fish"
 end
 # <<< gpy-init <<<
 EOF
@@ -378,7 +390,7 @@ echo ""
 echo "🎉 Next steps:"
 echo "   1. If you previously sourced a custom prompt, comment it out to see GPY"
 echo "   2. Restart your Fish shell or run: exec fish"
-echo "   3. Or reload config: source $FISH_CONFIG_DIR/config.fish"
+echo "   3. Or reload config: source \"$FISH_CONFIG_DIR/config.fish\""
 echo ""
 echo "📚 Your prompt now includes:"
 echo "   • Git status indicators"

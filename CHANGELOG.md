@@ -455,6 +455,19 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - gpy no longer overrides a `core.untrackedCache` set at any scope (#715);
   it enables the untracked cache only where the key is unset. Set it to
   `false` to opt out.
+- The bash/zsh basic and parity test suites no longer leak a `gpy-agent`
+  daemon on every gate run (#750); the gate also runs them against the
+  checkout's debug binary instead of whichever `gpy-agent` is on `PATH`.
+- `scripts/quality-check.sh --fix` changes to the repository root before
+  formatting (#811); run from another directory it reformatted that
+  directory's fish files.
+- A missing `fish_indent` or `shellcheck` is reported as a `SKIP:` line by
+  `scripts/quality-check.sh` and fails the gate under CI (#813), instead of
+  passing silently.
+- The installers quote the `source` path they write into rc files (#746), so
+  a config directory containing a space no longer breaks every shell start.
+  A directory containing `"`, `$`, a backtick or a backslash is refused before
+  anything is written.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

@@ -132,6 +132,8 @@ Binary-not-found errors, agent-won't-start, macOS Gatekeeper quarantine (`xattr 
 
 `GPY_CONFIG_PATH` overrides the config file location if you need to point GPY at a non-standard config for debugging (verified at `gpy-agent/src/config/schema.rs`, `gpy-agent/src/config/mod.rs`, `gpy-agent/src/commands/utils.rs`); it's checked before the XDG/`HOME` fallback chain.
 
+**Every new shell prints `No such file or directory` for a path ending at a space** (for example `/Users/John`): installs made before #746 wrote the rc `source` line without quotes, so a `HOME` or `XDG_CONFIG_HOME` containing a space split the path. Re-running the installer does not rewrite an existing `# >>> gpy-init >>>` block, so edit that block by hand and wrap the path in double quotes (`source "/Users/John Doe/.config/gpy/zsh/gpy.zsh"`), or remove the block and re-run the installer. Current installers quote the path, and refuse (before writing anything) a config directory containing `"`, `$`, a backtick, a backslash or a newline.
+
 ---
 
 ## See Also

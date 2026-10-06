@@ -1,0 +1,293 @@
+#!/usr/bin/env bash
+# tests/bash/installer_rc_matrix.test.bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# INSTALLER RC TEST -- the class test for every installer rc-file bug in epic
+# #675. It is also the named regression test for #746 (a space in HOME or
+# XDG_CONFIG_HOME broke the unquoted `source` line), so there is no separate
+# install_oneline_space_in_path file.
+#
+# Invariant, asserted per row:
+#   after install, every shell the installer targets, started the way a user
+#   starts it (interactive login AND non-login), sources gpy exactly once and
+#   prints nothing on stderr; after uninstall (scripts/uninstall.sh or
+#   scripts/uninstall.fish) every rc file is byte-identical to before install.
+#   A row that expects `refuse` instead asserts the installer exits non-zero
+#   and no rc file (and no gpy file under XDG_CONFIG_HOME) was touched.
+#
+# Rows = installer x shell x hostile HOME layout:
+#
+#   row INSTALLER SHELL LAYOUT EXPECT
+#     INSTALLER  oneline (install-oneline.sh, fake curl) | install.sh (staged
+#                release payload, fish only)
+#     SHELL      fish | zsh | bash
+#     LAYOUT     a `layout_<name>` function below; it sets HOME and
+#                XDG_CONFIG_HOME
+#     EXPECT     ok | refuse
+#
+# Adding a row is one `row ...` line at the bottom; adding a hostile layout is
+# one `layout_<name>` function. Later issues add: #747 (no ~/.bashrc but
+# ~/.profile -> bash login/non-login), #748 (ZDOTDIR set).
+#
+# Paths are never interpolated into `-c` code: they travel as arguments or
+# environment. Every row's agent is stopped before the row ends.
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
+
+test_require_command fish
+test_require_command zsh
+test_require_command python3
+
+GPY_CLI="$ROOT/gpy-agent/target/debug/gpy"
+GPY_AGENT="$ROOT/gpy-agent/target/debug/gpy-agent"
+if [ ! -x "$GPY_CLI" ] || [ ! -x "$GPY_AGENT" ]; then
+    (cd "$ROOT/gpy-agent" && cargo build --quiet --bin gpy --bin gpy-agent) || {
+        echo "FAIL: could not build the gpy binaries"
+        exit 1
+    }
+fi
+
+case "$(uname -s | tr '[:upper:]' '[:lower:]')" in
+    linux)
+        case "$(uname -m)" in
+            x86_64) AGENT_ASSET=gpy-agent-linux-x86_64; CLI_ASSET=gpy-linux-x86_64 ;;
+            aarch64 | arm64) AGENT_ASSET=gpy-agent-linux-aarch64; CLI_ASSET=gpy-linux-aarch64 ;;
+            *) test_skip "unsupported architecture $(uname -m)" ;;
+        esac
+        ;;
+    darwin)
+        case "$(uname -m)" in
+            x86_64) AGENT_ASSET=gpy-agent-macos-x86_64; CLI_ASSET=gpy-macos-x86_64 ;;
+            arm64) AGENT_ASSET=gpy-agent-macos-aarch64; CLI_ASSET=gpy-macos-aarch64 ;;
+            *) test_skip "unsupported architecture $(uname -m)" ;;
+        esac
+        ;;
+    *) test_skip "the installers do not support $(uname -s)" ;;
+esac
+
+failures=0
+fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
+pass() { echo "PASS: $*"; }
+
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+
+# Copied from install_oneline_e2e_real_binary.test.bash (that file is a
+# script, not a library, and existing tests stay unmodified): a `curl` that
+# serves release assets from the debug build and shell files from this
+# checkout.
+write_fake_curl() {
+    cat >"$1/curl" <<EOF
+#!/bin/sh
+ROOT="$ROOT"
+AGENT_BIN="$GPY_AGENT"
+CLI_BIN="$GPY_CLI"
+AGENT_ASSET="$AGENT_ASSET"
+CLI_ASSET="$CLI_ASSET"
+EOF
+    cat >>"$1/curl" <<'EOF'
+out=""; url=""; prev=""
+for arg in "$@"; do
+    if [ "$prev" = "-o" ]; then out="$arg"; else case "$arg" in -*) ;; *) url="$arg" ;; esac; fi
+    prev="$arg"
+done
+digest_of() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+source_for() {
+    case "$1" in
+        */releases/download/*/"$AGENT_ASSET") echo "$AGENT_BIN" ;;
+        */releases/download/*/"$CLI_ASSET") echo "$CLI_BIN" ;;
+        */raw.githubusercontent.com/*) echo "$ROOT/${1#*/raw.githubusercontent.com/*/*/*/}" ;;
+        *) echo "" ;;
+    esac
+}
+case "$url" in
+    *.sha256)
+        src="$(source_for "${url%.sha256}")"
+        [ -n "$src" ] && [ -f "$src" ] || exit 22
+        base="${url##*/}"
+        printf '%s  %s\n' "$(digest_of "$src")" "${base%.sha256}"
+        exit 0
+        ;;
+esac
+src="$(source_for "$url")"
+[ -n "$src" ] && [ -f "$src" ] || exit 22
+if [ -n "$out" ]; then
+    mkdir -p "$(dirname "$out")"
+    cp "$src" "$out"
+else
+    cat "$src"
+fi
+exit 0
+EOF
+    chmod +x "$1/curl"
+}
+
+# --- hostile layouts ----------------------------------------------------------
+# Each sets HOME and XDG_CONFIG_HOME under $SB (the sandbox root).
+layout_plain() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/config"; }
+layout_space() { HOME="$SB/sp ace/home"; XDG_CONFIG_HOME="$SB/sp ace/config"; }
+layout_quote() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/q\"uote/config"; }
+layout_dollar() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/d\$ollar/config"; }
+layout_backtick() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/b\`tick/config"; }
+layout_backslash() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/b\\slash/config"; }
+
+# The rc files that exist before install: the shell's own rc, and for bash a
+# ~/.bash_profile that chains to ~/.bashrc (as macOS and most distros ship),
+# so a login bash reaches the same file a non-login one does.
+seed_user_files() {
+    case "$1" in
+        fish)
+            mkdir -p "$XDG_CONFIG_HOME/fish"
+            printf '# user rc before gpy\n' >"$XDG_CONFIG_HOME/fish/config.fish"
+            ;;
+        zsh) printf '# user rc before gpy\n' >"$HOME/.zshrc" ;;
+        bash)
+            printf '# user rc before gpy\n' >"$HOME/.bashrc"
+            printf '[ -f ~/.bashrc ] && . ~/.bashrc\n' >"$HOME/.bash_profile"
+            ;;
+    esac
+}
+
+# One line per candidate rc file: its checksum, or `absent`.
+rc_snapshot() {
+    for f in "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.zshenv" "$HOME/.zlogin" \
+        "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile" \
+        "$XDG_CONFIG_HOME/fish/config.fish"; do
+        if [ -e "$f" ]; then printf '%s %s\n' "$(cksum <"$f")" "$f"; else printf 'absent %s\n' "$f"; fi
+    done
+}
+
+agent_stop() { "$HOME/.local/bin/gpy-agent" stop >/dev/null 2>&1 || true; }
+
+# `check_start LABEL SHELL MODE`: start SHELL interactively (MODE nonlogin or
+# login), assert no stderr, the integration loaded, and its entry point
+# sourced exactly once.
+check_start() {
+    label="$1" shell="$2" mode="$3"
+    set -- "$shell"
+    [ "$mode" = login ] && set -- "$@" -l
+    err="$SB/start.err"
+    case "$shell" in
+        fish) loaded="$("$@" -i -c 'functions -q __gpy_load_theme; and echo loaded' </dev/null 2>"$err")" ;;
+        zsh) loaded="$("$@" -i -c 'whence -w __gpy_load_theme >/dev/null && echo loaded' </dev/null 2>"$err")" ;;
+        bash) loaded="$("$@" -i -c 'declare -F __gpy_load_theme >/dev/null && echo loaded' </dev/null 2>"$err")" ;;
+    esac
+    # A tty-less interactive bash always prints these two job-control lines;
+    # a user's terminal does not, so they are not errors.
+    grep -Fv -e 'cannot set terminal process group' -e 'no job control in this shell' "$err" >"$err.f"
+    if [ -s "$err.f" ]; then fail "$label: stderr not empty: $(cat "$err.f")"; else pass "$label: no stderr"; fi
+    if [ "$loaded" = loaded ]; then pass "$label: gpy loaded"; else fail "$label: gpy not loaded (got '$loaded')"; fi
+    trace="$SB/start.trace"
+    : >"$trace"
+    case "$shell" in
+        fish) "$@" -i --profile-startup="$trace" -c true </dev/null >/dev/null 2>&1; pat='> source .*/gpy_init\.fish' ;;
+        zsh) "$@" -i -x -c true </dev/null >/dev/null 2>"$trace"; pat='source .*/gpy/zsh/gpy\.zsh'"'"'?$' ;;
+        bash) "$@" -i -x -c true </dev/null >/dev/null 2>"$trace"; pat='source .*/gpy/bash/gpy\.bash'"'"'?$' ;;
+    esac
+    count="$(grep -Ec "$pat" "$trace")"
+    if [ "$count" = 1 ]; then
+        pass "$label: sourced exactly once"
+    else
+        fail "$label: sourced $count times (expected 1)"
+        sed -n '1,20p' "$trace"
+    fi
+}
+
+# `row INSTALLER SHELL LAYOUT EXPECT`
+row() {
+    installer="$1" shell="$2" layout="$3" expect="$4"
+    name="$installer/$shell/$layout/$expect"
+    echo "=== $name ==="
+    shell_e2e_init "$ROOT"
+    SB="$SHELL_E2E_ROOT"
+    "layout_$layout"
+    export HOME XDG_CONFIG_HOME
+    export XDG_CACHE_HOME="$SB/cache"
+    mkdir -p "$HOME"
+    export PATH="$HOME/.local/bin:$SB/fakebin:$PATH"
+    mkdir -p "$SB/fakebin"
+    write_fake_curl "$SB/fakebin"
+    seed_user_files "$shell"
+    before="$(rc_snapshot)"
+
+    case "$installer" in
+        oneline)
+            (cd "$SB" && GPY_SHELL="$shell" GPY_VERSION=v9.9.9-test sh "$ROOT/install-oneline.sh" </dev/null) >"$SB/install.log" 2>&1
+            ;;
+        install.sh)
+            PKG="$SB/pkg"
+            mkdir -p "$PKG/bin" "$PKG/scripts"
+            cp -R "$ROOT/fish" "$PKG/fish"
+            cp "$ROOT/install.sh" "$PKG/install.sh"
+            cp "$ROOT/scripts/uninstall.fish" "$ROOT/scripts/uninstall.sh" "$PKG/scripts/"
+            cp "$GPY_AGENT" "$PKG/bin/$AGENT_ASSET"
+            cp "$GPY_CLI" "$PKG/bin/$CLI_ASSET"
+            for asset in "$AGENT_ASSET" "$CLI_ASSET"; do
+                printf '%s  %s\n' "$(sha256_of "$PKG/bin/$asset")" "$asset" >"$PKG/bin/$asset.sha256"
+            done
+            (cd "$PKG" && bash ./install.sh </dev/null) >"$SB/install.log" 2>&1
+            ;;
+    esac
+    rc=$?
+
+    if [ "$expect" = refuse ]; then
+        if [ "$rc" -ne 0 ]; then pass "$name: installer refused (exit $rc)"; else fail "$name: installer exited 0 on an unsupported path"; fi
+        if [ "$(rc_snapshot)" = "$before" ]; then pass "$name: no rc file touched"; else fail "$name: an rc file changed"; fi
+        leftovers="$(find "$XDG_CONFIG_HOME" "$HOME/.local" -iname '*gpy*' 2>/dev/null)"
+        if [ -z "$leftovers" ]; then pass "$name: nothing installed"; else fail "$name: refused install left files: $leftovers"; fi
+    else
+        if [ "$rc" -eq 0 ]; then pass "$name: installer exited 0"; else fail "$name: installer exited $rc"; sed -n '1,40p' "$SB/install.log"; fi
+        for mode in nonlogin login; do
+            check_start "$name [$mode]" "$shell" "$mode"
+        done
+        agent_stop
+        if [ "$installer" = install.sh ]; then
+            printf '\n' | fish "$ROOT/scripts/uninstall.fish" >"$SB/uninstall.log" 2>&1
+        else
+            printf '\n' | GPY_SHELL="$shell" sh "$ROOT/scripts/uninstall.sh" >"$SB/uninstall.log" 2>&1
+        fi
+        urc=$?
+        if [ "$urc" -eq 0 ]; then pass "$name: uninstaller exited 0"; else fail "$name: uninstaller exited $urc"; cat "$SB/uninstall.log"; fi
+        if [ "$(rc_snapshot)" = "$before" ]; then
+            pass "$name: every rc file byte-identical after uninstall"
+        else
+            fail "$name: rc files differ after uninstall"
+            diff <(printf '%s\n' "$before") <(rc_snapshot)
+        fi
+    fi
+    agent_stop
+    shell_e2e_cleanup
+    trap - EXIT
+}
+
+# --- rows ---------------------------------------------------------------------
+row oneline fish plain ok
+row oneline zsh plain ok
+row oneline bash plain ok
+
+# #746: a space in HOME / XDG_CONFIG_HOME
+row oneline fish space ok
+row oneline zsh space ok
+row oneline bash space ok
+row install.sh fish space ok
+
+# #746: characters double quotes cannot protect are refused up front
+row oneline fish quote refuse
+row oneline zsh quote refuse
+row oneline bash quote refuse
+row install.sh fish quote refuse
+row oneline zsh dollar refuse
+row oneline bash backtick refuse
+row oneline fish backslash refuse
+row install.sh fish dollar refuse
+
+if [ "$failures" -gt 0 ]; then
+    echo "FAILED: $failures assertion(s)"
+    exit 1
+fi
+echo "PASS: installer rc matrix"
