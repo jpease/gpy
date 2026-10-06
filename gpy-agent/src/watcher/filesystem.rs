@@ -775,10 +775,20 @@ impl FileSystemWatcher {
 
     /// Build the polling fallback backend (`notify::PollWatcher`).
     ///
-    /// `with_compare_contents` is left at its default (`false`): mtime/size
-    /// comparison is what the native backends report anyway, and hashing file
-    /// contents on every tick would make a degraded machine dramatically more
-    /// expensive than it already is.
+    /// `with_compare_contents(true)`: notify's poll compares only whole-second
+    /// mtimes (not size), so a rewrite landing in the same second as the
+    /// previous write -- a branch ref moved to another commit, a `git config`
+    /// edit, two saves in quick succession -- is otherwise never reported
+    /// (#817). With content comparison a same-second change is caught by its
+    /// hash. The cost is one read of every watched file per tick, accepted
+    /// because this backend only runs on a machine whose native watcher is
+    /// already broken or forced off, the expansion excludes ignored trees
+    /// (#463/#617), and `GPY_WATCH_POLL_MS` raises the interval.
+    ///
+    /// Remaining poll limitation: a rewrite that leaves both the content and
+    /// the mtime second unchanged (a `HEAD` rewritten with the value it
+    /// already holds) is invisible to any stat/hash comparison; the periodic
+    /// reconcile (`RECONCILE_INTERVAL_SECS`) bounds it, and it changes no state.
     ///
     /// # Errors
     ///
@@ -789,8 +799,13 @@ impl FileSystemWatcher {
     ) -> Result<Box<dyn Watcher + Send>> {
         let tx_clone = event_tx.clone();
         let watcher = PollWatcher::new(
-            move |res: notify::Result<Event>| Self::forward_event(&tx_clone, res),
-            notify::Config::default().with_poll_interval(poll_interval),
+            move |res: notify::Result<Event>| match res {
+                Ok(event) if is_poll_directory_mtime_noise(&event) => {}
+                other => Self::forward_event(&tx_clone, other),
+            },
+            notify::Config::default()
+                .with_poll_interval(poll_interval)
+                .with_compare_contents(true),
         )
         .map_err(|e| Error::watcher(format!("Failed to create poll-fallback watcher: {e}")))?;
         Ok(Box::new(watcher))
@@ -2105,6 +2120,25 @@ fn is_directory_create(kind: EventKind, path: &Path) -> bool {
         EventKind::Create(CreateKind::Any | CreateKind::Other) => path.is_dir(),
         _ => false,
     }
+}
+
+/// Whether `event` is the poll backend's report that a directory's own mtime
+/// moved (#817).
+///
+/// `PollWatcher` stats directories as well as files, so every create or remove
+/// inside one also surfaces as `Modify(Metadata(WriteTime))` on the directory
+/// path. The native backends never report that: they emit only the child's
+/// event. Delivered as is, a write to a high-churn file inside a significant
+/// directory (`.git/rebase-merge/patch`) wakes the repository through the
+/// directory's own path. The child event carries the real change, so this one
+/// is dropped. Only a `Modify(Metadata(WriteTime))` is tested, so a file's
+/// edit -- which poll reports under the same kind -- never pays the stat.
+fn is_poll_directory_mtime_noise(event: &Event) -> bool {
+    matches!(
+        event.kind,
+        EventKind::Modify(ModifyKind::Metadata(MetadataKind::WriteTime))
+    ) && !event.paths.is_empty()
+        && event.paths.iter().all(|path| path.is_dir())
 }
 
 /// Result of attributing an event path to a repo.
@@ -4927,6 +4961,91 @@ mod tests {
             "the poll fallback must deliver edits to an existing worktree file, \
              not only file creations"
         );
+    }
+
+    /// Regression test for #817: the poll fallback must report a same-size
+    /// rewrite that lands in the same whole second as the previous write.
+    ///
+    /// notify's poll compares mtimes truncated to seconds and ignores size, so
+    /// a branch ref moved to another commit looked unchanged. The mtime is
+    /// pinned to one instant before and after each rewrite, making "same
+    /// second" deterministic instead of timing-dependent. The rewrite alternates
+    /// content so one lands after the baseline snapshot whatever the load.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the temp repo cannot be created or the watcher cannot arm.
+    #[test]
+    fn poll_fallback_detects_same_second_same_size_rewrite() {
+        let (mut watcher, repo, events) = real_repo_watcher(FallbackPolicy::ForcePoll {
+            poll_interval: Duration::from_millis(200),
+        });
+        let pinned = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let pin = |path: &Path, contents: &[u8]| {
+            std::fs::write(path, contents).expect("write ref file");
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .expect("open ref file")
+                .set_modified(pinned)
+                .expect("pin mtime");
+        };
+
+        let ref_file = repo.join("branch-ref");
+        pin(&ref_file, b"1111111111111111111111111111111111111111\n");
+        watcher.watch(&repo).expect("watch repo");
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut delivered = false;
+        let mut flip = false;
+        while Instant::now() < deadline {
+            flip = !flip;
+            let digit: &[u8] = if flip {
+                b"2222222222222222222222222222222222222222\n"
+            } else {
+                b"1111111111111111111111111111111111111111\n"
+            };
+            pin(&ref_file, digit);
+            if wait_for_any_event(&events, Duration::from_millis(500)) {
+                delivered = true;
+                break;
+            }
+        }
+        watcher.stop();
+        let _ = std::fs::remove_dir_all(&repo);
+
+        assert!(
+            delivered,
+            "a same-size rewrite within one mtime second must be delivered"
+        );
+    }
+
+    /// Regression test for #817: the poll backend's directory-mtime report is
+    /// noise, while a file's mtime report and every other kind are not.
+    ///
+    /// The end-to-end case is `rebase_high_churn_file_wakes_zero_times` in
+    /// `multi_repo_integration_tests`, run with `GPY_WATCH_FORCE_POLL=1`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the temp dir cannot be created.
+    #[test]
+    fn poll_directory_mtime_event_is_noise_but_file_edit_is_not() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let file = tmp.path().join("f");
+        std::fs::write(&file, b"x").expect("write file");
+        let mtime = EventKind::Modify(ModifyKind::Metadata(MetadataKind::WriteTime));
+
+        assert!(is_poll_directory_mtime_noise(
+            &Event::new(mtime).add_path(tmp.path().to_path_buf())
+        ));
+        assert!(!is_poll_directory_mtime_noise(
+            &Event::new(mtime).add_path(file)
+        ));
+        assert!(!is_poll_directory_mtime_noise(&Event::new(mtime)));
+        assert!(!is_poll_directory_mtime_noise(
+            &Event::new(EventKind::Create(CreateKind::Folder)).add_path(tmp.path().to_path_buf())
+        ));
     }
 
     /// Regression test for #687: unwatching an outer poll root keeps a nested root armed.
