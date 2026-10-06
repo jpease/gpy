@@ -484,6 +484,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   partially configured `[git_branch]`, `[git_status]`, `[directory]` or
   `[cmd_duration]` keeps the preset's other fields (git status icons, colours)
   instead of replacing them.
+- `gpy theme import` handles Starship character symbols with surrounding
+  whitespace (`[➜](bold green) `) instead of storing the markup as literal
+  text, and warns on symbols it cannot represent (#735).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

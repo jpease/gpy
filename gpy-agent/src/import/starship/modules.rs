@@ -4,6 +4,7 @@ use crate::config::LanguageTheme;
 use crate::config::types::{ColorSpec, DirectoryTruncationLength, DirectoryTruncationSymbol, Icon};
 use crate::import::starship::model::StarshipConfig;
 use crate::import::starship::{WarningKind, Warnings};
+use crate::template::ast::Node;
 use crate::theme::{
     CharacterTheme, ClockTheme, DirectoryTheme, DurationTheme, GitTheme, HostnameTheme,
     RecommendedDirectory, UsernameTheme,
@@ -590,29 +591,53 @@ pub fn translate_duration(table: &toml::value::Table, warnings: &mut Warnings) -
     }
 }
 
+/// A parsed character symbol: text, color token, and whether it is bold.
+type StyledSymbol = (String, Option<String>, bool);
+
 /// Extract the symbol text, color, and bold flag from a Starship styled symbol
-/// template such as `[❯](bold green)`.
+/// template such as `[❯](bold green)` or `[➜](bold green) `.
 ///
-/// Falls back to the raw string with no color and no bold when the template
-/// has no `[text](style)` shape.
-fn parse_styled_symbol(template: &str) -> (String, Option<String>, bool) {
-    if let Some(close_text) = template.find("](")
-        && let Some(open) = template.find('[')
-        && open < close_text
-        && template.ends_with(')')
-    {
-        let text = template
-            .get(open.saturating_add(1_usize)..close_text)
-            .unwrap_or("")
-            .to_owned();
-        let style = template
-            .get(close_text.saturating_add(2_usize)..template.len().saturating_sub(1_usize))
-            .unwrap_or("");
-        let color = first_color_token(style).map(str::to_owned);
-        let bold = attr_tokens(style).contains(&"bold");
-        return (text, color, bold);
+/// Built on the real template grammar. Accepted shapes are a bare literal
+/// (no color, not bold) and exactly one styled group of literal text with
+/// optional whitespace-only literals around it, which are kept in the symbol.
+/// Returns `None` for anything else (several groups, variables, conditionals,
+/// non-whitespace text outside the group, or a template that does not parse).
+fn parse_styled_symbol(template: &str) -> Option<StyledSymbol> {
+    let nodes = crate::template::parse::parse(template).ok()?;
+    let mut symbol = String::new();
+    let mut style_spec: Option<String> = None;
+    for node in &nodes {
+        match node {
+            Node::Literal(text) => {
+                if nodes.len() > 1_usize && !text.trim().is_empty() {
+                    return None;
+                }
+                symbol.push_str(text);
+            }
+            Node::Styled {
+                style_spec: spec,
+                children,
+            } => {
+                if style_spec.is_some() {
+                    return None;
+                }
+                style_spec = Some(spec.clone());
+                for child in children {
+                    let Node::Literal(text) = child else {
+                        return None;
+                    };
+                    symbol.push_str(text);
+                }
+            }
+            Node::Var(_) | Node::Conditional(_) => return None,
+        }
     }
-    (template.to_owned(), None, false)
+    let Some(spec) = style_spec else {
+        return Some((symbol, None, false));
+    };
+    let color = first_color_token(&spec).map(str::to_owned);
+    let bold = attr_tokens(&spec).contains(&"bold");
+    Some((symbol, color, bold))
 }
 
 /// Translate Starship's `character` module into a GPY character theme.
@@ -629,32 +654,44 @@ pub fn translate_character(table: &toml::value::Table, warnings: &mut Warnings) 
     let mut theme = CharacterTheme::default();
     let mut success_bold = true;
     if let Some(raw) = table.get("success_symbol").and_then(toml::Value::as_str) {
-        let (symbol, color, bold) = parse_styled_symbol(raw);
-        theme.success_symbol = symbol;
-        success_bold = bold;
-        if let Some(color_name) = color {
-            match ColorSpec::new(&color_name) {
-                Ok(spec) => theme.success_color = spec,
-                Err(_) => warnings.push(
-                    WarningKind::InvalidColor,
-                    format!("character success color '{color_name}' is invalid; kept default"),
-                ),
+        if let Some((symbol, color, bold)) = parse_styled_symbol(raw) {
+            theme.success_symbol = symbol;
+            success_bold = bold;
+            if let Some(color_name) = color {
+                match ColorSpec::new(&color_name) {
+                    Ok(spec) => theme.success_color = spec,
+                    Err(_) => warnings.push(
+                        WarningKind::InvalidColor,
+                        format!("character success color '{color_name}' is invalid; kept default"),
+                    ),
+                }
             }
+        } else {
+            warnings.push(
+                WarningKind::LossyMapping,
+                format!("character: success_symbol '{raw}' cannot be represented; kept default"),
+            );
         }
     }
     let mut error_bold = true;
     if let Some(raw) = table.get("error_symbol").and_then(toml::Value::as_str) {
-        let (symbol, color, bold) = parse_styled_symbol(raw);
-        theme.error_symbol = symbol;
-        error_bold = bold;
-        if let Some(color_name) = color {
-            match ColorSpec::new(&color_name) {
-                Ok(spec) => theme.error_color = spec,
-                Err(_) => warnings.push(
-                    WarningKind::InvalidColor,
-                    format!("character error color '{color_name}' is invalid; kept default"),
-                ),
+        if let Some((symbol, color, bold)) = parse_styled_symbol(raw) {
+            theme.error_symbol = symbol;
+            error_bold = bold;
+            if let Some(color_name) = color {
+                match ColorSpec::new(&color_name) {
+                    Ok(spec) => theme.error_color = spec,
+                    Err(_) => warnings.push(
+                        WarningKind::InvalidColor,
+                        format!("character error color '{color_name}' is invalid; kept default"),
+                    ),
+                }
             }
+        } else {
+            warnings.push(
+                WarningKind::LossyMapping,
+                format!("character: error_symbol '{raw}' cannot be represented; kept default"),
+            );
         }
     }
     if success_bold != error_bold {
@@ -1405,6 +1442,77 @@ mod tests {
         assert_eq!(theme.success_color.as_str(), "green");
         assert_eq!(theme.error_color.as_str(), "red");
         assert_eq!(theme.format.as_deref(), Some("[$symbol](bold $style) "));
+    }
+
+    #[test]
+    fn character_symbol_with_trailing_space_is_parsed() {
+        use super::translate_character;
+        let mut w = Warnings::new();
+        let theme = translate_character(&table("success_symbol = \"[➜](bold green) \"\n"), &mut w);
+        assert_eq!(theme.success_symbol, "➜ ");
+        assert_eq!(theme.success_color.as_str(), "green");
+        assert_eq!(theme.format.as_deref(), Some("[$symbol](bold $style) "));
+        assert!(w.is_empty());
+    }
+
+    #[test]
+    fn character_multi_group_symbol_warns_lossy() {
+        use super::translate_character;
+        use crate::import::starship::WarningKind;
+        use crate::theme::CharacterTheme;
+        let mut w = Warnings::new();
+        let theme = translate_character(
+            &table("success_symbol = \"[❯](bold green)[❯](bold yellow)\"\n"),
+            &mut w,
+        );
+        assert_eq!(
+            theme.success_symbol,
+            CharacterTheme::default().success_symbol
+        );
+        let lossy = w
+            .iter()
+            .filter(|warning| warning.kind == WarningKind::LossyMapping)
+            .count();
+        assert_eq!(lossy, 1_usize);
+        assert!(
+            w.iter()
+                .all(|warning| warning.kind != WarningKind::InvalidColor)
+        );
+        assert!(
+            w.iter()
+                .any(|warning| warning.message.contains("[❯](bold green)[❯](bold yellow)"))
+        );
+    }
+
+    #[test]
+    fn character_bare_symbol_has_no_color_and_is_not_bold() {
+        use super::translate_character;
+        let mut w = Warnings::new();
+        let theme = translate_character(
+            &table("success_symbol = \"> \"\nerror_symbol = \"x \"\n"),
+            &mut w,
+        );
+        assert_eq!(theme.success_symbol, "> ");
+        assert_eq!(theme.format.as_deref(), Some("[$symbol]($style) "));
+    }
+
+    #[test]
+    fn character_symbol_with_leading_and_trailing_space_is_parsed() {
+        use super::translate_character;
+        let mut w = Warnings::new();
+        let theme = translate_character(&table("error_symbol = \" [✗](bold red)  \"\n"), &mut w);
+        assert_eq!(theme.error_symbol, " ✗  ");
+        assert_eq!(theme.error_color.as_str(), "red");
+    }
+
+    #[test]
+    fn character_symbol_with_variable_warns_lossy() {
+        use super::translate_character;
+        use crate::theme::CharacterTheme;
+        let mut w = Warnings::new();
+        let theme = translate_character(&table("error_symbol = \"[$x](bold red)\"\n"), &mut w);
+        assert_eq!(theme.error_symbol, CharacterTheme::default().error_symbol);
+        assert_eq!(w.len(), 1_usize);
     }
 
     #[test]
