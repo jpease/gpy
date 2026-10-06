@@ -121,19 +121,19 @@ Customize the installation behavior:
 
 - **`GPY_SHELL`**: Override shell detection
   ```bash
-  GPY_SHELL=fish curl -sS https://raw.githubusercontent.com/jpease/gpy/main/install-oneline.sh | sh
+  curl -sS https://raw.githubusercontent.com/jpease/gpy/main/install-oneline.sh | GPY_SHELL=fish sh
   ```
 
 - **`GPY_VERSION`**: Install a specific version
   ```bash
-  GPY_VERSION=v0.1.0 curl -sS https://raw.githubusercontent.com/jpease/gpy/main/install-oneline.sh | sh
+  curl -sS https://raw.githubusercontent.com/jpease/gpy/main/install-oneline.sh | GPY_VERSION=v0.1.0 sh
   ```
 
 - **`GPY_NERD_FONT`**: Force the icon style instead of auto-detecting (see
   [Icons and Nerd Fonts](#icons-and-nerd-fonts)). Accepts `1`/`nerd`, `0`/`none`,
   or `unknown`.
   ```bash
-  GPY_NERD_FONT=none curl -sS https://raw.githubusercontent.com/jpease/gpy/main/install-oneline.sh | sh
+  curl -sS https://raw.githubusercontent.com/jpease/gpy/main/install-oneline.sh | GPY_NERD_FONT=none sh
   ```
 
 ### After Installation
