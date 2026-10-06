@@ -123,6 +123,16 @@ impl WatchSet {
         Some(self.reconcile(path))
     }
 
+    /// The OS watches currently armed, by path. Test-only observability of
+    /// what the backend holds (#718).
+    #[cfg(test)]
+    pub fn armed_paths(&self) -> BTreeMap<PathBuf, WatchMode> {
+        self.entries
+            .iter()
+            .filter_map(|(path, entry)| Some((path.clone(), entry.armed?)))
+            .collect()
+    }
+
     /// Record that arming `path` on the backend failed, so the set no longer
     /// believes it armed. A later [`WatchSet::release`] or
     /// [`WatchSet::acquire`] of the path then re-adds whatever mode is still

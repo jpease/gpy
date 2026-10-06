@@ -459,6 +459,14 @@ fn parse_millis(raw: Option<&str>) -> Option<u64> {
     raw?.trim().parse::<u64>().ok()
 }
 
+/// Registration owner counts and the armed OS watches, as returned by
+/// [`FileSystemWatcher::held_watches`].
+#[cfg(test)]
+pub(crate) type HeldWatches = (
+    BTreeMap<(PathBuf, WatchMode), u32>,
+    BTreeMap<PathBuf, WatchMode>,
+);
+
 /// File system watcher using notify crate
 pub struct FileSystemWatcher {
     backend: Arc<Mutex<WatcherBackend>>,
@@ -1082,6 +1090,24 @@ impl FileSystemWatcher {
         self.backend
             .lock()
             .is_ok_and(|guard| guard.covers(path.as_ref()))
+    }
+
+    /// Snapshot of what this watcher holds, for tests (#718): every logical
+    /// registration with its owner count, and the OS watches armed beneath
+    /// them.
+    #[cfg(test)]
+    pub(crate) fn held_watches(&self) -> HeldWatches {
+        self.backend.lock().map_or_else(
+            |_| (BTreeMap::new(), BTreeMap::new()),
+            |guard| {
+                let owners = guard
+                    .registrations
+                    .iter()
+                    .map(|(key, registration)| (key.clone(), registration.owners))
+                    .collect();
+                (owners, guard.os.armed_paths())
+            },
+        )
     }
 
     /// Release one recursive [`FileSystemWatcher::watch`] of `path`.

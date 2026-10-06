@@ -293,23 +293,51 @@ impl MultiRepoWatcher {
             .ops_lock
             .lock()
             .map_err(|_| Error::watcher("Failed to lock watcher operations"))?;
-        self.register_client_locked(pid, cwd)
+        self.attach_pid_to(pid, cwd)
     }
 
+    /// Attach `pid` to the repository containing `cwd` and detach it from every
+    /// other repository, so afterwards it belongs to exactly one repository
+    /// (or none when `cwd` is outside any repository). Caller holds `ops_lock`.
+    ///
+    /// The target is attached (and armed, if new) *before* the others are
+    /// released, so a repository the pid stays in is never torn down and
+    /// re-armed, and a repository only the pid used is released once the new
+    /// one is watching. If attaching fails the pid is still detached from every
+    /// other repository and the attach error is returned.
+    ///
     /// # Errors
     ///
-    /// Returns an error if the repository cannot be discovered or watched.
-    fn register_client_locked(&self, pid: u32, cwd: &Path) -> Result<()> {
+    /// Returns an error if the repository cannot be discovered or watched, or
+    /// if the stale repositories cannot be released.
+    fn attach_pid_to(&self, pid: u32, cwd: &Path) -> Result<()> {
         debug_log!(
             "watcher",
-            "register_client: pid={}, cwd={}",
+            "attach_pid_to: pid={}, cwd={}",
             pid,
             cwd.display()
         );
 
+        let attached = self.attach_to_repo_containing(pid, cwd);
+        // On failure `keep` is `None`, so the pid also leaves the repository
+        // it was already in if re-arming that one is what failed.
+        let keep = attached.as_ref().ok().and_then(Option::as_deref);
+        let detached = self.detach_pid_except(pid, keep);
+        attached?;
+        detached
+    }
+
+    /// Attach `pid` to the repository containing `cwd`, arming it if it is not
+    /// yet watched. Returns its root, or `None` when `cwd` is outside any
+    /// repository.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the repository cannot be discovered or watched.
+    fn attach_to_repo_containing(&self, pid: u32, cwd: &Path) -> Result<Option<PathBuf>> {
         let Some(git_root) = Self::find_git_root(cwd) else {
             debug_log!("watcher", "No git root found for {}", cwd.display());
-            return Ok(());
+            return Ok(None);
         };
 
         let git_dir = Self::resolve_gitdir(&git_root)?;
@@ -324,7 +352,7 @@ impl MultiRepoWatcher {
         }
 
         if self.attach_or_rearm_existing_repo(pid, &git_root, &git_dir, watch_worktree)? {
-            return Ok(());
+            return Ok(Some(git_root));
         }
 
         debug_log!(
@@ -337,7 +365,8 @@ impl MultiRepoWatcher {
         // Record the watches that actually took effect: a failed recursive
         // worktree watch degrades to .git-only rather than failing registration.
         let repo_watches = self.start_repo_watches(&git_root, &git_dir, watch_worktree)?;
-        self.track_new_repo(pid, git_root, git_dir, repo_watches)
+        self.track_new_repo(pid, git_root.clone(), git_dir, repo_watches)?;
+        Ok(Some(git_root))
     }
 
     /// Remove a client and stop watching the repository if no clients remain.
@@ -350,13 +379,16 @@ impl MultiRepoWatcher {
             .ops_lock
             .lock()
             .map_err(|_| Error::watcher("Failed to lock watcher operations"))?;
-        self.unregister_client_locked(pid)
+        self.detach_pid_except(pid, None)
     }
 
+    /// Remove `pid` from every tracked repository other than `keep`, tearing
+    /// down only the repositories whose client set becomes empty.
+    ///
     /// # Errors
     ///
     /// Returns an error when watcher state cannot be updated.
-    fn unregister_client_locked(&self, pid: u32) -> Result<()> {
+    fn detach_pid_except(&self, pid: u32, keep: Option<&Path>) -> Result<()> {
         let repos_to_remove = {
             let mut repos_to_remove = Vec::new();
             {
@@ -366,6 +398,9 @@ impl MultiRepoWatcher {
                     .map_err(|_| Error::watcher("Failed to lock watched repos"))?;
 
                 for repo in repos.values_mut() {
+                    if keep.is_some_and(|kept| kept == repo.git_root) {
+                        continue;
+                    }
                     if repo.clients.remove(&pid) && repo.clients.is_empty() {
                         repos_to_remove.push(repo.clone());
                     }
@@ -374,10 +409,20 @@ impl MultiRepoWatcher {
             repos_to_remove
         };
 
+        self.tear_down_repos(&repos_to_remove)
+    }
+
+    /// Stop watching `repos` (each already out of clients) and drop every
+    /// piece of state tied to them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when watcher state cannot be updated.
+    fn tear_down_repos(&self, repos_to_remove: &[WatchedRepo]) -> Result<()> {
         if let Ok(mut watcher) = self.watcher.lock()
-            && let Some(ref mut w) = *watcher
+            && let Some(w) = watcher.as_mut()
         {
-            for repo in &repos_to_remove {
+            for repo in repos_to_remove {
                 for path in &repo.armed {
                     Self::unwatch_logged(w, path, WatchMode::Recursive);
                 }
@@ -389,7 +434,7 @@ impl MultiRepoWatcher {
                 .watched_repos
                 .lock()
                 .map_err(|_| Error::watcher("Failed to lock watched repos"))?;
-            for repo in &repos_to_remove {
+            for repo in repos_to_remove {
                 repos.remove(&repo.git_root);
             }
         }
@@ -399,7 +444,7 @@ impl MultiRepoWatcher {
 
         // Mirror the removal into the external-gitdir map (#428). Harmless for
         // ordinary repos, whose gitdirs were never inserted.
-        for repo in &repos_to_remove {
+        for repo in repos_to_remove {
             self.registry.unregister_external_gitdir(&repo.git_dir);
             // Reference-counted: only the last dependent worktree actually
             // drops the shared common-dir watch (#468).
@@ -409,18 +454,20 @@ impl MultiRepoWatcher {
         Ok(())
     }
 
-    /// Update the directory tracked for a client.
+    /// Move a client to `new_cwd`: attach it to the repository containing
+    /// `new_cwd` and detach it from every other one. A move within the
+    /// repository the client already belongs to touches no OS watch.
     ///
     /// # Errors
     ///
-    /// Propagates errors from `unregister_client`/`register_client` operations.
+    /// Returns an error if the new repository cannot be discovered or
+    /// watched; the client is then attached to no repository.
     pub fn update_client(&self, pid: u32, new_cwd: &Path) -> Result<()> {
         let _ops_guard = self
             .ops_lock
             .lock()
             .map_err(|_| Error::watcher("Failed to lock watcher operations"))?;
-        self.unregister_client_locked(pid)?;
-        self.register_client_locked(pid, new_cwd)
+        self.attach_pid_to(pid, new_cwd)
     }
 
     /// Stop watching all repositories and clear state.
@@ -2455,5 +2502,449 @@ mod tests {
             .registry()
             .unregister_common_gitdir(&common, &work_root);
         first.registry().unregister_config_path(&config_path);
+    }
+
+    /// The backend's unwatch log for `watcher`.
+    fn unwatch_log(watcher: &MultiRepoWatcher) -> Vec<PathBuf> {
+        watcher
+            .watcher
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("coordinator present")
+            .unwatch_calls()
+    }
+
+    /// Two plain repositories (bare `.git` directories) plus a `sub` directory
+    /// in the first, canonicalized.
+    fn two_plain_repos() -> (TempDir, PathBuf, PathBuf) {
+        let temp_dir = TempDir::new().unwrap();
+        let base = std::fs::canonicalize(temp_dir.path()).unwrap();
+        for name in ["a", "b"] {
+            std::fs::create_dir_all(base.join(name).join(".git")).unwrap();
+        }
+        std::fs::create_dir_all(base.join("a").join("sub")).unwrap();
+        let (a, b) = (base.join("a"), base.join("b"));
+        (temp_dir, a, b)
+    }
+
+    fn plain_watcher() -> MultiRepoWatcher {
+        MultiRepoWatcher::builder()
+            .registry(test_registry(true))
+            .callback(Box::new(|_event: DebouncedEvent| {}))
+            .build()
+            .unwrap()
+    }
+
+    /// #718: a `cd` inside the repository the pid is already attached to must
+    /// not touch the OS watches or the tracked entry.
+    #[test]
+    fn update_client_within_same_repo_does_not_rearm() {
+        let (_temp, repo, _other) = two_plain_repos();
+        let watcher = plain_watcher();
+        watcher.register_client(1, &repo).unwrap();
+        let before = watcher
+            .watched_repos
+            .lock()
+            .unwrap()
+            .get(&repo)
+            .unwrap()
+            .clone();
+
+        watcher.update_client(1, &repo.join("sub")).unwrap();
+
+        assert!(
+            unwatch_log(&watcher).is_empty(),
+            "an intra-repo cd must not unwatch anything, got {:?}",
+            unwatch_log(&watcher)
+        );
+        let after = watcher
+            .watched_repos
+            .lock()
+            .unwrap()
+            .get(&repo)
+            .unwrap()
+            .clone();
+        assert_eq!(after.armed, before.armed);
+        assert_eq!(after.git_dir_id, before.git_dir_id);
+        assert_eq!(after.clients, before.clients);
+        assert_eq!(tracked_clients(&watcher, &repo), HashSet::from([1]));
+    }
+
+    /// #718: `register` for a pid already attached elsewhere detaches it from
+    /// the old repository, tearing it down when it was the last client.
+    #[test]
+    fn register_client_detaches_pid_from_previous_repo() {
+        let (_temp, a, b) = two_plain_repos();
+        let watcher = plain_watcher();
+        watcher.register_client(1, &a).unwrap();
+        let a_armed = watcher
+            .watched_repos
+            .lock()
+            .unwrap()
+            .get(&a)
+            .unwrap()
+            .armed
+            .clone();
+
+        watcher.register_client(1, &b).unwrap();
+
+        assert!(
+            !watcher.watched_repos.lock().unwrap().contains_key(&a),
+            "the old repository must be released"
+        );
+        assert_eq!(unwatch_log(&watcher), a_armed);
+        assert_eq!(tracked_clients(&watcher, &b), HashSet::from([1]));
+    }
+
+    /// #718: moving one pid away from a repository other pids still use must
+    /// leave that repository, and its watches, alone.
+    #[test]
+    fn update_client_to_other_repo_keeps_shared_repo() {
+        let (_temp, a, b) = two_plain_repos();
+        let watcher = plain_watcher();
+        watcher.register_client(1, &a).unwrap();
+        watcher.register_client(2, &a).unwrap();
+
+        watcher.update_client(1, &b).unwrap();
+
+        assert_eq!(tracked_clients(&watcher, &a), HashSet::from([2]));
+        assert_eq!(tracked_clients(&watcher, &b), HashSet::from([1]));
+        assert!(
+            !unwatch_log(&watcher).contains(&a),
+            "a still has a client, its watch must stay: {:?}",
+            unwatch_log(&watcher)
+        );
+    }
+
+    /// #718 error semantics: a failed arm of the target still detaches the pid
+    /// from the repository it was attached to, leaving it attached nowhere.
+    #[test]
+    fn update_client_failed_arm_still_detaches_from_previous_repo() {
+        let (_temp, a, b) = two_plain_repos();
+        let fault_root = b.clone();
+        let watcher = MultiRepoWatcher::builder()
+            .registry(test_registry(true))
+            .callback(Box::new(|_event: DebouncedEvent| {}))
+            .watch_fault(Arc::new(move |path: &Path| {
+                path.starts_with(&fault_root)
+                    .then(|| Error::watcher("injected watch failure"))
+            }))
+            .build()
+            .unwrap();
+        watcher.register_client(1, &a).unwrap();
+
+        assert!(watcher.update_client(1, &b).is_err());
+
+        assert!(watcher.watched_repos.lock().unwrap().is_empty());
+        assert_eq!(unwatch_log(&watcher), vec![a]);
+    }
+
+    // ---- Watch-set class test (#718, #687) --------------------------------
+    //
+    // Randomized register/unregister/update sequences over a fixture with
+    // overlapping repositories, checked after every step against a model that
+    // is computed from the fixture alone (never from the watcher's own state).
+
+    /// One repository of the fixture.
+    struct FixtureRepo {
+        root: PathBuf,
+        git_dir: PathBuf,
+        /// A linked worktree: its common directory is shared with `main`.
+        linked: bool,
+    }
+
+    struct Fixture {
+        _temp: TempDir,
+        repos: Vec<FixtureRepo>,
+        /// Directories a pid can be in, with the index of the repository that
+        /// owns each (`None` outside any repository).
+        cwds: Vec<(PathBuf, Option<usize>)>,
+        /// `main`'s `.git`: the common directory of both linked worktrees.
+        common: PathBuf,
+    }
+
+    impl Fixture {
+        fn root_of(&self, index: usize) -> &Path {
+            &self.repos.get(index).expect("repo index in range").root
+        }
+    }
+
+    /// A set of `(path, mode)` OS watches.
+    type WatchSpec = std::collections::BTreeSet<(PathBuf, WatchMode)>;
+
+    /// The overlapping-repository fixture.
+    ///
+    /// `main` (with a nested repo, a submodule-shaped repo with an external
+    /// gitdir, and two linked worktrees sharing its common dir), `other`, and
+    /// a plain directory outside any repository. No `git` process needed:
+    /// the watcher only reads `.git` entries and pointer files.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one flat table of fixture directories reads better split nowhere"
+    )]
+    fn build_fixture() -> Fixture {
+        let temp = TempDir::new().unwrap();
+        let base = std::fs::canonicalize(temp.path()).unwrap();
+        let mk = |rel: &str| {
+            let path = base.join(rel);
+            std::fs::create_dir_all(&path).unwrap();
+            path
+        };
+        let main = mk("main");
+        let common = mk("main/.git");
+        mk("main/.git/refs");
+        mk("main/src");
+        let libs = mk("main/libs");
+        let sub_admin = mk("main/.git/modules/sub");
+        let sub = mk("main/libs/sub");
+        std::fs::write(
+            sub.join(".git"),
+            format!("gitdir: {}\n", sub_admin.display()),
+        )
+        .unwrap();
+        let nested = mk("main/nested");
+        mk("main/nested/.git");
+        mk("main/nested/src");
+        let mut linked = Vec::new();
+        for name in ["wt", "wt2"] {
+            let admin = mk(&format!("main/.git/worktrees/{name}"));
+            std::fs::write(admin.join("commondir"), "../..\n").unwrap();
+            let root = mk(name);
+            mk(&format!("{name}/src"));
+            std::fs::write(root.join(".git"), format!("gitdir: {}\n", admin.display())).unwrap();
+            linked.push((root, admin));
+        }
+        let other = mk("other");
+        mk("other/.git");
+        mk("other/deep");
+        let plain = mk("plain");
+
+        let mut repos = vec![
+            FixtureRepo {
+                root: main.clone(),
+                git_dir: common.clone(),
+                linked: false,
+            },
+            FixtureRepo {
+                root: nested.clone(),
+                git_dir: nested.join(".git"),
+                linked: false,
+            },
+            FixtureRepo {
+                root: sub.clone(),
+                git_dir: sub_admin,
+                linked: false,
+            },
+        ];
+        for (root, admin) in &linked {
+            repos.push(FixtureRepo {
+                root: root.clone(),
+                git_dir: admin.clone(),
+                linked: true,
+            });
+        }
+        repos.push(FixtureRepo {
+            root: other.clone(),
+            git_dir: other.join(".git"),
+            linked: false,
+        });
+
+        let wt = linked.first().unwrap().0.clone();
+        let wt2 = linked.get(1).expect("two linked worktrees").0.clone();
+        let cwds = vec![
+            (main.clone(), Some(0)),
+            (main.join("src"), Some(0)),
+            (libs, Some(0)),
+            (nested.clone(), Some(1)),
+            (nested.join("src"), Some(1)),
+            (sub, Some(2)),
+            (wt.clone(), Some(3)),
+            (wt.join("src"), Some(3)),
+            (wt2, Some(4)),
+            (other.clone(), Some(5)),
+            (other.join("deep"), Some(5)),
+            (plain, None),
+        ];
+        Fixture {
+            _temp: temp,
+            repos,
+            cwds,
+            common,
+        }
+    }
+
+    /// The OS watches the live repositories need: `(required, optional)`.
+    ///
+    /// Optional ones are the linked worktrees' shared common-dir watches,
+    /// which are skipped when the main checkout's recursive watch already
+    /// covers them, so their presence depends on arrival order.
+    fn needed_watches(
+        fx: &Fixture,
+        live: &std::collections::BTreeSet<usize>,
+    ) -> (WatchSpec, WatchSpec) {
+        let mut required = std::collections::BTreeSet::new();
+        let mut optional = std::collections::BTreeSet::new();
+        for repo in live.iter().filter_map(|index| fx.repos.get(*index)) {
+            if !repo.git_dir.starts_with(&repo.root) {
+                required.insert((repo.git_dir.clone(), WatchMode::Recursive));
+            }
+            required.insert((repo.root.clone(), WatchMode::Recursive));
+            if repo.linked {
+                optional.insert((fx.common.clone(), WatchMode::Shallow));
+                optional.insert((fx.common.join("refs"), WatchMode::Recursive));
+            }
+        }
+        (required, optional)
+    }
+
+    fn held_watches_of(watcher: &MultiRepoWatcher) -> crate::watcher::filesystem::HeldWatches {
+        watcher
+            .watcher
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("coordinator present")
+            .held_watches()
+    }
+
+    /// Assert the tracked repositories and the held OS watches equal what the
+    /// model says the remaining clients need.
+    fn assert_matches_model(
+        watcher: &MultiRepoWatcher,
+        fx: &Fixture,
+        model: &std::collections::BTreeMap<u32, Option<usize>>,
+        trace: &[(u8, u32, usize)],
+    ) {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        // (a) tracked repos == repos with >= 1 modelled client, same clients.
+        let mut expected: BTreeMap<PathBuf, BTreeSet<u32>> = BTreeMap::new();
+        let mut live = BTreeSet::new();
+        for (pid, repo) in model {
+            if let Some(index) = repo {
+                live.insert(*index);
+                let root = fx.root_of(*index).to_path_buf();
+                expected.entry(root).or_default().insert(*pid);
+            }
+        }
+        let tracked: BTreeMap<PathBuf, BTreeSet<u32>> = watcher
+            .watched_repos
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(root, repo)| (root.clone(), repo.clients.iter().copied().collect()))
+            .collect();
+        assert_eq!(tracked, expected, "tracked repos/clients after {trace:?}");
+
+        // (b) the held OS watches are exactly what the live repos need.
+        let (owners, armed) = held_watches_of(watcher);
+        let held: BTreeSet<(PathBuf, WatchMode)> = owners.keys().cloned().collect();
+        let armed_pairs: BTreeSet<(PathBuf, WatchMode)> = armed.into_iter().collect();
+        assert_eq!(
+            armed_pairs, held,
+            "OS watch set vs registrations after {trace:?}"
+        );
+        assert!(
+            owners.values().all(|count| *count == 1),
+            "every watch has exactly one owner: {owners:?} after {trace:?}"
+        );
+        let (required, optional) = needed_watches(fx, &live);
+        let missing: Vec<_> = required.difference(&held).collect();
+        assert!(
+            missing.is_empty(),
+            "missing watches {missing:?} after {trace:?}"
+        );
+        let leaked: Vec<_> = held
+            .iter()
+            .filter(|watch| !required.contains(*watch) && !optional.contains(*watch))
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "leaked watches {leaked:?} after {trace:?}"
+        );
+        for (path, mode) in &optional {
+            let covered = held.iter().any(|(held_path, held_mode)| {
+                path.starts_with(held_path)
+                    && (*held_mode == WatchMode::Recursive || held_path == path)
+                    && (*mode == WatchMode::Shallow || *held_mode == WatchMode::Recursive)
+            });
+            assert!(covered, "common watch {path:?} uncovered after {trace:?}");
+        }
+    }
+
+    /// Held watches, unwatch-log length, and the tracked `armed`/`git_dir_id`/
+    /// `clients` of one repository.
+    type RearmSnapshot = (
+        crate::watcher::filesystem::HeldWatches,
+        usize,
+        Vec<PathBuf>,
+        DirIdentity,
+        HashSet<u32>,
+    );
+
+    /// What a same-repository re-attach must leave untouched.
+    fn rearm_snapshot(watcher: &MultiRepoWatcher, root: &Path) -> RearmSnapshot {
+        let repo = watcher
+            .watched_repos
+            .lock()
+            .unwrap()
+            .get(root)
+            .unwrap()
+            .clone();
+        (
+            held_watches_of(watcher),
+            unwatch_log(watcher).len(),
+            repo.armed,
+            repo.git_dir_id,
+            repo.clients,
+        )
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig {
+            cases: 48,
+            failure_persistence: None,
+            ..proptest::prelude::ProptestConfig::default()
+        })]
+
+        /// Random sequences of register / update / unregister for a few pids
+        /// leave the watcher tracking, and watching, exactly what the
+        /// remaining clients need (#718, #687), and an attach to the repo a
+        /// pid already belongs to performs no backend watch operation.
+        #[test]
+        fn watch_set_matches_client_model(
+            steps in proptest::collection::vec((0_u8..3_u8, 1_u32..=3_u32, 0_usize..12_usize), 1..=30),
+        ) {
+            let fx = build_fixture();
+            let watcher = plain_watcher();
+            let mut model: std::collections::BTreeMap<u32, Option<usize>> =
+                std::collections::BTreeMap::new();
+            for (done, (kind, pid, cwd_index)) in steps.iter().copied().enumerate() {
+                let trace = steps.get(..=done).expect("in range");
+                let (cwd, target) = fx.cwds.get(cwd_index).expect("cwd index in range");
+                if kind == 2 {
+                    watcher.unregister_client(pid).unwrap();
+                    model.insert(pid, None);
+                } else {
+                    let same_repo = target.is_some() && model.get(&pid) == Some(target);
+                    let snapshot_before = same_repo.then(|| {
+                        rearm_snapshot(&watcher, fx.root_of(target.unwrap()))
+                    });
+                    if kind == 0 {
+                        watcher.register_client(pid, cwd).unwrap();
+                    } else {
+                        watcher.update_client(pid, cwd).unwrap();
+                    }
+                    model.insert(pid, *target);
+                    if let Some(snapshot) = snapshot_before {
+                        let after =
+                            rearm_snapshot(&watcher, fx.root_of(target.unwrap()));
+                        assert_eq!(snapshot, after, "same-repo attach touched watches after {trace:?}");
+                    }
+                }
+                assert_matches_model(&watcher, &fx, &model, trace);
+            }
+        }
     }
 }
