@@ -1323,8 +1323,9 @@ fn classify_event(path: &Path, registry: &WatchRegistry) -> Option<FileEvent> {
     // Theme files are often written via temp-file + rename workflows where
     // intermediate notifications may target the directory or a non-.toml temp file.
     // Treat any change under gpy/themes as a theme invalidation signal.
-    if path_has_consecutive_components(path, "gpy", "themes")
-        || path_ends_with_components(path, "gpy", "themes")
+    if !is_in_git_dir
+        && (path_has_consecutive_components(path, "gpy", "themes")
+            || path_ends_with_components(path, "gpy", "themes"))
     {
         return Some(FileEvent::Theme {
             path: path.to_path_buf(),
@@ -2291,6 +2292,28 @@ mod tests {
         assert!(
             matches!(classify_event(&themes_dir), Some(FileEvent::Theme { .. })),
             "a gpy/themes path must still classify as a Theme event regardless of platform separator"
+        );
+    }
+
+    /// #777: git metadata inside a repository rooted at (or tracking files
+    /// under) `gpy/themes` must classify as `Git`, not `Theme`; non-`.git`
+    /// theme paths keep classifying as `Theme`.
+    #[test]
+    fn git_metadata_under_gpy_themes_classifies_as_git() {
+        for leaf in ["HEAD", "index", "packed-refs", "refs/heads/main"] {
+            let path = Path::new("/x/gpy/themes/.git").join(leaf);
+            assert!(
+                matches!(classify_event(&path), Some(FileEvent::Git { .. })),
+                "{} must classify as Git",
+                path.display()
+            );
+        }
+        assert!(
+            matches!(
+                classify_event(Path::new("/x/gpy/themes/mine.toml")),
+                Some(FileEvent::Theme { .. })
+            ),
+            "a plain theme file must still classify as Theme"
         );
     }
 
