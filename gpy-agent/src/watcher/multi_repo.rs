@@ -1252,6 +1252,26 @@ impl MultiRepoWatcher {
         self.watched_repos.lock().map_or(0, |repos| repos.len())
     }
 
+    /// Every client PID the watcher currently tracks: the union of the client
+    /// sets of all watched repositories (sorted, deduplicated).
+    ///
+    /// Lets the agent reconcile the watcher against the client registry (#782).
+    #[must_use]
+    pub fn client_pids(&self) -> Vec<u32> {
+        let mut pids: Vec<u32> = self.watched_repos.lock().map_or_else(
+            |_| Vec::new(),
+            |repos| {
+                repos
+                    .values()
+                    .flat_map(|repo| repo.clients.iter().copied())
+                    .collect()
+            },
+        );
+        pids.sort_unstable();
+        pids.dedup();
+        pids
+    }
+
     /// Snapshot of the git roots currently being watched.
     ///
     /// Used by the periodic reconcile to recompute status for each active repo.
