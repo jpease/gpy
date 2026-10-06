@@ -496,6 +496,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - Zsh and Bash wait up to `GPY_IPC_TIMEOUT_MS` for agent replies instead of
   a hard 100 ms, and zsh no longer forks a blocking `gpy-agent oneshot` when a
   connected agent replies late (#757).
+- Bash and Zsh no longer treat an agent error reply to `register` as a
+  successful registration (#758), so the next prompt retries.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
