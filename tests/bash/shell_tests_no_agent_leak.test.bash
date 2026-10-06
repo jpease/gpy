@@ -98,4 +98,30 @@ done
 if [[ "$failures" -ne 0 ]]; then
     exit 1
 fi
+
+# stop_shell_test_agents must find an agent that bound under XDG_RUNTIME_DIR
+# (the Linux default for CI runners and systemd sessions, #824). run_shell_tests
+# pins XDG_RUNTIME_DIR to <root>/run; start an agent exactly so and require the
+# helper to stop it.
+eval "$(awk '/^stop_shell_test_agents\(\)/ {on=1} on {print} on && /^}/ {exit}' "$ROOT/scripts/quality-check.sh")"
+xroot="$scratch/xdg"
+mkdir -p "$xroot/cache" "$xroot/config" "$xroot/run" "$scratch/xhome"
+chmod 700 "$xroot/run"
+(env -i HOME="$scratch/xhome" XDG_RUNTIME_DIR="$xroot/run" XDG_CACHE_HOME="$xroot/cache" \
+    XDG_CONFIG_HOME="$xroot/config" TERM=dumb "$target_dir/gpy-agent" start >/dev/null 2>&1) || true
+for _ in $(seq 1 50); do
+    [[ -S "$xroot/run/gpy/gpy.sock" ]] && break
+    sleep 0.1
+done
+if [[ ! -S "$xroot/run/gpy/gpy.sock" ]]; then
+    echo "FAIL: test agent did not bind $xroot/run/gpy/gpy.sock"
+    exit 1
+fi
+stop_shell_test_agents "$xroot" "$target_dir"
+sleep 0.3
+if [[ -n "$(lsof -t "$xroot/run/gpy/gpy.sock" 2>/dev/null)" ]]; then
+    echo "FAIL: stop_shell_test_agents left an agent bound under XDG_RUNTIME_DIR"
+    exit 1
+fi
+echo "✓ stop_shell_test_agents stops an agent under XDG_RUNTIME_DIR"
 echo "PASS"
