@@ -1119,15 +1119,16 @@ function __gpy_sync_workspace --description 'Report current workspace to the age
     # This ensures we detect if the agent restarted and lost our registration
     set -l response (__gpy_request workspace $cwd)
 
-    # Check if response contains an error (agent may have restarted and lost registration)
-    if string match -q '*"error"*' -- $response; or string match -q '*not registered*' -- $response
-        # Workspace request failed - agent may have restarted, try re-registering
+    # Only a lost registration (agent restarted) warrants re-registering. Any
+    # other error (path rejected, transient failure) keeps the registration so
+    # the next valid cd syncs normally (#764).
+    if string match -q '*not registered*' -- $response
         __gpy_log_debug ipc "Workspace sync failed (not registered), re-registering PID %self"
         set -e __gpy_registered
         set -e __gpy_registered_pid
         set -e __gpy_last_workspace
         __gpy_register_with_agent
-    else if test -n "$response"
+    else if test -n "$response"; and not string match -q '*"error"*' -- $response
         # Success - update last workspace
         set -g __gpy_last_workspace $cwd
     end
