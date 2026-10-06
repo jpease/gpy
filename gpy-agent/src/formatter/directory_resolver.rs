@@ -23,7 +23,8 @@ use std::path::{Path, PathBuf};
 /// conditional group), and re-running the I/O on every call would waste a
 /// `canonicalize` + repo-root filesystem walk per extra call.
 pub struct DirectoryResolver<'a> {
-    cwd: &'a str,
+    /// Lexically normalized `cwd` (see [`normalize_cwd`]); drives every display mode.
+    cwd: String,
     read_only: bool,
     config: &'a Config,
     theme: &'a ThemeConfig,
@@ -59,7 +60,7 @@ impl<'a> DirectoryResolver<'a> {
         let canonical_cwd = std::fs::canonicalize(cwd).unwrap_or_else(|_| PathBuf::from(cwd));
         let repo_root = crate::git::find_repo_root(Path::new(cwd));
         Self {
-            cwd,
+            cwd: normalize_cwd(cwd),
             read_only,
             config,
             theme,
@@ -76,7 +77,7 @@ impl<'a> DirectoryResolver<'a> {
         const ELLIPSIS_LEN: usize = 3;
 
         // 1. Contract $HOME prefix to ~
-        let home_contracted = contract_home(self.cwd, self.home.as_deref());
+        let home_contracted = contract_home(&self.cwd, self.home.as_deref());
 
         // 2. Apply display mode (repo anchoring takes precedence when enabled).
         let base = repo_anchored_for(
@@ -135,6 +136,23 @@ impl<'a> DirectoryResolver<'a> {
         let fg = self.theme.segments.directory.text_color.as_str();
         let bg = self.theme.segments.directory.bg_color.as_str();
         format!("fg:{fg} bg:{bg}")
+    }
+}
+
+/// Lexically normalize a cwd without touching the filesystem.
+///
+/// Drops trailing `/` and `.` components. `..` is kept (resolving it lexically
+/// would change meaning across symlinks). A cwd that is only `.` is returned
+/// unchanged.
+fn normalize_cwd(cwd: &str) -> String {
+    let normalized: PathBuf = Path::new(cwd)
+        .components()
+        .filter(|c| !matches!(c, std::path::Component::CurDir))
+        .collect();
+    if normalized.as_os_str().is_empty() {
+        cwd.to_owned()
+    } else {
+        normalized.to_string_lossy().into_owned()
     }
 }
 
@@ -615,6 +633,7 @@ mod tests {
 
     use super::abbreviate_path;
     use super::contract_home;
+    use super::normalize_cwd;
     use super::repo_anchored_path;
     use super::truncate_to_components;
     use crate::config::types::DirectoryDisplay;
@@ -808,6 +827,30 @@ mod tests {
             resolver.resolve("path").expect("path present"),
             "/u/l/b/foo"
         );
+    }
+
+    #[test]
+    fn trailing_slash_cwd_renders_real_basename() {
+        let (config, theme) = (Config::default(), ThemeConfig::default());
+        for cwd in ["/usr/local/proj/", "/usr/local/proj/."] {
+            let resolver = DirectoryResolver::new(
+                cwd,
+                false,
+                &config,
+                &theme,
+                SegmentPosition::new(IsLast::No, IsFirst::No),
+            );
+            assert_eq!(resolver.resolve("path").as_deref(), Some("proj"), "{cwd}");
+        }
+        let resolver = DirectoryResolver::new(
+            "/",
+            false,
+            &config,
+            &theme,
+            SegmentPosition::new(IsLast::No, IsFirst::No),
+        );
+        assert_eq!(resolver.resolve("path").as_deref(), Some("/"));
+        assert_eq!(contract_home(&normalize_cwd("/h/u/"), Some("/h/u")), "~");
     }
 
     #[test]
