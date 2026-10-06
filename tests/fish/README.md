@@ -23,6 +23,7 @@ This directory contains integration tests for the Fish shell prompt and GPY init
 
 - **`install_dev_remove_conflicting_binaries.test.fish`** - `install-dev.fish` removes only a stale copy of our own `gpy`/`gpy-agent` under `$HOME` that shadows the install dir on PATH; an unrelated tool sharing the name, a tool-manager shim, anything after the install dir, a shadowing copy outside `$HOME` (warned about), and every copy when the install dir is off PATH are kept (#649, #693)
 - **`install_dev_stop_running_agent.test.fish`** - `install-dev.fish` stops only the agent bound to its own socket, never by process name
+- **`install_dev_verify_no_debug_log.test.fish`** - `install-dev.fish`'s hot-reload probe uses a private temp dir and leaves the long-lived agent running without `GPY_DEBUG_LOG`, with no `/tmp/gpy-verify-*` file (#743)
 - **`uninstall_rc_marker_roundtrip.test.fish`** - install then uninstall restores `config.fish` / `.zshrc` / `.bashrc` byte-identically, with stub binaries in a temp package (never the checkout's `bin/`)
 - **`uninstall_no_repo_checkout.test.fish`** - the uninstallers run standalone without a clone
 
@@ -76,6 +77,7 @@ sections above describe the ones worth reading first.
 - `install_dev_config_theme_preserve.test.fish`
 - `install_dev_remove_conflicting_binaries.test.fish`
 - `install_dev_stop_running_agent.test.fish`
+- `install_dev_verify_no_debug_log.test.fish`
 - `install_oneline_cli_binary.test.fish`
 - `install_oneline_file_lists.test.fish`
 - `install_oneline_main_wrapper.test.fish`
