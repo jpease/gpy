@@ -429,6 +429,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   file is removed and reported as "Agent is not running (stale socket
   removed)" instead of `kill` advice, and `gpy restart` continues to start
   after a failed stop.
+- Bold, underline and background no longer leak from one styled template
+  group into the next (#752). The encoder resets only when the previous style
+  would leak, so the shipped themes' bytes are unchanged.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
