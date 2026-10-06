@@ -630,6 +630,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   source line instead of leaving it behind (#809).
 - `prev_fg`/`prev_bg` resolve through the active palette (#737), so
   powerline chevrons match the neighbouring segment's colour.
+- The `uninstall.fish` confirmation listing shows the `conf.d/gpy_init.fish`
+  path instead of an empty item (#814).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

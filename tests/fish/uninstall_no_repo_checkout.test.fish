@@ -92,6 +92,14 @@ else
     __gpy_test_pass "scripts/uninstall.fish printed no 'Unknown command' errors"
 end
 
+# #814: the confirmation listing must show the conf.d path, not an empty item.
+set -l fish_line (string match -r -- '.*- Fish: .*' $run_out)
+if string match -q -- "*$sandbox_home/.config/fish/conf.d/gpy_init.fish*" $fish_line; and not string match -q -- '*, ,*' $fish_line
+    __gpy_test_pass "#814: listing shows the conf.d/gpy_init.fish path"
+else
+    __gpy_test_fail "#814: Fish listing line lacks conf.d path or has an empty item: $fish_line"
+end
+
 rm -rf "$isolated_dir" "$sandbox_home"
 
 # --- Regression suite for #667 (prompt destination preservation) and #670 (backup timestamp selection) ---

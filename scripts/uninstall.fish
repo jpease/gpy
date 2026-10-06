@@ -170,6 +170,7 @@ function uninstall_custom_prompt
     set -l completion_files "$completions_dir/gpy.fish" "$completions_dir/gpy-dynamic.fish"
 
     set -l config_file "$fish_config_dir/config.fish"
+    set -l conf_d_file "$fish_config_dir/conf.d/gpy_init.fish"
     # zsh reads ${ZDOTDIR:-$HOME}/.zshrc; ZDOTDIR may be unset in the shell
     # that runs the uninstaller, so ~/.zshrc is cleaned too (#748).
     set -l zshrc_files "$HOME/.zshrc"
@@ -265,7 +266,6 @@ function uninstall_custom_prompt
     end
 
     # Remove conf.d file
-    set -l conf_d_file "$fish_config_dir/conf.d/gpy_init.fish"
     if test -f "$conf_d_file"
         rm "$conf_d_file"
         echo "✅ Removed GPY initialization script from $conf_d_file"
