@@ -94,7 +94,8 @@ async fn start_test_ipc_server(
     let registry = ClientDirectory::new().shared();
     let server_registry = Arc::clone(&registry);
     let git_cache = Arc::new(GitStatusCache::new());
-    let theme_manager = Arc::new(ThemeManager::new("default").expect("default theme should load"));
+    let theme_manager =
+        Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
     let latency_tracker = Arc::new(LatencyTracker::new(100));
 
     let server_handle = tokio::spawn(async move {

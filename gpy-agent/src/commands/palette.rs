@@ -274,6 +274,9 @@ fn palette_validation_hints(message: &str) -> Vec<&'static str> {
     hints
 }
 
+// Validating the builtin `default` palette is tested in
+// `tests/palette_manager_tests.rs` against an empty `XDG_CONFIG_HOME`; here a
+// developer's own `palettes/default.toml` would be validated instead (#664).
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -283,21 +286,8 @@ mod tests {
     #![allow(missing_docs)]
 
     #[test]
-    fn validate_target_accepts_builtin_default() {
-        let report = super::validate_target(Some("default")).expect("default valid");
-        assert_eq!(report.target, "default");
-    }
-
-    #[test]
     fn validate_target_rejects_unknown() {
         assert!(super::validate_target(Some("no-such-palette-xyz")).is_err());
-    }
-
-    #[test]
-    fn validate_by_name_accepts_builtin_default() {
-        let report = super::validate_by_name("default").expect("default valid");
-        assert_eq!(report.target, "default");
-        assert_eq!(report.source, "named palette");
     }
 
     #[test]

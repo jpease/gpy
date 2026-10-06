@@ -61,6 +61,9 @@ impl PaletteCache {
     }
 }
 
+// Loading and refreshing the configured palette is tested in
+// `tests/palette_manager_tests.rs` against an empty `XDG_CONFIG_HOME`; here a
+// developer's own `palettes/default.toml` would shadow the builtin (#664).
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -70,44 +73,6 @@ mod tests {
 
     use super::PaletteCache;
     use crate::config::Config;
-
-    #[test]
-    fn get_returns_initial_palette() {
-        let config = Config::default();
-        let cache = PaletteCache::from_config(&config);
-        let palette = cache.get();
-        // The default palette must define the standard ANSI color names.
-        assert!(
-            palette.get("green").is_some(),
-            "initial palette must define green"
-        );
-    }
-
-    #[test]
-    fn refresh_updates_cached_palette() {
-        use crate::config::types::PaletteName;
-
-        let config = Config::default();
-        let cache = PaletteCache::from_config(&config);
-
-        // Baseline: default palette resolves "green".
-        assert!(cache.get().get("green").is_some());
-
-        // Switch to an unknown palette name — active_palette() degrades to an
-        // empty Palette.  After refresh the cache should hold that empty palette.
-        let mut new_config = Config::default();
-        new_config.ui.palette =
-            PaletteName::new("__nonexistent_palette__".to_owned()).expect("valid name");
-        cache.refresh(&new_config);
-
-        // The refreshed palette for a nonexistent name is Palette::default() which
-        // has no entries.
-        let refreshed = cache.get();
-        assert!(
-            refreshed.get("green").is_none(),
-            "refreshed empty palette should not define green"
-        );
-    }
 
     #[test]
     fn replace_reports_content_change() {

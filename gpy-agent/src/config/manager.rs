@@ -765,7 +765,9 @@ mod tests {
     #[test]
     #[allow(clippy::missing_panics_doc)]
     fn test_config_manager_get_returns_config() {
-        let manager = ConfigManager::new().unwrap();
+        // `with_defaults`, not `new`: `new` parses the developer's real
+        // config.toml, which fails this test wherever that file is invalid.
+        let manager = ConfigManager::with_defaults().unwrap();
         let config = manager.get();
 
         // Should be able to access config fields

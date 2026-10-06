@@ -204,80 +204,18 @@ impl PaletteManager {
     }
 }
 
+// Builtin loading and discovery are tested in `tests/palette_manager_tests.rs`,
+// which can point `XDG_CONFIG_HOME` at an empty dir (this crate forbids the
+// `unsafe` that `std::env::set_var` needs); here a developer's own palettes
+// would shadow the builtins (#664).
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
     #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
 
-    use super::{PaletteManager, PaletteSource};
-
-    #[test]
-    fn loads_builtin_default() {
-        let mgr = PaletteManager::new("default").expect("default palette loads");
-        assert!(mgr.get().colors.contains_key("red"));
-    }
+    use super::PaletteManager;
 
     #[test]
     fn missing_palette_errors() {
         assert!(PaletteManager::new("no-such-palette-xyz").is_err());
-    }
-
-    #[test]
-    fn discovery_includes_builtin_default() {
-        let found = PaletteManager::discover_available_palettes();
-        assert!(
-            found
-                .iter()
-                .any(|p| p.name == "default" && matches!(p.source, PaletteSource::Builtin))
-        );
-    }
-
-    #[test]
-    fn loads_builtin_starship() {
-        let mgr = PaletteManager::new("starship").expect("starship palette loads");
-        assert_eq!(
-            mgr.get().colors.get("orange").expect("orange").as_str(),
-            "202"
-        );
-        assert_eq!(
-            mgr.get()
-                .colors
-                .get("bright_magenta")
-                .expect("bright_magenta")
-                .as_str(),
-            "147"
-        );
-        assert_eq!(
-            mgr.get()
-                .colors
-                .get("bright_green")
-                .expect("bright_green")
-                .as_str(),
-            "149"
-        );
-    }
-
-    #[test]
-    fn discovery_includes_builtin_starship() {
-        let found = PaletteManager::discover_available_palettes();
-        assert!(
-            found
-                .iter()
-                .any(|p| p.name == "starship" && matches!(p.source, PaletteSource::Builtin))
-        );
-    }
-
-    #[test]
-    fn all_builtins_load_and_are_discovered() {
-        for (name, _) in super::BUILTIN_PALETTES {
-            assert!(PaletteManager::new(name).is_ok(), "{name} loads");
-        }
-        let found = PaletteManager::discover_available_palettes();
-        for (name, _) in super::BUILTIN_PALETTES {
-            assert!(found.iter().any(|p| p.name == *name), "{name} discovered");
-        }
     }
 }

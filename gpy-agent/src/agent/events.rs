@@ -1599,7 +1599,7 @@ mod tests {
     use tempfile::tempdir;
 
     fn make_theme_manager() -> Arc<ThemeManager> {
-        Arc::new(ThemeManager::new("default").expect("theme manager"))
+        Arc::new(ThemeManager::builtin("default").expect("theme manager"))
     }
 
     fn make_client_registry() -> Arc<ClientDirectory> {

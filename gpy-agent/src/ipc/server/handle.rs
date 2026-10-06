@@ -952,13 +952,12 @@ impl EndpointHandle {
         git_cache: &Arc<crate::git::cache::GitStatusCache>,
         watcher: WatcherRef,
     ) -> Self {
-        // Create a default theme manager for testing
+        // The embedded theme and built-in config defaults, never the
+        // developer's ~/.config/gpy (#664).
         let theme_manager =
-            Arc::new(ThemeManager::new("default").expect("default theme should always load"));
-
-        // Create a default config manager for testing
+            Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
         let config_manager = Arc::new(
-            crate::config::manager::ConfigManager::new()
+            crate::config::manager::ConfigManager::with_defaults()
                 .expect("default config should always load"),
         );
 
@@ -1239,7 +1238,7 @@ mod socket_ownership_tests {
             ))
             .watcher_slot(Arc::new(Mutex::new(None)))
             .theme_manager(Arc::new(
-                ThemeManager::new("default").expect("default theme"),
+                ThemeManager::builtin("default").expect("default theme"),
             ))
             .instant_cache(Arc::new(crate::cache::InstantPromptCache::new_for_test()))
             .latency_tracker(Arc::new(LatencyTracker::new(100_usize)))
@@ -1343,7 +1342,7 @@ mod socket_ownership_tests {
                 ConfigManager::with_defaults().expect("default config"),
             ))
             .theme_manager(Arc::new(
-                ThemeManager::new("default").expect("default theme"),
+                ThemeManager::builtin("default").expect("default theme"),
             ))
             .instant_cache(Arc::new(crate::cache::InstantPromptCache::new_for_test()))
             .latency_tracker(Arc::new(LatencyTracker::new(100_usize)))

@@ -1189,12 +1189,11 @@ impl Agent {
         use crate::watcher::{DebouncedEvent, WatcherConfig, multi_repo::MultiRepoWatcher};
         use std::sync::Mutex;
 
-        // Create default theme manager for testing first
-        let theme_manager = Arc::new(ThemeManager::new("default")?);
-        // Create default config manager for testing
-        let config_manager = Arc::new(crate::config::manager::ConfigManager::new()?);
-        // Create instant cache for testing
-        let instant_cache = Arc::new(crate::cache::InstantPromptCache::new()?);
+        // The embedded theme, built-in config defaults and a temp instant
+        // cache, never the developer's ~/.config/gpy or ~/.cache/gpy (#664).
+        let theme_manager = Arc::new(ThemeManager::builtin("default")?);
+        let config_manager = Arc::new(crate::config::manager::ConfigManager::with_defaults()?);
+        let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
 
         // Create watcher
         let config = WatcherConfig::default();

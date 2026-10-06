@@ -54,6 +54,22 @@ fn isolated_socket() -> (TempDir, String) {
     (dir, socket_path)
 }
 
+/// Point a child's home and its config, cache and runtime roots inside `dir`.
+///
+/// `gpy-agent start` reads `config.toml` (a developer's `agent.enabled =
+/// false` turns it into a no-op), and a running agent writes theme exports
+/// into the cache root, so without this the developer's `~/.config/gpy` and
+/// `~/.cache/gpy` take part in the test (#664). `HOME` goes too: config
+/// lookup falls back to `$HOME/.config/gpy/config.toml` when the
+/// `$XDG_CONFIG_HOME` one is missing.
+fn isolate_user_dirs<'cmd>(command: &'cmd mut Command, dir: &Path) -> &'cmd mut Command {
+    command
+        .env("HOME", dir)
+        .env("XDG_CONFIG_HOME", dir.join("config"))
+        .env("XDG_CACHE_HOME", dir.join("cache"))
+        .env("XDG_RUNTIME_DIR", dir)
+}
+
 /// Assert the cargo-built agent binary exists, with a message pointing at
 /// the likely cause (a failed build) rather than a bare path-not-found.
 fn assert_agent_binary_exists(agent_path: &str) {
@@ -223,18 +239,18 @@ async fn test_agent_handles_rapid_fish_restarts() {
     let agent_path = get_gpy_agent_path();
     assert_agent_binary_exists(agent_path);
 
-    let (_socket_dir, socket_path) = isolated_socket();
+    let (socket_dir, socket_path) = isolated_socket();
 
     // Stop any existing agent -- scoped to this test's own isolated socket,
     // never the ambient default (see `isolated_socket`'s doc comment).
-    let _ = Command::new(agent_path)
+    let _ = isolate_user_dirs(&mut Command::new(agent_path), socket_dir.path())
         .arg("stop")
         .env("GPY_AGENT_SOCKET_PATH", &socket_path)
         .output();
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Start the agent manually
-    let start_output = Command::new(agent_path)
+    let start_output = isolate_user_dirs(&mut Command::new(agent_path), socket_dir.path())
         .arg("start")
         .env("GPY_AGENT_SOCKET_PATH", &socket_path)
         .output()
@@ -253,7 +269,7 @@ async fn test_agent_handles_rapid_fish_restarts() {
 
     // Run multiple fish instances in rapid succession
     for i in 0..5 {
-        let output = Command::new("fish")
+        let output = isolate_user_dirs(&mut Command::new("fish"), socket_dir.path())
             .arg("-c")
             .arg(format!("echo 'Iteration {i}'"))
             .env("GPY_AGENT_ENABLED", "1")
@@ -273,7 +289,7 @@ async fn test_agent_handles_rapid_fish_restarts() {
     }
 
     // Agent should still be responsive
-    let status_output = Command::new(agent_path)
+    let status_output = isolate_user_dirs(&mut Command::new(agent_path), socket_dir.path())
         .arg("status")
         .env("GPY_AGENT_SOCKET_PATH", &socket_path)
         .output()
@@ -286,7 +302,7 @@ async fn test_agent_handles_rapid_fish_restarts() {
     );
 
     // Clean up
-    let _ = Command::new(agent_path)
+    let _ = isolate_user_dirs(&mut Command::new(agent_path), socket_dir.path())
         .arg("stop")
         .env("GPY_AGENT_SOCKET_PATH", &socket_path)
         .output();

@@ -62,6 +62,7 @@ The unit tests live next to the code in `src/`.
 | `multi_repo_integration_tests.rs` | Multi-repository integration tests |
 | `oneshot_format_values_tests.rs` | `--format` values clap offers equal the renderable formats, both ways, and `oneshot --help` never lists a rejected one (#756) |
 | `palette_cli_e2e_tests.rs` | `gpy palette` through the real binary (#648) |
+| `palette_manager_tests.rs` | `PaletteManager` resolution against user palettes, serial with a temp `XDG_CONFIG_HOME` so the suite never reads the developer's `~/.config/gpy` (#664) |
 | `palette_swap_tests.rs` | SP4: swapping ui.palette recolors languages while the starship palette is vanilla |
 | `plugin_extensibility_e2e_tests.rs` | Plugin discovery, manifest validation and a real Fish runtime load of a plugin segment (needs Fish 4) |
 | `plugin_performance_tests.rs` | Plugin discovery stays within its performance budget |

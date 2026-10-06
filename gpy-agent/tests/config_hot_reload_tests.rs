@@ -233,7 +233,7 @@ fn test_theme_export_updates_enabled_segments_when_git_disabled() {
         "git".to_string(),
     ];
 
-    let theme_manager = ThemeManager::new("default").expect("load default theme");
+    let theme_manager = ThemeManager::builtin("default").expect("load default theme");
     let fish_output = theme_manager.export(Shell::Fish, &config);
 
     // Verify git is removed from enabled_segments
@@ -268,7 +268,7 @@ fn test_theme_export_includes_git_when_enabled() {
         "git".to_string(),
     ];
 
-    let theme_manager = ThemeManager::new("default").expect("load default theme");
+    let theme_manager = ThemeManager::builtin("default").expect("load default theme");
     let fish_output = theme_manager.export(Shell::Fish, &config);
 
     // Verify git is included
@@ -300,7 +300,7 @@ fn test_theme_export_updates_enabled_segments_when_language_disabled() {
         "git".to_string(),
     ];
 
-    let theme_manager = ThemeManager::new("default").expect("load default theme");
+    let theme_manager = ThemeManager::builtin("default").expect("load default theme");
     let fish_output = theme_manager.export(Shell::Fish, &config);
 
     // Verify language is removed
@@ -334,7 +334,7 @@ fn test_theme_export_updates_enabled_segments_when_both_disabled() {
         "git".to_string(),
     ];
 
-    let theme_manager = ThemeManager::new("default").expect("load default theme");
+    let theme_manager = ThemeManager::builtin("default").expect("load default theme");
     let fish_output = theme_manager.export(Shell::Fish, &config);
 
     // Verify both are removed

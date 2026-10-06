@@ -1539,7 +1539,7 @@ mod tests {
         // icon is the Nerd Font powerline glyph U+E0B4 (confirmed against
         // `config/themes/default.toml`), so a clock segment that is both
         // first and last must render it as its closing cap.
-        let theme = crate::theme::ThemeManager::new("default")
+        let theme = crate::theme::ThemeManager::builtin("default")
             .expect("default theme should always load")
             .get();
 
@@ -1648,7 +1648,7 @@ mod tests {
     fn preview_draws_no_private_use_caps_when_icons_are_off() {
         let has_private_use =
             |text: &str| text.chars().any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c));
-        let theme = crate::theme::ThemeManager::new("default")
+        let theme = crate::theme::ThemeManager::builtin("default")
             .expect("default theme should always load")
             .get();
         let render = |show_icons: bool| {

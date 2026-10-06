@@ -70,7 +70,7 @@ async fn start_server_with(
             .git_cache(Arc::new(GitStatusCache::new()))
             .config_manager(config_manager)
             .watcher_slot(Arc::new(std::sync::Mutex::new(None)))
-            .theme_manager(Arc::new(ThemeManager::new("default").expect("theme")))
+            .theme_manager(Arc::new(ThemeManager::builtin("default").expect("theme")))
             .instant_cache(Arc::new(
                 gpy_agent::cache::InstantPromptCache::new().expect("instant cache"),
             ))
