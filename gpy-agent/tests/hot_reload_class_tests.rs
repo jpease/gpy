@@ -426,6 +426,45 @@ fn hot_reload_edit_active_palette_in_place() {
     run_mechanism(&EDIT_ACTIVE_PALETTE);
 }
 
+/// #778: with the poll fallback in use, a theme switch by name must not wait
+/// out the poll interval (the CLI gives the agent 2 s to acknowledge a reload).
+/// Drives `ThemeManager` directly: `switch_theme` is what the `config_reload`
+/// request runs synchronously, and it re-arms the watcher via `HotReloadSlot`.
+#[test]
+#[serial]
+fn hot_reload_switch_theme_by_name_with_poll_fallback_is_prompt() {
+    const POLL_VAR: &str = "GPY_THEME_WATCH_POLL_MS";
+    let harness = Harness::new();
+    let prev = std::env::var_os(POLL_VAR);
+    unsafe { std::env::set_var(POLL_VAR, "250") };
+
+    let manager = ThemeManager::new(ACTIVE_THEME).expect("theme manager");
+    manager
+        .start_watching(Duration::from_secs(5), None)
+        .expect("start watching");
+    // Let the poll thread enter its between-ticks sleep.
+    std::thread::sleep(Duration::from_millis(500));
+
+    let started = Instant::now();
+    let switched = manager.switch_theme(OTHER_THEME);
+    let elapsed = started.elapsed();
+
+    unsafe {
+        match prev {
+            Some(v) => std::env::set_var(POLL_VAR, v),
+            None => std::env::remove_var(POLL_VAR),
+        }
+    }
+    drop(manager);
+    drop(harness);
+
+    switched.expect("switch theme");
+    assert!(
+        elapsed < Duration::from_millis(1000),
+        "switch_theme took {elapsed:?} with the poll fallback; it must not wait out the 5 s poll interval"
+    );
+}
+
 #[test]
 #[serial]
 fn hot_reload_reapply_same_palette() {

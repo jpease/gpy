@@ -224,7 +224,7 @@ impl HotReloadSlot {
                     }
                 }
 
-                std::thread::sleep(interval);
+                crate::watcher::sleep_unless_stopped(interval, &stop_flag);
             }
         });
 
@@ -263,7 +263,8 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
     #![allow(missing_docs)]
 
-    use super::{content_fingerprint, parse_poll_interval_ms};
+    use super::{HotReloadSlot, PollTarget, content_fingerprint, parse_poll_interval_ms};
+    use std::time::{Duration, Instant};
 
     /// Pins the #529/#567 regression once, for every manager sharing this
     /// function.
@@ -310,6 +311,35 @@ mod tests {
             content_fingerprint(&temp.path().join("absent.toml")),
             None,
             "a missing file must not fingerprint"
+        );
+    }
+
+    /// #778: `stop()` joins the poll thread, so a thread sleeping out its whole
+    /// interval turned every theme switch into a multi-second request.
+    #[test]
+    fn stop_does_not_wait_for_full_poll_interval() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let file = temp.path().join("watched.toml");
+        std::fs::write(&file, "a = 1\n").expect("write file");
+
+        let slot = HotReloadSlot::new();
+        slot.spawn_poll_thread(
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            PollTarget {
+                path_of: Box::new(move || Some(file.clone())),
+                reload: Box::new(|_| {}),
+            },
+        );
+        // Let the thread finish its first tick and enter its sleep.
+        std::thread::sleep(Duration::from_millis(300));
+
+        let started = Instant::now();
+        slot.stop();
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "stop() blocked for {elapsed:?}; it must not wait out the poll interval"
         );
     }
 
