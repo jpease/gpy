@@ -1080,7 +1080,7 @@ these are supported commands rather than internals:
 | Command | What it does |
 |---|---|
 | `gpy-agent start [--socket <path>]` | Start the daemon in the background (idempotent; evicts an older version). `--socket` overrides the socket path, mainly for tests. |
-| `gpy-agent stop` / `gpy-agent restart` / `gpy-agent status` | Same behaviour and exit codes as the `gpy` equivalents above. |
+| `gpy-agent stop` / `gpy-agent status` | Same behaviour and exit codes as the `gpy` equivalents above. Restarting is only available as `gpy restart`. |
 | `gpy-agent init [--non-interactive] [--force]` | First-install bootstrap: detects whether a Nerd Font is available and writes `config.toml` with a matching `show_icons`. No-op when a config file exists (unless `--force`). Set `GPY_NERD_FONT` to skip the terminal prompt (see the environment table). The installers run this. |
 | `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|hostname\|username> [--cwd <dir>] [--format json\|ansi\|fish\|fish-source\|zsh\|zsh-source]` | Render one segment once, with no daemon. The shells use it as the fallback when the agent is down; it is also the quickest way to see what a segment produces for a directory. |
 | `gpy-agent theme export --format fish\|zsh\|bash` | Print the active theme as shell variable assignments. Each shell sources this on init (cached under `$XDG_CACHE_HOME/gpy/theme-export.<shell>`). |

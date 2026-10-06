@@ -74,6 +74,26 @@ for sub in $(subcommands_of "$GPY_AGENT"); do
     fi
 done
 
+# The reverse direction (#783): a code span naming `BIN <word>` must name a
+# subcommand the binary ships. `help` is clap's own and always exists.
+# shellcheck disable=SC2016  # the backtick is a markdown code-span delimiter, not an expansion
+documented_words() {
+    grep -oE -- "\`$1 [a-z][a-z0-9_-]*" "$DOC" | awk '{print $2}' | sort -u
+}
+check_names_exist() {
+    local bin="$1" label="$2" word shipped
+    shipped=" $(subcommands_of "$bin" | tr '\n' ' ') help "
+    for word in $(documented_words "$label"); do
+        case "$shipped" in
+            *" $word "*) pass "$label $word exists" ;;
+            *) fail "docs name $label $word but the binary ships no such subcommand" ;;
+        esac
+    done
+}
+echo "--- every documented gpy / gpy-agent subcommand exists ---"
+check_names_exist "$GPY" gpy
+check_names_exist "$GPY_AGENT" gpy-agent
+
 echo "--- the options and variables #643 found missing stay documented ---"
 # shellcheck disable=SC2016  # the backticks are markdown code spans to find, not expansions
 for needle in 'gpy theme use' '`--force`' 'gpy theme import' 'gpy debug paths' 'gpy debug prompt' \
