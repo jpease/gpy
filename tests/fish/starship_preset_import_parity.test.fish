@@ -176,6 +176,8 @@ set -g spi_username (whoami)
 set -g SPI_ISO (mktemp -d)
 set -gx XDG_CONFIG_HOME $SPI_ISO
 set -gx HOME $SPI_ISO
+# Cache and runtime roots follow the sandboxed HOME, never the caller's (#665).
+set -e XDG_CACHE_HOME XDG_RUNTIME_DIR
 set -gx MISE_DISABLE 1
 
 if not $spi_gpy_bin theme import $spi_match_cfg --name pure-preset --force --apply-layout >/dev/null 2>&1

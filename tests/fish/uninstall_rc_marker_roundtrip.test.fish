@@ -24,6 +24,12 @@ set -l script_dir (dirname (status --filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
 
+# The installers and uninstallers resolve their config, cache and runtime
+# roots from XDG_CONFIG_HOME/XDG_CACHE_HOME/XDG_RUNTIME_DIR (#615) and the zsh
+# rc file from ZDOTDIR, so a caller's values would send every sandboxed run
+# outside its $HOME (#665). The XDG parts (Part D onwards) pass theirs explicitly.
+set -e XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_RUNTIME_DIR ZDOTDIR
+
 set -g failed 0
 
 function __gpy_test_fail --argument-names msg

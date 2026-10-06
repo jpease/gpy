@@ -77,6 +77,10 @@ if not test -S $sock
 end
 
 set -gx GPY_AGENT_SOCKET_PATH $sock
+# Registration writes the shell PID file under the runtime root; keep it in
+# the sandbox instead of the caller's XDG_RUNTIME_DIR or ~/.cache (#665).
+set -gx XDG_CACHE_HOME $__ws_tmp/cache
+set -e XDG_RUNTIME_DIR
 set -e GPY_SUPERVISOR_CHILD
 set -l test_result PASS
 

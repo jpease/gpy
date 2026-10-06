@@ -125,6 +125,8 @@ __sp_patch_hostname_visible $SP_ISO/gpy/themes/starship.toml
 
 set -gx XDG_CONFIG_HOME $SP_ISO
 set -gx HOME $SP_ISO
+# Cache and runtime roots follow the sandboxed HOME, never the caller's (#665).
+set -e XDG_CACHE_HOME XDG_RUNTIME_DIR
 set -gx MISE_DISABLE 1
 
 if not $gpy_bin theme use starship --force >/dev/null 2>&1
