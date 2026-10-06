@@ -315,6 +315,39 @@ fn gpy_stop_when_not_running_is_a_noop() {
     );
 }
 
+/// #742: a socket that accepts but never answers is an agent that could not
+/// be stopped; `stop` must say so and exit 1, from both binaries.
+#[test]
+fn gpy_stop_fails_when_agent_does_not_answer() {
+    let sandbox = AgentSandbox::new();
+    let _listener = bind_silent_socket(&sandbox.socket_path);
+
+    let stopped = sandbox.gpy(&["stop"]);
+    assert_eq!(stopped.exit_code, 1_i32, "{stopped:?}");
+    assert!(stopped.stderr.contains("Error:"), "{stopped:?}");
+    assert!(stopped.stderr.contains("did not answer"), "{stopped:?}");
+
+    let direct = sandbox.gpy_agent(&["stop"]);
+    assert_eq!(direct.exit_code, 1_i32, "{direct:?}");
+    assert!(direct.stderr.contains("Error:"), "{direct:?}");
+}
+
+/// #742: a socket file with nothing listening is "not running", not a
+/// process to `kill`; the stale file is removed.
+#[test]
+fn gpy_stop_on_stale_socket_reports_not_running() {
+    let sandbox = AgentSandbox::new();
+    drop(bind_silent_socket(&sandbox.socket_path));
+    assert!(sandbox.socket_path.exists(), "fixture must leave the file");
+
+    let stopped = sandbox.gpy(&["stop"]);
+    stopped.assert_success("gpy stop on a stale socket");
+    assert!(stopped.stdout.contains("not running"), "{stopped:?}");
+    assert!(!stopped.stdout.contains("kill"), "{stopped:?}");
+    assert!(!stopped.stderr.contains("kill"), "{stopped:?}");
+    assert!(!sandbox.socket_path.exists(), "{stopped:?}");
+}
+
 #[test]
 fn gpy_restart_prints_normalized_steps() {
     let sandbox = AgentSandbox::new();

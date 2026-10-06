@@ -60,7 +60,12 @@ pub fn stop() -> Result<()> {
 /// Returns an error if stop or start operations fail.
 pub fn restart() -> Result<()> {
     println!("Restarting GPY...");
-    restart_stop()?;
+    // A stop that could not stop the agent (it already printed its `Error:`
+    // line) must not abort the restart: the start path evicts a wedged agent,
+    // and its result decides the exit code (#742).
+    if restart_stop().is_err() {
+        println!("Stop failed; attempting to start anyway");
+    }
     std::thread::sleep(std::time::Duration::from_millis(500));
     restart_start()
 }
@@ -90,7 +95,9 @@ fn restart_stop() -> Result<()> {
         let Ok(line) = line_result else { continue };
         match line.as_str() {
             "Shutdown command sent successfully" => println!("✅ Shutdown command sent"),
-            "Agent stopped successfully" | "Agent is not running (socket not found)" => {
+            "Agent stopped successfully"
+            | "Agent is not running (socket not found)"
+            | "Agent is not running (stale socket removed)" => {
                 println!("✅ GPY stopped");
             }
             other => println!("{other}"),
