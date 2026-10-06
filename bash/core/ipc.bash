@@ -219,14 +219,16 @@ __gpy_send_json() {
     local json="$1"
     local socket_path
     socket_path="$(__gpy_ipc_endpoint)"
-    local response="" read_status=1
+    local response="" read_status=1 timeout_secs
+    # One reply budget for every transport (#757).
+    __gpy_ms_to_secs "${GPY_IPC_TIMEOUT_MS:-150}" timeout_secs
 
     # Check if socket exists
     [[ -S "$socket_path" ]] || return 1
 
     # Try socat first (most reliable)
     if command -v socat &>/dev/null; then
-        IFS= read -r response < <(echo "$json" | socat -t 0.1 - "UNIX-CONNECT:$socket_path" 2>/dev/null)
+        IFS= read -r response < <(echo "$json" | socat -t "$timeout_secs" - "UNIX-CONNECT:$socket_path" 2>/dev/null)
         read_status=$?
     # Try nc with -U flag (Unix socket). nc's -w only accepts whole seconds, so
     # a hung-but-connected agent stalls the prompt for a full second rather
@@ -234,8 +236,6 @@ __gpy_send_json() {
     # it's available (#324). Falls back to the coarser -w 1 bound otherwise.
     elif command -v nc &>/dev/null; then
         if command -v timeout &>/dev/null; then
-            local timeout_secs
-            __gpy_ms_to_secs "${GPY_IPC_TIMEOUT_MS:-150}" timeout_secs
             IFS= read -r response < <(echo "$json" | timeout "$timeout_secs" nc -U "$socket_path" -w 1 2>/dev/null)
         else
             IFS= read -r response < <(echo "$json" | nc -U "$socket_path" -w 1 2>/dev/null)
