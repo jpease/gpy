@@ -283,7 +283,7 @@ impl InstantPromptCache {
     /// Counts every invocation regardless of whether the write changed
     /// content on disk, mirroring `ClientDirectory::notify_invocations`'s
     /// idiom for exercising an internal counter from tests (#570).
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn write_call_count(&self) -> u64 {
         self.write_calls.load(Ordering::Relaxed)
     }
