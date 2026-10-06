@@ -454,6 +454,7 @@ parity_rows! {
     cmd_duration_without_style: Scenario::Duration(5_000), "[cmd_duration]\nmin_time = 500\n";
     hostname_without_style: Scenario::Hostname, "[hostname]\nssh_only = false\n";
     // #735: character symbols with trailing text or several groups.
+    character_success_capitalized_bold: Scenario::Character(0), "[character]\nsuccess_symbol = \"[❯](Bold green)\"\nerror_symbol = \"[✗](Bold red)\"\n";
     character_success_trailing_space: Scenario::Character(0), "[character]\nsuccess_symbol = \"[➜](bold green) \"\nerror_symbol = \"[✗](bold red) \"\n";
     character_error_trailing_space: Scenario::Character(1), "[character]\nsuccess_symbol = \"[➜](bold green) \"\nerror_symbol = \"[✗](bold red) \"\n";
     character_success_leading_trailing_space: Scenario::Character(0), "[character]\nsuccess_symbol = \" [➜](bold green)  \"\n";
