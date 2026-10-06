@@ -84,9 +84,18 @@ impl Palette {
     }
 }
 
-/// Parse a space-separated style spec into a [`Style`].
+/// Parse a space-separated style spec into a [`Style`], following Starship's
+/// `parse_style_string`.
 ///
-/// `none` resets to an empty style. A bare color token sets the foreground.
+/// - Tokens are matched case-insensitively (`Bold Red` is bold + red). The one
+///   exception is a palette reference, which keeps its original spelling
+///   because palette keys are case-sensitive.
+/// - A bare `none` or `fg:none` makes the *whole* spec an empty style,
+///   ignoring every other token.
+/// - `bg:none` clears the background and keeps the rest.
+/// - A bare color token sets the foreground; `fg:`/`bg:` prefixes pick the side.
+/// - Hex colors must be `#rrggbb`; unknown palette names are accepted here and
+///   rejected at evaluation time.
 ///
 /// # Errors
 ///
@@ -94,13 +103,17 @@ impl Palette {
 pub fn parse_style(spec: &str) -> Result<Style> {
     let mut style = Style::default();
     for token in spec.split_whitespace() {
-        if token.eq_ignore_ascii_case("none") {
-            style = Style::default();
-        } else if let Some(rest) = token.strip_prefix("fg:") {
-            style.fg = Some(parse_color(rest)?);
-        } else if let Some(rest) = token.strip_prefix("bg:") {
-            style.bg = Some(parse_color(rest)?);
-        } else if let Some(attr) = parse_attr(token) {
+        let lower = token.to_ascii_lowercase();
+        if lower == "none" || lower == "fg:none" {
+            return Ok(Style::default());
+        }
+        if lower == "bg:none" {
+            style.bg = None;
+        } else if lower.starts_with("fg:") {
+            style.fg = Some(parse_color(token.get(3_usize..).unwrap_or_default())?);
+        } else if lower.starts_with("bg:") {
+            style.bg = Some(parse_color(token.get(3_usize..).unwrap_or_default())?);
+        } else if let Some(attr) = parse_attr(&lower) {
             style.attrs.push(attr);
         } else {
             style.fg = Some(parse_color(token)?);
@@ -109,7 +122,7 @@ pub fn parse_style(spec: &str) -> Result<Style> {
     Ok(style)
 }
 
-/// Map a token to an [`Attr`], returning `None` if the token is not an attribute keyword.
+/// Map a lowercased token to an [`Attr`], returning `None` if it is not an attribute keyword.
 fn parse_attr(token: &str) -> Option<Attr> {
     match token {
         "bold" => Some(Attr::Bold),
@@ -132,7 +145,8 @@ fn parse_attr(token: &str) -> Option<Attr> {
 ///
 /// Returns [`TemplateError::UnknownColor`] for malformed hex strings.
 pub fn parse_color(text: &str) -> Result<Color> {
-    match text {
+    let lower = text.to_ascii_lowercase();
+    match lower.as_str() {
         "prev_fg" => return Ok(Color::PrevFg),
         "prev_bg" => return Ok(Color::PrevBg),
         // `default` = the terminal's own fg/bg. Encoders map it to ANSI 39/49.
@@ -151,10 +165,11 @@ pub fn parse_color(text: &str) -> Result<Color> {
     if let Ok(index) = text.parse::<u8>() {
         return Ok(Color::Ansi256(index));
     }
-    if is_named_color(text) {
-        return Ok(Color::Named(text.to_owned()));
+    if is_named_color(&lower) {
+        return Ok(Color::Named(lower));
     }
-    // Unknown bare word: treat as a palette reference (resolved at eval time).
+    // Unknown bare word: palette reference (resolved at eval time). Palette keys
+    // are case-sensitive, so keep the original spelling.
     Ok(Color::Palette(text.to_owned()))
 }
 
@@ -246,6 +261,45 @@ mod tests {
     #[test]
     fn none_yields_empty_style() {
         assert_eq!(parse_style("none").unwrap(), Style::default());
+    }
+
+    #[test]
+    fn tokens_are_case_insensitive() {
+        let expected = Style {
+            fg: Some(Color::Named("red".to_owned())),
+            bg: None,
+            attrs: vec![Attr::Bold],
+        };
+        assert_eq!(parse_style("Bold Red").unwrap(), expected);
+        assert_eq!(parse_style("BOLD red").unwrap(), expected);
+    }
+
+    #[test]
+    fn bg_none_resets_background() {
+        assert_eq!(
+            parse_style("fg:red bg:none").unwrap(),
+            Style {
+                fg: Some(Color::Named("red".to_owned())),
+                bg: None,
+                attrs: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn none_overrides_all_tokens() {
+        assert_eq!(
+            parse_style("fg:red none fg:blue").unwrap(),
+            Style::default()
+        );
+        assert_eq!(parse_style("fg:none bg:black").unwrap(), Style::default());
+        assert_eq!(parse_style("bold FG:None red").unwrap(), Style::default());
+    }
+
+    #[test]
+    fn palette_reference_keeps_original_case() {
+        let style = parse_style("fg:MyPaletteKey").unwrap();
+        assert_eq!(style.fg, Some(Color::Palette("MyPaletteKey".to_owned())));
     }
 
     #[test]
