@@ -7,7 +7,7 @@ This directory contains the test suite for the GPY agent, including unit tests, 
 ### Test Files
 
 Every `*.rs` file directly under `gpy-agent/tests/` is its own nextest
-target (66 of them, listed below); `common/` holds the shared harnesses
+target (70 of them, listed below); `common/` holds the shared harnesses
 (`cli_harness.rs`, `fixtures.rs`, `integration_harness.rs`, `skip.rs`) and
 `snapshots/` the insta snapshots the help and formatter tests diff against.
 The unit tests live next to the code in `src/`.
@@ -71,6 +71,7 @@ The unit tests live next to the code in `src/`.
 | `signal_tests.rs` | SIGURG doorbell delivery to registered client PIDs (reloads add `<pid>.reload` flag files) |
 | `stale_socket_tests.rs` | Integration tests for `check_and_cleanup_socket` ping-retry behaviour (#317) |
 | `starship_import_golden_tests.rs` | Golden import tests: real-ish Starship configs → valid GPY artifacts |
+| `starship_import_parity_tests.rs` | Starship import test suite: table-driven rows (snippet + scenario) rendered by the real `starship` binary and by the imported GPY theme, compared per character (text + style); add a row with one line in `parity_rows!` |
 | `template_golden_tests.rs` | Golden fidelity tests: GPY engine output vs. Starship default module formats |
 | `test_harness.rs` | Test harness utilities for deterministic testing |
 | `theme_golden_default.rs` | Golden ANSI baseline for the default.toml migration (SP2 #199) |

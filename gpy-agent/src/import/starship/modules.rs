@@ -265,7 +265,11 @@ pub fn translate_directory(table: &toml::value::Table, warnings: &mut Warnings) 
         .unwrap_or("[$path]($style)[$read_only]($read_only_style) ");
     let inlined = inline_style_vars(
         raw,
-        &with_default_style(table, "read_only_style", "bold red"),
+        &with_default_style(
+            &with_default_style(table, "style", "bold cyan"),
+            "read_only_style",
+            "red",
+        ),
     );
     let mapped = retain_known_vars(
         &inlined,
@@ -571,7 +575,7 @@ pub fn translate_duration(table: &toml::value::Table, warnings: &mut Warnings) -
         .get("format")
         .and_then(toml::Value::as_str)
         .unwrap_or("took [$duration]($style) ");
-    let inlined = inline_style_vars(raw, table);
+    let inlined = inline_style_vars(raw, &with_default_style(table, "style", "bold yellow"));
     let mapped = retain_known_vars(&inlined, &["duration", "style"], "duration", warnings);
     let show_if_exceeds_ms = table
         .get("min_time")
@@ -729,7 +733,10 @@ pub fn translate_hostname(table: &toml::value::Table, warnings: &mut Warnings) -
     let renamed = raw
         .replace("${ssh_symbol}", "${symbol}")
         .replace("$ssh_symbol", "$symbol");
-    let inlined = inline_style_vars(&renamed, table);
+    let inlined = inline_style_vars(
+        &renamed,
+        &with_default_style(table, "style", "bold dimmed green"),
+    );
     let mapped = retain_known_vars(&inlined, &["hostname", "symbol"], "hostname", warnings);
     theme.format = Some(mapped);
     theme
@@ -912,8 +919,65 @@ mod tests {
         let theme = translate_directory(&module, &mut warnings);
         assert_eq!(
             theme.format.as_deref(),
-            Some("[$path](bold cyan)[$read_only](bold red) ")
+            Some("[$path](bold cyan)[$read_only](red) ")
         );
+    }
+
+    #[test]
+    fn directory_without_style_uses_starship_default() {
+        let mut warnings = Warnings::new();
+        let theme = translate_directory(&table("truncation_length = 3\n"), &mut warnings);
+        assert_eq!(
+            theme.format.as_deref(),
+            Some("[$path](bold cyan)[$read_only](red) ")
+        );
+    }
+
+    #[test]
+    fn directory_style_wins_over_default() {
+        let mut warnings = Warnings::new();
+        let theme = translate_directory(
+            &table("style = \"bold blue\"\nread_only_style = \"bold red\"\n"),
+            &mut warnings,
+        );
+        assert_eq!(
+            theme.format.as_deref(),
+            Some("[$path](bold blue)[$read_only](bold red) ")
+        );
+    }
+
+    #[test]
+    fn duration_without_style_uses_starship_default() {
+        use super::translate_duration;
+
+        let mut warnings = Warnings::new();
+        let theme = translate_duration(&table("min_time = 500\n"), &mut warnings);
+        assert_eq!(
+            theme.format.as_deref(),
+            Some("took [$duration](bold yellow) ")
+        );
+    }
+
+    #[test]
+    fn duration_style_wins_over_default() {
+        use super::translate_duration;
+
+        let mut warnings = Warnings::new();
+        let theme = translate_duration(&table("style = \"bold red\"\n"), &mut warnings);
+        assert_eq!(theme.format.as_deref(), Some("took [$duration](bold red) "));
+    }
+
+    #[test]
+    fn hostname_without_style_uses_starship_default() {
+        use super::translate_hostname;
+
+        let mut warnings = Warnings::new();
+        let theme = translate_hostname(&table("ssh_only = false\n"), &mut warnings);
+        assert_eq!(
+            theme.format.as_deref(),
+            Some("[$symbol$hostname](bold dimmed green) in ")
+        );
+        assert!(warnings.is_empty());
     }
 
     #[test]
