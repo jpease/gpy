@@ -20,6 +20,11 @@ set -l script_dir (dirname (status --filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
 
+# uninstall.fish resolves its paths from XDG_CONFIG_HOME/XDG_CACHE_HOME/
+# XDG_RUNTIME_DIR and ZDOTDIR; a caller's values would send the HOME-only
+# sandboxed run outside its sandbox (#665).
+set -e XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_RUNTIME_DIR ZDOTDIR
+
 set -g failed 0
 
 function __gpy_test_fail --argument-names msg

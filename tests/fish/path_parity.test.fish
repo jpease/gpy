@@ -437,7 +437,9 @@ end
 
 # Contract 1, JSON half: `--format json` is the documented interface (#476), so
 # it must carry the same keys in the same order as the kv form the diff uses.
-set -l json_keys (env -u GPY_CONFIG_PATH $GPY_PP_BIN debug paths --format json | string match -r '^  "([a-z_]+)":' -g)
+# Runs in the matrix's all-set sandbox: `debug paths` creates the runtime root,
+# which must not land under the caller's own XDG_RUNTIME_DIR (#665).
+set -l json_keys (env (__pp_env_args XDG_RUNTIME_DIR=%T%/run XDG_CACHE_HOME=%T%/cache XDG_CONFIG_HOME=%T%/conf HOME=%T%/home) $GPY_PP_BIN debug paths --format json | string match -r '^  "([a-z_]+)":' -g)
 if test "$json_keys" != "$GPY_PP_KEYS"
     __pp_fail "--format json key set/order differs from the contract
      json: $json_keys

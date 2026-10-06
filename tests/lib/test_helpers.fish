@@ -73,6 +73,9 @@ function init_test_env
     set -gx XDG_CONFIG_HOME $__gpy_test_tmp_dir/config
     set -gx XDG_CACHE_HOME $__gpy_test_tmp_dir/cache
     set -gx GPY_AGENT_SOCKET_PATH $__gpy_test_tmp_dir/gpy.sock
+    # The runtime root (shell PID files, supervisor.pid) then falls back to
+    # the isolated $XDG_CACHE_HOME/gpy instead of the caller's runtime dir (#665).
+    set -e XDG_RUNTIME_DIR
     mkdir -p $XDG_CONFIG_HOME $XDG_CACHE_HOME
 
     # Belt-and-braces guard: refuse to proceed if the test socket doesn't look
