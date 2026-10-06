@@ -1018,13 +1018,16 @@ function __gpy_agent_supervisor_start --description 'Start agent supervisor for 
     # Paths are passed as $argv[1] and $argv[2] to avoid quoting problems with
     # paths that contain spaces. All three core files are sourced so the loop
     # function is available without assuming ipc.fish re-sources its deps.
+    # fds are redirected at spawn: in fish, a redirect-only `exec` does not
+    # reopen the shell's own fds, so the child would keep this terminal (#767).
+    # `cd /` keeps the long-lived child from pinning the spawning shell's cwd.
     set -l config_root (__gpy_config_root)
     set -l supervisor_script '
+        cd /
         set -gx GPY_SUPERVISOR_CHILD 1
         set -l pidfile $argv[1]
         set -l cfgroot $argv[2]
         echo %self > "$pidfile"
-        exec >/dev/null 2>&1
         source "$cfgroot/gpy/core/constants.fish"; or exit 1
         source "$cfgroot/gpy/core/util.fish"; or exit 1
         source "$cfgroot/gpy/core/ipc.fish"; or exit 1
@@ -1032,7 +1035,7 @@ function __gpy_agent_supervisor_start --description 'Start agent supervisor for 
         rm -f "$pidfile"
     '
 
-    fish -c "$supervisor_script" -- "$supervisor_pidfile" "$config_root" &
+    fish -c "$supervisor_script" -- "$supervisor_pidfile" "$config_root" </dev/null >/dev/null 2>&1 &
     set -l spawned_pid $last_pid
     disown $spawned_pid 2>/dev/null
 
