@@ -96,9 +96,9 @@ format = "[$symbol$hostname](bold dimmed green) in "
 icon = "🌐 "
 show_always = false
 
-# Directory — Starship: `[$path]($style)[$read_only]($read_only_style) `, bold cyan.
+# Directory — Starship: `[$path]($style)[$read_only]($read_only_style) `, bold cyan path and red read-only marker.
 [segments.directory]
-format = "[$path](bold cyan)[$read_only](bold red) "
+format = "[$path](bold cyan)[$read_only](red) "
 text_color = "cyan"
 bg_color = "transparent"
 

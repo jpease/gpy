@@ -11,7 +11,10 @@ use crate::import::starship::palette::{selected_palette, translate_palette};
 use crate::import::starship::{ImportError, Result, Warnings, layout};
 use crate::palette::config::PaletteConfig;
 use crate::template::{Color, parse_color};
-use crate::theme::{RecommendedDirectory, RecommendedUi, SegmentThemes, ThemeConfig, UiTheme};
+use crate::theme::{
+    DirectoryTheme, DurationTheme, GitTheme, RecommendedDirectory, RecommendedUi, SegmentThemes,
+    ThemeConfig, UiTheme,
+};
 
 /// The translated output of an import: typed values, ready to serialize or
 /// inspect directly.
@@ -75,23 +78,7 @@ pub fn build(model: &StarshipConfig, name: &str) -> Result<ImportArtifacts> {
     let language =
         translate_languages(model, std::mem::take(&mut segments.language), &mut warnings);
     segments.language = language.theme;
-    if let Some(table) = model.module_table("directory") {
-        segments.directory = translate_directory(table, &mut warnings);
-    }
-    let git_branch = model.module_table("git_branch");
-    let git_status = model.module_table("git_status");
-    let git = translate_git(
-        git_branch,
-        git_status,
-        model.module_table("git_state"),
-        &mut warnings,
-    );
-    if git_branch.is_some() || git_status.is_some() {
-        segments.git = git;
-    }
-    if let Some(table) = model.module_table("cmd_duration") {
-        segments.duration = translate_duration(table, &mut warnings);
-    }
+    overlay_preset_modules(&mut segments, model, &mut warnings);
     if let Some(table) = model.module_table("character") {
         segments.character = translate_character(table, &mut warnings);
     }
@@ -125,6 +112,50 @@ pub fn build(model: &StarshipConfig, name: &str) -> Result<ImportArtifacts> {
         warnings,
         palette_name: name.to_owned(),
     })
+}
+
+/// Overlay the `directory`, git and `cmd_duration` modules `model` configures
+/// onto the preset `segments`.
+///
+/// A configured module replaces what Starship's own config controls (the
+/// template, and the duration threshold); everything Starship has no key for
+/// (colors, git status icons, `show_counts`) keeps the preset's value, so a
+/// partial table never resets it to a GPY default.
+fn overlay_preset_modules(
+    segments: &mut SegmentThemes,
+    model: &StarshipConfig,
+    warnings: &mut Warnings,
+) {
+    if let Some(table) = model.module_table("directory") {
+        let imported = translate_directory(table, warnings);
+        segments.directory = DirectoryTheme {
+            format: imported.format,
+            ..std::mem::take(&mut segments.directory)
+        };
+    }
+    let git_branch = model.module_table("git_branch");
+    let git_status = model.module_table("git_status");
+    let git = translate_git(
+        git_branch,
+        git_status,
+        model.module_table("git_state"),
+        warnings,
+    );
+    if git_branch.is_some() || git_status.is_some() {
+        segments.git = GitTheme {
+            format: git.format,
+            ..std::mem::take(&mut segments.git)
+        };
+    }
+    if let Some(table) = model.module_table("cmd_duration") {
+        let imported = translate_duration(table, warnings);
+        segments.duration = DurationTheme {
+            format: imported.format,
+            show_if_exceeds_ms: imported.show_if_exceeds_ms,
+            show_milliseconds: imported.show_milliseconds,
+            ..std::mem::take(&mut segments.duration)
+        };
+    }
 }
 
 /// The builtin `starship` preset's segments and palette: the import baseline.
@@ -277,7 +308,7 @@ error_symbol = "[❯](bold red)"
         // Typed checks: compare the translated values directly, no re-parse.
         assert_eq!(
             artifacts.theme.segments.directory.format.as_deref(),
-            Some("[$path](bold cyan)[$read_only](bold red) ")
+            Some("[$path](bold cyan)[$read_only](red) ")
         );
         assert_eq!(
             artifacts.theme.segments.git.format.as_deref(),
@@ -387,5 +418,29 @@ error_symbol = "[❯](bold red)"
             artifacts.segments,
             vec!["directory", "git", "language", "duration", "character"]
         );
+    }
+
+    #[test]
+    fn build_keeps_preset_fields_starship_has_no_key_for_in_partial_tables() {
+        // #734: a present `[git_branch]` / `[directory]` / `[cmd_duration]` table
+        // replaces only the template (and the duration threshold); the preset's
+        // git status icons, `show_counts = false` and segment colors survive.
+        let model = parse(
+            "[git_branch]\nsymbol = \"b \"\n[directory]\ntruncation_length = 3\n[cmd_duration]\nmin_time = 500\n",
+        )
+        .unwrap();
+        let theme = build(&model, "demo").expect("build").theme;
+        let git = &theme.segments.git;
+        assert_eq!(git.show_counts, Some(false));
+        assert_eq!(git.unstaged_icon.as_deref(), Some("!"));
+        assert_eq!(git.staged_icon.as_deref(), Some("+"));
+        assert_eq!(git.untracked_icon.as_deref(), Some("?"));
+        assert_eq!(git.conflicts_icon.as_deref(), Some("="));
+        assert_eq!(git.text_color.as_str(), "magenta");
+        assert_eq!(theme.segments.directory.text_color.as_str(), "cyan");
+        assert_eq!(theme.segments.directory.bg_color.as_str(), "transparent");
+        assert_eq!(theme.segments.duration.text_color.as_str(), "yellow");
+        assert_eq!(theme.segments.duration.bg_color.as_str(), "transparent");
+        assert_eq!(theme.segments.duration.show_if_exceeds_ms, 500_u64);
     }
 }

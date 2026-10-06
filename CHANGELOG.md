@@ -479,6 +479,11 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   background, as in Starship (#794). Palette references keep their case.
 - A `.` after a bare template variable is literal text (#796): `$branch.`
   renders the branch followed by a dot instead of nothing.
+- `gpy theme import` applies Starship's default styles for `directory`,
+  `cmd_duration` and `hostname` when the module sets no `style` (#734), and a
+  partially configured `[git_branch]`, `[git_status]`, `[directory]` or
+  `[cmd_duration]` keeps the preset's other fields (git status icons, colours)
+  instead of replacing them.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
