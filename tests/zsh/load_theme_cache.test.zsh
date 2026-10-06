@@ -42,7 +42,7 @@ STUB
 chmod +x "$STUB_BIN_DIR/gpy-agent"
 
 export PATH="$STUB_BIN_DIR:$PATH"
-export GPY_AGENT_SUPERVISOR_ENABLED=0
+source "$ROOT/tests/lib/supervisor_off.zsh"
 export GPY_AGENT_SOCKET_PATH="$TMP_DIR/dead-agent.sock"
 export XDG_CACHE_HOME="$TMP_DIR/cache"
 hash -r

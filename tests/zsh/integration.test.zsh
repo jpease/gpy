@@ -33,9 +33,6 @@ function __gpy_finish_test() {
 }
 trap __gpy_finish_test EXIT
 
-# Keep the test independent from an ambient development binary while retaining
-# standard tools such as sed, git, mktemp, and stat.
-export GPY_AGENT_SUPERVISOR_ENABLED=0
 # Hermetic XDG dirs (#632): __gpy_load_theme sources a theme-export cache from
 # $XDG_CACHE_HOME/gpy when one exists (#614), which would replace the built-in
 # defaults this file asserts on with the developer's own theme.
@@ -44,6 +41,9 @@ export XDG_CACHE_HOME="$__gpy_integration_xdg_root/cache"
 export XDG_CONFIG_HOME="$__gpy_integration_xdg_root/config"
 mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME"
 export GPY_AGENT_SOCKET_PATH="$ROOT/.gpy-test-missing.sock"
+# Keep the test independent from an ambient development binary while retaining
+# standard tools such as sed, git, mktemp, and stat. With no gpy-agent on PATH
+# there is no agent to start and no theme export, so no supervisor flag either.
 path=(/bin /usr/bin /usr/sbin /sbin)
 rehash
 
