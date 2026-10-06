@@ -55,6 +55,8 @@ const OTHER_THEME: &str = "other";
 /// One way config/theme/palette can change on disk.
 struct Mechanism {
     name: &'static str,
+    /// Runs once before the agent starts, to shape the on-disk layout.
+    setup: Option<fn(&Harness)>,
     apply: fn(&Harness),
     /// Exact number of reload doorbells expected once settled, if pinned.
     doorbells: Option<usize>,
@@ -64,17 +66,32 @@ struct Mechanism {
 /// it. Add a row here (and a test) to cover a new way the disk can change.
 const EDIT_ACTIVE_THEME: Mechanism = Mechanism {
     name: "edit active theme file in place (#710)",
+    setup: None,
     apply: edit_active_theme_in_place,
     doorbells: Some(1),
 };
 const SWITCH_THEME_BY_CONFIG: Mechanism = Mechanism {
     name: "switch theme by name via config (regression guard)",
+    setup: None,
     apply: switch_theme_by_config,
     doorbells: None,
 };
 const EDIT_CONFIG_IN_PLACE: Mechanism = Mechanism {
     name: "edit config.toml in place",
+    setup: None,
     apply: edit_config_in_place,
+    doorbells: None,
+};
+const EDIT_SYMLINKED_CONFIG_TARGET: Mechanism = Mechanism {
+    name: "edit the target of a symlinked config.toml (#720)",
+    setup: Some(symlink_config_into_dotfiles),
+    apply: edit_symlinked_config_target,
+    doorbells: None,
+};
+const RETARGET_SYMLINKED_CONFIG: Mechanism = Mechanism {
+    name: "retarget a symlinked config.toml (#720)",
+    setup: Some(symlink_config_into_dotfiles),
+    apply: retarget_symlinked_config,
     doorbells: None,
 };
 
@@ -88,6 +105,35 @@ fn switch_theme_by_config(h: &Harness) {
 
 fn edit_config_in_place(h: &Harness) {
     h.write_config(ACTIVE_THEME, false);
+}
+
+fn symlink_config_into_dotfiles(h: &Harness) {
+    let dotfiles = h.dotfiles_dir();
+    fs::create_dir_all(&dotfiles).expect("create dotfiles dir");
+    let target = dotfiles.join("gpy-config.toml");
+    fs::rename(h.config_path(), &target).expect("move config into dotfiles");
+    std::os::unix::fs::symlink(&target, h.config_path()).expect("symlink config");
+}
+
+fn edit_symlinked_config_target(h: &Harness) {
+    fs::write(
+        h.dotfiles_dir().join("gpy-config.toml"),
+        format!("[ui]\ntheme = \"{ACTIVE_THEME}\"\n\n[git]\nenabled = false\n"),
+    )
+    .expect("write symlink target");
+}
+
+fn retarget_symlinked_config(h: &Harness) {
+    let dotfiles = h.dotfiles_dir();
+    let other = dotfiles.join("other-config.toml");
+    fs::write(
+        &other,
+        format!("[ui]\ntheme = \"{ACTIVE_THEME}\"\n\n[git]\nenabled = false\n"),
+    )
+    .expect("write second target");
+    let staged = dotfiles.join("staged-link");
+    std::os::unix::fs::symlink(&other, &staged).expect("stage link");
+    fs::rename(&staged, h.config_path()).expect("retarget link");
 }
 
 struct Harness {
@@ -152,6 +198,11 @@ impl Harness {
 
     fn gpy_config_dir(&self) -> PathBuf {
         self.config_home.join("gpy")
+    }
+
+    /// A directory outside the XDG tree, standing in for a dotfiles repo.
+    fn dotfiles_dir(&self) -> PathBuf {
+        self.config_home.with_file_name("dotfiles")
     }
 
     fn config_path(&self) -> PathBuf {
@@ -238,6 +289,9 @@ fn wait_until(deadline: Duration, predicate: impl Fn() -> bool) -> bool {
 
 fn run_mechanism(mechanism: &Mechanism) {
     let harness = Harness::new();
+    if let Some(setup) = mechanism.setup {
+        setup(&harness);
+    }
     let before = harness.fresh_exports();
 
     let agent = Agent::new().expect("agent starts");
@@ -299,4 +353,16 @@ fn hot_reload_switch_theme_by_config() {
 #[serial]
 fn hot_reload_edit_config_in_place() {
     run_mechanism(&EDIT_CONFIG_IN_PLACE);
+}
+
+#[test]
+#[serial]
+fn hot_reload_edit_symlinked_config_target() {
+    run_mechanism(&EDIT_SYMLINKED_CONFIG_TARGET);
+}
+
+#[test]
+#[serial]
+fn hot_reload_retarget_symlinked_config() {
+    run_mechanism(&RETARGET_SYMLINKED_CONFIG);
 }

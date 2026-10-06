@@ -608,3 +608,102 @@ python = "🐍"
 fn reload_tests_require_unix() {
     // Placeholder for non-Unix platforms
 }
+
+/// Poll `manager.get().git.enabled` until it equals `want` or 10 s pass.
+#[cfg(unix)]
+async fn wait_for_git_enabled(manager: &ConfigManager, want: bool) -> bool {
+    for _ in 0..50 {
+        if manager.get().git.enabled == want {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    manager.get().git.enabled == want
+}
+
+/// #720: `config.toml` is a symlink into another directory (stow/dotfiles
+/// layout); a write through the link lands on the target inode, which the
+/// link's own directory never reports.
+#[cfg(unix)]
+#[tokio::test]
+#[serial]
+#[serial_test::file_serial(watcher_fsevents_bootstrap)]
+async fn symlinked_config_file_hot_reloads() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+    let base = fs::canonicalize(temp_dir.path()).expect("canonical base");
+    let dir_a = base.join("dirA");
+    let dir_b = base.join("dirB").join("gpy");
+    fs::create_dir_all(&dir_a).expect("create dirA");
+    fs::create_dir_all(&dir_b).expect("create dirB");
+    let target = dir_a.join("gpy-config.toml");
+    let link = dir_b.join("config.toml");
+    fs::write(&target, "[git]\nenabled = true\n").expect("write target");
+    std::os::unix::fs::symlink(&target, &link).expect("symlink config");
+
+    let manager = ConfigManager::from_path(&link).expect("create manager");
+    manager
+        .start_watching(Duration::from_millis(100))
+        .expect("start watching");
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+
+    fs::write(&link, "[git]\nenabled = false\n").expect("write through link");
+    assert!(
+        wait_for_git_enabled(&manager, false).await,
+        "a write through the symlink should hot-reload"
+    );
+
+    fs::write(&target, "[git]\nenabled = true\n").expect("write target directly");
+    assert!(
+        wait_for_git_enabled(&manager, true).await,
+        "a write to the symlink target should hot-reload"
+    );
+
+    manager.stop_watching();
+}
+
+/// #720: `ln -sf other config.toml` reloads, and edits to the new target
+/// (in a third directory) reload too.
+#[cfg(unix)]
+#[tokio::test]
+#[serial]
+#[serial_test::file_serial(watcher_fsevents_bootstrap)]
+async fn symlinked_config_retarget_hot_reloads() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+    let base = fs::canonicalize(temp_dir.path()).expect("canonical base");
+    let dir_a = base.join("dirA");
+    let dir_c = base.join("dirC");
+    let dir_b = base.join("dirB").join("gpy");
+    for dir in [&dir_a, &dir_b, &dir_c] {
+        fs::create_dir_all(dir).expect("create dir");
+    }
+    let first = dir_a.join("gpy-config.toml");
+    let second = dir_c.join("other-config.toml");
+    let link = dir_b.join("config.toml");
+    fs::write(&first, "[git]\nenabled = true\n").expect("write first target");
+    fs::write(&second, "[git]\nenabled = false\n").expect("write second target");
+    std::os::unix::fs::symlink(&first, &link).expect("symlink config");
+
+    let manager = ConfigManager::from_path(&link).expect("create manager");
+    manager
+        .start_watching(Duration::from_millis(100))
+        .expect("start watching");
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+
+    let staged = dir_b.join("staged-link");
+    std::os::unix::fs::symlink(&second, &staged).expect("stage link");
+    fs::rename(&staged, &link).expect("retarget link");
+    assert!(
+        wait_for_git_enabled(&manager, false).await,
+        "retargeting the symlink should hot-reload"
+    );
+
+    // Let the re-arm of the new target's directory settle.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    fs::write(&second, "[git]\nenabled = true\n").expect("edit new target");
+    assert!(
+        wait_for_git_enabled(&manager, true).await,
+        "an edit to the new target should hot-reload"
+    );
+
+    manager.stop_watching();
+}

@@ -66,6 +66,9 @@ pub struct ConfigManager {
     /// [`ConfigManager::stop_watching`] unregisters from the same one it
     /// registered against (#617). `None` until a watcher is started.
     watch_registry: Mutex<Option<Arc<WatchRegistry>>>,
+    /// Directory of the symlink target currently watched shallowly, when
+    /// `config_path` is a symlink into another directory (#720).
+    canonical_watch: Arc<Mutex<Option<PathBuf>>>,
     /// Serializes every reload -- the explicit [`reload_now`](Self::reload_now)
     /// and the watcher- and poll-triggered [`reload_and_apply`](Self::reload_and_apply)
     /// -- across its read-old, run-callback, store-new sequence.
@@ -171,6 +174,7 @@ impl ConfigManager {
             hot_reload: HotReloadSlot::new(),
             on_reload: Arc::new(Mutex::new(None)),
             watch_registry: Mutex::new(None),
+            canonical_watch: Arc::new(Mutex::new(None)),
             reload_gate: Arc::new(Mutex::new(())),
         }
     }
@@ -289,12 +293,19 @@ impl ConfigManager {
             } else {
                 None
             };
+            let rearm: Box<dyn Fn() + Send + Sync + 'static> = {
+                let path = self.config_path.clone();
+                let watcher = self.hot_reload.watcher_handle();
+                let canonical_dir = Arc::clone(&self.canonical_watch);
+                Box::new(move || Self::rearm_canonical_watch(&path, &watcher, &canonical_dir))
+            };
 
             let reload_callback = Self::create_reload_callback(
                 Arc::clone(&self.config),
                 Arc::clone(&self.reload_gate),
                 self.config_path.clone(),
                 on_reload_option,
+                rearm,
             );
 
             // Start watching with debounce. This coordinator never registers a
@@ -313,6 +324,7 @@ impl ConfigManager {
                 Self::ensure_config_directory_exists(parent)?;
                 coordinator.watch_directory(parent)?;
             }
+            self.arm_canonical_watch(&mut coordinator);
             registry.register_config_path(&self.config_path);
             if let Ok(mut slot) = self.watch_registry.lock() {
                 *slot = Some(Arc::clone(registry));
@@ -414,10 +426,84 @@ impl ConfigManager {
         reload_gate: Arc<Mutex<()>>,
         config_path: PathBuf,
         on_reload: Option<ConfigReloadCallback>,
+        rearm: Box<dyn Fn() + Send + Sync + 'static>,
     ) -> Box<dyn Fn(crate::watcher::DebouncedEvent) + Send + Sync + 'static> {
         Box::new(move |_event| {
             Self::reload_and_apply(&config, &reload_gate, &config_path, on_reload.as_ref());
+            // A retarget (`ln -sf other config.toml`) lands as an event in the
+            // lexical parent; follow the link to its new directory (#720).
+            rearm();
         })
+    }
+
+    /// Also watch the symlink target's directory: writes through the link land
+    /// on the target inode there, which the lexical parent never reports
+    /// (#720). Shallow, because it may be a whole dotfiles repo. Best-effort.
+    fn arm_canonical_watch(&self, coordinator: &mut WatchCoordinator) {
+        let Some(dir) = Self::canonical_watch_dir(&self.config_path) else {
+            return;
+        };
+        match coordinator.watch_directory_shallow(&dir) {
+            Ok(()) => {
+                if let Ok(mut watched) = self.canonical_watch.lock() {
+                    *watched = Some(dir);
+                }
+            }
+            Err(e) => {
+                debug_log!("config", "Failed to watch {}: {}", dir.display(), e);
+            }
+        }
+    }
+
+    /// The directory holding `config_path`'s symlink target, when it differs
+    /// from the directory holding the link itself. `None` for a regular file
+    /// (nothing extra to watch) or when the path cannot be resolved.
+    fn canonical_watch_dir(config_path: &Path) -> Option<PathBuf> {
+        let target_dir = std::fs::canonicalize(config_path)
+            .ok()?
+            .parent()?
+            .to_path_buf();
+        let link_dir = std::fs::canonicalize(config_path.parent()?).ok()?;
+        (target_dir != link_dir).then_some(target_dir)
+    }
+
+    /// Point the shallow watch on the symlink target's directory at the
+    /// current target, touching the watcher only when the target moved: each
+    /// extra watch rebuilds the `FSEvents` stream on macOS (#388).
+    ///
+    /// Best-effort: the lexical-parent watch keeps working if this fails.
+    fn rearm_canonical_watch(
+        config_path: &Path,
+        watcher: &Mutex<Option<WatchCoordinator>>,
+        canonical_dir: &Mutex<Option<PathBuf>>,
+    ) {
+        let next = Self::canonical_watch_dir(config_path);
+        let Ok(mut current) = canonical_dir.lock() else {
+            return;
+        };
+        if *current == next {
+            return;
+        }
+        // `stop` holds this lock while joining the thread we run on.
+        let Ok(mut slot) = watcher.try_lock() else {
+            return;
+        };
+        let Some(coordinator) = slot.as_mut() else {
+            return;
+        };
+        if let Some(old) = current.take()
+            && let Err(e) = coordinator.unwatch_directory_shallow(&old)
+        {
+            debug_log!("config", "Failed to unwatch {}: {}", old.display(), e);
+        }
+        if let Some(dir) = next {
+            match coordinator.watch_directory_shallow(&dir) {
+                Ok(()) => *current = Some(dir),
+                Err(e) => {
+                    debug_log!("config", "Failed to watch {}: {}", dir.display(), e);
+                }
+            }
+        }
     }
 
     /// Take the reload gate, recovering from a poisoned lock: a callback that
@@ -505,6 +591,9 @@ impl ConfigManager {
             .and_then(|mut slot| slot.take());
         if let Some(registry) = started_with {
             registry.unregister_config_path(&self.config_path);
+        }
+        if let Ok(mut watched) = self.canonical_watch.lock() {
+            *watched = None;
         }
     }
 
