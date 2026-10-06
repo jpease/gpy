@@ -239,7 +239,7 @@ if [ "$VERSION" = "latest" ]; then
     LATEST_TAG="$(fetch_stdout "https://api.github.com/repos/$REPO/releases/latest" |
         grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' || true)"
     if [ -z "$LATEST_TAG" ]; then
-        die "Could not resolve the latest GPY release from the GitHub API. Check your network, or pin a version: GPY_VERSION=v1.2.3 ... | sh"
+        die "Could not resolve the latest GPY release from the GitHub API. Check your network, or pin a version: curl -sS https://raw.githubusercontent.com/jpease/gpy/main/install-oneline.sh | GPY_VERSION=v1.2.3 sh"
     fi
     VERSION="$LATEST_TAG"
     success "Latest version: $VERSION"

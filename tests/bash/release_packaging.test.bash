@@ -251,6 +251,7 @@ if [[ -f "$NOTES" ]]; then
     grep -q "^# GPY v0.1.0" "$NOTES" || fail "release notes missing the version heading"
     grep -q "install-oneline.sh" "$NOTES" || fail "release notes missing the one-line installer"
     grep -q "docs/INSTALL.md" "$NOTES" || fail "release notes do not link the installation guide"
+    grep -qF '| GPY_VERSION=v0.1.0 sh' "$NOTES" || fail "release notes pin the version on curl instead of sh"
 else
     fail "release-notes.sh produced no output file"
 fi

@@ -59,7 +59,7 @@ itself (docs, workflows, packaging, dependency claims), not on the shell
 integration: `agent_tooling_privacy_claims`, `cleanup_test_agents`,
 `contributing_workflow_docs`, `crate_publish_boundary`,
 `dependency_advisory_claims`, `doc_links`, `gengo_gix_free`,
-`install_checksum_verification`, `install_from_source_docs`,
+`install_checksum_verification`, `install_docs_env_placement`, `install_from_source_docs`,
 `install_from_source_docs_isolation`, `install_oneline_verification`, `msrv_consistency`, `nextest_retry_policy`,
 `privacy_patterns`, `release_asset_contract`, `release_glibc_floor`,
 `release_packaging`, `release_sbom`, `release_version_claims`,

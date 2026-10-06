@@ -119,7 +119,7 @@ $section
 ### One-line installer (Linux, macOS)
 
 \`\`\`sh
-GPY_VERSION=$VERSION curl -sS https://raw.githubusercontent.com/jpease/gpy/$VERSION/install-oneline.sh | sh
+curl -sS https://raw.githubusercontent.com/jpease/gpy/$VERSION/install-oneline.sh | GPY_VERSION=$VERSION sh
 \`\`\`
 
 The installer script is fetched from the release tag, not from \`main\`, so the
