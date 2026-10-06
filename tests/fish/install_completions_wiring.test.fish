@@ -9,8 +9,10 @@
 #      the fish completions autoload directory on every run, guarded so a
 #      missing/non-executable gpy binary warns and skips instead of failing
 #      the install (mirrors the optional-CLI handling from #327).
-#   2. Install the checked-in `fish/completions/gpy-dynamic.fish` dynamic-
-#      value glue into that same directory.
+#   2. Append the checked-in `fish/completions/gpy-dynamic.fish` dynamic-
+#      value glue to that same `gpy.fish`: fish autoloads
+#      `completions/<command>.fish` only for the matching command, so a
+#      separate gpy-dynamic.fish is never loaded (#702).
 #
 # In the same spirit as install_oneline_file_lists.test.fish (#308) and
 # install_sh_cli_binary.test.fish / install_oneline_cli_binary.test.fish
@@ -53,8 +55,8 @@ __icw_check "install.sh: regenerates structural completions" install.sh \
     'gpy completions fish.*>.*FISH_CONFIG_DIR/completions/gpy\.fish'
 __icw_check "install.sh: guards on the CLI binary being executable" install.sh \
     '\[ -x ~/\.local/bin/gpy \]'
-__icw_check "install.sh: installs gpy-dynamic.fish into completions/" install.sh \
-    'completions/gpy-dynamic\.fish'
+__icw_check "install.sh: appends gpy-dynamic.fish to completions/gpy.fish" install.sh \
+    'completions/gpy-dynamic\.fish" *>>.*FISH_CONFIG_DIR/completions/gpy\.fish'
 
 # ---------------------------------------------------------------------------
 # install-oneline.sh
@@ -65,6 +67,8 @@ __icw_check "install-oneline.sh: guards on the CLI binary being executable" inst
     '\[ -x "\$INSTALL_DIR/gpy" \]'
 __icw_check "install-oneline.sh: downloads gpy-dynamic.fish from SHELL_FILES_BASE_URL" install-oneline.sh \
     'SHELL_FILES_BASE_URL/completions/gpy-dynamic\.fish'
+__icw_check "install-oneline.sh: appends the glue to completions/gpy.fish" install-oneline.sh \
+    '>>.*FISH_COMPLETIONS_DIR/gpy\.fish'
 
 # ---------------------------------------------------------------------------
 # install-dev.fish
@@ -73,8 +77,8 @@ __icw_check "install-dev.fish: regenerates structural completions" install-dev.f
     'gpy_cli completions fish.*>.*fish_completions_dir/gpy\.fish'
 __icw_check "install-dev.fish: guards on the CLI binary being executable" install-dev.fish \
     'test -x \$dev_gpy_cli'
-__icw_check "install-dev.fish: copies gpy-dynamic.fish into the completions dir" install-dev.fish \
-    'cp fish/completions/gpy-dynamic\.fish'
+__icw_check "install-dev.fish: appends gpy-dynamic.fish to completions/gpy.fish" install-dev.fish \
+    'cat fish/completions/gpy-dynamic\.fish >>.*fish_completions_dir/gpy\.fish'
 
 if test $failed -eq 1
     exit 1
