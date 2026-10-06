@@ -414,6 +414,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   git icon and ahead/behind keys, `language.detection_mode`, and the documented
   `gpy config set language.icons.<lang>`. `gpy config show` prints every field
   as valid TOML (`skip_paths = []`).
+- The shipped `config/config.toml` sets `language.confidence_threshold` to
+  its 0.1 default instead of 0.0 (#790).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

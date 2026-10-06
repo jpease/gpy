@@ -438,3 +438,97 @@ fn test_config_utf8_handling() {
     let result = load_config_from_file(config_file.to_str().unwrap());
     assert!(result.is_ok());
 }
+#[allow(clippy::float_cmp)]
+#[test]
+fn shipped_config_toml_matches_builtin_defaults() {
+    // Load the shipped config/config.toml file
+    let shipped_config_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/config.toml");
+    let config = load_config_from_file(shipped_config_path).unwrap();
+
+    // Verify language.confidence_threshold matches the built-in default
+    assert_eq!(
+        config.language.confidence_threshold.get(),
+        types::ConfidenceThreshold::DEFAULT,
+        "shipped config confidence_threshold must equal built-in default 0.1"
+    );
+
+    // Verify all shipped config values match defaults (except icons)
+    let default_config = Config::default();
+
+    // Convert both configs to TOML tables for comparison
+    let shipped_value = toml::Value::try_from(&config).unwrap();
+    let default_value = toml::Value::try_from(&default_config).unwrap();
+
+    let mut shipped_table = shipped_value.as_table().unwrap().clone();
+    let mut default_table = default_value.as_table().unwrap().clone();
+
+    // Remove icon sections from comparison (icons are allowed to differ)
+    if let Some(language_table) = shipped_table.get_mut("language")
+        && let Some(table) = language_table.as_table_mut()
+    {
+        table.remove("icons");
+    }
+    if let Some(language_table) = default_table.get_mut("language")
+        && let Some(table) = language_table.as_table_mut()
+    {
+        table.remove("icons");
+    }
+    if let Some(git_table) = shipped_table.get_mut("git")
+        && let Some(table) = git_table.as_table_mut()
+    {
+        table.remove("icons");
+    }
+    if let Some(git_table) = default_table.get_mut("git")
+        && let Some(table) = git_table.as_table_mut()
+    {
+        table.remove("icons");
+    }
+
+    assert_eq!(
+        shipped_table, default_table,
+        "shipped config must match defaults for all non-icon keys"
+    );
+}
+
+/// Collect every dotted leaf path of `table` into `out` (#790).
+fn toml_leaf_paths(prefix: &str, table: &toml::Table, out: &mut Vec<String>) {
+    for (key, value) in table {
+        let path = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        match value {
+            toml::Value::Table(inner) => toml_leaf_paths(&path, inner, out),
+            _ => out.push(path),
+        }
+    }
+}
+
+/// Every key the shipped config sets is a `Config` leaf (#790).
+///
+/// The reverse direction of `shipped_config_toml_matches_builtin_defaults`:
+/// serde silently ignores unknown keys, so a typo or a removed field would
+/// otherwise go unnoticed. Free-form icon maps are exempt.
+#[test]
+fn shipped_config_toml_sets_only_known_keys() {
+    let shipped_config_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/config.toml");
+    let raw: toml::Table = fs::read_to_string(shipped_config_path)
+        .unwrap()
+        .parse()
+        .unwrap();
+    let mut known = Vec::new();
+    let default_table = toml::Table::try_from(Config::default()).unwrap();
+    toml_leaf_paths("", &default_table, &mut known);
+    let mut shipped = Vec::new();
+    toml_leaf_paths("", &raw, &mut shipped);
+    let unknown: Vec<&String> = shipped
+        .iter()
+        .filter(|path| !path.starts_with("language.icons.") && !path.starts_with("git.icons."))
+        .filter(|path| !known.contains(path))
+        .collect();
+    assert!(
+        unknown.is_empty(),
+        "config/config.toml sets keys Config does not have: {unknown:?}"
+    );
+}
