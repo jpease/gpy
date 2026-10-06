@@ -176,6 +176,11 @@ pub fn stash_project_venv(repo_root: &Path, venv: &Path) {
     VENV_STASH.insert(stash_key(repo_root), venv.to_path_buf());
 }
 
+/// Drop a repo's stashed forwarded venv (the shell no longer has one active).
+pub fn clear_project_venv(repo_root: &Path) {
+    VENV_STASH.remove(&stash_key(repo_root));
+}
+
 /// Fetch a repo's stashed forwarded venv, dropping it if the TTL lapsed.
 #[must_use]
 pub fn stashed_project_venv(repo_root: &Path) -> Option<PathBuf> {
@@ -424,6 +429,16 @@ mod tests {
         // Stored venv path is returned verbatim (not canonicalized).
         assert_eq!(stashed_project_venv(repo.path()), Some(venv));
         assert!(expected.ends_with(".venv"));
+    }
+
+    #[test]
+    fn clear_project_venv_removes_the_stash() {
+        let repo = tempfile::tempdir().unwrap();
+        let venv = repo.path().join(".venv");
+        stash_project_venv(repo.path(), &venv);
+        assert_eq!(stashed_project_venv(repo.path()), Some(venv));
+        clear_project_venv(repo.path());
+        assert_eq!(stashed_project_venv(repo.path()), None);
     }
 
     /// Regression for #589: the venv stash previously had its own hardcoded
