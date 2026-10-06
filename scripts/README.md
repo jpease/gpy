@@ -118,7 +118,7 @@ The `--fast` mode is recommended for CI environments as it skips slower checks w
 - `bench.sh` - Run benchmarks
 - `perf-canary.sh` - Compare focused canary benchmarks against the last pushed commit on the same machine
 - `ci-bench.sh` - End-to-end prompt-latency and agent-memory budget benchmark (run via `just bench-ci`)
-- `install-hooks.sh` - Configure git to use the repo-provided hooks (pre-push runs the quality check and a same-machine perf canary). Run once per clone:
+- `install-hooks.sh` - Install prek shims for `pre-commit`, `pre-push` and `commit-msg` from `.pre-commit-config.yaml` (pre-push runs the path-aware quality gate, `just lint` and a same-machine perf canary). Replaces hook symlinks into `.raven/git-hooks/`. Run once per clone:
   ```bash
   ./scripts/install-hooks.sh          # install
   ./scripts/install-hooks.sh --uninstall  # remove

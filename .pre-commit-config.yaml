@@ -1,3 +1,8 @@
+# Hooks without an explicit `stages` run on commit and on push only; the
+# commit-msg shim (installed by scripts/install-hooks.sh) runs only
+# raven-commit-msg instead of repeating every pre-commit check.
+default_stages: [pre-commit, pre-push]
+
 repos:
 -   repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -55,6 +60,18 @@ repos:
         entry: python3 .raven/git-hooks/lib/check-managed-block-integrity.py
         language: system
         pass_filenames: false
+    -   id: raven-gate-relaxation
+        name: raven-gate-relaxation
+        description: Block a staged blanket lint suppression that names no rule
+        entry: python3 .raven/git-hooks/lib/check-gate-relaxation.py
+        language: system
+        pass_filenames: false
+    -   id: raven-commit-msg
+        name: raven-commit-msg
+        description: Strip AI attribution trailers; warn on a negated closing keyword
+        entry: .raven/git-hooks/commit-msg
+        language: system
+        stages: [commit-msg]
     -   id: gitleaks
         name: gitleaks
         description: Scan staged changes for secrets
