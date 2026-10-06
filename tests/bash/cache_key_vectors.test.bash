@@ -12,6 +12,14 @@ cd "$ROOT" || exit 1
 source bash/core/ipc.bash
 
 FIXTURE="tests/fixtures/cache_key_vectors.tsv"
+
+# Non-ASCII stems count characters only under a UTF-8 locale (#771).
+for utf8_locale in C.UTF-8 en_US.UTF-8 ""; do
+    [[ -n "$utf8_locale" ]] || { echo "FAIL: no UTF-8 locale available"; exit 1; }
+    export LC_ALL="$utf8_locale"
+    probe=$'\xc3\xa9'
+    (( ${#probe} == 1 )) && break
+done
 FAILED=0
 CASE_COUNT=0
 
@@ -30,7 +38,7 @@ unescape_input() {
     printf '%s' "$s"
 }
 
-while IFS=$'\t' read -r input_col expected_col _rest; do
+while IFS=$'\t' read -r input_col expected_col stem_col _rest; do
     [[ -z "$input_col" && -z "$expected_col" ]] && continue
     [[ "$input_col" == \#* ]] && continue
 
@@ -41,6 +49,15 @@ while IFS=$'\t' read -r input_col expected_col _rest; do
         echo "PASS: case $CASE_COUNT ($input_col)"
     else
         echo "FAIL: case $CASE_COUNT ($input_col): expected [$expected_col], got [$actual]"
+        FAILED=1
+    fi
+    # #771: the relative cache-file path the reader builds from the key.
+    stem="$actual"
+    __gpy_chunk_cache_key stem
+    if [[ "$stem.git.none.bash" == "$stem_col.git.none.bash" && -n "$stem_col" ]]; then
+        echo "PASS: case $CASE_COUNT stem"
+    else
+        echo "FAIL: case $CASE_COUNT stem: expected [$stem_col], got [$stem]"
         FAILED=1
     fi
 done < "$FIXTURE"

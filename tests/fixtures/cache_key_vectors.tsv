@@ -1,19 +1,20 @@
 # tests/fixtures/cache_key_vectors.tsv
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Shared instant-cache key vectors (#705). Read by ALL FOUR implementations of
-# the Unix path -> cache-key encoder, so they cannot drift apart again:
-#   - Rust:  path_to_cache_key_for(Os::Unix, ..) in gpy-agent/src/cache/instant_prompt.rs
-#            (test_path_to_cache_key_shared_vectors)
-#   - Bash:  __gpy_path_to_cache_key  (tests/bash/cache_key_vectors.test.bash)
-#   - Zsh:   __gpy_path_to_cache_key  (tests/zsh/cache_key_vectors.test.zsh)
-#   - Fish:  __gpy_path_to_cache_key  (tests/fish/cache_key_vectors.test.fish)
+# Shared instant-cache key vectors (#705, #771). Read by ALL FOUR
+# implementations of the Unix path -> cache-key encoder and its on-disk
+# chunking, so they cannot drift apart again:
+#   - Rust:  path_to_cache_key_for(Os::Unix, ..) + cache_file_parts in
+#            gpy-agent/src/cache/instant_prompt.rs (test_path_to_cache_key_shared_vectors)
+#   - Bash:  __gpy_path_to_cache_key + __gpy_chunk_cache_key  (tests/bash/cache_key_vectors.test.bash)
+#   - Zsh:   __gpy_path_to_cache_key + __gpy_chunk_cache_key  (tests/zsh/cache_key_vectors.test.zsh)
+#   - Fish:  __gpy_path_to_cache_key + __gpy_chunk_cache_key  (tests/fish/cache_key_vectors.test.fish)
 #
-# Format: one vector per line, tab-separated: input<TAB>expected.
+# Format: one vector per line, tab-separated: input<TAB>expected<TAB>stem.
 # Blank lines and lines starting with # are ignored. Extra columns after
-# `expected` are reserved for later issues (e.g. #771 long-key chunking) and
-# MUST be ignored by readers that do not know them. Neither column may be
-# empty (tab is IFS-whitespace to bash/zsh `read`, which would collapse it).
+# `stem` are reserved for later issues and MUST be ignored by readers that do
+# not know them. No column may be empty (tab is IFS-whitespace to bash/zsh
+# `read`, which would collapse it).
 #
 # `input` uses the same mini escape scheme as json_escape_vectors.tsv --
 # backslash first: \\ -> one literal backslash byte, \n -> LF, \r -> CR,
@@ -24,17 +25,32 @@
 # space->_w. Every other byte, including the Windows-reserved ? * < > " |,
 # passes through unchanged. Every reader MUST fail if this file is missing or
 # yields zero vectors.
-/Users/foo/project	_sUsers_sfoo_sproject
-/tmp/what?proj	_stmp_swhat?proj
-/tmp/q?x*y|z"<>	_stmp_sq?x*y|z"<>
-/a*b<c>d"e|f	_sa*b<c>d"e|f
-/odd/q?a*b<c>d"e|f	_sodd_sq?a*b<c>d"e|f
-/a_b/c__d	_sa__b_sc____d
-/a/b	_sa_sb
-C:\\Users\\foo	C_c_bUsers_bfoo
-/with space/dir	_swith_wspace_sdir
-/a:b	_sa_cb
-/unicode/café/项目/repo	_sunicode_scafé_s项目_srepo
-/a//b/	_sa_s_sb_s
-//	_s_s
-/	_s
+#
+# `stem` (#771) is the cache file's path relative to the instant-prompts
+# directory, minus its `.{suffix}.{token}.{ext}` tail: the key itself when it
+# is at most 200 characters, else the key split into 50-character chunks
+# joined by `/` (every chunk but the last is a directory). Each reader
+# asserts the relative path `{stem}.git.none.{ext}` its builder produces.
+# Rows over 200 characters contain no tab or newline (Fish chunks
+# line-wise). Non-ASCII rows count characters, which Bash/Zsh match only
+# under a UTF-8 locale (the readers set one).
+/Users/foo/project	_sUsers_sfoo_sproject	_sUsers_sfoo_sproject
+/tmp/what?proj	_stmp_swhat?proj	_stmp_swhat?proj
+/tmp/q?x*y|z"<>	_stmp_sq?x*y|z"<>	_stmp_sq?x*y|z"<>
+/a*b<c>d"e|f	_sa*b<c>d"e|f	_sa*b<c>d"e|f
+/odd/q?a*b<c>d"e|f	_sodd_sq?a*b<c>d"e|f	_sodd_sq?a*b<c>d"e|f
+/a_b/c__d	_sa__b_sc____d	_sa__b_sc____d
+/a/b	_sa_sb	_sa_sb
+C:\\Users\\foo	C_c_bUsers_bfoo	C_c_bUsers_bfoo
+/with space/dir	_swith_wspace_sdir	_swith_wspace_sdir
+/a:b	_sa_cb	_sa_cb
+/unicode/café/项目/repo	_sunicode_scafé_s项目_srepo	_sunicode_scafé_s项目_srepo
+/a//b/	_sa_s_sb_s	_sa_s_sb_s
+//	_s_s	_s_s
+/	_s	_s
+/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	_saaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	_saaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	_saaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	_saaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	_saaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	_saaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/a
+/deep tree/mono_repo_mono_repo_mono_repo_mono_repo_mono_repo_mono_repo_mono_repo_mono_repo_mono_repo_mono_repo_mono_repo_mono_repo_mono_repo_mono_repo_mono_repo_mono_repo_mono_repo_mono_repo_mono_repo_mono_repo/src: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx	_sdeep_wtree_smono__repo__mono__repo__mono__repo__mono__repo__mono__repo__mono__repo__mono__repo__mono__repo__mono__repo__mono__repo__mono__repo__mono__repo__mono__repo__mono__repo__mono__repo__mono__repo__mono__repo__mono__repo__mono__repo__mono__repo_ssrc_c_wxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx	_sdeep_wtree_smono__repo__mono__repo__mono__repo__/mono__repo__mono__repo__mono__repo__mono__repo__mo/no__repo__mono__repo__mono__repo__mono__repo__mono/__repo__mono__repo__mono__repo__mono__repo__mono__/repo__mono__repo__mono__repo__mono__repo__mono__re/po_ssrc_c_wxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxx
+/éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé/项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目/repo	_séééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé_s项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目_srepo	_séééééééééééééééééééééééééééééééééééééééééééééééé/éééééééééééééééééééééééééééééééééééééééééééééééééé/éééééééééééééééééééééé_s项目项目项目项目项目项目项目项目项目项目项目项目项目/项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目项目/项目项目项目项目项目项目项目项目项目项目项目项目_srepo
+/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/ccccccccccccccccccccccccccccccccccccccccccccccccc	_sbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb_sccccccccccccccccccccccccccccccccccccccccccccccccc	_sbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/_scccccccccccccccccccccccccccccccccccccccccccccccc/c

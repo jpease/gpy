@@ -12,6 +12,14 @@ cd "$ROOT" || exit 1
 source zsh/core/ipc.zsh
 
 FIXTURE="$ROOT/tests/fixtures/cache_key_vectors.tsv"
+
+# Non-ASCII stems count characters only under a UTF-8 locale (#771).
+for utf8_locale in C.UTF-8 en_US.UTF-8 ""; do
+    [[ -n "$utf8_locale" ]] || { echo "FAIL: no UTF-8 locale available"; exit 1; }
+    export LC_ALL=$utf8_locale
+    probe=$'\xc3\xa9'
+    (( ${#probe} == 1 )) && break
+done
 test_result=0
 vector_count=0
 
@@ -30,7 +38,7 @@ unescape_input() {
     printf '%s' "$s"
 }
 
-while IFS=$'\t' read -r input_col expected_col _rest; do
+while IFS=$'\t' read -r input_col expected_col stem_col _rest; do
     [[ -z "$input_col" && -z "$expected_col" ]] && continue
     [[ "$input_col" == \#* ]] && continue
 
@@ -41,6 +49,15 @@ while IFS=$'\t' read -r input_col expected_col _rest; do
         print -r -- "PASS: vector $vector_count ($input_col)"
     else
         print -r -- "FAIL: vector $vector_count ($input_col): expected [$expected_col], got [$actual]"
+        test_result=1
+    fi
+    # #771: the relative cache-file path the reader builds from the key.
+    stem=$actual
+    __gpy_chunk_cache_key stem
+    if [[ -n "$stem_col" && "$stem.git.none.zsh" == "$stem_col.git.none.zsh" ]]; then
+        print -r -- "PASS: vector $vector_count stem"
+    else
+        print -r -- "FAIL: vector $vector_count stem: expected [$stem_col], got [$stem]"
         test_result=1
     fi
 done < "$FIXTURE"
