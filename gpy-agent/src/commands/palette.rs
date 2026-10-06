@@ -67,10 +67,11 @@ pub fn use_palette(name: &str) -> Result<()> {
 
     // Update config
     let path = active_config_path()?;
-    let mut config = load_active_config(&path)?;
+    let original = load_active_config(&path)?;
+    let mut config = original.clone();
     config.ui.palette = config::types::PaletteName::new(name.to_owned())
         .ok_or_else(|| Error::config(format!("Invalid palette name: {name}")))?;
-    save_config_to(&config, &path)?;
+    save_config_to(&path, &original, &config, &[])?;
 
     println!("✅ Switched to '{name}' palette");
 

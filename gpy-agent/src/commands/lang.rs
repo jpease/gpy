@@ -18,10 +18,11 @@ use crate::Result;
 /// or validated, or if the config cannot be saved.
 pub fn set_versions(enabled: bool) -> Result<()> {
     let path = active_config_path()?;
-    let mut config = load_active_config(&path)?;
+    let original = load_active_config(&path)?;
+    let mut config = original.clone();
 
     config.language.show_versions = enabled;
-    save_config_to(&config, &path)?;
+    save_config_to(&path, &original, &config, &[])?;
 
     let status = if enabled { "enabled" } else { "disabled" };
     println!("✅ Language versions {status}");

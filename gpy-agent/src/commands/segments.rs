@@ -60,9 +60,10 @@ pub fn enable(segment: &str) -> Result<()> {
     ensure_segment_known(&canonical, true)?;
 
     let path = active_config_path()?;
-    let mut config = load_active_config(&path)?;
+    let original = load_active_config(&path)?;
+    let mut config = original.clone();
     apply_enable(&mut config, &canonical);
-    save_config_to(&config, &path)?;
+    save_config_to(&path, &original, &config, &[])?;
 
     println!("✅ Enabled {canonical} segment");
     reload_agent_and_notify();
@@ -155,11 +156,12 @@ const fn apply_feature_toggle(
 /// Returns an error if config cannot be saved.
 fn set_feature_enabled(feature: FeatureToggle, enabled: bool) -> Result<()> {
     let path = active_config_path()?;
-    let mut config = load_active_config(&path)?;
+    let original = load_active_config(&path)?;
+    let mut config = original.clone();
 
     apply_feature_toggle(&mut config, feature, enabled);
 
-    save_config_to(&config, &path)?;
+    save_config_to(&path, &original, &config, &[])?;
     Ok(())
 }
 
@@ -242,9 +244,10 @@ pub(crate) fn rebuild_enabled_segments(
 /// Returns an error if config cannot be saved.
 fn remove_from_enabled_segments(segment: &str) -> Result<()> {
     let path = active_config_path()?;
-    let mut config = load_active_config(&path)?;
+    let original = load_active_config(&path)?;
+    let mut config = original.clone();
     config.ui.enabled_segments.retain(|s| s != segment);
-    save_config_to(&config, &path)?;
+    save_config_to(&path, &original, &config, &[])?;
     Ok(())
 }
 

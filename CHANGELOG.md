@@ -398,6 +398,12 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `gpy enable`, `gpy segments`, completion, `gpy doctor` and the wizard
   recognise the shipped `hostname` and `username` segments (#740). `gpy doctor`
   no longer fails on the starship preset.
+- `gpy config set`, `theme use`, `palette use`, `enable`/`disable`,
+  `lang versions`, `theme import` and the wizard edit `config.toml` in place
+  (#730): comments, unknown keys, key order and unset defaults survive, writes
+  are atomic, and a symlinked `config.toml` stays a symlink. `gpy config open`
+  on a missing file creates a short header instead of a dump of every
+  default.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

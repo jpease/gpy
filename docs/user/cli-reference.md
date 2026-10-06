@@ -738,7 +738,7 @@ gpy config set language.cache_ttl_hours 48
 
 Open the active config file in your default editor.
 
-This command respects `GPY_CONFIG_PATH` when set. Otherwise it opens the standard config path under `XDG_CONFIG_HOME` or `~/.config/gpy/config.toml`. If the file does not exist yet, GPY creates it with default contents first.
+This command respects `GPY_CONFIG_PATH` when set. Otherwise it opens the standard config path under `XDG_CONFIG_HOME` or `~/.config/gpy/config.toml`. If the file does not exist yet, GPY creates it first as a short comment-only file that points at the [configuration reference](configuration-reference.md); defaults are not written out.
 
 Editor selection order:
 - `$VISUAL`

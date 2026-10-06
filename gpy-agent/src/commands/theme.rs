@@ -83,7 +83,8 @@ pub fn use_theme(name: &str, force: bool) -> Result<()> {
 
     // Update config
     let path = active_config_path()?;
-    let mut config = load_active_config(&path)?;
+    let original = load_active_config(&path)?;
+    let mut config = original.clone();
 
     // The theme active *before* this switch. A recommended field whose on-disk
     // value equals this outgoing theme's recommendation was almost certainly
@@ -118,6 +119,7 @@ pub fn use_theme(name: &str, force: bool) -> Result<()> {
     if force {
         apply_forced_switch(
             name,
+            &original,
             &mut config,
             &path,
             &theme,
@@ -128,7 +130,7 @@ pub fn use_theme(name: &str, force: bool) -> Result<()> {
         )?;
     } else {
         validate_prospective_activation(&theme, config.ui.palette.as_str())?;
-        save_config_to(&config, &path)?;
+        save_config_to(&path, &original, &config, &[])?;
 
         println!("✅ Switched to '{name}' theme");
         let detection_hint = recommended_detection.map(|_| "language detection".to_owned());
@@ -165,6 +167,7 @@ pub fn use_theme(name: &str, force: bool) -> Result<()> {
 )]
 fn apply_forced_switch(
     name: &str,
+    original: &config::Config,
     config: &mut config::Config,
     path: &str,
     theme: &ThemeConfig,
@@ -188,7 +191,7 @@ fn apply_forced_switch(
     );
     let palette_applied = resolve_forced_palette(config, recommended_palette, user_set.palette);
     validate_prospective_activation(theme, config.ui.palette.as_str())?;
-    save_config_to(config, path)?;
+    save_config_to(path, original, config, &[])?;
 
     println!("✅ Switched to '{name}' theme");
     print_summary(

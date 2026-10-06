@@ -25,6 +25,7 @@
 use crate::Result;
 use crate::commands::utils::{active_config_path, save_config_to};
 use crate::config::Config;
+use crate::config::loader::overwrite_config;
 use crate::font::{self, FontCapability};
 use std::path::Path;
 
@@ -63,7 +64,14 @@ pub fn run(options: InitOptions) -> Result<()> {
 
     let mut config = Config::default();
     config.ui.show_icons = show_icons;
-    save_config_to(&config, &path)?;
+    // `--force` overwrites: start from an empty document rather than editing
+    // the existing file. Only `ui.show_icons` is pinned either way.
+    let defaults = Config::default();
+    if options.force {
+        overwrite_config(&path, &defaults, &config, &["ui.show_icons"])?;
+    } else {
+        save_config_to(&path, &defaults, &config, &["ui.show_icons"])?;
+    }
 
     report(&path, capability, show_icons);
     Ok(())

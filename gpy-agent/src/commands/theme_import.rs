@@ -214,9 +214,10 @@ fn print_activation_hints(artifacts: &ImportArtifacts, name: &str) {
 /// Returns an error if resolving the active config path, loading, or saving fails.
 fn apply_layout(segments: &[String]) -> Result<()> {
     let path = crate::commands::utils::active_config_path()?;
-    let mut config = crate::commands::utils::load_active_config(&path)?;
+    let original = crate::commands::utils::load_active_config(&path)?;
+    let mut config = original.clone();
     config.ui.enabled_segments = segments.to_vec();
-    crate::commands::utils::save_config_to(&config, &path)?;
+    crate::commands::utils::save_config_to(&path, &original, &config, &[])?;
     crate::commands::utils::reload_agent_and_notify();
     println!("✅ Applied enabled_segments to {path}");
     Ok(())

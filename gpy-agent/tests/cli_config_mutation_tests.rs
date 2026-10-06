@@ -411,3 +411,130 @@ fn every_mutation_command_family_aborts_on_malformed_config() {
         );
     }
 }
+
+// --- #730: writers edit the document instead of regenerating it --------------
+
+#[test]
+fn config_set_preserves_comments_unknown_keys_and_absent_defaults() {
+    let (temp, home, xdg) = isolated_dirs();
+    let config_path = write_xdg_config(
+        &xdg,
+        "# my comment\n[ui]\ncustom_key = 1 # keep\n[git]\ntimeout_seconds = 3\n",
+    );
+
+    let output = run_gpy(
+        &["config", "set", "git.show_upstream", "false"],
+        &home,
+        &xdg,
+        None,
+        temp.path(),
+    );
+    assert!(
+        output.status.success(),
+        "config set should succeed; stderr: {}",
+        stderr_of(&output)
+    );
+
+    let contents = fs::read_to_string(&config_path).unwrap();
+    assert!(contents.contains("# my comment"), "{contents}");
+    assert!(contents.contains("custom_key = 1 # keep"), "{contents}");
+    assert!(contents.contains("timeout_seconds = 3"), "{contents}");
+    assert!(contents.contains("show_upstream = false"), "{contents}");
+    assert!(!contents.contains("max_ahead_behind"), "{contents}");
+    assert!(!contents.contains("Generated automatically"), "{contents}");
+}
+
+#[test]
+fn config_set_is_deterministic_with_language_icons() {
+    let (temp, home, xdg) = isolated_dirs();
+    let names: [&str; 10] = [
+        "zig", "rust", "go", "python", "node", "java", "elixir", "c", "cpp", "ruby",
+    ];
+    let seed: String = std::iter::once("[language.icons]\n".to_owned())
+        .chain(names.iter().map(|name| format!("{name} = \"i-{name}\"\n")))
+        .collect();
+    let config_path = write_xdg_config(&xdg, &seed);
+
+    let mut results = Vec::new();
+    for _ in 0_u8..2_u8 {
+        let output = run_gpy(
+            &["config", "set", "git.timeout_seconds", "5"],
+            &home,
+            &xdg,
+            None,
+            temp.path(),
+        );
+        assert!(
+            output.status.success(),
+            "config set should succeed; stderr: {}",
+            stderr_of(&output)
+        );
+        results.push(fs::read_to_string(&config_path).unwrap());
+    }
+
+    let [first, second] = results.as_slice() else {
+        panic!("expected two results");
+    };
+    assert_eq!(first, second, "two identical runs must match");
+    let icon_lines: Vec<&str> = first
+        .lines()
+        .filter(|line| line.contains("= \"i-"))
+        .collect();
+    let expected: Vec<String> = names
+        .iter()
+        .map(|name| format!("{name} = \"i-{name}\""))
+        .collect();
+    assert_eq!(icon_lines, expected, "icon order must be preserved");
+}
+
+#[test]
+fn theme_use_writes_only_ui_theme() {
+    let (temp, home, xdg) = isolated_dirs();
+
+    let output = run_gpy(&["theme", "use", "text"], &home, &xdg, None, temp.path());
+    assert!(
+        output.status.success(),
+        "theme use should succeed; stderr: {}",
+        stderr_of(&output)
+    );
+
+    let contents = fs::read_to_string(xdg.join("gpy").join("config.toml")).unwrap();
+    let table: toml::Table = contents.parse().unwrap();
+    let mut expected = toml::Table::new();
+    let mut ui = toml::Table::new();
+    ui.insert("theme".to_owned(), toml::Value::String("text".to_owned()));
+    expected.insert("ui".to_owned(), toml::Value::Table(ui));
+    assert_eq!(table, expected, "{contents}");
+}
+
+#[cfg(unix)]
+#[test]
+fn config_set_through_symlink_keeps_symlink() {
+    let (temp, home, xdg) = isolated_dirs();
+    let target_dir = temp.path().join("dotfiles");
+    fs::create_dir_all(&target_dir).unwrap();
+    let target = target_dir.join("config.toml");
+    fs::write(&target, "# linked\n[git]\ntimeout_seconds = 3\n").unwrap();
+    let config_dir = xdg.join("gpy");
+    fs::create_dir_all(&config_dir).unwrap();
+    let link = config_dir.join("config.toml");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    let output = run_gpy(
+        &["config", "set", "git.show_upstream", "false"],
+        &home,
+        &xdg,
+        None,
+        temp.path(),
+    );
+    assert!(
+        output.status.success(),
+        "config set should succeed; stderr: {}",
+        stderr_of(&output)
+    );
+
+    assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+    let contents = fs::read_to_string(&target).unwrap();
+    assert!(contents.contains("show_upstream = false"), "{contents}");
+    assert!(contents.contains("# linked"), "{contents}");
+}

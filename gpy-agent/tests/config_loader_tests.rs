@@ -293,26 +293,6 @@ fn test_load_config_from_file_success() {
 }
 
 #[test]
-fn test_save_config_success() {
-    let temp_dir = TempDir::new().unwrap();
-    let config_file = temp_dir.path().join("saved_config.toml");
-
-    let config = Config::default();
-    let result = save_config(&config, config_file.to_str().unwrap());
-    assert!(result.is_ok());
-
-    // Verify file was created
-    assert!(config_file.exists());
-
-    // Verify file content
-    let content = fs::read_to_string(&config_file).unwrap();
-    assert!(content.contains("[agent]"));
-    assert!(content.contains("[git]"));
-    assert!(content.contains("[language]"));
-    assert!(content.contains("[ui]"));
-}
-
-#[test]
 fn test_save_config_creates_directories() {
     let temp_dir = TempDir::new().unwrap();
     let nested_config_file = temp_dir
@@ -322,7 +302,12 @@ fn test_save_config_creates_directories() {
         .join("config.toml");
 
     let config = Config::default();
-    let result = save_config(&config, nested_config_file.to_str().unwrap());
+    let result = save_config(
+        nested_config_file.to_str().unwrap(),
+        &config,
+        &config,
+        &["ui.show_icons"],
+    );
     assert!(result.is_ok());
 
     // Verify nested directories were created
@@ -429,7 +414,13 @@ fn test_config_file_permissions() {
 
     // Create a config file
     let config = Config::default();
-    save_config(&config, config_file.to_str().unwrap()).unwrap();
+    save_config(
+        config_file.to_str().unwrap(),
+        &config,
+        &config,
+        &["ui.show_icons"],
+    )
+    .unwrap();
 
     // Verify we can read it back
     let result = load_config_from_file(config_file.to_str().unwrap());
