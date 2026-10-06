@@ -134,10 +134,55 @@ exit'
     fi
 }
 
+# nounset_scenario <label> <unset-vars>: shared body for the `set -u` scenarios.
+nounset_scenario() {
+    local label="$1" unsets="$2" repo="$SANDBOX/nu-repo" stubs="$SANDBOX/nu-stubs"
+    mkdir -p "$repo" "$stubs"
+    git -C "$repo" init -q
+    printf '#!/bin/sh\nexit 1\n' >"$stubs/gpy-agent"
+    chmod +x "$stubs/gpy-agent"
+    run_child "
+set -u
+PATH=\$HOME/nu-stubs:\$PATH
+unset GPY_AGENT_SOCKET_PATH $unsets" 'echo "ep=[$(__gpy_ipc_endpoint)]"
+echo "ic=[$(__gpy_instant_cache_dir)]"
+echo "te=[$(__gpy_theme_export_cache_path)]"
+cd "$HOME/nu-repo"
+true
+false
+cd /
+cd "$HOME/nu-repo"
+exit'
+    if [[ "$CHILD_OUT" == *"unbound variable"* ]]; then
+        fail "$label: set -u produced unbound-variable errors:"
+        printf '%s\n' "$CHILD_OUT" | grep 'unbound variable' | sort | uniq -c
+        return
+    fi
+    local f ok=1
+    for f in ep ic te; do
+        [[ "$(field "$f")" == /* ]] || ok=0
+    done
+    if ((ok)); then
+        pass "$label: no unbound-variable errors and resolvers return absolute paths"
+    else
+        fail "$label: resolvers returned ep=[$(field ep)] ic=[$(field ic)] te=[$(field te)]"
+    fi
+}
+
+scenario_nounset_no_xdg() {
+    nounset_scenario "set -u, no XDG vars" "XDG_RUNTIME_DIR XDG_CACHE_HOME"
+}
+
+scenario_nounset_runtime_only() {
+    nounset_scenario "set -u, only XDG_RUNTIME_DIR" "XDG_CACHE_HOME"
+}
+
 run_scenario prior_debug_trap_fires
 run_scenario exit_trap_with_quotes
 run_scenario resource_keeps_chain
 run_scenario never_chains_to_itself
+run_scenario nounset_no_xdg
+run_scenario nounset_runtime_only
 
 if ((failures > 0)); then
     echo "=== $failures scenario assertion(s) failed ==="

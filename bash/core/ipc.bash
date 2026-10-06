@@ -68,12 +68,12 @@ __gpy_ipc_endpoint() {
         return
     fi
 
-    if [[ -n "$XDG_RUNTIME_DIR" && "$XDG_RUNTIME_DIR" == /* ]]; then
+    if [[ -n "${XDG_RUNTIME_DIR:-}" && "${XDG_RUNTIME_DIR:-}" == /* ]]; then
         echo "$XDG_RUNTIME_DIR/gpy/gpy.sock"
         return
     fi
 
-    if [[ -n "$XDG_CACHE_HOME" && "$XDG_CACHE_HOME" == /* ]]; then
+    if [[ -n "${XDG_CACHE_HOME:-}" && "${XDG_CACHE_HOME:-}" == /* ]]; then
         echo "$XDG_CACHE_HOME/gpy/gpy.sock"
         return
     fi
@@ -150,7 +150,7 @@ __gpy_untrack_shell_for_agent_recovery() {
 __gpy_instant_cache_dir() {
     local home
 
-    if [[ -n "$XDG_CACHE_HOME" && "$XDG_CACHE_HOME" == /* ]]; then
+    if [[ -n "${XDG_CACHE_HOME:-}" && "${XDG_CACHE_HOME:-}" == /* ]]; then
         echo "$XDG_CACHE_HOME/gpy/instant-prompts"
         return 0
     fi
@@ -174,7 +174,7 @@ __gpy_instant_cache_dir() {
 __gpy_theme_export_cache_path() {
     local home
 
-    if [[ -n "$XDG_CACHE_HOME" && "$XDG_CACHE_HOME" == /* ]]; then
+    if [[ -n "${XDG_CACHE_HOME:-}" && "${XDG_CACHE_HOME:-}" == /* ]]; then
         echo "$XDG_CACHE_HOME/gpy/theme-export.bash"
         return 0
     fi
