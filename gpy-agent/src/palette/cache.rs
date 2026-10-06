@@ -38,15 +38,26 @@ impl PaletteCache {
 
     /// Replace the cached palette with one derived from `config`.
     ///
-    /// Called from `handle_config_reload` when `ui.palette` changes. A poisoned
-    /// lock is recovered (the cached palette remains valid) rather than panicking.
+    /// A poisoned lock is recovered (the cached palette remains valid) rather
+    /// than panicking.
     pub fn refresh(&self, config: &Config) {
-        let new_palette = crate::palette::active_palette(config);
+        self.replace(crate::palette::active_palette(config));
+    }
+
+    /// Store `palette` and report whether its contents differ from the cached one.
+    ///
+    /// Called from `handle_config_reload` on every reload so an edit to the
+    /// active palette file (same `ui.palette` name) is picked up (#772).
+    pub fn replace(&self, palette: Palette) -> bool {
         let mut guard = self
             .inner
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *guard = new_palette;
+        let changed = *guard != palette;
+        if changed {
+            *guard = palette;
+        }
+        changed
     }
 }
 
@@ -95,6 +106,33 @@ mod tests {
         assert!(
             refreshed.get("green").is_none(),
             "refreshed empty palette should not define green"
+        );
+    }
+
+    #[test]
+    fn replace_reports_content_change() {
+        use crate::template::{Color, Palette};
+        use std::collections::HashMap;
+
+        let cache = PaletteCache::from_config(&Config::default());
+        let build = |color: &str| {
+            Palette::new(HashMap::from([(
+                "red".to_owned(),
+                Color::Named(color.to_owned()),
+            )]))
+        };
+
+        assert!(
+            cache.replace(build("blue")),
+            "different red must report a change"
+        );
+        assert_eq!(
+            cache.get().get("red"),
+            Some(Color::Named("blue".to_owned()))
+        );
+        assert!(
+            !cache.replace(build("blue")),
+            "equal palette must report no change"
         );
     }
 }

@@ -1374,9 +1374,13 @@ pub(super) fn handle_config_reload(
 ) -> Result<()> {
     maybe_switch_theme(&ctx.theme_manager, old_config, new_config)?;
 
-    if old_config.ui.palette != new_config.ui.palette {
-        ctx.palette_cache.refresh(new_config);
-    }
+    // Resolve on every reload: an in-place edit of the active palette file
+    // keeps `ui.palette` unchanged, so only contents can reveal it (#772).
+    // Done before the export cache and instant-cache regeneration below so
+    // both render with the new colors.
+    let palette_changed = ctx
+        .palette_cache
+        .replace(crate::palette::active_palette(new_config));
 
     // Write theme export cache before notifying shells (ordering guarantee: cache
     // must be on disk before the reload doorbell so shells can source it immediately).
@@ -1391,7 +1395,7 @@ pub(super) fn handle_config_reload(
     ctx.watch_registry
         .set_worktree_enabled(new_config.git.watch_worktree);
 
-    let refresh_required = config_refresh_required(old_config, new_config);
+    let refresh_required = palette_changed || config_refresh_required(old_config, new_config);
 
     // Proactively regenerate instant-prompt caches with the new theme *before* any
     // reload doorbell so the repaint hits warm caches and recolors atomically — no

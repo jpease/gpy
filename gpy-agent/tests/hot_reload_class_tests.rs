@@ -27,6 +27,8 @@ use gpy_agent::agent::Agent;
 use gpy_agent::cache::theme_export::write_theme_export_to_dir;
 use gpy_agent::config::defaults::DEFAULT_THEME_CONTENT;
 use gpy_agent::config::loader::load_config_from_file;
+use gpy_agent::palette::active_palette;
+use gpy_agent::template::Palette;
 use gpy_agent::theme::ThemeManager;
 use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
 use serial_test::serial;
@@ -51,6 +53,7 @@ const QUIET_PERIOD: Duration = Duration::from_millis(2500);
 
 const ACTIVE_THEME: &str = "active";
 const OTHER_THEME: &str = "other";
+const ACTIVE_PALETTE: &str = "mine";
 
 /// One way config/theme/palette can change on disk.
 struct Mechanism {
@@ -94,6 +97,28 @@ const RETARGET_SYMLINKED_CONFIG: Mechanism = Mechanism {
     apply: retarget_symlinked_config,
     doorbells: None,
 };
+
+const EDIT_ACTIVE_PALETTE: Mechanism = Mechanism {
+    name: "edit the active palette file in place (#772)",
+    setup: None,
+    apply: edit_active_palette_in_place,
+    doorbells: Some(1),
+};
+const REAPPLY_SAME_PALETTE: Mechanism = Mechanism {
+    name: "rewrite config.toml with the same palette name after a palette edit (#772)",
+    setup: None,
+    apply: reapply_same_palette,
+    doorbells: None,
+};
+
+fn edit_active_palette_in_place(h: &Harness) {
+    h.write_palette("#123456");
+}
+
+fn reapply_same_palette(h: &Harness) {
+    h.write_palette("#123456");
+    h.write_config(ACTIVE_THEME, true);
+}
 
 fn edit_active_theme_in_place(h: &Harness) {
     h.write_theme(ACTIVE_THEME, "magenta");
@@ -153,6 +178,7 @@ impl Harness {
         let runtime = root.join("run");
         for dir in [
             &config_home.join("gpy").join("themes"),
+            &config_home.join("gpy").join("palettes"),
             &cache_home.join("gpy"),
             &runtime,
         ] {
@@ -192,6 +218,7 @@ impl Harness {
         };
         harness.write_theme(ACTIVE_THEME, "white");
         harness.write_theme(OTHER_THEME, "cyan");
+        harness.write_palette("red");
         harness.write_config(ACTIVE_THEME, true);
         harness
     }
@@ -230,10 +257,26 @@ impl Harness {
         fs::write(path, content).expect("write theme");
     }
 
+    fn write_palette(&self, red: &str) {
+        let path = self
+            .gpy_config_dir()
+            .join("palettes")
+            .join(format!("{ACTIVE_PALETTE}.toml"));
+        fs::write(
+            path,
+            format!(
+                "name = \"{ACTIVE_PALETTE}\"\n\n[colors]\nred = \"{red}\"\ngreen = \"green\"\n"
+            ),
+        )
+        .expect("write palette");
+    }
+
     fn write_config(&self, theme: &str, git_enabled: bool) {
         fs::write(
             self.config_path(),
-            format!("[ui]\ntheme = \"{theme}\"\n\n[git]\nenabled = {git_enabled}\n"),
+            format!(
+                "[ui]\ntheme = \"{theme}\"\npalette = \"{ACTIVE_PALETTE}\"\n\n[git]\nenabled = {git_enabled}\n"
+            ),
         )
         .expect("write config");
     }
@@ -249,6 +292,13 @@ impl Harness {
             .iter()
             .map(|file| fs::read_to_string(scratch.path().join(file)).expect("read fresh export"))
             .collect()
+    }
+
+    /// The palette a fresh load from disk resolves for the active config.
+    fn fresh_palette(&self) -> Palette {
+        let config = load_config_from_file(&self.config_path().display().to_string())
+            .expect("fresh config load");
+        active_palette(&config)
     }
 
     /// What the agent has exported to its cache dir (empty string if absent).
@@ -292,7 +342,7 @@ fn run_mechanism(mechanism: &Mechanism) {
     if let Some(setup) = mechanism.setup {
         setup(&harness);
     }
-    let before = harness.fresh_exports();
+    let before = (harness.fresh_exports(), harness.fresh_palette());
 
     let agent = Agent::new().expect("agent starts");
     agent.register_test_client(std::process::id(), harness.config_home.as_path());
@@ -301,26 +351,29 @@ fn run_mechanism(mechanism: &Mechanism) {
     DOORBELL_COUNTER.store(0, Ordering::Relaxed);
 
     (mechanism.apply)(&harness);
-    let expected = harness.fresh_exports();
+    let expected = (harness.fresh_exports(), harness.fresh_palette());
     assert_ne!(
         before, expected,
         "[{}] the change must alter the fresh export or the row is vacuous",
         mechanism.name
     );
 
-    let settled = wait_until(SETTLE_DEADLINE, || harness.agent_exports() == expected);
+    let agent_state = || (harness.agent_exports(), agent.active_palette_for_testing());
+    let settled = wait_until(SETTLE_DEADLINE, || agent_state() == expected);
     assert!(
         settled,
-        "[{}] exports never matched a fresh load from disk.\nagent fish export:\n{}\nfresh fish export:\n{}",
+        "[{}] exports/palette never matched a fresh load from disk.\nagent fish export:\n{}\nfresh fish export:\n{}\nagent palette: {:?}\nfresh palette: {:?}",
         mechanism.name,
         harness.agent_exports().first().cloned().unwrap_or_default(),
-        expected.first().cloned().unwrap_or_default()
+        expected.0.first().cloned().unwrap_or_default(),
+        agent.active_palette_for_testing(),
+        expected.1
     );
 
     // A late reload from a second watcher must not move the exports back.
     std::thread::sleep(QUIET_PERIOD);
     assert_eq!(
-        harness.agent_exports(),
+        agent_state(),
         expected,
         "[{}] exports drifted from a fresh load after settling",
         mechanism.name
@@ -365,4 +418,16 @@ fn hot_reload_edit_symlinked_config_target() {
 #[serial]
 fn hot_reload_retarget_symlinked_config() {
     run_mechanism(&RETARGET_SYMLINKED_CONFIG);
+}
+
+#[test]
+#[serial]
+fn hot_reload_edit_active_palette_in_place() {
+    run_mechanism(&EDIT_ACTIVE_PALETTE);
+}
+
+#[test]
+#[serial]
+fn hot_reload_reapply_same_palette() {
+    run_mechanism(&REAPPLY_SAME_PALETTE);
 }

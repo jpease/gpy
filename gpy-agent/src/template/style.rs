@@ -65,7 +65,7 @@ pub struct Style {
 /// The name→color map is stored behind an [`Arc`] so cloning a `Palette` (done
 /// once per rendered segment on the hot path) is a refcount bump rather than a
 /// deep copy of the whole map.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Palette {
     map: Arc<HashMap<String, Color>>,
 }
