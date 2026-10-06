@@ -311,13 +311,15 @@ pub enum Message {
     ///
     /// Per #259, the client resolves and passes the hostname string (and gates
     /// SSH-only visibility) before ever sending this request; the agent does
-    /// not derive the hostname itself and there is no `is_ssh` field.
+    /// not derive the hostname itself. The client also reports whether the
+    /// session is over SSH (#826), so the theme icon (Starship's `ssh_symbol`)
+    /// renders only in SSH sessions.
     ///
     /// # Examples
     ///
     /// Fish format:
     /// ```json
-    /// {"op":"hostname","hostname":"my-host","format":"ansi"}
+    /// {"op":"hostname","hostname":"my-host","format":"ansi","is_ssh":true}
     /// ```
     HostnameRequest {
         /// The hostname string resolved by the client.
@@ -330,6 +332,10 @@ pub enum Message {
         #[serde(default)]
         #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
+        /// Whether the client session is over SSH; absent means `false` (#826).
+        #[serde(default)]
+        #[serde(skip_serializing_if = "is_false")]
+        is_ssh: bool,
         /// Previous segment's background color for powerline chevron transitions.
         #[serde(default)]
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -819,17 +825,21 @@ pub enum Response {
 
     /// Hostname segment data returned by the agent when format is set.
     ///
-    /// The agent echoes back the hostname the client supplied on the request;
-    /// it does not resolve or validate hostname semantics itself (#259).
+    /// The agent echoes back the hostname and SSH state the client supplied on
+    /// the request; it does not resolve or validate hostname semantics itself
+    /// (#259).
     ///
     /// # Example
     ///
     /// ```json
-    /// {"Hostname":{"hostname":"my-host"}}
+    /// {"Hostname":{"hostname":"my-host","is_ssh":false}}
     /// ```
     Hostname {
         /// The hostname string, as supplied by the requesting client.
         hostname: String,
+        /// Whether the requesting client's session is over SSH (#826).
+        #[serde(default)]
+        is_ssh: bool,
     },
 
     /// Username segment data returned by the agent when format is set.

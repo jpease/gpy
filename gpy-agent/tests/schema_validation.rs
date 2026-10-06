@@ -677,6 +677,10 @@ mod schema_files {
                 r#"{"op":"hostname","hostname":"box","format":"ansi"}"#,
             ),
             (
+                "hostname",
+                r#"{"op":"hostname","hostname":"box","format":"ansi","is_ssh":true}"#,
+            ),
+            (
                 "username",
                 r#"{"op":"username","username":"me","format":"ansi"}"#,
             ),
@@ -713,6 +717,7 @@ mod schema_files {
             r#"{"DurationRequest":{"duration_ms":5}}"#,
             r#"{"CharacterRequest":{"success":false}}"#,
             r#"{"HostnameRequest":{"hostname":"h"}}"#,
+            r#"{"HostnameRequest":{"hostname":"h","is_ssh":true}}"#,
             r#"{"UsernameRequest":{"username":"u"}}"#,
             r#"{"RegisterClient":{"pid":123,"cwd":null,"shell":"zsh","shell_version":null}}"#,
             r#"{"UnregisterClient":{"pid":123}}"#,
@@ -738,6 +743,16 @@ mod schema_files {
         // form, by the agent).
         let stale = json(r#"{"op":"git","cwd":".","format":"fish-ansi"}"#);
         assert!(!validate(&schema, &schema, &stale));
+        // #826: `is_ssh` is a bare boolean in both hostname forms.
+        for bad in [
+            r#"{"op":"hostname","hostname":"box","is_ssh":"yes"}"#,
+            r#"{"HostnameRequest":{"hostname":"h","is_ssh":1}}"#,
+        ] {
+            assert!(
+                !validate(&schema, &schema, &json(bad)),
+                "schema accepts {bad}"
+            );
+        }
     }
 
     fn render_json(response: &Response) -> Value {
@@ -827,6 +842,7 @@ mod schema_files {
                 "hostname",
                 render_json(&Response::Hostname {
                     hostname: "h".to_owned(),
+                    is_ssh: true,
                 }),
             ),
             (

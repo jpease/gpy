@@ -202,11 +202,13 @@ fn resolve(wire: WireMessage) -> Result<Message> {
             hostname,
             format,
             is_last,
+            is_ssh,
             prev_bg,
         } => Ok(Message::HostnameRequest {
             hostname,
             format,
             is_last,
+            is_ssh,
             prev_bg,
         }),
         WireMessage::UsernameRequest {
@@ -655,6 +657,9 @@ enum WireMessage {
         /// Whether this is the last segment in the prompt.
         #[serde(default)]
         is_last: bool,
+        /// Whether the client session is over SSH (#826).
+        #[serde(default)]
+        is_ssh: bool,
         /// Previous segment's background color.
         #[serde(default)]
         prev_bg: Option<String>,
@@ -763,6 +768,10 @@ struct ShellIpcMessage {
     /// Client-resolved hostname string for the `hostname` op (#259).
     #[serde(default)]
     hostname: Option<String>,
+    /// Client-detected SSH session state for the `hostname` op (#826); absent
+    /// means `false`.
+    #[serde(default)]
+    is_ssh: Option<bool>,
     /// Client-resolved effective username string for the `username` op (#252).
     #[serde(default)]
     username: Option<String>,
@@ -854,6 +863,7 @@ impl ShellIpcMessage {
                 hostname: self.hostname.unwrap_or_default(),
                 format,
                 is_last: self.is_last.unwrap_or(false),
+                is_ssh: self.is_ssh.unwrap_or(false),
                 prev_bg: self.prev_bg,
             }),
             "username" => Ok(WireMessage::UsernameRequest {
@@ -950,7 +960,7 @@ mod tests {
 
     #[test]
     fn test_hostname_into_message_with_is_last_and_prev_bg() {
-        let json = r#"{"op":"hostname","hostname":"myhost","format":"ansi","is_last":true,"prev_bg":"blue"}"#;
+        let json = r#"{"op":"hostname","hostname":"myhost","format":"ansi","is_last":true,"prev_bg":"blue","is_ssh":true}"#;
         let shell_msg: ShellIpcMessage = serde_json::from_str(json).expect("parse failed");
         let wire = shell_msg
             .into_wire_message()
@@ -961,11 +971,13 @@ mod tests {
                 hostname,
                 format,
                 is_last,
+                is_ssh,
                 prev_bg,
             } => {
                 assert_eq!(hostname, "myhost");
                 assert_eq!(format, Format::Ansi);
                 assert!(is_last);
+                assert!(is_ssh);
                 assert_eq!(prev_bg, Some("blue".to_owned()));
             }
             other => panic!("expected HostnameRequest, got {other:?}"),
@@ -984,14 +996,47 @@ mod tests {
             Message::HostnameRequest {
                 hostname,
                 is_last,
+                is_ssh,
                 prev_bg,
                 ..
             } => {
                 assert_eq!(hostname, "myhost");
                 assert!(!is_last);
+                assert!(!is_ssh, "an absent is_ssh must default to false (#826)");
                 assert_eq!(prev_bg, None);
             }
             other => panic!("expected HostnameRequest, got {other:?}"),
+        }
+    }
+
+    /// #826: `is_ssh` survives the native serialize/deserialize round trip when
+    /// set, and is omitted on the wire (then defaults back to `false`) when not.
+    #[test]
+    fn test_hostname_native_round_trip_is_ssh_present_and_absent() {
+        for sent in [true, false] {
+            let native = Message::HostnameRequest {
+                hostname: "myhost".to_owned(),
+                format: Format::Ansi,
+                is_last: false,
+                is_ssh: sent,
+                prev_bg: None,
+            };
+            let bytes = serialize_message(&native).expect("serialize failed");
+            let text = std::str::from_utf8(&bytes).expect("utf8");
+            assert_eq!(
+                text.contains("is_ssh"),
+                sent,
+                "is_ssh must be serialized only when true: {text}"
+            );
+            match deserialize_message(&bytes).expect("deserialize failed") {
+                Message::HostnameRequest {
+                    hostname, is_ssh, ..
+                } => {
+                    assert_eq!(hostname, "myhost");
+                    assert_eq!(is_ssh, sent);
+                }
+                other => panic!("expected HostnameRequest, got {other:?}"),
+            }
         }
     }
 
@@ -1001,6 +1046,7 @@ mod tests {
             hostname: "my-host".to_owned(),
             format: Format::Ansi,
             is_last: false,
+            is_ssh: false,
             prev_bg: None,
         };
         assert!(validate_message_content(&msg).is_ok());
@@ -1013,6 +1059,7 @@ mod tests {
             hostname: long_hostname,
             format: Format::Ansi,
             is_last: false,
+            is_ssh: false,
             prev_bg: None,
         };
         assert!(validate_message_content(&msg).is_err());
@@ -1025,6 +1072,7 @@ mod tests {
             hostname: hostname_with_control,
             format: Format::Ansi,
             is_last: false,
+            is_ssh: false,
             prev_bg: None,
         };
         assert!(validate_message_content(&msg).is_err());

@@ -859,12 +859,10 @@ const STARSHIP_SSH_SYMBOL: &str = "🌐 ";
 /// GPY hostname vocabulary: `$hostname $symbol` (no `$style` — see
 /// [`crate::formatter::hostname_resolver::HostnameResolver`]). Starship's
 /// `$ssh_symbol` is renamed to `$symbol` and `ssh_only` is inverted onto
-/// `show_always`, since GPY's agent has no SSH knowledge (#259) and always
-/// renders the symbol when the segment renders; SSH-gating happens in the
-/// shell's `segment_hostname_detect` instead. Starship's default `ssh_symbol`
-/// (`🌐 `) is therefore imported only when `ssh_only` is true: the segment then
-/// renders only over SSH. With `ssh_only = false` it would also appear off-SSH,
-/// so only an explicit `ssh_symbol` is imported (#826).
+/// `show_always`; the shell's `segment_hostname_detect` does the SSH-only
+/// gating. The shell also reports SSH state to the agent, which resolves
+/// `$symbol` only in SSH sessions (#826), so Starship's default `ssh_symbol`
+/// (`🌐 `) is imported whenever no explicit one is set, as Starship applies it.
 #[must_use]
 pub fn translate_hostname(table: &toml::value::Table, warnings: &mut Warnings) -> HostnameTheme {
     let mut theme = HostnameTheme {
@@ -874,22 +872,16 @@ pub fn translate_hostname(table: &toml::value::Table, warnings: &mut Warnings) -
             .unwrap_or(true),
         ..Default::default()
     };
-    // Starship's `ssh_symbol` default applies only while the segment is
-    // SSH-gated: with `ssh_only = false` the segment also renders off-SSH,
-    // where Starship draws no symbol and the agent cannot tell the difference.
-    let default_symbol = (!theme.show_always).then_some(STARSHIP_SSH_SYMBOL);
     let raw_symbol = table
         .get("ssh_symbol")
         .and_then(toml::Value::as_str)
-        .or(default_symbol);
-    if let Some(raw_icon) = raw_symbol {
-        match Icon::new(raw_icon) {
-            Ok(icon) => theme.icon = Some(icon),
-            Err(_) => warnings.push(
-                WarningKind::UnrepresentableOption,
-                format!("hostname: ssh_symbol '{raw_icon}' is invalid; skipped"),
-            ),
-        }
+        .unwrap_or(STARSHIP_SSH_SYMBOL);
+    match Icon::new(raw_symbol) {
+        Ok(icon) => theme.icon = Some(icon),
+        Err(_) => warnings.push(
+            WarningKind::UnrepresentableOption,
+            format!("hostname: ssh_symbol '{raw_symbol}' is invalid; skipped"),
+        ),
     }
     if let Some(trim_at) = table.get("trim_at").and_then(toml::Value::as_str) {
         trim_at.clone_into(&mut theme.trim_at);
@@ -1150,6 +1142,7 @@ mod tests {
             theme.format.as_deref(),
             Some("[$symbol$hostname](bold dimmed green) in ")
         );
+        assert_eq!(theme.icon.as_deref(), Some("🌐 "), "Starship's default");
         assert!(warnings.is_empty());
     }
 
@@ -1814,12 +1807,14 @@ mod tests {
         assert_eq!(theme.icon.as_deref(), Some("@"));
     }
 
+    /// #826: the agent gates `$symbol` on the shell-reported SSH state, so the
+    /// default globe is imported even when the segment also shows locally.
     #[test]
-    fn translate_hostname_has_no_default_symbol_when_not_ssh_only() {
+    fn translate_hostname_defaults_ssh_symbol_to_globe_when_not_ssh_only() {
         use super::translate_hostname;
         let mut warnings = Warnings::new();
         let theme = translate_hostname(&table("ssh_only = false\n"), &mut warnings);
-        assert_eq!(theme.icon, None, "the agent cannot gate the globe on SSH");
+        assert_eq!(theme.icon.as_deref(), Some("🌐 "), "Starship's default");
     }
 
     #[test]

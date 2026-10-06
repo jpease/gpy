@@ -67,7 +67,9 @@ fn segment_detail(segment: &str) -> SegmentDetail {
         Ok(BuiltinSegment::Hostname) => SegmentDetail {
             config_field: "ui.enabled_segments",
             preview_contribution: "Shows the machine's hostname.",
-            caveat: Some("Shown only over SSH unless `segments.hostname.show_always` is set."),
+            caveat: Some(
+                "Shown only over SSH unless `segments.hostname.show_always` is set; its icon shows only over SSH.",
+            ),
         },
         Ok(BuiltinSegment::Username) => SegmentDetail {
             config_field: "ui.enabled_segments",

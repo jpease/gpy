@@ -122,9 +122,10 @@ impl Formatter for JsonFormatter {
                 map.insert("success".to_owned(), Value::Bool(*success));
                 Value::Object(map)
             }
-            Response::Hostname { hostname } => {
+            Response::Hostname { hostname, is_ssh } => {
                 let mut map = Map::new();
                 map.insert("hostname".to_owned(), Value::String(hostname.clone()));
+                map.insert("is_ssh".to_owned(), Value::Bool(*is_ssh));
                 Value::Object(map)
             }
             Response::Username { username } => {

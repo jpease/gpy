@@ -36,6 +36,7 @@ The importer (`gpy-agent/src/import/starship/`, exercised by `gpy-agent/tests/st
 - **Directory, git, duration, and character segments** — `format`/`style` fields map onto GPY's equivalent segment `format` strings, including conditional groups (`(...)`) and style tokens (`bold`, `fg:`, `bg:`, `prev_fg`/`prev_bg`).
 - **Language segments** — `rust`, `python`, `nodejs`, `golang`, `java`, `ruby`, `php`, `swift`, `elixir`, `c`, `cpp`, `csharp`, `erlang`, and others fold into one GPY `language` segment, with per-language colors and attributes preserved.
 - **Clock** — `time_format` maps to GPY's `"12"`/`"24"` setting on a best-effort basis.
+- **Username and hostname** — `format`, `style_root`, `show_always` (username) and `format`, `style`, `ssh_only`, `ssh_symbol`, `trim_at` (hostname) carry over. As in Starship, the hostname's `ssh_symbol` (default `🌐 `) shows only in SSH sessions, even with `ssh_only = false`.
 - **Segment order** — pass `--apply-layout` and the derived `enabled_segments` order is written straight into `config.toml`; without it, the command just prints the suggested order.
 - **Prompt layout** — `add_newline` (default `true`) becomes `ui.add_newline`, the blank line before each prompt. `$line_break` in `format` (or no `format` at all, Starship's default two-line layout) becomes `ui.two_line = true`, which Bash and Zsh honor; Fish always renders two lines.
 
@@ -47,7 +48,7 @@ Some Starship constructs have no GPY equivalent and are dropped with a warning r
 
 | Starship feature | What happens in GPY |
 |---|---|
-| `kubernetes`, `aws`, `docker_context`, `package`, `memory_usage`, `battery`, `username`, `hostname`, custom `[custom.x]` modules | Skipped entirely — no equivalent segment exists yet. |
+| `kubernetes`, `aws`, `docker_context`, `package`, `memory_usage`, `battery`, custom `[custom.x]` modules | Skipped entirely — no equivalent segment exists yet. |
 | `git_state` (rebasing/merging/cherry-picking overlay) | Folded into the git segment's `$status` token; the distinct state overlay is lost. |
 | Per-flag git status variables (`$conflicted`, `$ahead`, `$behind`, etc.) | Collapsed into GPY's single `$status` token. |
 | Per-language `symbol` overrides (e.g. `[rust] symbol = " "`) | Not part of the theme — set them manually after import: `gpy config set language.icons.rust ""`. |

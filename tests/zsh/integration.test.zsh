@@ -426,16 +426,27 @@ if [[ "$output" != *"host.example.com"* ]]; then
 fi
 echo "PASS: Hostname unchanged with empty trim delimiter"
 
-# Icon prefixes the label when set, and is omitted when empty
+# Icon prefixes the label over SSH when set, and is omitted when empty. #826:
+# the icon is Starship's ssh_symbol, so a local session omits it too.
+__gpy_is_ssh=1
 __hostname_trim_at="."
 __icon_hostname="@"
 output=$(__gpy_segment_hostname)
 if [[ "$output" != *" @ host "* ]]; then
-    echo "FAIL: Hostname icon missing from render: $output"
+    echo "FAIL: Hostname icon missing from SSH render: $output"
     exit 1
 fi
-echo "PASS: Hostname icon shown when set"
+echo "PASS: Hostname icon shown over SSH when set"
 
+__gpy_is_ssh=0
+output=$(__gpy_segment_hostname)
+if [[ "$output" == *"@"* || "$output" != *" host "* ]]; then
+    echo "FAIL: Hostname icon should be omitted in a local session: $output"
+    exit 1
+fi
+echo "PASS: Hostname icon omitted in a local session"
+
+__gpy_is_ssh=1
 __icon_hostname=""
 output=$(__gpy_segment_hostname)
 if [[ "$output" == *"@ host"* ]]; then
@@ -451,6 +462,20 @@ if [[ "$output" != *'%K{'* || "$output" != *'%F{'* || "$output" != *'%f%k'* ]]; 
 fi
 echo "PASS: Hostname uses zsh prompt escapes"
 
+# #826: the real request builder appends "is_ssh":true only for is_ssh=1. The
+# __gpy_send_json stub lives in the command-substitution subshell only.
+output=$(function __gpy_send_json() { print -rn -- "$1"; }; __gpy_request_hostname h "" "" 1)
+if [[ "$output" != '{"op":"hostname","hostname":"h","format":"zsh-prompt","is_ssh":true}' ]]; then
+    echo "FAIL: Hostname request should carry is_ssh for an SSH session: $output"
+    exit 1
+fi
+output=$(function __gpy_send_json() { print -rn -- "$1"; }; __gpy_request_hostname h "" "" 0)
+if [[ "$output" != '{"op":"hostname","hostname":"h","format":"zsh-prompt"}' ]]; then
+    echo "FAIL: Hostname request should omit is_ssh for a local session: $output"
+    exit 1
+fi
+echo "PASS: Hostname request payload carries is_ssh only over SSH"
+
 # Dual-path: a non-empty __hostname_format routes to the agent renderer,
 # quoting every positional arg (including a possibly-empty prev_bg) so it
 # lands in the correct slot.
@@ -462,22 +487,32 @@ echo "PASS: Hostname uses zsh prompt escapes"
 # #613: is_last is forwarded as-is ("true"/"") -- no more per-segment
 # last/first-literal conversion to a "true"/"false" string.
 function __gpy_request_hostname() {
-    printf 'AGENT[%s|%s|%s|argc=%s]' "$1" "$2" "$3" "$#"
+    printf 'AGENT[%s|%s|%s|%s|argc=%s]' "$1" "$2" "$3" "$4" "$#"
 }
 __hostname_format="{hostname}"
+__gpy_is_ssh=0
 output=$(__gpy_segment_hostname true "cyan")
-if [[ "$output" != "AGENT[host.example.com|true|cyan|argc=3]" ]]; then
-    echo "FAIL: Hostname agent-path args incorrect (want hostname|is_last|prev_bg): $output"
+if [[ "$output" != "AGENT[host.example.com|true|cyan|0|argc=4]" ]]; then
+    echo "FAIL: Hostname agent-path args incorrect (want hostname|is_last|prev_bg|is_ssh): $output"
     exit 1
 fi
 echo "PASS: Hostname dual-path routes to agent renderer with correctly-ordered args"
 
+# #826: the 4th arg carries __gpy_is_ssh for an SSH session too.
+__gpy_is_ssh=1
+output=$(__gpy_segment_hostname true "cyan")
+if [[ "$output" != "AGENT[host.example.com|true|cyan|1|argc=4]" ]]; then
+    echo "FAIL: Hostname agent-path should forward __gpy_is_ssh=1 as the 4th arg: $output"
+    exit 1
+fi
+echo "PASS: Hostname dual-path forwards __gpy_is_ssh as the 4th arg"
+
 # is_last must stay the possibly-empty string (not "false") when this is not
 # the last segment, and an empty prev_bg must still land in the 3rd slot (not
-# shift left) — the bug class called out for this task. argc=3 proves the
+# shift left) — the bug class called out for this task. argc=4 proves the
 # empty prev_bg was passed as a real (empty) positional arg, not omitted.
 output=$(__gpy_segment_hostname "" "")
-if [[ "$output" != "AGENT[host.example.com|||argc=3]" ]]; then
+if [[ "$output" != "AGENT[host.example.com|||1|argc=4]" ]]; then
     echo "FAIL: Hostname agent-path args incorrect for not-last/empty-prev_bg: $output"
     exit 1
 fi

@@ -35,6 +35,10 @@ pub struct PreviewFacts {
     /// Representative sample: same rationale as `sample_duration_ms`, for the
     /// character segment's success/failure state.
     pub(crate) sample_character_success: bool,
+    /// Representative sample: the preview always draws the hostname segment
+    /// (it never hides it off-SSH the way the shells do), so it draws it as it
+    /// looks over SSH, including the theme icon that only renders there (#826).
+    pub(crate) sample_is_ssh: bool,
 }
 
 /// Gather preview facts for `cwd`.
@@ -88,6 +92,7 @@ pub fn gather(cwd: &Path, config: &Config, theme: &ThemeConfig) -> crate::Result
         username: local_username(),
         sample_duration_ms: 128,
         sample_character_success: true,
+        sample_is_ssh: true,
     })
 }
 

@@ -284,8 +284,9 @@ enum OneshotCommands {
     },
     /// Render the hostname segment (when a format template is configured).
     ///
-    /// Per #259 the caller resolves and passes the hostname string; the agent
-    /// never derives it or gates on SSH state itself.
+    /// Per #259 the caller resolves and passes the hostname string and gates
+    /// SSH-only visibility; the agent never derives either. `--is-ssh` reports
+    /// the caller's SSH state so the theme icon renders only over SSH (#826).
     Hostname {
         /// The hostname string to render (defaults to the machine hostname,
         /// or empty when that cannot be determined).
@@ -301,6 +302,10 @@ enum OneshotCommands {
         /// powerline cap).
         #[arg(long)]
         first: bool,
+        /// Mark the session as SSH, so the theme icon (Starship's
+        /// `ssh_symbol`) renders.
+        #[arg(long)]
+        is_ssh: bool,
     },
     /// Render the username segment (when a format template is configured).
     ///
@@ -445,6 +450,7 @@ fn base_oneshot_request(
         duration_ms: 0_u64,
         success: None,
         hostname: None,
+        is_ssh: false,
         username: None,
     }
 }
@@ -526,8 +532,10 @@ impl From<OneshotCommands> for OneshotRequest {
                 format,
                 not_last,
                 first,
+                is_ssh,
             } => Self {
                 hostname: Some(hostname),
+                is_ssh,
                 ..base_oneshot_request(
                     OneshotKind::Hostname,
                     String::new(),

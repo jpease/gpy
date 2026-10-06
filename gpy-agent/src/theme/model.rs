@@ -320,7 +320,9 @@ pub struct HostnameTheme {
     /// renders the hostname itself (GPY pill colors).
     #[serde(default)]
     pub format: Option<String>,
-    /// Icon/symbol shown before the hostname (default: none, matching Starship)
+    /// SSH symbol shown before the hostname, in SSH sessions only, on both
+    /// paths (`$symbol` in `format`; default: none). Starship's `ssh_symbol`
+    /// semantics (#826): a `show_always` theme draws it over SSH, not locally.
     #[serde(default)]
     pub icon: Option<types::Icon>,
     /// Pill background color, pure-fish path only (ignored when `format` is set)

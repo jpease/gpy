@@ -203,6 +203,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The hostname segment's `icon` is now Starship's `ssh_symbol`: it is drawn
+  only in SSH sessions, on both the agent and the pure-shell render paths
+  (#826). Fish, Bash and Zsh pass their cached SSH state to the agent as a new
+  optional `is_ssh` field on the `hostname` request (MINOR; `PROTOCOL_VERSION`
+  stays 2), and `gpy-agent oneshot hostname` gained `--is-ssh`. A theme with
+  `show_always = true` and an icon now shows the bare hostname locally. Until
+  the shell is updated, a new agent treats the session as local.
 - The pinned Rust toolchain and the minimum supported Rust version are now
   1.99 (`rust-toolchain.toml`, `rust-version`, clippy `msrv`). Rust 1.99's
   `clippy::assert_is_empty` and `branches_sharing_code` findings are fixed.
@@ -755,9 +762,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   instead of warning that it is an unsupported module (#827).
 - The shell-test runner pins `XDG_RUNTIME_DIR` inside its hermetic root, so
   test agents are stopped on systems that set it (#824).
-- `gpy theme import` sets Starship's default hostname `ssh_symbol` for
-  SSH-only hostname modules, so imported themes show the globe over SSH
-  (#826).
+- `gpy theme import` sets Starship's default hostname `ssh_symbol` (`🌐 `),
+  including for `ssh_only = false` modules, so imported themes show the globe
+  over SSH and not locally, as Starship does (#826).
 - The shell e2e harness sends `TERM` and waits before falling back to
   `KILL` when it stops a test agent (#825).
 - `scripts/build-release-binaries.sh` builds Linux binaries against the

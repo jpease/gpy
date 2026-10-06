@@ -13,18 +13,20 @@ __gpy_segment_hostname() {
     # convention, matching __gpy_request_hostname's own contract) -- forward
     # it directly, no conversion needed.
     if [[ -n "${__hostname_format:-}" ]]; then
-        __gpy_request_hostname "$HOSTNAME" "$is_last" "$prev_bg"
+        __gpy_request_hostname "$HOSTNAME" "$is_last" "$prev_bg" "${__gpy_is_ssh:-0}"
         return
     fi
 
     # Pure-bash path: trim + optional icon + inline ANSI (mirror clock.bash).
+    # The icon is Starship's ssh_symbol: drawn only in SSH sessions (#826).
     # NOTE: `${var-default}` (no colon) so an *unset* var defaults to "." but an
     # explicit empty string (the "no trim" contract) is preserved rather than
     # being collapsed to the default by the colon-form `${var:-default}`.
     local delim="${__hostname_trim_at-.}"
     local name="$HOSTNAME"
     [[ -n "$delim" ]] && name="${HOSTNAME%%"$delim"*}"
-    local icon="${__icon_hostname:-}"
+    local icon=""
+    [[ "${__gpy_is_ssh:-0}" == "1" ]] && icon="${__icon_hostname:-}"
     local label="$name"
     [[ -n "$icon" ]] && label="$icon $name"
 
