@@ -600,6 +600,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   and its help and docs describe the round trips it actually times (#804).
 - Editing `.node-version`, `.nvmrc`, `mise.toml` or `.mise.toml` refreshes
   the displayed language version immediately (#725).
+- `install-oneline.sh` checks a downloaded agent or `gpy` binary before
+  replacing the installed one (#806), so a binary that cannot run on the host
+  no longer overwrites a working install.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
