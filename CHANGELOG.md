@@ -246,6 +246,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Removed
 
+- Fish `prompt-config`, `prompt-theme` and `prompt-perf`, which always
+  failed with exit 127 (#768).
 - The `gpy_setup` and `gpy_config_validate` Fish functions, dead since
   `config.toml` replaced the `config.fish`-era layout they walked users
   through. Installers, the Homebrew formula and `fisher.json` no longer ship
@@ -525,6 +527,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `gpy theme import` no longer inserts an unstyled space between the
   `git_branch` and `git_status` formats (#795), so powerline and Pure-style
   presets import without a gap.
+- Fish `prompt-debug validate` no longer reports false errors, and
+  `prompt-debug cache`/`vars` print live values (#768).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

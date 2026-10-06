@@ -40,6 +40,13 @@ echo ""
 # real, live dogfooding daemon's cache (#402).
 set -gx XDG_CACHE_HOME (mktemp -d)
 
+# A developer's own installed GPY (loaded by their fish config) may already
+# define prompt-* functions; erase them so Test 13 sees only what this
+# checkout's init defines.
+for stale in (functions -n | string match 'prompt-*')
+    functions -e $stale
+end
+
 # Test 1: Source core/init.fish without errors
 echo "Test 1: Source core/init.fish"
 if source fish/core/init.fish 2>&1 | string match -q "*error*"
@@ -213,6 +220,62 @@ for func in $required_functions
     else
         test_fail "Utility function $func missing"
     end
+end
+
+# Test 13: every user-visible prompt-* command exists and runs (#768).
+# Wrappers around functions that were never defined exit 127.
+echo ""
+echo "Test 13: prompt-* commands do not exit 127"
+for cmd in (functions -n | string match 'prompt-*')
+    $cmd >/dev/null 2>&1
+    set -l rc $status
+    if test $rc -ne 127
+        test_pass "$cmd exits $rc (not 127)"
+    else
+        test_fail "$cmd exits 127 (wraps an undefined function)"
+    end
+end
+for removed in prompt-config prompt-theme prompt-perf
+    if functions -q $removed
+        test_fail "$removed is still defined"
+    else
+        test_pass "$removed is not defined"
+    end
+end
+
+# Test 14: prompt-debug validate passes on a sandboxed install whose
+# XDG_CONFIG_HOME differs from $HOME/.config, and vars shows the active theme.
+echo ""
+echo "Test 14: prompt-debug validate in an XDG_CONFIG_HOME sandbox"
+set -l sandbox (mktemp -d)
+mkdir -p $sandbox/home $sandbox/xdg/fish $sandbox/run
+ln -s $repo_root/fish $sandbox/xdg/fish/gpy
+set -l validate_out (env -i \
+    "PATH=$repo_root/gpy-agent/target/debug:/usr/bin:/bin:"(dirname (command -s fish)) \
+    "HOME=$sandbox/home" "XDG_CONFIG_HOME=$sandbox/xdg" \
+    "XDG_CACHE_HOME=$sandbox/cache" "XDG_RUNTIME_DIR=$sandbox/run" \
+    "TMPDIR=$sandbox" GPY_AGENT_SUPERVISOR_ENABLED=0 \
+    fish --no-config -c 'source $XDG_CONFIG_HOME/fish/gpy/core/init.fish
+        prompt-debug validate 2>&1
+        echo "validate_rc=$status"
+        prompt-debug vars 2>&1
+        echo "theme_name=$__gpy_theme_name"' 2>&1 | string collect)
+rm -rf $sandbox
+if string match -q '*validate_rc=0*' -- "$validate_out"
+    test_pass "prompt-debug validate returns 0"
+else
+    test_fail "prompt-debug validate did not return 0: $validate_out"
+end
+if string match -q '*❌*' -- "$validate_out"
+    test_fail "prompt-debug validate reported errors: $validate_out"
+else
+    test_pass "prompt-debug validate reports no errors"
+end
+set -l theme_name (string match -rg '^theme_name=(\S+)$' -- (string split \n -- "$validate_out"))
+if test -n "$theme_name"; and string match -q "*Theme: $theme_name*" -- "$validate_out"
+    test_pass "prompt-debug vars prints the active theme '$theme_name'"
+else
+    test_fail "prompt-debug vars does not print the active theme ('$theme_name'): $validate_out"
 end
 
 # Summary

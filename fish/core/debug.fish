@@ -8,10 +8,13 @@ function __prompt_validate_installation
 
     echo "🔍 Validating GPY installation..."
 
+    # Install dir is derived from this file's own location, not ~/.config.
+    set -l install_dir $__gpy_core_dir/..
+
     # Check core files
     set -l core_files constants.fish util.fish renderer.fish init.fish ipc.fish
     for file in $core_files
-        set -l path ~/.config/fish/gpy/core/$file
+        set -l path $install_dir/core/$file
         if test -f $path
             echo "✅ Core file: $file"
         else
@@ -24,8 +27,11 @@ function __prompt_validate_installation
     echo ""
     echo "📊 Segment validation:"
     for segment in $__enabled_segments
-        set -l file ~/.config/fish/gpy/segments/$segment.fish
-        if test -f $file
+        set -l file $install_dir/segments/$segment.fish
+        set -l plugin_file_var __gpy_plugin_segment_file_(string lower (string replace -a '-' '_' -- $segment))
+        if test -f $file; or begin
+                set -q $plugin_file_var; and test -f $$plugin_file_var
+            end
             if functions -q segment_{$segment}_detect; and functions -q segment_{$segment}_render
                 echo "✅ $segment (complete)"
             else
@@ -38,14 +44,22 @@ function __prompt_validate_installation
         end
     end
 
-    # Check theme (TOML-based)
+    # Check theme: built-in themes are embedded in the agent binary, so ask
+    # the agent to validate the active theme instead of looking for a file.
     echo ""
-    set -q __prompt_theme; or set -l __prompt_theme default
-    set -l theme_file ~/.config/gpy/themes/$__prompt_theme.toml
-    if test -f $theme_file
-        echo "✅ Theme: $__prompt_theme (TOML)"
+    if set -q __gpy_theme_name
+        echo "✅ Active theme: $__gpy_theme_name"
+        set -l agent_binary (__gpy_resolve_agent_binary)
+        if test -n "$agent_binary"
+            if "$agent_binary" theme validate >/dev/null 2>&1
+                echo "✅ Theme validates"
+            else
+                echo "❌ Theme validation failed: $__gpy_theme_name"
+                set errors (math $errors + 1)
+            end
+        end
     else
-        echo "❌ Theme file missing: $__prompt_theme.toml"
+        echo "❌ No active theme (__gpy_theme_name is unset)"
         set errors (math $errors + 1)
     end
 
@@ -87,16 +101,17 @@ function prompt_debug --argument-names action
             __prompt_benchmark_segments
         case cache
             echo "🗄️  Cache status:"
-            echo "  Git check: $__last_git_check"
-            echo "  Dir signature: $__detect_last_signature"
-            echo "  Version cache sig: $__version_cache_sig"
-            echo "  Resolved PWD: $__resolved_pwd_key -> $__resolved_pwd_value"
+            echo "  Instant cache dir: "(__gpy_instant_cache_dir)
+            echo "  Registered: $__gpy_registered"
+            echo "  Agent backoff until: $__gpy_agent_backoff_until"
+            echo "  Char cache key: $__gpy_char_cache_key"
+            echo "  Dir cache key: $__gpy_dir_cache_key"
         case vars
             echo "🔧 Configuration variables:"
-            echo "  Theme: $__prompt_theme"
+            echo "  Theme: $__gpy_theme_name"
             echo "  Enabled segments: $__enabled_segments"
             echo "  Performance:"
-            echo "    Language cache TTL: $__language_cache_ttl"
+            echo "    Language cache TTL: $GPY_LANGUAGE_CACHE_TTL_SECONDS"
             echo "    Git check interval: $__git_check_interval"
             echo "    Duration threshold: $__duration_threshold"
         case ""

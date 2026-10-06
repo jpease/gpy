@@ -279,20 +279,8 @@ end
 # Default toggles are now set earlier to allow early exit logic to work
 
 # Register helpful aliases
-function prompt-config --wraps prompt_config_segments --description 'configure GPY segments'
-    prompt_config_segments $argv
-end
-
-function prompt-theme --wraps prompt_config_theme --description 'configure GPY theme'
-    prompt_config_theme $argv
-end
-
 function prompt-debug --wraps prompt_debug --description 'GPY debug helpers'
     prompt_debug $argv
-end
-
-function prompt-perf --wraps prompt_config_performance --description 'configure GPY performance'
-    prompt_config_performance $argv
 end
 
 # Internal helper for programmatic theme reload (used by tests and tooling)
