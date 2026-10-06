@@ -101,6 +101,7 @@ export __gpy_segment_kubernetes_plain_property="value\\"
 export __gpy_plugin_segment_file_aws_profile="/usr/share/gpy/segments/aws\$profile.fish"
 export __gpy_plugin_segment_file_kubernetes="/usr/share/gpy/segments/kubernetes.fish"
 export __enabled_segments="clock username hostname directory git duration status"
+__gpy_lang_marker_files=(.ruby-version CMakeLists.txt Cargo.toml Gemfile Makefile Package.swift Pipfile Rakefile build.gradle build.gradle.kts composer.json go.mod go.sum mix.exs package.json pom.xml pyproject.toml rebar.config requirements.txt setup.cfg setup.py tox.ini tsconfig.json)
 
 __gpy_segment_bg() {
     if [[ -n "$2" ]]; then

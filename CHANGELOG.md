@@ -519,6 +519,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - The Fish, Bash and Zsh prompts no longer end with a dangling separator
   when the git or language segment passes detection but has nothing to show
   yet (#766); the neighbouring segment closes the line instead.
+- The shell language pre-filters use the agent's own marker list, exported
+  with the theme (#785), so non-git projects marked only by `setup.py`,
+  `Package.swift`, `Rakefile` and similar files show their language.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

@@ -902,6 +902,41 @@ fn append_enabled_segments(output: &mut String, shell: Shell, config: &Config) {
     }
 }
 
+/// The language-detection marker file names, sorted, as the list the shell
+/// language pre-filters iterate with builtin file tests (#785).
+///
+/// The agent's `marker_file_names()` is the single source: the shells keep no
+/// hand-written list. Names are static, shell-safe file names, so they need no
+/// escaping. Fish gets a real list, Zsh and Bash a real array (never exported:
+/// Bash cannot export arrays, and the export is sourced into the shell itself).
+#[expect(
+    clippy::expect_used,
+    reason = "every .expect(\"string write\") is a writeln!/write! into a String via std::fmt::Write, which is infallible in practice"
+)]
+fn append_lang_marker_files(output: &mut String, shell: Shell) {
+    use std::fmt::Write;
+
+    let mut names: Vec<&str> = crate::language::metadata::marker_file_names()
+        .iter()
+        .copied()
+        .collect();
+    names.sort_unstable();
+    let joined = names.join(" ");
+
+    match shell {
+        Shell::Fish => {
+            writeln!(output, "set -g __gpy_lang_marker_files {joined}").expect("string write");
+        }
+        Shell::Zsh => {
+            writeln!(output, "typeset -g -a __gpy_lang_marker_files=({joined})")
+                .expect("string write");
+        }
+        Shell::Bash => {
+            writeln!(output, "__gpy_lang_marker_files=({joined})").expect("string write");
+        }
+    }
+}
+
 /// The built-in segments a powerline chevron cares about, paired with the
 /// `__color_*_bg` variable each one's background comes from -- in the exact
 /// order Bash/Zsh emit `__gpy_segment_bg`'s case arms.
@@ -1017,6 +1052,7 @@ pub(crate) fn theme_to_shell(
 
     append_plugin_segment_file_assignments(&mut output, shell, plugin_segment_files);
     append_enabled_segments(&mut output, shell, config);
+    append_lang_marker_files(&mut output, shell);
     append_segment_bg_function(&mut output, shell);
 
     output
@@ -1221,6 +1257,35 @@ max_length = 42
             shell,
             &golden_plugin_segment_files(),
         )
+    }
+
+    /// The exported marker list is exactly `marker_file_names()`, sorted (#785).
+    #[test]
+    fn export_lists_exactly_the_sorted_marker_file_names() {
+        let mut expected: Vec<&str> = crate::language::metadata::marker_file_names()
+            .iter()
+            .copied()
+            .collect();
+        expected.sort_unstable();
+        for shell in [Shell::Fish, Shell::Zsh, Shell::Bash] {
+            let export = golden_export(shell);
+            let line = export
+                .lines()
+                .find(|l| l.contains("__gpy_lang_marker_files"))
+                .expect("marker export line");
+            let body = match shell {
+                Shell::Fish => line.strip_prefix("set -g __gpy_lang_marker_files "),
+                Shell::Zsh => line
+                    .strip_prefix("typeset -g -a __gpy_lang_marker_files=(")
+                    .and_then(|r| r.strip_suffix(')')),
+                Shell::Bash => line
+                    .strip_prefix("__gpy_lang_marker_files=(")
+                    .and_then(|r| r.strip_suffix(')')),
+            }
+            .expect("marker line shape");
+            let got: Vec<&str> = body.split(' ').collect();
+            assert_eq!(got, expected, "{shell}");
+        }
     }
 
     #[test]

@@ -73,3 +73,4 @@ set -g __segment_delimiter_bg "transparent"
 set -g __prompt_base_bg "normal"
 set -g __prompt_base_fg "normal"
 set -g __enabled_segments clock duration language directory git
+set -g __gpy_lang_marker_files .ruby-version CMakeLists.txt Cargo.toml Gemfile Makefile Package.swift Pipfile Rakefile build.gradle build.gradle.kts composer.json go.mod go.sum mix.exs package.json pom.xml pyproject.toml rebar.config requirements.txt setup.cfg setup.py tox.ini tsconfig.json

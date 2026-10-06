@@ -13,24 +13,24 @@ function segment_language_detect
         return 0
     end
 
+    # The marker list is the agent's own, exported by `theme export` as
+    # __gpy_lang_marker_files (#785): no hand-kept list here to drift. If it
+    # has not been exported yet (agent never ran), defer to the request path,
+    # which the oneshot budget already bounds.
+    set -q __gpy_lang_marker_files[1]; or return 0
+
     # Walk upward from $PWD looking for project markers.
     # The agent is authoritative; this is a cheap pre-filter so we don't
     # fire IPC requests in non-project directories.
     set -l dir $PWD
     while test -n "$dir"
-        if test -e "$dir/.git" \
-                -o -f "$dir/Cargo.toml" \
-                -o -f "$dir/package.json" \
-                -o -f "$dir/requirements.txt" \
-                -o -f "$dir/Pipfile" \
-                -o -f "$dir/pyproject.toml" \
-                -o -f "$dir/go.mod" \
-                -o -f "$dir/Gemfile" \
-                -o -f "$dir/mix.exs" \
-                -o -f "$dir/pom.xml" \
-                -o -f "$dir/build.gradle" \
-                -o -f "$dir/build.gradle.kts"
+        if test -e "$dir/.git"
             return 0
+        end
+        for marker in $__gpy_lang_marker_files
+            if test -f "$dir/$marker"
+                return 0
+            end
         end
         set -l parent (path dirname -- "$dir")
         if test "$parent" = "$dir"
