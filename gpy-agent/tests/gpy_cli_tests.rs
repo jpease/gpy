@@ -734,6 +734,49 @@ provided_segments = ["broken_seg"]
 }
 
 #[test]
+fn test_plugin_validate_rejects_misspelled_provided_segments() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let plugin_dir = env.plugins_dir().join("weather");
+    fs::create_dir_all(plugin_dir.join("segments")).expect("Failed to create plugin dir");
+    fs::write(
+        plugin_dir.join("plugin.toml"),
+        r#"
+id = "weather"
+name = "Weather"
+version = "1.0.0"
+api_version = "v1"
+entry_type = "file"
+provided_segment = ["weather"]
+"#,
+    )
+    .expect("Failed to write plugin manifest");
+
+    let output = env
+        .run_gpy(&["plugin", "validate", &plugin_dir.display().to_string()])
+        .expect("Failed to run gpy plugin validate");
+
+    assert_ne!(
+        output.exit_code, 0_i32,
+        "Validation should fail when provided_segments is missing"
+    );
+    assert!(
+        output.stderr.contains("provided_segments") || output.stdout.contains("provided_segments"),
+        "Output should name provided_segments.\nstdout:\n{}\nstderr:\n{}",
+        output.stdout,
+        output.stderr
+    );
+
+    let list = env
+        .run_gpy(&["plugin", "list"])
+        .expect("Failed to run gpy plugin list");
+    assert!(
+        !list.stdout.contains("weather 1.0.0 [user] (ready)"),
+        "Plugin without provided_segments must not be listed as ready.\nstdout:\n{}",
+        list.stdout
+    );
+}
+
+#[test]
 fn test_lang_versions_toggle() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     let config_path = env.config_path();

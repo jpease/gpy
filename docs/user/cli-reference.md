@@ -929,6 +929,7 @@ Validate a plugin manifest and filesystem layout.
 Checks:
 - `plugin.toml` parses successfully
 - the declared plugin API version is supported
+- `provided_segments` is present and lists at least one segment
 - segment files exist for declared file-based segments
 
 You can pass either:
