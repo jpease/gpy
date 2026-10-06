@@ -661,6 +661,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   `Bold green` imports as bold (#828).
 - Bash and Zsh no longer re-send a rejected workspace sync (for example
   `cd /etc`) on every prompt; it is sent once per directory visit (#833).
+- `gpy theme import` maps Starship's `$all` to the default segment order
+  instead of warning that it is an unsupported module (#827).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
