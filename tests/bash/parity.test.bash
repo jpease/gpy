@@ -331,6 +331,53 @@ assert_payload_has_prev_bg "character request" "green"
 
 rm -f "$__gpy_capture_file"
 
+# #729: `lang` requests forward $VIRTUAL_ENV, else $CONDA_PREFIX for a non-base
+# conda env; `git` requests never carry virtual_env. Both send paths are checked
+# through the stubbed __gpy_send_json above.
+echo "=== virtual_env Forwarding ==="
+__gpy_capture_venv() {
+    local sender="$1" op="$2" venv="$3" conda="$4" conda_env="$5"
+    : > "$__gpy_capture_file"
+    (
+        unset VIRTUAL_ENV CONDA_PREFIX CONDA_DEFAULT_ENV
+        [[ -n "$venv" ]] && export VIRTUAL_ENV="$venv"
+        [[ -n "$conda" ]] && export CONDA_PREFIX="$conda"
+        [[ -n "$conda_env" ]] && export CONDA_DEFAULT_ENV="$conda_env"
+        if [[ "$sender" == "refresh" ]]; then
+            __gpy_trigger_data_refresh "$op" "$PWD" "false" ""
+        else
+            __gpy_request "$op" "$PWD" "json" "false" "" >/dev/null 2>&1
+        fi
+    )
+    cat "$__gpy_capture_file"
+}
+_assert_venv_forwarding() {
+    local label="$1" expected="$2" captured="$3"
+    if [[ -n "$expected" ]]; then
+        case "$captured" in
+            *"\"virtual_env\":\"$expected\""*) echo "✓ $label forwards virtual_env=$expected" ;;
+            *) echo "FAIL: $label should forward virtual_env=$expected: $captured"; rm -f "$__gpy_capture_file"; exit 1 ;;
+        esac
+    else
+        case "$captured" in
+            *virtual_env*) echo "FAIL: $label should not forward virtual_env: $captured"; rm -f "$__gpy_capture_file"; exit 1 ;;
+            *) echo "✓ $label omits virtual_env" ;;
+        esac
+    fi
+}
+for sender in refresh request; do
+    _assert_venv_forwarding "$sender lang with conda env" "/opt/conda/envs/ml" \
+        "$(__gpy_capture_venv "$sender" lang "" /opt/conda/envs/ml ml)"
+    _assert_venv_forwarding "$sender lang VIRTUAL_ENV beats CONDA_PREFIX" "/proj/.venv" \
+        "$(__gpy_capture_venv "$sender" lang /proj/.venv /opt/conda/envs/ml ml)"
+    _assert_venv_forwarding "$sender lang conda base" "" \
+        "$(__gpy_capture_venv "$sender" lang "" /opt/conda base)"
+    _assert_venv_forwarding "$sender git with VIRTUAL_ENV" "" \
+        "$(__gpy_capture_venv "$sender" git /proj/.venv /opt/conda/envs/ml ml)"
+done
+rm -f "$__gpy_capture_file"
+echo "✓ virtual_env forwarding: conda env, precedence, base skip, git omits"
+
 # Render loop must advance prev_bg across segments (subshell-safe tracking). This
 # is the #220 regression: before the fix bash segments received no prev_bg at all.
 # Segments run inside command substitution, so the stubs record what they receive

@@ -297,6 +297,17 @@ function __gpy_json_flags_tail --argument-names is_last is_first prev_bg --descr
     printf '%s' $tail
 end
 
+# The virtualenv to forward on `lang` requests: $VIRTUAL_ENV, else
+# $CONDA_PREFIX when $CONDA_DEFAULT_ENV is set and not `base` (#729; pinned by
+# tests/fixtures/venv_forwarding_vectors.tsv). Prints nothing when none applies.
+function __gpy_forwarded_venv --description 'Virtualenv path to forward on lang requests'
+    if test -n "$VIRTUAL_ENV"
+        printf '%s' "$VIRTUAL_ENV"
+    else if test -n "$CONDA_PREFIX"; and test -n "$CONDA_DEFAULT_ENV"; and test "$CONDA_DEFAULT_ENV" != base
+        printf '%s' "$CONDA_PREFIX"
+    end
+end
+
 # Helper function to build JSON payloads for git/lang operations
 function __gpy_build_data_payload --argument-names op cwd format is_last prev_bg is_first --description 'Build JSON payload for data requests (git/lang)'
     set -q cwd[1]; or set cwd $PWD
@@ -307,9 +318,12 @@ function __gpy_build_data_payload --argument-names op cwd format is_last prev_bg
     # Forward the activated virtualenv for language detection so the agent
     # daemon (which never inherits the shell's VIRTUAL_ENV) reports the venv's
     # Python version rather than its own global interpreter.
-    if test "$op" = lang; and set -q VIRTUAL_ENV; and test -n "$VIRTUAL_ENV"
-        set -l escaped_venv (__gpy_json_escape "$VIRTUAL_ENV")
-        set payload (string join '' $payload ',"virtual_env":"' $escaped_venv '"')
+    if test "$op" = lang
+        set -l venv (__gpy_forwarded_venv)
+        if test -n "$venv"
+            set -l escaped_venv (__gpy_json_escape "$venv")
+            set payload (string join '' $payload ',"virtual_env":"' $escaped_venv '"')
+        end
     end
     echo (string join '' $payload '}')
 end

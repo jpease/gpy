@@ -1,0 +1,31 @@
+# tests/fixtures/venv_forwarding_vectors.tsv
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Shared virtualenv-forwarding vectors (#729). `lang` requests carry a
+# `virtual_env` value chosen from the shell environment: $VIRTUAL_ENV wins;
+# otherwise $CONDA_PREFIX, but only when $CONDA_DEFAULT_ENV is non-empty and
+# not `base` (a forwarded venv beats the project's .venv, and many setups
+# auto-activate conda base everywhere). Empty expected value = nothing is
+# forwarded. Read by ALL FOUR implementations so they cannot drift apart:
+#   - Rust:  resolve_python_venv precedence for the forwarded value
+#            (gpy-agent/src/language/venv.rs, venv_forwarding_shared_vectors)
+#   - Bash:  __gpy_forwarded_venv (tests/bash/venv_forwarding_vectors.test.bash)
+#   - Zsh:   __gpy_forwarded_venv (tests/zsh/venv_forwarding_vectors.test.zsh)
+#   - Fish:  __gpy_forwarded_venv (tests/fish/venv_forwarding_vectors.test.fish)
+#
+# Format: one vector per line, tab-separated:
+#   VIRTUAL_ENV<TAB>CONDA_PREFIX<TAB>CONDA_DEFAULT_ENV<TAB>expected
+# Blank lines and lines starting with # are ignored. The token \e in a column
+# means the EMPTY string (an empty column would be collapsed by bash/zsh
+# `read`); an empty value and an unset variable are treated alike. No other
+# escapes are used. Every reader MUST fail if this file is missing or yields
+# zero vectors.
+\e	\e	\e	\e
+/proj/.venv	\e	\e	/proj/.venv
+\e	/opt/conda/envs/ml	ml	/opt/conda/envs/ml
+/proj/.venv	/opt/conda/envs/ml	ml	/proj/.venv
+\e	/opt/conda	base	\e
+/proj/.venv	/opt/conda	base	/proj/.venv
+\e	/opt/conda/envs/ml	\e	\e
+\e	\e	ml	\e
+\e	/opt/conda/envs/my ml	my-ml	/opt/conda/envs/my ml

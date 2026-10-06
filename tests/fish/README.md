@@ -93,6 +93,7 @@ sections above describe the ones worth reading first.
 - `agent_restart_quiet_when_socket_missing.test.fish`
 - `cache_key_vectors.test.fish`
 - `xdg_absoluteness_vectors.test.fish`
+- `venv_forwarding_vectors.test.fish`
 - `doorbell_signal.test.fish`
 - `ipc_nc_fallback_timeout.test.fish`
 - `ipc_partial_response.test.fish`

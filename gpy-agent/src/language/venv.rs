@@ -275,6 +275,49 @@ mod tests {
         );
     }
 
+    /// Shared vectors (`tests/fixtures/venv_forwarding_vectors.tsv`, #729).
+    ///
+    /// The same file is read by the Bash/Zsh/Fish tests: a forwarded env (`VIRTUAL_ENV`, or a non-base conda env) beats
+    /// the project `.venv`; when the shells forward nothing, the project `.venv` wins.
+    #[test]
+    fn venv_forwarding_shared_vectors() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/fixtures/venv_forwarding_vectors.tsv");
+        let text = std::fs::read_to_string(&fixture)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", fixture.display()));
+        let mut vectors = 0_u32;
+        for line in text.lines() {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let cols: Vec<&str> = line.split('\t').collect();
+            assert_eq!(cols.len(), 4, "bad vector line: {line:?}");
+            let expected = cols.get(3).copied().unwrap();
+            vectors += 1;
+
+            let tmp = tempfile::tempdir().unwrap();
+            let project = tmp.path().join("project");
+            write_pyvenv(&project.join(".venv"), "3.11.9");
+            let (forwarded, want) = if expected == "\\e" {
+                (None, project.join(".venv"))
+            } else {
+                // Re-root the fixture's absolute path inside the tempdir as a conda-style
+                // env (no pyvenv.cfg, only bin/python).
+                let env_dir = tmp.path().join(expected.trim_start_matches('/'));
+                let python = venv_python_binary(&env_dir);
+                std::fs::create_dir_all(python.parent().unwrap()).unwrap();
+                std::fs::write(&python, "").unwrap();
+                (Some(env_dir.clone()), env_dir)
+            };
+            assert_eq!(
+                resolve_python_venv(&project, forwarded.as_deref()),
+                Some(want),
+                "vector {line:?}"
+            );
+        }
+        assert!(vectors > 0, "no vectors read from {}", fixture.display());
+    }
+
     #[test]
     fn nonexistent_forwarded_venv_is_ignored() {
         let project = tempfile::tempdir().unwrap();
