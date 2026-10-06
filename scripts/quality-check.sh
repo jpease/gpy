@@ -305,14 +305,15 @@ check_shellcheck() {
 # Stop any gpy-agent still bound under the hermetic XDG root $1, using the
 # gpy-agent in $2, before the root is deleted (#750): the plain bash/zsh suites
 # source the entry point and the supervisor starts a daemon on the socket under
-# $1/cache. Asks the agent to stop through its own socket, then falls back to
-# TERM -> bounded wait -> KILL of whatever holds that socket. Never a
-# name-based kill (#484, #615).
+# $1/run (run_shell_tests pins XDG_RUNTIME_DIR there so the socket lands under
+# the root on Linux too, #824). Asks the agent to stop through its own socket,
+# then falls back to TERM -> bounded wait -> KILL of whatever holds that
+# socket. Never a name-based kill (#484, #615).
 stop_shell_test_agents() {
     local xdg_root="$1" agent_dir="$2"
-    local sock="$xdg_root/cache/gpy/gpy.sock" pid tries
+    local sock="$xdg_root/run/gpy/gpy.sock" pid tries
     [[ -S "$sock" ]] || return 0
-    XDG_CACHE_HOME="$xdg_root/cache" XDG_CONFIG_HOME="$xdg_root/config" \
+    XDG_RUNTIME_DIR="$xdg_root/run" XDG_CACHE_HOME="$xdg_root/cache" XDG_CONFIG_HOME="$xdg_root/config" \
         "$agent_dir/gpy-agent" stop &>/dev/null || true
     command -v lsof &>/dev/null || return 0
     for pid in $(lsof -t "$sock" 2>/dev/null); do
@@ -368,8 +369,9 @@ run_shell_tests() {
     # built-in defaults. Mirrors the Fish runner's `fish --no-config` (#630).
     local shell_xdg_root
     shell_xdg_root="$(mktemp -d "${TMPDIR:-/tmp}/gpy-qc-xdg.XXXXXX")"
-    mkdir -p "$shell_xdg_root/cache" "$shell_xdg_root/config"
-    local shell_xdg_env="XDG_CACHE_HOME=$shell_xdg_root/cache XDG_CONFIG_HOME=$shell_xdg_root/config "
+    mkdir -p "$shell_xdg_root/cache" "$shell_xdg_root/config" "$shell_xdg_root/run"
+    chmod 700 "$shell_xdg_root/run"
+    local shell_xdg_env="XDG_RUNTIME_DIR=$shell_xdg_root/run XDG_CACHE_HOME=$shell_xdg_root/cache XDG_CONFIG_HOME=$shell_xdg_root/config "
 
     # The suites must exercise this checkout's debug agent, never whichever
     # gpy-agent is first on the developer's PATH (#750). Mirrors
