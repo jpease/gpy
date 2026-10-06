@@ -117,7 +117,7 @@ gpy palette import <scheme.yaml> [--name <name>] [--force]
 Verified against `gpy-agent/src/commands/palette.rs` and `gpy-agent/src/import/base16/`:
 
 - `<scheme.yaml>` — a base16 or base24 scheme file. GPY's parser accepts both the modern nested layout (`system:`, `name:`, `variant:`, then a `palette:` block of `baseNN: "hex"` entries) and the legacy flat layout (`scheme:`/`name:` plus top-level `baseNN:` keys). `base00`–`base0F` cover base16; base24 adds `base10`–`base17`.
-- `--name <name>` — overrides the palette name. If omitted, GPY uses the scheme's declared `name`/`scheme` field, falling back to `imported` if the scheme declares none.
+- `--name <name>` — overrides the palette name. If omitted, GPY uses the scheme's `slug` field when present, else its `name`/`scheme` field (falling back to `imported` if the scheme declares none). The result is lowercased and runs of characters that are not letters or digits become a single `-`; non-ASCII letters are kept (`Rosé Pine` without a slug becomes `rosé-pine`).
 - `--force` — overwrite an existing palette of the same name; without it, the import errors if the destination already exists.
 
 The imported palette is written to `~/.config/gpy/palettes/<name>.toml`. Activate it the same way as any built-in palette:

@@ -20,6 +20,8 @@ pub struct Base16Scheme {
     pub system: SchemeSystem,
     /// Human-readable scheme name.
     pub name: String,
+    /// Machine-friendly `slug:` field when declared (preferred for the palette name).
+    pub slug: Option<String>,
     /// Light/dark variant when declared.
     pub variant: Option<String>,
     /// Slot index (0x00–0x17) → color.
@@ -60,6 +62,7 @@ pub fn parse_scheme(input: &str) -> Result<Base16Scheme> {
     let mut system = SchemeSystem::Base16;
     let mut name: Option<String> = None;
     let mut variant: Option<String> = None;
+    let mut slug: Option<String> = None;
     let mut slots: BTreeMap<u8, Hex> = BTreeMap::new();
 
     for raw_line in input.lines() {
@@ -85,6 +88,7 @@ pub fn parse_scheme(input: &str) -> Result<Base16Scheme> {
             }
             "name" | "scheme" => name = Some(value),
             "variant" => variant = Some(value),
+            "slug" => slug = Some(value),
             other => {
                 if let Some(index) = slot_index(other) {
                     slots.insert(index, Hex::parse(&value)?);
@@ -101,6 +105,7 @@ pub fn parse_scheme(input: &str) -> Result<Base16Scheme> {
     Ok(Base16Scheme {
         system,
         name: name.unwrap_or_else(|| "imported".to_owned()),
+        slug,
         variant,
         slots,
     })

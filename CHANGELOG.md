@@ -575,6 +575,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - The `gpy-agent oneshot lang` fallback detects languages at the git root
   (#784), matching the agent when the shell is in a repository
   subdirectory.
+- `gpy palette import` names the palette from the scheme's `slug` when
+  present and keeps non-ASCII letters otherwise (`Rosé Pine` → `rose-pine`
+  with a slug, `rosé-pine` without) (#797).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
