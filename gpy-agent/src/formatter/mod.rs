@@ -192,7 +192,6 @@ impl ValueEnum for Format {
             Self::Fish,
             Self::FishSource,
             Self::Zsh,
-            Self::ZshSource,
         ]
     }
 

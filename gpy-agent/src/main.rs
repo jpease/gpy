@@ -223,7 +223,7 @@ enum OneshotCommands {
         /// The directory to detect languages in (defaults to current directory).
         #[arg(long, short, default_value_t = String::from("."))]
         cwd: String,
-        /// Output format (`json`, `fish`, `fish-ansi`, or `fish-source`).
+        /// Output format (see possible values).
         #[arg(long, default_value_t = gpy_agent::formatter::Format::Json)]
         format: gpy_agent::formatter::Format,
         /// Mark segment as NOT the last (omit to mark as last - default for standalone use).
@@ -239,7 +239,7 @@ enum OneshotCommands {
         /// The directory to render (defaults to current directory).
         #[arg(long, short, default_value_t = String::from("."))]
         cwd: String,
-        /// Output format (`json`, `ansi`, `fish-ansi`).
+        /// Output format (see possible values).
         #[arg(long, default_value_t = gpy_agent::formatter::Format::Json)]
         format: gpy_agent::formatter::Format,
         /// Mark segment as NOT the last.
@@ -255,7 +255,7 @@ enum OneshotCommands {
         /// Command duration in milliseconds (from `$CMD_DURATION`).
         #[arg(long, default_value_t = 0_u64)]
         duration_ms: u64,
-        /// Output format (`json`, `ansi`, `fish-ansi`).
+        /// Output format (see possible values).
         #[arg(long, default_value_t = gpy_agent::formatter::Format::Json)]
         format: gpy_agent::formatter::Format,
         /// Mark segment as NOT the last.
@@ -271,7 +271,7 @@ enum OneshotCommands {
         /// Last command exit code (0 = success, non-zero = error).
         #[arg(long, default_value_t = 0_i32)]
         exit_code: i32,
-        /// Output format (`json`, `ansi`, `fish-ansi`).
+        /// Output format (see possible values).
         #[arg(long, default_value_t = gpy_agent::formatter::Format::Json)]
         format: gpy_agent::formatter::Format,
         /// Mark segment as NOT the last.
@@ -291,7 +291,7 @@ enum OneshotCommands {
         /// or empty when that cannot be determined).
         #[arg(long, default_value_t = default_hostname_arg())]
         hostname: String,
-        /// Output format (`json`, `ansi`, `fish-ansi`).
+        /// Output format (see possible values).
         #[arg(long, default_value_t = gpy_agent::formatter::Format::Json)]
         format: gpy_agent::formatter::Format,
         /// Mark segment as NOT the last.
@@ -311,7 +311,7 @@ enum OneshotCommands {
         /// or empty when that cannot be determined).
         #[arg(long, default_value_t = default_username_arg())]
         username: String,
-        /// Output format (`json`, `ansi`, `fish-ansi`).
+        /// Output format (see possible values).
         #[arg(long, default_value_t = gpy_agent::formatter::Format::Json)]
         format: gpy_agent::formatter::Format,
         /// Mark segment as NOT the last.

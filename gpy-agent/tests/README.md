@@ -59,6 +59,7 @@ The unit tests live next to the code in `src/`.
 | `logging_channel_guard.rs` | Guards the unified logging channel (#627): every runtime diagnostic under |
 | `mock_watcher.rs` | Tests verifying `WatcherConfig` default values |
 | `multi_repo_integration_tests.rs` | Multi-repository integration tests |
+| `oneshot_format_values_tests.rs` | `--format` values clap offers equal the renderable formats, both ways, and `oneshot --help` never lists a rejected one (#756) |
 | `palette_cli_e2e_tests.rs` | `gpy palette` through the real binary (#648) |
 | `palette_swap_tests.rs` | SP4: swapping ui.palette recolors languages while the starship palette is vanilla |
 | `plugin_extensibility_e2e_tests.rs` | Plugin discovery, manifest validation and a real Fish runtime load of a plugin segment (needs Fish 4) |

@@ -82,7 +82,7 @@ pub(crate) fn native_windows_unsupported() -> crate::Error {
 /// Fish shell sends messages using an object format with an `op` field:
 ///
 /// ```json
-/// {"op":"git","cwd":"/home/user/repo","format":"fish-ansi"}
+/// {"op":"git","cwd":"/home/user/repo","format":"ansi"}
 /// ```
 ///
 /// ## Native Rust Format
@@ -95,7 +95,7 @@ pub(crate) fn native_windows_unsupported() -> crate::Error {
 ///
 /// Both formats are supported for backward compatibility.
 ///
-/// **Note**: Format values use kebab-case: `"json"`, `"fish-ansi"`, `"fish-source"`
+/// **Note**: Format values use kebab-case: `"json"`, `"ansi"`, `"fish-source"`
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
     /// Request git status for a directory
@@ -109,7 +109,7 @@ pub enum Message {
     ///
     /// Fish format (full):
     /// ```json
-    /// {"op":"git","cwd":"/home/user/repo","format":"fish-ansi","is_last":false}
+    /// {"op":"git","cwd":"/home/user/repo","format":"ansi","is_last":false}
     /// ```
     ///
     /// Native format:
