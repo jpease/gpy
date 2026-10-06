@@ -987,9 +987,10 @@ impl Agent {
     pub async fn start_background(&mut self) -> Result<()> {
         startup::startup_checks(self.server.socket_path());
 
-        // Recovery nudge. `daemon()` exits the parent before the start path can
-        // notify existing shells, so the daemon itself writes each tracked
-        // shell's `.reregister` flag and rings its doorbell once our socket is accepting connections.
+        // Recovery nudge. The daemon is the only place it runs (the
+        // `gpy-agent start` process just waits for readiness, #741), so each
+        // tracked shell is nudged once: the daemon writes its `.reregister`
+        // flag and rings its doorbell once our socket is accepting connections.
         // Those shells re-register and resume live updates without the user
         // having to press enter.
         #[cfg(unix)]

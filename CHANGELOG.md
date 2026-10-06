@@ -274,6 +274,16 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   `~` contraction, and macOS `/tmp` showed as `/private/tmp`; IPC and oneshot
   output now match. Path validation, read-only checks and push-delivery
   matching still use the canonical path; the wire format is unchanged.
+- `gpy start` and `gpy-agent start` return only once the agent answers on
+  its socket (#741), and exit `1` with an `Error:` line when it dies or
+  does not answer within 5 seconds. They used to exit `0` right after
+  forking, before the socket existed and even when the agent never came up.
+
+- The agent daemon no longer keeps its launch directory busy (#724). It
+  now runs in `/`, so a volume you started it from can be unmounted while
+  it runs. Relative `--socket`, `GPY_AGENT_SOCKET_PATH`, `GPY_CONFIG_PATH`
+  and `GPY_DEBUG_LOG` values still resolve against the launch directory.
+
 - Concurrent `gpy-agent start` runs no longer orphan a daemon (#723). A
   start that raced an eviction could unlink the replacement agent's socket
   and fork a third daemon, leaving one running on an unreachable socket.

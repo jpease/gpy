@@ -17,7 +17,7 @@ use std::time::Duration;
 #[cfg(unix)]
 use crate::ipc::registry::{ShellFlag, default_shell_dir, ring_doorbell, write_shell_flag};
 #[cfg(unix)]
-use fork::{Fork, daemon};
+use fork::Fork;
 #[cfg(unix)]
 use nix::errno::Errno;
 #[cfg(unix)]
@@ -244,32 +244,46 @@ fn request_reregistration(shell_dir: &std::path::Path, pid: u32) {
     let _ = ring_doorbell(pid);
 }
 
-/// Fork and start the agent as a background daemon process
+/// How long `gpy-agent start` waits for its daemon to answer (#741).
+#[cfg(unix)]
+const READY_WAIT_MAX: Duration = Duration::from_secs(5);
+
+/// Poll interval while waiting for the daemon to answer.
+#[cfg(unix)]
+const READY_WAIT_POLL: Duration = Duration::from_millis(10);
+
+/// Wait until the daemon `agent_pid` answers a ping on `socket_path`.
+///
+/// Stops early once the daemon is gone (it is not our child, so `kill(pid, 0)`
+/// failing means it exited and was reaped by init).
 ///
 /// # Errors
 ///
-/// Returns an error if:
-/// - Forking fails (resource limits, permissions)
-/// - Child process cannot initialize the tokio runtime
-/// - Agent initialization fails (see `Agent::new()` in `gpy-agent/src/agent.rs`)
+/// Returns an error if the daemon dies or does not answer within
+/// [`READY_WAIT_MAX`].
 #[cfg(unix)]
-fn wait_for_agent_ready(socket_path: &PathBuf, child_pid: i32) -> Result<()> {
-    for _ in 0_i32..50_i32 {
+fn wait_for_agent_ready(socket_path: &PathBuf, agent_pid: i32) -> Result<()> {
+    let deadline = std::time::Instant::now()
+        .checked_add(READY_WAIT_MAX)
+        .unwrap_or_else(std::time::Instant::now);
+    loop {
         if super::ping_agent_blocking(socket_path)? {
             return Ok(());
         }
-
-        if kill(Pid::from_raw(child_pid), None).is_err() {
-            break;
+        if kill(Pid::from_raw(agent_pid), None).is_err() {
+            return Err(Error::process(
+                "startup_failed".to_owned(),
+                "Agent process exited before it was ready".to_owned(),
+            ));
         }
-
-        std::thread::sleep(Duration::from_millis(100));
+        if std::time::Instant::now() >= deadline {
+            return Err(Error::process(
+                "startup_timeout".to_owned(),
+                "Agent process did not become ready before timeout".to_owned(),
+            ));
+        }
+        std::thread::sleep(READY_WAIT_POLL);
     }
-
-    Err(Error::process(
-        "startup_timeout".to_owned(),
-        "Agent process did not become ready before timeout".to_owned(),
-    ))
 }
 
 #[cfg(unix)]
@@ -329,76 +343,133 @@ fn nudge_all_tracked_shells_in(shell_dir: &std::path::Path) {
     }
 }
 
-/// Fork and start the agent as a background daemon process
+/// Fork the agent daemon and return once it answers on `socket_path` (#741).
+///
+/// An explicit double fork instead of `fork::daemon()`, whose original and
+/// intermediate processes `_exit(0)` before anything can be awaited:
+///
+/// 1. The original forks, reads the daemon's PID from a pipe, reaps the
+///    intermediate and waits for readiness, holding `start_lock` throughout.
+/// 2. The intermediate calls `setsid`, redirects stdio to `/dev/null`, forks
+///    the daemon, writes its PID into the pipe and exits.
+/// 3. The daemon `chdir`s to `/` (#724), so it never keeps the launch
+///    directory's mount busy, binds its socket and only then drops the start
+///    lock it inherited (#723).
+///
+/// The restart nudge stays in the daemon (`Agent::start_background`), so
+/// shells are nudged once per start.
 ///
 /// # Errors
 ///
-/// Returns an error if:
-/// - Forking fails (resource limits, permissions)
-/// - Child process cannot initialize the tokio runtime
-/// - Agent initialization fails (see `Agent::new()` in `gpy-agent/src/agent.rs`)
+/// Returns an error if the pipe or fork fails, if the daemon never reports
+/// its PID, or if it dies or does not answer before the readiness timeout.
+/// In the daemon itself, returns the agent's own exit result.
 #[cfg(unix)]
 fn fork_agent(socket_path: &PathBuf, start_lock: Flock<std::fs::File>) -> Result<()> {
+    use std::io::Read;
+
+    let (mut pid_reader, pid_writer) =
+        std::io::pipe().map_err(|e| Error::process("pipe".to_owned(), e.to_string()))?;
+
+    match fork::fork() {
+        Ok(Fork::Parent(intermediate_pid)) => {
+            drop(pid_writer);
+            let mut pid_bytes = [0_u8; 4];
+            let read = pid_reader.read_exact(&mut pid_bytes);
+            let _ = fork::waitpid(intermediate_pid);
+            read.map_err(|e| {
+                Error::process(
+                    "fork".to_owned(),
+                    format!("Agent process did not start: {e}"),
+                )
+            })?;
+            let ready = wait_for_agent_ready(socket_path, i32::from_ne_bytes(pid_bytes));
+            // Held until now so a daemon that never binds cannot let another
+            // start in early; unlocking a lock the daemon already released is
+            // harmless.
+            drop(start_lock);
+            ready
+        }
+        Ok(Fork::Child) => {
+            drop(pid_reader);
+            fork_daemon_from_intermediate(pid_writer);
+            run_daemon(start_lock)
+        }
+        Err(e) => Err(Error::process("fork".to_owned(), e.to_string())),
+    }
+}
+
+/// Intermediate child: start a new session, detach stdio, fork the daemon and
+/// report its PID.
+///
+/// Returns only in the daemon; the intermediate always exits here, without
+/// running destructors that could unlock the inherited start lock.
+#[cfg(unix)]
+#[expect(
+    clippy::exit,
+    reason = "the intermediate process of the double fork must end right after handing the daemon's PID to the original process; returning would run the caller's code twice"
+)]
+fn fork_daemon_from_intermediate(mut pid_writer: std::io::PipeWriter) {
+    use std::io::Write;
+
+    if fork::setsid().is_err() || fork::redirect_stdio().is_err() {
+        std::process::exit(1);
+    }
+    match fork::fork() {
+        Ok(Fork::Parent(daemon_pid)) => {
+            let code = i32::from(pid_writer.write_all(&daemon_pid.to_ne_bytes()).is_err());
+            std::process::exit(code);
+        }
+        Ok(Fork::Child) => drop(pid_writer),
+        Err(_) => std::process::exit(1),
+    }
+}
+
+/// Daemon body: detach from the launch directory, then run the agent until
+/// it shuts down.
+///
+/// # Errors
+///
+/// Returns an error if the tokio runtime cannot be built or the agent fails.
+#[cfg(unix)]
+fn run_daemon(start_lock: Flock<std::fs::File>) -> Result<()> {
     use super::write_agent_version;
 
-    // daemon(nochdir, noclose) - using daemon() function for daemonization
-    // nochdir=true: keep working directory
-    // noclose=false: close stdin/stdout/stderr and redirect to /dev/null
-    match daemon(true, false) {
-        Ok(Fork::Child) => {
-            // Child: we are the agent background process
-            // stdin/stdout/stderr are already redirected to /dev/null by daemon()
-
-            // Write version file so we can detect upgrades
-            let _ = write_agent_version();
-
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| Error::process("runtime".to_owned(), e.to_string()))?;
-            let result = rt.block_on(async {
-                match Agent::new() {
-                    Ok(mut agent) => {
-                        agent.server.hold_start_lock_until_bound(start_lock);
-                        agent.start_background().await
-                    }
-                    Err(e) => {
-                        crate::debug::write_debug_log(
-                            "agent",
-                            &format!("Fatal initialization error: {e}"),
-                        );
-                        #[expect(
-                            clippy::exit,
-                            reason = "this is the daemonized child process after stdio has been redirected to /dev/null; agent init failed fatally, so exiting is the only way to end the process"
-                        )]
-                        std::process::exit(1);
-                    }
-                }
-            });
-            // Bound runtime teardown instead of letting `rt`'s Drop block until
-            // every spawn_blocking task finishes. Without this, an in-flight
-            // scan with no cancellation hook (e.g. a slow language-detection
-            // walk, #391) can hang process exit indefinitely after a clean
-            // shutdown signal. Anything still running past the deadline is
-            // detached, not joined; the process exiting when this function
-            // returns forcibly terminates it regardless.
-            rt.shutdown_timeout(std::time::Duration::from_secs(5));
-            result
-        }
-        Ok(Fork::Parent(child_pid)) => {
-            // NOTE: with `daemon()` the parent is exited inside `daemon()` and this
-            // arm typically never runs. The restart nudge is therefore performed by
-            // the daemon child itself (see `Agent::start_background`). This arm is
-            // kept as a best-effort fallback for platforms where `daemon()` returns
-            // in the parent.
-            wait_for_agent_ready(socket_path, child_pid)?;
-            notify_existing_shells_of_restart();
-            eprintln!("✅ GPY Agent started successfully (PID: {child_pid})");
-            Ok(())
-        }
-        Err(e) => {
-            eprintln!("❌ Failed to start GPY Agent: {e}");
-            Err(Error::process("fork".to_owned(), e.to_string()))
-        }
+    // Every relative input was made absolute before the fork (#724).
+    if let Err(e) = fork::chdir() {
+        debug_log!("agent", "Failed to chdir to /: {e}");
     }
+
+    // Write version file so we can detect upgrades
+    let _ = write_agent_version();
+
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| Error::process("runtime".to_owned(), e.to_string()))?;
+    let result = rt.block_on(async {
+        match Agent::new() {
+            Ok(mut agent) => {
+                agent.server.hold_start_lock_until_bound(start_lock);
+                agent.start_background().await
+            }
+            Err(e) => {
+                crate::debug::write_debug_log("agent", &format!("Fatal initialization error: {e}"));
+                #[expect(
+                    clippy::exit,
+                    reason = "this is the daemonized child process after stdio has been redirected to /dev/null; agent init failed fatally, so exiting is the only way to end the process"
+                )]
+                std::process::exit(1);
+            }
+        }
+    });
+    // Bound runtime teardown instead of letting `rt`'s Drop block until
+    // every spawn_blocking task finishes. Without this, an in-flight
+    // scan with no cancellation hook (e.g. a slow language-detection
+    // walk, #391) can hang process exit indefinitely after a clean
+    // shutdown signal. Anything still running past the deadline is
+    // detached, not joined; the process exiting when this function
+    // returns forcibly terminates it regardless.
+    rt.shutdown_timeout(std::time::Duration::from_secs(5));
+    result
 }
 
 /// Start the agent in background using race-free socket-based coordination
@@ -414,7 +485,20 @@ pub fn start_background_agent() -> Result<()> {
             return Ok(()); // Successful no-op
         }
 
-        let socket_path = super::get_socket_path()?;
+        // The daemon runs in `/` (#724): anchor every relative input to the
+        // launch directory now, before the fork, so it inherits the result.
+        if let Ok(cwd) = std::env::current_dir() {
+            let _ = crate::paths::LAUNCH_DIR.set(cwd);
+        }
+        crate::debug::init_path();
+        let socket_path = crate::paths::absolutize(&super::get_socket_path()?);
+        // `--socket` already stored an absolute path; this covers a relative
+        // `GPY_AGENT_SOCKET_PATH`, which the daemon would otherwise re-read
+        // against `/`. The default socket is left unset so it keeps the
+        // `agent.version` marker.
+        if super::socket_path_override().is_some() {
+            let _ = super::SOCKET_OVERRIDE.set(socket_path.clone());
+        }
 
         // Serialize check → evict → fork → bind per socket (#723). The forked
         // daemon inherits the lock and releases it once its socket is bound.
@@ -427,6 +511,8 @@ pub fn start_background_agent() -> Result<()> {
         }
 
         eprintln!("Starting GPY Agent in background...");
+        // Exits non-zero (via `main`'s `Error:` line) unless the daemon
+        // answers on its socket (#741).
         fork_agent(&socket_path, start_lock)
     }
 

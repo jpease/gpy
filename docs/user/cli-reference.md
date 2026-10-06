@@ -83,7 +83,12 @@ then reports `Running and Responding`. Starting is idempotent: with a
 matching agent already running it exits `0` without forking a second one,
 and with an older agent running it evicts it first (`Detected version
 mismatch`) so an upgrade never leaves a stale daemon serving new shells.
-A newer running agent is left alone.
+A newer running agent is left alone. If the new daemon exits or does not
+answer within 5 seconds, `gpy start` (and `gpy-agent start`) exits `1`
+with an `Error:` line. The daemon runs in `/`, so it never keeps the
+directory you started it from (or its volume) busy; a relative `--socket`,
+`GPY_AGENT_SOCKET_PATH`, `GPY_CONFIG_PATH` or `GPY_DEBUG_LOG` still
+resolves against that directory.
 
 ---
 

@@ -594,18 +594,11 @@ fn env_watch_worktree_override() -> Option<bool> {
 
 fn normalize_config_paths(path: &Path) -> Vec<PathBuf> {
     let mut normalized = Vec::with_capacity(2);
+    let absolute = crate::paths::absolutize(path);
 
-    if let Ok(canonical) = path.canonicalize() {
+    if let Ok(canonical) = absolute.canonicalize() {
         normalized.push(canonical);
     }
-
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else if let Ok(cwd) = std::env::current_dir() {
-        cwd.join(path)
-    } else {
-        path.to_path_buf()
-    };
 
     if !normalized.iter().any(|candidate| candidate == &absolute) {
         normalized.push(absolute);

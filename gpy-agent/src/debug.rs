@@ -17,13 +17,26 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::OnceLock;
 
+/// `GPY_DEBUG_LOG`, made absolute against the launch directory (#724).
+static DEBUG_PATH: OnceLock<Option<String>> = OnceLock::new();
+
 /// Check if debug logging is enabled
 fn debug_log_path() -> Option<&'static str> {
-    static DEBUG_PATH: OnceLock<Option<String>> = OnceLock::new();
-
     DEBUG_PATH
-        .get_or_init(|| std::env::var("GPY_DEBUG_LOG").ok())
+        .get_or_init(|| {
+            std::env::var("GPY_DEBUG_LOG").ok().map(|value| {
+                crate::paths::absolutize(Path::new(&value))
+                    .to_string_lossy()
+                    .into_owned()
+            })
+        })
         .as_deref()
+}
+
+/// Resolve `GPY_DEBUG_LOG` now, so a daemon forked afterwards inherits the
+/// path as it resolved in the launch directory, not against `/` (#724).
+pub fn init_path() {
+    let _ = debug_log_path();
 }
 
 /// Format one log line as `[timestamp_ms] [category] message`.
