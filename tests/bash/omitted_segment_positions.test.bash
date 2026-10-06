@@ -17,9 +17,9 @@ cd "$ROOT" || exit 1
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-export GPY_AGENT_SUPERVISOR_ENABLED=0
+# Supervisor off in a sandbox config: the theme export re-sets the flag (#836).
+source "$ROOT/tests/lib/supervisor_off.bash" "$TMP_ROOT"
 export GPY_AGENT_SOCKET_PATH="$TMP_ROOT/missing.sock"
-export XDG_CACHE_HOME="$TMP_ROOT/cache"
 export GPY_LANGUAGE_ENABLED=1
 
 source bash/gpy.bash

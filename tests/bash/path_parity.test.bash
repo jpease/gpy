@@ -69,6 +69,13 @@ compare() {
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/gpy-path-parity.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
+# gpy.bash decides on its startup agent start from the environment, but every
+# later supervisor check reads the flag the theme export sets from config.toml,
+# so disable it in every config dir the cases resolve to as well (#836).
+for cfg in "$tmp/config" "$tmp/home/.config"; do
+    mkdir -p "$cfg/gpy"
+    printf '[agent.supervisor]\nenabled = false\n' >"$cfg/gpy/config.toml"
+done
 compare xdg_all_set HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache" XDG_RUNTIME_DIR="$tmp/run"
 compare runtime_unset HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache"
 compare xdg_unset HOME="$tmp/home"
@@ -80,8 +87,10 @@ compare socket_override HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/run" GPY_AGENT_SO
 # --- cache key encoding, against a file the agent wrote ----------------------------
 echo "--- cache key encoding ---"
 shell_e2e_init "$ROOT"
+# shell_e2e_init's EXIT trap replaced the one above; run both (#836).
+trap 'shell_e2e_cleanup; rm -rf "$tmp"' EXIT
 export GPY_AGENT_SUPERVISOR_ENABLED=0
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' \
+printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n\n[agent.supervisor]\nenabled = false\n' \
     >"$XDG_CONFIG_HOME/gpy/config.toml"
 shell_e2e_start_agent || exit 1
 cd "$SHELL_E2E_REPO" || exit 1

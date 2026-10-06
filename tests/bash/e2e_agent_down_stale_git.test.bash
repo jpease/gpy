@@ -29,7 +29,10 @@ failures=0
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 pass() { echo "PASS: $*"; }
 
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' \
+# The supervisor stays off at startup (env) and on every later prompt, where
+# the theme export has re-set the flag from config.toml (#836): this test
+# needs the agent down.
+printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n\n[agent.supervisor]\nenabled = false\n' \
     >"$XDG_CONFIG_HOME/gpy/config.toml"
 export GPY_AGENT_ENABLED=1
 export GPY_AGENT_SUPERVISOR_ENABLED=0

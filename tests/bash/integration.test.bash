@@ -20,21 +20,14 @@ cd "$ROOT" || exit 1
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
     GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
     GIT_PREFIX GIT_NAMESPACE 2>/dev/null || true
-export GPY_AGENT_SUPERVISOR_ENABLED=0
 # Hermetic XDG dirs (#632): __gpy_load_theme sources a theme-export cache from
 # $XDG_CACHE_HOME/gpy when one exists (#614), which would replace the built-in
-# defaults this file asserts on with the developer's own theme.
+# defaults this file asserts on with the developer's own theme. The sandbox
+# config also disables the supervisor (the theme export re-sets the env flag),
+# or a later prompt's supervisor check starts a real agent on the "missing"
+# socket, which lives in the sandbox, never in the checkout (#835, #836).
 __gpy_integration_xdg_root=$(mktemp -d "${TMPDIR:-/tmp}/gpy-it-xdg.XXXXXX")
-export XDG_CACHE_HOME="$__gpy_integration_xdg_root/cache"
-export XDG_CONFIG_HOME="$__gpy_integration_xdg_root/config"
-mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME"
-# Sourcing gpy.bash evals the theme export, which sets
-# GPY_AGENT_SUPERVISOR_ENABLED from config and so overrides the export above:
-# disable the supervisor in the sandbox config too, or a later prompt's
-# supervisor check starts a real agent on the "missing" socket (#835). The
-# socket also lives in the sandbox, never in the checkout.
-mkdir -p "$XDG_CONFIG_HOME/gpy"
-printf '[agent.supervisor]\nenabled = false\n' >"$XDG_CONFIG_HOME/gpy/config.toml"
+source tests/lib/supervisor_off.bash "$__gpy_integration_xdg_root"
 export GPY_AGENT_SOCKET_PATH="$__gpy_integration_xdg_root/missing.sock"
 
 source bash/gpy.bash

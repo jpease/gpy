@@ -40,9 +40,9 @@ STUB
 chmod +x "$STUB_BIN_DIR/gpy-agent"
 
 export PATH="$STUB_BIN_DIR:$PATH"
-export GPY_AGENT_SUPERVISOR_ENABLED=0
+# Supervisor off in a sandbox config: the theme export re-sets the flag (#836).
+source "$ROOT/tests/lib/supervisor_off.bash" "$TMP_DIR"
 export GPY_AGENT_SOCKET_PATH="$TMP_DIR/dead-agent.sock"
-export XDG_CACHE_HOME="$TMP_DIR/cache"
 
 source bash/core/constants.bash
 source bash/core/ipc.bash
