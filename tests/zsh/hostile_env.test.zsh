@@ -91,8 +91,22 @@ scenario_nounset_runtime_only() {
     nounset_scenario "setopt nounset, only XDG_RUNTIME_DIR" "XDG_CACHE_HOME"
 }
 
+scenario_cache_dir_lifecycle() {
+    local -a d
+    rm -rf "$SANDBOX"/gpy_cache_*(N)
+    run_child '' $'source "$GPY_TEST_ROOT/zsh/gpy.zsh"\nexit'
+    d=("$SANDBOX"/gpy_cache_*(N))
+    ((${#d} == 0)) && pass "re-source + exit leaves no gpy_cache_*" \
+        || fail "re-source + exit left ${#d} gpy_cache_* dir(s)"
+    run_child '' $'exec zsh -i -c true'
+    d=("$SANDBOX"/gpy_cache_*(N))
+    ((${#d} == 0)) && pass "exec leaves no gpy_cache_*" \
+        || fail "exec left ${#d} gpy_cache_* dir(s)"
+}
+
 run_scenario nounset_no_xdg
 run_scenario nounset_runtime_only
+run_scenario cache_dir_lifecycle
 
 if ((failures > 0)); then
     print -r -- "=== $failures scenario assertion(s) failed ==="

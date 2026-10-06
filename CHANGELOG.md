@@ -441,6 +441,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   `XDG_CACHE_HOME` is unset, and zsh registers its exit hook (#698).
 - Bash `PROMPT_COMMAND` hooks that run after gpy see the command's real `$?`
   instead of 0 (#761).
+- Zsh no longer leaks a `gpy_cache_*` temp directory on every re-source,
+  `exec zsh` or killed shell (#763); directories left by dead shells are
+  removed at the next start.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
