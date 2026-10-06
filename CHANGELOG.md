@@ -490,6 +490,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `gpy theme import` carries Starship's `add_newline = false` and
   `$line_break` (or the default two-line layout) into `ui.add_newline` and
   `ui.two_line`, and no longer warns that `line_break` is unsupported (#738).
+- `gpy theme import` accepts `fg:`/`bg:`-prefixed and palette-alias colours
+  in language and character styles instead of rejecting them as invalid
+  (#792).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

@@ -18,8 +18,8 @@ pub use error::{ImportError, Result};
 pub use layout::{derive_segments, map_module};
 pub use model::{StarshipConfig, parse};
 pub use modules::{
-    LanguageTranslation, canonical_language, first_color_token, inline_style_vars,
-    retain_known_vars, translate_character, translate_directory, translate_duration, translate_git,
+    LanguageTranslation, canonical_language, inline_style_vars, retain_known_vars,
+    translate_character, translate_directory, translate_duration, translate_git,
     translate_languages, translate_time,
 };
 pub use palette::{selected_palette, translate_palette};

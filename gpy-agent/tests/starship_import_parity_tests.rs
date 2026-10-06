@@ -389,6 +389,13 @@ parity_rows! {
     character_error_trailing_space: Scenario::Character(1), "[character]\nsuccess_symbol = \"[➜](bold green) \"\nerror_symbol = \"[✗](bold red) \"\n";
     character_success_leading_trailing_space: Scenario::Character(0), "[character]\nsuccess_symbol = \" [➜](bold green)  \"\n";
     character_success_not_bold_trailing_space: Scenario::Character(0), "[character]\nsuccess_symbol = \"[➜](green) \"\nerror_symbol = \"[✗](red) \"\n";
+    // #792: `fg:`/`bg:` prefixes and palette aliases in character styles.
+    character_success_fg_prefix: Scenario::Character(0), "[character]\nsuccess_symbol = \"[❯](fg:cyan)\"\nerror_symbol = \"[✗](fg:purple)\"\n";
+    character_success_bold_fg_prefix: Scenario::Character(0), "[character]\nsuccess_symbol = \"[❯](bold fg:cyan)\"\nerror_symbol = \"[✗](bold fg:purple)\"\n";
+    character_error_fg_prefix: Scenario::Character(1), "[character]\nsuccess_symbol = \"[❯](bold fg:cyan)\"\nerror_symbol = \"[✗](bold fg:purple)\"\n";
+    character_success_fg_and_bg: Scenario::Character(0), "[character]\nsuccess_symbol = \"[❯](bg:blue fg:white)\"\nerror_symbol = \"[✗](bg:blue fg:red)\"\n";
+    character_success_palette_alias: Scenario::Character(0), "palette = \"p\"\n[character]\nsuccess_symbol = \"[❯](bold peach)\"\n[palettes.p]\npeach = \"#fab387\"\n";
+    character_error_palette_alias_fg_prefix: Scenario::Character(1), "palette = \"p\"\n[character]\nsuccess_symbol = \"[❯](bold peach)\"\nerror_symbol = \"[✗](bold fg:peach)\"\n[palettes.p]\npeach = \"#fab387\"\n";
     // #738: `add_newline` and `$line_break` drive the prompt's layout.
     layout_default: Scenario::Layout, "[character]\n";
     layout_add_newline_false: Scenario::Layout, "add_newline = false\n";

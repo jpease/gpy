@@ -147,20 +147,16 @@ fn real_world_powerline_preset_survives_import_with_documented_lossy_warnings() 
         Some("[ $username ](bg:color_orange fg:color_fg0)")
     );
 
-    // Every language module shares `style = "bg:color_blue"`: a powerline
-    // background token `first_color_token` extracts whole, which `ColorSpec`
-    // rejects (it has no `bg:`-prefix stripping and no palette-alias
-    // resolution). Pin the count so a future importer improvement that adds
-    // either capability shows up here as a visible diff, not silently.
-    let invalid_bg_colors = artifacts
-        .warnings
-        .iter()
-        .filter(|w| w.kind == WarningKind::InvalidColor && w.message.contains("bg:color_blue"))
-        .count();
-    assert_eq!(
-        invalid_bg_colors, 8,
-        "one per language module sharing style = \"bg:color_blue\""
-    );
+    // Every language module shares `style = "bg:color_blue"`: a background-only
+    // style GPY's shared language format cannot apply (lossy, never invalid).
+    let count = |kind: WarningKind, needle: &str| {
+        let matches = |w: &&gpy_agent::import::starship::Warning| {
+            w.kind == kind && w.message.contains(needle)
+        };
+        artifacts.warnings.iter().filter(matches).count()
+    };
+    assert_eq!(count(WarningKind::LossyMapping, "background style"), 8);
+    assert_eq!(count(WarningKind::InvalidColor, ""), 0);
 
     let unsupported_modules: Vec<&str> = artifacts
         .warnings
@@ -178,7 +174,9 @@ fn real_world_powerline_preset_survives_import_with_documented_lossy_warnings() 
     );
     assert!(artifacts.theme.ui.two_line);
 
-    assert_eq!(artifacts.warnings.len(), 26, "pin total warning count");
+    // #792: the two character `fg:color_*` InvalidColor warnings are gone; each
+    // of the 8 language tables gains a "per-language format" LossyMapping one.
+    assert_eq!(artifacts.warnings.len(), 32, "pin total warning count");
 }
 
 #[test]
