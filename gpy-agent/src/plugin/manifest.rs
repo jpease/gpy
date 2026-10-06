@@ -260,7 +260,6 @@ pub struct PluginManifest {
     /// Optional plugin description
     pub description: Option<String>,
     /// List of segment names provided by this plugin
-    #[serde(default)]
     pub provided_segments: Vec<SegmentName>,
     /// Type of execution entry point
     pub entry_type: EntryType,
@@ -278,6 +277,12 @@ impl PluginManifest {
     pub fn parse(toml_content: &str) -> crate::Result<Self> {
         let manifest: Self = toml::from_str(toml_content)
             .map_err(|e| crate::Error::invalid(format!("Failed to parse plugin manifest: {e}")))?;
+
+        if manifest.provided_segments.is_empty() {
+            return Err(crate::Error::invalid(
+                "provided_segments must list at least one segment".to_owned(),
+            ));
+        }
 
         // Ensure provided_segments has no duplicates
         let mut unique_segments = std::collections::HashSet::new();
@@ -357,6 +362,41 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_rejects_missing_provided_segments() {
+        for key_line in ["", "provided_segment = [\"x\"]"] {
+            let toml = format!(
+                r#"
+            id = "my-test-plugin"
+            name = "My Test Plugin"
+            version = "1.0.0"
+            api_version = "v1"
+            entry_type = "file"
+            {key_line}
+        "#
+            );
+            let err = PluginManifest::parse(&toml).unwrap_err();
+            assert!(
+                err.to_string().contains("provided_segments"),
+                "error should name provided_segments: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_rejects_empty_provided_segments() {
+        let toml = r#"
+            id = "my-test-plugin"
+            name = "My Test Plugin"
+            version = "1.0.0"
+            api_version = "v1"
+            provided_segments = []
+            entry_type = "file"
+        "#;
+        let err = PluginManifest::parse(toml).unwrap_err();
+        assert!(err.to_string().contains("provided_segments"), "{err}");
+    }
+
+    #[test]
     fn test_parse_duplicate_segments() {
         let toml = r#"
             id = "my-test-plugin"
@@ -386,6 +426,7 @@ mod tests {
             name = "Cmd"
             version = "1.0.0"
             api_version = "v1"
+            provided_segments = ["x"]
             entry_type = "command"
         "#;
         let manifest = PluginManifest::parse(toml).unwrap();
@@ -400,6 +441,7 @@ mod tests {
             name = "My Test Plugin"
             version = "1.0.0"
             api_version = "v1"
+            provided_segments = ["x"]
             entry_type = "file"
         "#;
         assert!(PluginManifest::parse(toml).is_err());
@@ -412,6 +454,7 @@ mod tests {
             name = "My Test Plugin"
             version = "1.0.0"
             api_version = "v2"
+            provided_segments = ["x"]
             entry_type = "file"
         "#;
         assert!(PluginManifest::parse(toml).is_err());
