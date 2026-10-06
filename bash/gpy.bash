@@ -27,11 +27,15 @@ source "$GPY_BASH_ROOT/core/ipc.bash"
 source "$GPY_BASH_ROOT/core/signals.bash"
 source "$GPY_BASH_ROOT/core/supervisor.bash"
 
-# Initialize (defines __gpy_load_theme)
+# Defines __gpy_load_theme and __gpy_init
 source "$GPY_BASH_ROOT/core/init.bash"
 
 # Load theme from agent (overrides defaults in constants.bash)
 __gpy_load_theme &>/dev/null
+
+# Start, register, and hook up only after the theme export has set the
+# effective GPY_AGENT_*ENABLED flags from config.toml (#837, zsh twin #762)
+__gpy_init
 
 # Source all segments
 for segment in "$GPY_BASH_ROOT"/segments/*.bash; do

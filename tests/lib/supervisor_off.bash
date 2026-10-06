@@ -1,11 +1,11 @@
 # tests/lib/supervisor_off.bash
 #
 # Sourced by bash tests that must neither start nor supervise an agent; the
-# Bash twin of tests/lib/supervisor_off.zsh. gpy.bash makes its startup
-# supervisor decision from the environment, but the theme export it then
-# loads re-exports GPY_AGENT_SUPERVISOR_ENABLED from config.toml for every
-# later prompt's check, so it takes both to turn supervision off (#657, #762,
-# #835, #836).
+# Bash twin of tests/lib/supervisor_off.zsh. gpy.bash reads
+# GPY_AGENT_SUPERVISOR_ENABLED after loading the theme export, which sets it
+# from config.toml, hence the sandbox config. The env flag stays for tests
+# whose export never sets it (a stub gpy-agent, or none on PATH) and that
+# would otherwise default to supervising (#657, #762, #835, #836, #837).
 #
 # `source supervisor_off.bash DIR` points XDG_CONFIG_HOME and XDG_CACHE_HOME
 # at DIR/config and DIR/cache, with a DIR/config/gpy/config.toml that
