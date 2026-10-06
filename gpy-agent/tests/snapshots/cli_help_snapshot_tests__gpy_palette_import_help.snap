@@ -12,5 +12,5 @@ Arguments:
 
 Options:
       --name <NAME>  Override the palette name (defaults to the scheme name)
-      --force        Overwrite an existing palette of the same name
+      --force        Overwrite an existing palette of the same name, or shadow a builtin or plugin palette
   -h, --help         Print help

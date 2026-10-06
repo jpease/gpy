@@ -214,7 +214,7 @@ enum ThemeAction {
         /// Base name for the emitted artifacts (default: file stem)
         #[arg(long)]
         name: Option<String>,
-        /// Overwrite existing artifacts of the same name
+        /// Overwrite existing artifacts of the same name, or shadow a builtin or plugin theme or palette
         #[arg(long)]
         force: bool,
         /// Print both artifacts instead of writing files
@@ -250,7 +250,7 @@ enum PaletteAction {
         /// Override the palette name (defaults to the scheme name)
         #[arg(long)]
         name: Option<String>,
-        /// Overwrite an existing palette of the same name
+        /// Overwrite an existing palette of the same name, or shadow a builtin or plugin palette
         #[arg(long)]
         force: bool,
     },

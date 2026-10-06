@@ -199,3 +199,19 @@ fn debug_paths_json_shape() {
         assert_snapshot!("gpy_debug_paths_json", redacted);
     });
 }
+
+/// Since #691 `--force` also lets an import shadow a builtin/plugin name; the
+/// help for both import commands must say so (#821).
+#[test]
+fn import_force_help_mentions_shadowing_a_builtin() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    for args in [&["theme", "import"][..], &["palette", "import"][..]] {
+        let help = help_of(&env, args);
+        let flat = help.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            flat.contains("shadow a builtin"),
+            "`gpy {} --help` must say --force shadows a builtin:\n{help}",
+            args.join(" ")
+        );
+    }
+}

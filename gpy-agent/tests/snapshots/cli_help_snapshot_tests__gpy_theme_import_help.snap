@@ -12,7 +12,7 @@ Arguments:
 
 Options:
       --name <NAME>   Base name for the emitted artifacts (default: file stem)
-      --force         Overwrite existing artifacts of the same name
+      --force         Overwrite existing artifacts of the same name, or shadow a builtin or plugin theme or palette
       --stdout        Print both artifacts instead of writing files
       --apply-layout  Also write the derived `enabled_segments` into the active config
   -h, --help          Print help
