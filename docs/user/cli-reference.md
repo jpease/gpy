@@ -546,7 +546,7 @@ A segment renders when it is listed in `ui.enabled_segments`; `git` and `languag
 - `clock` - Current time
 - `duration` - Command execution time
 - `directory` - Current working directory
-- `status` - Previous command exit status and prompt symbol
+- `status` - Previous command exit status pill (✔/✖)
 - `username` - Current user name; shown only as root or under sudo (opt-in)
 - `hostname` - Machine hostname; shown only over SSH unless `segments.hostname.show_always` is set (opt-in)
 

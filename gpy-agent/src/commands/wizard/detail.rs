@@ -61,7 +61,7 @@ fn segment_detail(segment: &str) -> SegmentDetail {
         },
         Ok(BuiltinSegment::Status) => SegmentDetail {
             config_field: "ui.enabled_segments",
-            preview_contribution: "Shows the previous command's exit status on its own line.",
+            preview_contribution: "Shows the previous command's exit status as a pill (✔/✖) in the segment chain.",
             caveat: Some("Preview uses a representative sample status, not a real command result."),
         },
         Ok(BuiltinSegment::Hostname) => SegmentDetail {

@@ -48,13 +48,6 @@ use ratatui::text::{Line, Span as RatatuiSpan};
 /// and `PreviewFacts::sample_character_success` document.
 const SAMPLE_CWD: &str = "~/dev/gpy";
 
-/// Whether `segment` is the builtin status/character segment — the one
-/// segment [`render_preview_line`] renders on its own line rather than in
-/// the main chain (see that function's doc comment).
-fn is_status_segment(segment: &str) -> bool {
-    BuiltinSegment::try_from(segment) == Ok(BuiltinSegment::Status)
-}
-
 // ---------------------------------------------------------------------
 // Part A: `template::Span` -> `ratatui::text::Span` adapter
 // ---------------------------------------------------------------------
@@ -203,7 +196,7 @@ fn preview_order<'a>(
 
 /// Render live preview lines for the wizard's currently-selected
 /// theme/palette/segments: one line for the main segment chain, plus a
-/// second line for the status/character segment when it's enabled.
+/// second line for the prompt character (`❯`), which is always drawn.
 ///
 /// `theme` and `palette` are expected to be the wizard's *selected* (not
 /// necessarily on-disk-active) theme/palette — loading those from
@@ -223,15 +216,16 @@ fn preview_order<'a>(
 ///   `is_first = true` (suppressed opening cap); this is determined purely by
 ///   chain position, matching `fish_prompt.fish`'s `current_idx -eq 1` check
 ///   — never by segment identity (e.g. hardcoding "clock is always first").
-/// - The status/character segment (`"status"` in `available_segments()`,
-///   which resolves to `theme.segments.character` — see `render_segment`'s
-///   doc comment) is never part of that chain. The real prompt always
-///   renders it on its own line, after the chain, with `is_last` hardcoded
-///   true (`fish_prompt.fish`'s `__gpy_request_character $char_success
-///   true $__gpy_last_segment_bg` call, preceded by a bare `echo`/newline).
-///   It's rendered here as a second `Line` for the same reason, picking up
-///   the chain's final prev-colors the same way `$__gpy_last_segment_bg`
-///   does.
+/// - The prompt character is never part of that chain and is never
+///   toggled by a segment: the real prompt always renders it on its own line,
+///   after the chain, from `theme.segments.character` with `is_last`
+///   hardcoded true (`fish_prompt.fish`'s `__gpy_request_character
+///   $char_success true $__gpy_last_segment_bg` call, preceded by a bare
+///   `echo`/newline). It's rendered here as a second `Line` (omitted only
+///   when the theme has no character format), picking up the chain's final
+///   prev-colors the same way `$__gpy_last_segment_bg` does. The `"status"`
+///   segment is unrelated to it: an exit-status pill drawn inside the chain
+///   at its list position.
 #[expect(
     clippy::similar_names,
     reason = "incoming_fg/incoming_bg are a deliberately paired fg/bg pair"
@@ -248,7 +242,7 @@ pub fn render_preview_line(
     let mut prev_background: Option<TemplateColor> = None;
 
     for segment in preview_order(state, config) {
-        if is_status_segment(segment) || !state.is_segment_enabled(segment) {
+        if !state.is_segment_enabled(segment) {
             continue;
         }
 
@@ -305,12 +299,13 @@ pub fn render_preview_line(
         .collect();
     let mut lines = vec![Line::from(main_spans)];
 
-    let status = BuiltinSegment::Status.as_str();
-    if state.is_segment_enabled(status) {
+    if let Some(format) = theme.segments.character.format.as_deref() {
+        let resolver =
+            CharacterResolver::new(facts.sample_character_success, theme, SegmentPosition::LAST);
         let ctx = FormatterRenderContext::new(config, theme, SegmentPosition::LAST)
             .with_palette(palette.clone())
             .with_prev_colors(prev_foreground, prev_background);
-        if let Some(spans) = render_segment(status, config, theme, facts, &ctx) {
+        if let Ok(spans) = crate::template::render(format, &template_ctx(&resolver, &ctx)) {
             lines.push(Line::from(
                 spans.iter().map(to_ratatui_span).collect::<Vec<_>>(),
             ));
@@ -359,14 +354,11 @@ fn render_directory_span(
 ///
 /// Segment names are the ones `commands::segments::available_segments()`
 /// (via `BUILTIN_ORDER`) produces: `clock`, `duration`, `language`,
-/// `directory`, `git`, `status`, `username`, `hostname`. Note the mismatch between the `"status"`
-/// segment name and its theme field, `theme.segments.character` — `"status"`
-/// is the built-in prompt-symbol segment's *segment* name, while
-/// `SegmentThemes::status` (`StatusTheme`) is an unrelated, non-template
-/// legacy pill config with no `format` field at all. The template-rendered
-/// prompt symbol has always lived under `theme.segments.character` (see
-/// `fish_ansi.rs`'s `render_character_segment`), so that is what `"status"`
-/// resolves to here too.
+/// `directory`, `git`, `status`, `username`, `hostname`. `"status"` renders
+/// the exit-status pill from `theme.segments.status` (`StatusTheme`, which has
+/// no `format` template), like `fish/segments/status.fish`; the prompt
+/// character (`theme.segments.character`) is rendered separately by
+/// [`render_preview_line`].
 fn render_segment(
     segment: &str,
     config: &Config,
@@ -403,12 +395,11 @@ fn render_segment(
             let resolver = DurationResolver::new(facts.sample_duration_ms, theme, ctx.position);
             crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
         }
-        BuiltinSegment::Status => {
-            let format = theme.segments.character.format.as_deref()?;
-            let resolver =
-                CharacterResolver::new(facts.sample_character_success, theme, ctx.position);
-            crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
-        }
+        BuiltinSegment::Status => Some(status_pill_spans(
+            theme,
+            facts.sample_character_success,
+            ctx.position,
+        )),
         // Clock has no `format`/template — it's rendered entirely Fish-side
         // against live wall-clock time (see `fish/segments/clock.fish`), which
         // this static preview pane can't demo. Show a fixed representative
@@ -457,10 +448,6 @@ fn render_segment(
 /// come from the session-global `ui.prompt_open`/`ui.prompt_close`/
 /// `ui.segment_open`/`ui.segment_close` delimiters instead, which this
 /// function does reproduce.
-#[expect(
-    clippy::similar_names,
-    reason = "clock_bg/clock_fg are a deliberately paired bg/fg pair"
-)]
 fn clock_demo_spans(theme: &ThemeConfig, is_first: IsFirst, is_last: IsLast) -> Vec<TemplateSpan> {
     let clock = &theme.segments.clock;
     let is_24h = clock.time_format.as_deref() == Some("24");
@@ -475,8 +462,58 @@ fn clock_demo_spans(theme: &ThemeConfig, is_first: IsFirst, is_last: IsLast) -> 
         text.push_str(" AM");
     }
 
-    let clock_bg = clock.bg_color.as_str();
-    let clock_fg = clock.text_color.as_str();
+    standalone_pill_spans(
+        text,
+        clock.bg_color.as_str(),
+        clock.text_color.as_str(),
+        theme,
+        SegmentPosition::new(is_last, is_first),
+    )
+}
+
+/// Build the exit-status pill.
+///
+/// Uses `theme.segments.status`'s ok variant when the sample command
+/// succeeded, the fail variant otherwise. Mirrors `fish/segments/status.fish` (icon-only content, `✔`/`✖` when the theme
+/// leaves the icon unset, pill drawn by `gpy_section_standalone`).
+fn status_pill_spans(
+    theme: &ThemeConfig,
+    success: bool,
+    position: SegmentPosition,
+) -> Vec<TemplateSpan> {
+    let status = &theme.segments.status;
+    let (icon, fallback, bg, fg) = if success {
+        (
+            status.ok_icon.as_ref(),
+            "✔",
+            status.ok_bg_color.as_str(),
+            status.ok_text_color.as_str(),
+        )
+    } else {
+        (
+            status.fail_icon.as_ref(),
+            "✖",
+            status.fail_bg_color.as_str(),
+            status.fail_text_color.as_str(),
+        )
+    };
+    let text = icon
+        .map_or(fallback, |configured| configured.as_str())
+        .to_owned();
+    standalone_pill_spans(text, bg, fg, theme, position)
+}
+
+/// Draw `text` as a theme-colored pill with open/close caps, the way
+/// `gpy_section_standalone` (`fish/core/renderer.fish`) does for the
+/// shell-rendered clock and status segments.
+fn standalone_pill_spans(
+    text: String,
+    bg: &str,
+    fg: &str,
+    theme: &ThemeConfig,
+    position: SegmentPosition,
+) -> Vec<TemplateSpan> {
+    let (is_first, is_last) = (position.is_first, position.is_last);
     let ui = &theme.ui;
 
     let mut spans = Vec::new();
@@ -490,13 +527,13 @@ fn clock_demo_spans(theme: &ThemeConfig, is_first: IsFirst, is_last: IsLast) -> 
     } else {
         ui.segment_open.as_ref()
     };
-    spans.extend(clock_cap_span(open_icon, open_config, clock_bg, clock_fg));
+    spans.extend(clock_cap_span(open_icon, open_config, bg, fg));
 
     spans.push(TemplateSpan {
         text,
         style: TemplateStyle {
-            fg: Some(TemplateColor::Named(clock_fg.to_owned())),
-            bg: Some(TemplateColor::Named(clock_bg.to_owned())),
+            fg: Some(TemplateColor::Named(fg.to_owned())),
+            bg: Some(TemplateColor::Named(bg.to_owned())),
             attrs: Vec::new(),
         },
         kind: SpanKind::Text,
@@ -510,7 +547,7 @@ fn clock_demo_spans(theme: &ThemeConfig, is_first: IsFirst, is_last: IsLast) -> 
             text: " ".to_owned(),
             style: TemplateStyle {
                 fg: None,
-                bg: Some(TemplateColor::Named(clock_bg.to_owned())),
+                bg: Some(TemplateColor::Named(bg.to_owned())),
                 attrs: Vec::new(),
             },
             kind: SpanKind::Text,
@@ -527,7 +564,7 @@ fn clock_demo_spans(theme: &ThemeConfig, is_first: IsFirst, is_last: IsLast) -> 
     } else {
         ui.segment_close.as_ref()
     };
-    spans.extend(clock_cap_span(close_icon, close_config, clock_bg, clock_fg));
+    spans.extend(clock_cap_span(close_icon, close_config, bg, fg));
 
     spans
 }
@@ -609,7 +646,7 @@ mod tests {
     #![allow(clippy::missing_errors_doc)]
 
     use super::*;
-    use crate::config::types::{PaletteName, ThemeName};
+    use crate::config::types::{Icon, PaletteName, ThemeName};
     use crate::git::{RepositoryState, RepositoryStatus};
     use crate::template::{Palette, Style as TStyle};
 
@@ -1025,7 +1062,7 @@ mod tests {
     #[test]
     fn render_preview_line_threads_prev_colors_between_segments() {
         let config = make_config(
-            &["duration", "status"],
+            &["duration"],
             GitLanguageFlags {
                 git: false,
                 language: false,
@@ -1036,7 +1073,7 @@ mod tests {
         let mut theme = ThemeConfig::default();
         // Duration's background is a known, fixed color...
         theme.segments.duration.format = Some("[$duration](bg:#010101)".to_owned());
-        // ...and status (character)'s foreground explicitly asks for the
+        // ...and the character line's foreground explicitly asks for the
         // previous segment's background, proving the engine's prev_bg
         // threading is actually wired through render_preview_line's
         // per-segment RenderContext construction, not just theoretically
@@ -1055,7 +1092,7 @@ mod tests {
             .collect();
         assert!(
             fg_colors.contains(&Some(RatatuiColor::Rgb(1, 1, 1))),
-            "expected the status segment's fg to inherit the duration segment's \
+            "expected the character line's fg to inherit the duration segment's \
              bg (rgb(1,1,1)) via prev_bg threading, got {fg_colors:?}"
         );
     }
@@ -1447,8 +1484,39 @@ mod tests {
         );
     }
 
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
     #[test]
-    fn render_preview_line_puts_status_segment_on_its_own_line() {
+    fn preview_always_renders_character_line() {
+        let config = make_config(
+            &["duration"],
+            GitLanguageFlags {
+                git: false,
+                language: false,
+            },
+        );
+        let state = test_state(config.clone());
+
+        let mut theme = ThemeConfig::default();
+        theme.segments.duration.format = Some("[$duration]($style)".to_owned());
+        theme.segments.character.format = Some("[$symbol]($style)".to_owned());
+
+        let lines =
+            render_preview_line(&state, &config, &theme, &Palette::default(), &make_facts());
+
+        assert_eq!(lines.len(), 2, "chain line plus character line: {lines:?}");
+        let last = lines.last().expect("asserted above: two lines");
+        assert!(
+            line_text(last).contains('❯'),
+            "last line must be the character line, got {:?}",
+            line_text(last)
+        );
+    }
+
+    #[test]
+    fn preview_renders_status_as_chain_pill() {
         let config = make_config(
             &["duration", "status"],
             GitLanguageFlags {
@@ -1461,39 +1529,49 @@ mod tests {
         let mut theme = ThemeConfig::default();
         theme.segments.duration.format = Some("[$duration]($style)".to_owned());
         theme.segments.character.format = Some("[$symbol]($style)".to_owned());
+        theme.segments.status.ok_icon = Some(Icon::new("✔").expect("valid icon"));
 
-        let palette = Palette::default();
-        let facts = make_facts();
+        let lines =
+            render_preview_line(&state, &config, &theme, &Palette::default(), &make_facts());
 
-        let lines = render_preview_line(&state, &config, &theme, &palette, &facts);
-
-        assert_eq!(
-            lines.len(),
-            2,
-            "expected the chain line plus a separate status line, got {lines:?}"
-        );
-        let chain_text: String = lines
-            .first()
-            .expect("asserted above: exactly two lines")
-            .spans
-            .iter()
-            .map(|s| s.content.as_ref())
-            .collect();
-        let status_text: String = lines
-            .get(1_usize)
-            .expect("asserted above: exactly two lines")
-            .spans
-            .iter()
-            .map(|s| s.content.as_ref())
-            .collect();
+        assert_eq!(lines.len(), 2, "chain line plus character line: {lines:?}");
+        let chain_text = line_text(lines.first().expect("asserted above: two lines"));
+        let char_text = line_text(lines.get(1_usize).expect("asserted above: two lines"));
         assert!(
             chain_text.contains("0.128s"),
-            "chain line should contain the duration segment, got {chain_text:?}"
+            "chain must still contain duration, got {chain_text:?}"
         );
         assert!(
-            !chain_text.contains('❯') && status_text.contains('❯'),
-            "status segment must render on its own line, not spliced into the \
-             chain line: chain={chain_text:?} status={status_text:?}"
+            chain_text.contains('✔') && !chain_text.contains('❯'),
+            "status must be a pill in the chain, not the character: {chain_text:?}"
         );
+        assert!(
+            char_text.contains('❯'),
+            "character line must follow the chain, got {char_text:?}"
+        );
+    }
+
+    #[test]
+    fn preview_status_pill_uses_fail_variant_and_theme_fallback_icon() {
+        let config = make_config(
+            &["status"],
+            GitLanguageFlags {
+                git: false,
+                language: false,
+            },
+        );
+        let state = test_state(config.clone());
+        let theme = ThemeConfig::default();
+        let mut facts = make_facts();
+
+        facts.sample_character_success = false;
+        let fail_lines = render_preview_line(&state, &config, &theme, &Palette::default(), &facts);
+        let fail_text = line_text(fail_lines.first().expect("chain line"));
+        assert!(fail_text.contains('✖'), "fail pill, got {fail_text:?}");
+
+        facts.sample_character_success = true;
+        let ok_lines = render_preview_line(&state, &config, &theme, &Palette::default(), &facts);
+        let ok_text = line_text(ok_lines.first().expect("chain line"));
+        assert!(ok_text.contains('✔'), "ok pill, got {ok_text:?}");
     }
 }

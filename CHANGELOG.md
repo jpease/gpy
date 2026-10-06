@@ -567,6 +567,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `gpy theme import` prints `gpy palette use` before `gpy theme use`, and
   the docs match (#793), so the printed activation steps work for imports
   that reference palette colours.
+- The config wizard preview always shows the `❯` character line and draws
+  `status` as a ✔/✖ pill in the segment chain (#800).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
