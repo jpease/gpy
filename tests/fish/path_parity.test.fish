@@ -443,6 +443,66 @@ else
     echo "✅ --format json emits the contract key set in order"
 end
 
+# Cache key encoding, against a file the agent wrote (#705). A repo whose path holds
+# the Windows-reserved characters ? and | must resolve to the file the agent wrote: the
+# agent escapes only the five documented tokens on Unix. Runs in a child fish with a
+# short-path sandbox (unix socket paths are length-limited) and a supervisor-less agent.
+set -l e2e_root (path resolve (mktemp -d /tmp/gpy-pp-e2e.XXXXXX))
+mkdir -p $e2e_root/home $e2e_root/config/gpy $e2e_root/cache $e2e_root/run
+printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' >$e2e_root/config/gpy/config.toml
+set -l odd_repo "$e2e_root/what?repo|x"
+mkdir -p $odd_repo
+git -C $odd_repo init -q -b main
+git -C $odd_repo config user.email test@example.com
+git -C $odd_repo config user.name Test
+git -C $odd_repo config core.fsmonitor false
+git -C $odd_repo config commit.gpgsign false
+git -C $odd_repo config core.hooksPath /dev/null
+echo hello >$odd_repo/tracked.txt
+git -C $odd_repo add tracked.txt
+git -C $odd_repo commit -qm init
+set -l agent_dir (path dirname $GPY_PP_BIN)
+set -l e2e_out (env -i PATH=(string join : $agent_dir $PATH) HOME=$e2e_root/home XDG_CONFIG_HOME=$e2e_root/config \
+    XDG_CACHE_HOME=$e2e_root/cache XDG_RUNTIME_DIR=$e2e_root/run GPY_AGENT_SOCKET_PATH=$e2e_root/gpy.sock \
+    GPY_AGENT_SUPERVISOR_ENABLED=0 fish -c '
+    source $argv[1]/fish/core/constants.fish
+    source $argv[1]/fish/core/util.fish
+    source $argv[1]/fish/core/ipc.fish
+    # A cold git render can exceed the default budget; the agent only writes its cache when the request completes.
+    set -g GPY_IPC_TIMEOUT_MS 3000
+    gpy-agent start >/dev/null 2>&1; or begin
+        echo "agent did not start"; exit 1
+    end
+    # Wait until the agent answers: a request sent while it is still starting is served by the oneshot fallback and never writes the cache.
+    for i in (seq 1 50)
+        __gpy_ipc_send "{\"op\":\"ping\"}" 1000 >/dev/null 2>&1; and break
+        sleep 0.1
+    end
+    __gpy_request git $argv[2] true "" true >/dev/null
+    set -l key (__gpy_path_to_cache_key (path resolve $argv[2]))
+    set -l found 0
+    for i in (seq 1 50)
+        if count $XDG_CACHE_HOME/gpy/instant-prompts/$key.git*.ansi >/dev/null 2>&1
+            set found 1
+            break
+        end
+        sleep 0.1
+    end
+    gpy-agent stop >/dev/null 2>&1
+    if test $found -eq 1
+        echo "ok $key"
+    else
+        echo "no cache file for key $key; agent wrote: "(string join , (ls $XDG_CACHE_HOME/gpy/instant-prompts 2>/dev/null | head -n 5) | string collect)
+        exit 1
+    end
+' -- $GPY_PP_ROOT $odd_repo)
+if string match -q 'ok *' -- "$e2e_out[-1]"
+    echo "✅ the agent's cache file name matches fish's key for a repo with ? and | in its path"
+else
+    __pp_fail "cache key mismatch for a repo with ? and | in its path: $e2e_out"
+end
+rm -rf $e2e_root
+
 rm -rf $GPY_PP_TMP
 
 for message in $GPY_PP_MESSAGES

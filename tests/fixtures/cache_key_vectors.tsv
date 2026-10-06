@@ -1,0 +1,40 @@
+# tests/fixtures/cache_key_vectors.tsv
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Shared instant-cache key vectors (#705). Read by ALL FOUR implementations of
+# the Unix path -> cache-key encoder, so they cannot drift apart again:
+#   - Rust:  path_to_cache_key_for(Os::Unix, ..) in gpy-agent/src/cache/instant_prompt.rs
+#            (test_path_to_cache_key_shared_vectors)
+#   - Bash:  __gpy_path_to_cache_key  (tests/bash/cache_key_vectors.test.bash)
+#   - Zsh:   __gpy_path_to_cache_key  (tests/zsh/cache_key_vectors.test.zsh)
+#   - Fish:  __gpy_path_to_cache_key  (tests/fish/cache_key_vectors.test.fish)
+#
+# Format: one vector per line, tab-separated: input<TAB>expected.
+# Blank lines and lines starting with # are ignored. Extra columns after
+# `expected` are reserved for later issues (e.g. #771 long-key chunking) and
+# MUST be ignored by readers that do not know them. Neither column may be
+# empty (tab is IFS-whitespace to bash/zsh `read`, which would collapse it).
+#
+# `input` uses the same mini escape scheme as json_escape_vectors.tsv --
+# backslash first: \\ -> one literal backslash byte, \n -> LF, \r -> CR,
+# \t -> tab. `expected` is literal (the Unix key never contains a backslash,
+# tab or newline) and is NOT unescaped.
+#
+# Unix scheme: exactly five escapes, `_` first: _->__ /->_s \->_b :->_c
+# space->_w. Every other byte, including the Windows-reserved ? * < > " |,
+# passes through unchanged. Every reader MUST fail if this file is missing or
+# yields zero vectors.
+/Users/foo/project	_sUsers_sfoo_sproject
+/tmp/what?proj	_stmp_swhat?proj
+/tmp/q?x*y|z"<>	_stmp_sq?x*y|z"<>
+/a*b<c>d"e|f	_sa*b<c>d"e|f
+/odd/q?a*b<c>d"e|f	_sodd_sq?a*b<c>d"e|f
+/a_b/c__d	_sa__b_sc____d
+/a/b	_sa_sb
+C:\\Users\\foo	C_c_bUsers_bfoo
+/with space/dir	_swith_wspace_sdir
+/a:b	_sa_cb
+/unicode/café/项目/repo	_sunicode_scafé_s项目_srepo
+/a//b/	_sa_s_sb_s
+//	_s_s
+/	_s

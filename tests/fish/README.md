@@ -84,6 +84,7 @@ sections above describe the ones worth reading first.
 
 - `agent_circuit_breaker_expiry.test.fish`
 - `agent_restart_quiet_when_socket_missing.test.fish`
+- `cache_key_vectors.test.fish`
 - `doorbell_signal.test.fish`
 - `ipc_nc_fallback_timeout.test.fish`
 - `ipc_partial_response.test.fish`

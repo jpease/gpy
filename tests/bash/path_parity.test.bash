@@ -95,6 +95,29 @@ else
     # shellcheck disable=SC2012  # diagnostic listing only
     fail "no cache file named from bash's key '$key'; agent wrote: $(ls "$XDG_CACHE_HOME/gpy/instant-prompts" 2>/dev/null | head -n 3)"
 fi
+# #705: a repo whose path holds the Windows-reserved characters ? and | must still
+# resolve to the file the agent wrote (the agent escapes only the five documented tokens).
+odd_repo="$SHELL_E2E_ROOT/what?repo|x"
+mkdir -p "$odd_repo"
+git -C "$odd_repo" init -q -b main
+git -C "$odd_repo" config user.email test@example.com
+git -C "$odd_repo" config user.name Test
+git -C "$odd_repo" config core.fsmonitor false
+git -C "$odd_repo" config commit.gpgsign false
+git -C "$odd_repo" config core.hooksPath /dev/null
+echo hello >"$odd_repo/tracked.txt"
+git -C "$odd_repo" add tracked.txt
+git -C "$odd_repo" commit -qm init
+__gpy_request git "$odd_repo" ansi true "" true >/dev/null
+odd_resolved="$(realpath "$odd_repo")"
+odd_key="$(__gpy_path_to_cache_key "$odd_resolved")"
+odd_written() { ls "$XDG_CACHE_HOME/gpy/instant-prompts/$odd_key".git*.bash >/dev/null 2>&1; }
+if shell_e2e_poll 5 odd_written; then
+    pass "the agent's cache file name matches bash's key for a repo with ? and | in its path ($odd_key)"
+else
+    # shellcheck disable=SC2012  # diagnostic listing only
+    fail "no cache file named from bash's key '$odd_key'; agent wrote: $(ls "$XDG_CACHE_HOME/gpy/instant-prompts" 2>/dev/null | head -n 5)"
+fi
 # The encoder's escape rules, exercised on characters the repo path lacks.
 odd="$tmp/under_score dir:with colons"
 case "$(__gpy_path_to_cache_key "$odd")" in
