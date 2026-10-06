@@ -625,6 +625,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `ui.directory.display = "abbreviated"` keeps a hidden directory's dot plus
   one character (`~/.c/fish`) and no longer splits multi-codepoint leading
   characters such as flag emoji (#754).
+- The manual and from-source Zsh/Bash install steps write a
+  `# >>> gpy-init >>>` marker block, so `scripts/uninstall.sh` removes the
+  source line instead of leaving it behind (#809).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
