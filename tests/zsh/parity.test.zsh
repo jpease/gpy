@@ -141,6 +141,10 @@ rm -f "$cache_file"
 echo "=== Language Subdir Detection Tests ==="
 
 source zsh/segments/language.zsh
+# The pre-filter iterates the agent-exported marker list (#785); this block
+# tests the ancestor walk, so a one-entry list suffices. The full export is
+# covered by language_marker_prefilter.test.zsh.
+typeset -g -a __gpy_lang_marker_files=(Cargo.toml)
 
 detect_proj=$(mktemp -d)
 touch "$detect_proj/Cargo.toml"

@@ -134,6 +134,7 @@ sections above describe the ones worth reading first.
 - `fresh_install.test.fish`
 - `hostname_segment.test.fish`
 - `init_integration.test.fish`
+- `language_marker_prefilter.test.fish`
 - `language_segment_detect_subdir.test.fish`
 - `language_venv.test.fish`
 - `main.test.fish`

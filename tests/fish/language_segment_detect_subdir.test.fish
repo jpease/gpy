@@ -13,6 +13,10 @@ source "$repo_root/fish/core/util.fish"
 # tree first, making the function available by accident (#630).
 source "$repo_root/fish/core/ipc.fish"
 source "$repo_root/fish/segments/language.fish"
+# The pre-filter iterates the agent-exported marker list (#785); this test
+# covers the ancestor walk, so a one-entry list suffices. The full export is
+# covered by language_marker_prefilter.test.fish.
+set -g __gpy_lang_marker_files Cargo.toml
 
 set -g pass_count 0
 set -g fail_count 0

@@ -7,16 +7,17 @@ function __gpy_segment_language_detect() {
     # ancestor walk (#128) so the segment stays visible in project
     # subdirectories instead of only at the project root (#174). Pure
     # parameter expansion — no external process in the per-prompt path.
-    # Marker list MUST stay aligned with fish/segments/language.fish.
-    local dir="$PWD"
+    # The marker list is the agent's own, exported by `theme export` as
+    # __gpy_lang_marker_files (#785): no hand-kept list here to drift. If it
+    # has not been exported yet (agent never ran), defer to the request path,
+    # which the oneshot budget already bounds.
+    (( ${#__gpy_lang_marker_files[@]} )) || return 0
+    local dir="$PWD" marker
     while [[ -n "$dir" ]]; do
-        if [[ -e "$dir/.git" || -f "$dir/Cargo.toml" || -f "$dir/package.json" \
-            || -f "$dir/requirements.txt" || -f "$dir/Pipfile" \
-            || -f "$dir/pyproject.toml" || -f "$dir/go.mod" \
-            || -f "$dir/Gemfile" || -f "$dir/mix.exs" || -f "$dir/pom.xml" \
-            || -f "$dir/build.gradle" || -f "$dir/build.gradle.kts" ]]; then
-            return 0
-        fi
+        [[ -e "$dir/.git" ]] && return 0
+        for marker in "${__gpy_lang_marker_files[@]}"; do
+            [[ -f "$dir/$marker" ]] && return 0
+        done
         [[ "$dir" == "/" ]] && break
         dir="${dir%/*}"
         [[ -z "$dir" ]] && dir="/"

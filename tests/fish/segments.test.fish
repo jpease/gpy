@@ -136,6 +136,9 @@ cd -
 rm -rf $temp_cargo
 
 # Test 6: Language segment returns nothing without project files
+# The pre-filter iterates the agent-exported marker list (#785); a one-entry
+# list suffices for this empty-directory check.
+set -g __gpy_lang_marker_files Cargo.toml
 echo "Test 6: Language detection in empty directory"
 set -l temp_empty (mktemp -d)
 cd $temp_empty
