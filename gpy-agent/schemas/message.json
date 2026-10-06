@@ -2,41 +2,13 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/jpease/gpy/schemas/message.json",
   "title": "GPY Agent IPC Message",
-  "description": "Message types sent from Fish shell to GPY Agent",
+  "description": "Messages a shell client sends to the GPY Agent, one JSON object per line. Each message has a shell form ({\"op\":...}, flat fields, used by the shell integrations) and a native form (serde externally-tagged enum, {\"Variant\":{...}} or the bare string for unit variants).",
   "oneOf": [
     {
-      "title": "RepositoryStatus (Native Format)",
       "type": "object",
-      "required": ["RepositoryStatus"],
-      "properties": {
-        "RepositoryStatus": {
-          "type": "object",
-          "required": ["path"],
-          "properties": {
-            "path": {
-              "type": "string",
-              "maxLength": 4096,
-              "description": "The path to the directory to check"
-            },
-            "format": {
-              "type": "string",
-              "enum": ["json", "fish-ansi", "fish-source"],
-              "default": "json",
-              "description": "Desired response format"
-            },
-            "is_last": {
-              "type": "boolean",
-              "default": false,
-              "description": "Whether this is the last segment in the prompt"
-            }
-          }
-        }
-      }
-    },
-    {
-      "title": "RepositoryStatus (Fish Format)",
-      "type": "object",
-      "required": ["op", "cwd"],
+      "required": [
+        "op"
+      ],
       "properties": {
         "op": {
           "type": "string",
@@ -45,50 +17,77 @@
         "cwd": {
           "type": "string",
           "maxLength": 4096,
-          "description": "Current working directory"
+          "description": "Directory path (shell form key: cwd)"
         },
         "format": {
-          "type": "string",
-          "enum": ["json", "fish-ansi", "fish-source"],
-          "default": "json"
+          "$ref": "#/definitions/Format"
         },
         "is_last": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "Whether this is the last segment in the prompt"
+        },
+        "is_first": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is the first segment in the prompt (opening-cap suppression)"
+        },
+        "prev_bg": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Previous segment's background colour for powerline transitions"
         }
-      }
+      },
+      "title": "RepositoryStatus (shell form)"
     },
     {
-      "title": "LanguageDetect (Native Format)",
+      "title": "RepositoryStatus (native form)",
       "type": "object",
-      "required": ["LanguageDetect"],
+      "required": [
+        "RepositoryStatus"
+      ],
       "properties": {
-        "LanguageDetect": {
+        "RepositoryStatus": {
           "type": "object",
-          "required": ["path"],
+          "required": [
+            "path"
+          ],
           "properties": {
             "path": {
               "type": "string",
               "maxLength": 4096,
-              "description": "The path to the directory to check"
+              "description": "Directory path (shell form key: cwd)"
             },
             "format": {
-              "type": "string",
-              "enum": ["json", "fish-ansi", "fish-source"],
-              "default": "json"
+              "$ref": "#/definitions/Format"
             },
             "is_last": {
               "type": "boolean",
-              "default": false
+              "default": false,
+              "description": "Whether this is the last segment in the prompt"
+            },
+            "is_first": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether this is the first segment in the prompt (opening-cap suppression)"
+            },
+            "prev_bg": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 64,
+              "description": "Previous segment's background colour for powerline transitions"
             }
           }
         }
       }
     },
     {
-      "title": "LanguageDetect (Fish Format)",
       "type": "object",
-      "required": ["op", "cwd"],
+      "required": [
+        "op"
+      ],
       "properties": {
         "op": {
           "type": "string",
@@ -96,47 +95,533 @@
         },
         "cwd": {
           "type": "string",
-          "maxLength": 4096
+          "maxLength": 4096,
+          "description": "Directory path (shell form key: cwd)"
+        },
+        "virtual_env": {
+          "type": "string",
+          "description": "Client-forwarded $VIRTUAL_ENV for venv-aware Python detection"
         },
         "format": {
-          "type": "string",
-          "enum": ["json", "fish-ansi", "fish-source"],
-          "default": "json"
+          "$ref": "#/definitions/Format"
         },
         "is_last": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "Whether this is the last segment in the prompt"
+        },
+        "is_first": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is the first segment in the prompt (opening-cap suppression)"
+        },
+        "prev_bg": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Previous segment's background colour for powerline transitions"
         }
-      }
+      },
+      "title": "LanguageDetect (shell form)"
     },
     {
-      "title": "RegisterClient (Native Format)",
+      "title": "LanguageDetect (native form)",
       "type": "object",
-      "required": ["RegisterClient"],
+      "required": [
+        "LanguageDetect"
+      ],
       "properties": {
-        "RegisterClient": {
+        "LanguageDetect": {
           "type": "object",
-          "required": ["pid"],
+          "required": [
+            "path"
+          ],
           "properties": {
-            "pid": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 1000000,
-              "description": "Process ID of the client"
-            },
-            "cwd": {
-              "type": ["string", "null"],
+            "path": {
+              "type": "string",
               "maxLength": 4096,
-              "description": "Optional current working directory"
+              "description": "Directory path (shell form key: cwd)"
+            },
+            "virtual_env": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "format": {
+              "$ref": "#/definitions/Format"
+            },
+            "is_last": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether this is the last segment in the prompt"
+            },
+            "is_first": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether this is the first segment in the prompt (opening-cap suppression)"
+            },
+            "prev_bg": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 64,
+              "description": "Previous segment's background colour for powerline transitions"
             }
           }
         }
       }
     },
     {
-      "title": "RegisterClient (Fish Format)",
       "type": "object",
-      "required": ["op", "pid"],
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "directory"
+        },
+        "cwd": {
+          "type": "string",
+          "maxLength": 4096,
+          "description": "Directory path (shell form key: cwd)"
+        },
+        "format": {
+          "$ref": "#/definitions/Format"
+        },
+        "is_last": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is the last segment in the prompt"
+        },
+        "is_first": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is the first segment in the prompt (opening-cap suppression)"
+        },
+        "prev_bg": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Previous segment's background colour for powerline transitions"
+        }
+      },
+      "title": "DirectoryRequest (shell form)"
+    },
+    {
+      "title": "DirectoryRequest (native form)",
+      "type": "object",
+      "required": [
+        "DirectoryRequest"
+      ],
+      "properties": {
+        "DirectoryRequest": {
+          "type": "object",
+          "required": [
+            "path"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "maxLength": 4096,
+              "description": "Directory path (shell form key: cwd)"
+            },
+            "format": {
+              "$ref": "#/definitions/Format"
+            },
+            "is_last": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether this is the last segment in the prompt"
+            },
+            "is_first": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether this is the first segment in the prompt (opening-cap suppression)"
+            },
+            "prev_bg": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 64,
+              "description": "Previous segment's background colour for powerline transitions"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "clock"
+        },
+        "shell": {
+          "type": "string",
+          "enum": [
+            "fish",
+            "zsh",
+            "bash"
+          ],
+          "description": "Shell whose live-clock token to embed; absent/unrecognized falls back to fish"
+        },
+        "format": {
+          "$ref": "#/definitions/Format"
+        },
+        "is_last": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is the last segment in the prompt"
+        },
+        "is_first": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is the first segment in the prompt (opening-cap suppression)"
+        },
+        "prev_bg": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Previous segment's background colour for powerline transitions"
+        }
+      },
+      "title": "ClockRequest (shell form)"
+    },
+    {
+      "title": "ClockRequest (native form)",
+      "type": "object",
+      "required": [
+        "ClockRequest"
+      ],
+      "properties": {
+        "ClockRequest": {
+          "type": "object",
+          "required": [
+            "shell"
+          ],
+          "properties": {
+            "shell": {
+              "type": "string",
+              "enum": [
+                "fish",
+                "zsh",
+                "bash"
+              ]
+            },
+            "format": {
+              "$ref": "#/definitions/Format"
+            },
+            "is_last": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether this is the last segment in the prompt"
+            },
+            "is_first": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether this is the first segment in the prompt (opening-cap suppression)"
+            },
+            "prev_bg": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 64,
+              "description": "Previous segment's background colour for powerline transitions"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "duration"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "format": {
+          "$ref": "#/definitions/Format"
+        },
+        "is_last": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is the last segment in the prompt"
+        },
+        "is_first": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is the first segment in the prompt (opening-cap suppression)"
+        },
+        "prev_bg": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Previous segment's background colour for powerline transitions"
+        }
+      },
+      "title": "DurationRequest (shell form)"
+    },
+    {
+      "title": "DurationRequest (native form)",
+      "type": "object",
+      "required": [
+        "DurationRequest"
+      ],
+      "properties": {
+        "DurationRequest": {
+          "type": "object",
+          "required": [
+            "duration_ms"
+          ],
+          "properties": {
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "format": {
+              "$ref": "#/definitions/Format"
+            },
+            "is_last": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether this is the last segment in the prompt"
+            },
+            "is_first": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether this is the first segment in the prompt (opening-cap suppression)"
+            },
+            "prev_bg": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 64,
+              "description": "Previous segment's background colour for powerline transitions"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "character"
+        },
+        "success": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether the last command succeeded"
+        },
+        "format": {
+          "$ref": "#/definitions/Format"
+        },
+        "is_last": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is the last segment in the prompt"
+        },
+        "prev_bg": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Previous segment's background colour for powerline transitions"
+        }
+      },
+      "title": "CharacterRequest (shell form)"
+    },
+    {
+      "title": "CharacterRequest (native form)",
+      "type": "object",
+      "required": [
+        "CharacterRequest"
+      ],
+      "properties": {
+        "CharacterRequest": {
+          "type": "object",
+          "required": [
+            "success"
+          ],
+          "properties": {
+            "success": {
+              "type": "boolean"
+            },
+            "format": {
+              "$ref": "#/definitions/Format"
+            },
+            "is_last": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether this is the last segment in the prompt"
+            },
+            "prev_bg": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 64,
+              "description": "Previous segment's background colour for powerline transitions"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "hostname"
+        },
+        "hostname": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "format": {
+          "$ref": "#/definitions/Format"
+        },
+        "is_last": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is the last segment in the prompt"
+        },
+        "prev_bg": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Previous segment's background colour for powerline transitions"
+        }
+      },
+      "title": "HostnameRequest (shell form)"
+    },
+    {
+      "title": "HostnameRequest (native form)",
+      "type": "object",
+      "required": [
+        "HostnameRequest"
+      ],
+      "properties": {
+        "HostnameRequest": {
+          "type": "object",
+          "required": [
+            "hostname"
+          ],
+          "properties": {
+            "hostname": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "format": {
+              "$ref": "#/definitions/Format"
+            },
+            "is_last": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether this is the last segment in the prompt"
+            },
+            "prev_bg": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 64,
+              "description": "Previous segment's background colour for powerline transitions"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "username"
+        },
+        "username": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "format": {
+          "$ref": "#/definitions/Format"
+        },
+        "is_last": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is the last segment in the prompt"
+        },
+        "prev_bg": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Previous segment's background colour for powerline transitions"
+        }
+      },
+      "title": "UsernameRequest (shell form)"
+    },
+    {
+      "title": "UsernameRequest (native form)",
+      "type": "object",
+      "required": [
+        "UsernameRequest"
+      ],
+      "properties": {
+        "UsernameRequest": {
+          "type": "object",
+          "required": [
+            "username"
+          ],
+          "properties": {
+            "username": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "format": {
+              "$ref": "#/definitions/Format"
+            },
+            "is_last": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether this is the last segment in the prompt"
+            },
+            "prev_bg": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 64,
+              "description": "Previous segment's background colour for powerline transitions"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "op",
+        "pid"
+      ],
       "properties": {
         "op": {
           "type": "string",
@@ -145,36 +630,78 @@
         "pid": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 1000000
+          "maximum": 4194304,
+          "description": "Client process ID"
         },
         "cwd": {
           "type": "string",
-          "maxLength": 4096
+          "maxLength": 4096,
+          "description": "Directory path (shell form key: cwd)"
+        },
+        "shell": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Shell name (fish, zsh, bash; anything else = unknown)"
+        },
+        "shell_version": {
+          "type": "string",
+          "maxLength": 64
         }
-      }
+      },
+      "title": "RegisterClient (shell form)"
     },
     {
-      "title": "UnregisterClient (Native Format)",
+      "title": "RegisterClient (native form)",
       "type": "object",
-      "required": ["UnregisterClient"],
+      "required": [
+        "RegisterClient"
+      ],
       "properties": {
-        "UnregisterClient": {
+        "RegisterClient": {
           "type": "object",
-          "required": ["pid"],
+          "required": [
+            "pid"
+          ],
           "properties": {
             "pid": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 1000000
+              "maximum": 4194304,
+              "description": "Client process ID"
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 4096
+            },
+            "shell": {
+              "enum": [
+                "fish",
+                "zsh",
+                "bash",
+                "unknown",
+                null
+              ]
+            },
+            "shell_version": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 64
             }
           }
         }
       }
     },
     {
-      "title": "UnregisterClient (Fish Format)",
       "type": "object",
-      "required": ["op", "pid"],
+      "required": [
+        "op",
+        "pid"
+      ],
       "properties": {
         "op": {
           "type": "string",
@@ -183,37 +710,42 @@
         "pid": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 1000000
+          "maximum": 4194304,
+          "description": "Client process ID"
         }
-      }
+      },
+      "title": "UnregisterClient (shell form)"
     },
     {
-      "title": "WorkspaceUpdate (Native Format)",
+      "title": "UnregisterClient (native form)",
       "type": "object",
-      "required": ["WorkspaceUpdate"],
+      "required": [
+        "UnregisterClient"
+      ],
       "properties": {
-        "WorkspaceUpdate": {
+        "UnregisterClient": {
           "type": "object",
-          "required": ["pid", "cwd"],
+          "required": [
+            "pid"
+          ],
           "properties": {
             "pid": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 1000000
-            },
-            "cwd": {
-              "type": "string",
-              "maxLength": 4096,
-              "description": "Current working directory"
+              "maximum": 4194304,
+              "description": "Client process ID"
             }
           }
         }
       }
     },
     {
-      "title": "WorkspaceUpdate (Fish Format)",
       "type": "object",
-      "required": ["op", "pid", "cwd"],
+      "required": [
+        "op",
+        "pid",
+        "cwd"
+      ],
       "properties": {
         "op": {
           "type": "string",
@@ -222,23 +754,52 @@
         "pid": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 1000000
+          "maximum": 4194304,
+          "description": "Client process ID"
         },
         "cwd": {
           "type": "string",
-          "maxLength": 4096
+          "maxLength": 4096,
+          "description": "Directory path (shell form key: cwd)"
+        }
+      },
+      "title": "WorkspaceUpdate (shell form)"
+    },
+    {
+      "title": "WorkspaceUpdate (native form)",
+      "type": "object",
+      "required": [
+        "WorkspaceUpdate"
+      ],
+      "properties": {
+        "WorkspaceUpdate": {
+          "type": "object",
+          "required": [
+            "pid",
+            "cwd"
+          ],
+          "properties": {
+            "pid": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4194304,
+              "description": "Client process ID"
+            },
+            "cwd": {
+              "type": "string",
+              "maxLength": 4096,
+              "description": "Directory path (shell form key: cwd)"
+            }
+          }
         }
       }
     },
     {
-      "title": "Ping (Native Format)",
-      "type": "string",
-      "const": "Ping"
-    },
-    {
-      "title": "Ping (Fish Format)",
+      "title": "Ping (shell form)",
       "type": "object",
-      "required": ["op"],
+      "required": [
+        "op"
+      ],
       "properties": {
         "op": {
           "type": "string",
@@ -247,14 +808,16 @@
       }
     },
     {
-      "title": "Status (Native Format)",
+      "title": "Ping (native form)",
       "type": "string",
-      "const": "Status"
+      "const": "Ping"
     },
     {
-      "title": "Status (Fish Format)",
+      "title": "Status (shell form)",
       "type": "object",
-      "required": ["op"],
+      "required": [
+        "op"
+      ],
       "properties": {
         "op": {
           "type": "string",
@@ -263,27 +826,16 @@
       }
     },
     {
-      "title": "ThemeQuery (Native Format)",
-      "type": "object",
-      "required": ["ThemeQuery"],
-      "properties": {
-        "ThemeQuery": {
-          "type": "object",
-          "required": ["key"],
-          "properties": {
-            "key": {
-              "type": "string",
-              "maxLength": 256,
-              "description": "Theme setting key to query"
-            }
-          }
-        }
-      }
+      "title": "Status (native form)",
+      "type": "string",
+      "const": "Status"
     },
     {
-      "title": "ThemeQuery (Fish Format)",
       "type": "object",
-      "required": ["op", "key"],
+      "required": [
+        "op",
+        "key"
+      ],
       "properties": {
         "op": {
           "type": "string",
@@ -291,19 +843,57 @@
         },
         "key": {
           "type": "string",
-          "maxLength": 256
+          "maxLength": 256,
+          "description": "Theme setting key"
+        }
+      },
+      "title": "ThemeQuery (shell form)"
+    },
+    {
+      "title": "ThemeQuery (native form)",
+      "type": "object",
+      "required": [
+        "ThemeQuery"
+      ],
+      "properties": {
+        "ThemeQuery": {
+          "type": "object",
+          "required": [
+            "key"
+          ],
+          "properties": {
+            "key": {
+              "type": "string",
+              "maxLength": 256
+            }
+          }
         }
       }
     },
     {
-      "title": "Shutdown (Native Format)",
-      "type": "string",
-      "const": "Shutdown"
+      "title": "LatencyStats (shell form)",
+      "type": "object",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "latency_stats"
+        }
+      }
     },
     {
-      "title": "Shutdown (Fish Format)",
+      "title": "LatencyStats (native form)",
+      "type": "string",
+      "const": "LatencyStats"
+    },
+    {
+      "title": "Shutdown (shell form)",
       "type": "object",
-      "required": ["op"],
+      "required": [
+        "op"
+      ],
       "properties": {
         "op": {
           "type": "string",
@@ -312,20 +902,45 @@
       }
     },
     {
-      "title": "ConfigReload (Native Format)",
+      "title": "Shutdown (native form)",
       "type": "string",
-      "const": "ConfigReload"
+      "const": "Shutdown"
     },
     {
-      "title": "ConfigReload (Fish Format)",
+      "title": "ConfigReload (shell form)",
       "type": "object",
-      "required": ["op"],
+      "required": [
+        "op"
+      ],
       "properties": {
         "op": {
           "type": "string",
           "const": "config_reload"
         }
       }
+    },
+    {
+      "title": "ConfigReload (native form)",
+      "type": "string",
+      "const": "ConfigReload"
     }
-  ]
+  ],
+  "definitions": {
+    "Format": {
+      "type": "string",
+      "description": "Output format. `json` replies with one JSON object (see response.json); every other value replies with one line of rendered text. The agent renders json, ansi, bash-prompt, zsh-prompt, fish, fish-source and zsh; bash-source and zsh-source parse but are not implemented. In the shell (`op`) form an unrecognized or missing value silently falls back to `json`; in the native form it rejects the whole message.",
+      "default": "json",
+      "enum": [
+        "json",
+        "ansi",
+        "bash-prompt",
+        "zsh-prompt",
+        "fish",
+        "fish-source",
+        "bash-source",
+        "zsh",
+        "zsh-source"
+      ]
+    }
+  }
 }

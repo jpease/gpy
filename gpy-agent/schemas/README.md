@@ -5,7 +5,7 @@ This directory contains JSON Schema files that define the IPC protocol between F
 ## Schema Files
 
 - **`message.json`**: Defines all message types that can be sent from Fish shell to the Agent
-- **`response.json`**: Defines all response types that can be sent from the Agent to Fish shell
+- **`response.json`**: Defines the replies the Agent writes for `format: "json"` requests (flat objects, `{"status":"ok"}`, `{"error":"..."}`; only `AgentStatus` is wrapped). Any other format replies with one line of rendered text
 
 ## Protocol Formats
 
@@ -16,7 +16,7 @@ The protocol supports two message formats for backward compatibility:
 Messages use an object with an `op` field to specify the operation:
 
 ```json
-{"op":"git","cwd":"/path/to/repo","format":"fish-ansi"}
+{"op":"git","cwd":"/path/to/repo","format":"ansi"}
 ```
 
 ### Native Rust Format
@@ -24,12 +24,14 @@ Messages use an object with an `op` field to specify the operation:
 Messages use Rust enum serialization:
 
 ```json
-{"RepositoryStatus":{"path":"/path/to/repo","format":"Json"}}
+{"RepositoryStatus":{"path":"/path/to/repo","format":"json"}}
 ```
 
 ## Validation
 
-The schemas can be used with standard JSON Schema validators to ensure protocol compliance. The GPY Agent codebase includes automated tests that validate all documentation examples against these schemas.
+The schemas can be used with standard JSON Schema validators to ensure protocol compliance. `gpy-agent/tests/schema_validation.rs` checks them against the code: the `format` enum against `Format`, the ops against the `into_wire_message` dispatch table, and real agent replies against `response.json`.
+
+In the `op` form an unrecognized `format` silently falls back to `json`; in the native form it rejects the message. `bash-source` and `zsh-source` parse but are not implemented.
 
 ## Version Compatibility
 
