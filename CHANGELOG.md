@@ -404,6 +404,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   are atomic, and a symlinked `config.toml` stays a symlink. `gpy config open`
   on a missing file creates a short header instead of a dump of every
   default.
+- `gpy enable` and the config wizard keep the order of
+  `ui.enabled_segments` and no longer drop entries the wizard does not offer
+  (#739); the wizard preview follows the list order.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

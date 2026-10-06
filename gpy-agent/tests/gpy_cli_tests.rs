@@ -412,6 +412,27 @@ fn test_config_get_value() {
 }
 
 #[test]
+fn test_enable_preserves_existing_segment_order() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let config_content = r#"
+[ui]
+enabled_segments = ["directory", "clock"]
+"#;
+    fs::write(env.config_path(), config_content).expect("Failed to write config");
+
+    let output = env
+        .run_gpy(&["enable", "status"])
+        .expect("Failed to run gpy enable status");
+    output.assert_success("gpy enable status");
+
+    let output = env
+        .run_gpy(&["config", "get", "ui.enabled_segments"])
+        .expect("Failed to run gpy config get");
+    output.assert_success("gpy config get ui.enabled_segments");
+    assert_eq!(output.stdout.trim(), "directory clock status");
+}
+
+#[test]
 fn test_enable_disable_segment() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     let config_path = env.config_path();
