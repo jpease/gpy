@@ -17,13 +17,16 @@
 #
 # Rows = installer x shell x hostile HOME layout:
 #
-#   row INSTALLER SHELL LAYOUT EXPECT
+#   row INSTALLER SHELL LAYOUT EXPECT [UNINSTALL]
 #     INSTALLER  oneline (install-oneline.sh, fake curl) | install.sh (staged
 #                release payload, fish only)
 #     SHELL      fish | zsh | bash
 #     LAYOUT     a `layout_<name>` function below; it sets HOME and
 #                XDG_CONFIG_HOME
 #     EXPECT     ok | refuse
+#     UNINSTALL  optional: `fish` runs scripts/uninstall.fish instead of the
+#                default (scripts/uninstall.sh for oneline, uninstall.fish for
+#                install.sh)
 #
 # Adding a row is one `row ...` line at the bottom; adding a hostile layout is
 # one `layout_<name>` function. Later issues add: #747 (no ~/.bashrc but
@@ -146,6 +149,13 @@ layout_bash_profile_only() { layout_plain; SEED_BASH=profile_only; }
 layout_bash_none() { layout_plain; SEED_BASH=none; }
 layout_bash_nochain() { layout_plain; SEED_BASH=nochain; }
 
+# #748: zsh reads ${ZDOTDIR:-$HOME}/.zshrc. ZDOTDIR is exported to the
+# installer and uninstaller; ~/.zshrc must stay absent throughout.
+#   zdotdir         $ZDOTDIR/.zshrc exists with user content
+#   zdotdir_absent  ZDOTDIR is set and its directory exists, but no .zshrc
+layout_zdotdir() { layout_plain; ZDOTDIR="$SB/zdot"; }
+layout_zdotdir_absent() { layout_plain; ZDOTDIR="$SB/zdot"; SEED_ZSH=absent; }
+
 # The rc files that exist before install: the shell's own rc, and for bash a
 # ~/.bash_profile that chains to ~/.bashrc (as macOS and most distros ship),
 # so a login bash reaches the same file a non-login one does.
@@ -155,7 +165,10 @@ seed_user_files() {
             mkdir -p "$XDG_CONFIG_HOME/fish"
             printf '# user rc before gpy\n' >"$XDG_CONFIG_HOME/fish/config.fish"
             ;;
-        zsh) printf '# user rc before gpy\n' >"$HOME/.zshrc" ;;
+        zsh)
+            mkdir -p "${ZDOTDIR:-$HOME}"
+            [ "$SEED_ZSH" = absent ] || printf '# user rc before gpy\n' >"${ZDOTDIR:-$HOME}/.zshrc"
+            ;;
         bash)
             case "$SEED_BASH" in
                 profile_only) printf 'export FROM_PROFILE=yes\n' >"$HOME/.profile" ;;
@@ -182,9 +195,10 @@ check_profile_survives() {
 
 # One line per candidate rc file: its checksum, or `absent`.
 rc_snapshot() {
-    for f in "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.zshenv" "$HOME/.zlogin" \
+    for f in "$HOME/.zshrc" "${ZDOTDIR:+$ZDOTDIR/.zshrc}" "$HOME/.zprofile" "$HOME/.zshenv" "$HOME/.zlogin" \
         "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile" \
         "$XDG_CONFIG_HOME/fish/config.fish"; do
+        [ -n "$f" ] || continue
         if [ -e "$f" ]; then printf '%s %s\n' "$(cksum <"$f")" "$f"; else printf 'absent %s\n' "$f"; fi
     done
 }
@@ -227,20 +241,28 @@ check_start() {
 
 # `row INSTALLER SHELL LAYOUT EXPECT`
 row() {
-    installer="$1" shell="$2" layout="$3" expect="$4"
-    name="$installer/$shell/$layout/$expect"
+    installer="$1" shell="$2" layout="$3" expect="$4" uninstaller="${5:-}"
+    name="$installer/$shell/$layout/$expect${uninstaller:+/uninstall.$uninstaller}"
     echo "=== $name ==="
     shell_e2e_init "$ROOT"
     SB="$SHELL_E2E_ROOT"
     SEED_BASH=chain
+    SEED_ZSH=present
+    unset ZDOTDIR
     "layout_$layout"
     export HOME XDG_CONFIG_HOME
+    [ -z "${ZDOTDIR:-}" ] || export ZDOTDIR
     export XDG_CACHE_HOME="$SB/cache"
     mkdir -p "$HOME"
     export PATH="$HOME/.local/bin:$SB/fakebin:$PATH"
     mkdir -p "$SB/fakebin"
     write_fake_curl "$SB/fakebin"
     seed_user_files "$shell"
+    # fish writes its stock config.fish on first run; seed it so running
+    # uninstall.fish for a non-fish shell does not look like a leftover.
+    if [ "$uninstaller" = fish ] && [ "$shell" != fish ]; then
+        seed_user_files fish
+    fi
     before="$(rc_snapshot)"
 
     case "$installer" in
@@ -275,7 +297,7 @@ row() {
         done
         check_profile_survives "$name"
         agent_stop
-        if [ "$installer" = install.sh ]; then
+        if [ "$installer" = install.sh ] || [ "$uninstaller" = fish ]; then
             printf '\n' | fish "$ROOT/scripts/uninstall.fish" >"$SB/uninstall.log" 2>&1
         else
             printf '\n' | GPY_SHELL="$shell" sh "$ROOT/scripts/uninstall.sh" >"$SB/uninstall.log" 2>&1
@@ -309,6 +331,12 @@ row install.sh fish space ok
 row oneline bash bash_profile_only ok
 row oneline bash bash_none ok
 row oneline bash bash_nochain ok
+
+# #748: zsh reads $ZDOTDIR/.zshrc; install and both uninstallers must use it
+row oneline zsh zdotdir ok
+row oneline zsh zdotdir ok fish
+row oneline zsh zdotdir_absent ok
+row oneline zsh zdotdir_absent ok fish
 
 # #746: characters double quotes cannot protect are refused up front
 row oneline fish quote refuse
