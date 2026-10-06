@@ -381,3 +381,57 @@ fn ac5_save_feedback_printed_after_leaving_alt_screen() {
         "not-reloaded notice must follow the confirmation; captured: {shown:?}"
     );
 }
+
+/// A user theme that fails to parse must not end the session (#802).
+///
+/// `aaa-broken.toml` sorts before `default`, so Up from the starting cursor lands on it. Enter
+/// must be refused with an on-screen error, and `s` must still save the previous valid theme.
+#[test]
+fn wizard_survives_selecting_malformed_theme() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    std::fs::create_dir_all(env.themes_dir()).expect("create user themes dir");
+    std::fs::write(
+        env.themes_dir().join("aaa-broken.toml"),
+        "this is = = not toml\n",
+    )
+    .expect("write malformed theme");
+
+    let (pair, reader) = open_pty_and_snapshot_termios();
+
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gpy"));
+    cmd.args(["config", "wizard"]);
+    configure_gpy_env(&mut cmd, &env);
+
+    let captured = spawn_reader_thread(reader);
+    let mut writer = pair.master.take_writer().expect("take pty writer");
+    let mut child = pair.slave.spawn_command(cmd).expect("spawn gpy in pty");
+    drop(pair.slave);
+
+    wait_for_output(&captured, ENTER_ALT_SCREEN, OUTPUT_DEADLINE);
+    wait_for_output(&captured, b"aaa-broken", OUTPUT_DEADLINE);
+    writer.write_all(b"\x1b[A").expect("write Up");
+    writer.write_all(b"\r").expect("write Enter");
+    writer.flush().expect("flush Up/Enter");
+    wait_for_output(&captured, b"Cannot", OUTPUT_DEADLINE);
+    writer.write_all(b"s").expect("write save key");
+    writer.flush().expect("flush save key");
+
+    let status = wait_for_exit(child.as_mut(), EXIT_DEADLINE);
+    assert!(
+        status.success(),
+        "the wizard must survive a malformed theme; captured: {:?}",
+        String::from_utf8_lossy(&captured.lock().expect("captured output lock"))
+    );
+
+    let config = std::fs::read_to_string(env.config_path()).expect("read config");
+    let theme_line = config
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("theme"))
+        .unwrap_or_default()
+        .replace(' ', "");
+    assert_eq!(
+        theme_line, "theme=\"default\"",
+        "the previous valid theme is saved; config:\n{config}"
+    );
+}
