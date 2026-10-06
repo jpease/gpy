@@ -64,6 +64,13 @@ clean_rc_file() {
         return 0
     fi
 
+    # The installer tags a block in a file it created (#747); remember that
+    # before the block is removed.
+    created_by_gpy=0
+    if grep -qF -- "(gpy-created-file)" "$rc_file"; then
+        created_by_gpy=1
+    fi
+
     tmp=$(mktemp "${TMPDIR:-/tmp}/gpy-uninstall.XXXXXX") || return 1
     diag=$(mktemp "${TMPDIR:-/tmp}/gpy-uninstall.XXXXXX") || { rm -f "$tmp"; return 1; }
 
@@ -151,6 +158,10 @@ clean_rc_file() {
             cat "$tmp" > "$rc_file"
         fi
         echo "✅ Removed GPY block from $rc_file"
+        if [ "$created_by_gpy" = 1 ] && ! grep -q '[^[:space:]]' "$rc_file"; then
+            rm -f "$rc_file"
+            echo "✅ Removed $rc_file (created by GPY, now empty)"
+        fi
     fi
     rm -f "$tmp" "$diag"
 }
@@ -168,7 +179,7 @@ echo "  - Cache: $gpy_cache_dir"
 echo "  - Runtime: $runtime_root"
 echo "  - fish_prompt.fish (will restore previous backup if destination becomes absent)"
 echo "  - GPY init blocks from startup files (if present):"
-echo "    - $HOME/.bashrc, $HOME/.bash_profile, $HOME/.zshrc, $fish_config_dir/config.fish"
+echo "    - $HOME/.bashrc, $HOME/.bash_profile, $HOME/.bash_login, $HOME/.profile, $HOME/.zshrc, $fish_config_dir/config.fish"
 echo ""
 echo "⚠️  This will also stop any running agent and supervisor processes"
 printf '%s' "Press Enter to continue or Ctrl-C to cancel: "
@@ -258,7 +269,7 @@ for completion in "$fish_completions_dir/gpy.fish" "$fish_completions_dir/gpy-dy
 done
 
 # Remove GPY init blocks from all supported startup files (#671)
-for rc_file in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.zshrc" "$fish_config_dir/config.fish"; do
+for rc_file in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile" "$HOME/.zshrc" "$fish_config_dir/config.fish"; do
     clean_rc_file "$rc_file"
 done
 
