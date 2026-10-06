@@ -578,6 +578,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `gpy palette import` names the palette from the scheme's `slug` when
   present and keeps non-ASCII letters otherwise (`Rosé Pine` → `rose-pine`
   with a slug, `rosé-pine` without) (#797).
+- `gpy config wizard` shows its save confirmation and any "Agent not
+  reloaded" notice after exiting instead of losing them with the alternate
+  screen (#801).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

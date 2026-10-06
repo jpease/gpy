@@ -526,7 +526,7 @@ pub fn run() -> Result<()> {
     let mut guard = TerminalGuard::new()?;
     let mut runtime = WizardRuntime::new()?;
 
-    loop {
+    let should_save = loop {
         draw_frame(&mut guard, &mut runtime)?;
 
         let Event::Key(key) = event::read()
@@ -543,12 +543,19 @@ pub fn run() -> Result<()> {
         runtime.mode = new_mode;
         match action {
             keys::WizardAction::Continue => {}
-            keys::WizardAction::Save => {
-                save::save(&runtime.state)?;
-                break;
-            }
-            keys::WizardAction::ExitWithoutSaving => break,
+            keys::WizardAction::Save => break true,
+            keys::WizardAction::ExitWithoutSaving => break false,
         }
+    };
+
+    // Restore the terminal before anything is printed: output written while the
+    // alternate screen is active is discarded when it is left (#801).
+    drop(guard);
+
+    if should_save {
+        let path = save::save(&runtime.state)?;
+        println!("✅ Saved configuration to {path}");
+        crate::commands::utils::reload_agent_and_notify();
     }
 
     Ok(())
