@@ -18,10 +18,15 @@ for gpy_var in $(compgen -e); do
     [[ "$gpy_var" == GPY_* ]] && unset "$gpy_var"
 done
 unset gpy_var
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 parity_xdg_root="$(mktemp -d "${TMPDIR:-/tmp}/gpy-parity-xdg.XXXXXX")"
-trap 'rm -rf "$parity_xdg_root"' EXIT
+# Sourcing the entry point starts a supervised gpy-agent (#750): stop it before
+# its socket directory is removed.
+trap 'shell_e2e_stop_agent_under "$parity_xdg_root/cache" "$parity_xdg_root/config"; rm -rf "$parity_xdg_root"' EXIT
 mkdir -p "$parity_xdg_root/cache" "$parity_xdg_root/config"
 export XDG_CACHE_HOME="$parity_xdg_root/cache" XDG_CONFIG_HOME="$parity_xdg_root/config"
+unset XDG_RUNTIME_DIR
 
 echo "=== Checking Feature Parity with Fish/Zsh ==="
 

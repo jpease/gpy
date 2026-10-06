@@ -231,6 +231,37 @@ shell_e2e_stop_agent() {
     return 0
 }
 
+# Stop whatever agent a test left bound under a hermetic XDG pair ($1 =
+# XDG_CACHE_HOME, $2 = XDG_CONFIG_HOME). For the plain bash/zsh suites that
+# source the entry point and let the supervisor start a daemon (#750): the
+# supervisor backgrounds `gpy-agent start`, so the socket can still be
+# missing at exit and is awaited (bounded) first. Stops through the agent's
+# own socket using the PATH `gpy-agent` (the binary that started it), then
+# TERMs, and as a last resort KILLs, whatever still holds that socket (never
+# a name-based kill; see #484, #615). The socket sits under $1 because these
+# tests run without XDG_RUNTIME_DIR, so the runtime root falls back to cache.
+shell_e2e_stop_agent_under() {
+    _sock="$1/gpy/gpy.sock"
+    shell_e2e_poll 3 test -S "$_sock" || return 0
+    XDG_CACHE_HOME="$1" XDG_CONFIG_HOME="$2" gpy-agent stop >/dev/null 2>&1 || true
+    shell_e2e_poll 3 shell_e2e_path_unbound "$_sock" && return 0
+    command -v lsof >/dev/null 2>&1 || return 0
+    lsof -t "$_sock" 2>/dev/null | while read -r _pid; do
+        kill "$_pid" 2>/dev/null || true
+    done
+    shell_e2e_poll 2 shell_e2e_path_unbound "$_sock" && return 0
+    lsof -t "$_sock" 2>/dev/null | while read -r _pid; do
+        kill -9 "$_pid" 2>/dev/null || true
+    done
+    return 0
+}
+
+# True when no process holds the socket at $1 (or lsof is unavailable).
+shell_e2e_path_unbound() {
+    command -v lsof >/dev/null 2>&1 || return 0
+    [ -z "$(lsof -t "$1" 2>/dev/null)" ]
+}
+
 # Spawn an interactive `bash` or `zsh` on a pty, sourcing this checkout's
 # integration from an rc file. The rc file prints GPY_E2E_PID=<pid> before
 # the integration loads so shell_e2e_client_pid can read it back.

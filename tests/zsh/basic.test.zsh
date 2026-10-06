@@ -6,6 +6,16 @@
 ROOT=${0:a:h:h:h}
 cd "$ROOT"
 
+# Sourcing the entry point starts a supervised gpy-agent (#750). Keep it inside
+# a throwaway XDG root and stop it on exit so a run leaves no daemon behind,
+# whether run directly or under quality-check.sh.
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
+basic_xdg_root="$(mktemp -d "${TMPDIR:-/tmp}/gpy-basic-xdg.XXXXXX")"
+mkdir -p "$basic_xdg_root/cache" "$basic_xdg_root/config"
+export XDG_CACHE_HOME="$basic_xdg_root/cache" XDG_CONFIG_HOME="$basic_xdg_root/config"
+unset XDG_RUNTIME_DIR GPY_AGENT_SOCKET_PATH
+trap 'shell_e2e_stop_agent_under "$basic_xdg_root/cache" "$basic_xdg_root/config"; rm -rf "$basic_xdg_root"' EXIT
+
 echo "Sourcing gpy.zsh from $ROOT/zsh/gpy.zsh"
 source zsh/gpy.zsh
 

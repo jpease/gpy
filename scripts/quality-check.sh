@@ -298,6 +298,32 @@ check_shellcheck() {
     fi
 }
 
+# Stop any gpy-agent still bound under the hermetic XDG root $1, using the
+# gpy-agent in $2, before the root is deleted (#750): the plain bash/zsh suites
+# source the entry point and the supervisor starts a daemon on the socket under
+# $1/cache. Asks the agent to stop through its own socket, then falls back to
+# TERM -> bounded wait -> KILL of whatever holds that socket. Never a
+# name-based kill (#484, #615).
+stop_shell_test_agents() {
+    local xdg_root="$1" agent_dir="$2"
+    local sock="$xdg_root/cache/gpy/gpy.sock" pid tries
+    [[ -S "$sock" ]] || return 0
+    XDG_CACHE_HOME="$xdg_root/cache" XDG_CONFIG_HOME="$xdg_root/config" \
+        "$agent_dir/gpy-agent" stop &>/dev/null || true
+    command -v lsof &>/dev/null || return 0
+    for pid in $(lsof -t "$sock" 2>/dev/null); do
+        kill "$pid" 2>/dev/null || true
+    done
+    for ((tries = 0; tries < 30; tries++)); do
+        [[ -z "$(lsof -t "$sock" 2>/dev/null)" ]] && return 0
+        sleep 0.1
+    done
+    for pid in $(lsof -t "$sock" 2>/dev/null); do
+        kill -9 "$pid" 2>/dev/null || true
+    done
+    return 0
+}
+
 # Run the shell integration test suites (Fish, Bash, Zsh).
 #
 # These exercise the agent's rendered output as consumed by each shell, so they
@@ -333,6 +359,11 @@ run_shell_tests() {
     mkdir -p "$shell_xdg_root/cache" "$shell_xdg_root/config"
     local shell_xdg_env="XDG_CACHE_HOME=$shell_xdg_root/cache XDG_CONFIG_HOME=$shell_xdg_root/config "
 
+    # The suites must exercise this checkout's debug agent, never whichever
+    # gpy-agent is first on the developer's PATH (#750). Mirrors
+    # test_fish.sh and tests/lib/shell_e2e.sh; honours CARGO_TARGET_DIR.
+    local shell_agent_dir="${CARGO_TARGET_DIR:-$PWD/gpy-agent/target}/debug"
+
     if command -v bash &>/dev/null; then
         local bash_test bash_base bash_env bash_label
         for bash_test in tests/bash/*.test.bash; do
@@ -354,7 +385,7 @@ run_shell_tests() {
                     ;;
             esac
             bash_label="$(shell_test_label "Bash" "$bash_base")"
-            run_check "$bash_label" "${shell_xdg_env}${bash_env}$GPY_BASH $bash_test" || true
+            run_check "$bash_label" "${shell_xdg_env}${bash_env}PATH=\"\$shell_agent_dir:\$PATH\" $GPY_BASH $bash_test" || true
             shell_tests_invoked="$shell_tests_invoked $bash_test"
         done
     fi
@@ -376,10 +407,11 @@ run_shell_tests() {
                     ;;
             esac
             zsh_label="$(shell_test_label "Zsh" "$zsh_base")"
-            run_check "$zsh_label" "${shell_xdg_env}${zsh_env}zsh $zsh_test" || true
+            run_check "$zsh_label" "${shell_xdg_env}${zsh_env}PATH=\"\$shell_agent_dir:\$PATH\" zsh $zsh_test" || true
             shell_tests_invoked="$shell_tests_invoked $zsh_test"
         done
     fi
+    stop_shell_test_agents "$shell_xdg_root" "$shell_agent_dir"
     rm -rf "$shell_xdg_root"
 
     # Meta-check (#483): fail loudly if a tests/{bash,zsh}/*.test.* file on
