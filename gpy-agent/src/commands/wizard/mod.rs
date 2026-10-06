@@ -351,6 +351,9 @@ struct WizardRuntime {
     cached_selection: Option<(String, String)>,
     cached_theme: std::sync::Arc<crate::theme::ThemeConfig>,
     cached_palette: crate::template::Palette,
+    /// Why the last theme activation was refused (the theme failed to load);
+    /// shown in the detail panel until the next key press (#802).
+    theme_error: Option<String>,
 }
 
 impl WizardRuntime {
@@ -376,6 +379,7 @@ impl WizardRuntime {
             cached_selection: None,
             cached_theme: initial_theme,
             cached_palette,
+            theme_error: None,
         })
     }
 }
@@ -386,18 +390,33 @@ impl WizardRuntime {
 ///
 /// # Errors
 ///
-/// Returns an error if the selected theme fails to load, or drawing the
-/// frame fails.
+/// Returns an error if drawing the frame fails, or the very first theme load
+/// fails (no previously loaded theme to fall back to). A later theme that
+/// fails to load is refused instead: the selection reverts to the last theme
+/// that loaded and the failure is shown in the detail panel (#802).
 fn draw_frame<Ops: TerminalOps>(
     guard: &mut TerminalGuard<Ops>,
     runtime: &mut WizardRuntime,
 ) -> Result<()> {
-    refresh_theme_palette_cache(
+    if let Err(error) = refresh_theme_palette_cache(
         &runtime.state,
         &mut runtime.cached_selection,
         &mut runtime.cached_theme,
         &mut runtime.cached_palette,
-    )?;
+    ) {
+        let Some((previous_theme, _)) = runtime.cached_selection.clone() else {
+            return Err(error);
+        };
+        // Only the first line: it names the file and the failure; the rest is
+        // a TOML excerpt that would not fit the detail panel.
+        let reason = error.to_string();
+        runtime.theme_error = Some(format!(
+            "Cannot select theme \"{}\": {}",
+            runtime.state.selected_theme(),
+            reason.lines().next().unwrap_or_default()
+        ));
+        runtime.state.select_theme(&previous_theme);
+    }
 
     let mut preview_config = runtime.config.clone();
     runtime.state.apply_to(&mut preview_config);
@@ -416,7 +435,11 @@ fn draw_frame<Ops: TerminalOps>(
         &runtime.cached_palette,
         &runtime.facts,
     );
-    let detail_lines = detail::detail_lines(&runtime.state, &runtime.cached_theme);
+    let mut detail_lines = detail::detail_lines(&runtime.state, &runtime.cached_theme);
+    if let Some(message) = &runtime.theme_error {
+        detail_lines.push(ratatui::text::Line::from(""));
+        detail_lines.push(ratatui::text::Line::from(message.clone()));
+    }
     let draw_args = ui::DrawArgs {
         state: &runtime.state,
         mode: runtime.mode,
@@ -537,6 +560,7 @@ pub fn run() -> Result<()> {
         if key.kind != KeyEventKind::Press {
             continue;
         }
+        runtime.theme_error = None;
 
         let (new_mode, action) =
             keys::handle_key(&mut runtime.state, runtime.mode, &runtime.cached_theme, key);

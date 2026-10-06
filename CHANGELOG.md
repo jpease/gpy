@@ -588,6 +588,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   palette and Starship-import behaviour the code actually has (#798).
 - A `.ruby-version` written as `ruby-3.2.2` or `ruby-3.2.2@gemset` shows
   `ruby 3.2.2` instead of `ruby ruby-3.2.2` (#786).
+- Selecting a user theme that fails to parse in `gpy config wizard` no
+  longer aborts the session; the selection reverts and the error is shown
+  (#802).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

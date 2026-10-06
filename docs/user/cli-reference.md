@@ -798,6 +798,8 @@ Changes are only written to the config file on save; quitting without saving lea
 
 After the wizard leaves the full-screen view, `s` prints `✅ Saved configuration to <path>` on the normal screen, followed by the `⚠️  Agent not reloaded` notice when no running agent confirmed the reload. Quitting without saving prints nothing.
 
+Selecting a user theme that fails to load keeps the wizard open: the selection stays on the previous theme and the Detail panel shows `Cannot select theme "<name>": <reason>` (naming the file) until the next key press. A configured theme that fails to load at startup still aborts the wizard.
+
 **Example:**
 ```bash
 gpy config wizard
