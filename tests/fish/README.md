@@ -65,6 +65,7 @@ sections above describe the ones worth reading first.
 - `e2e_lang_variant_fallback_bounded_refresh.test.fish`
 - `e2e_live_updates_signal.test.fish`
 - `e2e_prompt_content.test.fish`
+- `e2e_theme_refresh_after_offline_edit.test.fish`
 
 **Hostile environment**
 
