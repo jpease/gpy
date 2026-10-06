@@ -14,7 +14,7 @@ cd "$ROOT" || exit 1
 source bash/core/ipc.bash
 
 FIXTURE="tests/fixtures/xdg_absoluteness_vectors.tsv"
-FAKE_HOME="/home/fixture-home"
+FAKE_HOME="/home/user"
 FAILED=0
 CASE_COUNT=0
 
