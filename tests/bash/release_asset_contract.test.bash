@@ -329,6 +329,63 @@ grep -q 'attest-build-provenance' "$WORKFLOW" ||
 grep -q 'attestations: write' "$WORKFLOW" ||
     fail "release.yml is missing the attestations: write permission the attestation step needs"
 
+# --- 8. local bundle tooling and `just install` (#810) -------------------------
+#
+# `just build-all-platforms` is the only in-repo producer of bin/, and
+# install.sh is the only consumer. A checkout has no bin/, so the justfile
+# `install` recipe must not run install.sh, and the build script has to emit
+# the exact payload install.sh verifies: agent + CLI + a sidecar for each.
+echo "--- local bundle tooling (#810) ---"
+
+BUILD_SCRIPT="$ROOT/scripts/build-release-binaries.sh"
+JUSTFILE="$ROOT/justfile"
+INSTALL_DEV="$ROOT/install-dev.fish"
+
+for required in "$BUILD_SCRIPT" "$JUSTFILE" "$INSTALL_DEV"; do
+    [[ -f "$required" ]] || {
+        echo "FAIL: missing source of truth: $required"
+        exit 1
+    }
+done
+
+grep -q 'release-dist/gpy"' "$BUILD_SCRIPT" ||
+    fail "build-release-binaries.sh never copies the gpy CLI (release-dist/gpy); install.sh refuses a bin/ without it"
+grep -q '\.sha256' "$BUILD_SCRIPT" ||
+    fail "build-release-binaries.sh writes no .sha256 sidecars; install.sh refuses unverified binaries (#494)"
+
+# Every agent name the build script passes to build_target must be an agent
+# asset install.sh resolves, and the CLI name derived from it a CLI asset.
+built_agents="$(sed -nE 's/^[[:space:]]*(.*[^[:alnum:]_])?build_target "[^"]+" "([^"]+)".*/\2/p' "$BUILD_SCRIPT" | sort -u)"
+if [[ -z "$built_agents" ]]; then
+    fail "parsed no build_target calls from $BUILD_SCRIPT"
+else
+    while IFS= read -r built; do
+        # build_target appends .exe itself for the Windows target.
+        case "$built" in
+            *-windows-*) built="$built.exe" ;;
+        esac
+        grep -qxF "$built" <<<"$installer_agents" ||
+            fail "build-release-binaries.sh builds '$built', which install.sh's platform table does not resolve"
+        grep -qxF "gpy-${built#gpy-agent-}" <<<"$installer_clis" ||
+            fail "build-release-binaries.sh would stage the CLI for '$built' as 'gpy-${built#gpy-agent-}', which install.sh does not resolve"
+    done <<<"$built_agents"
+fi
+
+install_recipe="$(awk '
+    /^install:/ { inside = 1; next }
+    inside && /^[^[:space:]]/ { exit }
+    inside
+' "$JUSTFILE")"
+if [[ -z "$install_recipe" ]]; then
+    fail "found no body for the 'install:' recipe in $JUSTFILE (recipe removed? then this check can go)"
+elif grep -q 'install\.sh' <<<"$install_recipe"; then
+    fail "justfile 'install:' recipe runs install.sh, which needs a release bin/ a checkout does not have"
+fi
+
+if grep -q -- '--bundle' "$INSTALL_DEV" && ! grep -q 'aarch64' "$INSTALL_DEV"; then
+    fail "install-dev.fish keeps --bundle but never maps arm64 to aarch64 (install.sh expects gpy-agent-macos-aarch64)"
+fi
+
 if [[ $failures -ne 0 ]]; then
     echo "$failures assertion(s) failed"
     exit 1

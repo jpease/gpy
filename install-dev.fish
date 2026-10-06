@@ -10,14 +10,12 @@
 #   ./install-dev.fish --fish-only    # Skip agent build, only sync Fish files
 #   ./install-dev.fish --no-build     # Use existing agent binary, skip build
 #   ./install-dev.fish --clean        # Use rsync --delete for clean sync
-#   ./install-dev.fish --bundle       # Create platform-specific bundle in repo/bin
 #
 # Flags:
 #   --fish-only     Skip agent build, only update Fish files (fast iteration)
 #   --no-build      Skip agent build, use existing binary in target/release/
 #                   (or $CARGO_TARGET_DIR/release when that is set)
 #   --clean         Clean sync with rsync --delete (removes stale files)
-#   --bundle        Stage platform-specific bundle in repo/bin/
 #   --help, -h      Show this help message
 
 # Disable GPY during installation to prevent hanging
@@ -28,7 +26,6 @@ set -gx GPY_AGENT_SUPERVISOR_ENABLED 0
 set -g fish_only 0
 set -g no_build 0
 set -g clean_sync 0
-set -g create_bundle 0
 set -g show_help 0
 
 for arg in $argv
@@ -39,8 +36,6 @@ for arg in $argv
             set no_build 1
         case --clean
             set clean_sync 1
-        case --bundle
-            set create_bundle 1
         case --help -h
             set show_help 1
         case '*'
@@ -60,7 +55,6 @@ if test $show_help -eq 1
     echo "  --fish-only     Skip agent build, only update Fish files (fast)"
     echo "  --no-build      Skip building, use existing agent binary"
     echo "  --clean         Clean sync with rsync --delete"
-    echo "  --bundle        Create platform-specific bundle in repo/bin/"
     echo "  --help, -h      Show this help"
     echo ""
     echo "Note:"
@@ -71,7 +65,6 @@ if test $show_help -eq 1
     echo "Examples:"
     echo "  ./install-dev.fish                    # Full install"
     echo "  ./install-dev.fish --fish-only        # Quick Fish update"
-    echo "  ./install-dev.fish --clean --bundle   # Clean install with bundle"
     exit 0
 end
 
@@ -326,37 +319,6 @@ function _install_agent_binary
     # Drop any older builds that would shadow what we just installed.
     _remove_conflicting_binaries $install_dir
 
-    return 0
-end
-
-function _create_bundle
-    echo "📦 Creating platform-specific bundle..."
-
-    set -l agent_binary (_release_dir)/gpy-agent
-    if not test -f $agent_binary
-        echo "❌ Agent binary not found"
-        return 1
-    end
-
-    # Determine platform and architecture
-    set -l platform (uname -s | tr '[:upper:]' '[:lower:]')
-    set -l arch (uname -m)
-
-    switch $platform
-        case darwin
-            set platform macos
-        case linux
-            set platform linux
-    end
-
-    set -l bundle_name "gpy-agent-$platform-$arch"
-    set -l bundle_dir bin
-
-    mkdir -p $bundle_dir
-    cp $agent_binary $bundle_dir/$bundle_name
-    chmod +x $bundle_dir/$bundle_name
-
-    echo "✅ Bundle created: $bundle_dir/$bundle_name"
     return 0
 end
 
@@ -634,11 +596,6 @@ if test $no_build -eq 0; and test $fish_only -eq 0
     if not _install_agent_binary
         exit 1
     end
-
-    # Create bundle if requested
-    if test $create_bundle -eq 1
-        _create_bundle
-    end
 else
     echo "⏭️  Skipping agent build"
 
@@ -653,10 +610,6 @@ else
 
         if not _install_agent_binary
             exit 1
-        end
-
-        if test $create_bundle -eq 1
-            _create_bundle
         end
     end
 end
@@ -692,5 +645,4 @@ end
 set -e fish_only
 set -e no_build
 set -e clean_sync
-set -e create_bundle
 set -e show_help

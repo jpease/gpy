@@ -180,9 +180,9 @@ clear-cache:
 
 # --- Installation ---
 
-# Install GPY locally using the installer script
+# Install GPY from this checkout (builds the agent; install.sh is archive-only)
 install:
-    ./install.sh
+    fish install-dev.fish
 
 # --- Rust Agent Specific (Proxies) ---
 

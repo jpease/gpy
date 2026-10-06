@@ -32,6 +32,22 @@ echo ""
 # Create bin directory in repo root
 mkdir -p ../bin
 
+# Sidecars use the same two-space coreutils format as write_sidecar in
+# scripts/package-release.sh, which is what install.sh's verify_checksum reads.
+if command -v sha256sum >/dev/null 2>&1; then
+    sha256_of() { sha256sum "$1" | awk '{print $1}'; }
+elif command -v shasum >/dev/null 2>&1; then
+    sha256_of() { shasum -a 256 "$1" | awk '{print $1}'; }
+else
+    error "no SHA-256 tool found (need sha256sum or shasum)"
+    exit 1
+fi
+
+write_sidecar() {
+    local file="$1"
+    printf '%s  %s\n' "$(sha256_of "$file")" "$(basename "$file")" >"$file.sha256"
+}
+
 # Function to build for a target
 build_target() {
     local target=$1
@@ -50,25 +66,39 @@ build_target() {
 
     # Build (release-dist: opt-level 3 + thin LTO, see gpy-agent/Cargo.toml)
     if cargo build --profile release-dist --locked --target "$target"; then
-        # Copy to bin directory
-        local binary_path="target/$target/release-dist/gpy-agent"
+        # install.sh needs BOTH the agent and the CLI per platform, each with a
+        # .sha256 sidecar (#327, #494), so stage the pair with its sidecars.
+        local agent_path="target/$target/release-dist/gpy-agent"
+        local cli_path="target/$target/release-dist/gpy"
+        local cli_name="gpy-${output_name#gpy-agent-}"
         if [ "$target" = "x86_64-pc-windows-msvc" ]; then
-            binary_path="target/$target/release-dist/gpy-agent.exe"
+            agent_path="$agent_path.exe"
+            cli_path="$cli_path.exe"
             output_name="${output_name}.exe"
+            cli_name="${cli_name}.exe"
         fi
 
-        if [ -f "$binary_path" ]; then
-            cp "$binary_path" "../bin/$output_name"
+        local path name
+        for path in "$agent_path" "$cli_path"; do
+            if [ ! -f "$path" ]; then
+                error "Binary not found at $path"
+                return 1
+            fi
+        done
 
-            # release-dist already strips symbols (strip = true), so no
-            # manual strip step is needed here.
-
-            success "Built $output_name ($(du -h "../bin/$output_name" | cut -f1))"
-            return 0
-        else
-            error "Binary not found at $binary_path"
-            return 1
-        fi
+        # release-dist already strips symbols (strip = true), so no manual
+        # strip step is needed here.
+        for name in "$output_name" "$cli_name"; do
+            if [ "$name" = "$output_name" ]; then
+                path="$agent_path"
+            else
+                path="$cli_path"
+            fi
+            cp "$path" "../bin/$name"
+            write_sidecar "../bin/$name"
+            success "Built $name ($(du -h "../bin/$name" | cut -f1))"
+        done
+        return 0
     else
         error "Build failed for $target"
         return 1
@@ -138,18 +168,14 @@ success "Binaries available in bin/ directory"
 echo ""
 
 info "Next steps:"
-echo "  1. Test the installer locally:"
-echo "     bash install-oneline.sh"
+echo "  1. Install the host platform's bundle from bin/:"
+echo "     ./install.sh"
 echo ""
-echo "  2. Or test with a local HTTP server:"
-echo "     python3 -m http.server 8000"
-echo "     curl -sS http://localhost:8000/install-oneline.sh | sh"
-echo ""
-echo "  3. When ready for release, create and push a tag:"
+echo "  2. When ready for release, create and push a tag:"
 echo "     git tag v0.1.0"
 echo "     git push origin v0.1.0"
 echo ""
-echo "  4. GitHub Actions will automatically:"
+echo "  3. GitHub Actions will automatically:"
 echo "     - Build all platform binaries"
 echo "     - Run tests"
 echo "     - Create a GitHub release"
