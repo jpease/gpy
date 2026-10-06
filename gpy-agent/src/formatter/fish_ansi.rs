@@ -214,11 +214,27 @@ fn render_languages_via_template(
     format: &str,
 ) -> crate::template::Result<String> {
     use crate::formatter::language_resolver::LanguageResolver;
+    use crate::formatter::{IsFirst, IsLast, SegmentPosition};
 
     let selected = select_languages(ctx.config, ctx.theme, languages);
+    let last_index = selected.len().saturating_sub(1);
     let mut output = String::with_capacity(160);
-    for lang in selected {
-        let resolver = LanguageResolver::new(lang, ctx.config, ctx.theme, ctx.position);
+    for (index, lang) in selected.into_iter().enumerate() {
+        // Only the first pill inherits the segment's `is_first`, only the last
+        // its `is_last`; the rest chain as middle pills (#751).
+        let pill_position = SegmentPosition::new(
+            if index == last_index {
+                ctx.position.is_last
+            } else {
+                IsLast::No
+            },
+            if index == 0 {
+                ctx.position.is_first
+            } else {
+                IsFirst::No
+            },
+        );
+        let resolver = LanguageResolver::new(lang, ctx.config, ctx.theme, pill_position);
         output.push_str(&render_via_template(&resolver, ctx, dialect, format)?);
     }
     Ok(output)
@@ -671,6 +687,43 @@ mod tests {
             !got.contains("4.0.0"),
             "fourth language must be dropped: {got:?}"
         );
+    }
+
+    /// #751: each language pill takes its own position — only the first pill
+    /// inherits the segment's `is_first`, only the last its `is_last`.
+    #[test]
+    fn language_pills_chain_positions_within_segment() {
+        let formatter = FishAnsiFormatter::default();
+        let (config, mut theme) = ctx();
+        theme.segments.language.format = Some(
+            "([$sep_open](fg:$bg bg:default))[ $symbol]($style)([ $version]($style))([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+                .to_owned(),
+        );
+        let mk = |name: &str, ver: &str| LanguageInfo {
+            name: name.to_owned(),
+            version: Some(ver.to_owned()),
+            color: crate::config::types::ColorSpec::new("#dea584").unwrap(),
+        };
+        let response = Response::Language {
+            languages: vec![
+                mk("Rust", "1.0.0"),
+                mk("Go", "2.0.0"),
+                mk("Python", "3.0.0"),
+            ],
+        };
+        let counts = |pos: SegmentPosition| {
+            let rc = RenderContext::new(&config, &theme, pos);
+            let got = formatter.render(&response, &rc).expect("render");
+            (
+                got.matches('\u{e0ba}').count(),
+                got.matches('\u{e0bc}').count(),
+                got.matches('\u{e0b4}').count(),
+            )
+        };
+        assert_eq!(counts(SegmentPosition::FIRST), (2, 3, 0), "first");
+        assert_eq!(counts(SegmentPosition::MIDDLE), (3, 3, 0), "middle");
+        assert_eq!(counts(SegmentPosition::LAST), (3, 2, 1), "last");
+        assert_eq!(counts(SegmentPosition::ONLY), (2, 2, 1), "only");
     }
 
     #[test]
