@@ -334,3 +334,50 @@ fn ac4_select_second_theme_and_save_writes_config() {
     let shown = env.run_gpy(&["theme", "show"]).expect("spawn gpy");
     assert_eq!(shown.stdout.trim(), second, "{shown:?}");
 }
+
+/// Save feedback must reach the normal screen (#801).
+///
+/// Anything printed while the alternate screen is active is discarded when the wizard leaves
+/// it, so both the save confirmation and the not-reloaded notice (no agent runs in the isolated
+/// env) must come after the last leave-alternate-screen sequence.
+#[test]
+fn ac5_save_feedback_printed_after_leaving_alt_screen() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let (pair, reader) = open_pty_and_snapshot_termios();
+
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gpy"));
+    cmd.args(["config", "wizard"]);
+    configure_gpy_env(&mut cmd, &env);
+
+    let captured = spawn_reader_thread(reader);
+    let mut writer = pair.master.take_writer().expect("take pty writer");
+    let mut child = pair.slave.spawn_command(cmd).expect("spawn gpy in pty");
+    drop(pair.slave);
+
+    wait_for_output(&captured, ENTER_ALT_SCREEN, OUTPUT_DEADLINE);
+    wait_for_output(&captured, b"default", OUTPUT_DEADLINE);
+    writer.write_all(b"s").expect("write save key");
+    writer.flush().expect("flush save key");
+
+    let status = wait_for_exit(child.as_mut(), EXIT_DEADLINE);
+    assert!(
+        status.success(),
+        "save-and-exit run should exit successfully"
+    );
+
+    let output = captured.lock().expect("captured output lock").clone();
+    let shown = String::from_utf8_lossy(&output);
+    let leave = last_position(&output, LEAVE_ALT_SCREEN).expect("alt screen left");
+    let saved = last_position(&output, b"Saved configuration to")
+        .unwrap_or_else(|| panic!("no save confirmation; captured: {shown:?}"));
+    let notice = last_position(&output, b"Agent not reloaded")
+        .unwrap_or_else(|| panic!("no not-reloaded notice; captured: {shown:?}"));
+    assert!(
+        saved > leave,
+        "save confirmation must follow leaving the alternate screen; captured: {shown:?}"
+    );
+    assert!(
+        notice > saved,
+        "not-reloaded notice must follow the confirmation; captured: {shown:?}"
+    );
+}

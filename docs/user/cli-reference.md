@@ -796,6 +796,8 @@ Keys: `Tab` moves to the next section, `Space`/`Enter` toggles or selects the hi
 
 Changes are only written to the config file on save; quitting without saving leaves the existing configuration untouched.
 
+After the wizard leaves the full-screen view, `s` prints `✅ Saved configuration to <path>` on the normal screen, followed by the `⚠️  Agent not reloaded` notice when no running agent confirmed the reload. Quitting without saving prints nothing.
+
 **Example:**
 ```bash
 gpy config wizard

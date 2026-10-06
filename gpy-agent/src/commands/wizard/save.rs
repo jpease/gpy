@@ -10,16 +10,14 @@
 //! environment mutation, no subprocess) the same way
 //! `commands::utils::load_active_config`/`save_config_to` already take an
 //! explicit path rather than resolving it themselves. `save` is the one
-//! `wizard/mod.rs`'s render loop actually calls; it resolves the real active
-//! config path and reloads the running agent.
+//! `wizard/mod.rs`'s `run` actually calls, after restoring the terminal; it
+//! resolves the real active config path.
 
 use super::state::WizardState;
 use crate::Result;
 use crate::commands::palette;
 use crate::commands::theme;
-use crate::commands::utils::{
-    active_config_path, load_active_config, reload_agent_and_notify, save_config_to,
-};
+use crate::commands::utils::{active_config_path, load_active_config, save_config_to};
 
 /// Apply, validate, and persist `state`'s selection onto the config at `path`.
 ///
@@ -62,16 +60,19 @@ pub fn save_to(state: &WizardState, path: &str) -> Result<()> {
 }
 
 /// Apply, validate, and persist the wizard's current selection to the real
-/// active config path, then best-effort reload the running agent.
+/// active config path and return that path.
+///
+/// Prints nothing and does not reload the agent: the caller runs this after
+/// the terminal is restored, then reports the saved path and calls
+/// `reload_agent_and_notify` itself, so the feedback lands on the normal
+/// screen instead of being discarded with the alternate screen (#801).
 ///
 /// # Errors
 ///
 /// Returns an error if the config path cannot be resolved, the freshly-loaded
 /// config is invalid, the selected theme/palette fails validation, or the
-/// write fails. Never fails solely because the agent reload didn't succeed —
-/// that step is best-effort, matching every other command in this codebase
-/// that calls `reload_agent_and_notify` (e.g. `commands::config::set`).
-pub fn save(state: &WizardState) -> Result<()> {
+/// write fails.
+pub fn save(state: &WizardState) -> Result<String> {
     let path = active_config_path()?;
     save_to(state, &path)?;
     // Theme-level field edits (clock/duration/git/…) live in the per-theme
@@ -82,8 +83,7 @@ pub fn save(state: &WizardState) -> Result<()> {
     if let Some(theme) = state.pending_theme() {
         crate::theme::ThemeManager::save_user_theme(state.selected_theme(), theme)?;
     }
-    reload_agent_and_notify();
-    Ok(())
+    Ok(path)
 }
 
 #[cfg(test)]
