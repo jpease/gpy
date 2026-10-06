@@ -77,6 +77,6 @@ function __gpy_zshexit() {
 }
 
 # Register exit hook if not already present
-if [[ ${zshexit_functions[(I)__gpy_zshexit]} -eq 0 ]]; then
+if (( ! ${zshexit_functions[(I)__gpy_zshexit]:-0} )); then
     zshexit_functions+=(__gpy_zshexit)
 fi

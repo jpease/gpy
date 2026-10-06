@@ -436,6 +436,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   containing quotes (#683). gpy's DEBUG trap is now installed at the first
   prompt, where bash exposes the prior trap; re-sourcing `gpy.bash` keeps the
   chain.
+- Bash `set -u` and zsh `setopt nounset` shells no longer print
+  unbound-variable errors on every prompt when `XDG_RUNTIME_DIR` or
+  `XDG_CACHE_HOME` is unset, and zsh registers its exit hook (#698).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
