@@ -239,7 +239,7 @@ Controls how the directory segment renders the current path.
 
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|
-| `display` | string | `"basename"` | `"basename"`, `"abbreviated"`, `"truncated"`, `"full"` | `"basename"` shows only the current directory name; `"abbreviated"` shortens intermediate components to their first letter; `"truncated"` keeps the last `truncation_length` components; `"full"` shows the entire path, with your home directory shown as `~`. |
+| `display` | string | `"basename"` | `"basename"`, `"abbreviated"`, `"truncated"`, `"full"` | `"basename"` shows only the current directory name; `"abbreviated"` shortens intermediate components to their first character (hidden directories keep the leading dot plus one character, e.g. `~/.c/fish`); `"truncated"` keeps the last `truncation_length` components; `"full"` shows the whole path with your home directory shown as `~` (e.g. `~/work/project`). |
 | `truncation_length` | integer | `3` | `1`–`255` | Trailing path components kept when `display = "truncated"`. |
 | `truncation_symbol` | string | `""` | no control characters | Prefix shown before a truncated path (e.g. `"…/"`). |
 | `max_length` | integer | `80` | `1`–`1000` | Character cap applied to the rendered directory string after the display mode is resolved — even a `"full"` path can be shortened if it exceeds this. Truncation normally prefixes a 3-character `"..."` ellipsis before the kept tail; for `max_length` values of `1`–`3` (too small to fit an ellipsis plus any real content) the ellipsis is dropped and the raw last `max_length` characters are shown instead. |

@@ -74,9 +74,9 @@ truncate_to_repo = false
 `ui.directory.display` controls how much path context the directory segment shows:
 
 - `basename` shows only the current directory name
-- `abbreviated` shortens intermediate path components to their first letter while keeping the leaf directory
+- `abbreviated` shortens intermediate path components to their first character (a hidden directory keeps its leading dot plus one character, so `~/.config/fish` becomes `~/.c/fish`) while keeping the leaf directory
 - `truncated` keeps the last `ui.directory.truncation_length` path components, prefixed with `ui.directory.truncation_symbol`
-- `full` shows the entire absolute path
+- `full` shows the whole path with your home directory shown as `~` (for example `~/work/project`)
 
 `ui.directory.max_length` is applied after that rendering step. For example, a `full` path can still be shortened with an ellipsis if it exceeds the configured maximum. At `max_length` values of `1`–`3` there isn't room for both the 3-character `"..."` ellipsis and any real path content, so the ellipsis is dropped and the raw last `max_length` characters are shown instead — the cap is always honored exactly.
 
