@@ -603,26 +603,55 @@ EOF
         ;;
 
     bash)
-        # Try .bashrc first, fall back to .bash_profile
-        if [ -f "$HOME/.bashrc" ]; then
-            BASH_RC="$HOME/.bashrc"
-        else
-            BASH_RC="$HOME/.bash_profile"
-        fi
-        touch "$BASH_RC"
+        # Always write the GPY block to ~/.bashrc (interactive non-login
+        # shells read only that), creating it if missing. A file this
+        # installer creates is tagged `gpy-created-file` in its block so the
+        # uninstaller can delete it again (#747).
+        BASH_RC="$HOME/.bashrc"
+        BASH_RC_NOTE=""
+        [ -e "$BASH_RC" ] || BASH_RC_NOTE=" (gpy-created-file)"
 
         SOURCE_LINE="source \"$SHELL_CONFIG_DIR/gpy.bash\""
         if ! grep -qF "# >>> gpy-init >>>" "$BASH_RC" 2>/dev/null; then
             cat >> "$BASH_RC" << EOF
 
 # >>> gpy-init >>>
-# GPY Prompt Enhancement
+# GPY Prompt Enhancement$BASH_RC_NOTE
 $SOURCE_LINE
 # <<< gpy-init <<<
 EOF
             success "Added GPY initialization to $BASH_RC"
         else
             success "GPY already configured in $BASH_RC"
+        fi
+
+        # Login shells read only the first of ~/.bash_profile, ~/.bash_login,
+        # ~/.profile. Make that one reach ~/.bashrc without changing which
+        # file bash picks: append a loader block only when it does not
+        # already mention .bashrc; with no login file at all create
+        # ~/.profile (not ~/.bash_profile, which would shadow a later one).
+        BASH_LOGIN=""
+        for f in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+            if [ -e "$f" ]; then
+                BASH_LOGIN="$f"
+                break
+            fi
+        done
+        BASH_LOGIN_NOTE=""
+        if [ -z "$BASH_LOGIN" ]; then
+            BASH_LOGIN="$HOME/.profile"
+            BASH_LOGIN_NOTE=" (gpy-created-file)"
+        fi
+        if ! grep -qF "# >>> gpy-init >>>" "$BASH_LOGIN" 2>/dev/null \
+            && ! grep -q '\.bashrc' "$BASH_LOGIN" 2>/dev/null; then
+            cat >> "$BASH_LOGIN" << EOF
+
+# >>> gpy-init >>>
+# GPY: load ~/.bashrc in login shells$BASH_LOGIN_NOTE
+[ -f "\$HOME/.bashrc" ] && . "\$HOME/.bashrc"
+# <<< gpy-init <<<
+EOF
+            success "Added ~/.bashrc loader to $BASH_LOGIN"
         fi
 
         # Warn about Bash version if on macOS. Probe the `bash` binary

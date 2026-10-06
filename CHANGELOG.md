@@ -468,6 +468,10 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   a config directory containing a space no longer breaks every shell start.
   A directory containing `"`, `$`, a backtick or a backslash is refused before
   anything is written.
+- The oneline Bash install no longer creates `~/.bash_profile` (which shadowed
+  `~/.profile`) when `~/.bashrc` is absent (#747). gpy loads from `~/.bashrc`
+  in login and non-login shells, and uninstall removes startup files the
+  installer created.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

@@ -12,6 +12,13 @@ function __gpy_clean_rc_file --argument-names rc_file
         return 0
     end
 
+    # The installer tags a block in a file it created (#747); remember that
+    # before the block is removed.
+    set -l created_by_gpy 0
+    if grep -qF -- "(gpy-created-file)" "$rc_file"
+        set created_by_gpy 1
+    end
+
     set -l tmp_root /tmp
     set -q TMPDIR; and test -n "$TMPDIR"; and set tmp_root $TMPDIR
     set -l tmp (mktemp "$tmp_root/gpy-uninstall.XXXXXX"); or return 1
@@ -104,6 +111,10 @@ function __gpy_clean_rc_file --argument-names rc_file
             cat "$tmp" >"$rc_file"
         end
         echo "✅ Removed GPY block from $rc_file"
+        if test $created_by_gpy = 1; and not grep -q '[^[:space:]]' "$rc_file"
+            rm -f "$rc_file"
+            echo "✅ Removed $rc_file (created by GPY, now empty)"
+        end
     end
     rm -f "$tmp" "$diag"
 end
@@ -170,7 +181,7 @@ function uninstall_custom_prompt
     echo "  - Runtime: $runtime_root"
     echo "  - fish_prompt.fish (will restore previous backup if destination becomes absent)"
     echo "  - GPY init blocks from startup files (if present):"
-    echo "    - $HOME/.bashrc, $HOME/.bash_profile, $HOME/.zshrc, $config_file"
+    echo "    - $HOME/.bashrc, $HOME/.bash_profile, $HOME/.bash_login, $HOME/.profile, $HOME/.zshrc, $config_file"
     echo ""
     echo "⚠️  This will also stop any running agent and supervisor processes"
     read -P "Press Enter to continue or Ctrl-C to cancel"
@@ -241,8 +252,8 @@ function uninstall_custom_prompt
     end
 
     # Remove GPY init blocks from all supported startup files (#671):
-    # $HOME/.bashrc, $HOME/.bash_profile, $HOME/.zshrc, and $config_file
-    set -l rc_files "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.zshrc" "$config_file"
+    # $HOME/.bashrc, $HOME/.bash_profile, $HOME/.bash_login, $HOME/.profile, $HOME/.zshrc, and $config_file
+    set -l rc_files "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile" "$HOME/.zshrc" "$config_file"
     for rc_file in $rc_files
         __gpy_clean_rc_file "$rc_file"
     end

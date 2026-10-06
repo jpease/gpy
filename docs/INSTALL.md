@@ -103,7 +103,7 @@ The installer automatically:
 4. **Configures your shell** by adding source lines to:
    - Fish: `~/.config/fish/config.fish`
    - Zsh: `~/.zshrc`
-   - Bash: `~/.bashrc` (or `~/.bash_profile`)
+   - Bash: `~/.bashrc` (created if missing). If your login file (the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile`) does not already load `~/.bashrc`, a small loader block is added to it; if none exists, `~/.profile` is created
 5. **Starts the agent** (if not already running)
 
 ### Requirements
@@ -161,7 +161,7 @@ source ~/.config/fish/config.fish
 source ~/.zshrc
 
 # Bash
-source ~/.bashrc  # or ~/.bash_profile
+source ~/.bashrc
 ```
 
 ### Icons and Nerd Fonts
@@ -500,9 +500,9 @@ Uninstallation is **global for the current user's install**: either script stops
 the agent and supervisor processes, removes the binaries and their upgrade backups
 from `~/.local/bin`, removes all shell integration files and completions (Fish,
 Zsh, Bash), cleans the `gpy-init` block from all supported startup files
-(`~/.bashrc`, `~/.bash_profile`, `~/.zshrc`, and `~/.config/fish/config.fish`), and
+(`~/.bashrc`, `~/.bash_profile`, `~/.bash_login`, `~/.profile`, `~/.zshrc`, and `~/.config/fish/config.fish`), and
 removes the config, cache, and runtime directories. It asks for confirmation first,
-and startup files are restored byte-for-byte.
+and startup files are restored byte-for-byte (startup files the installer created are removed).
 
 ```bash
 # From a release archive or a clone of the repository
@@ -541,7 +541,7 @@ rm -rf ~/.config/fish/gpy ~/.config/fish/conf.d/gpy_init.fish ~/.config/fish/com
 rm -rf ~/.config/gpy                                           # config, plus Zsh/Bash integrations and completions
 rm -rf ~/.cache/gpy "${XDG_RUNTIME_DIR:-~/.cache}/gpy"          # cache; socket, agent.version, shells/
 # Remove the "# >>> gpy-init >>>" ... "# <<< gpy-init <<<" block from
-# ~/.config/fish/config.fish, ~/.zshrc, ~/.bashrc, and ~/.bash_profile
+# ~/.config/fish/config.fish, ~/.zshrc, ~/.bashrc, ~/.bash_profile, ~/.bash_login, and ~/.profile
 # Fish prompt: if a GPY symlink, remove it and restore the newest backup if desired
 rm -f ~/.config/fish/functions/fish_prompt.fish
 # Restore newest backup if present:

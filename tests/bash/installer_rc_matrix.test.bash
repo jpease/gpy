@@ -136,6 +136,16 @@ layout_dollar() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/d\$ollar/config"; }
 layout_backtick() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/b\`tick/config"; }
 layout_backslash() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/b\\slash/config"; }
 
+# #747: bash startup-file shapes. SEED_BASH picks what seed_user_files makes
+# (default `chain`: ~/.bashrc plus a ~/.bash_profile that sources it).
+#   profile_only  no ~/.bashrc, ~/.profile exports FROM_PROFILE (Debian default
+#                 minus the skeleton .bashrc)
+#   none          no bash startup file at all
+#   nochain       ~/.bashrc and a ~/.bash_profile that does not source it
+layout_bash_profile_only() { layout_plain; SEED_BASH=profile_only; }
+layout_bash_none() { layout_plain; SEED_BASH=none; }
+layout_bash_nochain() { layout_plain; SEED_BASH=nochain; }
+
 # The rc files that exist before install: the shell's own rc, and for bash a
 # ~/.bash_profile that chains to ~/.bashrc (as macOS and most distros ship),
 # so a login bash reaches the same file a non-login one does.
@@ -147,10 +157,27 @@ seed_user_files() {
             ;;
         zsh) printf '# user rc before gpy\n' >"$HOME/.zshrc" ;;
         bash)
-            printf '# user rc before gpy\n' >"$HOME/.bashrc"
-            printf '[ -f ~/.bashrc ] && . ~/.bashrc\n' >"$HOME/.bash_profile"
+            case "$SEED_BASH" in
+                profile_only) printf 'export FROM_PROFILE=yes\n' >"$HOME/.profile" ;;
+                none) ;;
+                nochain)
+                    printf '# user rc before gpy\n' >"$HOME/.bashrc"
+                    printf 'export FROM_PROFILE=yes\n' >"$HOME/.bash_profile"
+                    ;;
+                *)
+                    printf '# user rc before gpy\n' >"$HOME/.bashrc"
+                    printf '[ -f ~/.bashrc ] && . ~/.bashrc\n' >"$HOME/.bash_profile"
+                    ;;
+            esac
             ;;
     esac
+}
+
+# #747: the login startup file bash reads must keep running after install.
+check_profile_survives() {
+    [ "$SEED_BASH" = profile_only ] || [ "$SEED_BASH" = nochain ] || return 0
+    got="$(bash -l -c 'echo "${FROM_PROFILE:-unset}"' </dev/null 2>/dev/null)"
+    if [ "$got" = yes ]; then pass "$1: login startup file still runs"; else fail "$1: login startup file shadowed (FROM_PROFILE=$got)"; fi
 }
 
 # One line per candidate rc file: its checksum, or `absent`.
@@ -205,6 +232,7 @@ row() {
     echo "=== $name ==="
     shell_e2e_init "$ROOT"
     SB="$SHELL_E2E_ROOT"
+    SEED_BASH=chain
     "layout_$layout"
     export HOME XDG_CONFIG_HOME
     export XDG_CACHE_HOME="$SB/cache"
@@ -245,6 +273,7 @@ row() {
         for mode in nonlogin login; do
             check_start "$name [$mode]" "$shell" "$mode"
         done
+        check_profile_survives "$name"
         agent_stop
         if [ "$installer" = install.sh ]; then
             printf '\n' | fish "$ROOT/scripts/uninstall.fish" >"$SB/uninstall.log" 2>&1
@@ -275,6 +304,11 @@ row oneline fish space ok
 row oneline zsh space ok
 row oneline bash space ok
 row install.sh fish space ok
+
+# #747: bash without a ~/.bashrc must not shadow ~/.profile or skip non-login shells
+row oneline bash bash_profile_only ok
+row oneline bash bash_none ok
+row oneline bash bash_nochain ok
 
 # #746: characters double quotes cannot protect are refused up front
 row oneline fish quote refuse
