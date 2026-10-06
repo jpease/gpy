@@ -56,6 +56,10 @@ while read -d \t -la cols
     set -l real_input (unescape_input "$input_col" | string collect)
     set -l actual (__gpy_path_to_cache_key "$real_input")
     check "vector $vector_count ($input_col)" "$expected_col" "$actual"
+    # #771: the relative cache-file path the reader builds from the key.
+    test (count $cols) -ge 3; or set cols[3] ''
+    set -l stem (__gpy_chunk_cache_key "$actual")
+    check "vector $vector_count stem" "$cols[3].git.none.ansi" "$stem.git.none.ansi"
 end <"$fixture"
 
 if test $vector_count -eq 0

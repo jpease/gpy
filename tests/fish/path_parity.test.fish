@@ -461,6 +461,19 @@ git -C $odd_repo config core.hooksPath /dev/null
 echo hello >$odd_repo/tracked.txt
 git -C $odd_repo add tracked.txt
 git -C $odd_repo commit -qm init
+# #771: a repo under a ~300-byte path has a key too long for one filename; the agent
+# stores it chunked and the reader must find it.
+set -l long_repo $e2e_root/long/(string repeat -n 80 a)/(string repeat -n 80 b)/(string repeat -n 80 c)
+mkdir -p $long_repo
+git -C $long_repo init -q -b main
+git -C $long_repo config user.email test@example.com
+git -C $long_repo config user.name Test
+git -C $long_repo config core.fsmonitor false
+git -C $long_repo config commit.gpgsign false
+git -C $long_repo config core.hooksPath /dev/null
+echo hello >$long_repo/tracked.txt
+git -C $long_repo add tracked.txt
+git -C $long_repo commit -qm init
 set -l agent_dir (path dirname $GPY_PP_BIN)
 set -l e2e_out (env -i PATH=(string join : $agent_dir $PATH) HOME=$e2e_root/home XDG_CONFIG_HOME=$e2e_root/config \
     XDG_CACHE_HOME=$e2e_root/cache XDG_RUNTIME_DIR=$e2e_root/run GPY_AGENT_SOCKET_PATH=$e2e_root/gpy.sock \
@@ -488,6 +501,17 @@ set -l e2e_out (env -i PATH=(string join : $agent_dir $PATH) HOME=$e2e_root/home
         end
         sleep 0.1
     end
+    __gpy_request git $argv[3] true "" true >/dev/null
+    set -l long_found 0
+    for i in (seq 1 50)
+        __gpy_read_instant_cache git $argv[3] >/dev/null
+        if test $status -ne 1
+            set long_found 1
+            break
+        end
+        sleep 0.1
+    end
+    echo "long $long_found"
     gpy-agent stop >/dev/null 2>&1
     if test $found -eq 1
         echo "ok $key"
@@ -495,11 +519,16 @@ set -l e2e_out (env -i PATH=(string join : $agent_dir $PATH) HOME=$e2e_root/home
         echo "no cache file for key $key; agent wrote: "(string join , (ls $XDG_CACHE_HOME/gpy/instant-prompts 2>/dev/null | head -n 5) | string collect)
         exit 1
     end
-' -- $GPY_PP_ROOT $odd_repo)
+' -- $GPY_PP_ROOT $odd_repo $long_repo)
 if string match -q 'ok *' -- "$e2e_out[-1]"
     echo "✅ the agent's cache file name matches fish's key for a repo with ? and | in its path"
 else
     __pp_fail "cache key mismatch for a repo with ? and | in its path: $e2e_out"
+end
+if contains -- "long 1" $e2e_out
+    echo "✅ fish reads the agent's cache for a "(string length -- $long_repo)"-byte repo path"
+else
+    __pp_fail "no instant cache readable for the "(string length -- $long_repo)"-byte repo path $long_repo: $e2e_out"
 end
 rm -rf $e2e_root
 

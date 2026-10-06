@@ -114,6 +114,29 @@ if shell_e2e_poll 5 odd_written; then
 else
     fail "no cache file named from zsh's key '$odd_key'; agent wrote: $(ls "$XDG_CACHE_HOME/gpy/instant-prompts" 2>/dev/null | head -n 5)"
 fi
+# #771: a repo under a ~300-byte path has a key too long for one filename;
+# the agent stores it chunked and the reader must find it.
+long_repo="$SHELL_E2E_ROOT/long/${(l:80::a:)}/${(l:80::b:)}/${(l:80::c:)}"
+mkdir -p "$long_repo"
+git -C "$long_repo" init -q -b main
+git -C "$long_repo" config user.email test@example.com
+git -C "$long_repo" config user.name Test
+git -C "$long_repo" config core.fsmonitor false
+git -C "$long_repo" config commit.gpgsign false
+git -C "$long_repo" config core.hooksPath /dev/null
+echo hello >"$long_repo/tracked.txt"
+git -C "$long_repo" add tracked.txt
+git -C "$long_repo" commit -qm init
+__gpy_request git "$long_repo" ansi true "" true >/dev/null
+long_cached() {
+    __gpy_read_instant_cache git "$long_repo" >/dev/null
+    [ "$?" -ne 1 ]
+}
+if shell_e2e_poll 5 long_cached; then
+    pass "zsh reads the agent's cache for a ${#long_repo}-byte repo path"
+else
+    fail "no instant cache readable for the ${#long_repo}-byte repo path $long_repo"
+fi
 # The encoder's escape rules, exercised on characters the repo path lacks.
 odd="$tmp/under_score dir:with colons"
 case "$(__gpy_path_to_cache_key "$odd")" in

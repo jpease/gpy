@@ -61,7 +61,7 @@ use crate::ipc::Response;
 use crate::template::{Color, Palette, parse_color};
 use crate::theme::ThemeConfig;
 use crate::{Error, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError, RwLock};
@@ -179,6 +179,11 @@ pub struct InstantPromptCache {
     /// defeating the instant live-update path (#145/#160). Keyed by cache key; the
     /// `Vec` preserves insertion order so eviction drops the oldest context.
     seen_contexts: RwLock<SeenContexts>,
+    /// Cache keys whose final filename cannot fit `NAME_MAX` even after
+    /// chunking (a flat non-ASCII key of at most [`FLAT_CACHE_KEY_MAX_CHARS`]
+    /// characters but over ~230 bytes). Their writes are skipped, and this set
+    /// keeps that to one `debug_log!` per root (#771).
+    unwritable_keys: Mutex<HashSet<String>>,
     /// Test-only count of [`Self::write_cache_file`] invocations, incremented
     /// regardless of whether the write actually changed content on disk. Lets
     /// tests assert exactly how many low-level writes one request triggers
@@ -208,6 +213,7 @@ impl InstantPromptCache {
             cache_dir,
             last_written: Mutex::new(HashMap::new()),
             seen_contexts: RwLock::new(HashMap::new()),
+            unwritable_keys: Mutex::new(HashSet::new()),
             #[cfg(test)]
             write_calls: AtomicU64::new(0),
         })
@@ -266,6 +272,7 @@ impl InstantPromptCache {
             cache_dir,
             last_written: Mutex::new(HashMap::new()),
             seen_contexts: RwLock::new(HashMap::new()),
+            unwritable_keys: Mutex::new(HashSet::new()),
             #[cfg(test)]
             write_calls: AtomicU64::new(0),
         })
@@ -511,48 +518,12 @@ impl InstantPromptCache {
     /// Best-effort, like [`prune_stale_entries`]: an unreadable directory or
     /// an entry that cannot be removed (including `NotFound` from another
     /// agent clearing the same directory concurrently, #815) is logged and
-    /// skipped, never fatal to agent startup (#773).
+    /// skipped, never fatal to agent startup (#773). Chunked entries (#771)
+    /// are cleared too, and chunk directories left empty are removed.
     pub fn clear_language_files(&self) {
         let bases = SEGMENT_POSITIONS.map(|pos| variant_suffix("lang", pos.is_last, pos.is_first));
 
-        match std::fs::read_dir(&self.cache_dir) {
-            Ok(entries) => {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    let Some(file_name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
-                        continue;
-                    };
-
-                    // Cache files are named `{key}.{base}.{token}.{ext}`. Neither
-                    // the base, the token nor the dialect extension contains a
-                    // dot, so stripping the extension, then the trailing
-                    // `.{token}`, then the trailing `.{base}` isolates the base
-                    // for an exact match (the key may itself contain dots).
-                    if let Some((stem, ext)) = file_name.rsplit_once('.')
-                        && PromptDialect::ALL
-                            .iter()
-                            .any(|dialect| dialect.cache_ext() == ext)
-                        && let Some((without_token, _token)) = stem.rsplit_once('.')
-                        && let Some((_key, base)) = without_token.rsplit_once('.')
-                        && bases.iter().any(|lang_base| lang_base == base)
-                        && let Err(e) = std::fs::remove_file(&path)
-                    {
-                        debug_log!(
-                            "cache",
-                            "Could not remove language cache {}: {e}",
-                            path.display()
-                        );
-                    }
-                }
-            }
-            Err(e) => {
-                debug_log!(
-                    "cache",
-                    "Could not scan {} to clear language caches: {e}",
-                    self.cache_dir.display()
-                );
-            }
-        }
+        clear_language_files_in(&self.cache_dir, &bases);
 
         // Poison policy (#591, see `last_written`'s doc comment): recover
         // rather than silently skip.
@@ -594,7 +565,12 @@ impl InstantPromptCache {
 
         let ext = dialect.cache_ext();
         let map_key = format!("{key}:{suffix}.{ext}");
-        let cache_file = self.cache_file_path(key, suffix, dialect);
+        let (dir, file_name) = cache_file_parts(&self.cache_dir, key, &format!("{suffix}.{ext}"));
+        if file_name.len() > NAME_MAX_BYTES {
+            self.note_unwritable_key(key);
+            return Ok(false);
+        }
+        let cache_file = dir.join(&file_name);
 
         // Poison policy (#591, see `last_written`'s doc comment): recover via
         // `into_inner` rather than silently skip the dedup check on a
@@ -621,15 +597,16 @@ impl InstantPromptCache {
             }
         }
 
-        let file_name = format!("{key}.{suffix}.{ext}");
-        // The directory is created at construction only; if something removed
-        // it since (cache cleaner, `rm -rf ~/.cache/gpy`), recreate it and retry
-        // exactly once, inside the same guard so the record is never ahead of
-        // disk (#707). Not done up front: it would cost a `stat` per write.
-        match write_atomic(&self.cache_dir, &file_name, content) {
+        // The directory is created at construction only, and a chunk
+        // directory (#771) on first write; if something removed it since
+        // (cache cleaner, `rm -rf ~/.cache/gpy`, the sweep), recreate it and
+        // retry exactly once, inside the same guard so the record is never
+        // ahead of disk (#707). Not done up front: it would cost a `stat` per
+        // write.
+        match write_atomic(&dir, &file_name, content) {
             Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::create_dir_all(&self.cache_dir)?;
-                write_atomic(&self.cache_dir, &file_name, content)?;
+                std::fs::create_dir_all(&dir)?;
+                write_atomic(&dir, &file_name, content)?;
             }
             result => result?,
         }
@@ -653,10 +630,28 @@ impl InstantPromptCache {
         Ok(true)
     }
 
+    /// Log, once per root, that `key`'s cache files cannot be named within
+    /// `NAME_MAX` and are therefore skipped (#771).
+    fn note_unwritable_key(&self, key: &str) {
+        let mut seen = self
+            .unwritable_keys
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if seen.len() < INSTANT_PROMPT_LAST_WRITTEN_CAPACITY && seen.insert(key.to_owned()) {
+            debug_log!(
+                "cache",
+                "Skipping instant cache for {key}: its filename exceeds {NAME_MAX_BYTES} bytes"
+            );
+        }
+    }
+
     /// Get the cache file path for a given cache key, suffix and dialect
+    /// (tests; the writer needs the directory and name separately).
+    #[cfg(test)]
     fn cache_file_path(&self, key: &str, suffix: &str, dialect: PromptDialect) -> PathBuf {
         let ext = dialect.cache_ext();
-        self.cache_dir.join(format!("{key}.{suffix}.{ext}"))
+        let (dir, file_name) = cache_file_parts(&self.cache_dir, key, &format!("{suffix}.{ext}"));
+        dir.join(file_name)
     }
 
     /// Get the cache file path that a shell should read for a given directory
@@ -677,7 +672,9 @@ impl InstantPromptCache {
         let key = path_to_cache_key(dir);
         let token = prev_bg_token(prev_bg);
         let ext = dialect.cache_ext();
-        Ok(cache_dir.join(format!("{key}.{suffix}.{token}.{ext}")))
+        let (parent, file_name) =
+            cache_file_parts(&cache_dir, &key, &format!("{suffix}.{token}.{ext}"));
+        Ok(parent.join(file_name))
     }
 }
 
@@ -882,20 +879,37 @@ const ORPHAN_TMP_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 /// Returns `(entries_removed, orphans_removed)`. Errors reading the directory
 /// or any individual entry are swallowed: this is opportunistic tidying on the
 /// startup path, and a permission problem on one file must not abort the sweep
-/// or fail agent startup.
+/// or fail agent startup. Chunk directories (#771) are swept recursively and
+/// removed once empty.
 ///
 /// `now` is injected rather than read here so tests can age files deterministically
 /// without sleeping.
 fn prune_stale_entries(dir: &Path, now: SystemTime) -> (u64, u64) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return (0, 0);
-    };
-
     let mut removed_entries = 0_u64;
     let mut removed_orphans = 0_u64;
+    prune_stale_entries_in(dir, now, &mut removed_entries, &mut removed_orphans);
+    (removed_entries, removed_orphans)
+}
+
+/// One directory level of [`prune_stale_entries`].
+fn prune_stale_entries_in(
+    dir: &Path,
+    now: SystemTime,
+    removed_entries: &mut u64,
+    removed_orphans: &mut u64,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
 
     for entry in entries.flatten() {
         let path = entry.path();
+        if is_chunk_dir(&entry) {
+            prune_stale_entries_in(&path, now, removed_entries, removed_orphans);
+            // Fails, harmlessly, unless the sweep emptied it.
+            let _ = std::fs::remove_dir(&path);
+            continue;
+        }
         if !path.is_file() {
             continue;
         }
@@ -914,17 +928,79 @@ fn prune_stale_entries(dir: &Path, now: SystemTime) -> (u64, u64) {
             .is_some_and(|n| n.starts_with(".tmp-"));
 
         let (limit, counter) = if is_orphan_tmp {
-            (ORPHAN_TMP_MAX_AGE, &mut removed_orphans)
+            (ORPHAN_TMP_MAX_AGE, &mut *removed_orphans)
         } else {
-            (CACHE_ENTRY_MAX_AGE, &mut removed_entries)
+            (CACHE_ENTRY_MAX_AGE, &mut *removed_entries)
         };
 
         if age > limit && std::fs::remove_file(&path).is_ok() {
             *counter = counter.saturating_add(1);
         }
     }
+}
 
-    (removed_entries, removed_orphans)
+/// Whether `entry` is a chunk directory of a long cache key (#771).
+///
+/// Every chunk but the last is exactly [`CACHE_KEY_CHUNK_CHARS`] characters
+/// and becomes a directory; nothing else in the cache directory is a
+/// directory of that name length. Symlinks are never followed.
+fn is_chunk_dir(entry: &std::fs::DirEntry) -> bool {
+    entry.file_type().is_ok_and(|t| t.is_dir())
+        && entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.chars().count() == CACHE_KEY_CHUNK_CHARS)
+}
+
+/// Remove language cache files from `dir` and its chunk directories (#771),
+/// removing chunk directories left empty. See
+/// [`InstantPromptCache::clear_language_files`].
+fn clear_language_files_in(dir: &Path, bases: &[String]) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            debug_log!(
+                "cache",
+                "Could not scan {} to clear language caches: {e}",
+                dir.display()
+            );
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if is_chunk_dir(&entry) {
+            clear_language_files_in(&path, bases);
+            // Fails, harmlessly, unless it is now empty.
+            let _ = std::fs::remove_dir(&path);
+            continue;
+        }
+        let Some(file_name) = path.file_name().and_then(std::ffi::OsStr::to_str) else {
+            continue;
+        };
+
+        // Cache files are named `{key}.{base}.{token}.{ext}` (for a chunked
+        // key, `{last chunk}.{base}.{token}.{ext}`). Neither the base, the
+        // token nor the dialect extension contains a dot, so stripping the
+        // extension, then the trailing `.{token}`, then the trailing `.{base}`
+        // isolates the base for an exact match (the key may itself contain
+        // dots).
+        if let Some((stem, ext)) = file_name.rsplit_once('.')
+            && PromptDialect::ALL
+                .iter()
+                .any(|dialect| dialect.cache_ext() == ext)
+            && let Some((without_token, _token)) = stem.rsplit_once('.')
+            && let Some((_key, base)) = without_token.rsplit_once('.')
+            && bases.iter().any(|lang_base| lang_base == base)
+            && let Err(e) = std::fs::remove_file(&path)
+        {
+            debug_log!(
+                "cache",
+                "Could not remove language cache {}: {e}",
+                path.display()
+            );
+        }
+    }
 }
 
 /// Filesystem-safe token identifying the previous-segment background a cache
@@ -987,14 +1063,18 @@ const WINDOWS_CACHE_KEY_MAX_LEN: usize = 200;
 /// | ` `   | `_w`  |
 ///
 /// The order of replacements matters: `_` MUST be escaped first so the tokens
-/// introduced for the separators are not re-escaped. The Fish implementation in
-/// `fish/core/ipc.fish` (`__gpy_path_to_cache_key`) MUST stay byte-for-byte
+/// introduced for the separators are not re-escaped. The Fish/Bash/Zsh
+/// implementations (`__gpy_path_to_cache_key`) MUST stay byte-for-byte
 /// identical so both sides resolve the same cache file without a subprocess --
-/// on native Windows, though, no Fish process ever runs in this issue's
+/// on native Windows, though, no shell integration ever runs in this issue's
 /// scoping (#478: Rust-only, no shell integration on native Windows), so that
 /// contract binds only the [`crate::paths::Os::Unix`] arm this function
 /// dispatches to; see [`path_to_cache_key_for`] for the Windows-specific
 /// hardening on top of the same escape scheme.
+///
+/// The key is not yet the on-disk name: [`cache_key_path`] splits a key longer
+/// than [`FLAT_CACHE_KEY_MAX_CHARS`] into `/`-joined chunks (#771), and the
+/// shells mirror that too (`__gpy_chunk_cache_key`).
 ///
 /// Example: `/Users/foo/project` -> `_sUsers_sfoo_sproject`
 fn path_to_cache_key(path: &Path) -> String {
@@ -1003,6 +1083,75 @@ fn path_to_cache_key(path: &Path) -> String {
     #[cfg(not(windows))]
     let os = crate::paths::Os::Unix;
     path_to_cache_key_for(&path.to_string_lossy(), os)
+}
+
+/// Longest Unix cache key, in characters, stored as one flat filename (#771).
+///
+/// Keys up to this length keep their pre-#771 flat name byte-for-byte, so
+/// existing caches stay warm. Longer keys are split into
+/// [`CACHE_KEY_CHUNK_CHARS`]-character chunks: the flat form plus the longest
+/// `.{suffix}.{token}.{ext}` tail (~30 bytes) would exceed `NAME_MAX`.
+const FLAT_CACHE_KEY_MAX_CHARS: usize = 200;
+
+/// Characters per chunk of a long cache key (#771): at most 200 bytes even at
+/// 4 bytes per character, leaving room for the tail on the last chunk.
+const CACHE_KEY_CHUNK_CHARS: usize = 50;
+
+/// Longest filename component Linux and macOS accept, in bytes.
+const NAME_MAX_BYTES: usize = 255;
+
+/// Relative on-disk stem for a cache key on this platform; see
+/// [`cache_key_path_for`].
+fn cache_key_path(key: &str) -> std::borrow::Cow<'_, str> {
+    #[cfg(windows)]
+    let os = crate::paths::Os::Windows;
+    #[cfg(not(windows))]
+    let os = crate::paths::Os::Unix;
+    cache_key_path_for(key, os)
+}
+
+/// Relative on-disk stem for a cache key (#771).
+///
+/// | Key length (characters)          | Stem                                |
+/// |----------------------------------|-------------------------------------|
+/// | at most [`FLAT_CACHE_KEY_MAX_CHARS`] | the key, byte-for-byte          |
+/// | longer                           | 50-character chunks joined by `/`   |
+///
+/// A cache file is `{stem}.{suffix}.{token}.{ext}`, so every chunk but the
+/// last is a directory. Chunking an injective key keeps the mapping
+/// injective, and flat keys never contain `/`, so the two forms cannot
+/// collide. Chunks count characters (`chars()`), as Fish does; Bash and Zsh
+/// match under a UTF-8 locale (under `LC_ALL=C` they count bytes, so a long
+/// non-ASCII key resolves elsewhere and the shell just misses the cache).
+/// The shells (`__gpy_chunk_cache_key`) MUST stay in lockstep with this, as
+/// pinned by `tests/fixtures/cache_key_vectors.tsv`.
+///
+/// The `Os::Windows` arm returns the key unchanged: its key is already capped
+/// by [`windows_harden_cache_key`] and no shell reads it (#478).
+fn cache_key_path_for(key: &str, os: crate::paths::Os) -> std::borrow::Cow<'_, str> {
+    if matches!(os, crate::paths::Os::Windows) || key.chars().count() <= FLAT_CACHE_KEY_MAX_CHARS {
+        return std::borrow::Cow::Borrowed(key);
+    }
+    // Byte length bounds the char count, so this bounds the separators too.
+    let separators = key.len().div_ceil(CACHE_KEY_CHUNK_CHARS);
+    let mut stem = String::with_capacity(key.len().saturating_add(separators));
+    for (i, c) in key.chars().enumerate() {
+        if i > 0 && i.is_multiple_of(CACHE_KEY_CHUNK_CHARS) {
+            stem.push('/');
+        }
+        stem.push(c);
+    }
+    std::borrow::Cow::Owned(stem)
+}
+
+/// Directory and filename of the cache file `{stem}.{tail}` under
+/// `cache_dir`, where `stem` is [`cache_key_path`] of `key` (#771).
+fn cache_file_parts(cache_dir: &Path, key: &str, tail: &str) -> (PathBuf, String) {
+    let stem = cache_key_path(key);
+    match stem.rsplit_once('/') {
+        Some((chunk_dirs, last)) => (cache_dir.join(chunk_dirs), format!("{last}.{tail}")),
+        None => (cache_dir.to_path_buf(), format!("{stem}.{tail}")),
+    }
 }
 
 /// Pure core of [`path_to_cache_key`], parameterized by an explicit [`Os`].
@@ -1422,8 +1571,47 @@ mod tests {
         /// Remove the whole cache directory, as `rm -rf ~/.cache/gpy` would (#707).
         DeleteDir,
         /// Write all four git variants for a `key_len`-byte key, so the longest
-        /// final name is `key_len + 25` bytes (#708).
+        /// final name is `key_len + 25` bytes (#708); above 200 the key is
+        /// stored chunked (#771).
         WriteVariants(usize, &'static str),
+        /// Age every file past `CACHE_ENTRY_MAX_AGE` and run the startup
+        /// sweep, which must empty the directory, chunk dirs included (#771).
+        Sweep,
+    }
+
+    /// Independent model of the on-disk name of `(key, suffix)` (#771):
+    /// flat up to 200 characters, else 50-character chunks joined by `/`.
+    fn expected_name(key: &str, suffix: &str) -> String {
+        let chars: Vec<char> = key.chars().collect();
+        let stem = if chars.len() <= 200 {
+            key.to_owned()
+        } else {
+            chars
+                .chunks(50)
+                .map(|chunk| chunk.iter().collect::<String>())
+                .collect::<Vec<_>>()
+                .join("/")
+        };
+        format!("{stem}.{suffix}.ansi")
+    }
+
+    /// Every file under `dir` as `relative/path -> content`; panics on an
+    /// empty subdirectory, which the writer, sweep and clear must never leave.
+    fn collect_files(dir: &Path, prefix: &str, out: &mut HashMap<String, String>) {
+        for dir_entry in std::fs::read_dir(dir).expect("read dir") {
+            let entry = dir_entry.expect("dir entry");
+            let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
+            if entry.file_type().expect("file type").is_dir() {
+                let before = out.len();
+                collect_files(&entry.path(), &format!("{name}/"), out);
+                assert!(out.len() > before, "empty directory {name} left behind");
+            } else {
+                out.insert(
+                    name,
+                    std::fs::read_to_string(entry.path()).expect("read file"),
+                );
+            }
+        }
     }
 
     struct CacheHarness {
@@ -1458,15 +1646,30 @@ mod tests {
                 self.cache
                     .write_cache_file(&key, suffix, PromptDialect::Ansi, content)
                     .expect("every variant name that fits NAME_MAX must be writable");
-                let name = format!("{key}.{suffix}.ansi");
+                let name = expected_name(&key, suffix);
                 self.expected.insert(name.clone(), content.to_owned());
                 self.touched = Some(name);
             }
         }
 
+        fn sweep(&mut self) {
+            let when = SystemTime::now()
+                .checked_sub(CACHE_ENTRY_MAX_AGE)
+                .and_then(|t| t.checked_sub(Duration::from_secs(60)))
+                .expect("backdating within range");
+            for name in self.expected.keys() {
+                set_mtime(&self.cache.cache_dir.join(name), when);
+            }
+            let (removed, _) = prune_stale_entries(&self.cache.cache_dir, SystemTime::now());
+            assert_eq!(removed, u64::try_from(self.expected.len()).expect("count"));
+            self.expected.clear();
+            self.touched = None;
+        }
+
         fn apply(&mut self, op: &Op) {
             match *op {
                 Op::WriteVariants(key_len, content) => self.write_variants(key_len, content),
+                Op::Sweep => self.sweep(),
                 Op::DeleteDir => {
                     std::fs::remove_dir_all(&self.cache.cache_dir).expect("remove dir");
                     self.expected.clear();
@@ -1478,7 +1681,7 @@ mod tests {
                     self.cache
                         .write_cache_file(key, suffix, PromptDialect::Ansi, content)
                         .expect("write");
-                    let name = format!("{key}.{suffix}.ansi");
+                    let name = expected_name(key, suffix);
                     self.expected.insert(name.clone(), content.to_owned());
                     self.touched = Some(name);
                 }
@@ -1505,7 +1708,7 @@ mod tests {
                             });
                         }
                     });
-                    let name = format!("{key}.{suffix}.ansi");
+                    let name = expected_name(key, suffix);
                     let recorded = self
                         .cache
                         .last_written
@@ -1528,13 +1731,7 @@ mod tests {
 
         fn check(&self) {
             let mut actual = HashMap::new();
-            for dir_entry in std::fs::read_dir(&self.cache.cache_dir).expect("read dir") {
-                let entry = dir_entry.expect("dir entry");
-                actual.insert(
-                    entry.file_name().to_string_lossy().into_owned(),
-                    std::fs::read_to_string(entry.path()).expect("read file"),
-                );
-            }
+            collect_files(&self.cache.cache_dir, "", &mut actual);
             assert_eq!(
                 actual, self.expected,
                 "directory must equal a fresh render (no temp/orphan files)"
@@ -1562,6 +1759,25 @@ mod tests {
         h.apply(&Op::Age(60));
         h.apply(&Op::WriteVariants(225, "x"));
         h.apply(&Op::WriteVariants(225, "y"));
+    }
+
+    #[test]
+    fn instant_cache_writes_and_sweeps_a_chunked_300_byte_key() {
+        let mut h = CacheHarness::new();
+        // 300-byte key: flat it would be a 325-byte name; chunked it is
+        // 5 directories of 50 plus a 75-byte final name (#771).
+        h.apply(&Op::WriteVariants(300, "x"));
+        h.apply(&Op::Age(60));
+        h.apply(&Op::WriteVariants(300, "x"));
+        h.apply(&Op::WriteVariants(300, "y"));
+        h.apply(&Op::Write("repo", "git.none", "x"));
+        // The sweep removes chunked entries and their emptied directories.
+        h.apply(&Op::Sweep);
+        // Chunk directories are recreated inside the write's retry, both
+        // after the sweep and after the whole cache dir is deleted (#707).
+        h.apply(&Op::WriteVariants(300, "z"));
+        h.apply(&Op::DeleteDir);
+        h.apply(&Op::WriteVariants(300, "z"));
     }
 
     #[test]
@@ -1805,6 +2021,60 @@ mod tests {
         }
     }
 
+    /// Keys up to 200 characters keep their flat name; longer ones are split
+    /// into 50-character chunks, counted in characters (#771).
+    #[test]
+    fn test_cache_key_path_unix_characterization() {
+        let unix = crate::paths::Os::Unix;
+        let flat = "k".repeat(FLAT_CACHE_KEY_MAX_CHARS);
+        assert_eq!(cache_key_path_for(&flat, unix), flat.as_str());
+        let deep = path_to_cache_key_for(
+            "/a/very/deeply/nested/directory/structure/that/goes/on/and/on/and/on/and/on/and/on/for/quite/a/while/to/stress/the/escaping/logic/and/make/sure/nothing/changes/unexpectedly/when/this/function/gains/windows/hardening/as/part/of/issue/478s/implementation/work",
+            unix,
+        );
+        assert_eq!(
+            cache_key_path_for(&deep, unix),
+            "_sa_svery_sdeeply_snested_sdirectory_sstructure_st/hat_sgoes_son_sand_son_sand_son_sand_son_sand_son_/sfor_squite_sa_swhile_sto_sstress_sthe_sescaping_s/logic_sand_smake_ssure_snothing_schanges_sunexpect/edly_swhen_sthis_sfunction_sgains_swindows_sharden/ing_sas_spart_sof_sissue_s478s_simplementation_swo/rk"
+        );
+        // 201 two-byte characters: chunked by character, not byte.
+        let wide = "é".repeat(201);
+        let chunked = cache_key_path_for(&wide, unix);
+        let chunks: Vec<&str> = chunked.split('/').collect();
+        assert_eq!(chunks.len(), 5);
+        assert!(chunks.iter().take(4).all(|c| c.chars().count() == 50));
+        assert_eq!(chunks.last().copied(), Some("é"));
+        // The Windows key is already capped; it is never chunked.
+        let long = "k".repeat(FLAT_CACHE_KEY_MAX_CHARS + 18);
+        assert_eq!(
+            cache_key_path_for(&long, crate::paths::Os::Windows),
+            long.as_str()
+        );
+    }
+
+    /// A flat key that fits 200 characters but not `NAME_MAX` bytes is
+    /// skipped without an error (#771 residual).
+    #[test]
+    fn write_cache_file_skips_a_flat_key_over_name_max() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let cache = InstantPromptCache::new_in_dir(temp_dir.path().join("ip")).expect("cache");
+        let key = "\u{1F600}".repeat(64);
+        for _ in 0_u8..2_u8 {
+            assert!(
+                !cache
+                    .write_cache_file(&key, "git.none", PromptDialect::Ansi, "x")
+                    .expect("an unrepresentable name is skipped, not an error")
+            );
+        }
+        assert_eq!(
+            cache
+                .unwritable_keys
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .len(),
+            1
+        );
+    }
+
     /// The Windows arm escapes the reserved filename characters `? * < > " |`.
     #[test]
     fn test_path_to_cache_key_windows_escapes_reserved_chars() {
@@ -1869,16 +2139,38 @@ mod tests {
                 continue;
             }
             let mut cols = line.split('\t');
-            let (Some(raw_input), Some(expected)) = (cols.next(), cols.next()) else {
+            let (Some(raw_input), Some(expected), Some(stem)) =
+                (cols.next(), cols.next(), cols.next())
+            else {
                 panic!("malformed vector row: {line:?}");
             };
             let input = unescape(raw_input);
             let key = path_to_cache_key_for(&input, crate::paths::Os::Unix);
             assert_eq!(key, expected, "vector for {raw_input}");
             assert_eq!(decode(&key), input, "round-trip for {raw_input}");
+            assert_vector_stem(raw_input, &key, stem);
             count += 1;
         }
         assert!(count > 0, "no vectors read from {}", fixture.display());
+    }
+
+    /// #771: the shared vector's `stem` is the relative cache-file path the
+    /// writer builds for `key`.
+    fn assert_vector_stem(raw_input: &str, key: &str, stem: &str) {
+        assert_eq!(
+            cache_key_path_for(key, crate::paths::Os::Unix),
+            stem,
+            "stem for {raw_input}"
+        );
+        #[cfg(not(windows))]
+        {
+            let (dir, name) = cache_file_parts(Path::new("ip"), key, "git.none.ansi");
+            assert_eq!(
+                dir.join(name),
+                Path::new("ip").join(format!("{stem}.git.none.ansi")),
+                "cache file for {raw_input}"
+            );
+        }
     }
 
     /// Two differently-cased paths to the same Windows directory must collide to one cache key.
@@ -2210,6 +2502,43 @@ mod tests {
         assert!(blocker.is_dir(), "the unremovable entry is left in place");
     }
 
+    /// `clear_language_files` reaches chunked entries and removes the chunk
+    /// directories it empties, but keeps git caches and their dirs (#771).
+    #[test]
+    fn clear_language_files_clears_chunked_entries() {
+        let temp_dir = tempfile::TempDir::new().expect("temp cache dir");
+        let cache_dir = temp_dir.path().join("instant-prompts");
+        let cache = InstantPromptCache::new_in_dir(cache_dir.clone()).expect("cache");
+        let lang_only = "l".repeat(300);
+        let both = "b".repeat(300);
+        for (key, suffix) in [
+            (&lang_only, "lang_first_last.none"),
+            (&both, "lang.none"),
+            (&both, "git.none"),
+        ] {
+            cache
+                .write_cache_file(key, suffix, PromptDialect::Ansi, "x")
+                .expect("write");
+        }
+
+        cache.clear_language_files();
+
+        assert!(
+            !cache_dir.join("l".repeat(50)).exists(),
+            "emptied chunk directories are removed"
+        );
+        assert!(
+            !cache
+                .cache_file_path(&both, "lang.none", PromptDialect::Ansi)
+                .exists()
+        );
+        assert!(
+            cache
+                .cache_file_path(&both, "git.none", PromptDialect::Ansi)
+                .is_file()
+        );
+    }
+
     #[test]
     fn test_write_git_creates_both_is_last_variants() {
         use crate::git::RepositoryStatus;
@@ -2495,6 +2824,57 @@ mod tests {
                     .exists(),
                 "{suffix} must be written"
             );
+        }
+    }
+
+    /// A repo under three 80-character components has a ~300-byte key; every
+    /// variant must still be written, at the path both the writer and
+    /// `cache_file_for_dir` resolve (#771).
+    #[test]
+    fn write_git_caches_repo_with_very_long_path() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let cache = InstantPromptCache::new_in_dir(temp_dir.path().join("ip")).expect("cache");
+        let repo = temp_dir
+            .path()
+            .join("a".repeat(80))
+            .join("b".repeat(80))
+            .join("c".repeat(80));
+        std::fs::create_dir_all(repo.join(".git")).expect("git dir");
+        let canonical = std::fs::canonicalize(&repo).expect("canonicalize");
+        let key = path_to_cache_key(&canonical);
+        assert!(key.len() > 255, "the key alone must exceed NAME_MAX");
+        let config = Config::default();
+
+        let wrote = cache
+            .write_git(
+                &repo,
+                &clean_status("main"),
+                &config,
+                &ThemeConfig::default(),
+                None,
+                &crate::palette::active_palette(&config),
+            )
+            .expect("write git");
+
+        assert!(wrote);
+        for suffix in ["git", "git_last", "git_first", "git_first_last"] {
+            let written =
+                cache.cache_file_path(&key, &format!("{suffix}.none"), PromptDialect::Ansi);
+            assert!(written.is_file(), "{suffix} must be written");
+            // `cache_file_for_dir` resolves the same path under the
+            // environment's cache root.
+            if let Ok(shell_path) = InstantPromptCache::cache_file_for_dir(
+                &canonical,
+                suffix,
+                None,
+                PromptDialect::Ansi,
+            ) {
+                let root = get_instant_cache_dir().expect("cache dir");
+                assert_eq!(
+                    shell_path.strip_prefix(&root).expect("under root"),
+                    written.strip_prefix(&cache.cache_dir).expect("under root"),
+                );
+            }
         }
     }
 

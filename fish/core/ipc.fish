@@ -590,6 +590,20 @@ function __gpy_path_to_cache_key --argument-names path --description 'Convert pa
     string replace -a -- _ __ "$path" | string replace -a -- / _s | string replace -a -- '\\' _b | string replace -a -- ':' _c | string replace -a -- ' ' _w
 end
 
+# On-disk stem of a cache key (#771): unchanged up to 200 characters (existing
+# names stay byte-for-byte), else 50-character chunks joined by `/` so no
+# filename component exceeds NAME_MAX. MUST match `cache_key_path_for` in
+# gpy-agent/src/cache/instant_prompt.rs (pinned by
+# tests/fixtures/cache_key_vectors.tsv). Builtins only; fish counts
+# characters (code points), as the agent does.
+function __gpy_chunk_cache_key --argument-names key --description 'On-disk stem of a cache key'
+    if test (string length -- "$key") -le 200
+        printf '%s\n' "$key"
+        return
+    end
+    string match -ra -- '(?s).{1,50}' "$key" | string join /
+end
+
 # Filesystem-safe token identifying the previous-segment background a cache entry
 # was rendered with. Empty -> "none" (context-free). Every non-alphanumeric byte
 # becomes "_". MUST match `prev_bg_token` in
@@ -672,7 +686,7 @@ function __gpy_read_instant_cache --argument-names suffix cwd prev_bg --descript
     # cache/instant_prompt.rs) always populates all four is_last/is_first
     # variants, so this lookup resolves the correct opening-cap state directly
     # (#401) rather than rendering as if not-first and self-correcting later.
-    set -l cache_key (__gpy_path_to_cache_key $key_path)
+    set -l cache_key (__gpy_chunk_cache_key (__gpy_path_to_cache_key $key_path))
     set -l token (__gpy_prev_bg_token "$prev_bg")
     set -l cache_file "$cache_dir/$cache_key.$suffix.$token.ansi"
     # Track whether this read is about to fall back to the `.none` variant

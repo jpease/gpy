@@ -327,6 +327,23 @@ __gpy_path_to_cache_key() {
     echo "$key"
 }
 
+# Turn the cache key in the variable named by $1 into its on-disk stem, in
+# place (#771): unchanged up to 200 characters (existing names stay
+# byte-for-byte), else 50-character chunks joined by `/` so no filename
+# component exceeds NAME_MAX. MUST match `cache_key_path_for` in
+# gpy-agent/src/cache/instant_prompt.rs (pinned by
+# tests/fixtures/cache_key_vectors.tsv). Builtins only, no subshell. Lengths
+# count characters under a UTF-8 locale but bytes under LC_ALL=C, where a long
+# non-ASCII key resolves elsewhere and simply misses the cache.
+__gpy_chunk_cache_key() {
+    local __gpy_ck_key="${!1}" __gpy_ck_stem="" __gpy_ck_i
+    (( ${#__gpy_ck_key} > 200 )) || return 0
+    for (( __gpy_ck_i = 0; __gpy_ck_i < ${#__gpy_ck_key}; __gpy_ck_i += 50 )); do
+        __gpy_ck_stem+="${__gpy_ck_stem:+/}${__gpy_ck_key:__gpy_ck_i:50}"
+    done
+    printf -v "$1" '%s' "$__gpy_ck_stem"
+}
+
 # Filesystem-safe token identifying the previous-segment background a cache entry
 # was rendered with. Empty -> "none" (context-free). Every non-alphanumeric byte
 # becomes "_". MUST match `prev_bg_token` in
@@ -393,6 +410,7 @@ __gpy_read_instant_cache() {
     # a refresh that populates the correct token file and repaints via the doorbell.
     local cache_key token
     cache_key="$(__gpy_path_to_cache_key "$key_path")"
+    __gpy_chunk_cache_key cache_key
     token="$(__gpy_prev_bg_token "$prev_bg")"
     # `.bash`: the agent's bash-prompt dialect, escaped for PS1 (#677). The
     # `.ansi` files are fish's and must never reach PS1.
