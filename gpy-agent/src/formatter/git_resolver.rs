@@ -4,7 +4,7 @@
 //! #186 importer can drop Starship `format` strings in verbatim.
 
 use crate::config::{Config, GitIconSet};
-use crate::formatter::separator::{SeparatorStyle, resolve_separator};
+use crate::formatter::separator::{Glyphs, SeparatorStyle, resolve_separator};
 use crate::formatter::{SegmentPosition, truncate_branch};
 use crate::git::RepositoryStatus;
 use crate::template::VariableResolver;
@@ -237,6 +237,7 @@ impl VariableResolver for GitResolver<'_> {
         reason = "\"remote_branch\" is a known Starship name; arm kept explicit for the #186 importer"
     )]
     fn resolve(&self, name: &str) -> Option<String> {
+        let glyphs = Glyphs::from(&self.config.ui);
         match name {
             "symbol" => self.symbol(),
             "branch" => {
@@ -270,13 +271,13 @@ impl VariableResolver for GitResolver<'_> {
             "remote_branch" => None,
             "style" => Some(self.style()),
             "bg" => Some(self.theme.segments.git.get_bg_color(self.state).to_owned()),
-            "sep_gap" => resolve_separator(self.pos, SeparatorStyle::Chained)
+            "sep_gap" => resolve_separator(self.pos, SeparatorStyle::Chained, glyphs)
                 .gap
                 .map(str::to_owned),
-            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Chained)
+            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Chained, glyphs)
                 .close
                 .map(str::to_owned),
-            "sep_open" => resolve_separator(self.pos, SeparatorStyle::Chained)
+            "sep_open" => resolve_separator(self.pos, SeparatorStyle::Chained, glyphs)
                 .open
                 .map(str::to_owned),
             _ => None,

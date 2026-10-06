@@ -18,6 +18,7 @@
 use crate::commands::wizard::facts::PreviewFacts;
 use crate::commands::wizard::state::WizardState;
 use crate::config::Config;
+use crate::config::types::Icon;
 use crate::formatter::IsFirst;
 use crate::formatter::IsLast;
 use crate::formatter::RenderContext as FormatterRenderContext;
@@ -28,6 +29,7 @@ use crate::formatter::duration_resolver::DurationResolver;
 use crate::formatter::git_resolver::GitResolver;
 use crate::formatter::hostname_resolver::HostnameResolver;
 use crate::formatter::language_resolver::LanguageResolver;
+use crate::formatter::separator::Glyphs;
 use crate::formatter::username_resolver::UsernameResolver;
 use crate::plugin::BuiltinSegment;
 use crate::template::{
@@ -226,11 +228,55 @@ fn preview_order<'a>(
 ///   prev-colors the same way `$__gpy_last_segment_bg` does. The `"status"`
 ///   segment is unrelated to it: an exit-status pill drawn inside the chain
 ///   at its list position.
+pub fn render_preview_line(
+    state: &WizardState,
+    config: &Config,
+    theme: &ThemeConfig,
+    palette: &crate::template::Palette,
+    facts: &PreviewFacts,
+) -> Vec<Line<'static>> {
+    // The preview must show what the live prompt draws. With icons off the
+    // agent resolves no `$sep_*` caps and the theme export erases private-use
+    // delimiters, so the clock and status pills drawn from the theme's own
+    // delimiters must not show them here either (#695).
+    if Glyphs::from(&config.ui) == Glyphs::Nerd {
+        return render_chain(state, config, theme, palette, facts);
+    }
+    render_chain(
+        state,
+        config,
+        &without_private_use_delimiters(theme),
+        palette,
+        facts,
+    )
+}
+
+/// `theme` with every private-use (Nerd Font) delimiter glyph removed; plain
+/// text delimiters such as `[`/`]` are kept ([`Glyphs::delimiter`]).
+fn without_private_use_delimiters(theme: &ThemeConfig) -> ThemeConfig {
+    let mut plain = theme.clone();
+    let delimiters = [
+        &mut plain.ui.prompt_open,
+        &mut plain.ui.prompt_close,
+        &mut plain.ui.segment_open,
+        &mut plain.ui.segment_close,
+    ];
+    for delimiter in delimiters.into_iter().flatten() {
+        let kept = Glyphs::Plain.delimiter(delimiter.icon.as_str()).to_owned();
+        // Cannot fail: `kept` is either the original, already-validated icon
+        // text or empty.
+        if let Ok(icon) = Icon::new(kept) {
+            delimiter.icon = icon;
+        }
+    }
+    plain
+}
+
 #[expect(
     clippy::similar_names,
     reason = "incoming_fg/incoming_bg are a deliberately paired fg/bg pair"
 )]
-pub fn render_preview_line(
+fn render_chain(
     state: &WizardState,
     config: &Config,
     theme: &ThemeConfig,
@@ -301,7 +347,8 @@ pub fn render_preview_line(
 
     if let Some(format) = theme.segments.character.format.as_deref() {
         let resolver =
-            CharacterResolver::new(facts.sample_character_success, theme, SegmentPosition::LAST);
+            CharacterResolver::new(facts.sample_character_success, theme, SegmentPosition::LAST)
+                .with_glyphs(Glyphs::from(&config.ui));
         let ctx = FormatterRenderContext::new(config, theme, SegmentPosition::LAST)
             .with_palette(palette.clone())
             .with_prev_colors(prev_foreground, prev_background);
@@ -392,7 +439,8 @@ fn render_segment(
         BuiltinSegment::Directory => render_directory_span(config, theme, ctx),
         BuiltinSegment::Duration => {
             let format = theme.segments.duration.format.as_deref()?;
-            let resolver = DurationResolver::new(facts.sample_duration_ms, theme, ctx.position);
+            let resolver = DurationResolver::new(facts.sample_duration_ms, theme, ctx.position)
+                .with_glyphs(Glyphs::from(&config.ui));
             crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
         }
         BuiltinSegment::Status => Some(status_pill_spans(
@@ -412,12 +460,14 @@ fn render_segment(
         )),
         BuiltinSegment::Hostname => {
             let format = theme.segments.hostname.format.as_deref()?;
-            let resolver = HostnameResolver::new(facts.hostname.clone(), theme, ctx.position);
+            let resolver = HostnameResolver::new(facts.hostname.clone(), theme, ctx.position)
+                .with_glyphs(Glyphs::from(&config.ui));
             crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
         }
         BuiltinSegment::Username => {
             let format = theme.segments.username.format.as_deref()?;
-            let resolver = UsernameResolver::new(facts.username.clone(), theme, ctx.position);
+            let resolver = UsernameResolver::new(facts.username.clone(), theme, ctx.position)
+                .with_glyphs(Glyphs::from(&config.ui));
             crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
         }
     }
@@ -1548,6 +1598,50 @@ mod tests {
         assert!(
             char_text.contains('❯'),
             "character line must follow the chain, got {char_text:?}"
+        );
+    }
+
+    /// #695: the preview matches the live prompt with `ui.show_icons` off.
+    ///
+    /// The live prompt draws no powerline caps then. This covers both the
+    /// template-resolver caps (duration/directory) and the theme-delimiter
+    /// caps of the shell-drawn clock pill.
+    #[test]
+    fn preview_draws_no_private_use_caps_when_icons_are_off() {
+        let has_private_use =
+            |text: &str| text.chars().any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c));
+        let theme = crate::theme::ThemeManager::new("default")
+            .expect("default theme should always load")
+            .get();
+        let render = |show_icons: bool| {
+            let mut config = make_config(
+                &["clock", "duration", "directory"],
+                GitLanguageFlags {
+                    git: false,
+                    language: false,
+                },
+            );
+            config.ui.show_icons = show_icons;
+            let state = test_state(config.clone());
+            render_preview_line(&state, &config, &theme, &Palette::default(), &make_facts())
+                .iter()
+                .map(line_text)
+                .collect::<String>()
+        };
+
+        let on = render(true);
+        assert!(
+            on.contains('\u{e0ba}') && on.contains('\u{e0bc}') && on.contains('\u{e0b4}'),
+            "show_icons=true control must draw the caps, got {on:?}"
+        );
+        let off = render(false);
+        assert!(
+            !has_private_use(&off),
+            "show_icons=false preview leaked a private-use glyph: {off:?}"
+        );
+        assert!(
+            off.contains("0.128s") && off.contains("9:41"),
+            "segments themselves must still render, got {off:?}"
         );
     }
 

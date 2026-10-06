@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::config::DirectorySettings;
 use crate::config::types::DirectoryDisplay;
 use crate::formatter::SegmentPosition;
-use crate::formatter::separator::{SeparatorStyle, resolve_separator};
+use crate::formatter::separator::{Glyphs, SeparatorStyle, resolve_separator};
 use crate::template::VariableResolver;
 use crate::theme::ThemeConfig;
 use std::path::{Path, PathBuf};
@@ -432,6 +432,7 @@ fn join_anchored(root_name: &str, sub: &[&str]) -> String {
 
 impl VariableResolver for DirectoryResolver<'_> {
     fn resolve(&self, name: &str) -> Option<String> {
+        let glyphs = Glyphs::from(&self.config.ui);
         match name {
             "path" => {
                 let p = self.display_path();
@@ -440,13 +441,13 @@ impl VariableResolver for DirectoryResolver<'_> {
             "read_only" => self.read_only.then(|| "\u{1f512}".to_owned()), // 🔒
             "style" => Some(self.style()),
             "bg" => Some(self.theme.segments.directory.bg_color.as_str().to_owned()),
-            "sep_gap" => resolve_separator(self.pos, SeparatorStyle::Chained)
+            "sep_gap" => resolve_separator(self.pos, SeparatorStyle::Chained, glyphs)
                 .gap
                 .map(str::to_owned),
-            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Chained)
+            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Chained, glyphs)
                 .close
                 .map(str::to_owned),
-            "sep_open" => resolve_separator(self.pos, SeparatorStyle::Chained)
+            "sep_open" => resolve_separator(self.pos, SeparatorStyle::Chained, glyphs)
                 .open
                 .map(str::to_owned),
             _ => None,

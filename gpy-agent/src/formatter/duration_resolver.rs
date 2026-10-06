@@ -4,7 +4,7 @@
 //! Compatible with Starship's `cmd_duration` module.
 
 use crate::formatter::SegmentPosition;
-use crate::formatter::separator::{SeparatorStyle, resolve_separator};
+use crate::formatter::separator::{Glyphs, SeparatorStyle, resolve_separator};
 use crate::template::VariableResolver;
 use crate::theme::ThemeConfig;
 
@@ -13,6 +13,7 @@ pub struct DurationResolver<'a> {
     duration_ms: u64,
     theme: &'a ThemeConfig,
     pos: SegmentPosition,
+    glyphs: Glyphs,
 }
 
 impl<'a> DurationResolver<'a> {
@@ -23,7 +24,15 @@ impl<'a> DurationResolver<'a> {
             duration_ms,
             theme,
             pos,
+            glyphs: Glyphs::Nerd,
         }
+    }
+
+    /// Draw this segment with `glyphs` instead of the default [`Glyphs::Nerd`];
+    /// callers holding a `Config` pass `Glyphs::from(&config.ui)` (#695).
+    #[must_use]
+    pub const fn with_glyphs(self, glyphs: Glyphs) -> Self {
+        Self { glyphs, ..self }
     }
 
     /// Format milliseconds as a human-readable duration string.
@@ -82,13 +91,13 @@ impl VariableResolver for DurationResolver<'_> {
             "duration" => Some(self.format_duration()),
             "style" => Some(self.style()),
             "bg" => Some(self.theme.segments.duration.bg_color.as_str().to_owned()),
-            "sep_gap" => resolve_separator(self.pos, SeparatorStyle::Chained)
+            "sep_gap" => resolve_separator(self.pos, SeparatorStyle::Chained, self.glyphs)
                 .gap
                 .map(str::to_owned),
-            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Chained)
+            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Chained, self.glyphs)
                 .close
                 .map(str::to_owned),
-            "sep_open" => resolve_separator(self.pos, SeparatorStyle::Chained)
+            "sep_open" => resolve_separator(self.pos, SeparatorStyle::Chained, self.glyphs)
                 .open
                 .map(str::to_owned),
             _ => None,

@@ -6,7 +6,13 @@
 //! different from each other, so collapsing them into one *identical* body
 //! would have been a behavior change; [`SeparatorStyle`] names the difference
 //! instead, and [`resolve_separator`] is the single place the glyphs live.
+//!
+//! The caps are Powerline-Extra private-use codepoints that only Nerd/Powerline
+//! patched fonts carry. [`Glyphs`] says whether the terminal is assumed to have
+//! them (`ui.show_icons`, #695); [`Glyphs::Plain`] resolves every cap to nothing
+//! so a no-Nerd-Font install draws flat colored blocks instead of tofu boxes.
 
+use crate::config::UiSettings;
 use crate::formatter::{IsFirst, IsLast, SegmentPosition};
 
 /// Closing cap drawn by the last segment: a filled half circle.
@@ -40,6 +46,55 @@ pub enum SeparatorStyle {
     Terminal,
 }
 
+/// Which glyph set a segment may draw (#695).
+///
+/// An enum rather than a `bool` for the same reason as [`IsLast`]: a bare
+/// `bool` is unreadable at the call site and is easy to swap with the other
+/// booleans resolvers already take (`CharacterResolver::new`'s `success`).
+/// Derived from `ui.show_icons`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Glyphs {
+    /// Nerd/Powerline-patched font available: draw the powerline caps.
+    Nerd,
+    /// Any terminal font: draw no private-use glyphs.
+    Plain,
+}
+
+impl Glyphs {
+    /// The glyph set for a `ui.show_icons` setting.
+    #[must_use]
+    pub const fn from_show_icons(show_icons: bool) -> Self {
+        if show_icons { Self::Nerd } else { Self::Plain }
+    }
+
+    /// A theme-supplied delimiter as it should be drawn with this glyph set.
+    ///
+    /// [`Glyphs::Plain`] drops delimiter text containing a private-use
+    /// codepoint (the default theme's Nerd caps) and keeps plain text such as
+    /// a custom `[`/`]` delimiter, which renders on any font.
+    #[must_use]
+    pub fn delimiter(self, text: &str) -> &str {
+        if self == Self::Plain && text.chars().any(is_private_use) {
+            ""
+        } else {
+            text
+        }
+    }
+}
+
+impl From<&UiSettings> for Glyphs {
+    fn from(ui: &UiSettings) -> Self {
+        Self::from_show_icons(ui.show_icons)
+    }
+}
+
+/// Whether `c` sits in one of Unicode's three private-use areas, where Nerd
+/// Font glyphs live (BMP U+E000–F8FF for the powerline caps, the
+/// supplementary planes for the Material Design range).
+const fn is_private_use(c: char) -> bool {
+    matches!(c, '\u{e000}'..='\u{f8ff}' | '\u{f0000}'..='\u{ffffd}' | '\u{100000}'..='\u{10fffd}')
+}
+
 /// Resolved separator template variables for one segment position.
 ///
 /// `None` means the template variable resolves to nothing at this position;
@@ -57,10 +112,16 @@ pub struct Separators {
 /// Resolve `$sep_gap`/`$sep_open`/`$sep_close` for one segment position.
 ///
 /// See [`SeparatorStyle`] for why there are two behaviors sharing this one
-/// function rather than one literal behavior.
+/// function rather than one literal behavior. With [`Glyphs::Plain`] the caps
+/// (`open`/`close`) are `None` and `gap` is unchanged, so segments stay
+/// separated by a space.
 #[must_use]
-pub const fn resolve_separator(pos: SegmentPosition, style: SeparatorStyle) -> Separators {
-    match style {
+pub const fn resolve_separator(
+    pos: SegmentPosition,
+    style: SeparatorStyle,
+    glyphs: Glyphs,
+) -> Separators {
+    let nerd = match style {
         SeparatorStyle::Chained => Separators {
             gap: match pos.is_last {
                 IsLast::Yes => None,
@@ -83,6 +144,14 @@ pub const fn resolve_separator(pos: SegmentPosition, style: SeparatorStyle) -> S
                 IsLast::No => None,
             },
         },
+    };
+    match glyphs {
+        Glyphs::Nerd => nerd,
+        Glyphs::Plain => Separators {
+            gap: nerd.gap,
+            open: None,
+            close: None,
+        },
     }
 }
 
@@ -95,7 +164,7 @@ mod tests {
     #![allow(clippy::missing_errors_doc)]
 
     use super::{
-        CLOSE_LAST, CLOSE_NOT_LAST, GAP, OPEN_NOT_FIRST, SeparatorStyle, resolve_separator,
+        CLOSE_LAST, CLOSE_NOT_LAST, GAP, Glyphs, OPEN_NOT_FIRST, SeparatorStyle, resolve_separator,
     };
     use crate::formatter::{IsFirst, IsLast, SegmentPosition};
 
@@ -114,10 +183,12 @@ mod tests {
         let last = resolve_separator(
             SegmentPosition::new(IsLast::Yes, IsFirst::No),
             SeparatorStyle::Chained,
+            Glyphs::Nerd,
         );
         let not_last = resolve_separator(
             SegmentPosition::new(IsLast::No, IsFirst::No),
             SeparatorStyle::Chained,
+            Glyphs::Nerd,
         );
         assert_eq!(last.close, Some(CLOSE_LAST));
         assert_eq!(not_last.close, Some(CLOSE_NOT_LAST));
@@ -128,7 +199,8 @@ mod tests {
         assert_eq!(
             resolve_separator(
                 SegmentPosition::new(IsLast::No, IsFirst::No),
-                SeparatorStyle::Chained
+                SeparatorStyle::Chained,
+                Glyphs::Nerd
             )
             .gap,
             Some(GAP)
@@ -136,7 +208,8 @@ mod tests {
         assert_eq!(
             resolve_separator(
                 SegmentPosition::new(IsLast::Yes, IsFirst::No),
-                SeparatorStyle::Chained
+                SeparatorStyle::Chained,
+                Glyphs::Nerd
             )
             .gap,
             None
@@ -148,7 +221,8 @@ mod tests {
         assert_eq!(
             resolve_separator(
                 SegmentPosition::new(IsLast::No, IsFirst::No),
-                SeparatorStyle::Chained
+                SeparatorStyle::Chained,
+                Glyphs::Nerd
             )
             .open,
             Some(OPEN_NOT_FIRST)
@@ -156,7 +230,8 @@ mod tests {
         assert_eq!(
             resolve_separator(
                 SegmentPosition::new(IsLast::No, IsFirst::Yes),
-                SeparatorStyle::Chained
+                SeparatorStyle::Chained,
+                Glyphs::Nerd
             )
             .open,
             None
@@ -169,7 +244,7 @@ mod tests {
     #[test]
     fn terminal_never_yields_gap_or_open() {
         for pos in all_positions() {
-            let seps = resolve_separator(pos, SeparatorStyle::Terminal);
+            let seps = resolve_separator(pos, SeparatorStyle::Terminal, Glyphs::Nerd);
             assert_eq!(seps.gap, None, "terminal has no sep_gap at {pos:?}");
             assert_eq!(seps.open, None, "terminal has no sep_open at {pos:?}");
         }
@@ -179,8 +254,8 @@ mod tests {
     #[test]
     fn terminal_and_chained_close_differ_when_not_last() {
         for pos in all_positions() {
-            let terminal = resolve_separator(pos, SeparatorStyle::Terminal);
-            let chained = resolve_separator(pos, SeparatorStyle::Chained);
+            let terminal = resolve_separator(pos, SeparatorStyle::Terminal, Glyphs::Nerd);
+            let chained = resolve_separator(pos, SeparatorStyle::Chained, Glyphs::Nerd);
             match pos.is_last {
                 IsLast::Yes => {
                     assert_eq!(terminal.close, Some(CLOSE_LAST));
@@ -208,12 +283,66 @@ mod tests {
             let first = resolve_separator(
                 SegmentPosition::new(is_last, IsFirst::Yes),
                 SeparatorStyle::Terminal,
+                Glyphs::Nerd,
             );
             let not_first = resolve_separator(
                 SegmentPosition::new(is_last, IsFirst::No),
                 SeparatorStyle::Terminal,
+                Glyphs::Nerd,
             );
             assert_eq!(first, not_first);
         }
+    }
+
+    /// #695: with plain glyphs no position of either style draws a cap, but
+    /// the inter-segment gap survives so segments stay visually separated.
+    #[test]
+    fn plain_glyphs_suppress_caps_but_keep_gap() {
+        for style in [SeparatorStyle::Chained, SeparatorStyle::Terminal] {
+            for pos in all_positions() {
+                let plain = resolve_separator(pos, style, Glyphs::Plain);
+                let nerd = resolve_separator(pos, style, Glyphs::Nerd);
+                assert_eq!(
+                    plain.open, None,
+                    "plain draws no open cap, {style:?} at {pos:?}"
+                );
+                assert_eq!(
+                    plain.close, None,
+                    "plain draws no close cap, {style:?} at {pos:?}"
+                );
+                assert_eq!(
+                    plain.gap, nerd.gap,
+                    "gap must not depend on glyphs, {style:?} at {pos:?}"
+                );
+            }
+        }
+    }
+
+    /// #695: `Glyphs::Plain` drops private-use delimiter text in all three
+    /// Unicode private-use areas and keeps everything else verbatim.
+    #[test]
+    fn plain_delimiter_drops_only_private_use_text() {
+        for private in [
+            "\u{e0b4}",
+            "\u{e0ba}",
+            "\u{f0467}",
+            "\u{100000}",
+            " \u{e0bc} ",
+        ] {
+            assert_eq!(Glyphs::Plain.delimiter(private), "", "{private:?}");
+            assert_eq!(Glyphs::Nerd.delimiter(private), private, "{private:?}");
+        }
+        for kept in ["", " ", "[", "|", "❯", ">", "\u{2588}"] {
+            assert_eq!(Glyphs::Plain.delimiter(kept), kept, "{kept:?}");
+            assert_eq!(Glyphs::Nerd.delimiter(kept), kept, "{kept:?}");
+        }
+    }
+
+    #[test]
+    fn glyphs_follow_show_icons() {
+        let mut ui = crate::config::UiSettings::default();
+        assert_eq!(Glyphs::from(&ui), Glyphs::Nerd);
+        ui.show_icons = false;
+        assert_eq!(Glyphs::from(&ui), Glyphs::Plain);
     }
 }

@@ -7,7 +7,7 @@
 //! through to the wildcard arm) because there is no segment background color.
 
 use crate::formatter::SegmentPosition;
-use crate::formatter::separator::{SeparatorStyle, resolve_separator};
+use crate::formatter::separator::{Glyphs, SeparatorStyle, resolve_separator};
 use crate::template::VariableResolver;
 use crate::theme::ThemeConfig;
 
@@ -16,6 +16,7 @@ pub struct CharacterResolver<'a> {
     success: bool,
     theme: &'a ThemeConfig,
     pos: SegmentPosition,
+    glyphs: Glyphs,
 }
 
 impl<'a> CharacterResolver<'a> {
@@ -26,7 +27,15 @@ impl<'a> CharacterResolver<'a> {
             success,
             theme,
             pos,
+            glyphs: Glyphs::Nerd,
         }
+    }
+
+    /// Draw this segment with `glyphs` instead of the default [`Glyphs::Nerd`];
+    /// callers holding a `Config` pass `Glyphs::from(&config.ui)` (#695).
+    #[must_use]
+    pub const fn with_glyphs(self, glyphs: Glyphs) -> Self {
+        Self { glyphs, ..self }
     }
 
     /// Style string: `fg:<color>` (foreground only — no background for the prompt symbol).
@@ -51,7 +60,7 @@ impl VariableResolver for CharacterResolver<'_> {
                 }
             }
             "style" => Some(self.style()),
-            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Terminal)
+            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Terminal, self.glyphs)
                 .close
                 .map(str::to_owned),
             _ => None,

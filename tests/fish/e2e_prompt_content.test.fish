@@ -39,6 +39,7 @@ set -g BRANCH_GLYPH (printf '\xee\x82\xa0')
 set -g __content_pass 0
 set -g __content_fail 0
 set -g __render_last ""
+set -g __show_icons true
 
 function check --argument-names label ok detail
     if test "$ok" = 1
@@ -144,7 +145,7 @@ function write_config
     mkdir -p $XDG_CONFIG_HOME/gpy
     printf '%s\n' \
         '[ui]' \
-        'show_icons = true' \
+        "show_icons = $__show_icons" \
         'theme = "default"' \
         'enabled_segments = ["directory", "git", "language"]' \
         $argv >$XDG_CONFIG_HOME/gpy/config.toml
@@ -329,6 +330,55 @@ function test_directory_content --argument-names repo
     end
 end
 
+# ---- 3b. show_icons = false: no powerline caps (#695) --------------------------------
+# A raw render: SGR escapes go, but unlike `strip_sgr` the powerline caps
+# (U+E0B0..U+E0BF) stay, because their absence is the assertion.
+function render_prompt_raw --argument-names cwd
+    fish --no-config -c '
+        source $argv[1]/fish/core/init.fish
+        source $argv[1]/fish/functions/fish_prompt.fish
+        __gpy_register_with_agent >/dev/null 2>&1
+        cd $argv[2]
+        fish_prompt
+        sleep 0.2
+    ' -- $__gpy_root $cwd 2>/dev/null | string replace -ra '\e\[[0-9;]*m' '' | string collect
+end
+
+# Poll raw renders of $cwd until the directory segment is drawn and the
+# presence of a powerline cap equals $expect_cap (1 or 0).
+function wait_powerline_cap --argument-names cwd expect_cap
+    function __powerline_cap_probe --inherit-variable cwd --inherit-variable expect_cap
+        # `find`, not an `rm` glob: fish refuses a wildcard with no match.
+        find $XDG_CACHE_HOME/gpy/instant-prompts -name '*.git.*' -delete 2>/dev/null
+        set -g __render_last (render_prompt_raw $cwd)
+        string match -q '*repo *' -- "$__render_last"; or return 1
+        set -l has_cap 0
+        string match -qr '[\x{e0b0}-\x{e0bf}]' -- "$__render_last"; and set has_cap 1
+        test $has_cap = $expect_cap
+    end
+    poll_until 10 __powerline_cap_probe
+end
+
+function test_icons_off_draws_no_powerline_caps --argument-names repo
+    print_test_header "show_icons = false draws no powerline caps"
+
+    # Control: with icons on the same render does carry powerline caps, so
+    # the icons-off assertion below cannot pass on an empty render.
+    if wait_powerline_cap $repo 1
+        check "icons on: the prompt carries powerline caps (control)" 1
+    else
+        check "icons on: the prompt carries powerline caps (control)" 0 (string escape -- "$__render_last")
+    end
+
+    set -g __show_icons false
+    write_config
+    if wait_powerline_cap $repo 0
+        check "icons off: the prompt carries no powerline cap" 1
+    else
+        check "icons off: the prompt carries no powerline cap" 0 (string escape -- "$__render_last")
+    end
+end
+
 # ---- 4. prompt frame (no agent: socket pointed at nothing) ---------------------------
 function frame_render
     # $argv[1] and $argv[2] are code snippets run before/after sourcing the
@@ -391,6 +441,7 @@ test_git_content $repo
 test_language_content
 test_directory_content $repo
 test_prompt_frame
+test_icons_off_draws_no_powerline_caps $repo
 
 cleanup_test_files
 
