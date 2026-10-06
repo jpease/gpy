@@ -1391,6 +1391,12 @@ const LANGUAGE_CACHE_LOCKFILES: &[&str] = &[
     "go.work",
     ".tool-versions",
     ".python-version",
+    ".node-version",
+    ".nvmrc",
+    "mise.toml",
+    ".mise.toml",
+    "mise.local.toml",
+    ".mise.local.toml",
     "poetry.lock",
     "Gemfile.lock",
     "mix.lock",
@@ -2318,6 +2324,26 @@ mod tests {
             assert!(
                 matches!(classify_event(&path), Some(FileEvent::Language { .. })),
                 "{file_name} must keep triggering a Language event (residual lockfile list)"
+            );
+        }
+    }
+
+    /// gpy-agent#725: version-pin files read by the version managers gpy
+    /// shells out to must refresh the language segment when edited.
+    #[test]
+    fn version_pin_files_trigger_language_event() {
+        for file_name in [
+            ".node-version",
+            ".nvmrc",
+            "mise.toml",
+            ".mise.toml",
+            "mise.local.toml",
+            ".mise.local.toml",
+        ] {
+            let path = Path::new("/tmp/project").join(file_name);
+            assert!(
+                matches!(classify_event(&path), Some(FileEvent::Language { .. })),
+                "{file_name} must trigger a Language event (version pin)"
             );
         }
     }
