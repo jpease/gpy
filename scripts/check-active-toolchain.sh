@@ -66,10 +66,20 @@ echo "  pinned (rust-toolchain.toml): $pinned"
 echo "  active (rustc --version)    : $active"
 
 if [[ "$pinned" != "$active" ]]; then
+    # Say WHY the pin lost. RUSTUP_TOOLCHAIN outranks both directory overrides
+    # and rust-toolchain.toml, so it is the usual culprit (a shell profile or
+    # an agent session exporting a newer version); otherwise ask rustup.
+    if [[ -n "${RUSTUP_TOOLCHAIN:-}" ]]; then
+        reason="RUSTUP_TOOLCHAIN=$RUSTUP_TOOLCHAIN overrides rust-toolchain.toml (unset it, or set it to $pinned)"
+    elif command -v rustup >/dev/null 2>&1 && reason="$(rustup show active-toolchain 2>/dev/null | head -n1)" && [[ -n "$reason" ]]; then
+        reason="rustup reports: $reason"
+    else
+        reason="no RUSTUP_TOOLCHAIN set; check for a rustup directory override (rustup override list)"
+    fi
     # ::error:: renders as an annotation on the job in GitHub's UI and is inert
     # elsewhere, so the same script is useful locally.
     echo "::error::rustc $active is active but rust-toolchain.toml pins $pinned"
-    die "toolchain mismatch: expected $pinned, got $active"
+    die "toolchain mismatch: expected $pinned, got $active -- $reason"
 fi
 
 echo "  toolchain matches the pin"

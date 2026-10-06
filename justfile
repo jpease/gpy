@@ -73,6 +73,7 @@ audit:
 
 # Run lint checks (strict clippy for the agent)
 lint:
+    ./{{scripts_dir}}/check-active-toolchain.sh
     moon run gpy-agent:clippy
 
 # Line coverage for gpy-agent (#654): lcov.info in gpy-agent/ plus a summary
@@ -200,6 +201,7 @@ clippy-dev:
 # pre-push is scope, not strictness: this skips --features test-support, so
 # the #460 PTY test-support surface isn't compiled or linted here.
 clippy-strict:
+    ./{{scripts_dir}}/check-active-toolchain.sh
     cd {{agent_dir}} && cargo clippy --all-targets
 
 # Run Rust micro-benchmarks for the agent

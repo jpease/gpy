@@ -414,8 +414,22 @@ run_shell_tests() {
     cleanup_test_agents
 }
 
+# Fail fast when the active rustc is not the gpy-agent/rust-toolchain.toml pin
+# (#823). RUSTUP_TOOLCHAIN outranks the file, and a newer rustc raises lints the
+# pin does not, so without this the gate reports "findings" that are really a
+# toolchain override. Aborts the whole run: every Rust check below would be
+# measuring the wrong compiler, and the clippy run is the slow part to waste.
+require_pinned_toolchain() {
+    if ! "$(dirname "$0")/check-active-toolchain.sh"; then
+        print_error "Active Rust toolchain is not the pin; refusing to run Rust checks (see message above)"
+        exit 1
+    fi
+}
+
 # Main quality checks
 main() {
+    require_pinned_toolchain
+
     echo -e "${BLUE}🐟 GPY Code Quality Check${NC}"
     echo "=========================="
     echo
@@ -661,6 +675,7 @@ case "${1:-}" in
         exit 0
         ;;
     --fix)
+        require_pinned_toolchain
         print_step "Running auto-fixes"
 
         # Format Fish files
@@ -690,6 +705,7 @@ case "${1:-}" in
         main
         ;;
     --fast)
+        require_pinned_toolchain
         print_step "Running fast checks only"
         cd "$(dirname "$0")/.."
 
@@ -745,6 +761,7 @@ case "${1:-}" in
         fi
         ;;
     --rust-only)
+        require_pinned_toolchain
         print_step "Running Rust checks only"
         cd "$(dirname "$0")/.."
 
