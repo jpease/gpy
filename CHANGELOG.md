@@ -542,6 +542,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - Fish dynamic completions (theme, palette and segment names) load in real
   sessions (#702): the installers append them to the autoloaded
   `completions/gpy.fish` instead of an unloadable `gpy-dynamic.fish`.
+- uv and virtualenv venvs (`pyvenv.cfg` `version_info`) are read without
+  spawning Python, and the interpreter fallback for other venvs is memoized
+  instead of running on every render (#728).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

@@ -6,6 +6,7 @@
 //! a forwarded `VIRTUAL_ENV`, else a project-local `.venv`/`venv` directory.
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::cache::ttl_map::TtlMap;
 
@@ -54,9 +55,10 @@ pub fn venv_python_binary(venv_dir: &Path) -> PathBuf {
 /// bounding a maliciously or accidentally huge one.
 const PYVENV_CFG_READ_CAP: usize = 4_096;
 
-/// Read the `version = X.Y.Z` line from `<venv_dir>/pyvenv.cfg`.
+/// Read the venv's Python version from `<venv_dir>/pyvenv.cfg`.
 ///
-/// Returns `None` when the file is absent, unreadable, or has no `version` key.
+/// Returns `None` when the file is absent, unreadable, or has neither a
+/// `version` nor a `version_info` key.
 #[must_use]
 pub fn read_pyvenv_cfg_version(venv_dir: &Path) -> Option<String> {
     let contents =
@@ -64,17 +66,73 @@ pub fn read_pyvenv_cfg_version(venv_dir: &Path) -> Option<String> {
     parse_pyvenv_cfg_version(&contents)
 }
 
-/// Parse a `pyvenv.cfg` file's contents for its `version = ...` line.
+/// Parse a `pyvenv.cfg` file's contents for the interpreter version.
+///
+/// stdlib `venv` writes `version = X.Y.Z`; uv and virtualenv write
+/// `version_info = X.Y.Z[.releaselevel.serial]` instead. `version` wins when
+/// both are present; `version_info` is normalized to at most three numeric
+/// components (`3.11.4.final.0` becomes `3.11.4`).
 #[must_use]
 fn parse_pyvenv_cfg_version(contents: &str) -> Option<String> {
-    contents.lines().find_map(|line| {
-        let (key, value) = line.split_once('=')?;
-        (key.trim() == "version").then(|| value.trim().to_owned())
-    })
+    let find_value = |wanted: &str| {
+        contents.lines().find_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            (key.trim() == wanted).then(|| value.trim())
+        })
+    };
+    if let Some(version) = find_value("version") {
+        return Some(version.to_owned());
+    }
+    let components: Vec<&str> = find_value("version_info")?
+        .split('.')
+        .take_while(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+        .take(3)
+        .collect();
+    (!components.is_empty()).then(|| components.join("."))
+}
+
+/// Memoized interpreter-fallback versions, keyed by canonical interpreter path
+/// plus its mtime so recreating the venv busts the entry. Successes only;
+/// freshness follows the shared TTL knob via [`TtlMap`].
+static VENV_BINARY_VERSION_CACHE: TtlMap<(PathBuf, SystemTime), String> =
+    TtlMap::new(VENV_STASH_CAPACITY);
+
+/// Interpreters whose probe failed, with the failure time. A failure
+/// suppresses re-probing only for [`VERSION_FAILURE_TTL`] (the #689 policy),
+/// not the full shared TTL.
+static VENV_BINARY_FAILURE_CACHE: TtlMap<(PathBuf, SystemTime), SystemTime> =
+    TtlMap::new(VENV_STASH_CAPACITY);
+
+/// Probe the venv interpreter for its version, memoizing the outcome.
+fn memoized_binary_version(python: &Path) -> Option<String> {
+    let canonical = python.canonicalize().ok()?;
+    let modified = std::fs::metadata(&canonical).ok()?.modified().ok()?;
+    let key = (canonical, modified);
+    if let Some(version) = VENV_BINARY_VERSION_CACHE.get(&key) {
+        return Some(version);
+    }
+    let recently_failed = VENV_BINARY_FAILURE_CACHE
+        .get(&key)
+        .is_some_and(|recorded_at| {
+            SystemTime::now()
+                .duration_since(recorded_at)
+                .is_ok_and(|elapsed| elapsed < crate::language::version::VERSION_FAILURE_TTL)
+        });
+    if recently_failed {
+        return None;
+    }
+    if let Some(version) = crate::language::version::detect_python_binary_version(python) {
+        VENV_BINARY_FAILURE_CACHE.remove(&key);
+        VENV_BINARY_VERSION_CACHE.insert(key, version.clone());
+        Some(version)
+    } else {
+        VENV_BINARY_FAILURE_CACHE.insert(key, SystemTime::now());
+        None
+    }
 }
 
 /// Read the version reported by a venv: `pyvenv.cfg` first (no subprocess),
-/// then invoking the venv's Python interpreter as a fallback.
+/// then invoking the venv's Python interpreter as a memoized fallback.
 ///
 /// Returns `None` when the directory is not a usable venv.
 #[must_use]
@@ -85,7 +143,7 @@ pub fn read_venv_version(venv_dir: &Path) -> Option<String> {
     let python = venv_python_binary(venv_dir);
     python
         .is_file()
-        .then(|| crate::language::version::detect_python_binary_version(&python))
+        .then(|| memoized_binary_version(&python))
         .flatten()
 }
 
@@ -167,6 +225,13 @@ mod tests {
             ("home = /x\n", None),
             ("", None),
             ("not-a-key-value-line\n", None),
+            ("home = /x\nversion_info = 3.12.13\n", Some("3.12.13")),
+            ("version_info = 3.11.4.final.0\n", Some("3.11.4")),
+            (
+                "version = 3.10.1\nversion_info = 3.10.2.final.0\n",
+                Some("3.10.1"),
+            ),
+            ("version_info = final\n", None),
         ];
         for (input, expected) in cases {
             assert_eq!(
@@ -232,6 +297,77 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_pyvenv(tmp.path(), "3.11.9");
         assert_eq!(read_venv_version(tmp.path()).as_deref(), Some("3.11.9"));
+    }
+
+    #[test]
+    fn read_venv_version_uses_version_info_without_spawning() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("pyvenv.cfg"),
+            "home = /x\nuv = 0.9.16\nversion_info = 3.12.13\n",
+        )
+        .unwrap();
+        assert_eq!(read_venv_version(tmp.path()).as_deref(), Some("3.12.13"));
+    }
+
+    /// Write an executable `bin/python` that appends to `counter` per spawn
+    /// and prints `stdout_line` (failing when `exit_code` is non-zero).
+    #[cfg(unix)]
+    fn write_counting_python(venv: &Path, counter: &Path, stdout_line: &str, exit_code: u8) {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = venv.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let python = bin.join("python");
+        std::fs::write(
+            &python,
+            format!(
+                "#!/bin/sh\necho x >> '{}'\necho '{stdout_line}'\nexit {exit_code}\n",
+                counter.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[cfg(unix)]
+    fn spawn_count(counter: &Path) -> usize {
+        std::fs::read_to_string(counter).map_or(0, |text| text.lines().count())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interpreter_fallback_is_memoized() {
+        let tmp = tempfile::tempdir().unwrap();
+        let counter = tmp.path().join("spawns.log");
+        write_counting_python(tmp.path(), &counter, "Python 3.9.1", 0);
+        assert_eq!(read_venv_version(tmp.path()).as_deref(), Some("3.9.1"));
+        assert_eq!(read_venv_version(tmp.path()).as_deref(), Some("3.9.1"));
+        assert_eq!(spawn_count(&counter), 1, "second call must hit the memo");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interpreter_fallback_failure_is_cached_only_briefly() {
+        let tmp = tempfile::tempdir().unwrap();
+        let counter = tmp.path().join("spawns.log");
+        write_counting_python(tmp.path(), &counter, "broken", 1);
+        assert_eq!(read_venv_version(tmp.path()), None);
+        assert_eq!(read_venv_version(tmp.path()), None);
+        assert_eq!(
+            spawn_count(&counter),
+            1,
+            "a fresh failure suppresses re-probing"
+        );
+
+        // Age the recorded failure past VERSION_FAILURE_TTL: it must be retried.
+        let python = venv_python_binary(tmp.path()).canonicalize().unwrap();
+        let modified = std::fs::metadata(&python).unwrap().modified().unwrap();
+        VENV_BINARY_FAILURE_CACHE.insert(
+            (python, modified),
+            SystemTime::now() - crate::language::version::VERSION_FAILURE_TTL * 2,
+        );
+        assert_eq!(read_venv_version(tmp.path()), None);
+        assert_eq!(spawn_count(&counter), 2, "an aged failure is re-probed");
     }
 
     #[test]
