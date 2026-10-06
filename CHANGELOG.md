@@ -532,6 +532,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `gpy plugin validate` and plugin discovery reject a `plugin.toml` whose
   `provided_segments` is missing, misspelled or empty, instead of loading it
   as ready with no segments (#787).
+- The Fish and shell E2E suites rebuild the debug `gpy`/`gpy-agent` before
+  running, honouring `CARGO_TARGET_DIR`, instead of reusing a stale binary
+  (#812).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

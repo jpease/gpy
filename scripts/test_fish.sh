@@ -16,13 +16,21 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
 echo "Running Fish integration tests..."
 echo
 
-# Ensure gpy-agent binary exists for tests that depend on theme export.
-AGENT_BIN="gpy-agent/target/debug/gpy-agent"
-if [ ! -x "$AGENT_BIN" ]; then
-    echo "Building gpy-agent debug binary for Fish tests..."
-    (cd gpy-agent && cargo build --quiet)
-fi
+# Always build the debug binaries: an existence check would let a stale binary
+# from before the last Rust edit pass or fail the suite on the old behaviour
+# (#812). cargo's up-to-date check makes this a fast no-op when nothing changed.
+# The pinned toolchain is asserted first -- RUSTUP_TOOLCHAIN outranks
+# gpy-agent/rust-toolchain.toml, and a direct run of this script (e.g. `just
+# check-shell`) does not pass through quality-check.sh's require_pinned_toolchain.
+"$(dirname "$0")/check-active-toolchain.sh" || exit 1
+echo "Building gpy debug binaries for Fish tests..."
+(cd gpy-agent && cargo build --quiet --bin gpy --bin gpy-agent) || {
+    echo "❌ cargo build failed; refusing to test a stale gpy-agent"
+    exit 1
+}
 
+# Honour CARGO_TARGET_DIR, as install-dev.fish and run_shell_tests do.
+AGENT_BIN="${CARGO_TARGET_DIR:-$PWD/gpy-agent/target}/debug/gpy-agent"
 if [ ! -x "$AGENT_BIN" ]; then
     echo "❌ gpy-agent binary not found at $AGENT_BIN after build"
     exit 1
