@@ -337,6 +337,13 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   3). `GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS` and
   `GPY_SUPERVISOR_CHECK_MAX_ATTEMPTS` still override when set.
 
+- Fish runs at most one agent supervisor per runtime root (#703). Shells
+  that reached their first prompt together each started a supervisor, and
+  only the last one was recorded in `supervisor.pid`. The supervisor now
+  claims the file with fish's no-clobber `>?`, a loser exits, and a
+  supervisor whose file names another process stops. A recycled PID in a
+  stale file no longer suppresses supervision.
+
 - `gpy-agent start` no longer evicts a newer running agent (#780). It
   replaced the daemon on any version difference, so two installs could flip
   it back and forth. Only an older or unreadable version is replaced now.
