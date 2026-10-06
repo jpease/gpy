@@ -2,22 +2,26 @@
 #
 # Dynamic-value completion glue for the `gpy` CLI.
 #
-# `gpy completions fish` (clap_complete) is regenerated at install time into
-# `completions/gpy.fish` and covers the STRUCTURAL surface: subcommand and
-# flag names, driven by the `__fish_gpy_needs_command` /
-# `__fish_gpy_using_subcommand` predicates it defines. It has no way to know
-# the live set of themes, palettes, or segments installed on this machine --
-# those come from the hidden `gpy __complete <kind>` command, which prints
-# plain newline-delimited names (#328).
+# `gpy completions fish` (clap_complete) is regenerated at install time and
+# covers the STRUCTURAL surface: subcommand and flag names, driven by the
+# `__fish_gpy_needs_command` / `__fish_gpy_using_subcommand` predicates it
+# defines. It has no way to know the live set of themes, palettes, or segments
+# installed on this machine -- those come from the hidden `gpy __complete
+# <kind>` command, which prints plain newline-delimited names (#328).
 #
-# This file supplies exactly those dynamic value lists. Unlike gpy.fish it is
-# hand-authored and checked into the repo, so it ships and loads unchanged
+# This file supplies exactly those dynamic value lists. Unlike the generated
+# output it is hand-authored and checked into the repo, so it ships unchanged
 # regardless of `gpy`'s clap definitions.
 #
-# Coexistence with the generated file: fish merges `complete -c gpy` rules
-# from every sourced file, so these `-n` predicates only need to narrow down
-# to the specific value position (subcommand + action already seen); they
-# don't redefine the subcommand/flag completions gpy.fish already provides.
+# Installation (#702): fish autoloads `completions/<command>.fish` only for
+# the command of that name, so this file is NEVER installed under its own
+# name -- nothing would load it. The installers append it to the generated
+# structural completions and write the result as a single
+# `completions/gpy.fish` (the glue alone when the CLI is unavailable; its
+# predicates need only fish's `__fish_seen_subcommand_from`). The `-n`
+# predicates below therefore only narrow down to the specific value position
+# (subcommand + action already seen); they don't redefine the subcommand/flag
+# completions the generated part already provides.
 #
 # Per-session caching (#346): forking `gpy __complete <kind>` on every single
 # TAB press is wasted work once the answer is already known for this shell

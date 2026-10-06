@@ -444,33 +444,42 @@ function _install_fish_files
         cp fish/conf.d/gpy_init.fish "$fish_conf_d_dir/gpy_init.fish"
     end
 
-    # Install Fish completions. `completions/gpy.fish` is STRUCTURAL
-    # (subcommand/flag names) and is regenerated from the just-installed CLI
-    # on every run rather than checked in, so it can never drift from the
-    # binary on disk. Skipped -- not fatal -- if the gpy CLI isn't on disk
-    # (e.g. `--fish-only`, which skips the binary build/install entirely):
-    # the prompt itself doesn't depend on shell completions.
-    # `completions/gpy-dynamic.fish` is the small, checked-in glue that
-    # supplies live theme/palette/segment names via `gpy __complete <kind>`
-    # (#328, #329); it ships in the repo, so it's a plain copy like the rest
-    # of $fish_files.
+    # Install Fish completions as ONE autoloadable file, `completions/gpy.fish`:
+    # the STRUCTURAL completions (subcommand/flag names), regenerated from the
+    # just-installed CLI on every run rather than checked in so they can never
+    # drift from the binary on disk, followed by the small, checked-in
+    # `completions/gpy-dynamic.fish` glue that supplies live
+    # theme/palette/segment names via `gpy __complete <kind>` (#328, #329).
+    # Fish autoloads `completions/<command>.fish` only for the command of that
+    # name, so the glue must be appended to gpy.fish, not copied beside it
+    # (#702). If the gpy CLI isn't on disk (e.g. `--fish-only`, which skips
+    # the binary build/install) or generation fails, gpy.fish is the glue
+    # alone; the prompt itself doesn't depend on shell completions.
     set -l fish_completions_dir "$fish_config_dir/completions"
     mkdir -p $fish_completions_dir
+    # Older installs copied the glue as its own (never autoloaded) file.
+    rm -f "$fish_completions_dir/gpy-dynamic.fish"
 
+    set -l fish_completions_generated 0
     set -l dev_gpy_cli "$HOME/.local/bin/gpy"
     if test -x $dev_gpy_cli
         if $dev_gpy_cli completions fish >"$fish_completions_dir/gpy.fish"
+            set fish_completions_generated 1
             echo "✅ Generated structural completions: $fish_completions_dir/gpy.fish"
         else
             echo "⚠️  Could not generate gpy completions (gpy completions fish failed)"
         end
     else
-        echo "⚠️  gpy CLI not installed; skipping shell completions"
+        echo "⚠️  gpy CLI not installed; skipping structural shell completions"
     end
 
     if test -f fish/completions/gpy-dynamic.fish
-        cp fish/completions/gpy-dynamic.fish "$fish_completions_dir/gpy-dynamic.fish"
-        echo "✅ Installed dynamic completions glue: $fish_completions_dir/gpy-dynamic.fish"
+        if test $fish_completions_generated -eq 1
+            cat fish/completions/gpy-dynamic.fish >>"$fish_completions_dir/gpy.fish"
+        else
+            cat fish/completions/gpy-dynamic.fish >"$fish_completions_dir/gpy.fish"
+        end
+        echo "✅ Installed dynamic completions glue into: $fish_completions_dir/gpy.fish"
     end
 
     # Install fish_prompt function as symlink (consistent with install.sh)

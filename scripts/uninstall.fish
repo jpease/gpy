@@ -162,8 +162,9 @@ function uninstall_custom_prompt
     end
 
     # Shell completions the installers write beside the user's own
-    # (install.sh / install-oneline.sh: `gpy completions fish` plus the
-    # dynamic-value glue), and the timestamped binary backups they leave in
+    # (install.sh / install-oneline.sh: `gpy completions fish` with the
+    # dynamic-value glue appended; gpy-dynamic.fish is the standalone file
+    # older installs left behind, #702), and the timestamped binary backups they leave in
     # ~/.local/bin on every upgrade (#642).
     set -l completions_dir "$fish_config_dir/completions"
     set -l completion_files "$completions_dir/gpy.fish" "$completions_dir/gpy-dynamic.fish"

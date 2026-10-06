@@ -45,7 +45,10 @@ class Gpy < Formula
         mkdir -p ~/.config/fish/gpy ~/.config/fish/completions ~/.config/fish/functions
         cp -r #{opt_pkgshare}/core #{opt_pkgshare}/segments #{opt_pkgshare}/functions \\
           #{opt_pkgshare}/conf.d ~/.config/fish/gpy/
-        cp #{opt_pkgshare}/completions/gpy-dynamic.fish ~/.config/fish/completions/
+        # One autoloadable file: fish loads completions/gpy.fish only, so the
+        # dynamic glue is appended to the generated completions (#702).
+        gpy completions fish > ~/.config/fish/completions/gpy.fish
+        cat #{opt_pkgshare}/completions/gpy-dynamic.fish >> ~/.config/fish/completions/gpy.fish
 
         # Fish only autoloads functions from ~/.config/fish/functions, so
         # this needs a symlink there alongside fish_prompt itself.

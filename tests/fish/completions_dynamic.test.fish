@@ -10,7 +10,9 @@
 # `fish/completions/gpy-dynamic.fish` is a small, hand-authored, checked-in
 # file that supplies the DYNAMIC value lists (installed theme/palette/segment
 # names) by shelling out to the hidden `gpy __complete <kind>` command
-# (#328). This test proves the two files coexist and that the dynamic glue
+# (#328). The installers concatenate the two into one autoloadable
+# `completions/gpy.fish` (#702); this test builds that file and proves it
+# autoloads (no manual `source`) and that the dynamic glue
 # actually produces the live completions a user would see for:
 #   - `gpy theme use <TAB>` / `gpy theme validate <TAB>`
 #   - `gpy palette use <TAB>` / `gpy palette validate <TAB>`
@@ -22,7 +24,7 @@
 # right names or that the `complete` rules parse. `complete -C` works
 # without `gpy` being "installed" anywhere in particular: fish resolves
 # completions from whatever `complete -c gpy ...` rules are registered in
-# the current session (sourced below), and the `-n` predicates in
+# the current session (autoloaded below), and the `-n` predicates in
 # gpy-dynamic.fish shell out to `gpy __complete <kind>` at completion time,
 # which requires the debug binary's directory on $PATH (set up below,
 # mirroring tests/fish/starship_parity.test.fish's explicit debug-binary
@@ -87,28 +89,30 @@ if not test -f $dynamic_completions
 end
 
 # ---------------------------------------------------------------------------
-# Load both the generated structural completions and the checked-in dynamic
-# glue together, exactly as an installed shell would, and confirm neither
-# produces an error.
+# Build the completions directory exactly as the installers do (#702): ONE
+# autoloadable `gpy.fish` = `gpy completions fish` followed by the dynamic
+# glue. Fish autoloads `completions/<command>.fish` only for the command of
+# that name, so a separate `gpy-dynamic.fish` would never be loaded. Nothing
+# is `source`d by hand below: the first `complete -C 'gpy ...'` autoloads
+# gpy.fish from $fish_complete_path, as a real interactive session does.
 # ---------------------------------------------------------------------------
 set -l tmp_dir (mktemp -d)
-set -l generated_completions $tmp_dir/gpy.fish
+set -l comp_dir $tmp_dir/comp
+mkdir -p $comp_dir
+set -l generated_completions $comp_dir/gpy.fish
 
 if not $gpy_bin completions fish >$generated_completions
     test_fail "gpy completions fish failed to generate output"
 end
+cat $dynamic_completions >>$generated_completions
 
-if source $generated_completions 2>$tmp_dir/generated.err
-    test_pass "generated gpy.fish sources without errors"
+if fish -n $generated_completions 2>$tmp_dir/installed.err
+    test_pass "installed gpy.fish (structural + dynamic glue) parses"
 else
-    test_fail "generated gpy.fish raised an error when sourced: "(cat $tmp_dir/generated.err)
+    test_fail "installed gpy.fish does not parse: "(cat $tmp_dir/installed.err)
 end
 
-if source $dynamic_completions 2>$tmp_dir/dynamic.err
-    test_pass "gpy-dynamic.fish sources without errors"
-else
-    test_fail "gpy-dynamic.fish raised an error when sourced: "(cat $tmp_dir/dynamic.err)
-end
+set fish_complete_path $comp_dir $fish_complete_path
 
 # ---------------------------------------------------------------------------
 # Dynamic value completions: theme

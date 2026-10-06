@@ -129,7 +129,8 @@ if [ -s "$COMPLETIONS" ] && fish -n "$COMPLETIONS" 2>/dev/null; then
 else
     fail "structural completions missing or unparsable at $COMPLETIONS"
 fi
-[ -f "$FISH_CONFIG/completions/gpy-dynamic.fish" ] || fail "dynamic completions glue was not installed"
+grep -q '__gpy_complete_cached' "$COMPLETIONS" || fail "dynamic completions glue was not appended to gpy.fish"
+[ ! -e "$FISH_CONFIG/completions/gpy-dynamic.fish" ] || fail "standalone gpy-dynamic.fish (never autoloaded) was installed"
 
 if shell_e2e_poll 5 installed_agent_responding; then
     pass "the installed agent is running and responding"

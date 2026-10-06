@@ -539,6 +539,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   documented trailing `+` (e.g. `↓100+`) (#717).
 - `gpy doctor` no longer fails when the agent is disabled with
   `agent.enabled = false`; it reports the agent as disabled via config (#799).
+- Fish dynamic completions (theme, palette and segment names) load in real
+  sessions (#702): the installers append them to the autoloaded
+  `completions/gpy.fish` instead of an unloadable `gpy-dynamic.fish`.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
