@@ -190,6 +190,7 @@ set -g GPY_PP_CASES \
     "config_empty_no_config;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=;HOME=%T%/home3" \
     "home_unset;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf" \
     "home_unset_cache_unset;XDG_RUNTIME_DIR=%T%/run;XDG_CONFIG_HOME=%T%/conf" \
+    "xdg_windows_shaped;XDG_RUNTIME_DIR=C:\\x;XDG_CACHE_HOME=C:/x;XDG_CONFIG_HOME=\\\\srv\\cfg;HOME=%T%/home" \
     "all_unset;" \
     "home_only;HOME=%T%/home" \
     "home_dotgpy_only;HOME=%T%/home2" \

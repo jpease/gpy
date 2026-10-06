@@ -70,6 +70,8 @@ trap 'rm -rf "$tmp"' EXIT
 compare xdg_all_set HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache" XDG_RUNTIME_DIR="$tmp/run"
 compare runtime_unset HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache"
 compare xdg_unset HOME="$tmp/home"
+# #774: Windows-shaped XDG_* values are relative on Unix; every resolver ignores them.
+compare xdg_windows_shaped HOME="$tmp/home" XDG_CONFIG_HOME='\\srv\cfg' XDG_CACHE_HOME='C:/x' XDG_RUNTIME_DIR='C:\x'
 # GPY_AGENT_SOCKET_PATH overrides only the socket, never the runtime root.
 compare socket_override HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/run" GPY_AGENT_SOCKET_PATH="$tmp/custom.sock"
 

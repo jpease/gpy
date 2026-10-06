@@ -71,19 +71,25 @@ use std::path::PathBuf;
 /// equivalents), which is what makes the four implementations agree under the
 /// cross-shell parity harness.
 ///
-/// "Absolute" accepts the Windows spellings (`C:\...`, `C:/...`, and the
-/// `\\server\share` UNC prefix) as well as a leading `/`: this function is
-/// pure and platform-independent by design -- `cache_root_for`'s [`Os`]
-/// parameter, not `cfg!(windows)`, decides which precedence chain runs -- so
-/// rejecting drive-absolute values here would silently disable the
-/// `XDG_CACHE_HOME` override that #478 gives native-Windows users.
+/// "Absolute" depends on the [`Os`] whose rules apply (#774). On
+/// [`Os::Unix`] (Linux, macOS, WSL) only a leading `/` counts, exactly like the
+/// shells' `'/*'` checks: `C:\x`, `C:/x`, `\\server\share` and `~/x` are
+/// *relative* paths there, and honouring them would bind sockets and write
+/// caches under the process's current directory (the WSL `WSLENV` hazard from
+/// #478). On [`Os::Windows`] the spellings `/...`, `\...`, `C:\...`,
+/// `C:/...` and UNC all count, so the `XDG_CACHE_HOME` override that #478
+/// gives native-Windows users keeps working. The function stays pure:
+/// the caller's `os`, not `cfg!(windows)`, decides.
 #[must_use]
-pub fn xdg_value(value: Option<&str>) -> Option<&str> {
-    value.filter(|raw| is_absolute(raw))
+pub fn xdg_value(value: Option<&str>, os: Os) -> Option<&str> {
+    value.filter(|raw| match os {
+        Os::Unix => raw.starts_with('/'),
+        Os::Windows => is_absolute_windows(raw),
+    })
 }
 
-/// Whether `value` is an absolute path in POSIX or Windows spelling.
-fn is_absolute(value: &str) -> bool {
+/// Whether `value` is absolute under Windows rules (POSIX-style `/` included).
+fn is_absolute_windows(value: &str) -> bool {
     if value.starts_with('/') || value.starts_with('\\') {
         return true;
     }
@@ -151,10 +157,10 @@ pub fn runtime_root_for(
     xdg_cache_home: Option<&str>,
     home: Option<&str>,
 ) -> PathBuf {
-    if let Some(xdg_runtime) = xdg_value(xdg_runtime_dir) {
+    if let Some(xdg_runtime) = xdg_value(xdg_runtime_dir, Os::Unix) {
         return PathBuf::from(xdg_runtime).join("gpy");
     }
-    if let Some(xdg_cache) = xdg_value(xdg_cache_home) {
+    if let Some(xdg_cache) = xdg_value(xdg_cache_home, Os::Unix) {
         return PathBuf::from(xdg_cache).join("gpy");
     }
     if let Some(home_dir) = home {
@@ -197,7 +203,7 @@ pub fn cache_root_for(
     local_app_data: Option<&str>,
     os: Os,
 ) -> Option<PathBuf> {
-    if let Some(xdg_cache) = xdg_value(xdg_cache_home) {
+    if let Some(xdg_cache) = xdg_value(xdg_cache_home, os) {
         return Some(PathBuf::from(xdg_cache).join("gpy"));
     }
     match os {
@@ -208,6 +214,9 @@ pub fn cache_root_for(
 
 /// The config root for a given environment, with no I/O and no ambient
 /// reads.
+///
+/// Unix rules only (#774): a Windows-shaped `XDG_CONFIG_HOME` is relative and
+/// ignored; native-Windows config resolution is out of scope.
 ///
 /// Precedence:
 /// 1. `$XDG_CONFIG_HOME/gpy`
@@ -223,7 +232,7 @@ pub fn cache_root_for(
 /// theme resolution unified onto this function.
 #[must_use]
 pub fn config_root_for(xdg_config_home: Option<&str>, home: Option<&str>) -> PathBuf {
-    if let Some(xdg_config) = xdg_value(xdg_config_home) {
+    if let Some(xdg_config) = xdg_value(xdg_config_home, Os::Unix) {
         return PathBuf::from(xdg_config).join("gpy");
     }
     let home_dir = home.unwrap_or(".");
@@ -261,7 +270,7 @@ mod tests {
     /// Panics if the resolver disagrees with the documented precedence.
     #[test]
     fn runtime_root_precedence() {
-        let cases: [RuntimeCase; 9] = [
+        let cases: [RuntimeCase; 12] = [
             (
                 Some("/run/user/1000"),
                 Some("/cache"),
@@ -283,6 +292,15 @@ mod tests {
             (
                 Some("run"),
                 Some("cache"),
+                Some("/home/u"),
+                "/home/u/.cache/gpy",
+            ),
+            // #774: Windows-shaped values are relative on Unix and ignored.
+            (Some("C:/x"), None, Some("/home/u"), "/home/u/.cache/gpy"),
+            (Some(r"C:\x"), None, Some("/home/u"), "/home/u/.cache/gpy"),
+            (
+                Some(r"\\srv\x"),
+                None,
                 Some("/home/u"),
                 "/home/u/.cache/gpy",
             ),
@@ -313,7 +331,7 @@ mod tests {
     /// Panics if the resolver disagrees with the documented precedence.
     #[test]
     fn cache_root_precedence() {
-        let cases: [CacheCase; 6] = [
+        let cases: [CacheCase; 9] = [
             (Some("/cache"), Some("/home/u"), Some("/cache/gpy")),
             (None, Some("/home/u"), Some("/home/u/.cache/gpy")),
             (None, None, None),
@@ -321,6 +339,14 @@ mod tests {
             (Some(""), Some("/home/u"), Some("/home/u/.cache/gpy")),
             (Some("cache"), Some("/home/u"), Some("/home/u/.cache/gpy")),
             (Some(""), None, None),
+            // #774: Windows-shaped values are relative on Unix and ignored.
+            (Some("C:/x"), Some("/home/u"), Some("/home/u/.cache/gpy")),
+            (Some(r"C:\x"), Some("/home/u"), Some("/home/u/.cache/gpy")),
+            (
+                Some(r"\\srv\x"),
+                Some("/home/u"),
+                Some("/home/u/.cache/gpy"),
+            ),
         ];
 
         for (xdg_cache, home, expected) in cases {
@@ -387,19 +413,56 @@ mod tests {
     /// # Panics
     ///
     /// Panics if the XDG spec's "empty or relative is not set" rule is not
-    /// applied, or if an absolute value (in either POSIX or Windows spelling)
-    /// is rejected.
+    /// applied on Unix, or if an absolute value is rejected.
     #[test]
-    fn xdg_value_keeps_only_absolute_values() {
+    fn xdg_value_unix_keeps_only_slash_rooted_values() {
+        for accepted in ["/run/user/1000", "/"] {
+            assert_eq!(
+                xdg_value(Some(accepted), Os::Unix),
+                Some(accepted),
+                "{accepted:?} is absolute and must be kept"
+            );
+        }
+
+        // #774: Windows spellings are relative on Unix.
+        for rejected in [
+            "",
+            "cache",
+            "./cache",
+            "~/cache",
+            "C:relative",
+            "1:/x",
+            r"C:\Users\u\AppData\Local",
+            "c:/users/u",
+            r"\server\share",
+            r"\x",
+            " /lead-space",
+        ] {
+            assert_eq!(
+                xdg_value(Some(rejected), Os::Unix),
+                None,
+                "{rejected:?} is empty or relative on Unix and must be treated as unset"
+            );
+        }
+
+        assert_eq!(xdg_value(None, Os::Unix), None);
+    }
+
+    /// # Panics
+    ///
+    /// Panics if a Windows-absolute spelling is rejected on Windows, or a
+    /// relative one accepted (#478 behaviour).
+    #[test]
+    fn xdg_value_windows_keeps_windows_and_posix_absolute_values() {
         for accepted in [
             "/run/user/1000",
             "/",
             r"C:\Users\u\AppData\Local",
             "c:/users/u",
-            r"\\server\share",
+            r"\server\share",
         ] {
             assert_eq!(
-                xdg_value(Some(accepted)),
+                xdg_value(Some(accepted), Os::Windows),
                 Some(accepted),
                 "{accepted:?} is absolute and must be kept"
             );
@@ -407,13 +470,13 @@ mod tests {
 
         for rejected in ["", "cache", "./cache", "~/cache", "C:relative", "1:/x"] {
             assert_eq!(
-                xdg_value(Some(rejected)),
+                xdg_value(Some(rejected), Os::Windows),
                 None,
                 "{rejected:?} is empty or relative and must be treated as unset"
             );
         }
 
-        assert_eq!(xdg_value(None), None);
+        assert_eq!(xdg_value(None, Os::Windows), None);
     }
 
     /// A home directory is always found on a machine with a user account.
