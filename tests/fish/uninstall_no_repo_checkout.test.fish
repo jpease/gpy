@@ -346,7 +346,7 @@ else
 end
 rm -rf "$t12"
 
-# 13. Malformed suffix and matching directory/symlink candidates ignored (#670)
+# 13. Malformed suffix and matching directory candidates ignored (#670)
 set -l t13 (mktemp -d)
 set -l t13_fn "$t13/config/fish/functions"
 mkdir -p "$t13_fn"
@@ -355,15 +355,31 @@ set -l t13_bad_suffix "$t13_fn/fish_prompt.fish.backup.invalid_stamp"
 printf '%s\n' "function fish_prompt; echo bad_suffix; end" >"$t13_bad_suffix"
 set -l t13_dir_candidate "$t13_fn/fish_prompt.fish.backup.20260101_000000"
 mkdir -p "$t13_dir_candidate"
-set -l t13_symlink_candidate "$t13_fn/fish_prompt.fish.gpy-backup.20260101_000000"
-ln -s "$t13_bad_suffix" "$t13_symlink_candidate"
 __gpy_test_uninstall "$isolated_bin/uninstall.fish" "$t13"
-if not test -e "$t13_prompt"; and not test -L "$t13_prompt"; and test -f "$t13_bad_suffix"; and test -d "$t13_dir_candidate"; and test -L "$t13_symlink_candidate"
-    __gpy_test_pass "#670 matrix 5: malformed suffix, directory and symlink candidates untouched"
+if not test -e "$t13_prompt"; and not test -L "$t13_prompt"; and test -f "$t13_bad_suffix"; and test -d "$t13_dir_candidate"
+    __gpy_test_pass "#670 matrix 5: malformed suffix and directory candidates untouched"
 else
     __gpy_test_fail "#670 matrix 5: invalid candidate was improperly selected or modified"
 end
 rm -rf "$t13"
+
+# 13b. A symlink backup of a user's own prompt is restored as the symlink
+# (#744). Installers now move a symlinked (dotfiles) prompt aside as-is,
+# which #670 predates: it assumed every backup was a regular file.
+set -l t13b (mktemp -d)
+set -l t13b_fn "$t13b/config/fish/functions"
+mkdir -p "$t13b_fn" "$t13b/dotfiles"
+set -l t13b_prompt "$t13b_fn/fish_prompt.fish"
+set -l t13b_target "$t13b/dotfiles/fish_prompt.fish"
+printf '%s\n' "function fish_prompt; echo dotfiles; end" >"$t13b_target"
+ln -s "$t13b_target" "$t13b_fn/fish_prompt.fish.gpy-backup.20260101_000000"
+__gpy_test_uninstall "$isolated_bin/uninstall.fish" "$t13b"
+if test -L "$t13b_prompt"; and test (readlink "$t13b_prompt") = "$t13b_target"; and test -f "$t13b_target"
+    __gpy_test_pass "#744: a symlink backup is restored as the user's symlink"
+else
+    __gpy_test_fail "#744: symlink backup was not restored as a symlink"
+end
+rm -rf "$t13b"
 
 # 14. Fixture root includes spaces: correct restoration, no split-path (#670)
 set -l t14 (mktemp -d "/tmp/gpy test spaces.XXXXXX")
