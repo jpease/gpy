@@ -140,6 +140,7 @@ sections above describe the ones worth reading first.
 - `renderer_transparent_bg.test.fish`
 - `segment_bg_tracking_empty_response.test.fish`
 - `segment_lazy_reload.test.fish`
+- `segment_position_mixed_renderers.test.fish`
 - `segment_toggle.test.fish`
 - `segments.test.fish`
 - `starship_parity.test.fish`
