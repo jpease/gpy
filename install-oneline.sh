@@ -214,6 +214,17 @@ else
     SHELL_CONFIG_DIR="$CONFIG_HOME/gpy/$CURRENT_SHELL"
 fi
 
+# The rc block sources this path inside double quotes, which fish, zsh and
+# bash all read identically -- except that `"`, `$`, a backtick, a backslash
+# or a newline still break out of them. Escaping for three shells is a bug
+# farm, so refuse such a path before any file is written (#746).
+case "$SHELL_CONFIG_DIR" in
+    *[\"\$\`\\]* | *"
+"*)
+        die "Cannot install: $SHELL_CONFIG_DIR contains a quote, \$, backtick, backslash or newline, which cannot be sourced safely from a shell rc file. Use an XDG_CONFIG_HOME without those characters."
+        ;;
+esac
+
 # GitHub release information
 REPO="jpease/gpy"
 VERSION="${GPY_VERSION:-latest}"
@@ -545,7 +556,7 @@ case "$CURRENT_SHELL" in
 # >>> gpy-init >>>
 # GPY Prompt Enhancement
 if status is-interactive
-    source $SHELL_CONFIG_DIR/conf.d/gpy_init.fish
+    source "$SHELL_CONFIG_DIR/conf.d/gpy_init.fish"
 end
 # <<< gpy-init <<<
 EOF
@@ -576,7 +587,7 @@ EOF
         ZSH_RC="$HOME/.zshrc"
         touch "$ZSH_RC"
 
-        SOURCE_LINE="source $SHELL_CONFIG_DIR/gpy.zsh"
+        SOURCE_LINE="source \"$SHELL_CONFIG_DIR/gpy.zsh\""
         if ! grep -qF "# >>> gpy-init >>>" "$ZSH_RC" 2>/dev/null; then
             cat >> "$ZSH_RC" << EOF
 
@@ -600,7 +611,7 @@ EOF
         fi
         touch "$BASH_RC"
 
-        SOURCE_LINE="source $SHELL_CONFIG_DIR/gpy.bash"
+        SOURCE_LINE="source \"$SHELL_CONFIG_DIR/gpy.bash\""
         if ! grep -qF "# >>> gpy-init >>>" "$BASH_RC" 2>/dev/null; then
             cat >> "$BASH_RC" << EOF
 
@@ -682,7 +693,7 @@ info "🚀 Next steps:"
 case "$CURRENT_SHELL" in
     fish)
         echo "   1. Restart Fish: exec fish"
-        echo "   2. Or reload config: source $FISH_CONFIG"
+        echo "   2. Or reload config: source \"$FISH_CONFIG\""
         ;;
     zsh)
         echo "   1. Restart Zsh: exec zsh"
@@ -690,7 +701,7 @@ case "$CURRENT_SHELL" in
         ;;
     bash)
         echo "   1. Restart Bash: exec bash"
-        echo "   2. Or reload config: source $BASH_RC"
+        echo "   2. Or reload config: source \"$BASH_RC\""
         ;;
 esac
 echo ""
