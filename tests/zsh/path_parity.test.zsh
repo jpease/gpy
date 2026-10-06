@@ -42,7 +42,7 @@ compare() {
     case_name="$1"
     shift
     agent="$(env -i PATH="$PATH" "$@" "$GPY_BIN" debug paths --format kv)"
-    shell="$(env -i PATH="$PATH" "$@" zsh -c 'export GPY_AGENT_SUPERVISOR_ENABLED=0; source "$1/zsh/gpy.zsh"; __gpy_debug_paths' _ "$ROOT")"
+    shell="$(env -i PATH="$PATH" "$@" zsh -c 'source "$1/zsh/gpy.zsh"; __gpy_debug_paths' _ "$ROOT")"
     for key in ${=ALL_KEYS}; do
         a="$(printf '%s\n' "$agent" | sed -n "s/^$key=//p")"
         s="$(printf '%s\n' "$shell" | sed -n "s/^$key=//p")"
@@ -67,6 +67,13 @@ compare() {
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/gpy-path-parity.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
+# The theme export sets the supervisor flag from config.toml after gpy.zsh
+# loads (#762), so disable it in every config dir the cases resolve to;
+# otherwise sourcing gpy.zsh starts an agent.
+for cfg in "$tmp/config" "$tmp/home/.config"; do
+    mkdir -p "$cfg/gpy"
+    printf '[agent.supervisor]\nenabled = false\n' >"$cfg/gpy/config.toml"
+done
 compare xdg_all_set HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache" XDG_RUNTIME_DIR="$tmp/run"
 compare runtime_unset HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache"
 compare xdg_unset HOME="$tmp/home"
@@ -78,8 +85,7 @@ compare socket_override HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/run" GPY_AGENT_SO
 # --- cache key encoding, against a file the agent wrote ----------------------------
 echo "--- cache key encoding ---"
 shell_e2e_init "$ROOT"
-export GPY_AGENT_SUPERVISOR_ENABLED=0
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' \
+printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n\n[agent.supervisor]\nenabled = false\n' \
     >"$XDG_CONFIG_HOME/gpy/config.toml"
 shell_e2e_start_agent || exit 1
 cd "$SHELL_E2E_REPO" || exit 1

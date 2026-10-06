@@ -15,6 +15,14 @@ in `tests/bash/`, see its README for the split).
 | Completion widgets | `completions` | a nested zsh via `zsh/zpty` |
 | Hostile environment | `hostile_env` (fresh child zsh whose rc builds a hostile environment before sourcing `gpy.zsh`; asserts the user's environment survived), `cache_dir_no_leak` (the private `$TMPDIR/gpy_cache_*` render-cache dir does not leak on re-source, `exec zsh` or a killed shell, and a live shell's dir is never removed by a sibling) | none: supervisor off, socket that does not exist |
 | IPC edge cases | `ipc_partial_response`, `ipc_no_double_send_on_slow_reply`, `protocol_version_mismatch`, `ipc_nc_fallback_timeout`, `ipc_send_preserves_escapes` (backslashes and quotes reach the agent and come back verbatim), `ipc_timeout_honors_budget` (the zsocket and socat transports honour `GPY_IPC_TIMEOUT_MS`; a slow reply never forks a oneshot), `register_rejects_error_reply` (an `{"error":…}` reply to register does not count as registered), `workspace_error_keeps_registration` (a workspace error other than "not registered" keeps the registration) | a python3 fake listener |
+| Supervisor config | `supervisor_respects_config` (the per-prompt check honours `[agent.supervisor]` `enabled`, `check_interval_seconds` and `max_restart_attempts` from the theme export, #762) | a stub `gpy-agent` on `PATH` |
+
+The supervisor flags come from `config.toml` through the theme export, which
+loads after `gpy.zsh` starts sourcing, so exporting
+`GPY_AGENT_SUPERVISOR_ENABLED=0` does not stop `gpy.zsh` from starting an
+agent. Tests that must not start one source `tests/lib/supervisor_off.zsh`
+(a throwaway config with `[agent.supervisor] enabled = false`) or write that
+key into their own sandbox `config.toml` (#762).
 
 ## The live-daemon harness
 

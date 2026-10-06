@@ -272,9 +272,8 @@ function __gpy_precmd() {
 
     # Periodic health check (#638): a dead agent is restarted from the next
     # prompt, rate limited and off the render path, mirroring Bash's
-    # __gpy_supervisor_check. Defined by supervisor.zsh only when the
-    # supervisor is enabled.
-    (( $+functions[__gpy_supervisor_check] )) && __gpy_supervisor_check
+    # __gpy_supervisor_check. It reads the enable flags itself (#762).
+    __gpy_supervisor_check
 }
 
 function __gpy_render_prompt() {

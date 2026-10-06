@@ -327,6 +327,16 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   removed itself before registering, so a shell outside git and project
   directories never got live updates. Only the restart loop is skipped now.
 
+- Zsh honours `[agent.supervisor] enabled = false`, and Bash and Zsh honour
+  `check_interval_seconds` and `max_restart_attempts` (#762). Zsh decided
+  whether to supervise before the theme export had loaded, so it kept
+  restarting a stopped agent; its one startup start now runs after the
+  export and is gated the same way. Both shells read the interval and cap
+  from the exported `GPY_AGENT_SUPERVISOR_*` values on every check. With
+  nothing configured, the fallback is now 30 s and 5 attempts (was 10 s and
+  3). `GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS` and
+  `GPY_SUPERVISOR_CHECK_MAX_ATTEMPTS` still override when set.
+
 - `gpy-agent start` no longer evicts a newer running agent (#780). It
   replaced the daemon on any version difference, so two installs could flip
   it back and forth. Only an older or unreadable version is replaced now.

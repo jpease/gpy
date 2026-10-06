@@ -20,7 +20,7 @@
 ROOT=${0:a:h:h:h}
 cd "$ROOT" || exit 1
 
-export GPY_AGENT_SUPERVISOR_ENABLED=0
+source "$ROOT/tests/lib/supervisor_off.zsh"
 export GPY_AGENT_SOCKET_PATH="$ROOT/.gpy-test-missing-json-flags-tail.sock"
 
 source zsh/gpy.zsh
