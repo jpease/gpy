@@ -4,7 +4,9 @@
 #
 # With the agent disabled in config.toml (exported GPY_AGENT_ENABLED=0), the
 # first prompt must not spawn a supervisor or start the agent, and a running
-# supervisor loop must exit instead of restarting the agent (#699).
+# supervisor loop must exit instead of restarting the agent (#699). A loop
+# spawned while both flags were on must exit within one check interval once
+# the agent rewrites the export cache with either flag off.
 
 set -l repo_root (path resolve (status dirname)/../..)
 
@@ -74,5 +76,32 @@ if not poll_exit 5 $loop_pid
 end
 string match -q RESTART <$tmp/loop.out; and fail "supervisor loop restarted the agent with GPY_AGENT_ENABLED=0"
 
+# Case 3: a running loop re-reads the export cache the agent rewrites on a
+# config change. Both flags are on at spawn; flipping one in the cache must
+# stop the loop within one check interval (here 2s, plus startup slack).
+function assert_loop_stops_on_export --argument-names flag --inherit-variable repo_root --inherit-variable tmp
+    printf '%s\n' 'set -gx GPY_AGENT_ENABLED "1"' 'set -gx GPY_AGENT_SUPERVISOR_ENABLED "1"' >$XDG_CACHE_HOME/gpy/theme-export.fish
+    env GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1 \
+        GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=2 \
+        fish --no-config -c '
+            source $argv[1]/fish/core/constants.fish
+            source $argv[1]/fish/core/util.fish
+            source $argv[1]/fish/core/ipc.fish
+            function __gpy_agent_is_healthy; return 0; end
+            __gpy_agent_supervisor_loop' -- $repo_root >/dev/null 2>&1 &
+    set -l loop_pid $last_pid
+    sleep 1
+    kill -0 $loop_pid 2>/dev/null; or fail "supervisor loop exited with both flags on (checking $flag)"
+
+    string replace "set -gx $flag \"1\"" "set -gx $flag \"0\"" <$XDG_CACHE_HOME/gpy/theme-export.fish >$tmp/export.new
+    mv $tmp/export.new $XDG_CACHE_HOME/gpy/theme-export.fish
+    if not poll_exit 3 $loop_pid
+        kill $loop_pid 2>/dev/null
+        fail "supervisor loop kept running after the export cache set $flag=0"
+    end
+end
+assert_loop_stops_on_export GPY_AGENT_ENABLED
+assert_loop_stops_on_export GPY_AGENT_SUPERVISOR_ENABLED
+
 cleanup
-echo "✅ Agent-disabled shells spawn no supervisor and the loop exits"
+echo "✅ Agent-disabled shells spawn no supervisor and the loop exits, also when config disables it later"

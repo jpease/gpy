@@ -318,9 +318,10 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   (#699). With `[agent] enabled = false`, the first prompt spawned a
   supervisor that never exited, and a supervisor loop restarted the agent
   even when the shell had `GPY_AGENT_ENABLED=0`. The loop now re-reads both
-  flags on every iteration and exits when either is `0`. The Agent-Free Mode
-  docs now use the `config.toml` keys; the theme export overwrites a
-  `set -gx` in `config.fish`.
+  flags on every iteration, from the theme export the agent rewrites when
+  `config.toml` changes, and exits within one check interval when either is
+  `0`. The Agent-Free Mode docs now use the `config.toml` keys; the theme
+  export overwrites a `set -gx` in `config.fish`.
 
 - Fish registers with a running agent when the supervisor is disabled
   (#700). With `[agent.supervisor] enabled = false`, the per-prompt hook

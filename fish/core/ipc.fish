@@ -1223,6 +1223,21 @@ function __gpy_sync_workspace --description 'Report current workspace to the age
     end
 end
 
+# The detached supervisor inherits the agent flags at spawn; a later
+# config.toml edit reaches it only through the theme-export cache the agent
+# rewrites (#699). Read just those two assignments instead of sourcing the
+# whole export into the supervisor. A missing or unreadable cache, or one
+# without the flags, keeps the current values.
+function __gpy_supervisor_refresh_flags --description 'Re-read the agent enable flags from the theme-export cache'
+    set -l cache_path (__gpy_theme_export_cache_path)
+    test -n "$cache_path" -a -r "$cache_path"; or return 0
+    set -l pairs (string match -rg '^set -gx (GPY_AGENT_ENABLED|GPY_AGENT_SUPERVISOR_ENABLED) "(\d+)"$' <"$cache_path")
+    while set -q pairs[2]
+        set -gx $pairs[1] $pairs[2]
+        set -e pairs[1..2]
+    end
+end
+
 # $argv[1] (optional): the supervisor pidfile this process claimed. The loop
 # exits once the file no longer names this process, so a supervisor that lost
 # a stale-file recovery race does not run on untracked (#703).
@@ -1240,8 +1255,10 @@ function __gpy_agent_supervisor_loop --description 'Background loop for agent su
     set -l last_restart_time 0
 
     while true
-        # Re-read both flags every iteration so a value changed after spawn
-        # stops the loop (#699).
+        # Re-read both flags every iteration, from the export cache the agent
+        # rewrites on a config change, so disabling either one stops a running
+        # loop within one check interval (#699).
+        __gpy_supervisor_refresh_flags
         if test "$GPY_AGENT_SUPERVISOR_ENABLED" = 0; or test "$GPY_AGENT_ENABLED" = 0
             break
         end
