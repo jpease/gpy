@@ -112,6 +112,7 @@ sections above describe the ones worth reading first.
 - `language_cache_nongit.test.fish`
 - `language_cache_stale_refresh.test.fish`
 - `theme_export_cache.test.fish`
+- `theme_reload_clears_optional_vars.test.fish`
 
 **Segments and rendering**
 
