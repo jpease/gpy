@@ -39,11 +39,13 @@ async fn test_socket_permissions() -> Result<()> {
     let registry = ClientDirectory::new().shared();
     let git_cache = Arc::new(GitStatusCache::new());
     let watcher = None;
-    let theme_manager = Arc::new(ThemeManager::new("default").expect("default theme should load"));
+    let theme_manager =
+        Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
     let instant_cache =
         Arc::new(gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"));
     let latency_tracker = Arc::new(LatencyTracker::new(100));
-    let config_manager = Arc::new(ConfigManager::new().expect("default config should load"));
+    let config_manager =
+        Arc::new(ConfigManager::with_defaults().expect("default config should load"));
     let mut server = EndpointHandle::builder()
         .socket_path(socket_path.clone())
         .client_registry(registry)
@@ -100,11 +102,13 @@ async fn test_socket_binding_variations() -> Result<()> {
     let registry = ClientDirectory::new().shared();
     let git_cache = Arc::new(GitStatusCache::new());
     let watcher = None;
-    let theme_manager = Arc::new(ThemeManager::new("default").expect("default theme should load"));
+    let theme_manager =
+        Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
     let instant_cache =
         Arc::new(gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"));
     let latency_tracker = Arc::new(LatencyTracker::new(100));
-    let config_manager = Arc::new(ConfigManager::new().expect("default config should load"));
+    let config_manager =
+        Arc::new(ConfigManager::with_defaults().expect("default config should load"));
     let server = EndpointHandle::builder()
         .socket_path(socket_path)
         .client_registry(registry)
@@ -126,11 +130,13 @@ async fn test_socket_binding_variations() -> Result<()> {
     let registry2 = ClientDirectory::new().shared();
     let git_cache2 = Arc::new(GitStatusCache::new());
     let watcher2 = None;
-    let theme_manager2 = Arc::new(ThemeManager::new("default").expect("default theme should load"));
+    let theme_manager2 =
+        Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
     let instant_cache2 =
         Arc::new(gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"));
     let latency_tracker = Arc::new(LatencyTracker::new(100));
-    let config_manager2 = Arc::new(ConfigManager::new().expect("default config should load"));
+    let config_manager2 =
+        Arc::new(ConfigManager::with_defaults().expect("default config should load"));
     let server2 = EndpointHandle::builder()
         .socket_path(nested_socket)
         .client_registry(registry2)
@@ -152,11 +158,13 @@ async fn test_socket_binding_variations() -> Result<()> {
     let registry3 = ClientDirectory::new().shared();
     let git_cache3 = Arc::new(GitStatusCache::new());
     let watcher3 = None;
-    let theme_manager = Arc::new(ThemeManager::new("default").expect("default theme should load"));
+    let theme_manager =
+        Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
     let instant_cache3 =
         Arc::new(gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"));
     let latency_tracker = Arc::new(LatencyTracker::new(100));
-    let config_manager3 = Arc::new(ConfigManager::new().expect("default config should load"));
+    let config_manager3 =
+        Arc::new(ConfigManager::with_defaults().expect("default config should load"));
     let server3 = EndpointHandle::builder()
         .socket_path(spaced_socket)
         .client_registry(registry3)
@@ -187,12 +195,13 @@ async fn test_rapid_socket_lifecycle() -> Result<()> {
         let git_cache = Arc::new(GitStatusCache::new());
         let watcher = None;
         let theme_manager =
-            Arc::new(ThemeManager::new("default").expect("default theme should load"));
+            Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
         let instant_cache = Arc::new(
             gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"),
         );
         let latency_tracker = Arc::new(LatencyTracker::new(100));
-        let config_manager = Arc::new(ConfigManager::new().expect("default config should load"));
+        let config_manager =
+            Arc::new(ConfigManager::with_defaults().expect("default config should load"));
         let mut server = EndpointHandle::builder()
             .socket_path(socket_path.clone())
             .client_registry(registry)
@@ -237,11 +246,13 @@ async fn test_concurrent_connections() -> Result<()> {
     let server_registry = Arc::clone(&registry);
     let git_cache = Arc::new(GitStatusCache::new());
     let watcher = None;
-    let theme_manager = Arc::new(ThemeManager::new("default").expect("default theme should load"));
+    let theme_manager =
+        Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
     let latency_tracker = Arc::new(LatencyTracker::new(100));
 
     // Start server with automatic cleanup
-    let config_manager = Arc::new(ConfigManager::new().expect("default config should load"));
+    let config_manager =
+        Arc::new(ConfigManager::with_defaults().expect("default config should load"));
     let server_handle = tokio::spawn(async move {
         let instant_cache = Arc::new(
             gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"),
@@ -317,12 +328,13 @@ async fn test_socket_cleanup_on_termination() -> Result<()> {
         let git_cache = Arc::new(GitStatusCache::new());
         let watcher = None;
         let theme_manager =
-            Arc::new(ThemeManager::new("default").expect("default theme should load"));
+            Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
         let instant_cache = Arc::new(
             gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"),
         );
         let latency_tracker = Arc::new(LatencyTracker::new(100));
-        let config_manager = Arc::new(ConfigManager::new().expect("default config should load"));
+        let config_manager =
+            Arc::new(ConfigManager::with_defaults().expect("default config should load"));
         let mut server = EndpointHandle::builder()
             .socket_path(socket_path.clone())
             .client_registry(registry)
@@ -410,11 +422,13 @@ async fn test_ipc_under_load() -> Result<()> {
     let server_registry = Arc::clone(&registry);
     let git_cache = Arc::new(GitStatusCache::new());
     let watcher = None;
-    let theme_manager = Arc::new(ThemeManager::new("default").expect("default theme should load"));
+    let theme_manager =
+        Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
     let latency_tracker = Arc::new(LatencyTracker::new(100));
 
     // Start server with automatic cleanup
-    let config_manager = Arc::new(ConfigManager::new().expect("default config should load"));
+    let config_manager =
+        Arc::new(ConfigManager::with_defaults().expect("default config should load"));
     let server_handle = tokio::spawn(async move {
         let instant_cache = Arc::new(
             gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"),
@@ -514,12 +528,13 @@ async fn test_socket_binding_errors() -> Result<()> {
         let git_cache = Arc::new(GitStatusCache::new());
         let watcher = None;
         let theme_manager =
-            Arc::new(ThemeManager::new("default").expect("default theme should load"));
+            Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
         let instant_cache = Arc::new(
             gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"),
         );
         let latency_tracker = Arc::new(LatencyTracker::new(100));
-        let config_manager = Arc::new(ConfigManager::new().expect("default config should load"));
+        let config_manager =
+            Arc::new(ConfigManager::with_defaults().expect("default config should load"));
         let mut server = EndpointHandle::builder()
             .socket_path(readonly_socket)
             .client_registry(registry)
@@ -554,11 +569,13 @@ async fn test_socket_binding_errors() -> Result<()> {
     let registry = ClientDirectory::new().shared();
     let git_cache = Arc::new(GitStatusCache::new());
     let watcher = None;
-    let theme_manager = Arc::new(ThemeManager::new("default").expect("default theme should load"));
+    let theme_manager =
+        Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
     let instant_cache =
         Arc::new(gpy_agent::cache::InstantPromptCache::new().expect("instant cache should work"));
     let latency_tracker = Arc::new(LatencyTracker::new(100));
-    let config_manager = Arc::new(ConfigManager::new().expect("default config should load"));
+    let config_manager =
+        Arc::new(ConfigManager::with_defaults().expect("default config should load"));
     let mut server = EndpointHandle::builder()
         .socket_path(file_path)
         .client_registry(registry)

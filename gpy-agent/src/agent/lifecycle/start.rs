@@ -950,8 +950,8 @@ mod tests {
         let shell_dir = tempfile::tempdir().expect("create shell dir");
         let cache = tempfile::tempdir().expect("create cache dir");
         let config = crate::config::Config::default();
-        let default_theme = crate::theme::ThemeManager::new("default").expect("default theme");
-        let text_theme = crate::theme::ThemeManager::new("text").expect("text theme");
+        let default_theme = crate::theme::ThemeManager::builtin("default").expect("default theme");
+        let text_theme = crate::theme::ThemeManager::builtin("text").expect("text theme");
         // The previous agent's export, as the shell sourced it.
         crate::cache::theme_export::write_theme_export_to_dir(
             cache.path(),

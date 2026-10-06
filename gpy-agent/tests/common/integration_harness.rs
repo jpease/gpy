@@ -374,13 +374,19 @@ impl IntegrationTestServer {
         // Write config to disk if needed
         config.write();
 
-        // Start agent process (it will fork and daemonize)
+        // Start agent process (it will fork and daemonize). The XDG roots
+        // live in the test's own temp dir: otherwise the daemon resolves
+        // themes and palettes from the developer's ~/.config/gpy and writes
+        // its theme exports and instant cache into ~/.cache/gpy (#664).
         let agent_binary = env!("CARGO_BIN_EXE_gpy-agent");
         let status = Command::new(agent_binary)
             .arg("start")
             .arg("--socket")
             .arg(socket.path())
             .env("GPY_CONFIG_PATH", config.path())
+            .env("XDG_CONFIG_HOME", socket_dir.path().join("config"))
+            .env("XDG_CACHE_HOME", socket_dir.path().join("cache"))
+            .env("XDG_RUNTIME_DIR", socket_dir.path())
             .status()?;
 
         if !status.success() {

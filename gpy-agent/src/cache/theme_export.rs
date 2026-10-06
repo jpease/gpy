@@ -103,7 +103,7 @@ mod tests {
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let cache_dir = temp_dir.path().join("gpy");
 
-        let theme_manager = crate::theme::ThemeManager::new("default").expect("theme manager");
+        let theme_manager = crate::theme::ThemeManager::builtin("default").expect("theme manager");
         let config = crate::config::Config::default();
 
         write_theme_export_to_dir(&cache_dir, &theme_manager, &config)
@@ -124,7 +124,7 @@ mod tests {
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let cache_dir = temp_dir.path().join("gpy");
 
-        let theme_manager = crate::theme::ThemeManager::new("default").expect("theme manager");
+        let theme_manager = crate::theme::ThemeManager::builtin("default").expect("theme manager");
         let config = crate::config::Config::default();
 
         write_theme_export_to_dir(&cache_dir, &theme_manager, &config).expect("write");
@@ -147,7 +147,7 @@ mod tests {
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let cache_dir = temp_dir.path().join("gpy");
 
-        let theme_manager = crate::theme::ThemeManager::new("default").expect("theme manager");
+        let theme_manager = crate::theme::ThemeManager::builtin("default").expect("theme manager");
         let config = crate::config::Config::default();
 
         write_theme_export_to_dir(&cache_dir, &theme_manager, &config)
@@ -189,8 +189,8 @@ mod tests {
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let cache_dir = temp_dir.path().join("gpy");
         let config = crate::config::Config::default();
-        let default_theme = crate::theme::ThemeManager::new("default").expect("default theme");
-        let text_theme = crate::theme::ThemeManager::new("text").expect("text theme");
+        let default_theme = crate::theme::ThemeManager::builtin("default").expect("default theme");
+        let text_theme = crate::theme::ThemeManager::builtin("text").expect("text theme");
 
         assert!(
             write_theme_export_to_dir(&cache_dir, &default_theme, &config).expect("first write"),

@@ -52,6 +52,9 @@ pub fn palette_by_name(name: &str) -> Palette {
     }
 }
 
+// Resolution of the builtin default palette is tested in
+// `tests/palette_manager_tests.rs` against an empty `XDG_CONFIG_HOME`; here a
+// developer's own `palettes/default.toml` would shadow it (#664).
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -61,57 +64,6 @@ mod tests {
 
     use super::{active_palette, palette_by_name};
     use crate::config::Config;
-
-    #[test]
-    fn default_config_resolves_builtin_default_palette() {
-        // `ui.palette` defaults to "default", which SP1 ships as a builtin.
-        let config = Config::default();
-        let palette = active_palette(&config);
-        // The default builtin maps the standard ANSI names to themselves (SP1),
-        // so at minimum a standard name resolves.
-        assert!(
-            palette.get("green").is_some(),
-            "default palette must define green"
-        );
-    }
-
-    #[test]
-    fn default_palette_defines_required_named_colors() {
-        let config = Config::default();
-        let palette = active_palette(&config);
-        // Identity ANSI names (default.toml/text.toml use these directly).
-        for name in [
-            "black", "red", "green", "yellow", "blue", "cyan", "white", "magenta",
-        ] {
-            assert!(
-                palette.get(name).is_some(),
-                "default palette must define standard name '{name}'"
-            );
-        }
-    }
-
-    #[test]
-    fn default_palette_defines_orange_and_brown() {
-        let config = Config::default();
-        let palette = active_palette(&config);
-        assert!(
-            palette.get("orange").is_some(),
-            "default palette must define orange"
-        );
-        assert!(
-            palette.get("brown").is_some(),
-            "default palette must define brown"
-        );
-    }
-
-    #[test]
-    fn palette_by_name_resolves_builtin_default_palette() {
-        let palette = palette_by_name("default");
-        assert!(
-            palette.get("green").is_some(),
-            "palette_by_name(\"default\") must define green"
-        );
-    }
 
     #[test]
     fn palette_by_name_falls_back_to_empty_for_unknown_name() {

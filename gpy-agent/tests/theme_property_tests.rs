@@ -166,7 +166,7 @@ proptest! {
         // We would set git/language enabled here, but Config doesn't expose setters
         // This test verifies the export mechanism doesn't panic
 
-        let theme_mgr = ThemeManager::new("default").expect("create theme manager");
+        let theme_mgr = ThemeManager::builtin("default").expect("create theme manager");
         let export = theme_mgr.export(Shell::Fish, &config);
 
         // Export should always contain at least basic theme variables
@@ -231,7 +231,7 @@ proptest! {
     #[test]
     fn prop_empty_theme_valid(_seed in any::<u32>()) {
         let config = Config::default();
-        let theme_mgr = ThemeManager::new("default").expect("create theme manager");
+        let theme_mgr = ThemeManager::builtin("default").expect("create theme manager");
 
         let export = theme_mgr.export(Shell::Fish, &config);
         prop_assert!(!export.is_empty());
@@ -274,7 +274,7 @@ proptest! {
     #[test]
     fn invariant_theme_export_idempotent(_seed in any::<u32>()) {
         let config = Config::default();
-        let theme_mgr = ThemeManager::new("default").expect("create theme manager");
+        let theme_mgr = ThemeManager::builtin("default").expect("create theme manager");
 
         let export1 = theme_mgr.export(Shell::Fish, &config);
         let export2 = theme_mgr.export(Shell::Fish, &config);
@@ -308,7 +308,7 @@ proptest! {
     #[test]
     fn regression_no_raw_ansi_in_export(_seed in any::<u32>()) {
         let config = Config::default();
-        let theme_mgr = ThemeManager::new("default").expect("create theme manager");
+        let theme_mgr = ThemeManager::builtin("default").expect("create theme manager");
 
         let export = theme_mgr.export(Shell::Fish, &config);
 

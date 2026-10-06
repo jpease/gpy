@@ -51,7 +51,7 @@ fn notify_clients_respects_agent_live_updates_flag() {
         Arc::new(crate::config::manager::ConfigManager::with_defaults().expect("config"));
     let watcher = Arc::new(Mutex::new(None));
     let theme_manager =
-        Arc::new(ThemeManager::new("default").expect("default theme should always load"));
+        Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
     let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
     let latency_tracker = Arc::new(crate::ipc::LatencyTracker::new(100));
     let language_cache = crate::language::DetectionCache::new();
@@ -124,7 +124,7 @@ fn hot_reload_git_enabled_blocks_requests() {
         Arc::new(crate::config::manager::ConfigManager::with_defaults().expect("config"));
     let watcher = Arc::new(Mutex::new(None));
     let theme_manager =
-        Arc::new(ThemeManager::new("default").expect("default theme should always load"));
+        Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
     let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
     let latency_tracker = Arc::new(crate::ipc::LatencyTracker::new(100));
     let language_cache = crate::language::DetectionCache::new();
@@ -203,7 +203,7 @@ fn build_test_endpoint(
         Arc::new(crate::config::manager::ConfigManager::with_defaults().expect("config"));
     let watcher = Arc::new(Mutex::new(None));
     let theme_manager =
-        Arc::new(ThemeManager::new("default").expect("default theme should always load"));
+        Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
     let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
     let latency_tracker = Arc::new(crate::ipc::LatencyTracker::new(100));
     let language_cache = crate::language::DetectionCache::new();
@@ -284,7 +284,8 @@ fn test_endpoint_handle_builder_success() {
     let config_manager = Arc::new(
         crate::config::manager::ConfigManager::with_defaults().expect("default config should load"),
     );
-    let theme_manager = Arc::new(ThemeManager::new("default").expect("default theme should load"));
+    let theme_manager =
+        Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
     let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
     let latency_tracker = Arc::new(crate::ipc::LatencyTracker::new(100));
     let language_cache = crate::language::DetectionCache::new();
@@ -314,7 +315,8 @@ fn test_endpoint_handle_builder_with_socket_path() {
     let config_manager = Arc::new(
         crate::config::manager::ConfigManager::with_defaults().expect("default config should load"),
     );
-    let theme_manager = Arc::new(ThemeManager::new("default").expect("default theme should load"));
+    let theme_manager =
+        Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
     let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
     let latency_tracker = Arc::new(crate::ipc::LatencyTracker::new(100));
     let language_cache = crate::language::DetectionCache::new();
@@ -348,7 +350,8 @@ fn test_endpoint_handle_builder_with_watcher_slot() {
     let config_manager = Arc::new(
         crate::config::manager::ConfigManager::with_defaults().expect("default config should load"),
     );
-    let theme_manager = Arc::new(ThemeManager::new("default").expect("default theme should load"));
+    let theme_manager =
+        Arc::new(ThemeManager::builtin("default").expect("default theme should load"));
     let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
     let latency_tracker = Arc::new(crate::ipc::LatencyTracker::new(100));
     let language_cache = crate::language::DetectionCache::new();
@@ -418,7 +421,7 @@ fn test_endpoint_handle_builder_fluent_api() {
                 .expect("default config should load"),
         ))
         .theme_manager(Arc::new(
-            ThemeManager::new("default").expect("default theme should load"),
+            ThemeManager::builtin("default").expect("default theme should load"),
         ))
         .instant_cache(Arc::new(crate::cache::InstantPromptCache::new_for_test()))
         .latency_tracker(Arc::new(crate::ipc::LatencyTracker::new(100)))

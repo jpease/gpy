@@ -23,6 +23,7 @@ use gpy_agent::config::Config;
 use gpy_agent::formatter::{Formatter, RenderContext, SegmentPosition};
 use gpy_agent::git::{RepositoryState, RepositoryStatus};
 use gpy_agent::ipc::{LanguageInfo, Response};
+use gpy_agent::palette::PaletteConfig;
 use gpy_agent::theme::ThemeConfig;
 use std::path::PathBuf;
 
@@ -36,9 +37,20 @@ fn load_text_theme() -> ThemeConfig {
         .expect("load text.toml")
 }
 
+/// The shipped default palette, read from the repo like the theme above.
+/// `active_palette` would prefer `~/.config/gpy/palettes/default.toml` and
+/// render the developer's colors instead of the fixtures' (#664).
+fn load_default_palette() -> gpy_agent::template::Palette {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../config/palettes/default.toml");
+    let content = std::fs::read_to_string(&path).expect("read palettes/default.toml");
+    toml::from_str::<PaletteConfig>(&content)
+        .expect("parse palettes/default.toml")
+        .to_template_palette()
+}
+
 fn render_response(theme: &ThemeConfig, response: &Response, is_last: bool) -> String {
     let config = Config::default();
-    let palette = gpy_agent::palette::active_palette(&config);
+    let palette = load_default_palette();
     let position = if is_last {
         SegmentPosition::LAST
     } else {
