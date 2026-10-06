@@ -187,8 +187,8 @@ fn validate_palette_name(palette_name: &str) -> Result<()> {
 
 /// Validate a concrete palette TOML file by path.
 ///
-/// `ColorSpec` deserialization validates each color value; a successful parse
-/// confirms the file is a well-formed palette.
+/// `ColorSpec` deserialization validates each color value; `PaletteConfig::validate`
+/// then confirms every palette reference resolves to a concrete color.
 ///
 /// # Errors
 ///
@@ -196,9 +196,9 @@ fn validate_palette_name(palette_name: &str) -> Result<()> {
 fn validate_palette_file(path: &Path) -> Result<()> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| Error::config(format!("Failed to read palette file: {e}")))?;
-    let _palette: crate::palette::PaletteConfig =
+    let palette: crate::palette::PaletteConfig =
         toml::from_str(&content).map_err(|e| Error::config(format!("TOML parsing failed: {e}")))?;
-    Ok(())
+    palette.validate()
 }
 
 /// Import a base16/base24 scheme file into a GPY user palette.

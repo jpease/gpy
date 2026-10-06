@@ -8,7 +8,7 @@
 use super::{ValidationError, ValidationErrorKind};
 use crate::Result;
 
-const NAMED_COLORS: &[&str] = &[
+pub(crate) const NAMED_COLORS: &[&str] = &[
     "black",
     "red",
     "green",

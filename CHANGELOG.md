@@ -553,6 +553,10 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   skipped because the theme failed to load (#803).
 - The `install_from_source_docs` test runs sealed from the caller's
   environment and stops only its own sandbox agent (#749).
+- `magenta`, `bright_*`/`br*` and `gray`/`grey` render as ANSI colours in
+  templates (#732), so the default theme's rebase/merge pill keeps its
+  background. Palettes with unresolvable or cyclic references are rejected
+  when loaded instead of rendering nothing.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

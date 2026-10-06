@@ -180,6 +180,7 @@ impl PaletteManager {
         if cfg.name.is_empty() {
             name.clone_into(&mut cfg.name);
         }
+        cfg.validate()?;
         Ok(cfg)
     }
 
@@ -194,6 +195,7 @@ impl PaletteManager {
         if cfg.name.is_empty() {
             stem_fallback.clone_into(&mut cfg.name);
         }
+        cfg.validate()?;
         Ok(cfg)
     }
 

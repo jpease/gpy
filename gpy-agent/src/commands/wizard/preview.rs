@@ -32,7 +32,7 @@ use crate::formatter::username_resolver::UsernameResolver;
 use crate::plugin::BuiltinSegment;
 use crate::template::{
     Attr, Color as TemplateColor, RenderContext as TemplateRenderContext, Span as TemplateSpan,
-    SpanKind, Style as TemplateStyle, VariableResolver,
+    SpanKind, Style as TemplateStyle, VariableResolver, canonical_ansi_name,
 };
 use crate::theme::{GitState, ThemeConfig};
 use ratatui::style::{Color as RatatuiColor, Modifier, Style as RatatuiStyle};
@@ -78,8 +78,8 @@ pub(super) fn to_ratatui_color(color: &TemplateColor) -> Option<RatatuiColor> {
 
 /// Map a named color to its `ratatui` equivalent.
 ///
-/// Accepts the vocabulary `crate::template::style::parse_color` accepts (the
-/// 16 names in its private `is_named_color`, plus `"default"`, which
+/// Accepts the vocabulary `crate::template::style::parse_color` accepts (every
+/// spelling `canonical_ansi_name` maps, plus `"default"`, which
 /// `parse_color` normalizes to `Named("default")`) to `ratatui` colors.
 ///
 /// Named per ANSI code, not per ratatui's user-friendly `FromStr` for
@@ -96,7 +96,12 @@ pub(super) fn to_ratatui_color(color: &TemplateColor) -> Option<RatatuiColor> {
 /// easy trap — this mapping is verified directly against both source files
 /// rather than assumed.
 fn named_to_ratatui(name: &str) -> Option<RatatuiColor> {
-    match name {
+    let canonical = if name == "default" {
+        name
+    } else {
+        canonical_ansi_name(name)?
+    };
+    match canonical {
         "black" => Some(RatatuiColor::Black),
         "red" => Some(RatatuiColor::Red),
         "green" => Some(RatatuiColor::Green),
