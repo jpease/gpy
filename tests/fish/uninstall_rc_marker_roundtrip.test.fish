@@ -146,7 +146,7 @@ cp "$original_a" "$home_a/.config/fish/config.fish"
 
 # A child fish for the cd: a `cd` inside a command substitution changes this
 # shell's own directory, and pkg_a is deleted below.
-set -l install_a_out (fish -c "cd '$pkg_a'; and env HOME='$home_a' bash ./install.sh" 2>&1)
+set -l install_a_out (fish -c 'cd $argv[1]; and env HOME=$argv[2] bash ./install.sh' -- $pkg_a $home_a 2>&1)
 set -l install_a_status $status
 
 if test $install_a_status -ne 0
@@ -159,7 +159,7 @@ else
     end
 
     # Idempotency: running install.sh again must not duplicate the block.
-    fish -c "cd '$pkg_a'; and env HOME='$home_a' bash ./install.sh" >/dev/null 2>&1
+    fish -c 'cd $argv[1]; and env HOME=$argv[2] bash ./install.sh' -- $pkg_a $home_a >/dev/null 2>&1
     set -l marker_count_a (grep -cF '# >>> gpy-init >>>' "$home_a/.config/fish/config.fish")
     if test "$marker_count_a" = 1
         __gpy_test_pass "install.sh: append is idempotent"

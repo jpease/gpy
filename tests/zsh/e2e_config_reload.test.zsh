@@ -14,7 +14,7 @@
 #   (c) leave an export that sources cleanly under `zsh -o nounset`.
 
 ROOT=${0:a:h:h:h}
-emulate sh -c ". $ROOT/tests/lib/shell_e2e.sh"
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
 shell_e2e_init "$ROOT"
 failures=0
@@ -77,7 +77,7 @@ else
 fi
 
 # --- the export sources cleanly under nounset ----------------------------------------
-if zsh -o nounset -c "source '$export_file'" 2>"$SHELL_E2E_ROOT/nounset.err"; then
+if zsh -o nounset -c 'source "$1"' zsh "$export_file" 2>"$SHELL_E2E_ROOT/nounset.err"; then
     pass "the export sources cleanly under zsh -o nounset"
 else
     fail "the export fails under nounset: $(cat "$SHELL_E2E_ROOT/nounset.err")"

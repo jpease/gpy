@@ -21,7 +21,7 @@
 #       runs a command typed into it.
 
 ROOT=${0:a:h:h:h}
-emulate sh -c ". $ROOT/tests/lib/shell_e2e.sh"
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
 shell_e2e_init "$ROOT"
 failures=0

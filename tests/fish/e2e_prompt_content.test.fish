@@ -70,25 +70,25 @@ end
 # not a synchronisation sleep: assertions still poll renders until the cache
 # has what they expect.
 function render_prompt --argument-names cwd
-    fish --no-config -c "
-        source $__gpy_root/fish/core/init.fish
-        source $__gpy_root/fish/functions/fish_prompt.fish
+    fish --no-config -c '
+        source $argv[1]/fish/core/init.fish
+        source $argv[1]/fish/functions/fish_prompt.fish
         __gpy_register_with_agent >/dev/null 2>&1
-        cd '$cwd'
+        cd $argv[2]
         fish_prompt
         sleep 0.2
-    " 2>/dev/null | strip_sgr | string collect
+    ' -- $__gpy_root $cwd 2>/dev/null | strip_sgr | string collect
 end
 
 # Render just the directory segment via its entry point, trimmed.
 function render_directory --argument-names cwd
-    fish --no-config -c "
-        source $__gpy_root/fish/core/init.fish
-        source $__gpy_root/fish/functions/fish_prompt.fish
+    fish --no-config -c '
+        source $argv[1]/fish/core/init.fish
+        source $argv[1]/fish/functions/fish_prompt.fish
         __gpy_register_with_agent >/dev/null 2>&1
-        cd '$cwd'
+        cd $argv[2]
         segment_directory_render true true
-    " 2>/dev/null | strip_sgr | string collect | string trim
+    ' -- $__gpy_root $cwd 2>/dev/null | strip_sgr | string collect | string trim
 end
 
 # Does $text contain every `|`-separated token of $wanted and none of $unwanted?
@@ -331,16 +331,18 @@ end
 
 # ---- 4. prompt frame (no agent: socket pointed at nothing) ---------------------------
 function frame_render
-    fish --no-config -c "
+    # $argv[1] and $argv[2] are code snippets run before/after sourcing the
+    # integration; they travel as arguments to `eval`, like the repo root.
+    fish --no-config -c '
         set -gx GPY_AGENT_SOCKET_PATH /nonexistent/gpy.sock
         set -gx GPY_AGENT_ENABLED 0
         set -gx GPY_AGENT_SUPERVISOR_ENABLED 0
-        $argv[1]
-        source $__gpy_root/fish/core/init.fish
-        source $__gpy_root/fish/functions/fish_prompt.fish
-        $argv[2]
+        eval $argv[2]
+        source $argv[1]/fish/core/init.fish
+        source $argv[1]/fish/functions/fish_prompt.fish
+        eval $argv[3]
         fish_prompt
-    " 2>/dev/null | strip_sgr | string collect
+    ' -- $__gpy_root "$argv[1]" "$argv[2]" 2>/dev/null | strip_sgr | string collect
 end
 
 function test_prompt_frame

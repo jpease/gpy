@@ -19,7 +19,7 @@
 # suite used to carry can no longer drift from the Rust encoder unnoticed.
 
 ROOT=${0:a:h:h:h}
-emulate sh -c ". $ROOT/tests/lib/shell_e2e.sh"
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
 GPY_BIN="$ROOT/gpy-agent/target/debug/gpy"
 if [ ! -x "$GPY_BIN" ]; then

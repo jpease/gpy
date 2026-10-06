@@ -89,7 +89,7 @@ else
 fi
 
 # --- the export sources cleanly under nounset ----------------------------------------
-if bash -u -c "source '$export_file'" 2>"$SHELL_E2E_ROOT/nounset.err"; then
+if bash -u -c 'source "$1"' bash "$export_file" 2>"$SHELL_E2E_ROOT/nounset.err"; then
     pass "the export sources cleanly under bash -u"
 else
     fail "the export fails under nounset: $(cat "$SHELL_E2E_ROOT/nounset.err")"

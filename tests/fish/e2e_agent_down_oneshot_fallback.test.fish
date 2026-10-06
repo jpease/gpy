@@ -127,11 +127,11 @@ function test_agent_down_oneshot_fallback
     # the integration, claims its own marker and exits normally leaves nothing
     # named after its PID in TMPDIR (a later process reusing the PID would
     # otherwise start with a spent oneshot budget).
-    set -l child_marker (fish -c "
-        source $__gpy_root/fish/core/init.fish >/dev/null 2>&1
+    set -l child_marker (fish -c '
+        source $argv[1]/fish/core/init.fish >/dev/null 2>&1
         __gpy_oneshot_claim
         __gpy_oneshot_marker
-        test -e (__gpy_oneshot_marker); or echo NOT_CLAIMED" 2>/dev/null)
+        test -e (__gpy_oneshot_marker); or echo NOT_CLAIMED' -- $__gpy_root 2>/dev/null)
     if test -e "$child_marker[1]"
         print_test_result "oneshot marker is removed when the shell exits" FAIL "$child_marker[1] survived the shell that claimed it"
         rm -f "$child_marker[1]"

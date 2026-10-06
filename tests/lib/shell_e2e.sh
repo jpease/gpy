@@ -13,7 +13,8 @@
 #     ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 #     # shellcheck source=tests/lib/shell_e2e.sh
 #     . "$ROOT/tests/lib/shell_e2e.sh"
-# (Zsh: ROOT=${0:a:h:h:h}; emulate sh -c ". $ROOT/tests/lib/shell_e2e.sh".)
+# (Zsh: ROOT=${0:a:h:h:h}; emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"' --
+# single-quoted so the path expands as one word and is never re-parsed as code.)
 #
 # ---------------------------------------------------------------------------
 # Skip contract (#650)

@@ -251,14 +251,14 @@ function __pp_dump --description 'Run one implementation and echo its key=value 
         case rust
             env $env_args $GPY_PP_BIN debug paths --format kv 2>$GPY_PP_ERR
         case fish
-            env $env_args fish --no-config -c "source $GPY_PP_ROOT/fish/core/ipc.fish
-source $GPY_PP_ROOT/fish/core/util.fish
-source $GPY_PP_ROOT/fish/core/debug.fish
-__gpy_debug_paths" 2>$GPY_PP_ERR
+            env $env_args fish --no-config -c 'source $argv[1]/fish/core/ipc.fish
+source $argv[1]/fish/core/util.fish
+source $argv[1]/fish/core/debug.fish
+__gpy_debug_paths' -- $GPY_PP_ROOT 2>$GPY_PP_ERR
         case bash
-            env $env_args bash --noprofile --norc -c "source $GPY_PP_ROOT/bash/core/ipc.bash; __gpy_debug_paths" 2>$GPY_PP_ERR
+            env $env_args bash --noprofile --norc -c 'source "$1/bash/core/ipc.bash"; __gpy_debug_paths' bash $GPY_PP_ROOT 2>$GPY_PP_ERR
         case zsh
-            env $env_args zsh -f -c "source $GPY_PP_ROOT/zsh/core/ipc.zsh; __gpy_debug_paths" 2>$GPY_PP_ERR
+            env $env_args zsh -f -c 'source "$1/zsh/core/ipc.zsh"; __gpy_debug_paths' zsh $GPY_PP_ROOT 2>$GPY_PP_ERR
     end
 end
 

@@ -107,12 +107,14 @@ send "PROMPT='TESTPROMPT> '"
 drain >/dev/null
 send "autoload -Uz compinit"
 drain >/dev/null
-send "compinit -u -d $(mktemp -u -t gpy-zcompdump.XXXXXX)"
+send "compinit -u -d ${(q)$(mktemp -u -t gpy-zcompdump.XXXXXX)}"
 drain >/dev/null
 # Mirror zsh/gpy.zsh's wiring exactly: add the repo's checked-in completions
 # dir plus the freshly generated structural completions dir to fpath,
 # autoload both, and register the dynamic wrapper as gpy's completer.
-send "fpath=($ROOT/zsh/completions $GENERATED_DIR \$fpath)"
+# Paths are typed into the nested shell as code, so quote them with (q): a
+# checkout path with a space must stay one word (#822).
+send "fpath=(${(q)ROOT}/zsh/completions ${(q)GENERATED_DIR} \$fpath)"
 drain >/dev/null
 send "autoload -Uz _gpy-dynamic; autoload -Uz _gpy; compdef _gpy-dynamic gpy"
 out=$(drain)
@@ -205,7 +207,7 @@ call_count() {
 
 send "unset __gpy_complete_cache_theme __gpy_complete_cache_segment"
 drain >/dev/null
-send "gpy() { echo call >> $CALLS_FILE; case \$2 in theme) cat $THEME_FILE ;; segment) cat $SEGMENT_FILE ;; esac }"
+send "gpy() { echo call >> ${(q)CALLS_FILE}; case \$2 in theme) cat ${(q)THEME_FILE} ;; segment) cat ${(q)SEGMENT_FILE} ;; esac }"
 drain >/dev/null
 
 : >"$CALLS_FILE"
@@ -249,7 +251,7 @@ fi
 
 echo "Checking an empty/failed gpy __complete is never cached..."
 : >"$CALLS_FILE"
-send "unset __gpy_complete_cache_theme; gpy() { echo call >> $CALLS_FILE; return 1 }"
+send "unset __gpy_complete_cache_theme; gpy() { echo call >> ${(q)CALLS_FILE}; return 1 }"
 drain >/dev/null
 send "__gpy_complete_cached theme; print -r -- FAIL1:\$__gpy_complete_result:"
 fail_out1=$(drain)

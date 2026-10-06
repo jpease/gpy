@@ -131,13 +131,13 @@ end
 function test_test_helpers_scoped_kill
     echo "Driving tests/lib/test_helpers.fish's init_test_env + stop_test_agent from a subprocess..."
 
-    set -l out (fish -c "
-        source '$__gpy_root/tests/lib/test_helpers.fish'
+    set -l out (fish -c '
+        source $argv[1]/tests/lib/test_helpers.fish
         init_test_env; or exit 1
         start_test_agent >/dev/null 2>&1; or exit 1
         stop_test_agent
         exit 0
-    " 2>&1)
+    ' -- $__gpy_root 2>&1)
     set -l helper_status $status
 
     if test $helper_status -ne 0
@@ -151,11 +151,11 @@ end
 function test_setup_test_env_scoped_kill
     echo "Driving tests/support/setup_test_env.fish's ensure_agent_stopped from a subprocess..."
 
-    set -l out (fish -c "
-        source '$__gpy_root/tests/support/setup_test_env.fish' >/dev/null 2>&1
+    set -l out (fish -c '
+        source $argv[1]/tests/support/setup_test_env.fish >/dev/null 2>&1
         ensure_agent_stopped
         exit 0
-    " 2>&1)
+    ' -- $__gpy_root 2>&1)
     set -l helper_status $status
 
     if test $helper_status -ne 0
