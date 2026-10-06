@@ -385,6 +385,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - The agent recreates its instant-prompts cache directory when it is
   deleted while running (#707), instead of failing every cache write until
   restart.
+- Instant-prompt cache writes no longer fail for repositories with long
+  paths (~210–230 bytes), and one failing variant no longer stops the others
+  from being written (#708).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
