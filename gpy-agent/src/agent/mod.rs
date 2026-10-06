@@ -1045,8 +1045,7 @@ impl Agent {
         let registry_for_pruning = Arc::clone(&self.ctx.registry);
         let watcher_for_pruning = Arc::clone(&self.watcher);
         let mut clock_timer = startup::create_clock_timer();
-        let mut pruning_timer = tokio::time::interval(Duration::from_secs(60));
-        pruning_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut pruning_timer = startup::create_pruning_timer();
         // Bounded per-PID retry budget for re-nudging stranded shells; see
         // `lifecycle::start::ShellRenudger`.
         #[cfg(unix)]
