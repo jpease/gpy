@@ -277,7 +277,8 @@ impl WatcherBackend {
 
     /// Apply `ops` to the backend as one batch -- one `FSEventStream` rebuild
     /// on macOS however many paths change (#388) -- returning every path whose
-    /// add failed. Those are also marked unarmed in [`WatcherBackend::os`].
+    /// add failed. Those failures are recorded in [`WatcherBackend::os`],
+    /// which keeps a partially armed recursive tree removable (#722).
     /// Removal failures are only logged: the watch is gone either way.
     fn apply(&mut self, ops: Vec<OsOp>) -> Vec<(PathBuf, notify::Error)> {
         let mut failures = Vec::new();
@@ -296,6 +297,7 @@ impl WatcherBackend {
                             "watcher",
                             &format!("failed to watch {} ({mode:?}): {error}", path.display()),
                         );
+                        self.os.record_failed_add(&path, mode);
                         failures.push((path, error));
                     }
                 }
@@ -314,9 +316,6 @@ impl WatcherBackend {
                 "watcher",
                 &format!("failed to commit watch changes: {error}"),
             );
-        }
-        for (path, _) in &failures {
-            self.os.mark_unarmed(path);
         }
         failures
     }
