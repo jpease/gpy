@@ -318,6 +318,10 @@ function __gpy_reload_theme --description 'reload GPY theme from config (interna
         return 1
     end
 
+    # The export erases status icons the theme leaves unset; refill the
+    # nerd/ascii fallbacks from the current __prompt_icons (#791).
+    __gpy_initialize_icons
+
     # Load implementation files for any segment newly added to __enabled_segments
     __gpy_ensure_segments_loaded
 

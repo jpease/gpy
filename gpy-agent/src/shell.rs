@@ -44,18 +44,21 @@ impl Shell {
             Self::Fish => VariableSyntax {
                 prefix: "set -g",
                 export_prefix: "set -gx",
+                unset_prefix: "set -e",
                 separator: " ",
                 quote: "\"",
             },
             Self::Zsh => VariableSyntax {
                 prefix: "typeset -g",
                 export_prefix: "export",
+                unset_prefix: "unset",
                 separator: "=",
                 quote: "\"",
             },
             Self::Bash => VariableSyntax {
                 prefix: "export",
                 export_prefix: "export",
+                unset_prefix: "unset",
                 separator: "=",
                 quote: "\"",
             },
@@ -111,6 +114,8 @@ pub struct VariableSyntax {
     pub prefix: &'static str,
     /// Prefix command for exported variables (e.g., "set -gx", "export")
     pub export_prefix: &'static str,
+    /// Command that erases a variable (e.g., "set -e", "unset")
+    pub unset_prefix: &'static str,
     /// Separator between name and value (e.g., " " or "=")
     pub separator: &'static str,
     /// Quote character for values
@@ -150,5 +155,18 @@ impl VariableSyntax {
             "{} {}{}{}{}{}",
             self.export_prefix, name, self.separator, self.quote, value, self.quote
         )
+    }
+
+    /// Format a statement erasing a variable; harmless when it is not set.
+    ///
+    /// # Example
+    /// ```
+    /// use gpy_agent::shell::Shell;
+    /// assert_eq!(Shell::Fish.variable_syntax().format_unset("v"), "set -e v");
+    /// assert_eq!(Shell::Bash.variable_syntax().format_unset("v"), "unset v");
+    /// ```
+    #[must_use]
+    pub fn format_unset(self, name: &str) -> String {
+        format!("{} {}", self.unset_prefix, name)
     }
 }

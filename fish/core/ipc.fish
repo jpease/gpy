@@ -1365,6 +1365,10 @@ function __gpy_apply_agent_reload --description 'Reload theme/config after the a
     # variables. The caller (__gpy_doorbell_handler) repaints afterwards.
     __gpy_apply_theme_export
 
+    # The export erases status icons the theme leaves unset; refill the
+    # nerd/ascii fallbacks from the current __prompt_icons (#791).
+    __gpy_initialize_icons
+
     # Load implementation files for any segment newly added to __enabled_segments
     __gpy_ensure_segments_loaded
 

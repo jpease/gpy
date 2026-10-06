@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 enum AssignmentScope {
     Local,
     Export,
+    Unset,
 }
 
 #[derive(Debug, Clone)]
@@ -41,8 +42,17 @@ impl ShellAssignment {
         }
     }
 
+    fn unset(name: impl Into<String>) -> Self {
+        Self {
+            scope: AssignmentScope::Unset,
+            name: name.into(),
+            value: String::new(),
+        }
+    }
+
     fn render(self, syntax: VariableSyntax) -> String {
         match self.scope {
+            AssignmentScope::Unset => syntax.format_unset(&self.name),
             AssignmentScope::Local => syntax.format(&self.name, &self.value),
             AssignmentScope::Export => syntax.format_export(&self.name, &self.value),
         }
@@ -347,13 +357,14 @@ fn append_builtin_segment_assignments(output: &mut String, shell: Shell, theme: 
             ShellAssignment::local("__color_clock_fg", theme.segments.clock.text_color.as_str()),
         ],
     );
-    if let Some(fmt) = &theme.segments.clock.time_format {
-        append_shell_assignment(
-            output,
-            syntax,
-            ShellAssignment::local("__time_format", escape(fmt)),
-        );
-    }
+    append_shell_assignment(
+        output,
+        syntax,
+        ShellAssignment::local(
+            "__time_format",
+            escape(theme.segments.clock.time_format.as_deref().unwrap_or("12")),
+        ),
+    );
     append_shell_assignments(
         output,
         syntax,
@@ -495,26 +506,28 @@ fn append_username_assignments(output: &mut String, shell: Shell, theme: &ThemeC
     );
 }
 
-/// Status segment icons (emitted only when the theme sets them) and the
+/// Status segment icons (erased when the theme leaves them unset) and the
 /// four ok/fail color assignments (always emitted).
 fn append_status_assignments(output: &mut String, shell: Shell, theme: &ThemeConfig) {
     let syntax = shell.variable_syntax();
     let escape = |text: &str| escape_shell_value(text, shell);
 
-    if let Some(icon) = &theme.segments.status.ok_icon {
-        append_shell_assignment(
-            output,
-            syntax,
-            ShellAssignment::local("__icon_status_ok", escape(icon.as_str())),
-        );
-    }
-    if let Some(icon) = &theme.segments.status.fail_icon {
-        append_shell_assignment(
-            output,
-            syntax,
-            ShellAssignment::local("__icon_status_fail", escape(icon.as_str())),
-        );
-    }
+    append_shell_assignment(
+        output,
+        syntax,
+        theme.segments.status.ok_icon.as_ref().map_or_else(
+            || ShellAssignment::unset("__icon_status_ok"),
+            |icon| ShellAssignment::local("__icon_status_ok", escape(icon.as_str())),
+        ),
+    );
+    append_shell_assignment(
+        output,
+        syntax,
+        theme.segments.status.fail_icon.as_ref().map_or_else(
+            || ShellAssignment::unset("__icon_status_fail"),
+            |icon| ShellAssignment::local("__icon_status_fail", escape(icon.as_str())),
+        ),
+    );
     append_shell_assignments(
         output,
         syntax,
@@ -1268,9 +1281,10 @@ max_length = 42
 
     /// Companion golden for the *absent* arms the populated fixture misses.
     ///
-    /// Namely: `prompt_color`/`root_prompt_color`/`clock.time_format`/
-    /// `status.ok_icon`/`status.fail_icon` unset (their assignments are
-    /// skipped entirely), `hostname.format`/`username.format` unset (presence
+    /// Namely: `prompt_color`/`root_prompt_color` unset (their assignments
+    /// are skipped entirely), `clock.time_format` unset (renders the `12`
+    /// default), `status.ok_icon`/`status.fail_icon` unset (rendered as
+    /// erase statements), `hostname.format`/`username.format` unset (presence
     /// flags render empty), and no plugin segments or plugin files at all.
     #[test]
     fn default_theme_export_matches_golden() {
@@ -1498,6 +1512,97 @@ max_length = 42
             assert_eq!(
                 echoed, raw,
                 "{shell:?}: trailing backslash did not round-trip"
+            );
+        }
+    }
+
+    /// Shell script body printing every `__*` variable as sorted-by-caller
+    /// `name=value` lines (names only; no `__*` variable is skipped).
+    const fn dump_script(shell: Shell) -> &'static str {
+        match shell {
+            Shell::Fish => "for v in (set -n | string match '__*'); echo $v=$$v; end",
+            Shell::Bash => r#"for v in $(compgen -v __); do printf '%s=%s\n' "$v" "${!v}"; done"#,
+            Shell::Zsh => r#"for v in ${(k)parameters[(I)__*]}; do print -r -- "$v=${(P)v}"; done"#,
+        }
+    }
+
+    /// Source `files` in order in a clean shell and return the sorted dump.
+    fn sourced_vars(shell: Shell, files: &[&std::path::Path]) -> Vec<String> {
+        let mut script = String::new();
+        for index in 1..=files.len() {
+            let line = match shell {
+                Shell::Fish => format!("source $argv[{index}]\n"),
+                Shell::Bash | Shell::Zsh => format!("source \"${index}\"\n"),
+            };
+            script.push_str(&line);
+        }
+        script.push_str(dump_script(shell));
+        let mut cmd = Command::new(shell_bin(shell));
+        cmd.env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default());
+        match shell {
+            Shell::Fish => cmd.args(["--no-config", "-c", &script, "--"]),
+            Shell::Bash => cmd.args(["--noprofile", "--norc", "-c", &script, "bash"]),
+            Shell::Zsh => cmd.args(["-f", "-c", &script, "zsh"]),
+        };
+        let output = cmd.args(files).output().expect("spawning shell");
+        assert!(
+            output.status.success(),
+            "{shell:?}: sourcing failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mut lines: Vec<String> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        lines.sort();
+        lines
+    }
+
+    /// Hot-reload invariant (#791).
+    ///
+    /// Re-sourcing export B over export A leaves the shell's whole `__*`
+    /// variable set equal to a fresh shell that sourced only B, so no
+    /// optional variable can leak across a theme switch.
+    #[test]
+    fn optional_shell_vars_reset_on_resource() {
+        use crate::config::types::Icon;
+
+        let mut theme_a = ThemeConfig::default();
+        theme_a.segments.clock.time_format = Some("24".to_owned());
+        theme_a.segments.status.ok_icon = Some(Icon::new("OK").expect("valid icon"));
+        theme_a.segments.status.fail_icon = Some(Icon::new("NO").expect("valid icon"));
+        let theme_b = ThemeConfig::default();
+        let config = Config::default();
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        for shell in [Shell::Fish, Shell::Bash, Shell::Zsh] {
+            if !shell_available(shell) {
+                skip_shell_or_fail_under_ci(shell);
+                continue;
+            }
+            let export =
+                |theme: &ThemeConfig| theme_to_shell(theme, "t", &config, shell, &BTreeMap::new());
+            let path_a = dir
+                .path()
+                .join(format!("a.{shell_bin}", shell_bin = shell_bin(shell)));
+            let path_b = dir
+                .path()
+                .join(format!("b.{shell_bin}", shell_bin = shell_bin(shell)));
+            std::fs::write(&path_a, export(&theme_a)).expect("write a");
+            std::fs::write(&path_b, export(&theme_b)).expect("write b");
+
+            let only_a = sourced_vars(shell, &[&path_a]);
+            assert!(
+                only_a.contains(&"__time_format=24".to_owned()),
+                "{shell:?}: export A must set the 24h clock, got {only_a:?}"
+            );
+            let fresh = sourced_vars(shell, &[&path_b]);
+            let reloaded = sourced_vars(shell, &[&path_a, &path_b]);
+            assert_eq!(reloaded, fresh, "{shell:?}: A-then-B must equal fresh B");
+            assert!(
+                reloaded.contains(&"__time_format=12".to_owned()),
+                "{shell:?}: B must reset the clock to 12h, got {reloaded:?}"
             );
         }
     }
