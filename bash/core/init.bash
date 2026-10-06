@@ -483,14 +483,17 @@ __gpy_register_with_agent() {
     local register_json
     register_json="$(__gpy_build_register_payload)"
 
-    if __gpy_send_json "$register_json" &>/dev/null; then
-        __gpy_registered=1
-        __gpy_last_workspace="$PWD"
-        __gpy_track_shell_for_agent_recovery
-        return 0
-    fi
+    # Only an explicit "status":"ok" counts (as in fish): an {"error":...}
+    # reply is a rejection and must leave the shell unregistered so the next
+    # prompt retries (#758).
+    local response
+    response=$(__gpy_send_json "$register_json" 2>/dev/null) || return 1
+    [[ $response == *'"status":"ok"'* ]] || return 1
 
-    return 1
+    __gpy_registered=1
+    __gpy_last_workspace="$PWD"
+    __gpy_track_shell_for_agent_recovery
+    return 0
 }
 
 # Forget the current registration and register again. Runs from the doorbell
