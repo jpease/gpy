@@ -31,6 +31,7 @@ Exercise `bash/gpy.bash` and its segments.
 | Gate and scripts | `shell_e2e_stop_agent_term` (`shell_e2e_stop_agent` TERMs a socket holder that `gpy-agent stop` did not release, waits, and only then KILLs: a stub that exits cleanly on TERM must record TERM, one that ignores TERM is still killed, #825) | python3 stub holding an AF_UNIX socket |
 | Gate and scripts | `shell_suites_build_agent` (`scripts/test_fish.sh` and `run_shell_tests` build the debug `gpy`/`gpy-agent` unconditionally, not behind an existence check, and honour `CARGO_TARGET_DIR`) | the two scripts, read as text |
 | Gate and scripts | `quality_check_fix_cwd` (`quality-check.sh --fix` run from another directory cds to the repo root and does not reformat `.fish` files under the caller's cwd) | none |
+| Gate and scripts | `install_hooks_prek` (`scripts/install-hooks.sh` over hook symlinks into `.raven/git-hooks/`: leaves prek shims for `pre-commit`, `pre-push` and `commit-msg`, no `.legacy` hook, and the tracked script untouched; #666) | a stub `prek` on `PATH` |
 
 ### The live-daemon harness: `tests/lib/shell_e2e.sh`
 

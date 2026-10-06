@@ -156,11 +156,13 @@ Every test tier and the command that runs it is in
 ./scripts/install-hooks.sh
 ```
 
-Installs `prek` hooks so `git commit` and `git push` run the relevant checks
+Installs `prek` shims so `git commit` and `git push` run the relevant checks
 automatically: `pre-commit` runs fast, file-type-scoped checks (Clippy,
-rustfmt, Fish syntax/formatting); `pre-push` runs the shell suites always, and
-the Rust suite too when Rust-relevant files changed. `.raven/git-hooks/`
-holds the hook scripts.
+rustfmt, Fish syntax/formatting); `commit-msg` strips AI attribution trailers;
+`pre-push` runs the shell suites always, and the Rust suite too when
+Rust-relevant files changed. `.raven/git-hooks/` holds the scripts those hooks
+call; `.pre-commit-config.yaml` wires them. If `.git/hooks/` already holds
+symlinks into `.raven/git-hooks/`, the script replaces them with prek shims.
 
 ## Filing a Bug Report
 

@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# prek runs this from pre-push without clearing the repo-scoping variables git
+# exports to hooks, and this script runs `git worktree add/remove` against the
+# real repository (#555). Clear them, as quality-check.sh does (#275), so every
+# git call resolves the repository from its own cwd.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
+    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    GIT_PREFIX GIT_NAMESPACE 2>/dev/null || true
+
 # Compare a small set of Criterion microbenchmarks against an upstream commit
 # on the same machine. This is designed as an early-warning diagnostic for
 # regressions, not as a publication-grade benchmark harness.
