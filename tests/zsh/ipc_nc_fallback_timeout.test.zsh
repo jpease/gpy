@@ -14,7 +14,7 @@
 # bare `nc -w 1` branch is the one exercised.
 
 ROOT=${0:a:h:h:h}
-emulate sh -c ". $ROOT/tests/lib/shell_e2e.sh"
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
 test_require_command nc "nc not installed, cannot exercise this fallback"
 test_require_command python3 "python3 not installed, cannot simulate a wedged listener"

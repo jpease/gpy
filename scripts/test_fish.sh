@@ -84,7 +84,11 @@ for test_file in tests/fish/*.test.fish; do
             # PATH (cargo, jq, hyperfine, mise shims, ...) are unaffected.
             # Streamed AND captured (pipefail keeps fish's own status) so a
             # `SKIP:` line from the shared skip contract can be tallied.
-            if fish --no-config -c "set -gx PATH '$AGENT_DIR' \$PATH; source '$test_file'" 2>&1 | tee "$run_log"; then
+            # The paths travel as $argv, never interpolated into the code
+            # string (a checkout path may contain spaces or quotes, #822); the
+            # single quotes are deliberate, fish expands $argv, not this shell.
+            # shellcheck disable=SC2016
+            if fish --no-config -c 'set -gx PATH $argv[1] $PATH; source $argv[2]' -- "$AGENT_DIR" "$test_file" 2>&1 | tee "$run_log"; then
                 passed=1
                 if grep -q '^SKIP:' "$run_log"; then
                     skipped_tests+=("$base")

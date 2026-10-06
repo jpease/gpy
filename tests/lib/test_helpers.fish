@@ -228,21 +228,27 @@ function register_test_client
         set client_cwd $argv[2]
     end
 
-    # Spawn a Fish subprocess that registers and counts signals
-    fish -c "
-        set -g signal_file $__gpy_test_signal_dir/client-\$fish_pid
+    # Spawn a Fish subprocess that registers and counts signals. The paths and
+    # duration travel as $argv, never interpolated into the code string (they
+    # may contain spaces or quotes).
+    fish -c '
+        set -l signal_dir $argv[1]
+        set -l repo_root $argv[2]
+        set -l client_cwd $argv[3]
+        set -l duration $argv[4]
+        set -g signal_file $signal_dir/client-$fish_pid
 
         # Define our test signal handler BEFORE GPY init
         function __test_count_signal --on-signal SIGURG
-            echo SIGNAL >> \$signal_file
+            echo SIGNAL >> $signal_file
         end
 
         # Source GPY initialization from repo
-        source $__gpy_root/fish/core/init.fish >/dev/null 2>&1
+        source $repo_root/fish/core/init.fish >/dev/null 2>&1
 
         # Source GPY functions
-        for f in $__gpy_root/fish/functions/*.fish
-            source \$f
+        for f in $repo_root/fish/functions/*.fish
+            source $f
         end
 
         cd $client_cwd
@@ -255,10 +261,10 @@ function register_test_client
 
         # Wait for specified duration using a loop to remain responsive to signals
         set -l end_time (math (date +%s) + $duration)
-        while test (date +%s) -lt \$end_time
+        while test (date +%s) -lt $end_time
             sleep 0.5
         end
-    " >/dev/null 2>&1 &
+    ' -- $__gpy_test_signal_dir $__gpy_root $client_cwd $duration >/dev/null 2>&1 &
 
     set -l client_pid $last_pid
     set -a __gpy_test_client_pids $client_pid

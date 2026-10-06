@@ -160,10 +160,15 @@ function test_autostart_exhausted_client_recovers_via_git_segment
     # (same technique as tests/fish/prompt_autostart_backoff.test.fish),
     # since `fish -c` scripts never emit a real interactive `fish_prompt`
     # event.
-    fish -c "
-        set -gx XDG_CONFIG_HOME $XDG_CONFIG_HOME
-        set -gx XDG_CACHE_HOME $XDG_CACHE_HOME
-        set -gx GPY_AGENT_SOCKET_PATH $GPY_AGENT_SOCKET_PATH
+    # Paths travel as $argv (never interpolated into the code string: they may
+    # contain spaces or quotes); XDG_* and GPY_AGENT_SOCKET_PATH are already
+    # exported by init_test_env and inherited.
+    fish -c '
+        set -l repo $argv[1]
+        set -l __gpy_root $argv[2]
+        set -l exhausted_marker $argv[3]
+        set -l go_marker $argv[4]
+        set -l result_file $argv[5]
         set -gx GPY_AGENT_AUTOSTART_MAX_ATTEMPTS 1
         set -gx GPY_AGENT_AUTOSTART_RATE_LIMIT_SECONDS 0
         set -gx GPY_AGENT_START_DELAY_MS 0
@@ -196,19 +201,19 @@ function test_autostart_exhausted_client_recovers_via_git_segment
         end
 
         if functions -q __gpy_start_supervisor_on_prompt
-            echo 'FAIL:not-exhausted' > $exhausted_marker
+            echo FAIL:not-exhausted > $exhausted_marker
             exit 0
         end
         if set -q __gpy_registered
-            echo 'FAIL:registered-before-agent-started' > $exhausted_marker
+            echo FAIL:registered-before-agent-started > $exhausted_marker
             exit 0
         end
         echo OK > $exhausted_marker
 
         # The exhaustion loop above hammers __gpy_agent_available and will
         # have opened its circuit breaker (util.fish, a real pre-existing
-        # protection this issue doesn't touch and isn't in scope to change).
-        # Reset it here to simulate that breaker's normal backoff window
+        # protection that is not touched here and is out of scope to change).
+        # Reset it here to simulate the normal backoff window of that breaker
         # having already elapsed by the time the agent comes back -- without
         # this the test would need a real 60s sleep to exercise the
         # registration-retry path #419 actually adds, rather than just
@@ -216,18 +221,18 @@ function test_autostart_exhausted_client_recovers_via_git_segment
         set -g __gpy_agent_backoff_until 0
         set -g __gpy_agent_failure_count 0
 
-        # Wait for the outer test's go-ahead, given only once it has
-        # confirmed (via start_test_agent's own readiness poll) that a real
+        # Wait for the go-ahead of the outer test, given only once it has
+        # confirmed (via the readiness poll of start_test_agent) that a real
         # agent is up and responding -- so the render below is the first and
         # only recovery attempt made against a genuinely available agent.
         set -l waited 0
         while not test -f $go_marker
-            if test \$waited -ge 150
-                echo 'FAIL:go-marker-timeout' > $result_file
+            if test $waited -ge 150
+                echo FAIL:go-marker-timeout > $result_file
                 exit 0
             end
             sleep 0.1
-            set waited (math \"\$waited + 1\")
+            set waited (math "$waited + 1")
         end
 
         # A single cold-miss git-segment render -- the exact codepath #419
@@ -237,9 +242,9 @@ function test_autostart_exhausted_client_recovers_via_git_segment
         if set -q __gpy_registered
             echo PASS > $result_file
         else
-            echo 'FAIL:not-registered-after-one-render' > $result_file
+            echo FAIL:not-registered-after-one-render > $result_file
         end
-    " >/dev/null 2>&1 &
+    ' -- $repo $__gpy_root $exhausted_marker $go_marker $result_file >/dev/null 2>&1 &
 
     set -l client_pid $last_pid
     set -a __gpy_test_client_pids $client_pid
@@ -323,18 +328,20 @@ function test_failed_restart_registration_retries_on_next_nudge
     # agent's lifetime, receiving no live updates at all. Each nudge is the
     # agent writing <pid>.reregister and ringing SIGURG; the doorbell consumes
     # the flag, so the retry relies on the agent writing it again.
-    fish -c "
-        set -gx XDG_CONFIG_HOME $XDG_CONFIG_HOME
-        set -gx XDG_CACHE_HOME $XDG_CACHE_HOME
-        set -gx GPY_AGENT_SOCKET_PATH $GPY_AGENT_SOCKET_PATH
+    # Paths travel as $argv, never interpolated into the code string;
+    # XDG_* and GPY_AGENT_SOCKET_PATH are inherited from init_test_env.
+    fish -c '
+        set -l repo $argv[1]
+        set -l __gpy_root $argv[2]
+        set -l result_file $argv[3]
 
         source $__gpy_root/fish/core/init.fish >/dev/null 2>&1
 
         cd $repo
 
         set -l reregister_flag (__gpy_shell_registry_file).reregister
-        mkdir -p (dirname \$reregister_flag)
-        touch \$reregister_flag
+        mkdir -p (dirname $reregister_flag)
+        touch $reregister_flag
 
         # Simulate the real trigger: the circuit breaker opened while the agent
         # was down, so this shell refuses to talk to the agent for the length of
@@ -344,28 +351,28 @@ function test_failed_restart_registration_retries_on_next_nudge
         __gpy_doorbell_handler
 
         if set -q __gpy_registered
-            echo 'FAIL:registered-despite-open-breaker' > $result_file
+            echo FAIL:registered-despite-open-breaker > $result_file
             exit 0
         end
-        if test -e \$reregister_flag
-            echo 'FAIL:flag-not-consumed' > $result_file
+        if test -e $reregister_flag
+            echo FAIL:flag-not-consumed > $result_file
             exit 0
         end
 
         # Backoff window elapses; the agent has been up the whole time. The
-        # agent's re-nudge writes the flag again and must now succeed.
+        # re-nudge of the agent writes the flag again and must now succeed.
         set -g __gpy_agent_backoff_until 0
         set -g __gpy_agent_failure_count 0
 
-        touch \$reregister_flag
+        touch $reregister_flag
         __gpy_doorbell_handler
 
         if set -q __gpy_registered
             echo PASS > $result_file
         else
-            echo 'FAIL:no-retry-on-repeat-nudge' > $result_file
+            echo FAIL:no-retry-on-repeat-nudge > $result_file
         end
-    " >/dev/null 2>&1
+    ' -- $repo $__gpy_root $result_file >/dev/null 2>&1
 
     if not test -f $result_file
         print_test_result "Failed nudge retries on the next nudge" FAIL "client reported no result"

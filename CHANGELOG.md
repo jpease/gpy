@@ -344,6 +344,10 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   Typed input no longer wraps early, and Ctrl-A, history recall and
   completion keep the cursor on the input line.
 
+- Shell end-to-end suites pass from a checkout whose path contains a space
+  (#822): tests pass paths to child shells as arguments instead of
+  interpolating them into `-c` code, and a meta-check rejects any
+  interpolating `-c` string under `tests/` and `scripts/`.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

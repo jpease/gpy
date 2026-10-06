@@ -37,10 +37,10 @@ set -l scratch_copy "$repo_root/scripts/.__update_test_scratch.fish"
 sed '$d' "$repo_root/scripts/update.fish" >"$scratch_copy"
 
 function __gpy_run_update_fish_scripts --argument-names home_dir scratch_copy
-    env HOME=$home_dir XDG_CONFIG_HOME="$home_dir/.config" fish -c "
-        source '$scratch_copy'
+    env HOME=$home_dir XDG_CONFIG_HOME="$home_dir/.config" fish -c '
+        source $argv[1]
         _update_fish_scripts
-    " 2>&1
+    ' -- $scratch_copy 2>&1
 end
 
 # ===========================================================================

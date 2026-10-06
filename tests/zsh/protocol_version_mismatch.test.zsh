@@ -12,7 +12,7 @@
 
 ROOT="$(cd "$(dirname "${(%):-%x}")/../.." && pwd)"
 # Shared skip contract (#650): exits 0 locally, fails under CI.
-emulate sh -c ". $ROOT/tests/lib/shell_e2e.sh"
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 cd "$ROOT" || exit 1
 
 source zsh/core/ipc.zsh

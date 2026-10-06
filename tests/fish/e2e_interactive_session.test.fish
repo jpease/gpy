@@ -68,11 +68,14 @@ end
 
 function session_start --argument-names name cwd
     set -l dir $__gpy_test_tmp_dir/session-$name
-    python3 $__pty start $dir -- fish --no-config -i -C "
-        source $__gpy_root/fish/core/init.fish
-        source $__gpy_root/fish/functions/fish_prompt.fish
-        cd '$cwd'
-    "
+    # The init command is constant code; the paths reach it through the
+    # environment (a checkout path may contain spaces or quotes, #822).
+    env GPY_E2E_ROOT=$__gpy_root GPY_E2E_CWD=$cwd GPY_E2E_GATE=$__gpy_test_tmp_dir/exec-gate \
+        python3 $__pty start $dir -- fish --no-config -i -C '
+        source $GPY_E2E_ROOT/fish/core/init.fish
+        source $GPY_E2E_ROOT/fish/functions/fish_prompt.fish
+        cd $GPY_E2E_CWD
+    '
     set -ga __sessions $dir
     echo $dir
 end
@@ -381,9 +384,10 @@ function scenario_exec_survives_notifications --argument-names repo
     end
     check "session registered before exec" 1
 
+    # The session environment already carries the gate path (session_start).
     set -l gate $__gpy_test_tmp_dir/exec-gate
     rm -f $gate
-    session_send $a "exec fish --no-config -i -C 'while not test -e $gate; sleep 0.1; end; source $__gpy_root/fish/core/init.fish; source $__gpy_root/fish/functions/fish_prompt.fish'\r"
+    session_send $a "exec fish --no-config -i -C 'while not test -e \$GPY_E2E_GATE; sleep 0.1; end; source \$GPY_E2E_ROOT/fish/core/init.fish; source \$GPY_E2E_ROOT/fish/functions/fish_prompt.fish'\r"
     # The exec'd shell is now spinning on the gate with no gpy handlers.
     sleep 0.5
 

@@ -116,13 +116,13 @@ function test_agent_autostart
     # Test that a Fish shell can initialize GPY and register with the agent
     echo ""
     echo "Testing Fish shell registration..."
-    set -l register_result (fish -c "
-        source $repo_root/fish/core/init.fish >/dev/null 2>&1
+    set -l register_result (fish -c '
+        source $argv[1]/fish/core/init.fish >/dev/null 2>&1
         fish_prompt >/dev/null 2>&1
-        if test \$status -eq 0
+        if test $status -eq 0
             echo REGISTERED
         end
-    " 2>&1)
+    ' -- $repo_root 2>&1)
 
     if string match -q "*REGISTERED*" -- $register_result
         print_test_result "Shell Registration" "PASS"
@@ -134,10 +134,10 @@ function test_agent_autostart
     # Test that GPY initialization doesn't error out
     echo ""
     echo "Testing GPY initialization completes without errors..."
-    set -l init_output (fish -c "
-        source $repo_root/fish/core/init.fish
-        echo \$status
-    " 2>&1)
+    set -l init_output (fish -c '
+        source $argv[1]/fish/core/init.fish
+        echo $status
+    ' -- $repo_root 2>&1)
     set -l init_result $init_output[-1]
 
     if test "$init_result" = "0"
