@@ -41,6 +41,23 @@ pub struct ConfigKeyMeta {
     pub description: &'static str,
 }
 
+/// One `git.icons.<name>` entry: get/set through [`types::Icon`].
+macro_rules! git_icon_key {
+    ($field:ident, $description:expr) => {
+        ConfigKeyMeta {
+            key: concat!("git.icons.", stringify!($field)),
+            get: |c| c.git.icons.$field.to_string(),
+            set: Some(|c, v| {
+                c.git.icons.$field = types::Icon::new(v).map_err(|_| {
+                    invalid_value(concat!("git.icons.", stringify!($field)), "icon", v)
+                })?;
+                Ok(())
+            }),
+            description: $description,
+        }
+    };
+}
+
 /// Centralized definition of all configuration keys
 ///
 /// ## Adding a New Config Key
@@ -208,6 +225,48 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         }),
         description: "Maximum branch name length to display",
     },
+    ConfigKeyMeta {
+        key: "git.skip_paths",
+        get: |c| c.git.skip_paths.join(" "),
+        set: None, // List-valued; read-only like ui.enabled_segments
+        description: "Paths where git detection is skipped",
+    },
+    ConfigKeyMeta {
+        key: "git.max_ahead_behind",
+        get: |c| c.git.max_ahead_behind.to_string(),
+        set: Some(|c, v| {
+            c.git.max_ahead_behind = parse_usize_field(v, "git.max_ahead_behind")?;
+            Ok(())
+        }),
+        description: "Maximum ahead/behind commit count to report (0 = unlimited)",
+    },
+    ConfigKeyMeta {
+        key: "git.stash_enabled",
+        get: |c| c.git.stash_enabled.to_string(),
+        set: Some(|c, v| {
+            c.git.stash_enabled = parse_bool_field(v, "git.stash_enabled")?;
+            Ok(())
+        }),
+        description: "Enable the git stash count capture",
+    },
+    ConfigKeyMeta {
+        key: "git.icon_set",
+        get: |c| c.git.icon_set.to_string(),
+        set: Some(|c, v| {
+            c.git.icon_set = v.parse().map_err(Error::config)?;
+            Ok(())
+        }),
+        description: "Glyph set for stash/detached/in-progress icons: 'unicode' or 'nerd_font'",
+    },
+    git_icon_key!(ahead, "Ahead indicator"),
+    git_icon_key!(behind, "Behind indicator"),
+    git_icon_key!(staged, "Staged files indicator"),
+    git_icon_key!(unstaged, "Unstaged files indicator"),
+    git_icon_key!(untracked, "Untracked files indicator"),
+    git_icon_key!(conflicts, "Conflicts indicator"),
+    git_icon_key!(stash, "Stash indicator"),
+    git_icon_key!(detached, "Detached-HEAD indicator"),
+    git_icon_key!(in_progress, "In-progress operation indicator"),
     // Language Settings
     ConfigKeyMeta {
         key: "language.enabled",
@@ -226,6 +285,21 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
             Ok(())
         }),
         description: "Enable version detection",
+    },
+    ConfigKeyMeta {
+        key: "language.enabled_languages",
+        get: |c| c.language.enabled_languages.join(" "),
+        set: None, // List-valued; read-only like ui.enabled_segments
+        description: "Languages to detect (empty = all)",
+    },
+    ConfigKeyMeta {
+        key: "language.detection_mode",
+        get: |c| c.language.detection_mode.to_string(),
+        set: Some(|c, v| {
+            c.language.detection_mode = v.parse().map_err(Error::config)?;
+            Ok(())
+        }),
+        description: "Detection strategy: 'content', 'markers', or 'hybrid'",
     },
     ConfigKeyMeta {
         key: "language.cache_ttl_hours",
@@ -369,6 +443,16 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         description: "Anchor the path at the enclosing git repo root",
     },
     ConfigKeyMeta {
+        key: "ui.palette",
+        get: |c| c.ui.palette.to_string(),
+        set: Some(|c, v| {
+            c.ui.palette = types::PaletteName::new(v.to_owned())
+                .ok_or_else(|| invalid_value("ui.palette", "palette name", v))?;
+            Ok(())
+        }),
+        description: "Color palette name (named-color set used by templates)",
+    },
+    ConfigKeyMeta {
         key: "ui.enabled_segments",
         get: |c| c.ui.enabled_segments.join(" "),
         set: None, // Setting requires Vec<String> parsing, not yet implemented
@@ -376,22 +460,77 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
     },
 ];
 
+/// Prefixes of dynamic (map-backed) keys addressed as `<prefix><name>`.
+///
+/// These keys are not in [`CONFIG_KEYS`] because the name part is
+/// user-chosen; [`get_config_value`] and [`set_config_value`] resolve them
+/// directly.
+pub const DYNAMIC_KEY_PREFIXES: &[&str] = &[LANGUAGE_ICONS_PREFIX];
+
+/// Prefix of the `[language.icons]` map keys (`language.icons.<lang>`).
+const LANGUAGE_ICONS_PREFIX: &str = "language.icons.";
+
+/// The canonical `[language.icons]` entry name for a `language.icons.<lang>`
+/// key, or `None` when `key` is not such a key.
+///
+/// The language is normalized with the same lookup the formatter uses at
+/// render time, so `language.icons.rs` and `language.icons.rust` address one
+/// entry. Names that are empty or contain `.` are not addressable.
+fn language_icon_name(key: &str) -> Option<String> {
+    let lang = key.strip_prefix(LANGUAGE_ICONS_PREFIX)?;
+    if lang.is_empty() || lang.contains('.') {
+        return None;
+    }
+    Some(
+        crate::language::metadata::get_icon_key(lang)
+            .unwrap_or(lang)
+            .to_owned(),
+    )
+}
+
+/// The key as it appears in the serialized config, for use as an explicit
+/// key of the diff-based config writer.
+///
+/// Identical to `key` except for dynamic keys, whose name part is normalized
+/// (`language.icons.rs` becomes `language.icons.rust`).
+#[must_use]
+pub fn canonical_config_key(key: &str) -> String {
+    language_icon_name(key).map_or_else(
+        || key.to_owned(),
+        |name| format!("{LANGUAGE_ICONS_PREFIX}{name}"),
+    )
+}
+
+fn unknown_key(key: &str) -> Error {
+    ValidationError {
+        field_path: key.to_owned(),
+        kind: ValidationErrorKind::UnknownKey,
+    }
+    .into()
+}
+
 /// Get a config value by key
 ///
 /// # Errors
 ///
-/// Returns an error if the config key is unknown.
+/// Returns an error if the config key is unknown, or names a
+/// `language.icons.<lang>` entry that is not set.
 pub fn get_config_value(config: &Config, key: &str) -> Result<String> {
     for meta in CONFIG_KEYS {
         if meta.key == key {
             return Ok((meta.get)(config));
         }
     }
-    Err(ValidationError {
-        field_path: key.to_owned(),
-        kind: ValidationErrorKind::UnknownKey,
+    if let Some(name) = language_icon_name(key) {
+        return config
+            .language
+            .icons
+            .icons
+            .get(&name)
+            .map(ToString::to_string)
+            .ok_or_else(|| Error::config(format!("Config key {key} is not set")));
     }
-    .into())
+    Err(unknown_key(key))
 }
 
 /// Set a config value by key
@@ -412,11 +551,12 @@ pub fn set_config_value(config: &mut Config, key: &str, value: &str) -> Result<(
             .into());
         }
     }
-    Err(ValidationError {
-        field_path: key.to_owned(),
-        kind: ValidationErrorKind::UnknownKey,
+    if let Some(name) = language_icon_name(key) {
+        let icon = types::Icon::new(value).map_err(|_| invalid_value(key, "icon", value))?;
+        config.language.icons.icons.insert(name, icon);
+        return Ok(());
     }
-    .into())
+    Err(unknown_key(key))
 }
 
 /// Check if a config key is valid
@@ -498,10 +638,12 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::missing_panics_doc)]
 
-    use super::{get_config_value, set_config_value};
+    use super::{
+        CONFIG_KEYS, DYNAMIC_KEY_PREFIXES, canonical_config_key, get_config_value, set_config_value,
+    };
     use crate::Error;
-    use crate::config::Config;
     use crate::config::validation::ValidationError;
+    use crate::config::{Config, types};
 
     /// `gpy config set agent.timeout_seconds abc` must still yield the exact
     /// pre-#628 message.
@@ -572,6 +714,149 @@ mod tests {
             err.to_string(),
             "Configuration error: Unknown config key: not.a.real.key"
         );
+    }
+
+    /// Flatten a serialized value into dotted leaf paths, skipping the
+    /// free-form `language.icons` map (its keys are user-chosen language
+    /// names, addressed through [`super::DYNAMIC_KEY_PREFIXES`]).
+    fn leaf_paths(prefix: &str, value: &toml::Value, out: &mut Vec<String>) {
+        match value {
+            toml::Value::Table(table) => {
+                for (key, inner) in table {
+                    let path = if prefix.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{prefix}.{key}")
+                    };
+                    if path == "language.icons" {
+                        continue;
+                    }
+                    leaf_paths(&path, inner, out);
+                }
+            }
+            _ => out.push(prefix.to_owned()),
+        }
+    }
+
+    fn default_config_leaves() -> Vec<String> {
+        let table = toml::Table::try_from(Config::default()).expect("serialize default config");
+        let mut leaves = Vec::new();
+        leaf_paths("", &toml::Value::Table(table), &mut leaves);
+        leaves
+    }
+
+    /// Config -> registry: every serialized `Config` leaf has a `CONFIG_KEYS`
+    /// entry, so a new field cannot silently be unreadable from the CLI.
+    #[test]
+    fn every_config_leaf_has_registry_entry() {
+        let missing: Vec<String> = default_config_leaves()
+            .into_iter()
+            .filter(|leaf| !CONFIG_KEYS.iter().any(|meta| meta.key == leaf))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "Config leaves without a CONFIG_KEYS entry: {missing:?}"
+        );
+    }
+
+    /// Registry -> Config: every `CONFIG_KEYS` key names a real serialized
+    /// `Config` leaf, so a removed or renamed field cannot leave a stale
+    /// registry entry behind.
+    #[test]
+    fn every_registry_key_is_a_config_leaf() {
+        let leaves = default_config_leaves();
+        let stale: Vec<&str> = CONFIG_KEYS
+            .iter()
+            .map(|meta| meta.key)
+            .filter(|key| !leaves.iter().any(|leaf| leaf == key))
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "CONFIG_KEYS entries that are not Config leaves: {stale:?}"
+        );
+    }
+
+    /// Docs -> registry: the `gpy config set` "Common Keys" list in the CLI
+    /// reference only names keys the registry (or a dynamic prefix) knows.
+    #[test]
+    fn cli_reference_common_keys_are_registered() {
+        let doc = include_str!("../../../docs/user/cli-reference.md");
+        let section = doc
+            .split("**Common Keys:**")
+            .nth(1)
+            .expect("cli-reference.md has a Common Keys list");
+        let keys: Vec<&str> = section
+            .lines()
+            .skip(1)
+            .take_while(|line| line.starts_with("- `"))
+            .filter_map(|line| line.strip_prefix("- `")?.split('`').next())
+            .collect();
+        assert!(!keys.is_empty(), "Common Keys list parsed empty");
+
+        let unknown: Vec<&str> = keys
+            .into_iter()
+            .filter(|key| match key.split_once('<') {
+                // `git.icons.<name>`: a placeholder stands for a family of
+                // registered keys or a dynamic prefix.
+                Some((stem, _)) => {
+                    !CONFIG_KEYS.iter().any(|meta| meta.key.starts_with(stem))
+                        && !DYNAMIC_KEY_PREFIXES.contains(&stem)
+                }
+                None => !CONFIG_KEYS.iter().any(|meta| meta.key == *key),
+            })
+            .collect();
+        assert!(
+            unknown.is_empty(),
+            "cli-reference.md Common Keys not in CONFIG_KEYS: {unknown:?}"
+        );
+    }
+
+    #[test]
+    fn language_icon_key_round_trips() {
+        let mut cfg = Config::default();
+        set_config_value(&mut cfg, "language.icons.rs", "X").unwrap();
+        assert_eq!(
+            cfg.language
+                .icons
+                .icons
+                .get("rust")
+                .map(types::Icon::as_str),
+            Some("X")
+        );
+        assert_eq!(get_config_value(&cfg, "language.icons.rust").unwrap(), "X");
+        assert_eq!(get_config_value(&cfg, "language.icons.rs").unwrap(), "X");
+        assert_eq!(
+            canonical_config_key("language.icons.RS"),
+            "language.icons.rust"
+        );
+    }
+
+    #[test]
+    fn language_icon_get_unset_names_the_key() {
+        let cfg = Config::default();
+        let err = get_config_value(&cfg, "language.icons.rust").unwrap_err();
+        assert!(err.to_string().contains("language.icons.rust"), "{err}");
+    }
+
+    #[test]
+    fn new_scalar_keys_round_trip() {
+        let mut cfg = Config::default();
+        for (key, value) in [
+            ("ui.palette", "nord"),
+            ("git.max_ahead_behind", "5"),
+            ("git.stash_enabled", "false"),
+            ("git.icon_set", "nerd_font"),
+            ("language.detection_mode", "markers"),
+            ("git.icons.ahead", "A"),
+            ("git.icons.in_progress", "P"),
+        ] {
+            set_config_value(&mut cfg, key, value).unwrap();
+            assert_eq!(get_config_value(&cfg, key).unwrap(), value, "{key}");
+        }
+        assert!(set_config_value(&mut cfg, "git.icon_set", "bogus").is_err());
+        assert!(set_config_value(&mut cfg, "git.skip_paths", "/tmp").is_err());
+        assert!(set_config_value(&mut cfg, "language.enabled_languages", "rust").is_err());
+        assert_eq!(get_config_value(&cfg, "git.skip_paths").unwrap(), "");
     }
 
     /// A converted site's `Error::Config` must downcast to `ValidationError`.

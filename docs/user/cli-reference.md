@@ -635,7 +635,7 @@ gpy lang versions on
 
 Display configuration values.
 
-Without a section argument, shows all configuration. With a section argument, shows only that section.
+Without a section argument, shows all configuration. With a section argument, shows only that section. Every field is printed, including the `[git.icons]` and `[language.icons]` tables; the output is valid TOML (section headings are comments).
 
 **Valid Sections:**
 - `agent` - Agent process settings
@@ -654,14 +654,30 @@ gpy config show git
 
 **Output:**
 ```
-Git Configuration:
-=================
+# Git Configuration:
+# ==================
 
+[git]
 enabled = true
-show_upstream = true
-timeout_seconds = 10
-skip_paths = []
+icon_set = "unicode"
+max_ahead_behind = 100
 max_branch_length = 0
+show_upstream = true
+skip_paths = []
+stash_enabled = true
+timeout_seconds = 10
+watch_worktree = true
+
+[git.icons]
+ahead = "↑"
+behind = "↓"
+conflicts = "✖"
+detached = "➦"
+in_progress = "↻"
+staged = "✚"
+stash = "≡"
+unstaged = "✱"
+untracked = "?"
 ```
 
 ---
@@ -707,6 +723,15 @@ Updates the configuration file and reloads the running agent.
 - `ui.directory.max_length` - Maximum displayed length for the rendered directory string
 - `language.display` - Language segment display: `icon` or `text`
 - `language.filter` - Languages to show: `all`, `primary`, or top N (e.g. `3`)
+- `language.detection_mode` - Detection strategy: `content`, `markers`, or `hybrid`
+- `language.icons.<lang>` - Icon for one language, e.g. `language.icons.rust`; aliases such as `rs` resolve to the same entry
+- `git.max_ahead_behind` - Maximum ahead/behind count to report (`0` = unlimited)
+- `git.stash_enabled` - Enable/disable the stash count
+- `git.icon_set` - Glyph set for stash/detached/in-progress icons: `unicode` or `nerd_font`
+- `git.icons.<name>` - Git indicator icon; `<name>` is one of `ahead`, `behind`, `staged`, `unstaged`, `untracked`, `conflicts`, `stash`, `detached`, `in_progress`
+- `ui.palette` - Named color palette; must exist (checked before writing)
+
+List-valued keys (`git.skip_paths`, `language.enabled_languages`, `ui.enabled_segments`) can be read with `gpy config get` but not set. `gpy config list` shows every registered key.
 
 **Boolean values accept:** `true`, `false`, `1`, `0`, `yes`, `no`, `on`, `off`
 
