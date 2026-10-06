@@ -97,14 +97,7 @@ impl GitHandler {
             return false;
         }
 
-        // Check if path should be skipped
-        for skip_path in &config.git.skip_paths {
-            if path.starts_with(skip_path) {
-                return false;
-            }
-        }
-
-        true
+        !config.git.is_path_skipped(path)
     }
 
     /// Get git status for a path, checking cache first
@@ -121,8 +114,8 @@ impl GitHandler {
         let path_buf = path.as_path();
 
         // Check if git detection is enabled. `is_git_enabled` already rejects
-        // any path under a configured `git.skip_paths` prefix (same
-        // `Path::starts_with` scan over the same strings), so a second skip-path
+        // any path under a configured `git.skip_paths` entry (the shared
+        // `GitSettings::is_path_skipped` matcher), so a second skip-path
         // scan here would be dead code — the disabled-via-config error below is
         // always returned first for a skipped path.
         if !self.is_git_enabled(path_buf) {
@@ -404,11 +397,18 @@ mod tests {
     fn make_handler_with_cache(
         git_cache: Arc<GitStatusCache>,
     ) -> (GitHandler, Arc<ClientDirectory>) {
-        let registry = ClientDirectory::new().shared();
         let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
+        make_handler_with_config(git_cache, config_manager)
+    }
+
+    fn make_handler_with_config(
+        git_cache: Arc<GitStatusCache>,
+        config_manager: Arc<ConfigManager>,
+    ) -> (GitHandler, Arc<ClientDirectory>) {
+        let registry = ClientDirectory::new().shared();
         let palette_cache = Arc::new(PaletteCache::from_config(&config_manager.get()));
         let render = RenderDeps {
-            config_manager: Arc::clone(&config_manager),
+            config_manager,
             // Use the embedded builtin theme so the test is hermetic against a
             // stale on-disk ~/.config/gpy/themes/default.toml (which may predate
             // the format+palette migration and render empty segments).
@@ -437,12 +437,15 @@ mod tests {
     /// Returns the canonical worktree root, matching the key `get_git_status`
     /// derives via `find_git_root` (which canonicalizes).
     fn init_dirty_repo(temp_dir: &tempfile::TempDir) -> PathBuf {
-        let repo = temp_dir.path().join("repo");
-        std::fs::create_dir_all(&repo).expect("repo dir");
+        init_dirty_repo_at(&temp_dir.path().join("repo"))
+    }
+
+    fn init_dirty_repo_at(repo: &Path) -> PathBuf {
+        std::fs::create_dir_all(repo).expect("repo dir");
 
         let output = std::process::Command::new("git")
             .args(["init", "--initial-branch=main"])
-            .arg(&repo)
+            .arg(repo)
             .output()
             .expect("run git init");
         assert!(
@@ -454,7 +457,7 @@ mod tests {
         // An untracked file makes the true status Dirty.
         std::fs::write(repo.join("untracked.txt"), "hello").expect("write untracked file");
 
-        std::fs::canonicalize(&repo).expect("canonicalize repo root")
+        std::fs::canonicalize(repo).expect("canonicalize repo root")
     }
 
     fn status(untracked: u32) -> RepositoryStatus {
@@ -580,6 +583,42 @@ mod tests {
             handler_err.contains("work tree") && oneshot_err.to_string().contains("work tree"),
             "handler and oneshot paths should fail with the same git work-tree error: \
              handler={handler_err}, oneshot={oneshot_err}"
+        );
+    }
+
+    /// #696: a `skip_paths` entry that goes through a symlink must skip a repo
+    /// reached via its canonical (`SafePath`) location, and a sibling that merely
+    /// shares a string prefix must not be skipped.
+    #[cfg(unix)]
+    #[test]
+    fn get_git_status_honors_skip_path_through_symlink() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let real = temp_dir.path().join("real");
+        let repo = init_dirty_repo_at(&real.join("repo"));
+        let other = init_dirty_repo_at(&temp_dir.path().join("realty").join("repo"));
+        let link = temp_dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+
+        let mut config = crate::config::Config::default();
+        config.git.skip_paths = vec![link.to_string_lossy().into_owned()];
+        let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
+        config_manager.overwrite_for_tests(config);
+        let (handler, _registry) =
+            make_handler_with_config(Arc::new(GitStatusCache::new()), config_manager);
+
+        let skipped = crate::security::SafePath::new(repo.to_str().expect("utf8")).expect("safe");
+        assert!(
+            matches!(
+                handler.get_git_status(&skipped, None),
+                Err(HandlerError::FeatureDisabled("Git"))
+            ),
+            "repo under a symlinked skip_paths entry must be disabled"
+        );
+
+        let kept = crate::security::SafePath::new(other.to_str().expect("utf8")).expect("safe");
+        assert!(
+            handler.get_git_status(&kept, None).is_ok(),
+            "a sibling sharing only a string prefix must not be skipped"
         );
     }
 

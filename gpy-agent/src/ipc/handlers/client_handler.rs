@@ -293,6 +293,17 @@ impl ClientHandler {
             return; // Not a git repository, nothing to scan
         };
 
+        // Honor `git.enabled` / `git.skip_paths` exactly like the IPC git
+        // request: a skipped repo must not get a status computed or an
+        // instant-prompt cache written for it (#696).
+        let skipped = {
+            let current = self.render.config_manager.get();
+            !current.git.enabled || current.git.is_path_skipped(&git_root)
+        };
+        if skipped {
+            return;
+        }
+
         // Spawn background task to avoid blocking registration
         let git_cache = Arc::clone(&self.git_cache);
         let render = self.render.clone();
@@ -367,5 +378,112 @@ impl RequestHandler for ClientHandler {
 
     fn name(&self) -> &'static str {
         "ClientHandler"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::missing_panics_doc)]
+    use super::*;
+    use crate::cache::InstantPromptCache;
+    use crate::config::manager::ConfigManager;
+    use crate::config::{Config, GitSettings};
+    use crate::ipc::ClientDirectory;
+    use crate::palette::PaletteCache;
+    use crate::theme::ThemeManager;
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, Instant};
+
+    fn init_repo(repo: &Path) -> PathBuf {
+        std::fs::create_dir_all(repo).expect("repo dir");
+        let output = std::process::Command::new("git")
+            .args(["init", "--initial-branch=main"])
+            .arg(repo)
+            .output()
+            .expect("run git init");
+        assert!(output.status.success(), "git init failed");
+        std::fs::write(repo.join("untracked.txt"), "x").expect("write file");
+        std::fs::canonicalize(repo).expect("canonical repo")
+    }
+
+    fn handler_with(skip_paths: Vec<String>, cache_dir: &Path) -> ClientHandler {
+        let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
+        config_manager.overwrite_for_tests(Config {
+            git: GitSettings {
+                skip_paths,
+                ..GitSettings::default()
+            },
+            ..Config::default()
+        });
+        let render = RenderDeps {
+            palette_cache: Arc::new(PaletteCache::from_config(&config_manager.get())),
+            config_manager,
+            theme_manager: Arc::new(ThemeManager::builtin("default").expect("theme")),
+            instant_cache: Arc::new(
+                InstantPromptCache::new_in_dir(cache_dir.to_path_buf()).expect("cache"),
+            ),
+            client_registry: ClientDirectory::new().shared(),
+        };
+        ClientHandler::new(
+            render,
+            Arc::new(GitStatusCache::new()),
+            Arc::new(Mutex::new(None)),
+            Arc::new(LatencyTracker::new(16)),
+        )
+    }
+
+    fn git_cache_files(dir: &Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .expect("read cache dir")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".git"))
+            .collect()
+    }
+
+    fn register(handler: &ClientHandler, cwd: &Path) {
+        let pid = crate::config::types::ClientPid::new(std::process::id()).expect("pid");
+        let safe = crate::security::SafePath::new(cwd.to_str().expect("utf8")).expect("safe");
+        handler
+            .handle_register_client(pid, Some(safe), None, None)
+            .expect("register");
+    }
+
+    /// #696: registering inside a skipped repo (entry written through a
+    /// symlink) must write no git instant-prompt cache files.
+    #[cfg(unix)]
+    #[test]
+    fn register_in_skipped_repo_writes_no_git_instant_cache() {
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let real = tmp.path().join("real");
+        let repo = init_repo(&real.join("repo"));
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+        let cache_dir = tmp.path().join("cache");
+
+        let handler = handler_with(vec![link.to_string_lossy().into_owned()], &cache_dir);
+        register(&handler, &repo);
+
+        std::thread::sleep(Duration::from_millis(1500));
+        assert_eq!(git_cache_files(&cache_dir), Vec::<String>::new());
+    }
+
+    /// Control: the same registration without a skip entry does populate the
+    /// cache, so the assertion above is not vacuous.
+    #[test]
+    fn register_in_unskipped_repo_writes_git_instant_cache() {
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let repo = init_repo(&tmp.path().join("repo"));
+        let cache_dir = tmp.path().join("cache");
+
+        let handler = handler_with(Vec::new(), &cache_dir);
+        register(&handler, &repo);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while git_cache_files(&cache_dir).is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!git_cache_files(&cache_dir).is_empty());
     }
 }
