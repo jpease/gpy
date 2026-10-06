@@ -385,6 +385,145 @@ fn concurrent_starts_during_eviction_leave_one_daemon() {
     );
 }
 
+// #741: `gpy start` returns only once the daemon is listening.
+#[test]
+fn gpy_start_returns_only_when_agent_answers() {
+    let sandbox = AgentSandbox::new();
+    for round in 0_u32..5 {
+        sandbox.gpy(&["start"]).assert_success("gpy start");
+        // Connect at once: spawning `gpy status` first would give the daemon
+        // time to bind and hide the race.
+        assert!(
+            std::os::unix::net::UnixStream::connect(&sandbox.socket_path).is_ok(),
+            "round {round}: the socket must accept connections when `gpy start` exits 0"
+        );
+        sandbox.gpy(&["stop"]).assert_success("gpy stop");
+        assert!(sandbox.wait_until_socket_gone(), "round {round}: stop");
+    }
+}
+
+// #741: a start whose agent can never bind exits 1 with an `Error:` line.
+#[test]
+fn gpy_start_fails_when_agent_cannot_bind() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sandbox = AgentSandbox::new();
+    let dir = tempfile::tempdir_in(gpy_test_root().expect("GPY test root")).expect("tempdir");
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    let socket = dir.path().join("gpy.sock");
+
+    for result in [
+        sandbox
+            .env
+            .run_gpy_with_env(&["start"], &[("GPY_AGENT_SOCKET_PATH", &socket)])
+            .expect("spawn gpy"),
+        sandbox
+            .env
+            .run_gpy_agent_with_env(&["start"], &[("GPY_AGENT_SOCKET_PATH", &socket)])
+            .expect("spawn gpy-agent"),
+    ] {
+        assert_eq!(result.exit_code, 1_i32, "{result:?}");
+        assert!(result.stderr.contains("Error:"), "{result:?}");
+    }
+
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).expect("chmod");
+}
+
+// #741: the lock is taken but the daemon itself cannot bind (the path is too
+// long for `sun_path`), so the failure must come from the readiness wait.
+#[test]
+fn gpy_agent_start_fails_when_the_daemon_dies_before_binding() {
+    let sandbox = AgentSandbox::new();
+    let dir = tempfile::tempdir_in(gpy_test_root().expect("GPY test root")).expect("tempdir");
+    let socket = dir.path().join(format!("{}.sock", "x".repeat(120)));
+
+    let result = sandbox
+        .env
+        .run_gpy_agent_with_env(&["start"], &[("GPY_AGENT_SOCKET_PATH", &socket)])
+        .expect("spawn gpy-agent");
+    assert_eq!(result.exit_code, 1_i32, "{result:?}");
+    assert!(result.stderr.contains("Error:"), "{result:?}");
+}
+
+/// Stops the agent on an explicit `--socket` path when the test ends.
+struct SocketStopper<'a>(&'a CliTestEnv, PathBuf);
+
+impl Drop for SocketStopper<'_> {
+    fn drop(&mut self) {
+        let socket = self.1.to_string_lossy().into_owned();
+        let _ = self.0.run_gpy_agent(&["stop", "--socket", &socket]);
+    }
+}
+
+/// The working directory of process `pid`.
+fn process_cwd(pid: &str) -> PathBuf {
+    if cfg!(target_os = "linux") {
+        return std::fs::read_link(format!("/proc/{pid}/cwd")).expect("read /proc cwd");
+    }
+    let output = std::process::Command::new("lsof")
+        .args(["-a", "-p", pid, "-d", "cwd", "-Fn"])
+        .output()
+        .expect("run lsof");
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix('n'))
+        .map(PathBuf::from)
+        .expect("lsof reports a cwd")
+}
+
+// #724: the daemon never keeps the launch directory busy.
+#[test]
+fn daemon_does_not_keep_the_launch_directory_as_cwd() {
+    let sandbox = AgentSandbox::new();
+    let launch = tempfile::tempdir_in(gpy_test_root().expect("GPY test root")).expect("tempdir");
+    let socket = sandbox.socket_path.to_string_lossy().into_owned();
+    let _reaper = DaemonReaper(sandbox.socket_path.clone());
+
+    let status = sandbox
+        .env
+        .gpy_agent_command()
+        .args(["start", "--socket", &socket])
+        .current_dir(launch.path())
+        .status()
+        .expect("spawn gpy-agent start");
+    assert!(status.success());
+    sandbox.wait_until_responding();
+
+    let daemons = pids_matching(&sandbox.socket_path);
+    let [pid] = daemons.as_slice() else {
+        panic!("expected one daemon, found {daemons:?}");
+    };
+    assert_eq!(process_cwd(pid), PathBuf::from("/"));
+}
+
+// #724: a relative `--socket` still binds next to the launch directory.
+#[test]
+fn relative_socket_is_resolved_against_the_launch_directory() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let launch = tempfile::tempdir_in(gpy_test_root().expect("GPY test root")).expect("tempdir");
+    let socket = launch.path().join("rel.sock");
+    let _stopper = SocketStopper(&env, socket.clone());
+
+    let status = env
+        .gpy_agent_command()
+        .args(["start", "--socket", "rel.sock"])
+        .current_dir(launch.path())
+        .status()
+        .expect("spawn gpy-agent start");
+    assert!(status.success());
+    assert!(
+        socket.exists(),
+        "rel.sock must be bound in the launch directory"
+    );
+
+    let socket_arg = socket.to_string_lossy().into_owned();
+    let reported = env
+        .run_gpy_agent(&["status", "--socket", &socket_arg])
+        .expect("spawn gpy-agent status");
+    assert_eq!(reported.exit_code, 0_i32, "{reported:?}");
+    assert!(reported.stdout.contains(RUNNING_LINE), "{reported:?}");
+}
+
 #[test]
 fn gpy_stop_when_not_running_is_a_noop() {
     let sandbox = AgentSandbox::new();

@@ -398,8 +398,11 @@ fn install_panic_handler() {
     }));
 }
 
+/// Record `--socket`, made absolute against the current directory so a
+/// forked daemon (which runs in `/`, #724) binds the path the user meant.
 fn apply_socket_override(socket: Option<PathBuf>) {
-    if let Some(path) = socket {
+    if let Some(given) = socket {
+        let path = gpy_agent::paths::absolutize(&given);
         match SOCKET_OVERRIDE.set(path.clone()) {
             Ok(()) => {}
             Err(existing) => {

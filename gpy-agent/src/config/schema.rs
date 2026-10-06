@@ -120,22 +120,16 @@ pub fn config_candidates_for(
 ///
 /// Ambient-environment wrapper over [`config_candidates_for`]; `HOME` comes
 /// from [`crate::paths::home_dir`], which falls back to the passwd database
-/// exactly as Fish and Zsh do (#626). A relative `GPY_CONFIG_PATH` is joined
-/// onto the current directory here, so every caller, the agent included,
-/// stores, reports, and watches an absolute path (#733).
+/// exactly as Fish and Zsh do (#626). A relative `GPY_CONFIG_PATH` is made
+/// absolute here against the directory `gpy-agent start` ran in (the current
+/// directory for every other command), so every caller, the daemon in `/`
+/// included, stores, reports, and watches the same absolute path (#733, #724).
 #[must_use]
 pub fn get_config_paths() -> Vec<String> {
     let custom_path = std::env::var_os("GPY_CONFIG_PATH").map(|value| {
-        let path = std::path::PathBuf::from(value);
-        let absolute = if path.as_os_str().is_empty() || path.is_absolute() {
-            path
-        } else {
-            match std::env::current_dir() {
-                Ok(cwd) => cwd.join(path),
-                Err(_) => path,
-            }
-        };
-        absolute.to_string_lossy().into_owned()
+        crate::paths::absolutize(std::path::Path::new(&value))
+            .to_string_lossy()
+            .into_owned()
     });
     let home = crate::paths::home_dir();
     let xdg_config =

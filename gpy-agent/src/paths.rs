@@ -53,7 +53,34 @@
 //! what lets every branch, including the Windows one, be table-tested from
 //! this Unix development machine.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+/// The directory `gpy-agent start` ran in, recorded before it forks (#724).
+///
+/// The daemon `chdir`s to `/` so it never keeps a mount busy, yet relative
+/// paths the user supplied (`--socket`, `GPY_AGENT_SOCKET_PATH`,
+/// `GPY_CONFIG_PATH`, `GPY_DEBUG_LOG`, `GPY_BUNDLED_PLUGIN_DIR`) must keep
+/// resolving against the launch directory. The forked daemon inherits this
+/// value; every other command leaves it unset.
+pub(crate) static LAUNCH_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// `path` made absolute against [`LAUNCH_DIR`].
+///
+/// Falls back to the current directory when `LAUNCH_DIR` is unset (every
+/// non-daemon command). Absolute and empty paths, and any path when no
+/// directory is known, are returned unchanged.
+#[must_use]
+pub fn absolutize(path: &Path) -> PathBuf {
+    if path.is_absolute() || path.as_os_str().is_empty() {
+        return path.to_path_buf();
+    }
+    LAUNCH_DIR
+        .get()
+        .cloned()
+        .or_else(|| std::env::current_dir().ok())
+        .map_or_else(|| path.to_path_buf(), |dir| dir.join(path))
+}
 
 /// Normalise an `$XDG_*` environment value to the spec's notion of "set".
 ///
