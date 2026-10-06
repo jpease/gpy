@@ -353,6 +353,18 @@ grep -q 'release-dist/gpy"' "$BUILD_SCRIPT" ||
 grep -q '\.sha256' "$BUILD_SCRIPT" ||
     fail "build-release-binaries.sh writes no .sha256 sidecars; install.sh refuses unverified binaries (#494)"
 
+# shellcheck disable=SC2016 # literal script text, not expansions
+# Linux binaries must be pinned to the workflow's glibc floor like #694 (#818).
+grep -q 'cargo zigbuild .*"\$target\.\$GLIBC_FLOOR"' "$BUILD_SCRIPT" ||
+    fail "build-release-binaries.sh does not build Linux targets with cargo zigbuild --target <triple>.\$GLIBC_FLOOR (#818)"
+grep -q 'GPY_GLIBC_FLOOR' "$BUILD_SCRIPT" ||
+    fail "build-release-binaries.sh does not read GPY_GLIBC_FLOOR from release.yml (#818)"
+grep -q 'check-glibc-floor.sh' "$BUILD_SCRIPT" ||
+    fail "build-release-binaries.sh never runs scripts/check-glibc-floor.sh on what it builds (#818)"
+if grep -q 'gcc-aarch64-linux-gnu' "$BUILD_SCRIPT"; then
+    fail "build-release-binaries.sh still recommends gcc-aarch64-linux-gnu instead of zig (#818)"
+fi
+
 # Every agent name the build script passes to build_target must be an agent
 # asset install.sh resolves, and the CLI name derived from it a CLI asset.
 built_agents="$(sed -nE 's/^[[:space:]]*(.*[^[:alnum:]_])?build_target "[^"]+" "([^"]+)".*/\2/p' "$BUILD_SCRIPT" | sort -u)"

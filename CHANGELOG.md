@@ -670,6 +670,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   (#826).
 - The shell e2e harness sends `TERM` and waits before falling back to
   `KILL` when it stops a test agent (#825).
+- `scripts/build-release-binaries.sh` builds Linux binaries against the
+  release glibc floor with cargo-zigbuild and checks them, matching the
+  release workflow (#818).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
