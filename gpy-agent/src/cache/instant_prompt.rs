@@ -89,8 +89,11 @@ pub(super) fn next_tmp_suffix() -> u64 {
 /// atomic on the same filesystem, so a reader always sees either the complete
 /// old content or the complete new content -- never a partial write, even if
 /// the process is killed between the write and the rename (the target path
-/// is untouched until the rename succeeds; at worst a stray `.tmp-` file is
-/// left in `dir`, never a half-written `name`).
+/// is untouched until the rename succeeds; at worst a stray `.tmp-<pid>-<n>`
+/// file is left in `dir`, never a half-written `name`). The temp name does not
+/// embed `name`, so any `name` that fits the filesystem limit can be written;
+/// its leading dot keeps it out of shell globs and lets the startup sweep
+/// recognise orphans by prefix.
 ///
 /// `pub(super)` so the sibling `theme_export` module (same `cache` parent)
 /// shares this instead of carrying its own copy of the same sequence (#591).
@@ -102,11 +105,9 @@ pub(super) fn next_tmp_suffix() -> u64 {
 /// not itself an error -- the write/rename failure is what's reported).
 pub(super) fn write_atomic(dir: &Path, name: &str, content: &str) -> Result<()> {
     let target = dir.join(name);
-    let tmp_path = dir.join(format!(
-        "{name}.tmp-{}-{}",
-        std::process::id(),
-        next_tmp_suffix()
-    ));
+    // Independent of `name`: a name derived from the target overflowed
+    // NAME_MAX for ~240+ byte cache names (#708).
+    let tmp_path = dir.join(format!(".tmp-{}-{}", std::process::id(), next_tmp_suffix()));
 
     if let Err(e) = std::fs::write(&tmp_path, content) {
         let _ = std::fs::remove_file(&tmp_path);
@@ -117,6 +118,26 @@ pub(super) fn write_atomic(dir: &Path, name: &str, content: &str) -> Result<()> 
         let _ = std::fs::remove_file(&tmp_path);
         Error::from(e)
     })
+}
+
+/// Combine the outcomes of a multi-variant write.
+///
+/// A partial success counts as success (so the caller still rings for the
+/// variants that changed) and the first error is logged; only a total failure
+/// is returned (#708).
+///
+/// # Errors
+///
+/// Returns the first error when no variant was written.
+fn settle_variant_writes(wrote_any: bool, first_err: Option<Error>) -> Result<bool> {
+    match first_err {
+        Some(e) if !wrote_any => Err(e),
+        Some(e) => {
+            debug_log!("cache", "Some cache variants were not written: {e}");
+            Ok(wrote_any)
+        }
+        None => Ok(wrote_any),
+    }
 }
 
 /// Maximum distinct `prev_bg` render contexts tracked per repository.
@@ -306,21 +327,33 @@ impl InstantPromptCache {
         // keep context-specific cache files fresh too, or a live shell pinned to one
         // would serve stale status (#145/#160).
         let mut wrote_any = false;
+        let mut first_err = None;
         for ctx_prev_bg in self.known_contexts(&key, prev_bg) {
             let token = prev_bg_token(ctx_prev_bg.as_deref());
             let color = ctx_prev_bg.as_deref().and_then(|s| parse_color(s).ok());
 
             for pos in SEGMENT_POSITIONS {
                 let prompts =
-                    render_git_prompts(status, config, theme, pos, color.clone(), palette)?;
+                    match render_git_prompts(status, config, theme, pos, color.clone(), palette) {
+                        Ok(prompts) => prompts,
+                        Err(e) => {
+                            first_err.get_or_insert(e);
+                            continue;
+                        }
+                    };
                 let suffix = variant_suffix("git", pos.is_last, pos.is_first);
                 let suffix_token = format!("{suffix}.{token}");
                 for (dialect, prompt) in prompts {
-                    wrote_any |= self.write_cache_file(&key, &suffix_token, dialect, &prompt)?;
+                    match self.write_cache_file(&key, &suffix_token, dialect, &prompt) {
+                        Ok(wrote) => wrote_any |= wrote,
+                        Err(e) => {
+                            first_err.get_or_insert(e);
+                        }
+                    }
                 }
             }
         }
-        Ok(wrote_any)
+        settle_variant_writes(wrote_any, first_err)
     }
 
     /// Write instant-prompt cache for language segment.
@@ -359,10 +392,11 @@ impl InstantPromptCache {
         // Refresh every known render context (see `write_git` for the rationale):
         // background language writes carry no `prev_bg` but must keep context files fresh.
         let mut wrote_any = false;
+        let mut first_err = None;
         for ctx_prev_bg in self.known_contexts(&key, prev_bg) {
             let token = prev_bg_token(ctx_prev_bg.as_deref());
             let color = ctx_prev_bg.as_deref().and_then(|s| parse_color(s).ok());
-            let prompts = render_language_prompts(
+            let prompts = match render_language_prompts(
                 languages,
                 config,
                 theme,
@@ -371,13 +405,24 @@ impl InstantPromptCache {
                 color,
                 palette,
                 virtual_env,
-            )?;
+            ) {
+                Ok(prompts) => prompts,
+                Err(e) => {
+                    first_err.get_or_insert(e);
+                    continue;
+                }
+            };
             let base_token = format!("{base}.{token}");
             for (dialect, prompt) in prompts {
-                wrote_any |= self.write_cache_file(&key, &base_token, dialect, &prompt)?;
+                match self.write_cache_file(&key, &base_token, dialect, &prompt) {
+                    Ok(wrote) => wrote_any |= wrote,
+                    Err(e) => {
+                        first_err.get_or_insert(e);
+                    }
+                }
             }
         }
-        Ok(wrote_any)
+        settle_variant_writes(wrote_any, first_err)
     }
 
     /// Write all four language cache variants (`is_last` × `is_first`).
@@ -407,8 +452,9 @@ impl InstantPromptCache {
         virtual_env: Option<&Path>,
     ) -> Result<bool> {
         let mut wrote_any = false;
+        let mut first_err = None;
         for pos in SEGMENT_POSITIONS {
-            wrote_any |= self.write_language(
+            match self.write_language(
                 path,
                 languages,
                 config,
@@ -417,9 +463,14 @@ impl InstantPromptCache {
                 prev_bg,
                 palette,
                 virtual_env,
-            )?;
+            ) {
+                Ok(wrote) => wrote_any |= wrote,
+                Err(e) => {
+                    first_err.get_or_insert(e);
+                }
+            }
         }
-        Ok(wrote_any)
+        settle_variant_writes(wrote_any, first_err)
     }
 
     /// Record `prev_bg` as a render context seen for `key` and return every known
@@ -860,7 +911,7 @@ fn prune_stale_entries(dir: &Path, now: SystemTime) -> (u64, u64) {
         let is_orphan_tmp = path
             .file_name()
             .and_then(|n| n.to_str())
-            .is_some_and(|n| n.contains(".tmp-"));
+            .is_some_and(|n| n.starts_with(".tmp-"));
 
         let (limit, counter) = if is_orphan_tmp {
             (ORPHAN_TMP_MAX_AGE, &mut removed_orphans)
@@ -1110,7 +1161,7 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let orphan = aged_file(
             dir.path(),
-            "repo.git.none.ansi.tmp-1234-5",
+            ".tmp-1234-5",
             ORPHAN_TMP_MAX_AGE.saturating_add(Duration::from_secs(60)),
         );
         // Well past the orphan clock but nowhere near the entry clock, proving
@@ -1130,13 +1181,24 @@ mod tests {
     }
 
     #[test]
+    fn sweep_keeps_cache_files_whose_key_contains_tmp() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let legit = aged_file(
+            dir.path(),
+            "_sx.tmp-1.git.none.ansi",
+            Duration::from_hours(2),
+        );
+
+        let (entries, orphans) = prune_stale_entries(dir.path(), SystemTime::now());
+
+        assert_eq!((entries, orphans), (0, 0));
+        assert!(legit.exists(), "a key containing .tmp- is not an orphan");
+    }
+
+    #[test]
     fn sweep_spares_an_in_flight_temp_file() {
         let dir = tempfile::TempDir::new().expect("temp dir");
-        let in_flight = aged_file(
-            dir.path(),
-            "repo.git.none.ansi.tmp-99-1",
-            Duration::from_secs(1),
-        );
+        let in_flight = aged_file(dir.path(), ".tmp-99-1", Duration::from_secs(1));
 
         let (_, orphans) = prune_stale_entries(dir.path(), SystemTime::now());
 
@@ -1215,6 +1277,19 @@ mod tests {
             let content =
                 std::fs::read_to_string(temp_dir.path().join("target.txt")).expect("read");
             assert_eq!(content, "hello");
+        }
+
+        #[test]
+        fn write_atomic_succeeds_for_names_near_name_max() {
+            let temp_dir = tempfile::TempDir::new().expect("temp dir");
+            let name = format!("{}.ansi", "a".repeat(245));
+
+            write_atomic(temp_dir.path(), &name, "x").expect("write");
+
+            assert_eq!(
+                std::fs::read_to_string(temp_dir.path().join(&name)).expect("read"),
+                "x"
+            );
         }
 
         /// After a successful write, the target is the ONLY file in the
@@ -1341,6 +1416,9 @@ mod tests {
         Concurrent(&'static str, &'static str, &'static [&'static str], usize),
         /// Remove the whole cache directory, as `rm -rf ~/.cache/gpy` would (#707).
         DeleteDir,
+        /// Write all four git variants for a `key_len`-byte key, so the longest
+        /// final name is `key_len + 25` bytes (#708).
+        WriteVariants(usize, &'static str),
     }
 
     struct CacheHarness {
@@ -1364,8 +1442,26 @@ mod tests {
             }
         }
 
+        fn write_variants(&mut self, key_len: usize, content: &str) {
+            let key = "k".repeat(key_len);
+            for suffix in [
+                "git.none",
+                "git_last.none",
+                "git_first.none",
+                "git_first_last.none",
+            ] {
+                self.cache
+                    .write_cache_file(&key, suffix, PromptDialect::Ansi, content)
+                    .expect("every variant name that fits NAME_MAX must be writable");
+                let name = format!("{key}.{suffix}.ansi");
+                self.expected.insert(name.clone(), content.to_owned());
+                self.touched = Some(name);
+            }
+        }
+
         fn apply(&mut self, op: &Op) {
             match *op {
+                Op::WriteVariants(key_len, content) => self.write_variants(key_len, content),
                 Op::DeleteDir => {
                     std::fs::remove_dir_all(&self.cache.cache_dir).expect("remove dir");
                     self.expected.clear();
@@ -1451,6 +1547,16 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn instant_cache_writes_every_variant_for_a_near_name_max_key() {
+        let mut h = CacheHarness::new();
+        // 225-byte key -> 250-byte longest variant name; its old temp name overflowed.
+        h.apply(&Op::WriteVariants(225, "x"));
+        h.apply(&Op::Age(60));
+        h.apply(&Op::WriteVariants(225, "x"));
+        h.apply(&Op::WriteVariants(225, "y"));
     }
 
     #[test]
@@ -2209,6 +2315,137 @@ mod tests {
             !read("lang_first_last.none").contains(sep_open),
             "is_first+is_last variant must suppress the opening powerline cap"
         );
+    }
+
+    /// Build a git repo under `root` with a near-`NAME_MAX` cache key.
+    ///
+    /// The longest variant name (`<key>.git_first_last.none.ansi`) is exactly
+    /// 250 bytes: a legal final name whose old `<name>.tmp-<pid>-<n>` temp
+    /// name exceeded `NAME_MAX` (#708).
+    fn near_name_max_repo(root: &Path) -> (PathBuf, String) {
+        let parent = std::fs::canonicalize(root).expect("canonicalize root");
+        let fixed = path_to_cache_key(&parent)
+            .len()
+            .checked_add("_s".len())
+            .and_then(|n| n.checked_add(".git_first_last.none.ansi".len()))
+            .expect("length");
+        let pad = 250_usize.checked_sub(fixed).expect("root fits");
+        let repo = parent.join("a".repeat(pad));
+        std::fs::create_dir_all(repo.join(".git")).expect("git dir");
+        let key = path_to_cache_key(&repo);
+        (repo, key)
+    }
+
+    const GIT_VARIANTS: [&str; 4] = [
+        "git.none",
+        "git_last.none",
+        "git_first.none",
+        "git_first_last.none",
+    ];
+
+    #[test]
+    fn write_git_writes_every_variant_for_a_near_name_max_path() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let cache = InstantPromptCache::new_in_dir(temp_dir.path().join("ip")).expect("cache");
+        let (repo, key) = near_name_max_repo(temp_dir.path());
+        let config = Config::default();
+
+        let wrote = cache
+            .write_git(
+                &repo,
+                &clean_status("main"),
+                &config,
+                &ThemeConfig::default(),
+                None,
+                &crate::palette::active_palette(&config),
+            )
+            .expect("write git");
+
+        assert!(wrote);
+        for suffix in GIT_VARIANTS {
+            assert!(
+                cache
+                    .cache_file_path(&key, suffix, PromptDialect::Ansi)
+                    .exists(),
+                "{suffix} must be written"
+            );
+        }
+    }
+
+    #[test]
+    fn write_language_variants_writes_every_variant_for_a_near_name_max_path() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let cache = InstantPromptCache::new_in_dir(temp_dir.path().join("ip")).expect("cache");
+        let (repo, key) = near_name_max_repo(temp_dir.path());
+        let config = Config::default();
+        let theme_mgr =
+            crate::theme::ThemeManager::builtin("default").expect("builtin default theme");
+        let languages = vec![DetectedLanguage {
+            name: "rust".to_owned(),
+            confidence: 1.0,
+            file_count: 1,
+            total_bytes: 128,
+        }];
+
+        cache
+            .write_language_variants(
+                &repo,
+                &languages,
+                &config,
+                &theme_mgr.get(),
+                None,
+                &crate::palette::active_palette(&config),
+                None,
+            )
+            .expect("write variants");
+
+        for suffix in [
+            "lang.none",
+            "lang_last.none",
+            "lang_first.none",
+            "lang_first_last.none",
+        ] {
+            assert!(
+                cache
+                    .cache_file_path(&key, suffix, PromptDialect::Ansi)
+                    .exists(),
+                "{suffix} must be written"
+            );
+        }
+    }
+
+    #[test]
+    fn write_git_writes_every_variant_when_one_fails() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let cache = InstantPromptCache::new_in_dir(temp_dir.path().join("ip")).expect("cache");
+        let repo = temp_dir.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).expect("git dir");
+        let key = path_to_cache_key(&std::fs::canonicalize(&repo).expect("canonicalize"));
+        // A directory at the target: the rename onto it fails.
+        std::fs::create_dir_all(cache.cache_file_path(&key, "git_first.none", PromptDialect::Ansi))
+            .expect("blocking dir");
+        let config = Config::default();
+
+        let wrote = cache
+            .write_git(
+                &repo,
+                &clean_status("main"),
+                &config,
+                &ThemeConfig::default(),
+                None,
+                &crate::palette::active_palette(&config),
+            )
+            .expect("one failing variant must not fail the call");
+
+        assert!(wrote, "the other variants changed, so the caller must ring");
+        for suffix in ["git.none", "git_last.none", "git_first_last.none"] {
+            assert!(
+                cache
+                    .cache_file_path(&key, suffix, PromptDialect::Ansi)
+                    .is_file(),
+                "{suffix} must be written despite git_first failing"
+            );
+        }
     }
 
     /// Part A: the instant-prompt cache must contain the branch name AND ANSI escapes,
