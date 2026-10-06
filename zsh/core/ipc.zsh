@@ -217,7 +217,10 @@ function __gpy_send_json() {
     local json=$1
     local socket_path=$(__gpy_ipc_endpoint)
     local response="" read_status=1
-    local zsocket_connected=0
+    local zsocket_connected=0 timeout_secs
+    # One reply budget for every transport (#757); guarded against a
+    # non-numeric GPY_IPC_TIMEOUT_MS by __gpy_ms_to_secs.
+    __gpy_ms_to_secs "${GPY_IPC_TIMEOUT_MS:-150}" timeout_secs
 
     # Check if socket exists
     if [[ ! -S "$socket_path" ]]; then
@@ -239,7 +242,7 @@ function __gpy_send_json() {
             # trailing space the character segment's template emits after `❯`
             # (so zsh rendered `❯cd foo` where fish rendered `❯ cd foo`), and
             # without -r it would mangle the backslashes in the rendered ANSI.
-            IFS= read -r -u $fd -t 0.1 response
+            IFS= read -r -u $fd -t $timeout_secs response
             read_status=$?
             exec {fd}>&-
         fi
@@ -247,7 +250,7 @@ function __gpy_send_json() {
 
     # Once zsocket has connected, $json has already gone out over that
     # connection -- a slow-but-alive agent (read_status nonzero from the
-    # 0.1s timeout above) is not the same as "never sent". Falling through
+    # reply-budget timeout above) is not the same as "never sent". Falling through
     # to socat/nc here would resend the same payload on a second connection
     # while the agent may still be working the first one (#575). So this
     # branch always returns once connected, whether or not the read landed
@@ -258,13 +261,16 @@ function __gpy_send_json() {
             print -r -- "$response"
             return 0
         fi
-        return 1
+        # 2 = connected, but no complete reply within the budget: the agent
+        # is alive and still working, so the caller must not fork a oneshot
+        # (#757). 1 stays "could not reach the agent".
+        return 2
     fi
 
     # 2. Try socat
     read_status=1
     if (( $+commands[socat] )); then
-        IFS= read -r response < <(print -r -- "$json" | socat -t 0.1 - UNIX-CONNECT:"$socket_path" 2>/dev/null)
+        IFS= read -r response < <(print -r -- "$json" | socat -t $timeout_secs - UNIX-CONNECT:"$socket_path" 2>/dev/null)
         read_status=$?
 
     # 3. Try nc (BSD/macOS style with -U). nc's -w only accepts whole
@@ -274,8 +280,6 @@ function __gpy_send_json() {
     # back to the coarser -w 1 bound otherwise.
     elif (( $+commands[nc] )); then
         if (( $+commands[timeout] )); then
-            local timeout_secs
-            __gpy_ms_to_secs "${GPY_IPC_TIMEOUT_MS:-150}" timeout_secs
             IFS= read -r response < <(print -r -- "$json" | timeout "$timeout_secs" nc -U "$socket_path" -w 1 2>/dev/null)
         else
             IFS= read -r response < <(print -r -- "$json" | nc -U "$socket_path" -w 1 2>/dev/null)
@@ -602,7 +606,12 @@ function __gpy_request() {
     # Use "cwd" as per protocol, not "path"
     local request="{\"op\":\"$op\",\"cwd\":\"$json_cwd\",\"format\":\"$format\"${flags_tail}${venv_json}}"
 
-    if ! __gpy_send_json "$request"; then
+    __gpy_send_json "$request"
+    local send_status=$?
+    # 2: connected but the reply was late (#757). The agent is computing the
+    # same segment, so omit it this render rather than fork a oneshot.
+    (( send_status == 2 )) && return 1
+    if (( send_status != 0 )); then
         # oneshot fallback has no --prev-bg flag; the opening chevron color is
         # skipped until the daemon connects (mirrors fish). is_first IS passed
         # (--first, #401), so the opening cap's presence/absence is correct.
