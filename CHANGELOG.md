@@ -603,6 +603,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `install-oneline.sh` checks a downloaded agent or `gpy` binary before
   replacing the installed one (#806), so a binary that cannot run on the host
   no longer overwrites a working install.
+- `gpy plugin validate plugin.toml` works from inside the plugin directory
+  instead of failing with "Plugin root '' is not a directory" (#805).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

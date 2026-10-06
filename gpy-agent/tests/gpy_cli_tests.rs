@@ -734,6 +734,43 @@ provided_segments = ["broken_seg"]
 }
 
 #[test]
+fn test_plugin_validate_accepts_bare_manifest_filename() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let plugin_dir = env.plugins_dir().join("bare");
+    fs::create_dir_all(plugin_dir.join("segments")).expect("Failed to create plugin dir");
+    fs::write(
+        plugin_dir.join("plugin.toml"),
+        r#"
+id = "bare"
+name = "Bare"
+version = "0.1.0"
+api_version = "v1"
+entry_type = "file"
+provided_segments = ["bare_seg"]
+"#,
+    )
+    .expect("Failed to write plugin manifest");
+    fs::write(plugin_dir.join("segments").join("bare_seg.fish"), "# seg\n")
+        .expect("Failed to write segment file");
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_gpy"))
+        .args(["plugin", "validate", "plugin.toml"])
+        .current_dir(&plugin_dir)
+        .env("HOME", env.root())
+        .env("XDG_CONFIG_HOME", env.xdg_config_home())
+        .env("XDG_RUNTIME_DIR", env.xdg_runtime_dir())
+        .env("XDG_CACHE_HOME", env.xdg_cache_home())
+        .output()
+        .expect("Failed to run gpy plugin validate");
+
+    assert!(
+        output.status.success(),
+        "Bare plugin.toml should validate from inside the plugin dir.\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn test_plugin_validate_rejects_misspelled_provided_segments() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     let plugin_dir = env.plugins_dir().join("weather");
