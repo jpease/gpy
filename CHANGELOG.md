@@ -268,6 +268,12 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Fixed
 
+- `gpy-agent start` no longer evicts a newer running agent (#780). It
+  replaced the daemon on any version difference, so two installs could flip
+  it back and forth. Only an older or unreadable version is replaced now.
+  An agent on a `--socket` / `GPY_AGENT_SOCKET_PATH` override keeps its
+  version in `<socket>.version` instead of the default agent's marker.
+
 - Zsh prints IPC requests, replies and cached output verbatim (#676).
   `echo` and `print` without `-r` interpreted backslash escapes, so a path
   containing `\` reached the agent as invalid JSON and replies containing

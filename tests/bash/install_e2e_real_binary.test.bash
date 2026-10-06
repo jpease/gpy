@@ -177,8 +177,10 @@ cd "$SHELL_E2E_ROOT" || exit 1
 
 # =====================================================================================
 echo "--- upgrade ---"
-VERSION_FILE="$XDG_RUNTIME_DIR/gpy/agent.version"
-[ -f "$VERSION_FILE" ] || fail "no agent.version at $VERSION_FILE"
+# The harness overrides the socket path, so the agent records its version next
+# to the socket rather than in the runtime root's agent.version (#780).
+VERSION_FILE="$GPY_AGENT_SOCKET_PATH.version"
+[ -f "$VERSION_FILE" ] || fail "no version marker at $VERSION_FILE"
 printf '0.0.0-old\n' >"$VERSION_FILE"
 sed -i.bak 's/^show_icons = false/show_icons = true/' "$CONFIG" && rm -f "$CONFIG.bak"
 cp "$CONFIG" "$SHELL_E2E_ROOT/config.before-upgrade"

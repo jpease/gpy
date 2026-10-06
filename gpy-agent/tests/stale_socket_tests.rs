@@ -410,3 +410,37 @@ fn version_matched_agent_is_left_running() {
         "the live agent's version file must stay"
     );
 }
+
+/// #780: an older binary must not evict a newer running agent. Two installs
+/// resolving different binaries would otherwise flip the daemon back and
+/// forth on every `start`.
+#[test]
+fn newer_running_agent_is_left_running() {
+    let _lock = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let tmp = tempfile::tempdir().unwrap();
+    let _env = EnvGuard::redirect_runtime_dir(tmp.path());
+
+    let socket_path = get_socket_path().expect("compute redirected socket path");
+    let version_path = get_version_file_path().expect("compute redirected version path");
+    std::fs::write(&version_path, "999.0.0\n").expect("write the newer agent's version");
+    let responder = Responder::spawn(&socket_path, true, Duration::ZERO);
+
+    let is_running = check_and_cleanup_socket(&socket_path);
+
+    assert!(
+        is_running,
+        "a responding agent newer than this binary must be treated as already running"
+    );
+    assert_eq!(
+        responder.shutdown_requests(),
+        0,
+        "a newer agent must not be asked to shut down"
+    );
+    assert!(socket_path.exists(), "the newer agent's socket must stay");
+    assert!(
+        version_path.exists(),
+        "the newer agent's version file must stay"
+    );
+}

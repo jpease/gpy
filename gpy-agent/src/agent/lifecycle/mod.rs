@@ -13,8 +13,9 @@ pub use start::start_background_agent;
 #[cfg(unix)]
 use crate::Error;
 use crate::{Result, VERSION};
+use std::cmp::Ordering;
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 #[cfg(unix)]
@@ -88,11 +89,80 @@ pub fn socket_path_override() -> Option<PathBuf> {
 
 /// Get the version file path
 ///
+/// The default socket's agent keeps `<runtime>/agent.version`, the path the
+/// installers and uninstallers name. An agent on an overridden socket
+/// (`--socket` / `GPY_AGENT_SOCKET_PATH`) uses `<socket>.version`, so agents
+/// on different sockets never read or remove each other's marker (#780).
+///
 /// # Errors
 ///
 /// Returns an error if the runtime directory cannot be created.
 pub fn get_version_file_path() -> Result<PathBuf> {
-    Ok(get_runtime_dir()?.join("agent.version"))
+    let socket_override = SOCKET_OVERRIDE.get().cloned().or_else(socket_path_override);
+    match socket_override {
+        Some(socket) => Ok(version_file_for(Some(&socket), Path::new(""))),
+        None => Ok(version_file_for(None, &get_runtime_dir()?)),
+    }
+}
+
+/// Version marker path for an agent on `socket_override`, or on the default
+/// socket under `runtime_dir` when there is no override.
+fn version_file_for(socket_override: Option<&Path>, runtime_dir: &Path) -> PathBuf {
+    socket_override.map_or_else(
+        || runtime_dir.join("agent.version"),
+        |socket| {
+            let mut marker = socket.as_os_str().to_owned();
+            marker.push(".version");
+            PathBuf::from(marker)
+        },
+    )
+}
+
+/// A parsed `MAJOR.MINOR.PATCH[-prerelease]` version.
+type AgentVersion<'a> = ((u64, u64, u64), Option<&'a str>);
+
+/// Parse an agent version, ignoring surrounding whitespace.
+fn parse_agent_version(raw: &str) -> Option<AgentVersion<'_>> {
+    let trimmed = raw.trim();
+    let (core, pre) = match trimmed.split_once('-') {
+        Some((core, pre)) if !pre.is_empty() => (core, Some(pre)),
+        Some(_) => return None,
+        None => (trimmed, None),
+    };
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(((major, minor, patch), pre))
+}
+
+/// Order two parsed versions; a pre-release sorts before its release.
+fn compare_agent_versions(left: &AgentVersion<'_>, right: &AgentVersion<'_>) -> Ordering {
+    left.0.cmp(&right.0).then_with(|| match (left.1, right.1) {
+        (None, None) => Ordering::Equal,
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(left_pre), Some(right_pre)) => left_pre.cmp(right_pre),
+    })
+}
+
+/// Whether a running agent at `running` should be replaced by this binary.
+///
+/// Only an older running version is replaced, or one whose recorded version
+/// does not parse, so a corrupt marker still self-heals (#780).
+fn should_replace(running: &str, binary: &str) -> bool {
+    let Some(running_version) = parse_agent_version(running) else {
+        return true;
+    };
+    parse_agent_version(binary).map_or_else(
+        || running.trim() != binary.trim(),
+        |binary_version| {
+            compare_agent_versions(&running_version, &binary_version) == Ordering::Less
+        },
+    )
 }
 
 /// Read the version of the currently running agent
@@ -934,10 +1004,18 @@ pub fn check_and_cleanup_socket(socket_path: &PathBuf) -> bool {
         if let Some(running_version) = read_agent_version()
             && running_version != VERSION
         {
-            eprintln!("Detected version mismatch (running: {running_version}, binary: {VERSION})");
-            eprintln!("Restarting agent with new version...");
-            evict_wedged_agent(socket_path);
-            return false; // Allow new agent to start
+            if should_replace(&running_version, VERSION) {
+                eprintln!(
+                    "Detected version mismatch (running: {running_version}, binary: {VERSION})"
+                );
+                eprintln!("Restarting agent with this binary's version ({VERSION})...");
+                evict_wedged_agent(socket_path);
+                return false; // Allow new agent to start
+            }
+            eprintln!(
+                "A newer GPY agent ({running_version}) is already running; not replacing it with {VERSION}"
+            );
+            return true;
         }
 
         eprintln!("GPY Agent is already running and responsive");
@@ -951,6 +1029,55 @@ pub fn check_and_cleanup_socket(socket_path: &PathBuf) -> bool {
             let _ = std::fs::remove_file(version_path);
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod version_order_tests {
+    use super::{should_replace, version_file_for};
+    use std::path::{Path, PathBuf};
+
+    /// # Panics
+    ///
+    /// Panics when a case's verdict differs from the expected one.
+    #[test]
+    fn only_older_or_unparsable_running_versions_are_replaced() {
+        let cases = [
+            ("0.0.9", "0.1.0", true),
+            ("9.9.9", "0.1.0", false),
+            ("0.1.0", "0.1.0", false),
+            ("0.1.0-rc1", "0.1.0", true),
+            ("0.1.0", "0.1.0-rc1", false),
+            ("0.0.0-old", "0.1.0", true),
+            ("garbage", "0.1.0", true),
+            ("0.1", "0.1.0", true),
+            ("0.1.0-", "0.1.0", true),
+            (" 0.1.0\n", "0.1.0", false),
+            ("0.10.0", "0.9.0", false),
+        ];
+        for (running, binary, expected) in cases {
+            assert_eq!(
+                should_replace(running, binary),
+                expected,
+                "should_replace({running:?}, {binary:?})"
+            );
+        }
+    }
+
+    /// # Panics
+    ///
+    /// Panics when a marker path differs from the expected one.
+    #[test]
+    fn version_marker_follows_the_socket_override() {
+        let runtime = Path::new("/run/gpy");
+        assert_eq!(
+            version_file_for(None, runtime),
+            PathBuf::from("/run/gpy/agent.version")
+        );
+        assert_eq!(
+            version_file_for(Some(Path::new("/x/dev.sock")), runtime),
+            PathBuf::from("/x/dev.sock.version")
+        );
     }
 }
 
