@@ -376,6 +376,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   to defaults, and a higher-priority config file that appears is picked up.
 - Switching themes in an open Fish/Bash/Zsh shell no longer keeps the
   previous theme's clock format or Fish status icons (#791).
+- An unchanged instant-prompt cache entry has its timestamp refreshed on
+  every verified refresh (#704), so quiet repositories no longer fork a
+  background refresh and a git recompute on every prompt.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
