@@ -277,7 +277,7 @@ fn parse_variable(chars: &[char], pos: &mut usize) -> Result<Node> {
         });
     }
     while let Some(&ch) = chars.get(*pos) {
-        if ch.is_alphanumeric() || ch == '_' || ch == '.' {
+        if ch.is_alphanumeric() || ch == '_' {
             name.push(ch);
             *pos = pos.saturating_add(1_usize);
         } else {
@@ -314,6 +314,23 @@ mod tests {
     fn parses_braced_variable() {
         let nodes = parse("${git_branch}").unwrap();
         assert_eq!(nodes, vec![Node::Var("git_branch".to_owned())]);
+    }
+    #[test]
+    fn dot_terminates_bare_variable_name() {
+        let nodes = parse("$branch.").unwrap();
+        assert_eq!(
+            nodes,
+            vec![
+                Node::Var("branch".to_owned()),
+                Node::Literal(".".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn braced_variable_may_contain_dot() {
+        let nodes = parse("${a.b}").unwrap();
+        assert_eq!(nodes, vec![Node::Var("a.b".to_owned())]);
     }
 
     #[test]
