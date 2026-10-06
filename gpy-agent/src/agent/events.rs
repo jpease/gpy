@@ -757,6 +757,26 @@ fn status_changed(previous: Option<&RepositoryStatus>, new: Option<&RepositorySt
     }
 }
 
+/// Map a repo-relative changed path that lies inside a nested working tree (a
+/// submodule, or a plain nested repository) to that tree's root.
+///
+/// The superproject only knows the gitlink or untracked directory, so a
+/// pathspec below it (`sub/s.txt`) matches nothing: an edit would be missed
+/// and a cached `sub` entry would never be cleared on revert (#712). The
+/// outermost directory holding a `.git` entry wins (a file for submodules, a
+/// directory for plain nested repos). Paths outside any nested tree are
+/// returned unchanged.
+fn nested_worktree_root(relative: &Path, git_root: &Path) -> PathBuf {
+    relative
+        .ancestors()
+        .skip(1)
+        .take_while(|dir| !dir.as_os_str().is_empty())
+        .filter(|dir| git_root.join(dir).join(".git").symlink_metadata().is_ok())
+        .last()
+        .unwrap_or(relative)
+        .to_path_buf()
+}
+
 /// Try a pathspec-limited incremental status update for `changed` under
 /// `git_root`, in one git invocation covering every path.
 ///
@@ -798,19 +818,22 @@ fn try_incremental_update_with<B: GitBackend>(
         cache_write: CacheWriteOutcome::NotAttempted,
     };
 
-    let mut relative_paths = Vec::with_capacity(changed.len());
+    let mut relative_paths: Vec<PathBuf> = Vec::with_capacity(changed.len());
     for path in changed {
         let Some(relative) = incremental_relative_path(path, git_root) else {
             return not_attempted;
         };
+        let scan_path = nested_worktree_root(relative, git_root);
         // Git's index may spell a non-ASCII name in another Unicode
         // normalization (NFC vs NFD on macOS), so a pathspec built from the
         // watcher's spelling can match nothing. A full scan is always
         // correct (#713).
-        if !relative.to_str().is_some_and(str::is_ascii) {
+        if !scan_path.to_str().is_some_and(str::is_ascii) {
             return not_attempted;
         }
-        relative_paths.push(relative.to_path_buf());
+        if !relative_paths.contains(&scan_path) {
+            relative_paths.push(scan_path);
+        }
     }
     if relative_paths.is_empty() {
         return not_attempted;
@@ -1560,7 +1583,7 @@ mod tests {
 
     use super::*;
     use crate::config::Config;
-    use crate::git::{FileStatus, StatusAggregate};
+    use crate::git::{FileStatus, RepositoryState, StatusAggregate};
     use crate::ipc::ClientDirectory;
     use crate::theme::ThemeManager;
     use crate::watcher::{DebouncedEvent, FileEvent, WatcherConfig, multi_repo::MultiRepoWatcher};
@@ -3784,6 +3807,201 @@ mod tests {
                 };
                 assert_eq!(
                     got,
+                    StatusAggregate::from_file_statuses(want_files.values()),
+                    "seed {seed}: status counts diverged from git after {log:#?}"
+                );
+            }
+        }
+    }
+
+    /// A parent repo with one committed submodule `sub` (holding `s.txt`).
+    /// The returned `TempDir` owns the submodule source and must outlive use.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any git setup step fails.
+    fn repo_with_submodule() -> (tempfile::TempDir, tempfile::TempDir, PathBuf) {
+        let (source_tmp, source) = create_temp_repo();
+        fs::write(source.join("s.txt"), "s\n").expect("write s.txt");
+        commit_all(&source);
+
+        let (parent_tmp, repo) = create_temp_repo();
+        fs::write(repo.join("t.txt"), "t\n").expect("write t.txt");
+        commit_all(&repo);
+        let source_arg = source.to_str().expect("utf-8 source path");
+        assert!(
+            git_in(
+                &repo,
+                &[
+                    "-c",
+                    "protocol.file.allow=always",
+                    "submodule",
+                    "add",
+                    "-q",
+                    source_arg,
+                    "sub",
+                ],
+            ),
+            "git submodule add failed"
+        );
+        commit_all(&repo);
+        let sub = repo.join("sub");
+        assert!(git_in(&sub, &["config", "user.email", "test@example.com"]));
+        assert!(git_in(&sub, &["config", "user.name", "Test"]));
+        (source_tmp, parent_tmp, repo)
+    }
+
+    /// Deliver a single-path watcher event for `path` and return the cached status.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the cache stays empty after the event.
+    fn deliver_path(
+        ctx: &AgentContext,
+        repo: &Path,
+        config: &Config,
+        path: PathBuf,
+    ) -> RepositoryStatus {
+        let event = DebouncedEvent {
+            event: FileEvent::Git {
+                paths: GitPaths::single(path),
+            },
+            repo: repo.to_path_buf(),
+        };
+        handle_file_event(ctx, &event, config);
+        ctx.cache.get(repo).expect("status after event")
+    }
+
+    #[test]
+    /// Regression test for #712: a path below a gitlink matches no pathspec in
+    /// the superproject, so an edit inside a submodule must be mapped to the
+    /// gitlink itself.
+    fn incremental_refresh_maps_submodule_child_paths_to_gitlink() {
+        let (_source, _tmp, repo) = repo_with_submodule();
+        let ctx = make_agent_context();
+        let config = Config::default();
+        handle_file_event(&ctx, &whole_repo_event(&repo), &config);
+
+        let file = repo.join("sub/s.txt");
+        fs::write(&file, "s\nmodified\n").expect("modify submodule file");
+        let incremental = deliver_path(&ctx, &repo, &config, file);
+        assert_eq!(
+            incremental.unstaged, 1,
+            "the submodule must show as modified"
+        );
+
+        ctx.cache.invalidate(&repo);
+        handle_file_event(&ctx, &whole_repo_event(&repo), &config);
+        let full = ctx.cache.get(&repo).expect("status after full scan");
+        assert_eq!(incremental, full);
+    }
+
+    #[test]
+    /// Regression test for #712: reverting the edit must clear the cached
+    /// gitlink entry instead of leaving the parent dirty.
+    fn incremental_refresh_clears_gitlink_after_submodule_revert() {
+        let (_source, _tmp, repo) = repo_with_submodule();
+        let ctx = make_agent_context();
+        let config = Config::default();
+
+        let file = repo.join("sub/s.txt");
+        fs::write(&file, "s\nmodified\n").expect("modify submodule file");
+        handle_file_event(&ctx, &whole_repo_event(&repo), &config);
+        assert_eq!(ctx.cache.get(&repo).expect("warm").unstaged, 1);
+
+        assert!(
+            git_in(&repo.join("sub"), &["checkout", "--", "s.txt"]),
+            "git checkout failed"
+        );
+        let incremental = deliver_path(&ctx, &repo, &config, file);
+        assert_eq!(incremental.state, RepositoryState::Clean);
+
+        ctx.cache.invalidate(&repo);
+        handle_file_event(&ctx, &whole_repo_event(&repo), &config);
+        let full = ctx.cache.get(&repo).expect("status after full scan");
+        assert_eq!(incremental, full);
+    }
+
+    #[test]
+    /// Regression test for #712: a change inside a plain nested repository
+    /// (no gitlink) yields the same counts as a full scan of the parent.
+    fn incremental_refresh_maps_nested_repo_child_paths_to_nested_root() {
+        let (_tmp, repo) = create_temp_repo();
+        fs::write(repo.join("t.txt"), "t\n").expect("write t.txt");
+        commit_all(&repo);
+        let ctx = make_agent_context();
+        let config = Config::default();
+        handle_file_event(&ctx, &whole_repo_event(&repo), &config);
+
+        let child = repo.join("deep/child");
+        fs::create_dir_all(&child).expect("create nested repo dir");
+        assert!(git_in(&child, &["init", "-q"]), "git init failed");
+        let file = child.join("f.txt");
+        fs::write(&file, "f\n").expect("write nested file");
+        let incremental = deliver_path(&ctx, &repo, &config, file);
+        assert_eq!(incremental.untracked, 1);
+
+        ctx.cache.invalidate(&repo);
+        handle_file_event(&ctx, &whole_repo_event(&repo), &config);
+        let full = ctx.cache.get(&repo).expect("status after full scan");
+        assert_eq!(incremental, full);
+    }
+
+    #[test]
+    /// Differential scenario for #712: random edits, reverts, untracked files
+    /// and commits inside a submodule, reported as the paths a watcher sees,
+    /// must leave the parent's cached file map equal to a fresh `git status`.
+    fn incremental_refresh_matches_git_status_for_submodule_edits() {
+        for seed in 1..=8_u64 {
+            let (_source, _tmp, repo) = repo_with_submodule();
+            let sub = repo.join("sub");
+            let ctx = make_agent_context();
+            let config = Config::default();
+            let backend = NativeGitBackend;
+            refresh_repo_status_with(&backend, &ctx, &repo, &config, None);
+
+            let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+            let mut log = Vec::new();
+            for _ in 0_u32..10_u32 {
+                let (reported, op) = match rng.below(4) {
+                    0 => {
+                        let file = sub.join("s.txt");
+                        fs::write(&file, format!("{}\n", rng.below(1000))).expect("write");
+                        (vec![file], "edit s.txt")
+                    }
+                    1 => {
+                        git_in(&sub, &["checkout", "--", "s.txt"]);
+                        (vec![sub.join("s.txt")], "revert s.txt")
+                    }
+                    2 => {
+                        let file = sub.join("extra/new.txt");
+                        fs::create_dir_all(sub.join("extra")).expect("mkdir");
+                        fs::write(&file, "n\n").expect("write");
+                        (vec![sub.join("extra"), file], "add untracked")
+                    }
+                    _ => {
+                        git_in(&sub, &["commit", "-q", "-a", "-m", "step", "--allow-empty"]);
+                        (vec![sub.join("s.txt")], "commit in submodule")
+                    }
+                };
+                log.push(op);
+                let hint = git_paths_hint(&GitPaths::Paths(reported), &repo);
+                let refreshed =
+                    refresh_repo_status_with(&backend, &ctx, &repo, &config, hint.as_deref());
+                let status = refreshed.status.expect("repository status");
+                let want_files = oracle_files(&repo);
+                let got_files = ctx.cache.files_for_test(&repo).unwrap_or_default();
+                assert_eq!(
+                    got_files, want_files,
+                    "seed {seed}: cached file map diverged from git after {log:#?}"
+                );
+                assert_eq!(
+                    StatusAggregate {
+                        staged: status.staged,
+                        unstaged: status.unstaged,
+                        untracked: status.untracked,
+                        conflicts: status.conflicts,
+                    },
                     StatusAggregate::from_file_statuses(want_files.values()),
                     "seed {seed}: status counts diverged from git after {log:#?}"
                 );
