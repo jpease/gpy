@@ -659,6 +659,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   Font.
 - The Starship importer detects style attributes case-insensitively, so
   `Bold green` imports as bold (#828).
+- Bash and Zsh no longer re-send a rejected workspace sync (for example
+  `cd /etc`) on every prompt; it is sent once per directory visit (#833).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

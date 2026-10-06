@@ -6,6 +6,8 @@ zmodload zsh/datetime
 # Flag to track registration
 typeset -g __gpy_registered=""
 typeset -g __gpy_last_workspace=""
+# Directory whose workspace sync the agent rejected; not re-sent until $PWD changes (#833)
+typeset -g __gpy_rejected_workspace=""
 
 # SSH-session cache for the hostname segment's default visibility gate.
 # Computed once at shell startup rather than per-prompt.
@@ -189,6 +191,8 @@ function __gpy_build_workspace_payload() {
 
 function __gpy_sync_workspace() {
     [[ -n "$__gpy_registered" ]] || return 0
+    [[ "$__gpy_rejected_workspace" != "$PWD" ]] || return 0
+    __gpy_rejected_workspace=""
     [[ "$__gpy_last_workspace" != "$PWD" ]] || return 0
 
     local request
@@ -205,7 +209,10 @@ function __gpy_sync_workspace() {
         __gpy_register_with_agent
         return
     fi
-    [[ "$response" != *'"error"'* ]] || return 0
+    if [[ "$response" == *'"error"'* ]]; then
+        __gpy_rejected_workspace="$PWD"
+        return 0
+    fi
 
     __gpy_last_workspace="$PWD"
 }

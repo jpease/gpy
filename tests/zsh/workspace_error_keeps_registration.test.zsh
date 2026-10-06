@@ -106,10 +106,22 @@ check "error reply keeps __gpy_registered" "1" "$__gpy_registered"
 check "error reply does not re-register" "1" "$(count_ops register)"
 check "error reply leaves __gpy_last_workspace untouched" "$before_ws" "$__gpy_last_workspace"
 
+# Further prompts in the rejected directory must not re-send the workspace op (#833).
+__gpy_sync_workspace
+__gpy_sync_workspace
+__gpy_sync_workspace
+check "rejected dir is sent exactly once across prompts" "1" "$(count_ops workspace)"
+
 cd "$test_tmp_dir/other" || exit 1
 __gpy_sync_workspace
 check "next cd sends a workspace op" "2" "$(count_ops workspace)"
 check "next cd records __gpy_last_workspace" "$test_tmp_dir/other" "$__gpy_last_workspace"
+
+cd "$test_tmp_dir/denied" || exit 1
+__gpy_sync_workspace
+check "cd back into rejected dir re-sends" "3" "$(count_ops workspace)"
+__gpy_sync_workspace
+check "and is again sent only once" "3" "$(count_ops workspace)"
 
 cd "$test_tmp_dir/lost" || exit 1
 __gpy_sync_workspace
