@@ -71,11 +71,11 @@ display = "icon"
 #   "3" - Show top N languages by confidence (replace 3 with any number)
 filter = "all"
 
-# confidence_threshold: Minimum confidence (0.0-1.0) to display a language
+# confidence_threshold: Minimum confidence (0.0-1.0) to display a language (default 0.1)
 # Confidence is calculated as: 70% file size ratio + 30% file count ratio
 # Example: 0.05 means only show languages that are at least 5% of the project
 # Useful for hiding trace files in polyglot repos (e.g., single config.js in Rust project)
-confidence_threshold = 0.0
+confidence_threshold = 0.1
 
 # Language icons (Nerd Fonts icons from https://www.nerdfonts.com/cheat-sheet)
 [language.icons]
