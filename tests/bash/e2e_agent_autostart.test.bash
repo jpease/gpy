@@ -13,7 +13,7 @@
 #
 #   1. with no agent running, sourcing the integration starts one: the socket
 #      appears within 3 s, the client registers as shell "bash", and the first
-#      prompt carries colour, the directory name, and no error text;
+#      prompt carries colour, `~` for $HOME, and no error text;
 #   2. after `false`, the next prompt differs (exit-status colouring);
 #   3. after `cd` into the repository the prompt names the branch, and an
 #      edit to a tracked file made from outside the shell shows the dirty
@@ -81,10 +81,12 @@ if tail -c +1 "$SHELL_E2E_SESSION/transcript" | grep -q $'\x1b\\['; then
 else
     fail "no SGR escape in the first prompt"
 fi
+# The shell starts in $HOME, so the directory segment contracts it to `~`
+# (the logical path the shell reports, #697).
 first="$(shell_e2e_transcript 0)"
 case "$first" in
-    *home*) pass "the first prompt shows the directory name" ;;
-    *) fail "the first prompt does not name the directory: $first" ;;
+    *'~'*) pass "the first prompt shows the home directory as ~" ;;
+    *) fail "the first prompt does not show ~ for \$HOME: $first" ;;
 esac
 for bad in 'nohup:' 'gpy[' 'Error' 'command not found'; do
     case "$first" in

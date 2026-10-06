@@ -268,6 +268,13 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Fixed
 
+- The directory segment rendered by the agent now shows the shell's logical
+  `$PWD` instead of the symlink-resolved path (#697). `cd ~/app/current` (a
+  symlink) showed the target's name, a `$HOME` reached through a symlink lost
+  `~` contraction, and macOS `/tmp` showed as `/private/tmp`; IPC and oneshot
+  output now match. Path validation, read-only checks and push-delivery
+  matching still use the canonical path; the wire format is unchanged.
+
 - `gpy-agent start` no longer evicts a newer running agent (#780). It
   replaced the daemon on any version difference, so two installs could flip
   it back and forth. Only an older or unreadable version is replaced now.
