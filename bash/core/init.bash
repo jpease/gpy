@@ -250,15 +250,24 @@ __gpy_precmd() {
     return "$exit_code"
 }
 
+# Positions are assigned from the segments this accepts, before anything
+# renders, and are baked into agent output. A segment whose detect passes but
+# that is certain to print nothing this render (an optional
+# __gpy_segment_<name>_omit returning 0, e.g. a language cold miss) is
+# rejected here; otherwise its neighbour would end with a dangling separator
+# or lose its first-segment form (#766).
 __gpy_segment_would_render() {
     local segment="$1"
     local segment_fn="__gpy_segment_${segment}"
     local detect_fn="__gpy_segment_${segment}_detect"
+    local omit_fn="__gpy_segment_${segment}_omit"
 
     declare -f "$segment_fn" &>/dev/null || return 1
     if declare -f "$detect_fn" &>/dev/null; then
-        "$detect_fn"
-        return
+        "$detect_fn" || return 1
+    fi
+    if declare -f "$omit_fn" &>/dev/null && "$omit_fn"; then
+        return 1
     fi
 
     return 0

@@ -516,6 +516,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   ignored on Linux, macOS and WSL (#774), so the agent uses the same socket
   and caches as the shells instead of directories relative to its working
   directory.
+- The Fish, Bash and Zsh prompts no longer end with a dangling separator
+  when the git or language segment passes detection but has nothing to show
+  yet (#766); the neighbouring segment closes the line instead.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

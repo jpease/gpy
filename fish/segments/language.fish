@@ -41,6 +41,20 @@ function segment_language_detect
     return 1
 end
 
+# Called by fish_prompt after segment_language_detect passes, before any
+# position is assigned: returns 0 when this render is certain to print
+# nothing, so the segment never takes a first/last position it cannot fill
+# (#766). A cold miss (no instant-cache entry for this project in any variant)
+# always omits, so fire the background refresh segment_language_render would
+# have fired here instead. It carries no position or prev_bg: the agent writes
+# every variant, plus the context-free `.none` entry, and repaints via SIGURG.
+# Builtin-only, since it runs on every prompt in a project directory.
+function segment_language_omit
+    __gpy_instant_cache_present lang $PWD; and return 1
+    __gpy_maybe_refresh lang $PWD lang "" "" ""
+    return 0
+end
+
 # Renders language/tool versions. Tries to get data in this order:
 # 1. Fast: from agent via IPC socket (if agent is running).
 # 2. Medium: from a cache file (if not stale).
@@ -76,8 +90,14 @@ function segment_language_render --argument-names is_last is_first
         # 2. Cache miss - fire a throttled background refresh and render
         # nothing this time. The agent writes the cache and sends SIGURG when
         # done, causing a repaint.
+        #
+        # segment_language_omit already dropped a plain cold miss before
+        # positions were assigned (#766). This branch still catches cache
+        # entries that exist only for other prev_bg contexts (no `.none`):
+        # the previous segment was drawn as not-last, so the line keeps a
+        # trailing separator until the refresh lands (with the agent up) or
+        # the agent returns.
         __gpy_maybe_refresh lang "$root" "$cache_suffix" "$is_last" "$prev_bg" "$is_first"
-        return
     end
 
     # 3. Output cached content

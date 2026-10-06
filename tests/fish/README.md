@@ -137,6 +137,7 @@ sections above describe the ones worth reading first.
 - `language_segment_detect_subdir.test.fish`
 - `language_venv.test.fish`
 - `main.test.fish`
+- `omitted_segment_positions.test.fish`
 - `prompt_dispatch_positions.test.fish`
 - `renderer_transparent_bg.test.fish`
 - `segment_bg_tracking_empty_response.test.fish`
