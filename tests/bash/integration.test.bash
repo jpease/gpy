@@ -28,7 +28,14 @@ __gpy_integration_xdg_root=$(mktemp -d "${TMPDIR:-/tmp}/gpy-it-xdg.XXXXXX")
 export XDG_CACHE_HOME="$__gpy_integration_xdg_root/cache"
 export XDG_CONFIG_HOME="$__gpy_integration_xdg_root/config"
 mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME"
-export GPY_AGENT_SOCKET_PATH="$ROOT/.gpy-test-missing.sock"
+# Sourcing gpy.bash evals the theme export, which sets
+# GPY_AGENT_SUPERVISOR_ENABLED from config and so overrides the export above:
+# disable the supervisor in the sandbox config too, or a later prompt's
+# supervisor check starts a real agent on the "missing" socket (#835). The
+# socket also lives in the sandbox, never in the checkout.
+mkdir -p "$XDG_CONFIG_HOME/gpy"
+printf '[agent.supervisor]\nenabled = false\n' >"$XDG_CONFIG_HOME/gpy/config.toml"
+export GPY_AGENT_SOCKET_PATH="$__gpy_integration_xdg_root/missing.sock"
 
 source bash/gpy.bash
 

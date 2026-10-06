@@ -20,7 +20,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
 export GPY_AGENT_SUPERVISOR_ENABLED=0
-export GPY_AGENT_SOCKET_PATH="$ROOT/.gpy-test-missing.sock"
+# Hermetic XDG dirs: sourcing gpy.bash evals the theme export, which sets
+# GPY_AGENT_SUPERVISOR_ENABLED from config and overrides the export above, so
+# the sandbox config disables the supervisor too. Otherwise a prompt's
+# supervisor check starts a real agent on the "missing" socket, which also
+# lives in the sandbox rather than the checkout (#835).
+__gpy_debug_trap_xdg_root=$(mktemp -d "${TMPDIR:-/tmp}/gpy-dt-xdg.XXXXXX")
+export XDG_CACHE_HOME="$__gpy_debug_trap_xdg_root/cache"
+export XDG_CONFIG_HOME="$__gpy_debug_trap_xdg_root/config"
+mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME/gpy"
+printf '[agent.supervisor]\nenabled = false\n' >"$XDG_CONFIG_HOME/gpy/config.toml"
+export GPY_AGENT_SOCKET_PATH="$__gpy_debug_trap_xdg_root/missing.sock"
 
 echo "=== Testing DEBUG trap chains a pre-existing trap ==="
 __gpy_prior_trap_fired=0
@@ -93,7 +103,7 @@ env "${gpy_scrub[@]}" bash -c '
     ROOT="'"$ROOT"'"
     cd "$ROOT" || exit 1
     export GPY_AGENT_SUPERVISOR_ENABLED=0
-    export GPY_AGENT_SOCKET_PATH="$ROOT/.gpy-test-missing.sock"
+    export GPY_AGENT_SOCKET_PATH="'"$__gpy_debug_trap_xdg_root"'/missing.sock"
     source bash/gpy.bash
     unset COMP_LINE
     BASH_COMMAND=":"
@@ -113,4 +123,5 @@ if grep -qi "unbound variable" "$OUT_LOG"; then
 fi
 echo "PASS: DEBUG trap produces zero errors under set -u"
 
+rm -rf "$__gpy_debug_trap_xdg_root"
 echo "=== All Tests Passed ==="
