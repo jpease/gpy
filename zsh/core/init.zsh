@@ -67,10 +67,33 @@ typeset -g __gpy_dir_cache_val=""
 # subshell-relay memoization -- each prompt then does the normal IPC round
 # trip. A slower-but-correct prompt is strictly better than writing prompt
 # content through an insecure predictable temp path.
-typeset -g __gpy_cache_dir=""
+#
+# Lifecycle (#763): the name embeds the owning shell's PID
+# (`gpy_cache_<pid>_XXXXXX`) so a later shell can tell whose dir it is.
+#  - Re-source: reuse the dir this shell already made (still a dir, ours).
+#  - Otherwise sweep dirs left by this same PID before an `exec` (zsh runs no
+#    zshexit on exec) and by dead PIDs (SIGKILL), then create a fresh one.
+#    Only directories owned by the user and not symlinks are removed
+#    (`(N/U)`: lstat, so symlinks never match); a live other shell's dir
+#    (kill -0 succeeds) is never
+#    touched. Runs once per shell start and forks nothing.
+typeset -g __gpy_cache_dir="${__gpy_cache_dir-}"
 typeset -g __gpy_char_cache_relay_path=""
 typeset -g __gpy_dir_cache_relay_path=""
-__gpy_cache_dir=$(mktemp -d "${TMPDIR:-/tmp}/gpy_cache_XXXXXX" 2>/dev/null)
+if [[ -z "$__gpy_cache_dir" || -L "$__gpy_cache_dir" || ! -d "$__gpy_cache_dir" || ! -O "$__gpy_cache_dir" ]]; then
+    __gpy_cache_dir=""
+    () {
+        local d pid
+        for d in "${TMPDIR:-/tmp}"/gpy_cache_<->_*(N/U); do
+            pid=${${d:t}#gpy_cache_}
+            pid=${pid%%_*}
+            if [[ $pid == $$ ]] || ! kill -0 "$pid" 2>/dev/null; then
+                rm -rf -- "$d" 2>/dev/null
+            fi
+        done
+    }
+    __gpy_cache_dir=$(mktemp -d "${TMPDIR:-/tmp}/gpy_cache_$$_XXXXXX" 2>/dev/null)
+fi
 if [[ -n "$__gpy_cache_dir" ]]; then
     __gpy_char_cache_relay_path="$__gpy_cache_dir/char"
     __gpy_dir_cache_relay_path="$__gpy_cache_dir/dir"
