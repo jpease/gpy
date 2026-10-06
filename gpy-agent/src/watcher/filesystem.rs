@@ -1477,11 +1477,13 @@ impl FileSystemWatcher {
     /// since that's what the downstream git-refresh machinery and its path
     /// validation expect.
     ///
-    /// `Theme` is deliberately excluded: theme paths are usually outside any
-    /// watched repo (e.g. `~/.config/gpy/themes/...`), so running the
-    /// worktree checks against them risks firing a git scan for a path
-    /// that isn't even in a repository. `Git` is also excluded: it is
-    /// already the specialized event here, so there is nothing to add.
+    /// `Theme` also gets the added refresh (#777): a tracked theme file in a
+    /// dotfiles repo (`.config/gpy/themes/...`) must refresh that repo's git
+    /// segment. This is safe because of the `RepoEvidence::GenuineRepoOnly`
+    /// gate below — a theme path outside any genuine repository (the usual
+    /// `~/.config/gpy/themes/...`) never reaches a git scan (#443). `Git` is
+    /// excluded: it is already the specialized event, so there is nothing to
+    /// add.
     ///
     /// Passes `RepoEvidence::GenuineRepoOnly`, which closes the same hole
     /// for `Config`/`Language`: without it, `attribute_repo_detailed` can
@@ -1500,7 +1502,9 @@ impl FileSystemWatcher {
     ) {
         if matches!(
             pending.event,
-            super::FileEvent::Language { .. } | super::FileEvent::Config { .. }
+            super::FileEvent::Language { .. }
+                | super::FileEvent::Config { .. }
+                | super::FileEvent::Theme { .. }
         ) && let Some(repo) = worktree_git_repo(
             worktree_ctx.event,
             path,
@@ -2760,6 +2764,7 @@ mod tests {
         let repo = tmp.path();
         std::fs::create_dir_all(repo.join(".git")).expect("git dir");
         let file = repo.join(filename);
+        std::fs::create_dir_all(file.parent().expect("file parent")).expect("parent dirs");
         std::fs::write(&file, "data").expect("write file");
 
         let events = run_with_capture(|captured| {
@@ -2828,6 +2833,19 @@ mod tests {
     fn worktree_config_like_filename_edit_also_emits_git_refresh() {
         assert_worktree_edit_emits_both_specialized_and_git("config.toml", |event| {
             matches!(event, FileEvent::Config { .. })
+        });
+    }
+
+    /// A tracked gpy theme inside a dotfiles repository (`.config/gpy/themes/a.toml`)
+    /// emits a Git refresh as well as the `Theme` signal (#777).
+    ///
+    /// # Panics
+    ///
+    /// Panics if creating the temp repo or capturing the events fails.
+    #[test]
+    fn tracked_theme_file_in_repo_also_emits_git() {
+        assert_worktree_edit_emits_both_specialized_and_git(".config/gpy/themes/a.toml", |event| {
+            matches!(event, FileEvent::Theme { .. })
         });
     }
 
@@ -4281,6 +4299,7 @@ mod tests {
         let dir = std::fs::canonicalize(tmp.path()).expect("canonicalize dir");
         // NOTE: deliberately NO `.git` directory anywhere in this tree.
         let file = dir.join(filename);
+        std::fs::create_dir_all(file.parent().expect("file parent")).expect("parent dirs");
         std::fs::write(&file, "data").expect("write file");
 
         let events = run_with_capture(|captured| {
@@ -4328,6 +4347,19 @@ mod tests {
     fn config_file_outside_any_repo_does_not_emit_git_refresh() {
         assert_path_outside_any_repo_emits_no_git_refresh("config.toml", |event| {
             matches!(event, FileEvent::Config { .. })
+        });
+    }
+
+    /// A `~/.config/gpy/themes/x.toml`-shaped path with no enclosing repository
+    /// still emits no Git refresh (#777 keeps the #443 behaviour).
+    ///
+    /// # Panics
+    ///
+    /// Panics if creating the temp dir or capturing the events fails.
+    #[test]
+    fn theme_file_outside_any_repo_does_not_emit_git_refresh() {
+        assert_path_outside_any_repo_emits_no_git_refresh("gpy/themes/x.toml", |event| {
+            matches!(event, FileEvent::Theme { .. })
         });
     }
 
