@@ -29,7 +29,7 @@ function fish_prompt
     # __gpy_oneshot_marker_path (core/ipc.fish); reuse it directly and guard
     # the rm with a builtin existence check so the healthy path (marker never
     # created) costs zero forks instead of a cmd-sub + rm every prompt (#342).
-    test -e $__gpy_oneshot_marker_path; and rm -f $__gpy_oneshot_marker_path
+    set -q __gpy_oneshot_marker_path[1]; and test -e "$__gpy_oneshot_marker_path"; and rm -f -- "$__gpy_oneshot_marker_path"
 
     # Clear any clock pre-render from a previous pass so a stale value never leaks
     # into a render where the clock segment doesn't run (#342).
