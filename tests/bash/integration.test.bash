@@ -337,6 +337,42 @@ s.bind(sys.argv[1])
         fi
         echo "PASS: down-path restart invalidates the parent shell's protocol cache so the next health check re-checks the protocol (#307/#340)"
 
+        # The interval and attempt cap come from the names the theme export
+        # emits ([agent.supervisor] in config.toml), read on every check
+        # (#762). Two prompts 15 s apart with a 60 s interval probe once; the
+        # old 10 s default probed twice.
+        __gpy_supervisor_probe_count=0
+        __gpy_supervisor_is_running() { __gpy_supervisor_probe_count=$((__gpy_supervisor_probe_count + 1)); return 1; }
+        unset GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS
+        export GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=60
+        __gpy_supervisor_last_check_time=0
+        __gpy_supervisor_check_attempts=0
+        __gpy_supervisor_check
+        __gpy_supervisor_last_check_time=$((__gpy_supervisor_last_check_time - 15))
+        __gpy_supervisor_check
+        if [[ "$__gpy_supervisor_probe_count" != "1" ]]; then
+            echo "FAIL: two checks 15 s apart with GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=60 probed $__gpy_supervisor_probe_count time(s), want 1 (#762)"
+            rm -rf "$supervisor_test_tmp_dir"
+            exit 1
+        fi
+        echo "PASS: GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS sets the health-check interval (#762)"
+
+        # max_restart_attempts=1: a persistently dead agent gets one restart.
+        export GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS=0
+        export GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS=1
+        __gpy_supervisor_last_check_time=0
+        __gpy_supervisor_check_attempts=0
+        __gpy_supervisor_check
+        __gpy_supervisor_check
+        __gpy_supervisor_check
+        if [[ "$__gpy_supervisor_check_attempts" != "1" ]]; then
+            echo "FAIL: GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS=1 allowed $__gpy_supervisor_check_attempts restart(s), want 1 (#762)"
+            rm -rf "$supervisor_test_tmp_dir"
+            exit 1
+        fi
+        echo "PASS: GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS caps restarts (#762)"
+        unset GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS __gpy_supervisor_probe_count
+
         # Restore the real supervisor functions the stubs shadowed above.
         eval "$__gpy_supervisor_saved_is_running"
         eval "$__gpy_supervisor_saved_start"

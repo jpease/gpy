@@ -19,7 +19,7 @@
 ROOT=${0:a:h:h:h}
 cd "$ROOT"
 
-export GPY_AGENT_SUPERVISOR_ENABLED=0
+source "$ROOT/tests/lib/supervisor_off.zsh"
 export GPY_AGENT_SOCKET_PATH="$ROOT/.gpy-test-missing-instant-cache-status.sock"
 
 source zsh/gpy.zsh

@@ -15,15 +15,6 @@ __enabled_segments="${__enabled_segments:-directory git}"
 # integer-second -w resolution (#324).
 GPY_IPC_TIMEOUT_MS="${GPY_IPC_TIMEOUT_MS:-150}"
 
-# Minimum time between per-prompt supervisor health checks (seconds). Rate
-# limits __gpy_supervisor_check so a dead agent doesn't get a restart attempt
-# forked on every single prompt (#324).
-GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS="${GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS:-10}"
-
-# Maximum consecutive restart attempts from the per-prompt supervisor check
-# before backing off for the rest of the session.
-GPY_SUPERVISOR_CHECK_MAX_ATTEMPTS="${GPY_SUPERVISOR_CHECK_MAX_ATTEMPTS:-3}"
-
 # Git instant-cache TTL (seconds). This is the pull-based self-heal bound when
 # an agent repaint push is missed: cached git output is still served instantly,
 # but entries older than this flag a throttled background refresh.

@@ -20,10 +20,9 @@ failures=0
 fail() { print -r -- "FAIL: $*"; failures=$((failures + 1)); }
 pass() { print -r -- "PASS: $*"; }
 
-printf '[ui]\ntheme = "default"\nenabled_segments = ["directory", "git"]\n' \
+printf '[ui]\ntheme = "default"\nenabled_segments = ["directory", "git"]\n\n[agent.supervisor]\nenabled = false\n' \
     >"$XDG_CONFIG_HOME/gpy/config.toml"
 export GPY_AGENT_ENABLED=1
-export GPY_AGENT_SUPERVISOR_ENABLED=0
 shell_e2e_start_agent || exit 1
 cd "$SHELL_E2E_REPO" || exit 1
 source "$ROOT/zsh/gpy.zsh"

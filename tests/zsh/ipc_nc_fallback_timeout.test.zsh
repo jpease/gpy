@@ -51,7 +51,7 @@ for tool in cat echo head; do
 done
 
 export GPY_AGENT_SOCKET_PATH="$sock"
-export GPY_AGENT_SUPERVISOR_ENABLED=0
+source "$ROOT/tests/lib/supervisor_off.zsh"
 export GPY_IPC_TIMEOUT_MS=300
 source "$ROOT/zsh/gpy.zsh"
 # Hide the builtin transport: the shadow refuses to load zsh/net/socket, so

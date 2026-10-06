@@ -121,9 +121,12 @@ __gpy_supervisor_check() {
     # rate-limited. Checking the window before touching the socket means a
     # healthy agent costs zero round-trips within the window, and the
     # down/restart path below is reached -- and thus pings -- at most once
-    # per window, same cadence as before.
-    local rate_limit="${GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS:-10}"
-    [[ "$rate_limit" =~ ^[0-9]+$ ]] || rate_limit=10
+    # per window, same cadence as before. The interval and attempt cap come
+    # from the theme export ([agent.supervisor] in config.toml) and are read
+    # here, not at source time, so a reload applies (#762). The legacy
+    # GPY_SUPERVISOR_CHECK_* names stay as explicit overrides.
+    local rate_limit="${GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS:-${GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS:-30}}"
+    [[ "$rate_limit" =~ ^[0-9]+$ ]] || rate_limit=30
 
     local now
     now=$(date +%s 2>/dev/null)
@@ -143,8 +146,8 @@ __gpy_supervisor_check() {
     # Note the accepted behavior change (#340): a mid-session-dead agent is
     # now noticed up to $rate_limit seconds later instead of on the very next
     # prompt, since the ping above only runs after the window has elapsed.
-    local max_attempts="${GPY_SUPERVISOR_CHECK_MAX_ATTEMPTS:-3}"
-    [[ "$max_attempts" =~ ^[0-9]+$ ]] || max_attempts=3
+    local max_attempts="${GPY_SUPERVISOR_CHECK_MAX_ATTEMPTS:-${GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS:-5}}"
+    [[ "$max_attempts" =~ ^[0-9]+$ ]] || max_attempts=5
     if [[ $__gpy_supervisor_check_attempts -ge $max_attempts ]]; then
         return
     fi

@@ -1,15 +1,10 @@
 # zsh/core/supervisor.zsh
 # Agent lifecycle management
-
-# Check if supervisor is enabled
-if [[ "${GPY_AGENT_SUPERVISOR_ENABLED:-1}" != "1" ]]; then
-    return
-fi
-
-# Check if agent is disabled entirely
-if [[ "${GPY_AGENT_ENABLED:-1}" != "1" ]]; then
-    return
-fi
+#
+# Both functions are always defined. The enable flags come from the theme
+# export (config.toml), which loads after this file, so they are read when
+# each function acts, never at source time (#762). gpy.zsh makes the one
+# startup __gpy_start_agent call after __gpy_load_theme.
 
 function __gpy_start_agent() {
     # Check if agent is already running. `gpy-agent status` exits 0 for any
@@ -45,14 +40,18 @@ function __gpy_start_agent() {
 # Mid-session health check (#638), called from __gpy_precmd: Bash had
 # __gpy_supervisor_check but Zsh's supervisor was startup-only, so an agent
 # that died under an open Zsh shell was never restarted. Rate limited to one
-# probe per GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS (default 10) and to
-# GPY_SUPERVISOR_CHECK_MAX_ATTEMPTS restarts (default 3); the restart itself
+# probe per [agent.supervisor] check_interval_seconds (default 30) and to
+# max_restart_attempts restarts (default 5), read from the exported
+# GPY_AGENT_SUPERVISOR_* values on every call (#762); the legacy
+# GPY_SUPERVISOR_CHECK_* names stay as explicit overrides. The restart itself
 # runs in the background so a prompt never waits on it.
 __gpy_supervisor_last_check_time=0
 __gpy_supervisor_check_attempts=0
 function __gpy_supervisor_check() {
-    local rate_limit="${GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS:-10}"
-    [[ "$rate_limit" == <-> ]] || rate_limit=10
+    [[ "${GPY_AGENT_SUPERVISOR_ENABLED:-1}" == 1 && "${GPY_AGENT_ENABLED:-1}" == 1 ]] || return 0
+
+    local rate_limit="${GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS:-${GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS:-30}}"
+    [[ "$rate_limit" == <-> ]] || rate_limit=30
     local now=$EPOCHSECONDS
     (( now - __gpy_supervisor_last_check_time >= rate_limit )) || return 0
     __gpy_supervisor_last_check_time=$now
@@ -63,12 +62,9 @@ function __gpy_supervisor_check() {
         return 0
     fi
 
-    local max_attempts="${GPY_SUPERVISOR_CHECK_MAX_ATTEMPTS:-3}"
-    [[ "$max_attempts" == <-> ]] || max_attempts=3
+    local max_attempts="${GPY_SUPERVISOR_CHECK_MAX_ATTEMPTS:-${GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS:-5}}"
+    [[ "$max_attempts" == <-> ]] || max_attempts=5
     (( __gpy_supervisor_check_attempts < max_attempts )) || return 0
     (( __gpy_supervisor_check_attempts++ ))
     __gpy_start_agent &>/dev/null &!
 }
-
-# Try to start agent once at shell startup
-__gpy_start_agent
