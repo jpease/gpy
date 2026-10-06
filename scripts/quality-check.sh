@@ -708,6 +708,7 @@ case "${1:-}" in
         ;;
     --fix)
         require_pinned_toolchain
+        cd "$(dirname "$0")/.."
         print_step "Running auto-fixes"
 
         # Format Fish files

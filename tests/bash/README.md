@@ -26,6 +26,7 @@ Exercise `bash/gpy.bash` and its segments.
 | Doc tripwire | `bash_limitations_claims` (pins the shell-support matrix rows the E2E tests measure), `ci_gate_shape` (pins the pr-gate/release workflow shape), `cli_reference_claims` (every shipped subcommand is in `docs/user/cli-reference.md`, walked from `--help`), `segment_registry_parity` (the builtin segments, the fish/bash/zsh segment files and the `gpy enable` segment list in `docs/user/cli-reference.md` are the same set, both directions), `test_readme_claims` (the test READMEs name exactly the files that exist) | none |
 | Gate and scripts | `toolchain_pin_hooks` (each Rust entry point: `just clippy-strict`, `just lint`, `quality-check.sh --rust-only`/`--fast`/`--fix` fails fast naming the `RUSTUP_TOOLCHAIN` override when the active rustc is not the `rust-toolchain.toml` pin, before any cargo/moon command runs) | none |
 | Gate and scripts | `shell_tests_no_agent_leak` (the plain Bash and Zsh `basic`/`parity` suites, run as `run_shell_tests` runs them, leave no `gpy-agent` holding a socket under the scratch root; leaked agents are found with `lsof -U` and stopped by PID) | the debug `gpy-agent`, started by the sourced entry point |
+| Gate and scripts | `quality_check_fix_cwd` (`quality-check.sh --fix` run from another directory cds to the repo root and does not reformat `.fish` files under the caller's cwd) | none |
 
 ### The live-daemon harness: `tests/lib/shell_e2e.sh`
 
