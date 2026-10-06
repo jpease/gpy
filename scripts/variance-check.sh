@@ -47,7 +47,7 @@ for _ in $(seq 1 "$COUNT"); do
         LANG_MS="${RAW_LANG%ms}"
     fi
 
-    RAW_TOTAL=$(echo "$OUTPUT" | grep "Total Render Estimate:" | awk '{print $4}')
+    RAW_TOTAL=$(echo "$OUTPUT" | grep "Git + Language Total:" | awk '{print $5}')
     if [[ "$RAW_TOTAL" == *"µs" ]]; then
         TOTAL_VAL="${RAW_TOTAL%µs}"
         TOTAL_MS=$(echo "scale=4; $TOTAL_VAL / 1000" | bc)
@@ -85,7 +85,7 @@ def stats(name, times):
 
 stats('Git Status IPC', git_times)
 stats('Language Detection', lang_times)
-stats('Total Render Estimate', total_times)
+stats('Git + Language Total', total_times)
 " < "$TIMINGS_FILE"
 
 rm "$TIMINGS_FILE"

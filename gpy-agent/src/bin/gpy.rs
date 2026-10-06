@@ -327,7 +327,7 @@ enum PathsFormat {
 /// Debug actions
 #[derive(Subcommand, Debug)]
 enum DebugAction {
-    /// Show timing breakdown for prompt rendering
+    /// Time the agent's ping, git and language round trips
     Prompt,
 
     /// Dump every path GPY resolves from the environment

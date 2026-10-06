@@ -899,8 +899,11 @@ cache_root=/home/user/.cache/gpy
 
 #### `gpy debug prompt`
 
-Show a timing breakdown for one prompt render: how long each segment took
-through the agent, so a slow prompt can be attributed to a segment.
+Time the agent round trips a prompt makes for the current directory: a ping
+(baseline latency), a git status request and a language detection request,
+plus a `Git + Language Total` of the last two. Other segments render in the
+shell or through separate requests and are not included. Exits `1` with an
+`Error:` line when no agent is running; start it with `gpy start`.
 
 ---
 

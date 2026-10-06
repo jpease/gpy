@@ -96,12 +96,13 @@ async fn send_request(stream: &mut UnixStream, msg: &Message) -> Result<Duration
 
 /// Run the debug prompt timing analysis
 ///
-/// This command connects to the running agent and simulates a prompt render sequence
-/// (Git status + Language detection) to measure IPC roundtrip times.
+/// This command connects to the running agent and times three round trips for the
+/// current directory: a ping, a git status request and a language detection request.
+/// Other segments are not measured.
 ///
 /// # Errors
 ///
-/// Returns an error if connection fails, I/O fails, or socket path cannot be found.
+/// Returns an error if the agent is not running (no socket), connection fails, or I/O fails.
 #[expect(
     clippy::print_stdout,
     reason = "this is an interactive CLI debug command; its whole output is timing results printed to stdout"
@@ -114,8 +115,9 @@ async fn send_request(stream: &mut UnixStream, msg: &Message) -> Result<Duration
 pub fn prompt() -> Result<()> {
     let socket_path = get_socket_path()?;
     if !socket_path.exists() {
-        println!("Agent is not running. Please start it with 'gpy start'.");
-        return Ok(());
+        return Err(crate::Error::agent(
+            "Agent is not running. Start it with 'gpy start'.",
+        ));
     }
 
     println!("GPY Prompt Timing Debugger");
@@ -178,7 +180,7 @@ pub fn prompt() -> Result<()> {
 
         println!("--------------------------");
         let total = git_duration.checked_add(lang_duration).unwrap_or_default();
-        println!("Total Render Estimate: {total:.2?}");
+        println!("Git + Language Total: {total:.2?}");
         println!("\n(Note: Timings are roundtrip latencies including serialization, transport, and agent processing.)");
 
         Ok(())
