@@ -1352,10 +1352,7 @@ fn classify_event(path: &Path, registry: &WatchRegistry) -> Option<FileEvent> {
         FileEvent::Language {
             path: path.to_path_buf(),
         }
-    } else if file_name.ends_with(".gpy.toml")
-        || file_name.ends_with("gpy.toml")
-        || file_name.eq_ignore_ascii_case("config.toml")
-    {
+    } else if file_name.ends_with("gpy.toml") || file_name.eq_ignore_ascii_case("config.toml") {
         FileEvent::Config {
             path: path.to_path_buf(),
         }

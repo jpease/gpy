@@ -11,6 +11,6 @@ expression: redacted
   "instant_prompts_dir": "<ROOT>/.cache/gpy/instant-prompts",
   "theme_export_file": "<ROOT>/.cache/gpy/theme-export.fish",
   "config_path": "<ROOT>/.config/gpy/config.toml",
-  "config_candidates": "<ROOT>/.config/gpy/config.toml|<ROOT>/.config/gpy/config.toml|.gpy.toml",
+  "config_candidates": "<ROOT>/.config/gpy/config.toml|<ROOT>/.config/gpy/config.toml",
   "theme_dir": "<ROOT>/.config/gpy/themes"
 }

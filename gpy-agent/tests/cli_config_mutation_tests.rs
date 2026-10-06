@@ -3,8 +3,9 @@
 //!
 //! Covers two June 2026 audit defects:
 //! - #179: mutating commands must load and save the *same* active config file,
-//!   honoring `GPY_CONFIG_PATH` and an existing local `.gpy.toml`, and must never
-//!   create a lower-priority config when a higher-priority one is active.
+//!   honoring `GPY_CONFIG_PATH`, and must never create a lower-priority config
+//!   when a higher-priority one is active. (#179 also required updating a local
+//!   `.gpy.toml`; #733 removed that source because the agent never honored it.)
 //! - #182: a load/parse/validation failure must abort a mutation without writing,
 //!   leaving the original file byte-for-byte unchanged, and read-only commands
 //!   must report the error and exit non-zero instead of printing defaults.
@@ -107,47 +108,93 @@ fn gpy_config_path_is_used_for_both_load_and_save() {
     );
 }
 
+/// #733: a `.gpy.toml` in the current directory is not a config source.
+///
+/// The agent is one daemon for every directory, so it only ever read the one
+/// in the directory it was started from, and the CLI read and wrote a
+/// different file than the prompt used.
 #[test]
-fn local_gpy_toml_is_updated_without_creating_a_global_config() {
+fn local_gpy_toml_is_ignored() {
     let (temp, home, xdg) = isolated_dirs();
     let workdir = temp.path().join("work");
     fs::create_dir_all(&workdir).unwrap();
-    fs::write(
-        workdir.join(".gpy.toml"),
-        "[ui]\ndirectory.max_length = 50\n",
-    )
-    .unwrap();
+    let local = workdir.join(".gpy.toml");
+    let local_contents = "[ui]\ntheme = \"text\"\n";
+    fs::write(&local, local_contents).unwrap();
 
-    let output = run_gpy(
+    let get = run_gpy(&["config", "get", "ui.theme"], &home, &xdg, None, &workdir);
+    assert!(
+        get.status.success(),
+        "config get should succeed; stderr: {}",
+        stderr_of(&get)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&get.stdout).trim(),
+        "default",
+        "a local .gpy.toml must not be read"
+    );
+
+    let set = run_gpy(
         &["config", "set", "ui.directory.max_length", "99"],
         &home,
         &xdg,
         None,
         &workdir,
     );
+    assert!(
+        set.status.success(),
+        "config set should succeed; stderr: {}",
+        stderr_of(&set)
+    );
+    assert_eq!(
+        fs::read_to_string(&local).unwrap(),
+        local_contents,
+        "a local .gpy.toml must not be written"
+    );
+    let global = fs::read_to_string(xdg.join("gpy").join("config.toml"))
+        .expect("config set must write the XDG config");
+    assert!(
+        global.contains("99"),
+        "XDG config should hold the new value: {global}"
+    );
+}
 
+/// #733: a relative `GPY_CONFIG_PATH` resolves against the current directory
+/// once, so every reported, stored, and watched config path is absolute.
+#[test]
+fn relative_gpy_config_path_is_made_absolute() {
+    let (temp, home, xdg) = isolated_dirs();
+    let workdir = temp.path().join("work");
+    fs::create_dir_all(&workdir).unwrap();
+    let expected = fs::canonicalize(&workdir)
+        .unwrap()
+        .join("rel")
+        .join("custom.toml");
+
+    let output = run_gpy(
+        &["debug", "paths", "--format", "kv"],
+        &home,
+        &xdg,
+        Some(Path::new("rel/custom.toml")),
+        &workdir,
+    );
     assert!(
         output.status.success(),
-        "config set should succeed; stderr: {}",
+        "debug paths should succeed; stderr: {}",
         stderr_of(&output)
     );
-
-    let contents = fs::read_to_string(workdir.join(".gpy.toml")).unwrap();
-    assert!(
-        contents.contains("99"),
-        "local .gpy.toml should be updated: {contents}"
-    );
-    assert!(
-        !xdg.join("gpy").join("config.toml").exists(),
-        "must not create an XDG config when a local .gpy.toml is active"
-    );
-    assert!(
-        !home
-            .join(".config")
-            .join("gpy")
-            .join("config.toml")
-            .exists(),
-        "must not create a HOME config when a local .gpy.toml is active"
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let value_of = |key: &str| {
+        stdout
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{key}=")))
+            .unwrap_or_else(|| panic!("{key} missing from:\n{stdout}"))
+            .to_owned()
+    };
+    assert_eq!(value_of("config_path"), expected.display().to_string());
+    assert_eq!(
+        value_of("config_candidates").split('|').next(),
+        Some(expected.display().to_string().as_str())
     );
 }
 

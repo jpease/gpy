@@ -93,8 +93,10 @@ truncate_to_repo = false
 ///
 /// There is deliberately no `$HOME/.gpy.toml` candidate: Fish used to offer
 /// one that this list never had, so a user with that file got one config in
-/// the prompt and a different one from the CLI (#626). `.gpy.toml` is a
-/// project-local override, resolved relative to the current directory only.
+/// the prompt and a different one from the CLI (#626). Nor is there a
+/// project-local `.gpy.toml`: the agent is one long-lived daemon serving every
+/// directory, so it resolved that file against whichever directory first
+/// started it, never hot-reloaded it, and disagreed with the CLI (#733).
 #[must_use]
 pub fn config_candidates_for(
     custom_path: Option<&str>,
@@ -108,7 +110,6 @@ pub fn config_candidates_for(
         crate::paths::xdg_value(xdg_config, crate::paths::Os::Unix)
             .map(|xdg| format!("{xdg}/gpy/config.toml")),
         home.map(|h| format!("{h}/.config/gpy/config.toml")),
-        Some(".gpy.toml".to_owned()),
     ]
     .into_iter()
     .flatten()
@@ -119,11 +120,23 @@ pub fn config_candidates_for(
 ///
 /// Ambient-environment wrapper over [`config_candidates_for`]; `HOME` comes
 /// from [`crate::paths::home_dir`], which falls back to the passwd database
-/// exactly as Fish and Zsh do (#626).
+/// exactly as Fish and Zsh do (#626). A relative `GPY_CONFIG_PATH` is joined
+/// onto the current directory here, so every caller, the agent included,
+/// stores, reports, and watches an absolute path (#733).
 #[must_use]
 pub fn get_config_paths() -> Vec<String> {
-    let custom_path =
-        std::env::var_os("GPY_CONFIG_PATH").map(|value| value.to_string_lossy().into_owned());
+    let custom_path = std::env::var_os("GPY_CONFIG_PATH").map(|value| {
+        let path = std::path::PathBuf::from(value);
+        let absolute = if path.as_os_str().is_empty() || path.is_absolute() {
+            path
+        } else {
+            match std::env::current_dir() {
+                Ok(cwd) => cwd.join(path),
+                Err(_) => path,
+            }
+        };
+        absolute.to_string_lossy().into_owned()
+    });
     let home = crate::paths::home_dir();
     let xdg_config =
         std::env::var_os("XDG_CONFIG_HOME").map(|value| value.to_string_lossy().into_owned());
@@ -192,21 +205,16 @@ mod config_path_tests {
                 "/custom.toml",
                 "/xdgcfg/gpy/config.toml",
                 "/home/u/.config/gpy/config.toml",
-                ".gpy.toml",
             ],
         ),
-        // A relative GPY_CONFIG_PATH is still honoured: unlike the XDG
-        // variables, it is an explicit "use this file" and the spec's
-        // absolute-path rule does not cover it.
+        // A relative GPY_CONFIG_PATH passes through unchanged: unlike the XDG
+        // variables, it is an explicit "use this file". The ambient wrapper
+        // `get_config_paths` joins it onto the current directory (#733).
         (
             Some("custom.toml"),
             None,
             Some("/home/u"),
-            &[
-                "custom.toml",
-                "/home/u/.config/gpy/config.toml",
-                ".gpy.toml",
-            ],
+            &["custom.toml", "/home/u/.config/gpy/config.toml"],
         ),
         // Empty GPY_CONFIG_PATH is unset, not an empty highest-priority
         // candidate that `gpy config set` would write to (#626).
@@ -214,11 +222,7 @@ mod config_path_tests {
             Some(""),
             Some("/xdgcfg"),
             Some("/home/u"),
-            &[
-                "/xdgcfg/gpy/config.toml",
-                "/home/u/.config/gpy/config.toml",
-                ".gpy.toml",
-            ],
+            &["/xdgcfg/gpy/config.toml", "/home/u/.config/gpy/config.toml"],
         ),
         // Empty XDG_CONFIG_HOME is unset: it used to build
         // "/gpy/config.toml" at the filesystem root.
@@ -226,35 +230,34 @@ mod config_path_tests {
             None,
             Some(""),
             Some("/home/u"),
-            &["/home/u/.config/gpy/config.toml", ".gpy.toml"],
+            &["/home/u/.config/gpy/config.toml"],
         ),
         // A relative XDG_CONFIG_HOME is invalid and ignored.
         (
             None,
             Some("cfg"),
             Some("/home/u"),
-            &["/home/u/.config/gpy/config.toml", ".gpy.toml"],
+            &["/home/u/.config/gpy/config.toml"],
         ),
+        // There is no project-local `.gpy.toml` candidate (#733): the agent
+        // is one daemon for every directory, so it would resolve the file
+        // against whatever directory first started it.
         (
             None,
             None,
             Some("/home/u"),
-            &["/home/u/.config/gpy/config.toml", ".gpy.toml"],
+            &["/home/u/.config/gpy/config.toml"],
         ),
         // No home at all (`paths::home_dir` found neither HOME nor a
-        // passwd entry): only the project-local override remains.
-        (None, None, None, &[".gpy.toml"]),
+        // passwd entry): no candidate remains.
+        (None, None, None, &[]),
         // There is no `$HOME/.gpy.toml` candidate, in any environment:
         // Fish used to offer one this list never had (#626).
         (
             None,
             Some("/xdgcfg"),
             Some("/home/u"),
-            &[
-                "/xdgcfg/gpy/config.toml",
-                "/home/u/.config/gpy/config.toml",
-                ".gpy.toml",
-            ],
+            &["/xdgcfg/gpy/config.toml", "/home/u/.config/gpy/config.toml"],
         ),
     ];
 

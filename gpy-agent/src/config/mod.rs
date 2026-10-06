@@ -14,11 +14,11 @@
 //!
 //! The agent searches for `config.toml` in the following order:
 //!
-//! 1. `$GPY_CONFIG_PATH` (environment variable override for custom config location)
+//! 1. `$GPY_CONFIG_PATH` (environment variable override for custom config location;
+//!    a relative value is resolved against the current directory)
 //! 2. `$XDG_CONFIG_HOME/gpy/config.toml` (typically `~/.config/gpy/config.toml`)
 //! 3. `~/.config/gpy/config.toml` (fallback if `$XDG_CONFIG_HOME` is not set)
-//! 4. `.gpy.toml` (local directory configuration for project-specific overrides)
-//! 6. Falls back to built-in defaults if no file exists
+//! 4. Falls back to built-in defaults if no file exists
 //!
 //! ## Hot-Reload Support
 //!

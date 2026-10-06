@@ -200,6 +200,7 @@ set -g GPY_PP_CASES \
     "socket_override_empty;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;HOME=%T%/home;GPY_AGENT_SOCKET_PATH=" \
     "config_override;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home;GPY_CONFIG_PATH=%T%/cfg/custom.toml" \
     "config_override_missing;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home;GPY_CONFIG_PATH=%T%/cfg/absent.toml" \
+    "config_override_relative;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home;GPY_CONFIG_PATH=rel/custom.toml" \
     "config_override_empty;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home;GPY_CONFIG_PATH="
 
 # ============================================================================
@@ -337,12 +338,13 @@ end
 # RUN
 # ============================================================================
 
-# The relative `.gpy.toml` config candidate and the relative runtime root an
-# empty XDG_RUNTIME_DIR produces are both CWD-sensitive, and the agent's
-# runtime-root resolver materializes the directory it returns. Run everything
-# from a scratch CWD so neither can touch this repo. The one write that escapes
-# the scratch tree is `/tmp/gpy` in the `all_unset` case, which is the agent's
-# own last-resort runtime root -- exactly what `gpy status` would create there.
+# A relative GPY_CONFIG_PATH resolves against the CWD, and the relative
+# runtime root an empty XDG_RUNTIME_DIR produces is CWD-sensitive too; the
+# agent's runtime-root resolver materializes the directory it returns. Run
+# everything from a scratch CWD so neither can touch this repo. The one write
+# that escapes the scratch tree is `/tmp/gpy` in the `all_unset` case, which is
+# the agent's own last-resort runtime root -- exactly what `gpy status` would
+# create there.
 cd $GPY_PP_TMP/cwd
 
 for spec in $GPY_PP_CASES

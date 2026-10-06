@@ -129,6 +129,12 @@ const HIGHER_PRIORITY_CONFIG_APPEARS: Mechanism = Mechanism {
     apply: create_xdg_config,
     doorbells: None,
 };
+const DELETE_CONFIG_WITH_LOCAL_GPY_TOML: Mechanism = Mechanism {
+    name: "delete the active config.toml with a .gpy.toml in the agent's cwd (#733)",
+    setup: Some(local_gpy_toml_in_cwd),
+    apply: delete_active_config,
+    doorbells: None,
+};
 
 fn invalid_home_config_only(h: &Harness) {
     fs::remove_file(h.config_path()).expect("remove xdg config");
@@ -147,6 +153,14 @@ fn fix_home_config(h: &Harness) {
 
 fn delete_active_config(h: &Harness) {
     fs::remove_file(h.config_path()).expect("delete config");
+}
+
+/// A `.gpy.toml` in the directory the agent starts from, naming a theme that
+/// differs from both the active config and the defaults. It is not a config
+/// source (#733), so it must never become active.
+fn local_gpy_toml_in_cwd(h: &Harness) {
+    std::env::set_current_dir(&h.home).expect("enter launch dir");
+    Harness::write_config_at(&h.home.join(".gpy.toml"), OTHER_THEME, true);
 }
 
 fn config_lives_under_home(h: &Harness) {
@@ -215,6 +229,7 @@ struct Harness {
     config_home: PathBuf,
     cache_home: PathBuf,
     prev_env: Vec<(&'static str, Option<OsString>)>,
+    prev_cwd: PathBuf,
     prev_sigurg: SigAction,
 }
 
@@ -264,6 +279,7 @@ impl Harness {
             config_home,
             cache_home,
             prev_env,
+            prev_cwd: std::env::current_dir().expect("current dir"),
             prev_sigurg,
         };
         harness.write_theme(ACTIVE_THEME, "white");
@@ -391,6 +407,7 @@ impl Harness {
 
 impl Drop for Harness {
     fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.prev_cwd);
         unsafe {
             let _ = sigaction(Signal::SIGURG, &self.prev_sigurg);
             for (key, value) in self.prev_env.drain(..) {
@@ -576,4 +593,12 @@ fn hot_reload_delete_config() {
 #[serial]
 fn hot_reload_higher_priority_config_appears() {
     run_mechanism(&HIGHER_PRIORITY_CONFIG_APPEARS);
+}
+
+/// #733: with the active config.toml gone, the agent falls back to defaults,
+/// never to a `.gpy.toml` in the directory it was launched from.
+#[test]
+#[serial]
+fn hot_reload_delete_config_ignores_local_gpy_toml() {
+    run_mechanism(&DELETE_CONFIG_WITH_LOCAL_GPY_TOML);
 }

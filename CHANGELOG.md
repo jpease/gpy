@@ -249,6 +249,10 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Removed
 
+- `.gpy.toml` as a configuration source (#733). It was only ever resolved
+  against the agent's launch directory and never hot-reloaded, so the prompt
+  and `gpy config get` disagreed depending on the current directory. Move its
+  settings to `~/.config/gpy/config.toml`, or point `GPY_CONFIG_PATH` at it.
 - `install-dev.fish --bundle`, which produced payloads `install.sh` rejected
   (#810); use `just build-all-platforms`.
 - Fish `prompt-config`, `prompt-theme` and `prompt-perf`, which always
@@ -676,6 +680,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `scripts/build-release-binaries.sh` builds Linux binaries against the
   release glibc floor with cargo-zigbuild and checks them, matching the
   release workflow (#818).
+- A relative `GPY_CONFIG_PATH` is resolved against the current directory
+  when read, so `gpy-agent status` reports and watches an absolute path
+  (#733).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

@@ -142,8 +142,7 @@ impl ConfigManager {
     ///
     /// This searches for config files in the standard locations, in priority
     /// order (`GPY_CONFIG_PATH`, `$XDG_CONFIG_HOME/gpy/config.toml`,
-    /// `~/.config/gpy/config.toml`, `.gpy.toml`), and re-searches on every
-    /// reload.
+    /// `~/.config/gpy/config.toml`), and re-searches on every reload.
     ///
     /// If no config file exists, uses `Config::default()`.
     ///
@@ -599,8 +598,7 @@ impl ConfigManager {
     /// deleting any candidate is seen, not only the one active at startup
     /// (#788). The highest-priority candidate's directory is created when
     /// missing (`config set` writes there); the others are watched only when
-    /// they already exist and are absolute, which leaves out the relative
-    /// project-local `.gpy.toml`.
+    /// they already exist and are absolute.
     ///
     /// # Errors
     ///
@@ -787,9 +785,8 @@ mod tests {
         // then went wrong with it. The predicate never named
         // `%LOCALAPPDATA%`, so once #473 taught `paths.rs` to resolve Windows
         // roots the test began asserting the absence of a feature that had
-        // shipped. And `get_config_paths` always yields at least the
-        // `.gpy.toml` fallback, so "the environment names a config location"
-        // was not the thing that decided success in the first place (#527).
+        // shipped. And whether the environment names a config location was
+        // never what decided success (#527).
         //
         // A temp directory decides it locally on every platform, so the test
         // exercises the start/stop contract instead of the host's

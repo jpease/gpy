@@ -33,12 +33,29 @@ else
     exit 1
 end
 
-# Every candidate but the last is absolute; the last is the project-local
-# `.gpy.toml`, deliberately relative to the current directory.
-if string match -q "/*" -- $config_path; or test "$config_path" = .gpy.toml
-    echo "✅ __gpy_locate_config_path returns an absolute path or the project-local override"
+# Every candidate is absolute: there is no project-local `.gpy.toml` (#733),
+# and a relative GPY_CONFIG_PATH is resolved against the current directory.
+if string match -q "/*" -- $config_path
+    echo "✅ __gpy_locate_config_path returns an absolute path"
 else
-    echo "❌ __gpy_locate_config_path returned invalid path: $config_path"
+    echo "❌ __gpy_locate_config_path returned a non-absolute path: $config_path"
+    exit 1
+end
+
+for candidate in (__gpy_user_config_candidates)
+    if not string match -q "/*" -- $candidate
+        echo "❌ __gpy_user_config_candidates offered a non-absolute candidate: $candidate"
+        exit 1
+    end
+end
+echo "✅ every config candidate is absolute"
+
+set -l relative_candidates (GPY_CONFIG_PATH=rel/custom.toml __gpy_user_config_candidates)
+set -l relative_path $relative_candidates[1]
+if test "$relative_path" = (pwd -P)/rel/custom.toml
+    echo "✅ a relative GPY_CONFIG_PATH resolves against the current directory"
+else
+    echo "❌ relative GPY_CONFIG_PATH resolved to: $relative_path"
     exit 1
 end
 
