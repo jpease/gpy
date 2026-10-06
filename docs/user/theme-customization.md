@@ -195,7 +195,7 @@ After editing, validate before activating:
 gpy theme validate mytheme
 gpy theme use mytheme
 ```
-`gpy theme validate` checks theme schema fields, icon glyphs, and segment format templates across all eight supported agent-rendered segments (`git`, `language`, `directory`, `duration`, `character`, `clock`, `hostname`, `username`), reporting the failing field, the invalid value, and remediation guidance if something's wrong (bad color name, empty icon glyph, malformed TOML). Both `theme validate` and `theme use` share this validator.
+`gpy theme validate` checks theme schema fields, icon glyphs, and segment format templates across all eight supported agent-rendered segments (`git`, `language`, `directory`, `duration`, `character`, `clock`, `hostname`, `username`), reporting the failing field, the invalid value, and remediation guidance if something's wrong (bad color name, empty icon glyph, malformed TOML). It also checks the free-form style strings (`<lang>_style` overrides and `[segments.git.git_style]` values), naming the offending field (e.g. `segments.language.rust_style`) when one cannot be parsed or uses a color the palette cannot resolve. Both `theme validate` and `theme use` share this validator.
 ### Already using Starship?
 
 If you're migrating from [Starship](https://starship.rs/) and want to start from your existing look rather than the GPY default theme, `gpy theme import` converts a `starship.toml` into a matching GPY palette + theme pair in one step:

@@ -1,6 +1,8 @@
 //! Validates per-segment `format` templates so authoring mistakes surface in
 //! `gpy doctor` / `gpy theme` check rather than silently degrading the prompt.
 
+use std::collections::HashMap;
+
 use super::{ValidationError, ValidationErrorKind};
 use crate::template::{Palette, RenderContext, VariableResolver, render};
 use crate::theme::ThemeConfig;
@@ -62,6 +64,48 @@ pub fn validate_segment_templates(
     }
     if let Some(format) = theme.segments.username.format.as_deref() {
         validate_one("username", format, palette)?;
+    }
+    validate_style_values(
+        "language",
+        "segments.language",
+        &theme.segments.language.styles,
+        palette,
+    )?;
+    validate_style_values(
+        "git",
+        "segments.git.git_style",
+        &theme.segments.git.git_style,
+        palette,
+    )
+}
+
+/// Validate free-form style strings by rendering each as a one-group template.
+///
+/// The engine's own style parsing and palette lookup reject anything that would fail at
+/// runtime. Keys are visited in sorted order so the reported failure is stable.
+///
+/// # Errors
+///
+/// Returns `Err` naming `<prefix>.<key>` for the first style value that fails to render.
+fn validate_style_values(
+    segment: &'static str,
+    prefix: &str,
+    styles: &HashMap<String, String>,
+    palette: &Palette,
+) -> Result<(), ValidationError> {
+    let resolver = PlaceholderResolver;
+    let ctx = RenderContext::new(&resolver).with_palette(palette.clone());
+    let mut entries: Vec<(&String, &String)> = styles.iter().collect();
+    entries.sort_unstable();
+    for (key, value) in entries {
+        render(&format!("[x]({value})"), &ctx).map_err(|error| ValidationError {
+            field_path: format!("{prefix}.{key}"),
+            kind: ValidationErrorKind::TemplateRenderFailed {
+                segment,
+                template: value.clone(),
+                source: error,
+            },
+        })?;
     }
     Ok(())
 }
@@ -153,6 +197,68 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("language"));
+    }
+
+    #[test]
+    fn err_for_invalid_language_style_override() {
+        let mut theme = ThemeConfig::default();
+        theme.segments.language.format = Some("[$symbol]($attr fg:$color)".into());
+        theme
+            .segments
+            .language
+            .styles
+            .insert("rust_style".into(), "fg:#12".into());
+        let err = validate_segment_templates(&theme, &Palette::default()).unwrap_err();
+        assert_eq!(err.field_path, "segments.language.rust_style");
+    }
+
+    #[test]
+    fn err_for_invalid_git_style_value() {
+        let mut theme = ThemeConfig::default();
+        theme
+            .segments
+            .git
+            .git_style
+            .insert("conflicts".into(), "fg:#12".into());
+        let err = validate_segment_templates(&theme, &Palette::default()).unwrap_err();
+        assert_eq!(err.field_path, "segments.git.git_style.conflicts");
+    }
+
+    #[test]
+    fn ok_for_empty_and_attribute_only_language_styles() {
+        let mut theme = ThemeConfig::default();
+        theme.segments.language.format = Some("[$symbol]($attr fg:$color)".into());
+        theme
+            .segments
+            .language
+            .styles
+            .insert("rust_style".into(), String::new());
+        theme
+            .segments
+            .language
+            .styles
+            .insert("java_style".into(), "dimmed".into());
+        assert!(validate_segment_templates(&theme, &Palette::default()).is_ok());
+    }
+
+    #[test]
+    fn every_builtin_theme_validates_against_every_builtin_palette() {
+        use crate::palette::config::PaletteConfig;
+        use crate::palette::manager::BUILTIN_PALETTES;
+        use crate::theme::manager::BUILTIN_THEMES;
+
+        for (theme_name, theme_content) in BUILTIN_THEMES {
+            let theme: ThemeConfig = toml::from_str(theme_content).expect("builtin theme parses");
+            for (palette_name, palette_content) in BUILTIN_PALETTES {
+                let palette: PaletteConfig =
+                    toml::from_str(palette_content).expect("builtin palette parses");
+                if let Err(error) =
+                    validate_segment_templates(&theme, &palette.to_template_palette())
+                {
+                    panic!("theme {theme_name} x palette {palette_name}: {error}");
+                }
+            }
+        }
     }
 
     #[test]
