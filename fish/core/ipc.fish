@@ -986,6 +986,13 @@ function __gpy_check_protocol_version --description 'Check and warn on protocol 
     return 0
 end
 
+# True when $argv[1] is a live GPY agent supervisor (not merely a live PID,
+# which may have been recycled). Same identity check as scripts/uninstall.fish.
+function __gpy_is_supervisor_pid --argument-names pid
+    string match -qr '^\d+$' -- "$pid"; or return 1
+    ps -o command= -p $pid 2>/dev/null | string match -q '*__gpy_agent_supervisor_loop*'
+end
+
 # Agent process supervision and automatic restart
 function __gpy_agent_supervisor_start --description 'Start agent supervisor for automatic restart'
     # The flags exported from config.toml are the source of truth (#657, #699):
@@ -1004,16 +1011,11 @@ function __gpy_agent_supervisor_start --description 'Start agent supervisor for 
     mkdir -p "$runtime_root"
     set -l supervisor_pidfile "$runtime_root/supervisor.pid"
 
-    # Check if supervisor is already running via PID file
-    if test -f "$supervisor_pidfile"
-        set -l existing_pid (cat "$supervisor_pidfile" 2>/dev/null)
-        if test -n "$existing_pid"; and kill -0 $existing_pid 2>/dev/null
-            # Supervisor already running
-            return 0
-        else
-            # Stale PID file, remove it
-            rm -f "$supervisor_pidfile" 2>/dev/null
-        end
+    # Cheap early return when a live supervisor is recorded. Never remove the
+    # file here: stale-file recovery happens only in the child under the
+    # no-clobber claim, so two parents cannot delete each other's claim (#703).
+    if __gpy_is_supervisor_pid (cat "$supervisor_pidfile" 2>/dev/null)
+        return 0
     end
 
     # Spawn supervisor in completely detached process to avoid blocking.
@@ -1024,17 +1026,32 @@ function __gpy_agent_supervisor_start --description 'Start agent supervisor for 
     # reopen the shell's own fds, so the child would keep this terminal (#767).
     # `cd /` keeps the long-lived child from pinning the spawning shell's cwd.
     set -l config_root (__gpy_config_root)
+    # The child claims the pidfile with no-clobber `>?` (atomic O_EXCL). A
+    # loser whose recorded PID is a live supervisor exits; otherwise the file
+    # is stale and is removed and claimed once more. An empty read means the
+    # winner has created the file but not yet written its PID, so read again.
+    # The loop exits once the file no longer names this process, and the
+    # final rm only removes the file while it still does (#703).
     set -l supervisor_script '
         cd /
         set -gx GPY_SUPERVISOR_CHILD 1
         set -l pidfile $argv[1]
         set -l cfgroot $argv[2]
-        echo %self > "$pidfile"
         source "$cfgroot/gpy/core/constants.fish"; or exit 1
         source "$cfgroot/gpy/core/util.fish"; or exit 1
         source "$cfgroot/gpy/core/ipc.fish"; or exit 1
-        __gpy_agent_supervisor_loop
-        rm -f "$pidfile"
+        if not echo $fish_pid >?"$pidfile"
+            set -l owner (cat "$pidfile" 2>/dev/null)
+            if test -z "$owner"
+                sleep 0.2
+                set owner (cat "$pidfile" 2>/dev/null)
+            end
+            __gpy_is_supervisor_pid $owner; and exit 0
+            rm -f "$pidfile"
+            echo $fish_pid >?"$pidfile"; or exit 0
+        end
+        __gpy_agent_supervisor_loop "$pidfile"
+        test "$(cat "$pidfile" 2>/dev/null)" = "$fish_pid"; and rm -f "$pidfile"
     '
 
     fish -c "$supervisor_script" -- "$supervisor_pidfile" "$config_root" </dev/null >/dev/null 2>&1 &
@@ -1206,7 +1223,11 @@ function __gpy_sync_workspace --description 'Report current workspace to the age
     end
 end
 
+# $argv[1] (optional): the supervisor pidfile this process claimed. The loop
+# exits once the file no longer names this process, so a supervisor that lost
+# a stale-file recovery race does not run on untracked (#703).
 function __gpy_agent_supervisor_loop --description 'Background loop for agent supervision'
+    set -l pidfile $argv[1]
     # Guard against unset/empty/non-numeric variables that would cause sleep to
     # receive no argument, producing a 100% CPU busy-loop. constants.fish
     # already validates these at load time; re-validate here too via the same
@@ -1222,6 +1243,10 @@ function __gpy_agent_supervisor_loop --description 'Background loop for agent su
         # Re-read both flags every iteration so a value changed after spawn
         # stops the loop (#699).
         if test "$GPY_AGENT_SUPERVISOR_ENABLED" = 0; or test "$GPY_AGENT_ENABLED" = 0
+            break
+        end
+
+        if test -n "$pidfile"; and test "$(cat "$pidfile" 2>/dev/null)" != "$fish_pid"
             break
         end
 
