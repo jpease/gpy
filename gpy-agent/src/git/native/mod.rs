@@ -639,6 +639,9 @@ pub(crate) const fn resolve_overall_state(
 /// with a non-zero status, or the timeout expires.
 fn run_git_with_timeout(repo_path: &Path, args: &[&str], timeout: Duration) -> Result<String> {
     let mut command = Command::new("git");
+    for var in REPO_LOCAL_GIT_ENV {
+        command.env_remove(var);
+    }
     command
         .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("-C")
@@ -663,6 +666,33 @@ fn run_git_with_timeout(repo_path: &Path, args: &[&str], timeout: Duration) -> R
     })?;
     git_output_to_string(&output)
 }
+
+/// Repository-selection environment variables the agent must never forward to
+/// git (#714). Git gives these precedence over `-C`, so an inherited value
+/// would make every status describe another repository.
+///
+/// Mirrors `git rev-parse --local-env-vars`, plus `GIT_NAMESPACE`.
+/// `GIT_CONFIG_COUNT` pairs with `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>`;
+/// removing the count disables them. User-level settings (`GIT_CONFIG_GLOBAL`,
+/// `HOME`, `PATH`, `GIT_SSH*`) are deliberately kept.
+const REPO_LOCAL_GIT_ENV: &[&str] = &[
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+];
 
 /// Convert a raw `process::Output` to a trimmed string, propagating git errors.
 ///

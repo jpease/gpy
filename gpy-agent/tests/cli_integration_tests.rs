@@ -273,6 +273,50 @@ fn test_cli_oneshot_git_with_custom_path() {
 }
 
 #[test]
+fn test_cli_oneshot_git_ignores_inherited_git_dir() {
+    let env = CliTestEnv::new().expect("failed to create CLI test env");
+    let git = |dir: &std::path::Path, args: &[&str]| {
+        let status = Command::new("git")
+            .args(["-c", "commit.gpgsign=false", "-c", "user.name=T"])
+            .args(["-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .expect("spawn git");
+        assert!(status.success(), "git {args:?} failed");
+    };
+    let a = env.root().join("repoA");
+    let b = env.root().join("repoB");
+    for (repo, branch) in [(&a, "featureA"), (&b, "main")] {
+        fs::create_dir_all(repo).expect("mkdir");
+        git(repo, &["init", "-q", "-b", branch]);
+        fs::write(repo.join("f"), "x\n").expect("write");
+        git(repo, &["add", "."]);
+        git(repo, &["commit", "-q", "-m", "init"]);
+    }
+    fs::write(b.join("untracked.txt"), "z\n").expect("write");
+
+    let result = env
+        .run_gpy_agent_with_env(
+            &["oneshot", "git", "--cwd", &b.to_string_lossy()],
+            &[("GIT_DIR", a.join(".git")), ("GIT_WORK_TREE", a.clone())],
+        )
+        .expect("run gpy-agent");
+    result.assert_success("oneshot git");
+    let json: serde_json::Value = serde_json::from_str(&result.stdout).expect("Invalid JSON");
+    assert_eq!(
+        json.get("branch"),
+        Some(&serde_json::json!("main")),
+        "reported repo A's branch: {json}"
+    );
+    assert_eq!(
+        json.get("untracked"),
+        Some(&serde_json::json!(1_i32)),
+        "reported repo A's counts: {json}"
+    );
+}
+
+#[test]
 #[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_git_non_git_directory() {
     let Ok(temp_dir) = TempDir::new() else { return };

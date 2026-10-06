@@ -449,6 +449,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   still previews the prompt.
 - The fish prompt no longer forks `rm` on every render in disabled-footprint
   mode (#770).
+- Git prompts no longer show another repository's status when `GIT_DIR`,
+  `GIT_WORK_TREE`, `GIT_INDEX_FILE` or a similar repository-local variable is
+  inherited by the shell or agent (#714).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

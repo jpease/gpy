@@ -38,6 +38,7 @@ The unit tests live next to the code in `src/`.
 | `formatter_snapshot_tests.rs` | Snapshot tests for formatter outputs using insta |
 | `git_commands_tests.rs` | Tests for git/commands.rs |
 | `git_edge_cases_tests.rs` | Git Edge Case Tests |
+| `git_env_isolation_tests.rs` | GIT-ENV class (#714): status under a hostile inherited git environment equals status under a clean one, and the agent writes no repository config it was not asked to |
 | `git_huge_repo_tests.rs` | Integration tests for huge repository performance optimizations |
 | `git_repository_tests.rs` | Tests for git repository discovery and path normalization |
 | `git_status_tests.rs` | Comprehensive tests for git status functionality |
