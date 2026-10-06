@@ -22,6 +22,7 @@ use crate::git::native::NativeGitBackend;
 use crate::git::status::{GitBackend, load_repository_state_with};
 use crate::git::{CompleteStatus, RepositoryStatus};
 use crate::ipc::ClientDirectory;
+use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
 use crate::palette::PaletteCache;
 use crate::theme::{ThemeConfig, ThemeManager};
 use crate::watcher::{
@@ -386,13 +387,6 @@ enum LanguageRefreshMode {
     /// context changed (a theme switch), not the detected language set.
     CachedOnly,
 }
-
-/// Rate limit for re-detection in [`LanguageRefreshMode::Throttled`].
-///
-/// One constant so the caller deciding whether a background job is even worth
-/// scheduling and [`refresh_language_for`]'s own re-check once that job runs
-/// cannot drift apart.
-const LANGUAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Refresh `root`'s detected languages according to `mode`, write its
 /// instant-cache prompt variants, and repaint (SIGURG doorbell) when a cache file's

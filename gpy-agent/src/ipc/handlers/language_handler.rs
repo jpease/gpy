@@ -11,6 +11,7 @@ use super::{
 };
 use crate::ipc::{Message, Response};
 use crate::language::DetectionCache;
+use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
 use crate::language::display::build_language_display_info_at;
 use crate::watcher::multi_repo::MultiRepoWatcher;
 use std::path::{Path, PathBuf};
@@ -62,8 +63,9 @@ impl LanguageHandler {
         // Use the shared theme manager instead of loading from disk
         let theme = self.render.theme_manager.get();
         let request_path = path.as_path();
-        let repo_root = MultiRepoWatcher::find_git_root(request_path)
-            .unwrap_or_else(|| request_path.to_path_buf());
+        let git_root = MultiRepoWatcher::find_git_root(request_path);
+        let in_git_repo = git_root.is_some();
+        let repo_root = git_root.unwrap_or_else(|| request_path.to_path_buf());
 
         // Resolve the forwarded venv (if any) against this repo and stash it so
         // the background detection job renders the same interpreter version,
@@ -80,22 +82,26 @@ impl LanguageHandler {
         // request indefinitely (#154). The wait runs on the blocking pool (the IPC
         // server routes requests via `spawn_blocking`), so it never ties up a Tokio
         // worker thread.
-        let detected_languages = if let Some(cached) = self.language_cache.get(&repo_root) {
-            cached
-        } else {
-            let job = self.language_detection_job(&repo_root);
-            let wait_budget = Duration::from_secs(config.agent.timeout_seconds.get());
-            let Some(detected) = job.wait_timeout(wait_budget) else {
-                // Detection exceeded the budget and is still running on the
-                // blocking pool. Return an error (mirroring the git handler's
-                // timeout path) rather than an empty success: an error response
-                // leaves the instant cache and live shells untouched, so a slow
-                // scan never clobbers a good prompt with a blank one. The result
-                // lands in the in-memory cache and is served on the next prompt.
-                return Err(HandlerError::TimedOut("Language detection"));
+        let detected_languages =
+            if let Some((cached, age)) = self.language_cache.get_with_age(&repo_root) {
+                // Never wait here: the stale value is served now and the job's
+                // result reaches the shell through the repaint doorbell (#709).
+                drop(self.revalidate_stale_hit(&repo_root, in_git_repo, age));
+                cached
+            } else {
+                let job = self.language_detection_job(&repo_root);
+                let wait_budget = Duration::from_secs(config.agent.timeout_seconds.get());
+                let Some(detected) = job.wait_timeout(wait_budget) else {
+                    // Detection exceeded the budget and is still running on the
+                    // blocking pool. Return an error (mirroring the git handler's
+                    // timeout path) rather than an empty success: an error response
+                    // leaves the instant cache and live shells untouched, so a slow
+                    // scan never clobbers a good prompt with a blank one. The result
+                    // lands in the in-memory cache and is served on the next prompt.
+                    return Err(HandlerError::TimedOut("Language detection"));
+                };
+                detected
             };
-            detected
-        };
 
         // Refresh the instant cache so subsequent shell prompts render without IPC,
         // and repaint any other live shells in this repo when the rendered output
@@ -128,6 +134,27 @@ impl LanguageHandler {
         );
 
         Ok(Response::Language { languages })
+    }
+
+    /// Start a background re-detection for a cache hit older than
+    /// [`LANGUAGE_REFRESH_INTERVAL`] when `repo_root` is not inside a git repo.
+    ///
+    /// Git repos are refreshed by the watcher and the signature-throttled
+    /// git-status path; non-git directories are not watched, so without this a
+    /// cached result would be served for the agent's lifetime (#709). Returns
+    /// the job handle (for tests), or `None` when no revalidation is due. NEVER
+    /// awaited on the request path; the job is single-flight per root.
+    #[must_use]
+    fn revalidate_stale_hit(
+        &self,
+        repo_root: &Path,
+        in_git_repo: bool,
+        age: Duration,
+    ) -> Option<Arc<LanguageJob>> {
+        if in_git_repo || age < LANGUAGE_REFRESH_INTERVAL {
+            return None;
+        }
+        Some(self.language_detection_job(repo_root))
     }
 
     fn language_detection_job(&self, repo_root: &Path) -> Arc<LanguageJob> {
@@ -315,6 +342,95 @@ mod tests {
             registry.notify_invocations(),
             1,
             "an unchanged refresh must not wake terminals"
+        );
+    }
+
+    /// Seed an empty cache entry for `root`, aged past the refresh interval.
+    fn seed_stale_empty_entry(handler: &LanguageHandler, root: &Path) {
+        handler.language_cache.set(root, Vec::new());
+        handler.language_cache.age_entry_for_test(
+            root,
+            LANGUAGE_REFRESH_INTERVAL.saturating_add(Duration::from_secs(1)),
+        );
+    }
+
+    fn write_rust_project(dir: &Path) {
+        std::fs::create_dir_all(dir.join("src")).expect("src dir");
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("Cargo.toml");
+        std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").expect("main.rs");
+    }
+
+    /// #709: a stale non-git cache hit re-detects in the background.
+    ///
+    /// Nothing watches a non-git directory, so the hit must still be answered
+    /// from the cache without waiting, or new marker files are never noticed.
+    #[test]
+    fn stale_non_git_hit_triggers_background_redetection() {
+        let (handler, _registry) = make_handler();
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let root = std::fs::canonicalize(temp_dir.path()).expect("canonicalize");
+        write_rust_project(&root);
+        seed_stale_empty_entry(&handler, &root);
+
+        let response = handler
+            .handle(&language_detect_request(&root))
+            .expect("stale hit request");
+        assert!(
+            matches!(&response, Response::Language { languages } if languages.is_empty()),
+            "a cache hit must be served immediately from the stale entry: {response:?}"
+        );
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let detected_rust = loop {
+            let found = handler
+                .language_cache
+                .get(&root)
+                .is_some_and(|langs| langs.iter().any(|l| l.name == "rust"));
+            if found || std::time::Instant::now() >= deadline {
+                break found;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(
+            detected_rust,
+            "stale non-git hit must re-detect in the background"
+        );
+    }
+
+    /// #709: a stale git-root hit starts no detection job.
+    ///
+    /// Git roots are covered by the watcher and the signature-throttled refresh.
+    #[test]
+    fn stale_git_hit_does_not_trigger_redetection() {
+        let (handler, _registry) = make_handler();
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let repo_dir = temp_dir.path().join("repo");
+        std::fs::create_dir_all(repo_dir.join(".git")).expect("git dir");
+        let root = std::fs::canonicalize(&repo_dir).expect("canonicalize");
+        write_rust_project(&root);
+        seed_stale_empty_entry(&handler, &root);
+
+        handler
+            .handle(&language_detect_request(&root))
+            .expect("stale hit request");
+
+        assert!(
+            handler
+                .revalidate_stale_hit(&root, true, LANGUAGE_REFRESH_INTERVAL)
+                .is_none(),
+            "a git root must not start a detection job from a stale hit"
+        );
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(
+            handler
+                .language_cache
+                .get(&root)
+                .is_some_and(|langs| langs.is_empty()),
+            "a git root's entry must be left untouched by a stale hit"
         );
     }
 }
