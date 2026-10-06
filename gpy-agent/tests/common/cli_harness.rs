@@ -282,14 +282,9 @@ impl CliTestEnv {
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
-        let mut command = Command::new(program);
+        let mut command = self.command(program);
         command
             .args(args)
-            .env("HOME", &self.root)
-            .env("XDG_CONFIG_HOME", &self.config_home)
-            .env("XDG_RUNTIME_DIR", &self.runtime_dir)
-            .env("XDG_CACHE_HOME", &self.cache_home)
-            .env("PATH", path_with_cargo_bin_dir())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -299,6 +294,23 @@ impl CliTestEnv {
 
         let output = command.output()?;
         Ok(CliCommandResult::from_output(&output))
+    }
+
+    /// A `gpy-agent` command with this env's isolated `HOME`/`XDG_*`/`PATH`,
+    /// for tests that need to spawn concurrently or set a working directory.
+    pub fn gpy_agent_command(&self) -> Command {
+        self.command(Path::new(env!("CARGO_BIN_EXE_gpy-agent")))
+    }
+
+    fn command(&self, program: &Path) -> Command {
+        let mut command = Command::new(program);
+        command
+            .env("HOME", &self.root)
+            .env("XDG_CONFIG_HOME", &self.config_home)
+            .env("XDG_RUNTIME_DIR", &self.runtime_dir)
+            .env("XDG_CACHE_HOME", &self.cache_home)
+            .env("PATH", path_with_cargo_bin_dir());
+        command
     }
 }
 
