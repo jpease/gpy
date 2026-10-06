@@ -1979,6 +1979,118 @@ activation_accent = "#123456"
     );
 }
 
+/// Issue #731: a palette written by the outgoing theme's recommendation is
+/// replaced, and a user-chosen palette is preserved and reported.
+#[test]
+fn test_theme_use_force_replaces_palette_from_outgoing_recommendation() {
+    let env = CliTestEnv::with_config("[ui]\ntheme = \"starship\"\npalette = \"starship\"\n")
+        .expect("Failed to create isolated CLI test environment");
+    let themes_dir = env.themes_dir();
+    fs::create_dir_all(&themes_dir).expect("Failed to create themes dir");
+    fs::write(
+        themes_dir.join("starnord.toml"),
+        "[ui.recommended]\npalette = \"nord\"\n\n[segments.git]\nformat = \"$branch\"\n",
+    )
+    .expect("Failed to write starnord theme");
+
+    let env_overrides = [
+        ("GPY_CONFIG_PATH", env.config_path().display().to_string()),
+        (
+            "GPY_AGENT_SOCKET_PATH",
+            env.xdg_runtime_dir().join("gpy.sock").display().to_string(),
+        ),
+        (
+            "GPY_BUNDLED_PLUGIN_DIR",
+            env.root().join("empty_plugins").display().to_string(),
+        ),
+    ];
+
+    let res = env
+        .run_gpy_with_env(&["theme", "use", "starnord", "--force"], &env_overrides)
+        .expect("Failed to run forced theme use");
+    res.assert_success("forced theme use starnord");
+    let persisted = fs::read_to_string(env.config_path()).expect("read config");
+    assert!(
+        persisted.contains("palette = \"nord\""),
+        "palette must be replaced: {persisted}"
+    );
+    assert!(
+        res.stdout.contains("palette (nord)"),
+        "applied summary must name palette: {}",
+        res.stdout
+    );
+
+    // Hand-set palette differing from the outgoing recommendation is preserved and reported.
+    fs::write(env.config_path(), "[ui]\npalette = \"nord\"\n").expect("write config");
+    let res_kept = env
+        .run_gpy_with_env(&["theme", "use", "starship", "--force"], &env_overrides)
+        .expect("Failed to run forced theme use starship");
+    res_kept.assert_success("forced theme use starship");
+    let kept = fs::read_to_string(env.config_path()).expect("read config");
+    assert!(
+        kept.contains("palette = \"nord\""),
+        "user palette must be kept: {kept}"
+    );
+    let preserved_line = res_kept
+        .stdout
+        .lines()
+        .find(|line| line.contains("Preserved your explicit settings"))
+        .unwrap_or_default();
+    assert!(
+        preserved_line.contains("palette (nord)"),
+        "preserved summary must name palette: {}",
+        res_kept.stdout
+    );
+}
+
+/// Issue #731 (a)/(b), enabled by #730: after another CLI write, `--force`
+/// still applies every recommendation including the palette.
+#[test]
+fn test_theme_use_force_applies_palette_after_prior_cli_writes() {
+    for prior in [
+        &["theme", "use", "text"][..],
+        &["config", "set", "git.timeout_seconds", "5"][..],
+    ] {
+        let env =
+            CliTestEnv::with_config("").expect("Failed to create isolated CLI test environment");
+        let env_overrides = [
+            ("GPY_CONFIG_PATH", env.config_path().display().to_string()),
+            (
+                "GPY_AGENT_SOCKET_PATH",
+                env.xdg_runtime_dir().join("gpy.sock").display().to_string(),
+            ),
+            (
+                "GPY_BUNDLED_PLUGIN_DIR",
+                env.root().join("empty_plugins").display().to_string(),
+            ),
+        ];
+        let first = env
+            .run_gpy_with_env(prior, &env_overrides)
+            .expect("Failed to run prior CLI write");
+        first.assert_success("prior CLI write");
+        let res = env
+            .run_gpy_with_env(&["theme", "use", "starship", "--force"], &env_overrides)
+            .expect("Failed to run forced theme use starship");
+        res.assert_success("forced theme use starship");
+        let persisted = fs::read_to_string(env.config_path()).expect("read config");
+        assert!(
+            persisted.contains("palette = \"starship\""),
+            "palette must be applied after {prior:?}: {persisted}"
+        );
+        assert!(
+            res.stdout.contains("palette (starship)")
+                && res.stdout.contains("language detection (markers)"),
+            "applied summary after {prior:?}: {}",
+            res.stdout
+        );
+        assert!(
+            !res.stdout.contains("Preserved"),
+            "nothing may be preserved after {prior:?}: {}",
+            res.stdout
+        );
+    }
+}
+
 // ===========================================================================
 // Issue #672: theme new validates destination name
 // ===========================================================================
