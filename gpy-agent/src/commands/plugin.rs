@@ -109,9 +109,15 @@ fn resolve_manifest_target(path: &Path) -> Result<(PathBuf, PathBuf)> {
     let plugin_root = if path.is_dir() {
         path.to_path_buf()
     } else {
-        path.parent()
-            .ok_or_else(|| Error::invalid("Path has no parent directory"))?
-            .to_path_buf()
+        let parent = path
+            .parent()
+            .ok_or_else(|| Error::invalid("Path has no parent directory"))?;
+        // A bare filename like `plugin.toml` has an empty parent; it means the cwd.
+        if parent.as_os_str().is_empty() {
+            PathBuf::from(".")
+        } else {
+            parent.to_path_buf()
+        }
     };
     let manifest_path = if plugin_root.ends_with("plugin.toml") {
         plugin_root
