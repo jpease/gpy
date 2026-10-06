@@ -444,6 +444,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - Zsh no longer leaks a `gpy_cache_*` temp directory on every re-source,
   `exec zsh` or killed shell (#763); directories left by dead shells are
   removed at the next start.
+- GPY's fish `conf.d` entry point no longer loads in non-interactive shells
+  (`fish -c`, scripts, the supervisor child) (#769). `fish -i -c fish_prompt`
+  still previews the prompt.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
