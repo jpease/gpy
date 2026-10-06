@@ -337,6 +337,18 @@ fn gpy_stop_when_not_running_is_a_noop() {
     );
 }
 
+/// #804: `gpy debug prompt` with no agent is an unreachable agent: exit 1 with
+/// an `Error:` line on stderr, like every other failed connection.
+#[test]
+fn debug_prompt_fails_without_agent() {
+    let sandbox = AgentSandbox::new();
+
+    let out = sandbox.gpy(&["debug", "prompt"]);
+    assert_eq!(out.exit_code, 1_i32, "{out:?}");
+    assert!(out.stderr.contains("Error:"), "{out:?}");
+    assert!(out.stderr.contains("Agent is not running"), "{out:?}");
+}
+
 /// #742: a socket that accepts but never answers is an agent that could not
 /// be stopped; `stop` must say so and exit 1, from both binaries.
 #[test]

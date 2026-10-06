@@ -8,7 +8,7 @@ Debugging tools
 Usage: gpy debug <COMMAND>
 
 Commands:
-  prompt  Show timing breakdown for prompt rendering
+  prompt  Time the agent's ping, git and language round trips
   paths   Dump every path GPY resolves from the environment
   help    Print this message or the help of the given subcommand(s)
 
