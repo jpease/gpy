@@ -178,63 +178,18 @@ fn apply_enable(config: &mut Config, segment: &str) {
         }
         _ => {}
     }
-    insert_enabled_segment(config, segment);
+    insert_enabled_segment(&mut config.ui.enabled_segments, segment);
 }
 
-/// Add `segment` to `ui.enabled_segments` if it is not already listed.
+/// Add `segment` to `ui.enabled_segments` unless already listed.
 ///
-/// Builtins are placed in [`BUILTIN_ORDER`] (see [`rebuild_enabled_segments`]);
-/// any other segment is appended.
-fn insert_enabled_segment(config: &mut Config, segment: &str) {
-    if config.ui.enabled_segments.iter().any(|s| s == segment) {
+/// Appends: an existing entry never moves, so the order the user (or a theme
+/// preset) chose is preserved.
+fn insert_enabled_segment(list: &mut Vec<String>, segment: &str) {
+    if list.iter().any(|s| s == segment) {
         return;
     }
-
-    if let Ok(builtin_segment) = BuiltinSegment::try_from(segment) {
-        let mut enabled_builtin: BTreeSet<BuiltinSegment> = config
-            .ui
-            .enabled_segments
-            .iter()
-            .filter_map(|s| BuiltinSegment::try_from(s.as_str()).ok())
-            .collect();
-        enabled_builtin.insert(builtin_segment);
-
-        let plugin_segments: Vec<String> = config
-            .ui
-            .enabled_segments
-            .iter()
-            .filter(|s| BuiltinSegment::try_from(s.as_str()).is_err())
-            .cloned()
-            .collect();
-
-        config.ui.enabled_segments =
-            rebuild_enabled_segments(|b| enabled_builtin.contains(&b), plugin_segments);
-    } else {
-        config.ui.enabled_segments.push(segment.to_owned());
-    }
-}
-
-/// Rebuild an ordered `enabled_segments` list: builtins from [`BUILTIN_ORDER`]
-/// that `is_enabled` accepts, in `BUILTIN_ORDER`'s order, followed by
-/// `plugin_segments` in the order given.
-///
-/// Pure — no I/O, no config reads — so both `insert_enabled_segment` (the
-/// `gpy enable` CLI path) and `WizardState::apply_to` (the wizard's save
-/// path) can share one rebuild implementation instead of maintaining two
-/// near-identical copies.
-pub(crate) fn rebuild_enabled_segments(
-    is_enabled: impl Fn(BuiltinSegment) -> bool,
-    plugin_segments: impl IntoIterator<Item = String>,
-) -> Vec<String> {
-    let mut rebuilt: Vec<String> = BUILTIN_ORDER
-        .iter()
-        .copied()
-        .filter(|builtin| is_enabled(*builtin))
-        .map(BuiltinSegment::as_str)
-        .map(str::to_owned)
-        .collect();
-    rebuilt.extend(plugin_segments);
-    rebuilt
+    list.push(segment.to_owned());
 }
 
 /// Remove a segment from enabled segments list
@@ -376,6 +331,20 @@ mod tests {
     }
 
     #[test]
+    fn insert_enabled_segment_appends_without_reordering() {
+        let mut list = vec!["directory".to_owned(), "clock".to_owned()];
+        insert_enabled_segment(&mut list, "status");
+        assert_eq!(list, ["directory", "clock", "status"]);
+
+        insert_enabled_segment(&mut list, "directory");
+        assert_eq!(
+            list,
+            ["directory", "clock", "status"],
+            "existing name is a no-op"
+        );
+    }
+
+    #[test]
     fn is_effectively_enabled_requires_flag_and_list_membership() {
         // flag true + absent from the list: not rendered.
         let absent = config_with(&["directory"], true);
@@ -412,7 +381,7 @@ mod tests {
         assert!(config.language.enabled);
         assert_eq!(
             config.ui.enabled_segments,
-            vec!["clock", "duration", "language", "directory", "git"]
+            vec!["clock", "duration", "directory", "git", "language"]
         );
     }
 

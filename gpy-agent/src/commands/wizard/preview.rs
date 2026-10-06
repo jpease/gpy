@@ -182,6 +182,20 @@ struct ChainEntry {
     is_first: bool,
 }
 
+/// Segments in the order the preview draws them: the configured list order
+/// (what a save will write), then any offered segment the list does not
+/// mention, in `available_segments()` order.
+fn preview_order<'a>(
+    state: &'a WizardState,
+    config: &'a Config,
+) -> impl Iterator<Item = &'a String> {
+    let unlisted = state
+        .available_segments()
+        .iter()
+        .filter(|segment| !config.ui.enabled_segments.contains(segment));
+    config.ui.enabled_segments.iter().chain(unlisted)
+}
+
 /// Render live preview lines for the wizard's currently-selected
 /// theme/palette/segments: one line for the main segment chain, plus a
 /// second line for the status/character segment when it's enabled.
@@ -228,7 +242,7 @@ pub fn render_preview_line(
     let mut prev_foreground: Option<TemplateColor> = None;
     let mut prev_background: Option<TemplateColor> = None;
 
-    for segment in state.available_segments() {
+    for segment in preview_order(state, config) {
         if is_status_segment(segment) || !state.is_segment_enabled(segment) {
             continue;
         }
@@ -1069,6 +1083,35 @@ mod tests {
         assert!(
             !text.contains("128ms") && text.is_empty(),
             "disabled duration segment must not appear in the composed line, got {text:?}"
+        );
+    }
+
+    #[test]
+    fn render_preview_line_follows_enabled_segments_order() {
+        let config = make_config(
+            &["directory", "clock"],
+            GitLanguageFlags {
+                git: false,
+                language: false,
+            },
+        );
+        let state = test_state(config.clone());
+
+        let mut theme = ThemeConfig::default();
+        theme.segments.directory.format = Some("[DIRMARK]".to_owned());
+
+        let lines =
+            render_preview_line(&state, &config, &theme, &Palette::default(), &make_facts());
+        let text: String = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        let dir = text.find("DIRMARK");
+        let clock = text.find("9:41");
+        assert!(
+            dir.is_some() && clock.is_some() && dir < clock,
+            "directory must precede clock, got {text:?}"
         );
     }
 

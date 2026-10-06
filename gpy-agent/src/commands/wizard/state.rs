@@ -779,9 +779,8 @@ impl WizardState {
 
     /// Apply the current selection onto `config`.
     ///
-    /// Shares the `BUILTIN_ORDER` rebuild with `gpy enable` via
-    /// `commands::segments::rebuild_enabled_segments` (not just a mirrored
-    /// copy of the same logic), so a save through the wizard produces the
+    /// Edits the list order-preservingly (new names are appended), like
+    /// `gpy enable`/`gpy disable`, so a save through the wizard produces the
     /// same shape of config a sequence of `gpy enable`/`gpy disable`/`gpy
     /// theme use`/`gpy palette use` calls would: a selected `git`/`language`
     /// is listed with its flag set, and a deselected one has its flag cleared
@@ -803,34 +802,24 @@ impl WizardState {
         config.git.enabled = self.is_segment_enabled(BuiltinSegment::Git.as_str());
         config.language.enabled = self.is_segment_enabled(BuiltinSegment::Language.as_str());
 
-        // Rebuild ui.enabled_segments preserving BUILTIN_ORDER for builtin
-        // segments and appending any non-builtin (plugin) segments the
-        // selection still includes, in `available_segments`'s order.
-        let plugin_segments: Vec<String> = self
-            .available_segments
-            .iter()
-            .filter(|segment| {
-                BuiltinSegment::try_from(segment.as_str()).is_err()
-                    && self.is_segment_enabled(segment)
-            })
-            .cloned()
-            .collect();
-        let previously_listed = |builtin: BuiltinSegment| {
-            config
-                .ui
-                .enabled_segments
-                .iter()
-                .any(|s| s == builtin.as_str())
-        };
-        let rebuilt = crate::commands::segments::rebuild_enabled_segments(
-            |builtin| {
-                self.is_segment_enabled(builtin.as_str())
-                    || (matches!(builtin, BuiltinSegment::Git | BuiltinSegment::Language)
-                        && previously_listed(builtin))
-            },
-            plugin_segments,
-        );
-        config.ui.enabled_segments = rebuilt;
+        // Edit ui.enabled_segments in place so the existing order survives:
+        // drop offered names the user deselected (a listed git/language entry
+        // stays, like `gpy disable`), keep every name the wizard does not
+        // offer, then append newly selected names in `available_segments`
+        // order.
+        config.ui.enabled_segments.retain(|name| {
+            !self.available_segments.contains(name)
+                || self.is_segment_enabled(name)
+                || matches!(
+                    BuiltinSegment::try_from(name.as_str()),
+                    Ok(BuiltinSegment::Git | BuiltinSegment::Language)
+                )
+        });
+        for name in &self.available_segments {
+            if self.is_segment_enabled(name) && !config.ui.enabled_segments.contains(name) {
+                config.ui.enabled_segments.push(name.clone());
+            }
+        }
     }
 }
 
@@ -2108,6 +2097,25 @@ mod tests {
             ],
             "enabled_segments must follow BUILTIN_ORDER, not toggle order"
         );
+    }
+
+    #[test]
+    fn apply_to_preserves_existing_order_and_unoffered_entries() {
+        let config = make_config(
+            "default",
+            "default",
+            GitLanguageFlags {
+                git: false,
+                language: false,
+            },
+            &["directory", "clock", "removed-plugin-seg"],
+        );
+        let state = test_state(config.clone());
+
+        let mut applied = config.clone();
+        state.apply_to(&mut applied);
+
+        assert_eq!(applied.ui.enabled_segments, config.ui.enabled_segments);
     }
 
     #[test]
