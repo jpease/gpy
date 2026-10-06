@@ -522,6 +522,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - The shell language pre-filters use the agent's own marker list, exported
   with the theme (#785), so non-git projects marked only by `setup.py`,
   `Package.swift`, `Rakefile` and similar files show their language.
+- `gpy theme import` no longer inserts an unstyled space between the
+  `git_branch` and `git_status` formats (#795), so powerline and Pure-style
+  presets import without a gap.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

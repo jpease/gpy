@@ -91,6 +91,11 @@ enum Scenario {
     /// GPY's shells decide it from the theme's `add_newline` / `two_line`, so
     /// the imported theme's exported `__gpy_*` flags are compared instead.
     Layout,
+    /// The `git` segment, which Starship draws as `$git_branch$git_status`:
+    /// both modules are rendered and concatenated, in a repository with one
+    /// untracked file. Rows must not use `$symbol` (GPY's branch icon has no
+    /// trailing space, Starship's has), so they compare the join only.
+    Git,
 }
 
 impl Scenario {
@@ -102,6 +107,7 @@ impl Scenario {
             Self::Hostname => "hostname",
             Self::Character(_) => "character",
             Self::Layout => "prompt",
+            Self::Git => "git_branch",
         }
     }
 
@@ -134,6 +140,11 @@ impl Scenario {
                     .map(str::to_owned)
                     .to_vec();
             }
+            Self::Git => args.extend([
+                "git".to_owned(),
+                "--cwd".to_owned(),
+                cwd.to_string_lossy().into_owned(),
+            ]),
         }
         args.extend(["--format".to_owned(), "ansi".to_owned()]);
         args
@@ -170,6 +181,30 @@ fn machine_hostname(home: &Path) -> String {
 
 /// Render `scenario` with the real `starship` binary using `config`.
 fn render_with_starship(env: &CliTestEnv, config: &Path, scenario: Scenario, cwd: &Path) -> String {
+    // The git segment is `$git_branch$git_status`: concatenate both modules.
+    if matches!(scenario, Scenario::Git) {
+        let mut result = String::new();
+        for module in ["git_branch", "git_status"] {
+            let mut command = scrubbed("starship", env.root());
+            command
+                .env("STARSHIP_CONFIG", config)
+                .env("STARSHIP_CACHE", env.root().join(".starship-cache"))
+                .env("STARSHIP_LOG", "error")
+                .env("PWD", cwd)
+                .current_dir(cwd)
+                .args(["module", module]);
+            let output = command.output().expect("run starship");
+            assert!(
+                output.status.success(),
+                "starship module {} failed: {}",
+                module,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            result.push_str(&String::from_utf8(output.stdout).expect("starship output is UTF-8"));
+        }
+        return result;
+    }
+
     let mut command = scrubbed("starship", env.root());
     command
         .env("STARSHIP_CONFIG", config)
@@ -255,6 +290,36 @@ fn describe(cells: &[(char, Look)]) -> String {
         .join("\n")
 }
 
+/// Create a repository in `cwd` with one commit on `main` and an untracked
+/// file, so `git_status` has something to report. Every git call must succeed.
+fn setup_git_repo(cwd: &Path) {
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args([
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "init.defaultBranch=main",
+                "-c",
+                "user.name=Test User",
+                "-c",
+                "user.email=test@example.com",
+            ])
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "--quiet"]);
+    git(&["commit", "--quiet", "--allow-empty", "-m", "initial"]);
+    fs::write(cwd.join("untracked.txt"), "untracked").expect("create untracked file");
+}
+
 /// Run one row: render both sides and require identical normalized output.
 fn check_row(name: &str, config: &str, scenario: Scenario) {
     if !starship_is_installed() {
@@ -266,12 +331,16 @@ fn check_row(name: &str, config: &str, scenario: Scenario) {
     fs::write(&config_path, config).expect("write starship config");
     let cwd = match scenario {
         Scenario::Directory(relative) => env.root().join(relative),
-        Scenario::Duration(_) | Scenario::Hostname | Scenario::Character(_) | Scenario::Layout => {
-            env.root().to_path_buf()
-        }
+        Scenario::Duration(_)
+        | Scenario::Hostname
+        | Scenario::Character(_)
+        | Scenario::Layout
+        | Scenario::Git => env.root().to_path_buf(),
     };
     fs::create_dir_all(&cwd).expect("create fixture directory");
-
+    if matches!(scenario, Scenario::Git) {
+        setup_git_repo(&cwd);
+    }
     if matches!(scenario, Scenario::Layout) {
         check_layout_row(name, &env, &config_path, config, &cwd);
         return;
@@ -403,4 +472,8 @@ parity_rows! {
     layout_format_with_line_break_no_newline: Scenario::Layout, "add_newline = false\nformat = \"$directory$git_branch$cmd_duration$line_break$character\"\n";
     layout_format_without_line_break: Scenario::Layout, "format = \"$directory$character\"\n";
     layout_format_without_line_break_no_newline: Scenario::Layout, "add_newline = false\nformat = \"$directory$character\"\n";
+    // #795: `$git_branch$git_status` joins with nothing between the two.
+    git_default_formats_without_symbol: Scenario::Git, "[git_branch]\nformat = \"on [$branch]($style) \"\n[git_status]\n";
+    git_pure_preset_format: Scenario::Git, "[git_branch]\nformat = \"[$branch]($style)\"\nstyle = \"bold purple\"\n[git_status]\nformat = \"[$all_status]($style)\"\nstyle = \"bold red\"\n";
+    git_powerline_format: Scenario::Git, "[git_branch]\nstyle = \"bg:#394260\"\nformat = '[[ $branch ](fg:#769ff0 bg:#394260)]($style)'\n[git_status]\nstyle = \"bg:#394260\"\nformat = '[[($all_status$ahead_behind )](fg:#769ff0 bg:#394260)]($style)'\n";
 }

@@ -424,9 +424,9 @@ pub fn translate_git(
 
     let format = match (branch_part.is_empty(), status_part.is_empty()) {
         (true, true) => None,
-        (false, true) => Some(format!("{} ", branch_part.trim_end())),
+        (false, true) => Some(branch_part),
         (true, false) => Some(status_part),
-        (false, false) => Some(format!("{} {status_part}", branch_part.trim_end())),
+        (false, false) => Some(format!("{branch_part}{status_part}")),
     };
     GitTheme {
         format,
@@ -1220,6 +1220,19 @@ mod tests {
         assert_eq!(
             format,
             r"on [$symbol$branch](bold purple) ([\[$status$ahead_behind\]](bold red) )"
+        );
+    }
+
+    #[test]
+    fn git_branch_and_status_concatenate_without_separator() {
+        use super::translate_git;
+        let branch = table("format = \"[$branch](bg:blue)\"\n");
+        let status = table("format = \"[$all_status](bg:blue)\"\n");
+        let mut warnings = Warnings::new();
+        let theme = translate_git(Some(&branch), Some(&status), None, &mut warnings);
+        assert_eq!(
+            theme.format.as_deref(),
+            Some("[$branch](bg:blue)[$status](bg:blue)")
         );
     }
 
