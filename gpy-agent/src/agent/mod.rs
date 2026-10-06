@@ -1024,11 +1024,19 @@ impl Agent {
         // a blocking thread and only after the server has begun accepting below.
         // A first request or reload doorbell racing this warmup gets a cache miss and the
         // shell falls back to spawning `gpy-agent theme export`, so the prompt is
-        // always correct, never gated on this write.
+        // always correct, never gated on this write. If the write changed the
+        // export (config edited while no agent ran), tracked shells are rung
+        // with `.reload` so they drop the stale theme they sourced (#701).
         {
             let theme_manager_for_export = Arc::clone(&self.ctx.theme_manager);
             let config_for_export = self.ctx.config_manager.get();
             tokio::task::spawn_blocking(move || {
+                #[cfg(unix)]
+                lifecycle::start::warm_theme_export_cache(
+                    &theme_manager_for_export,
+                    &config_for_export,
+                );
+                #[cfg(not(unix))]
                 if let Err(e) = crate::cache::write_theme_export_cache(
                     &theme_manager_for_export,
                     &config_for_export,

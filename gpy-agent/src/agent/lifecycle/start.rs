@@ -274,16 +274,20 @@ fn renudge_unregistered_shells_in(
 
     for pid in pids {
         debug_log!("agent", "Re-nudging unregistered tracked shell {pid}");
-        request_reregistration(shell_dir, pid);
+        raise_shell_flag(shell_dir, pid, ShellFlag::Reregister);
     }
 }
 
-/// Write `<pid>.reregister` in `shell_dir`, then ring the doorbell. The flag
+/// Write `flag` for `pid` in `shell_dir`, then ring the doorbell. The flag
 /// must exist before the signal, or the shell's handler finds nothing to do.
 #[cfg(unix)]
-fn request_reregistration(shell_dir: &std::path::Path, pid: u32) {
-    if let Err(e) = write_shell_flag(shell_dir, pid, ShellFlag::Reregister) {
-        debug_log!("agent", "Failed to write reregister flag for {pid}: {e}");
+fn raise_shell_flag(shell_dir: &std::path::Path, pid: u32, flag: ShellFlag) {
+    if let Err(e) = write_shell_flag(shell_dir, pid, flag) {
+        debug_log!(
+            "agent",
+            "Failed to write {} flag for {pid}: {e}",
+            flag.suffix()
+        );
         return;
     }
     let _ = ring_doorbell(pid);
@@ -346,8 +350,54 @@ pub(crate) fn notify_existing_shells_of_restart() {
     nudge_all_tracked_shells_in(&default_shell_dir());
 }
 
+/// Warm the theme-export cache for a freshly started agent and, if that
+/// rewrote it, ask every alive tracked shell to reload (#701).
+///
+/// A config change made while no agent ran is never seen by the file
+/// watcher, so this write is the only sign of it. Shells still hold the
+/// variables they sourced from the old export, and the restart nudge only
+/// re-registers them. The client registry is empty in a just-started agent, so
+/// `ClientDirectory::notify_reload` would reach nobody: the tracked shells
+/// are flagged instead. An unchanged export leaves the file alone and rings
+/// nobody, so a plain restart stays a re-registration only.
+#[cfg(unix)]
+pub(crate) fn warm_theme_export_cache(
+    theme_manager: &crate::theme::ThemeManager,
+    config: &crate::config::Config,
+) {
+    warm_theme_export_cache_with(&default_shell_dir(), || {
+        crate::cache::write_theme_export_cache(theme_manager, config)
+    });
+}
+
+/// [`warm_theme_export_cache`] with the export write supplied by the caller
+/// and an explicit tracking directory, so tests can point both at temp dirs.
+#[cfg(unix)]
+fn warm_theme_export_cache_with(
+    shell_dir: &std::path::Path,
+    write_export: impl FnOnce() -> Result<bool>,
+) {
+    match write_export() {
+        Ok(true) => flag_all_tracked_shells_in(shell_dir, ShellFlag::Reload),
+        Ok(false) => {}
+        Err(e) => {
+            debug_log!(
+                "agent",
+                "Warning: Failed to write initial theme export cache ({e})"
+            );
+        }
+    }
+}
+
 /// Request re-registration from every alive shell tracked in `shell_dir`,
 /// removing the files of ones that have exited.
+#[cfg(unix)]
+fn nudge_all_tracked_shells_in(shell_dir: &std::path::Path) {
+    flag_all_tracked_shells_in(shell_dir, ShellFlag::Reregister);
+}
+
+/// Raise `flag` for every alive shell tracked in `shell_dir`, removing the
+/// files of ones that have exited.
 ///
 /// Shares [`ShellRenudger::pids_to_nudge`]'s scan with the periodic
 /// re-nudge path (see [`renudge_unregistered_shells_in`]) instead of walking
@@ -358,29 +408,33 @@ pub(crate) fn notify_existing_shells_of_restart() {
 ///
 /// - `is_registered` is hardwired to `false`, preserving this path's "notify
 ///   *everyone*" semantics. That is not just convenient here, it is the only
-///   correct choice: this call's whole purpose is to notify every alive
-///   tracked shell of a restart, registered or not. Wiring in the real
-///   registry lookup would narrow that down to "notify only the stragglers
-///   the registry doesn't know about yet" — which is
+///   correct choice: the startup notifications (restart nudge, offline theme
+///   change) are for every alive tracked shell, registered or not. Wiring in
+///   the real registry lookup would narrow that down to "notify only the
+///   stragglers the registry doesn't know about yet" — which is
 ///   [`renudge_unregistered_shells_in`]'s job, `pids_to_nudge`'s other,
 ///   already-correct caller, not this one's.
 /// - The [`ShellRenudger`] is created fresh per call, so
-///   [`MAX_RENUDGE_ATTEMPTS`] can never suppress a restart nudge: every PID
-///   starts at zero attempts and this is a one-shot call. The budget only
-///   exists to bound the *periodic* caller, which reuses one renudger for the
-///   agent's lifetime.
+///   [`MAX_RENUDGE_ATTEMPTS`] can never suppress a startup notification:
+///   every PID starts at zero attempts and this is a one-shot call. The
+///   budget only exists to bound the *periodic* caller, which reuses one
+///   renudger for the agent's lifetime.
 ///
 /// Liveness comes from [`tracked_shell_liveness`]: `is_client_alive` (which
 /// treats `EPERM` as alive, so a live shell we merely lack permission to
 /// signal keeps its tracking file) plus the recycled-PID check (#781).
 #[cfg(unix)]
-fn nudge_all_tracked_shells_in(shell_dir: &std::path::Path) {
+fn flag_all_tracked_shells_in(shell_dir: &std::path::Path, flag: ShellFlag) {
     let mut renudger = ShellRenudger::default();
     let pids = renudger.pids_to_nudge(shell_dir, |_| false, tracked_shell_liveness());
 
     for pid in pids {
-        debug_log!("agent", "Nudging tracked shell {pid} after agent restart");
-        request_reregistration(shell_dir, pid);
+        debug_log!(
+            "agent",
+            "Raising {} for tracked shell {pid} after agent start",
+            flag.suffix()
+        );
+        raise_shell_flag(shell_dir, pid, flag);
     }
 }
 
@@ -884,6 +938,64 @@ mod tests {
         );
         let _ = child.kill();
         let _ = child.wait();
+    }
+
+    /// #701: the startup warm-up raises `.reload` only when the export changed.
+    ///
+    /// A plain restart (same config as the export on disk) must raise no
+    /// `.reload`; a config edited while no agent ran must.
+    #[cfg(unix)]
+    #[test]
+    fn warm_theme_export_flags_reload_only_when_the_export_changed() {
+        let shell_dir = tempfile::tempdir().expect("create shell dir");
+        let cache = tempfile::tempdir().expect("create cache dir");
+        let config = crate::config::Config::default();
+        let default_theme = crate::theme::ThemeManager::new("default").expect("default theme");
+        let text_theme = crate::theme::ThemeManager::new("text").expect("text theme");
+        // The previous agent's export, as the shell sourced it.
+        crate::cache::theme_export::write_theme_export_to_dir(
+            cache.path(),
+            &default_theme,
+            &config,
+        )
+        .expect("seed export");
+
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn unhandled stand-in shell");
+        let pid = child.id();
+        track_shells(shell_dir.path(), &[pid]);
+        let reload_flag = shell_dir.path().join(format!("{pid}.reload"));
+
+        super::warm_theme_export_cache_with(shell_dir.path(), || {
+            crate::cache::theme_export::write_theme_export_to_dir(
+                cache.path(),
+                &default_theme,
+                &config,
+            )
+        });
+        let flagged_on_unchanged = reload_flag.exists();
+
+        super::warm_theme_export_cache_with(shell_dir.path(), || {
+            crate::cache::theme_export::write_theme_export_to_dir(
+                cache.path(),
+                &text_theme,
+                &config,
+            )
+        });
+        let flagged_on_changed = reload_flag.exists();
+
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(
+            !flagged_on_unchanged,
+            "an unchanged export must not ask shells to reload"
+        );
+        assert!(
+            flagged_on_changed,
+            "a changed export must write the tracked shell's reload flag"
+        );
     }
 
     /// #391: `fork_agent` bounds runtime teardown with `shutdown_timeout`.

@@ -143,9 +143,12 @@ fn bench_theme_manager_load(c: &mut Criterion) {
     });
 }
 
-/// Bench: `write_theme_export_cache`'s real rendering + atomic-write work,
-/// via the `write_theme_export_to_dir` seam so the target directory is a
-/// tempdir rather than the real cache directory.
+/// Bench: `write_theme_export_cache`'s real rendering + compare-and-write work.
+///
+/// Runs via the `write_theme_export_to_dir` seam so the target directory is a
+/// tempdir rather than the real cache directory. Every iteration after the
+/// first finds the export unchanged, so this measures the common restart
+/// cost: render and compare, no write (#701).
 fn bench_theme_export(c: &mut Criterion) {
     let theme_manager = ThemeManager::new("default").expect("load theme");
     let config = Config::default();

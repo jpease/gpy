@@ -140,13 +140,19 @@ end
 # Returns the status of whichever path ran (source's status, the spawned
 # command's status, or 1 if neither a cache file nor an agent binary could
 # be found).
+#
+# Records the mtime of the cache file it sourced in __gpy_theme_export_mtime
+# (erased when it had to spawn instead), so registration can tell whether the
+# agent rewrote the export since (__gpy_reload_if_theme_export_changed, #701).
 function __gpy_apply_theme_export --description 'source the theme export cache or spawn the agent to produce it'
     set -l cache_path (__gpy_theme_export_cache_path)
     if test -n "$cache_path" -a -f "$cache_path"
+        set -g __gpy_theme_export_mtime (__gpy_file_mtime "$cache_path")
         source "$cache_path"
         return $status
     end
 
+    set -e __gpy_theme_export_mtime
     set -l agent_binary (__gpy_resolve_agent_binary)
     if test -n "$agent_binary"
         "$agent_binary" theme export --format fish 2>/dev/null | source
