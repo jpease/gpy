@@ -1062,14 +1062,17 @@ fn per_worktree_head_write_wakes_zero_sibling_worktrees() {
     thread::sleep(Duration::from_millis(150));
 
     // Write the first worktree's own HEAD directly, so no shared ref under
-    // `<common>/refs/heads` is touched alongside it.
+    // `<common>/refs/heads` is touched alongside it. Detach it at its current
+    // commit: rewriting the ref it already holds is byte-identical and so
+    // invisible to the poll backend (#817).
     let admin_dir = fixture.common.join("worktrees").join("wt_sib_sibone");
     assert!(
         admin_dir.is_dir(),
         "expected per-worktree admin dir at {}",
         admin_dir.display()
     );
-    fs::write(admin_dir.join("HEAD"), "ref: refs/heads/sibone\n").expect("rewrite worktree HEAD");
+    let detached_head = format!("{}\n", rev_parse(&first, "HEAD"));
+    fs::write(admin_dir.join("HEAD"), detached_head).expect("rewrite worktree HEAD");
 
     assert!(
         wait_for_repo(&events, &first, Duration::from_secs(20)),
@@ -1776,7 +1779,10 @@ fn linked_worktree_admin_write_wakes_zero_parent_repos() {
         "expected per-worktree admin dir at {}",
         admin_dir.display()
     );
-    fs::write(admin_dir.join("HEAD"), "ref: refs/heads/npbranch\n").expect("rewrite worktree HEAD");
+    // Detach rather than rewrite the ref HEAD already holds: a byte-identical
+    // write is invisible to the poll backend (#817).
+    let detached_head = format!("{}\n", rev_parse(&linked, "HEAD"));
+    fs::write(admin_dir.join("HEAD"), detached_head).expect("rewrite worktree HEAD");
 
     assert!(
         wait_for_repo(&events, &linked, Duration::from_secs(20)),
