@@ -474,6 +474,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   installer created.
 - The oneline Zsh install and both uninstallers honour `ZDOTDIR`, using
   `${ZDOTDIR:-$HOME}/.zshrc` instead of a `~/.zshrc` zsh never reads (#748).
+- Template style strings are case-insensitive (`Bold Red`, `BOLD red`), and
+  `none` / `fg:none` empty the whole style while `bg:none` clears only the
+  background, as in Starship (#794). Palette references keep their case.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
