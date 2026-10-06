@@ -31,11 +31,12 @@ pub fn run() -> Result<()> {
 
     let mut all_ok = true;
 
-    all_ok &= check_agent_status();
+    let loaded_config = config::loader::load_config();
+    all_ok &= check_agent_status(loaded_config.as_ref().ok());
     println!();
 
     let discovery = discover_plugins();
-    all_ok &= check_config_and_theme(&discovery);
+    all_ok &= check_config_and_theme(&loaded_config, &discovery);
     println!();
 
     all_ok &= check_plugins(&discovery);
@@ -56,9 +57,13 @@ pub fn run() -> Result<()> {
     }
 }
 
-fn check_agent_status() -> bool {
+fn check_agent_status(cfg: Option<&config::Config>) -> bool {
     println!("[Agent]");
     print!("  Checking process... ");
+    if cfg.is_some_and(|loaded| !loaded.agent.enabled) {
+        println!("ℹ️  Disabled via config (agent.enabled = false)");
+        return true;
+    }
     if check_agent_running() {
         println!("✅ Running");
         true
@@ -87,10 +92,13 @@ fn check_active_palette(palette_name: &str) -> bool {
     }
 }
 
-fn check_config_and_theme(discovery: &crate::plugin::PluginDiscovery) -> bool {
+fn check_config_and_theme(
+    loaded_config: &Result<config::Config>,
+    discovery: &crate::plugin::PluginDiscovery,
+) -> bool {
     println!("[Configuration]");
     print!("  Checking config file... ");
-    let cfg = match config::loader::load_config() {
+    let cfg = match loaded_config {
         Ok(cfg) => {
             println!("✅ Valid");
             cfg

@@ -233,6 +233,28 @@ fn doctor_reports_not_running_when_no_agent() {
 }
 
 #[test]
+fn doctor_accepts_agent_disabled_via_config() {
+    let sandbox = AgentSandbox::new();
+    sandbox
+        .env
+        .write_config("[agent]\nenabled = false\n")
+        .expect("write config");
+
+    let doctor = sandbox.gpy(&["doctor"]);
+    assert_eq!(
+        doctor.exit_code, 0_i32,
+        "a disabled agent is not a health failure: {doctor:?}"
+    );
+    assert!(
+        doctor
+            .stdout
+            .contains("Checking process... ℹ️  Disabled via config (agent.enabled = false)"),
+        "{doctor:?}"
+    );
+    assert!(!doctor.stdout.contains("Not running"), "{doctor:?}");
+}
+
+#[test]
 fn doctor_reports_not_running_on_a_stale_socket() {
     let sandbox = AgentSandbox::new();
     let _listener = bind_silent_socket(&sandbox.socket_path);

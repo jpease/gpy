@@ -854,9 +854,13 @@ With no agent running the first check reads `⚠️  Not running` with the hint
 ``Start the agent with `gpy start` or just use your prompt.``, and the
 command exits `1`.
 
+With `agent.enabled = false` the agent check reads
+`ℹ️  Disabled via config (agent.enabled = false)` and is not counted as a
+failure (the agent is not probed), so the command can still exit `0`.
+
 **Exit Codes:**
 - `0` - All checks passed
-- `1` - One or more checks failed (including the agent not running)
+- `1` - One or more checks failed (including the agent not running, unless it is disabled via `agent.enabled = false`)
 
 ---
 
