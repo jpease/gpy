@@ -607,6 +607,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   instead of failing with "Plugin root '' is not a directory" (#805).
 - The directory segment no longer renders `/` for a working directory with
   a trailing slash or `/.` (#755).
+- `install.sh` and `install-oneline.sh` keep only the most recent
+  `gpy-agent` and `gpy` backup in `~/.local/bin` instead of adding a full
+  copy on every run (#807).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
