@@ -243,7 +243,7 @@ Controls how the directory segment renders the current path.
 | `truncation_length` | integer | `3` | `1`–`255` | Trailing path components kept when `display = "truncated"`. |
 | `truncation_symbol` | string | `""` | no control characters | Prefix shown before a truncated path (e.g. `"…/"`). |
 | `max_length` | integer | `80` | `1`–`1000` | Character cap applied to the rendered directory string after the display mode is resolved — even a `"full"` path can be shortened if it exceeds this. Truncation normally prefixes a 3-character `"..."` ellipsis before the kept tail; for `max_length` values of `1`–`3` (too small to fit an ellipsis plus any real content) the ellipsis is dropped and the raw last `max_length` characters are shown instead. |
-| `truncate_to_repo` | bool | `false` | — | Anchors the displayed path at the enclosing git repo root (the repo folder becomes the leading component). Affects `"truncated"`/`"full"` only, applied before `max_length`. No effect outside a git repo. |
+| `truncate_to_repo` | bool | `false` | — | Anchors the displayed path at the enclosing git repo root (the repo folder becomes the leading component). Affects `"truncated"`/`"full"` only, applied before `max_length`. No effect outside a git repo, and a repo rooted at `$HOME` is ignored (paths show as `~/…`). |
 
 ```toml
 [ui]

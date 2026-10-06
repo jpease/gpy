@@ -84,7 +84,8 @@ truncate_to_repo = false
 the enclosing git repository root: the repo folder becomes the leading
 component and everything above it is dropped. It affects `truncated` and `full`
 (not `basename`/`abbreviated`), and applies before `max_length`. Outside a git
-repo it has no effect. The Starship preset enables it via
+repo it has no effect. A repo rooted at your home directory (e.g. a dotfiles
+repo) is not used as an anchor, so paths under it still show as `~/…`. The Starship preset enables it via
 `gpy theme use starship --apply-layout`.
 
 ### Theme Configuration

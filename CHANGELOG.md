@@ -618,6 +618,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - The oneline Fish install aborts, leaving `config.fish` untouched, when
   `gpy_init.fish` or `fish_prompt.fish` fails to download (#808), instead of
   installing a config that sources a missing file.
+- `ui.directory.truncate_to_repo` no longer anchors at a git repository
+  rooted at `$HOME` (dotfiles), so paths under home show as `~/…` (#753).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
