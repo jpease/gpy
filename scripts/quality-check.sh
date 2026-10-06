@@ -183,7 +183,9 @@ check_fish_syntax() {
 # shellcheck disable=SC2329
 check_fish_formatting() {
     if ! command -v fish_indent >/dev/null 2>&1; then
-        print_warning "fish_indent not available, skipping formatting check"
+        echo "SKIP: fish_indent not available, skipping formatting check"
+        # A skipped check is a failure under CI (#650 skip contract, #813).
+        [[ -n "${CI:-}" ]] && return 1
         return 0
     fi
 
@@ -254,7 +256,9 @@ shellcheck_targets() {
 # shellcheck disable=SC2329
 check_shellcheck() {
     if ! command -v shellcheck >/dev/null 2>&1; then
-        print_warning "shellcheck not available, skipping shell lint (brew install shellcheck)"
+        echo "SKIP: shellcheck not available, skipping shell lint (brew install shellcheck)"
+        # A skipped check is a failure under CI (#650 skip contract, #813).
+        [[ -n "${CI:-}" ]] && return 1
         return 0
     fi
 

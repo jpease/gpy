@@ -69,7 +69,7 @@ done
 
 echo "--- (b) the ubuntu job installs every shell-suite prerequisite ---"
 apt_line="$(printf '%s\n' "$gate" | grep -E 'apt-get install -y' | head -n 1)"
-for pkg in fish zsh socat netcat-openbsd python3 jq; do
+for pkg in fish zsh socat netcat-openbsd python3 jq shellcheck; do
     if [[ " $apt_line " == *" $pkg "* ]]; then
         pass "gate apt line installs $pkg"
     else
@@ -126,6 +126,25 @@ if printf '%s\n' "$validate" | grep -q 'moonrepo/setup-toolchain' && printf '%s\
 else
     fail "release validate must install moon and run just lint (a tag could otherwise ship code the PR gate rejects)"
 fi
+
+echo "--- (f) a missing gate tool is a visible SKIP, and a failure under CI (#813) ---"
+for fn in check_fish_formatting check_shellcheck; do
+    body="$(sed -n "/^${fn}() {/,/^}/p" scripts/quality-check.sh)"
+    if [[ -z "$body" ]]; then
+        fail "$fn not found in scripts/quality-check.sh"
+        continue
+    fi
+    if printf '%s\n' "$body" | grep -q 'echo "SKIP:'; then
+        pass "$fn prints a SKIP: line when its tool is missing"
+    else
+        fail "$fn has no SKIP: line for a missing tool (#650 skip contract)"
+    fi
+    if printf '%s\n' "$body" | grep -qE '\[\[ -n "\$\{CI:-\}" \]\] && return 1'; then
+        pass "$fn fails a skipped check under CI"
+    else
+        fail "$fn does not fail a skipped check under CI"
+    fi
+done
 
 echo "--- (e) the Windows leg is defined once and declares its shell-less runner ---"
 WINDOWS_GATE=".github/workflows/windows-gate.yml"

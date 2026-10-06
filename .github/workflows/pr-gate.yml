@@ -116,7 +116,7 @@ jobs:
         run: |
           sudo add-apt-repository -y ppa:fish-shell/release-4
           sudo apt-get update
-          sudo apt-get install -y fish zsh socat netcat-openbsd python3 jq
+          sudo apt-get install -y fish zsh socat netcat-openbsd python3 jq shellcheck
           curl -sS https://starship.rs/install.sh | sh -s -- -y
           fish --version
           starship --version

@@ -509,6 +509,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `scripts/quality-check.sh --fix` changes to the repository root before
   formatting (#811); run from another directory it reformatted that
   directory's fish files.
+- A missing `fish_indent` or `shellcheck` is reported as a `SKIP:` line by
+  `scripts/quality-check.sh` and fails the gate under CI (#813), instead of
+  passing silently.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
