@@ -111,6 +111,7 @@ sections above describe the ones worth reading first.
 - `agent_disabled_no_supervisor.test.fish`
 - `supervisor_cadence.test.fish`
 - `supervisor_output_detached.test.fish`
+- `supervisor_disabled_still_registers.test.fish`
 - `test_helpers_scoped_kill.test.fish`
 - `workspace_error_keeps_registration.test.fish`
 

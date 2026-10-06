@@ -1334,15 +1334,12 @@ end
 # Only set up event handlers if GPY is not completely disabled
 if not set -q GPY_SUPERVISOR_CHILD; and not test "$GPY_AGENT_ENABLED" = 0 -a "$GPY_AGENT_SUPERVISOR_ENABLED" = 0
     function __gpy_start_supervisor_on_prompt --on-event fish_prompt
-        if test "$GPY_AGENT_SUPERVISOR_ENABLED" = 0
-            functions -e __gpy_start_supervisor_on_prompt
-            return
-        end
-
         if test "$GPY_AGENT_ENABLED" = 1
+            # Only the restart loop depends on the supervisor flag; protocol
+            # check, bounded autostart and registration always run (#700).
             if not set -q __gpy_supervisor_initialized
                 set -g __gpy_supervisor_initialized 1
-                __gpy_agent_supervisor_start
+                test "$GPY_AGENT_SUPERVISOR_ENABLED" = 0; or __gpy_agent_supervisor_start
             end
 
             # One-time protocol version check per shell session: an agent
