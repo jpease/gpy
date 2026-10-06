@@ -28,7 +28,8 @@ use crate::Error;
 use crate::Result;
 use crate::config::types::GitTimeout;
 use crate::profiling::Timer;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -43,6 +44,10 @@ use parser::{BranchHead, V2ParseResult};
 
 /// Cache of repositories where we've already checked/enabled untracked cache
 static UNTRACKED_CACHE_CHECKED: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+
+/// Per-repository `core.ignorecase`, read once (see
+/// [`NativeGitBackend::ignores_case`]).
+static IGNORE_CASE: Mutex<Option<HashMap<PathBuf, bool>>> = Mutex::new(None);
 
 /// Cap on `.git` gitdir-pointer file reads: a single-line pointer file by
 /// construction.
@@ -127,6 +132,48 @@ impl NativeGitBackend {
     fn run_git_optional(repo_path: &Path, args: &[&str]) -> Option<String> {
         let timeout = Duration::from_secs(GitTimeout::DEFAULT);
         run_git_with_timeout(repo_path, args, timeout).ok()
+    }
+
+    /// Whether `core.ignorecase` is true for the repository at `repo_path`,
+    /// at any config scope.
+    ///
+    /// Read once per repository per process (git fixes the answer when the
+    /// repository is created on its volume), so the per-event incremental
+    /// update never spawns `git config`. A failed read counts as `false`
+    /// and is not cached, so a transient failure is retried.
+    #[must_use]
+    pub fn ignores_case(repo_path: &Path) -> bool {
+        let cached = IGNORE_CASE.lock().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .and_then(|known| known.get(repo_path).copied())
+        });
+        if let Some(ignore_case) = cached {
+            return ignore_case;
+        }
+
+        // `--default false` makes an unset key succeed with `false`, so only a
+        // genuine failure reaches the `else`.
+        let Some(value) = Self::run_git_optional(
+            repo_path,
+            &[
+                "config",
+                "--type=bool",
+                "--default",
+                "false",
+                "--get",
+                "core.ignorecase",
+            ],
+        ) else {
+            return false;
+        };
+        let ignore_case = value.trim() == "true";
+        if let Ok(mut guard) = IGNORE_CASE.lock() {
+            guard
+                .get_or_insert_with(HashMap::new)
+                .insert(repo_path.to_path_buf(), ignore_case);
+        }
+        ignore_case
     }
 
     /// Whether the user has set `core.untrackedCache` at any scope
@@ -317,20 +364,28 @@ impl NativeGitBackend {
         // Build git status command with v2 format. `-z` makes Git emit
         // NUL-terminated records with unquoted, unescaped paths so renames,
         // spaces, tabs, and non-ASCII bytes survive parsing intact.
-        let mut args = vec!["status", "--porcelain=v2", "--branch", "-z"];
+        let mut args: Vec<OsString> = ["status", "--porcelain=v2", "--branch", "-z"]
+            .into_iter()
+            .map(OsString::from)
+            .collect();
 
         // Add specific paths if provided. `:(literal)` stops git reading a
         // leading `:`, `*`, `?` or `[` in a filename as pathspec magic or a
-        // glob (#713).
-        let path_strings: Vec<String>;
+        // glob, and `icase` makes a repository with `core.ignorecase=true`
+        // match the watcher's on-disk spelling against the index spelling
+        // (#713). The pathspec is built from the `OsStr` so a non-UTF-8 name
+        // is not mangled.
         if let Some(p) = paths {
-            args.push("--");
-            path_strings = p
-                .iter()
-                .map(|pb| format!(":(literal){}", pb.display()))
-                .collect();
-            for path_str in &path_strings {
-                args.push(path_str);
+            let magic = if Self::ignores_case(repo_path) {
+                ":(literal,icase)"
+            } else {
+                ":(literal)"
+            };
+            args.push(OsString::from("--"));
+            for pb in p {
+                let mut spec = OsString::from(magic);
+                spec.push(pb.as_os_str());
+                args.push(spec);
             }
         }
 
@@ -652,7 +707,11 @@ pub(crate) const fn resolve_overall_state(
 ///
 /// Returns an error if the process cannot be spawned, its I/O fails, it exits
 /// with a non-zero status, or the timeout expires.
-fn run_git_with_timeout(repo_path: &Path, args: &[&str], timeout: Duration) -> Result<String> {
+fn run_git_with_timeout<S: AsRef<OsStr>>(
+    repo_path: &Path,
+    args: &[S],
+    timeout: Duration,
+) -> Result<String> {
     let mut command = Command::new("git");
     for var in REPO_LOCAL_GIT_ENV {
         command.env_remove(var);
@@ -1603,5 +1662,62 @@ mv "$tmp" "$todo""#,
             .get(Path::new("new name.txt"))
             .expect("renamed file present");
         assert!(renamed.staged);
+    }
+
+    /// #713: `core.ignorecase` is read from the repository's config once and
+    /// decides whether pathspecs fold case.
+    #[test]
+    fn ignores_case_reflects_the_repository_config() {
+        for (setting, expected) in [("true", true), ("false", false)] {
+            let (_dir, path) = init_test_repo();
+            let status = Command::new("git")
+                .args(["config", "core.ignorecase", setting])
+                .current_dir(&path)
+                .output()
+                .expect("run git config")
+                .status;
+            assert!(status.success());
+            assert_eq!(NativeGitBackend::ignores_case(&path), expected);
+        }
+    }
+
+    /// #713: a pathspec is passed to git as the raw `OsStr`, so a file whose
+    /// name is not valid UTF-8 is still matched. Skipped where the filesystem
+    /// rejects such names (APFS).
+    #[cfg(unix)]
+    #[test]
+    fn pathspec_matches_a_non_utf8_file_name() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let (_dir, path) = init_test_repo();
+        let name = PathBuf::from(OsStr::from_bytes(b"bad\xff.txt"));
+        if fs::write(path.join(&name), "one\n").is_err() {
+            return;
+        }
+        for args in [vec!["add", "-A"], vec!["commit", "-q", "-m", "non-utf8"]] {
+            let output = Command::new("git")
+                .args(&args)
+                .current_dir(&path)
+                .output()
+                .expect("run git");
+            assert!(output.status.success(), "git {args:?} failed");
+        }
+        fs::write(path.join(&name), "two\n").expect("modify non-UTF-8 file");
+
+        let CompleteStatus { status, .. } = NativeGitBackend::get_complete_status(
+            &path,
+            Some(&[name]),
+            0,
+            false,
+            Duration::from_secs(GitTimeout::DEFAULT),
+        )
+        .expect("get_complete_status should succeed")
+        .expect("repo should be detected");
+
+        assert_eq!(
+            status.unstaged, 1,
+            "the edit must be seen through the pathspec"
+        );
     }
 }

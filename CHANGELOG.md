@@ -594,6 +594,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `gpy theme import --help` and `gpy palette import --help` say that
   `--force` also lets an import shadow a builtin or plugin theme or palette
   (#821).
+- Incremental git updates see edits and reverts of files whose on-disk
+  case differs from git's on case-insensitive repositories (#713).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

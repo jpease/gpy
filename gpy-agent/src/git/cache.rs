@@ -99,6 +99,26 @@ fn reaggregate(entry: &mut CacheEntry) -> RepositoryStatus {
     entry.data.aggregates.clone()
 }
 
+/// `path.starts_with(prefix)`, optionally comparing components
+/// ASCII-case-insensitively (a `core.ignorecase=true` repository, #713).
+fn path_starts_with(path: &Path, prefix: &Path, ignore_case: bool) -> bool {
+    if !ignore_case {
+        return path.starts_with(prefix);
+    }
+    let mut path_components = path.components();
+    prefix.components().all(|wanted| {
+        path_components
+            .next()
+            .is_some_and(|actual| actual.as_os_str().eq_ignore_ascii_case(wanted.as_os_str()))
+    })
+}
+
+/// Whether `left` and `right` name the same path under the comparison
+/// [`path_starts_with`] uses.
+fn paths_equal(left: &Path, right: &Path, ignore_case: bool) -> bool {
+    path_starts_with(left, right, ignore_case) && path_starts_with(right, left, ignore_case)
+}
+
 /// Git status cache with policy-driven TTL and cooldown
 #[derive(Clone)]
 pub struct GitStatusCache {
@@ -361,12 +381,19 @@ impl GitStatusCache {
     /// makes git report that file instead. So the merge is refused when a
     /// cached untracked entry is a strict ancestor of a scanned path, or when
     /// the scan reports an untracked file below the repository root.
+    ///
+    /// With `ignore_case` (the repository has `core.ignorecase=true`) scanned
+    /// and cached paths are compared ASCII-case-insensitively: the watcher
+    /// reports the on-disk spelling while the cached keys carry git's index
+    /// spelling, so `README.md` must clear a cached `Readme.md` (#713).
+    /// Non-ASCII names never get here; they take a full scan.
     #[must_use]
     pub fn update_paths_canonical(
         &self,
         key: &Path,
         scanned: &[PathBuf],
         results: &HashMap<PathBuf, FileStatus>,
+        ignore_case: bool,
     ) -> Option<RepositoryStatus> {
         let mut guard = self.entries.lock().ok()?;
         let entry = guard.get_mut(key)?;
@@ -381,7 +408,9 @@ impl GitStatusCache {
             .collect();
         let collapsed_ancestor = relative_scanned.iter().any(|relative| {
             entry.data.files.iter().any(|(cached, status)| {
-                status.untracked && cached.as_path() != *relative && relative.starts_with(cached)
+                status.untracked
+                    && !paths_equal(cached, relative, ignore_case)
+                    && path_starts_with(relative, cached, ignore_case)
             })
         });
         let nested_untracked = results.iter().any(|(path, status)| {
@@ -400,7 +429,7 @@ impl GitStatusCache {
             entry
                 .data
                 .files
-                .retain(|cached, _| !cached.starts_with(relative));
+                .retain(|cached, _| !path_starts_with(cached, relative, ignore_case));
         }
         for (path, status) in results {
             if status.is_clean() {
@@ -862,7 +891,7 @@ mod tests {
         scan.insert(still_dirty.clone(), unstaged());
 
         let status = cache
-            .update_paths_canonical(&repo, &[reverted, still_dirty], &scan)
+            .update_paths_canonical(&repo, &[reverted, still_dirty], &scan, false)
             .expect("entry with complete file details must return Some");
 
         assert_eq!(
@@ -889,7 +918,7 @@ mod tests {
         scan.insert(destination.clone(), staged());
 
         let status = cache
-            .update_paths_canonical(&repo, &[source, destination], &scan)
+            .update_paths_canonical(&repo, &[source, destination], &scan, false)
             .expect("entry with complete file details must return Some");
 
         assert_eq!(
@@ -917,12 +946,87 @@ mod tests {
         scan.insert(PathBuf::from("src/new.rs"), unstaged());
 
         let status = cache
-            .update_paths_canonical(&repo, &[scanned_dir], &scan)
+            .update_paths_canonical(&repo, &[scanned_dir], &scan, false)
             .expect("entry with complete file details must return Some");
 
         assert_eq!(
             status.unstaged, 2,
             "src/gone.rs is replaced by src/new.rs; untouched.rs is outside the scan"
+        );
+    }
+
+    /// #713: an ignore-case update clears a cached entry in another spelling.
+    ///
+    /// On a `core.ignorecase=true` repository the watcher reports the on-disk
+    /// spelling (`README.md`) while the cached key carries git's index spelling
+    /// (`Readme.md`); a revert must still clear the cached entry.
+    #[test]
+    fn ignore_case_update_clears_a_cached_entry_spelled_in_another_case() {
+        let cache = GitStatusCache::new();
+        let repo = PathBuf::from("/repo/icase-file");
+        let mut files = HashMap::new();
+        files.insert(PathBuf::from("Readme.md"), unstaged());
+        files.insert(PathBuf::from("Src/lib.rs"), unstaged());
+        cache.set(&repo, dummy_status(), files);
+
+        let status = cache
+            .update_paths_canonical(
+                &repo,
+                &[PathBuf::from("README.md"), PathBuf::from("SRC")],
+                &HashMap::new(),
+                true,
+            )
+            .expect("entry with complete file details must return Some");
+
+        assert_eq!(
+            status.unstaged, 0,
+            "a file and a directory spelled in another case must still be cleared"
+        );
+    }
+
+    /// #713: without `core.ignorecase` the comparison stays exact, so a
+    /// differently-cased path is a different file and its entry is kept.
+    #[test]
+    fn case_sensitive_update_keeps_a_differently_cased_entry() {
+        let cache = GitStatusCache::new();
+        let repo = PathBuf::from("/repo/case-sensitive");
+        let mut files = HashMap::new();
+        files.insert(PathBuf::from("Readme.md"), unstaged());
+        cache.set(&repo, dummy_status(), files);
+
+        let status = cache
+            .update_paths_canonical(&repo, &[PathBuf::from("README.md")], &HashMap::new(), false)
+            .expect("entry with complete file details must return Some");
+
+        assert_eq!(status.unstaged, 1, "README.md is not Readme.md here");
+    }
+
+    /// #713: the #711 refusal (a cached collapsed untracked directory above a
+    /// scanned path) must also see through a case difference.
+    #[test]
+    fn ignore_case_update_refuses_a_collapsed_untracked_ancestor_in_another_case() {
+        let cache = GitStatusCache::new();
+        let repo = PathBuf::from("/repo/icase-collapsed");
+        let mut files = HashMap::new();
+        files.insert(
+            PathBuf::from("Newdir"),
+            FileStatus {
+                untracked: true,
+                ..FileStatus::default()
+            },
+        );
+        cache.set(&repo, dummy_status(), files);
+
+        assert!(
+            cache
+                .update_paths_canonical(
+                    &repo,
+                    &[PathBuf::from("NEWDIR/x.txt")],
+                    &HashMap::new(),
+                    true,
+                )
+                .is_none(),
+            "the collapsed directory must force a full scan"
         );
     }
 
@@ -941,7 +1045,12 @@ mod tests {
 
         assert!(
             cache
-                .update_paths_canonical(&repo_a, &[PathBuf::from("src/main.rs")], &HashMap::new())
+                .update_paths_canonical(
+                    &repo_a,
+                    &[PathBuf::from("src/main.rs")],
+                    &HashMap::new(),
+                    false,
+                )
                 .is_none(),
             "a details-dropped entry must force a full scan"
         );
