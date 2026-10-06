@@ -92,7 +92,7 @@ All of these are off/default unless explicitly set — setting none of them pres
 
 - **Signal handling**: Fish uses one native `--on-signal SIGURG` handler, which checks the reload/re-register flag files and then repaints; it is the most reliable of the three shells — see the comparison table above. If Fish's prompt isn't repainting on signal, the watcher section above is the more likely cause than Fish's signal handling itself.
 - **Agent won't start / crash loop**: Fish runs a background supervisor loop (`__gpy_agent_supervisor_loop` in `fish/core/ipc.fish`) that health-checks the agent and restarts it. Relevant `config.toml` keys, in increasing order of aggressiveness:
-  - `[agent.supervisor] enabled = false` — disable the restart loop entirely (useful while debugging a crash so it doesn't keep respawning under you).
+  - `[agent.supervisor] enabled = false` — disable only the background restart loop (useful while debugging a crash so it doesn't keep respawning under you). Each shell still tries a bounded per-prompt autostart and registers with a running agent, so live updates keep working.
   - `[agent.supervisor] check_interval_seconds` (default 30) — health-check cadence.
   - `[agent.supervisor] max_restart_attempts` (default 5) — restarts attempted before the supervisor gives up.
   - `[agent] enabled = false` — disable the agent entirely (falls back to oneshot mode; slower per-prompt but no background process). No supervisor is started either.

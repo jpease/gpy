@@ -322,6 +322,11 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   docs now use the `config.toml` keys; the theme export overwrites a
   `set -gx` in `config.fish`.
 
+- Fish registers with a running agent when the supervisor is disabled
+  (#700). With `[agent.supervisor] enabled = false`, the per-prompt hook
+  removed itself before registering, so a shell outside git and project
+  directories never got live updates. Only the restart loop is skipped now.
+
 - `gpy-agent start` no longer evicts a newer running agent (#780). It
   replaced the daemon on any version difference, so two installs could flip
   it back and forth. Only an older or unreadable version is replaced now.
