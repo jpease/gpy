@@ -177,12 +177,30 @@ scenario_nounset_runtime_only() {
     nounset_scenario "set -u, only XDG_RUNTIME_DIR" "XDG_CACHE_HOME"
 }
 
+scenario_prompt_command_sees_status() {
+    run_child '__pre() { local s=$?; echo "pre=[$s]"; return "$s"; }
+PROMPT_COMMAND=__pre' 'PROMPT_COMMAND="${PROMPT_COMMAND}; "'"'"'echo "post=[$?]"'"'"'
+false
+(exit 42)
+exit'
+    local got
+    got="$(printf '%s,%s' "$(printf '%s\n' "$CHILD_OUT" | sed -n 's/^pre=\[\(.*\)\]$/\1/p' | tail -n 2 | tr '\n' ' ')" \
+        "$(printf '%s\n' "$CHILD_OUT" | sed -n 's/^post=\[\(.*\)\]$/\1/p' | tail -n 2 | tr '\n' ' ')")"
+    if [[ "$got" == "1 42 ,1 42 " ]]; then
+        pass "PROMPT_COMMAND entries before and after gpy see the command's status"
+    else
+        fail "PROMPT_COMMAND entries saw [$got], want [1 42 ,1 42 ] (pre,post)"
+        printf '%s\n' "$CHILD_OUT"
+    fi
+}
+
 run_scenario prior_debug_trap_fires
 run_scenario exit_trap_with_quotes
 run_scenario resource_keeps_chain
 run_scenario never_chains_to_itself
 run_scenario nounset_no_xdg
 run_scenario nounset_runtime_only
+run_scenario prompt_command_sees_status
 
 if ((failures > 0)); then
     echo "=== $failures scenario assertion(s) failed ==="

@@ -247,6 +247,7 @@ __gpy_precmd() {
     if [[ $__gpy_duration_method != "none" ]]; then
         __gpy_keep_arm_hook_last
     fi
+    return "$exit_code"
 }
 
 __gpy_segment_would_render() {
