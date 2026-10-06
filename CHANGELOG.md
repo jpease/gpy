@@ -352,6 +352,10 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   active toolchain is not the pin in `gpy-agent/rust-toolchain.toml` (#823),
   naming the override (e.g. a stray `RUSTUP_TOOLCHAIN`), instead of reporting
   lint findings from the wrong compiler.
+- `cd` within a repository no longer tears down and re-arms its file
+  watches, and a shell that registers in another repository releases the one
+  it was in (#718). A change written between the old unwatch and re-arm was
+  never reported.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

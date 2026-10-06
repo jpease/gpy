@@ -1124,6 +1124,16 @@ impl WatchCoordinator {
             .map_or_else(|_| Vec::new(), |calls| calls.clone())
     }
 
+    /// Logical registrations (with owner counts) and the OS watches armed
+    /// beneath them. Test-only observability (#718).
+    #[cfg(test)]
+    pub(crate) fn held_watches(&self) -> filesystem::HeldWatches {
+        self.watcher.as_ref().map_or_else(
+            Default::default,
+            filesystem::FileSystemWatcher::held_watches,
+        )
+    }
+
     /// Stop all watching
     pub fn stop(&mut self) {
         // Stop the file watcher
