@@ -512,6 +512,10 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - A missing `fish_indent` or `shellcheck` is reported as a `SKIP:` line by
   `scripts/quality-check.sh` and fails the gate under CI (#813), instead of
   passing silently.
+- Windows-shaped `XDG_*` values (`C:\…`, `C:/…`, `\\server\share`) are
+  ignored on Linux, macOS and WSL (#774), so the agent uses the same socket
+  and caches as the shells instead of directories relative to its working
+  directory.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

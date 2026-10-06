@@ -1,0 +1,30 @@
+# tests/fixtures/xdg_absoluteness_vectors.tsv
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Shared XDG_* absoluteness vectors (#774). On Unix (Linux, macOS, WSL) an
+# XDG_* value is honoured iff it starts with `/`; Windows spellings, relative
+# paths, `~`, empty and leading-space values are ignored. Read by ALL FOUR
+# implementations so they cannot drift apart:
+#   - Rust:  paths::xdg_value(.., Os::Unix) + runtime/cache/config_root_for
+#            in gpy-agent/src/paths.rs (xdg_absoluteness_shared_vectors)
+#   - Bash:  __gpy_runtime_root, __gpy_ipc_endpoint, __gpy_instant_cache_dir
+#            (tests/bash/xdg_absoluteness_vectors.test.bash)
+#   - Zsh:   same functions (tests/zsh/xdg_absoluteness_vectors.test.zsh)
+#   - Fish:  __gpy_runtime_root, __gpy_ipc_endpoint, __gpy_instant_cache_dir,
+#            __gpy_theme_export_cache_path (tests/fish/xdg_absoluteness_vectors.test.fish)
+#
+# Format: one vector per line, tab-separated: value<TAB>absolute (yes|no).
+# Blank lines and lines starting with # are ignored. `value` uses the mini
+# escape scheme of cache_key_vectors.tsv (\\ -> one backslash) plus the single
+# whole-column token \e meaning the EMPTY string (an empty column would be
+# collapsed by bash/zsh `read`). Every reader MUST fail if this file is
+# missing or yields zero vectors.
+/abs	yes
+relative	no
+./x	no
+C:\\Users\\x	no
+C:/x	no
+\\\\server\\share	no
+~/x	no
+\e	no
+ /lead-space	no

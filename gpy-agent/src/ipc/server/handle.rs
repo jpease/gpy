@@ -431,8 +431,9 @@ impl EndpointHandle {
         // agree about which variables actually count.
         let xdg_runtime_raw = std::env::var("XDG_RUNTIME_DIR").ok();
         let xdg_cache_raw = std::env::var("XDG_CACHE_HOME").ok();
-        let xdg_runtime = crate::paths::xdg_value(xdg_runtime_raw.as_deref());
-        let xdg_cache = crate::paths::xdg_value(xdg_cache_raw.as_deref());
+        let xdg_runtime =
+            crate::paths::xdg_value(xdg_runtime_raw.as_deref(), crate::paths::Os::Unix);
+        let xdg_cache = crate::paths::xdg_value(xdg_cache_raw.as_deref(), crate::paths::Os::Unix);
         let home = crate::paths::home_dir();
 
         // Final fallback: /tmp is world-writable, so — unlike the XDG/HOME

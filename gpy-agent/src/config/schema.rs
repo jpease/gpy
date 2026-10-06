@@ -105,7 +105,8 @@ pub fn config_candidates_for(
         custom_path
             .filter(|path| !path.is_empty())
             .map(ToOwned::to_owned),
-        crate::paths::xdg_value(xdg_config).map(|xdg| format!("{xdg}/gpy/config.toml")),
+        crate::paths::xdg_value(xdg_config, crate::paths::Os::Unix)
+            .map(|xdg| format!("{xdg}/gpy/config.toml")),
         home.map(|h| format!("{h}/.config/gpy/config.toml")),
         Some(".gpy.toml".to_owned()),
     ]
