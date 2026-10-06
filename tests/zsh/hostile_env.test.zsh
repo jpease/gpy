@@ -8,15 +8,18 @@
 # hostile-environment issues add a `scenario_<name>` function plus one
 # `run_scenario` line below.
 #
-# Children never start a gpy-agent: the supervisor is disabled and the socket
-# path points at a file that does not exist. Paths reach the child only as
-# environment/argv, never interpolated into code.
+# Children never start a gpy-agent: the supervisor is disabled in the sandbox
+# config.toml, for a real agent's theme export, and in the environment, for
+# the stub agents that export nothing (#836); the socket path points at a
+# file that does not exist. Paths reach the child only as environment/argv,
+# never interpolated into code.
 
 ROOT=${0:a:h:h:h}
 SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/gpy-hostile.XXXXXX") || exit 1
 cleanup() { rm -rf "$SANDBOX"; }
 trap cleanup EXIT
-mkdir -p "$SANDBOX/cfg" "$SANDBOX/cache" "$SANDBOX/run"
+mkdir -p "$SANDBOX/cfg/gpy" "$SANDBOX/cache" "$SANDBOX/run"
+print -r -- $'[agent.supervisor]\nenabled = false' >"$SANDBOX/cfg/gpy/config.toml"
 
 failures=0
 fail() { print -r -- "FAIL: $*"; failures=$((failures + 1)); }

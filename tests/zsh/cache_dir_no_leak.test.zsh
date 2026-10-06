@@ -3,8 +3,8 @@
 #
 # #763: the private render-cache dir ($TMPDIR/gpy_cache_*) must not leak on
 # re-source, `exec zsh`, or a killed shell, and a live shell's dir must never
-# be removed by a sibling. Children never start an agent. Paths reach children
-# only as environment/argv.
+# be removed by a sibling. Children never start an agent: none is on their
+# PATH. Paths reach children only as environment/argv.
 
 ROOT=${0:a:h:h:h}
 SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/gpy-cleak.XXXXXX") || exit 1
@@ -22,7 +22,7 @@ child_env() {
     env -i PATH=/usr/bin:/bin TERM=dumb HOME="$SANDBOX" ZDOTDIR="$SANDBOX/zdot" \
         TMPDIR="$SANDBOX/tmp" XDG_CONFIG_HOME="$SANDBOX/cfg" \
         XDG_CACHE_HOME="$SANDBOX/cache" XDG_RUNTIME_DIR="$SANDBOX/run" \
-        GPY_AGENT_SUPERVISOR_ENABLED=0 GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock" \
+        GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock" \
         GPY_TEST_ROOT="$ROOT" "$@"
 }
 
