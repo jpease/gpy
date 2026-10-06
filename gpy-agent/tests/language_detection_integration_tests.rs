@@ -467,3 +467,60 @@ fn test_polyglot_project() {
     assert!(detected_names.contains(&"python"), "Should detect Python");
     assert!(detected_names.contains(&"ruby"), "Should detect Ruby");
 }
+
+// `oneshot lang` in a repo subdirectory must resolve the git root first, like
+// the agent's lang handler, so a stray `conf.py` in `docs/` of a Rust repo does
+// not turn the fallback prompt into `python` (#784).
+#[test]
+fn test_oneshot_lang_uses_git_root_in_subdirectory() {
+    let (home_env, config_path) = setup_test_env();
+    let repo = TempDir::new().expect("Failed to create temp dir");
+    let root = repo.path();
+
+    let git_init = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .arg(root)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .status()
+        .expect("Failed to run git init");
+    assert!(git_init.success(), "git init failed");
+
+    fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n")
+        .expect("Failed to write Cargo.toml");
+    fs::create_dir_all(root.join("src")).expect("Failed to create src");
+    fs::write(root.join("src/main.rs"), "fn main() {}").expect("Failed to write main.rs");
+    fs::create_dir_all(root.join("docs")).expect("Failed to create docs");
+    fs::write(root.join("docs/conf.py"), "x = 1\n").expect("Failed to write conf.py");
+
+    let names_for = |cwd: &Path| -> Vec<String> {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_gpy-agent"));
+        command.args(["oneshot", "lang", "--cwd"]);
+        command.arg(cwd);
+        command.args(["--format", "json"]);
+        configure_command_env(&mut command, &home_env, &config_path);
+        let output = command.output().expect("Failed to execute gpy-agent");
+        assert!(output.status.success(), "oneshot lang failed");
+        let json: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("Failed to parse JSON");
+        json.get("languages")
+            .and_then(|v| v.as_array())
+            .expect("languages should be an array")
+            .iter()
+            .filter_map(|l| l.get("name").and_then(|n| n.as_str()).map(str::to_owned))
+            .collect()
+    };
+
+    let at_root = names_for(root);
+    let at_sub = names_for(&root.join("docs"));
+
+    assert!(
+        at_sub.iter().any(|n| n == "rust"),
+        "rust must be detected from a subdirectory: {at_sub:?}"
+    );
+    assert!(
+        !at_sub.iter().any(|n| n == "python"),
+        "subdirectory-only python must not leak into the repo-level answer: {at_sub:?}"
+    );
+    assert_eq!(at_sub, at_root, "subdirectory must match the repo root");
+}
