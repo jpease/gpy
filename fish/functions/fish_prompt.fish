@@ -114,6 +114,16 @@ function fish_prompt
             set is_first true
         end
 
+        # Keep the shell-side renderer's position global (read by
+        # gpy_section_start / gpy_section_standalone) in step with the same
+        # index, so a shell-rendered segment after an agent-rendered one opens
+        # with the start delimiter instead of the first-position cap (#765).
+        if test $current_idx -eq 1
+            set -g __gpy_segment_position first
+        else
+            set -g __gpy_segment_position middle
+        end
+
         if functions -q segment_{$segment}_render
             segment_{$segment}_render $is_last $is_first
         end
