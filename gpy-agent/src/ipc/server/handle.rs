@@ -142,6 +142,26 @@ fn accept_error_is_fd_exhaustion(err: &std::io::Error) -> bool {
 #[cfg(unix)]
 use crate::ipc::socket_identity::SocketIdentity;
 
+/// How often the accept loop checks that its socket path still holds the
+/// socket it bound (#779).
+///
+/// Long enough that a briefly missing socket during a normal restart never
+/// races a healthy agent into exiting.
+#[cfg(unix)]
+pub(crate) const SOCKET_OWNERSHIP_CHECK: Duration = Duration::from_secs(30);
+
+/// Outcome of one ownership check (#779). Only `Lost` acts.
+#[cfg(unix)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SocketOwnership {
+    /// The path holds the socket this handle bound (or it never bound one).
+    Owned,
+    /// The path is gone or holds a different socket.
+    Lost,
+    /// The path could not be inspected (EACCES, EIO, ...): not evidence.
+    Unknown,
+}
+
 /// IPC server handle used by the agent to serve client requests
 //
 // The collaborators below are all read by the accept/serve path, which is
@@ -168,6 +188,10 @@ pub struct EndpointHandle {
     /// and on bind failure alike.
     #[cfg(unix)]
     start_lock: Option<nix::fcntl::Flock<std::fs::File>>,
+    /// Period of the accept loop's ownership check ([`SOCKET_OWNERSHIP_CHECK`]
+    /// outside tests).
+    #[cfg(unix)]
+    pub(super) socket_ownership_check: Duration,
     security_config: GuardSettings,
     rate_limiter: RateLimiter,
     client_registry: Arc<ClientDirectory>,
@@ -316,6 +340,8 @@ impl EndpointHandle {
             bound_socket: None,
             #[cfg(unix)]
             start_lock: None,
+            #[cfg(unix)]
+            socket_ownership_check: SOCKET_OWNERSHIP_CHECK,
             security_config,
             rate_limiter,
             client_registry: deps.client_registry,
@@ -623,6 +649,13 @@ impl EndpointHandle {
         // Subscribe to shutdown signals
         let mut shutdown_rx = self.shutdown_tx.subscribe();
 
+        // Ownership tick (#779): an agent whose socket was removed or
+        // rebound by another process is unreachable, so it exits the same way
+        // an IPC `Shutdown` does. No tick at t=0.
+        let mut ownership_timer = tokio::time::interval(self.socket_ownership_check);
+        ownership_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        ownership_timer.reset();
+
         debug_log!("server", "Got listener reference, entering main loop");
         loop {
             debug_log!("server", "Waiting for connection...");
@@ -667,6 +700,16 @@ impl EndpointHandle {
                     debug_log!("server", "Received shutdown signal, exiting accept loop");
                     break;
                 }
+                _ = ownership_timer.tick() => {
+                    if self.socket_ownership() == SocketOwnership::Lost {
+                        warn_log!(
+                            "server",
+                            "Socket {} no longer belongs to this agent (removed or rebound by another process); shutting down",
+                            self.socket_path.display()
+                        );
+                        break;
+                    }
+                }
             }
         }
 
@@ -685,6 +728,24 @@ impl EndpointHandle {
     #[cfg(unix)]
     fn cleanup_socket_file(&self) {
         self.unlink_socket_if_owned();
+    }
+
+    /// Whether the path still holds the socket this handle bound (#779).
+    ///
+    /// Uses the same strict dev+ino+ctime comparison as
+    /// [`Self::unlink_socket_if_owned`]. A handle that never bound owns
+    /// nothing and so can never lose it.
+    #[cfg(unix)]
+    fn socket_ownership(&self) -> SocketOwnership {
+        let Some(bound_socket) = self.bound_socket else {
+            return SocketOwnership::Owned;
+        };
+        match SocketIdentity::at(&self.socket_path) {
+            Ok(current) if current == bound_socket => SocketOwnership::Owned,
+            Ok(_) => SocketOwnership::Lost,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => SocketOwnership::Lost,
+            Err(_) => SocketOwnership::Unknown,
+        }
     }
 
     /// Remove the socket file only if it is still the inode this handle bound.
@@ -1261,6 +1322,81 @@ mod socket_ownership_tests {
         );
         assert_eq!(inode_of(&socket_path), foreign_inode);
         drop(foreign);
+    }
+
+    /// A handle with a 50 ms ownership check, started on its own task.
+    async fn spawn_started_handle(
+        socket_path: &Path,
+    ) -> (
+        tokio::task::JoinHandle<crate::Result<()>>,
+        tokio::sync::broadcast::Sender<()>,
+    ) {
+        let mut handle = EndpointHandle::builder()
+            .socket_path(socket_path.to_path_buf())
+            .client_registry(Arc::new(ClientDirectory::new()))
+            .git_cache(Arc::new(GitStatusCache::new()))
+            .config_manager(Arc::new(
+                ConfigManager::with_defaults().expect("default config"),
+            ))
+            .theme_manager(Arc::new(
+                ThemeManager::new("default").expect("default theme"),
+            ))
+            .instant_cache(Arc::new(crate::cache::InstantPromptCache::new_for_test()))
+            .latency_tracker(Arc::new(LatencyTracker::new(100_usize)))
+            .language_cache(crate::language::DetectionCache::new())
+            .socket_ownership_check(std::time::Duration::from_millis(50))
+            .build()
+            .expect("handle build");
+        let shutdown = handle.shutdown_tx.clone();
+        let task = tokio::spawn(async move { handle.start().await });
+        for _ in 0_u32..200 {
+            if socket_path.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(socket_path.exists(), "the handle must bind its socket");
+        (task, shutdown)
+    }
+
+    // #779: an agent whose socket was rebound by someone else exits, and
+    // leaves the newcomer's socket alone.
+    #[tokio::test]
+    async fn accept_loop_exits_when_socket_is_rebound() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let socket_path = tmp.path().join("gpy.sock");
+        let (task, _shutdown) = spawn_started_handle(&socket_path).await;
+
+        std::fs::remove_file(&socket_path).expect("remove ours");
+        let foreign = UnixListener::bind(&socket_path).expect("foreign bind");
+        let foreign_inode = inode_of(&socket_path);
+
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("the accept loop must exit once its socket is lost");
+        assert!(matches!(outcome, Ok(Ok(()))), "{outcome:?}");
+        assert_eq!(inode_of(&socket_path), foreign_inode);
+        drop(foreign);
+    }
+
+    // #779: an untouched socket never makes the agent exit.
+    #[tokio::test]
+    async fn accept_loop_keeps_running_while_socket_is_owned() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let socket_path = tmp.path().join("gpy.sock");
+        let (task, shutdown) = spawn_started_handle(&socket_path).await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert!(
+            !task.is_finished(),
+            "an owned socket must keep the loop running"
+        );
+
+        shutdown.send(()).expect("send shutdown");
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("shutdown must end the loop");
+        assert!(matches!(outcome, Ok(Ok(()))), "{outcome:?}");
     }
 
     // A handle that never bound (bound_socket == None) owns nothing and must
