@@ -5,11 +5,13 @@ use crate::config::types::{ColorSpec, DirectoryTruncationLength, DirectoryTrunca
 use crate::import::starship::model::StarshipConfig;
 use crate::import::starship::{WarningKind, Warnings};
 use crate::template::ast::Node;
+use crate::template::{Color, TemplateError, parse_style};
 use crate::theme::{
     CharacterTheme, ClockTheme, DirectoryTheme, DurationTheme, GitTheme, HostnameTheme,
     RecommendedDirectory, UsernameTheme,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::hash::BuildHasher;
 
 /// Replace style-position variables (`$style`, `$*_style`) in `format` with the
 /// module's literal style values. Content variables are left untouched.
@@ -489,12 +491,61 @@ const STYLE_ATTRS: [&str; 8_usize] = [
     "strikethrough",
 ];
 
-/// Return the first non-attribute token of a style string (the color), if any.
+/// The colors of a Starship `style` string, resolved to concrete GPY colors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StyleColor {
+    /// The style parsed. `fg`/`bg` are `None` when the style sets no such color.
+    Resolved {
+        /// Foreground color, a valid [`ColorSpec`] spelling.
+        fg: Option<String>,
+        /// Background color, a valid [`ColorSpec`] spelling.
+        bg: Option<String>,
+    },
+    /// A token is not a color GPY can represent (the offending text).
+    Invalid(String),
+}
+
+/// Resolve the colors of a Starship `style` string.
+///
+/// Tokenizing is the template engine's own [`parse_style`] (`fg:`/`bg:`
+/// prefixes, case-insensitive tokens, `none`), so the importer reads a style
+/// exactly as the renderer does. A color name the template engine treats as a
+/// palette reference (not a builtin color name) is replaced by the selected
+/// Starship `palette`'s value for it; anything else must already be a
+/// [`ColorSpec`] spelling. A palette entry that shadows a builtin name
+/// (`red = "#f38ba8"`) is left to #732, the palette name vocabulary.
 #[must_use]
-pub fn first_color_token(style: &str) -> Option<&str> {
-    style
-        .split_whitespace()
-        .find(|token| !STYLE_ATTRS.contains(token))
+pub fn style_color<S: BuildHasher>(
+    style: &str,
+    palette: Option<&HashMap<String, String, S>>,
+) -> StyleColor {
+    let parsed = match parse_style(style) {
+        Ok(parsed) => parsed,
+        Err(
+            TemplateError::UnknownColor { name: token } | TemplateError::InvalidStyle { token },
+        ) => return StyleColor::Invalid(token),
+        Err(_) => return StyleColor::Invalid(style.to_owned()),
+    };
+    let resolve = |color: Option<Color>| -> Result<Option<String>, String> {
+        let Some(parsed_color) = color else {
+            return Ok(None);
+        };
+        let text = match parsed_color {
+            Color::Named(name) => name,
+            Color::Palette(name) => palette.and_then(|p| p.get(&name)).cloned().unwrap_or(name),
+            Color::Rgb { r, g, b } => format!("#{r:02x}{g:02x}{b:02x}"),
+            Color::Ansi256(index) => index.to_string(),
+            Color::PrevFg => "prev_fg".to_owned(),
+            Color::PrevBg => "prev_bg".to_owned(),
+        };
+        ColorSpec::new(&text)
+            .map(|_| Some(text.clone()))
+            .map_err(|_| text)
+    };
+    match (resolve(parsed.fg), resolve(parsed.bg)) {
+        (Ok(fg), Ok(bg)) => StyleColor::Resolved { fg, bg },
+        (Err(token), _) | (_, Err(token)) => StyleColor::Invalid(token),
+    }
 }
 
 /// Return the attribute tokens of a style string (everything `first_color_token`
@@ -514,10 +565,14 @@ pub fn attr_tokens(style: &str) -> Vec<&str> {
 /// Only languages whose module table is present are touched: a module `style`
 /// replaces that language's color and attributes, and a module `symbol` drops
 /// the base's symbol for that language so `[language.icons]` config applies.
+/// Colors resolve through `palette` (the selected Starship palette, if any) to
+/// concrete values. GPY has one shared language format, so a style's background
+/// and a module's own `format` are reported as [`WarningKind::LossyMapping`].
 #[must_use]
-pub fn translate_languages(
+pub fn translate_languages<S: BuildHasher>(
     model: &StarshipConfig,
     base: LanguageTheme,
+    palette: Option<&HashMap<String, String, S>>,
     warnings: &mut Warnings,
 ) -> LanguageTranslation {
     let mut theme = base;
@@ -527,21 +582,29 @@ pub fn translate_languages(
             continue;
         };
         if let Some(style) = table.get("style").and_then(toml::Value::as_str) {
-            if let Some(color) = first_color_token(style) {
-                match ColorSpec::new(color) {
-                    Ok(spec) => {
+            match style_color(style, palette) {
+                StyleColor::Resolved { fg, bg } => {
+                    if let Some(color) = fg
+                        && let Ok(spec) = ColorSpec::new(&color)
+                    {
                         theme
                             .overrides
                             .insert(format!("{canonical}_bg_color"), spec);
-                        palette_colors.insert((*canonical).to_owned(), color.to_owned());
+                        palette_colors.insert((*canonical).to_owned(), color);
                     }
-                    Err(_) => warnings.push(
-                        WarningKind::InvalidColor,
-                        format!(
-                            "language {starship_name}: style color '{color}' is invalid; skipped"
-                        ),
-                    ),
+                    if let Some(background) = bg {
+                        warnings.push(
+                            WarningKind::LossyMapping,
+                            format!(
+                                "language {starship_name}: background style '{background}' cannot be applied by GPY's shared language format; skipped"
+                            ),
+                        );
+                    }
                 }
+                StyleColor::Invalid(token) => warnings.push(
+                    WarningKind::InvalidColor,
+                    format!("language {starship_name}: style color '{token}' is invalid; skipped"),
+                ),
             }
             // Capture attribute tokens. The renderer defaults to `bold`, so only
             // emit `<lang>_style` when the attrs differ (an empty string here is
@@ -554,6 +617,12 @@ pub fn translate_languages(
             } else {
                 theme.styles.insert(style_key, attrs.join(" "));
             }
+        }
+        if table.contains_key("format") {
+            warnings.push(
+                WarningKind::LossyMapping,
+                format!("language {starship_name}: per-language format is not carried over (GPY uses one shared language format)"),
+            );
         }
         if table.get("symbol").and_then(toml::Value::as_str).is_some() {
             theme.symbols.remove(&format!("{canonical}_symbol"));
@@ -591,14 +660,14 @@ pub fn translate_duration(table: &toml::value::Table, warnings: &mut Warnings) -
     }
 }
 
-/// A parsed character symbol: text, color token, and whether it is bold.
+/// A parsed character symbol: text, style spec, and whether it is bold.
 type StyledSymbol = (String, Option<String>, bool);
 
-/// Extract the symbol text, color, and bold flag from a Starship styled symbol
-/// template such as `[❯](bold green)` or `[➜](bold green) `.
+/// Extract the symbol text, style spec, and bold flag from a Starship styled
+/// symbol template such as `[❯](bold green)` or `[➜](bold green) `.
 ///
 /// Built on the real template grammar. Accepted shapes are a bare literal
-/// (no color, not bold) and exactly one styled group of literal text with
+/// (no style, not bold) and exactly one styled group of literal text with
 /// optional whitespace-only literals around it, which are kept in the symbol.
 /// Returns `None` for anything else (several groups, variables, conditionals,
 /// non-whitespace text outside the group, or a template that does not parse).
@@ -635,77 +704,121 @@ fn parse_styled_symbol(template: &str) -> Option<StyledSymbol> {
     let Some(spec) = style_spec else {
         return Some((symbol, None, false));
     };
-    let color = first_color_token(&spec).map(str::to_owned);
     let bold = attr_tokens(&spec).contains(&"bold");
-    Some((symbol, color, bold))
+    Some((symbol, Some(spec), bold))
+}
+
+/// One side (`success` or `error`) of a translated `character` module.
+struct CharacterSide {
+    /// The symbol text, when the source gave a representable one.
+    symbol: Option<String>,
+    /// The foreground color, when the source's style names a valid one.
+    color: Option<ColorSpec>,
+    /// The background color from the source's style, if any.
+    background: Option<String>,
+    /// Whether the source style is bold; an absent symbol keeps Starship's
+    /// default of bold.
+    bold: bool,
+}
+
+/// Translate the `<side>_symbol` key of a `character` table.
+fn translate_character_side<S: BuildHasher>(
+    table: &toml::value::Table,
+    side: &str,
+    palette: Option<&HashMap<String, String, S>>,
+    warnings: &mut Warnings,
+) -> CharacterSide {
+    let mut translated = CharacterSide {
+        symbol: None,
+        color: None,
+        background: None,
+        bold: true,
+    };
+    let key = format!("{side}_symbol");
+    let Some(raw) = table.get(&key).and_then(toml::Value::as_str) else {
+        return translated;
+    };
+    let Some((symbol, spec, bold)) = parse_styled_symbol(raw) else {
+        warnings.push(
+            WarningKind::LossyMapping,
+            format!("character: {key} '{raw}' cannot be represented; kept default"),
+        );
+        return translated;
+    };
+    translated.symbol = Some(symbol);
+    translated.bold = bold;
+    if let Some(spec_text) = spec {
+        match style_color(&spec_text, palette) {
+            StyleColor::Resolved { fg, bg } => {
+                translated.color = fg.and_then(|color| ColorSpec::new(&color).ok());
+                translated.background = bg;
+            }
+            StyleColor::Invalid(token) => warnings.push(
+                WarningKind::InvalidColor,
+                format!("character {side} color '{token}' is invalid; kept default"),
+            ),
+        }
+    }
+    translated
 }
 
 /// Translate Starship's `character` module into a GPY character theme.
 ///
 /// GPY renders success and error through one shared `format` template, so the
-/// `bold` attribute can only be applied uniformly. It is derived from the
-/// source's `success_symbol`/`error_symbol` styles: bold unless both styles
-/// explicitly omit it (an absent symbol keeps Starship's real default of
-/// bold, matching [`CharacterTheme`]'s own default colors). A source that
-/// requests bold on one side but not the other emits a
+/// `bold` attribute and a background color can only be applied uniformly. Bold
+/// is derived from the source's `success_symbol`/`error_symbol` styles: bold
+/// unless both styles explicitly omit it (an absent symbol keeps Starship's
+/// real default of bold, matching [`CharacterTheme`]'s own default colors). A
+/// source that requests bold on one side but not the other emits a
 /// [`WarningKind::LossyMapping`] warning, since GPY cannot represent that split.
+/// A background is carried into the shared format when both sides agree on it
+/// (an absent side has none); otherwise it is dropped with the same warning
+/// kind. Colors resolve through `palette`, the selected Starship palette.
 #[must_use]
-pub fn translate_character(table: &toml::value::Table, warnings: &mut Warnings) -> CharacterTheme {
+pub fn translate_character<S: BuildHasher>(
+    table: &toml::value::Table,
+    palette: Option<&HashMap<String, String, S>>,
+    warnings: &mut Warnings,
+) -> CharacterTheme {
     let mut theme = CharacterTheme::default();
-    let mut success_bold = true;
-    if let Some(raw) = table.get("success_symbol").and_then(toml::Value::as_str) {
-        if let Some((symbol, color, bold)) = parse_styled_symbol(raw) {
-            theme.success_symbol = symbol;
-            success_bold = bold;
-            if let Some(color_name) = color {
-                match ColorSpec::new(&color_name) {
-                    Ok(spec) => theme.success_color = spec,
-                    Err(_) => warnings.push(
-                        WarningKind::InvalidColor,
-                        format!("character success color '{color_name}' is invalid; kept default"),
-                    ),
-                }
-            }
-        } else {
-            warnings.push(
-                WarningKind::LossyMapping,
-                format!("character: success_symbol '{raw}' cannot be represented; kept default"),
-            );
-        }
+    let success = translate_character_side(table, "success", palette, warnings);
+    if let Some(symbol) = success.symbol {
+        theme.success_symbol = symbol;
     }
-    let mut error_bold = true;
-    if let Some(raw) = table.get("error_symbol").and_then(toml::Value::as_str) {
-        if let Some((symbol, color, bold)) = parse_styled_symbol(raw) {
-            theme.error_symbol = symbol;
-            error_bold = bold;
-            if let Some(color_name) = color {
-                match ColorSpec::new(&color_name) {
-                    Ok(spec) => theme.error_color = spec,
-                    Err(_) => warnings.push(
-                        WarningKind::InvalidColor,
-                        format!("character error color '{color_name}' is invalid; kept default"),
-                    ),
-                }
-            }
-        } else {
-            warnings.push(
-                WarningKind::LossyMapping,
-                format!("character: error_symbol '{raw}' cannot be represented; kept default"),
-            );
-        }
+    if let Some(color) = success.color {
+        theme.success_color = color;
     }
-    if success_bold != error_bold {
+    let error = translate_character_side(table, "error", palette, warnings);
+    if let Some(symbol) = error.symbol {
+        theme.error_symbol = symbol;
+    }
+    if let Some(color) = error.color {
+        theme.error_color = color;
+    }
+    if success.bold != error.bold {
         warnings.push(
             WarningKind::LossyMapping,
             "character: success/error styles disagree on bold; GPY renders both through one shared format and kept bold".to_owned(),
         );
     }
-    let bold = success_bold || error_bold;
-    theme.format = Some(if bold {
-        "[$symbol](bold $style) ".to_owned()
+    let background = if success.background == error.background {
+        success.background
     } else {
-        "[$symbol]($style) ".to_owned()
-    });
+        warnings.push(
+            WarningKind::LossyMapping,
+            "character: success/error styles disagree on the background; GPY renders both through one shared format and dropped it".to_owned(),
+        );
+        None
+    };
+    let base = if success.bold || error.bold {
+        "bold $style"
+    } else {
+        "$style"
+    };
+    theme.format = Some(background.map_or_else(
+        || format!("[$symbol]({base}) "),
+        |color| format!("[$symbol]({base} bg:{color}) "),
+    ));
     theme
 }
 
@@ -833,6 +946,9 @@ mod tests {
     use crate::config::LanguageTheme;
     use crate::config::types::{ColorSpec, DirectoryTruncationLength, DirectoryTruncationSymbol};
     use crate::import::starship::Warnings;
+
+    /// No selected Starship palette.
+    const NO_PALETTE: Option<&std::collections::HashMap<String, String>> = None;
 
     fn table(toml_src: &str) -> toml::value::Table {
         toml::from_str(toml_src).unwrap()
@@ -1282,11 +1398,82 @@ mod tests {
     }
 
     #[test]
-    fn first_color_token_skips_attributes() {
-        use super::first_color_token;
-        assert_eq!(first_color_token("bold green"), Some("green"));
-        assert_eq!(first_color_token("fg:#ff0000"), Some("fg:#ff0000"));
-        assert_eq!(first_color_token("bold"), None);
+    fn style_color_skips_attributes_and_strips_prefixes() {
+        use super::{StyleColor, style_color};
+        let resolved = |fg: Option<&str>, bg: Option<&str>| StyleColor::Resolved {
+            fg: fg.map(str::to_owned),
+            bg: bg.map(str::to_owned),
+        };
+        assert_eq!(
+            style_color("bold green", NO_PALETTE),
+            resolved(Some("green"), None)
+        );
+        assert_eq!(
+            style_color("fg:green", NO_PALETTE),
+            resolved(Some("green"), None)
+        );
+        assert_eq!(
+            style_color("Bold FG:Green", NO_PALETTE),
+            resolved(Some("green"), None)
+        );
+        assert_eq!(
+            style_color("fg:#ff0000", NO_PALETTE),
+            resolved(Some("#ff0000"), None)
+        );
+        assert_eq!(
+            style_color("bold fg:202", NO_PALETTE),
+            resolved(Some("202"), None)
+        );
+        assert_eq!(
+            style_color("bg:blue fg:white", NO_PALETTE),
+            resolved(Some("white"), Some("blue"))
+        );
+        assert_eq!(
+            style_color("bg:#212736", NO_PALETTE),
+            resolved(None, Some("#212736"))
+        );
+        assert_eq!(style_color("bold", NO_PALETTE), resolved(None, None));
+        assert_eq!(style_color("none", NO_PALETTE), resolved(None, None));
+    }
+
+    #[test]
+    fn style_color_resolves_palette_aliases_and_rejects_unknown_names() {
+        use super::{StyleColor, style_color};
+        let palette: std::collections::HashMap<String, String> = [
+            ("peach".to_owned(), "#fab387".to_owned()),
+            ("green".to_owned(), "#00ff00".to_owned()),
+        ]
+        .into();
+        assert_eq!(
+            style_color("bold peach", Some(&palette)),
+            StyleColor::Resolved {
+                fg: Some("#fab387".to_owned()),
+                bg: None
+            }
+        );
+        assert_eq!(
+            style_color("bg:peach", Some(&palette)),
+            StyleColor::Resolved {
+                fg: None,
+                bg: Some("#fab387".to_owned())
+            }
+        );
+        // Shadowing a builtin color name is #732's concern, not an alias.
+        assert_eq!(
+            style_color("green", Some(&palette)),
+            StyleColor::Resolved {
+                fg: Some("green".to_owned()),
+                bg: None
+            }
+        );
+        assert_eq!(
+            style_color("peach", NO_PALETTE),
+            StyleColor::Invalid("peach".to_owned())
+        );
+        assert_eq!(
+            style_color("fg:#12345", NO_PALETTE),
+            StyleColor::Invalid("#12345".to_owned())
+        );
     }
 
     #[test]
@@ -1307,7 +1494,8 @@ mod tests {
         )
         .unwrap();
         let mut warnings = Warnings::new();
-        let result = translate_languages(&model, LanguageTheme::default(), &mut warnings);
+        let result =
+            translate_languages(&model, LanguageTheme::default(), NO_PALETTE, &mut warnings);
         assert_eq!(
             result
                 .theme
@@ -1351,7 +1539,8 @@ mod tests {
         )
         .expect("parse");
         let mut warnings = Warnings::new();
-        let result = translate_languages(&model, LanguageTheme::default(), &mut warnings);
+        let result =
+            translate_languages(&model, LanguageTheme::default(), NO_PALETTE, &mut warnings);
         assert_eq!(
             result.theme.styles.get("java_style").map(String::as_str),
             Some("dimmed")
@@ -1385,7 +1574,7 @@ mod tests {
         // drops the base symbol so `[language.icons]` applies. swift: untouched.
         let model = parse("[java]\nstyle = \"bold blue\"\nsymbol = \"J \"\n").expect("parse");
         let mut warnings = Warnings::new();
-        let result = translate_languages(&model, base, &mut warnings);
+        let result = translate_languages(&model, base, NO_PALETTE, &mut warnings);
         assert_eq!(
             result.theme.format.as_deref(),
             Some("via [$symbol]($attr fg:$color) ")
@@ -1436,7 +1625,7 @@ mod tests {
         let module =
             table("success_symbol = \"[❯](bold green)\"\nerror_symbol = \"[❯](bold red)\"\n");
         let mut warnings = Warnings::new();
-        let theme = translate_character(&module, &mut warnings);
+        let theme = translate_character(&module, NO_PALETTE, &mut warnings);
         assert_eq!(theme.success_symbol, "❯");
         assert_eq!(theme.error_symbol, "❯");
         assert_eq!(theme.success_color.as_str(), "green");
@@ -1448,7 +1637,11 @@ mod tests {
     fn character_symbol_with_trailing_space_is_parsed() {
         use super::translate_character;
         let mut w = Warnings::new();
-        let theme = translate_character(&table("success_symbol = \"[➜](bold green) \"\n"), &mut w);
+        let theme = translate_character(
+            &table("success_symbol = \"[➜](bold green) \"\n"),
+            NO_PALETTE,
+            &mut w,
+        );
         assert_eq!(theme.success_symbol, "➜ ");
         assert_eq!(theme.success_color.as_str(), "green");
         assert_eq!(theme.format.as_deref(), Some("[$symbol](bold $style) "));
@@ -1463,6 +1656,7 @@ mod tests {
         let mut w = Warnings::new();
         let theme = translate_character(
             &table("success_symbol = \"[❯](bold green)[❯](bold yellow)\"\n"),
+            NO_PALETTE,
             &mut w,
         );
         assert_eq!(
@@ -1490,6 +1684,7 @@ mod tests {
         let mut w = Warnings::new();
         let theme = translate_character(
             &table("success_symbol = \"> \"\nerror_symbol = \"x \"\n"),
+            NO_PALETTE,
             &mut w,
         );
         assert_eq!(theme.success_symbol, "> ");
@@ -1500,7 +1695,11 @@ mod tests {
     fn character_symbol_with_leading_and_trailing_space_is_parsed() {
         use super::translate_character;
         let mut w = Warnings::new();
-        let theme = translate_character(&table("error_symbol = \" [✗](bold red)  \"\n"), &mut w);
+        let theme = translate_character(
+            &table("error_symbol = \" [✗](bold red)  \"\n"),
+            NO_PALETTE,
+            &mut w,
+        );
         assert_eq!(theme.error_symbol, " ✗  ");
         assert_eq!(theme.error_color.as_str(), "red");
     }
@@ -1510,7 +1709,11 @@ mod tests {
         use super::translate_character;
         use crate::theme::CharacterTheme;
         let mut w = Warnings::new();
-        let theme = translate_character(&table("error_symbol = \"[$x](bold red)\"\n"), &mut w);
+        let theme = translate_character(
+            &table("error_symbol = \"[$x](bold red)\"\n"),
+            NO_PALETTE,
+            &mut w,
+        );
         assert_eq!(theme.error_symbol, CharacterTheme::default().error_symbol);
         assert_eq!(w.len(), 1_usize);
     }

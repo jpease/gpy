@@ -68,7 +68,7 @@ hostname, username, and language formats. The preset's `[ui]` and
 | `git_branch` + `git_status` + `git_state` | `git` | Composed into one GPY git `format`. `$all_status` → `$status`; Starship per-flag variables → GPY `$status`. When only one of `git_branch` / `git_status` is present, the other half uses Starship's default `format` and `style`; when both are absent the preset's git format applies. `git_state` is lossy (GPY has no state overlay); produces a warning. |
 | `cmd_duration` | `duration` | `min_time` (ms) → `show_if_exceeds_ms`; `format` / `style` → GPY duration `format`. |
 | `character` | `character` | `success_symbol` / `error_symbol` (e.g. `[❯](bold green)`) → GPY `success_symbol`, `error_symbol`, `success_color`, `error_color`, `format`. |
-| `rust`, `python`, `nodejs`, `golang`, `java`, `ruby`, `php`, `swift`, `elixir`, `c`, `cpp`, `csharp`, `erlang`, … | `language` | Starts from the preset's language theme (format `via [$symbol( v$version)]($attr fg:$color) `, per-language colors, symbols, `enabled_languages`). Per-language `style` → palette entry + `{lang}_bg_color` (color) + `{lang}_style` (attributes, exposed as `$attr`). Per-language `symbol` overrides are lossy (they live in `[language.icons]`, not the prompt theme): each produces a warning and drops the preset's symbol for that language so `[language.icons]` applies. |
+| `rust`, `python`, `nodejs`, `golang`, `java`, `ruby`, `php`, `swift`, `elixir`, `c`, `cpp`, `csharp`, `erlang`, … | `language` | Starts from the preset's language theme (format `via [$symbol( v$version)]($attr fg:$color) `, per-language colors, symbols, `enabled_languages`). Per-language `style` → palette entry + `{lang}_bg_color` (foreground color, `fg:` prefix optional, palette aliases resolved to the selected Starship palette's value) + `{lang}_style` (attributes, exposed as `$attr`). GPY has one shared language format, so a style's `bg:` color is dropped with a `LossyMapping` warning, and a module's own `format` is not carried over (also a `LossyMapping` warning). Per-language `symbol` overrides are lossy (they live in `[language.icons]`, not the prompt theme): each produces a warning and drops the preset's symbol for that language so `[language.icons]` applies. |
 | `time` | `clock` | `time_format` (strftime) → GPY `time_format` (`"12"` or `"24"`) + `show_seconds` on a best-effort basis. Non-representable formats produce a warning. |
 | `username`, `hostname`, `kubernetes`, `aws`, `docker_context`, `package`, `memory_usage`, `battery`, custom modules, and everything else | — | Skipped with a warning: `module 'X' has no GPY equivalent; omitted from layout`. |
 
@@ -85,8 +85,16 @@ named/hex/256-index colors, `prev_fg`, `prev_bg`), so the importer:
 3. Passes all other tokens through unchanged — escapes (`\[`, `\]`) and
    conditional groups `(...)` use the same grammar on both sides.
 
-Palette-alias names survive as bare color names; SP2's palette-precedence lookup
-resolves them at render time.
+Palette-alias names inside `format`-inlined styles survive as bare color names;
+the emitted palette defines them and the renderer resolves them. Language and
+character colors are different: GPY stores them as concrete `ColorSpec` values,
+so the importer reads the style with the template engine's own `parse_style`
+(`fg:`/`bg:` prefixes, case-insensitive tokens) and resolves an alias through the
+selected `[palettes.*]` table at import time (`peach` → `#fab387`). A palette
+entry that shadows a builtin color name (`red = "#f38ba8"`) is not applied.
+A character style's `bg:` color is carried into the shared character `format`
+when the success and error styles agree on it; otherwise it is dropped with a
+`LossyMapping` warning.
 
 #### Per-language style attributes
 

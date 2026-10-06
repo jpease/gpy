@@ -74,13 +74,18 @@ pub fn build(model: &StarshipConfig, name: &str) -> Result<ImportArtifacts> {
     let mut warnings = Warnings::new();
     let preset = load_preset()?;
 
+    let selected = selected_palette(model, &mut warnings);
     let mut segments = preset.segments;
-    let language =
-        translate_languages(model, std::mem::take(&mut segments.language), &mut warnings);
+    let language = translate_languages(
+        model,
+        std::mem::take(&mut segments.language),
+        selected,
+        &mut warnings,
+    );
     segments.language = language.theme;
     overlay_preset_modules(&mut segments, model, &mut warnings);
     if let Some(table) = model.module_table("character") {
-        segments.character = translate_character(table, &mut warnings);
+        segments.character = translate_character(table, selected, &mut warnings);
     }
     if let Some(table) = model.module_table("time") {
         segments.clock = translate_time(table, &mut warnings);
@@ -95,7 +100,6 @@ pub fn build(model: &StarshipConfig, name: &str) -> Result<ImportArtifacts> {
     let ui = build_ui(model, &mut warnings);
     let theme = ThemeConfig { ui, segments };
 
-    let selected = selected_palette(model, &mut warnings);
     let mut palette = translate_palette(name, selected, &language.palette_colors, &mut warnings);
     add_preset_language_roles(&mut palette, &theme.segments.language, &preset.palette);
 
@@ -255,8 +259,9 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
     #![allow(missing_docs)]
 
-    use super::build;
+    use super::{ImportArtifacts, build};
     use crate::config::types::ColorSpec;
+    use crate::import::starship::WarningKind;
     use crate::import::starship::model::parse;
 
     const SAMPLE: &str = r##"
@@ -498,5 +503,169 @@ error_symbol = "[❯](bold red)"
         assert_eq!(theme.segments.duration.text_color.as_str(), "yellow");
         assert_eq!(theme.segments.duration.bg_color.as_str(), "transparent");
         assert_eq!(theme.segments.duration.show_if_exceeds_ms, 500_u64);
+    }
+
+    fn language_override<'a>(artifacts: &'a ImportArtifacts, key: &str) -> Option<&'a str> {
+        artifacts
+            .theme
+            .segments
+            .language
+            .overrides
+            .get(key)
+            .map(ColorSpec::as_str)
+    }
+
+    fn invalid_color_warnings(artifacts: &ImportArtifacts) -> Vec<&str> {
+        artifacts
+            .warnings
+            .iter()
+            .filter(|w| w.kind == WarningKind::InvalidColor)
+            .map(|w| w.message.as_str())
+            .collect()
+    }
+
+    fn lossy_warnings(artifacts: &ImportArtifacts) -> Vec<&str> {
+        artifacts
+            .warnings
+            .iter()
+            .filter(|w| w.kind == WarningKind::LossyMapping)
+            .map(|w| w.message.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn language_fg_prefixed_style_is_accepted() {
+        let model = parse("[nodejs]\nstyle = \"fg:green\"\n").unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        assert_eq!(
+            language_override(&artifacts, "node_bg_color"),
+            Some("green")
+        );
+        assert!(
+            invalid_color_warnings(&artifacts).is_empty(),
+            "{:?}",
+            artifacts.warnings
+        );
+    }
+
+    #[test]
+    fn language_palette_alias_resolves_via_selected_palette() {
+        let model = parse(
+            "palette = \"p\"\n[python]\nstyle = \"bold peach\"\n[palettes.p]\npeach = \"#fab387\"\n",
+        )
+        .unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        assert_eq!(
+            language_override(&artifacts, "python_bg_color"),
+            Some("#fab387")
+        );
+        assert_eq!(
+            artifacts.palette.colors.get("peach").map(ColorSpec::as_str),
+            Some("#fab387")
+        );
+        assert!(invalid_color_warnings(&artifacts).is_empty());
+    }
+
+    #[test]
+    fn language_bg_only_style_is_lossy_not_invalid() {
+        let model = parse("[rust]\nstyle = \"bg:#212736\"\n").unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        assert!(invalid_color_warnings(&artifacts).is_empty());
+        let lossy = lossy_warnings(&artifacts);
+        assert_eq!(lossy.len(), 1_usize, "{lossy:?}");
+        assert!(lossy.iter().all(|m| m.contains("language rust")));
+        // The bg is not applied: the color stays the preset's, as without the module.
+        let untouched = build(&parse("").unwrap(), "demo").expect("build");
+        assert_eq!(
+            artifacts
+                .theme
+                .segments
+                .language
+                .overrides
+                .get("rust_bg_color"),
+            untouched
+                .theme
+                .segments
+                .language
+                .overrides
+                .get("rust_bg_color")
+        );
+    }
+
+    #[test]
+    fn language_own_format_is_reported_lossy() {
+        let model = parse(
+            "[nodejs]\nstyle = \"fg:green\"\nformat = \"via [$symbol($version )]($style)\"\n",
+        )
+        .unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        let lossy = lossy_warnings(&artifacts);
+        assert_eq!(lossy.len(), 1_usize, "{lossy:?}");
+        assert!(lossy.iter().all(|m| m.contains("language nodejs")));
+        assert!(lossy.iter().all(|m| m.contains("format")));
+    }
+
+    #[test]
+    fn language_fg_and_bg_style_keeps_fg_and_warns_about_bg() {
+        let model = parse("[rust]\nstyle = \"bg:blue fg:white\"\n").unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        assert_eq!(
+            language_override(&artifacts, "rust_bg_color"),
+            Some("white")
+        );
+        assert_eq!(lossy_warnings(&artifacts).len(), 1_usize);
+        assert!(invalid_color_warnings(&artifacts).is_empty());
+    }
+
+    #[test]
+    fn character_fg_prefixed_style_is_accepted() {
+        let model = parse("[character]\nsuccess_symbol = \"[❯](fg:green)\"\n").unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        assert_eq!(
+            artifacts.theme.segments.character.success_color.as_str(),
+            "green"
+        );
+        assert!(invalid_color_warnings(&artifacts).is_empty());
+    }
+
+    #[test]
+    fn character_palette_alias_resolves_via_selected_palette() {
+        let model = parse(
+            "palette = \"p\"\n[character]\nsuccess_symbol = \"[❯](bold peach)\"\nerror_symbol = \"[✗](fg:peach)\"\n[palettes.p]\npeach = \"#fab387\"\n",
+        )
+        .unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        let character = &artifacts.theme.segments.character;
+        assert_eq!(character.success_color.as_str(), "#fab387");
+        assert_eq!(character.error_color.as_str(), "#fab387");
+        assert!(invalid_color_warnings(&artifacts).is_empty());
+    }
+
+    #[test]
+    fn character_shared_background_lands_in_the_format() {
+        let model = parse(
+            "[character]\nsuccess_symbol = \"[❯](bg:blue fg:white)\"\nerror_symbol = \"[✗](bg:blue fg:red)\"\n",
+        )
+        .unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        let character = &artifacts.theme.segments.character;
+        assert_eq!(character.success_color.as_str(), "white");
+        assert_eq!(
+            character.format.as_deref(),
+            Some("[$symbol]($style bg:blue) ")
+        );
+        assert!(invalid_color_warnings(&artifacts).is_empty());
+    }
+
+    #[test]
+    fn character_diverging_background_is_lossy() {
+        let model =
+            parse("[character]\nsuccess_symbol = \"[❯](bold bg:blue fg:white)\"\n").unwrap();
+        let artifacts = build(&model, "demo").expect("build");
+        assert_eq!(
+            artifacts.theme.segments.character.format.as_deref(),
+            Some("[$symbol](bold $style) ")
+        );
+        assert_eq!(lossy_warnings(&artifacts).len(), 1_usize);
     }
 }
