@@ -535,7 +535,45 @@ __gpy_sync_workspace() {
 # Any DEBUG trap installed before gpy's (e.g. bash-preexec, a user framework),
 # captured by __gpy_setup_hooks and chained from __gpy_debug_trap so gpy never
 # silently clobbers it (#320).
-__gpy_prev_debug_trap=""
+: "${__gpy_prev_debug_trap=}"
+
+# One-shot PROMPT_COMMAND entry that captures a prior DEBUG trap. bash hides
+# the DEBUG trap from functions AND from files run with `source` (no
+# functrace), so neither __gpy_setup_hooks nor gpy.bash's own top level can
+# read it. A PROMPT_COMMAND string is evaluated at the shell's top level, where
+# `trap -p DEBUG` works, so the install is deferred to the first prompt. $?
+# is passed through for the entries that follow.
+# shellcheck disable=SC2016
+__gpy_debug_oneshot='__gpy_dbg_s=$?; __gpy_dbg_seen="$(trap -p DEBUG)"; __gpy_install_debug_trap "$__gpy_dbg_s"'
+
+# Run once from the first prompt: chain any prior DEBUG trap (never gpy's own,
+# which would recurse), install gpy's, and drop the one-shot entry. Sourcing
+# gpy.bash from inside a function still sees the trap at the first prompt, so
+# plugin-manager loads are covered too.
+__gpy_install_debug_trap() {
+    if [[ -n "$__gpy_dbg_seen" && "$__gpy_dbg_seen" != *"__gpy_debug_trap"* ]]; then
+        __gpy_prev_debug_trap="$(__gpy_trap_body "$__gpy_dbg_seen")"
+    fi
+    trap '__gpy_debug_trap "$_"' DEBUG
+    local x
+    if [[ -n "$__gpy_prompt_command_arrays" && "${PROMPT_COMMAND@a}" == *a* ]]; then
+        local -a kept=()
+        for x in "${PROMPT_COMMAND[@]}"; do
+            x="${x//"$__gpy_debug_oneshot; "/}"
+            x="${x//"$__gpy_debug_oneshot"/}"
+            [[ -n "$x" ]] && kept+=("$x")
+        done
+        PROMPT_COMMAND=("${kept[@]}")
+    else
+        x="${PROMPT_COMMAND:-}"
+        x="${x//"$__gpy_debug_oneshot; "/}"
+        # String form only: the array form was handled above.
+        # shellcheck disable=SC2178
+        PROMPT_COMMAND="${x//"$__gpy_debug_oneshot"/}"
+    fi
+    __gpy_keep_arm_hook_last
+    return "${1:-0}"
+}
 
 # Bash preexec emulation using DEBUG trap. Installed as
 # `__gpy_debug_trap "$_"`: bash sets `$_` to the last argument of every
@@ -577,21 +615,18 @@ __gpy_setup_hooks() {
         PROMPT_COMMAND="__gpy_precmd${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
     fi
 
-    # Setup DEBUG trap for preexec emulation, chaining any trap already
-    # installed instead of overwriting it (#320). Skip capture if the
-    # existing trap is already gpy's own (re-init in the same shell), which
-    # would otherwise chain into itself and recurse forever. The arming hook
-    # goes last in PROMPT_COMMAND, after __gpy_precmd and anything else
-    # (#684).
+    # DEBUG trap for preexec emulation, chaining any trap already installed
+    # instead of overwriting it (#320). Installed from the first prompt by
+    # __gpy_install_debug_trap (see __gpy_debug_oneshot for why), which skips
+    # capture when the trap is already gpy's own (re-init in the same shell).
+    # The arming hook goes last in PROMPT_COMMAND (#684).
     if [[ $__gpy_duration_method != "none" ]]; then
-        local existing_trap
-        existing_trap="$(trap -p DEBUG)"
-        if [[ -n "$existing_trap" && "$existing_trap" != *"__gpy_debug_trap"* ]]; then
-            existing_trap="${existing_trap#trap -- \'}"
-            __gpy_prev_debug_trap="${existing_trap%\' DEBUG}"
-        fi
-        trap '__gpy_debug_trap "$_"' DEBUG
+        # Arm from the very first prompt, so the first command line is timed.
         __gpy_keep_arm_hook_last
+        if [[ "${PROMPT_COMMAND:-}" != *"$__gpy_debug_oneshot"* ]]; then
+            # shellcheck disable=SC2128,SC2178
+            PROMPT_COMMAND="$__gpy_debug_oneshot${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+        fi
     fi
 }
 
