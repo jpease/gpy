@@ -274,6 +274,13 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   `~` contraction, and macOS `/tmp` showed as `/private/tmp`; IPC and oneshot
   output now match. Path validation, read-only checks and push-delivery
   matching still use the canonical path; the wire format is unchanged.
+- Fish shells pick up a theme change made while the agent was stopped
+  (#701). A new shell kept the stale theme it sourced, and open shells
+  only re-registered after the agent restarted. The starting agent now
+  rings `.reload` for tracked shells when its theme export actually
+  changed (a plain restart writes nothing), and Fish re-applies a newer
+  export after registering.
+
 - The agent no longer signals an unrelated process that reused a dead
   shell's PID (#781). A shell tracking file older than its PID's current
   process is now removed with its flags instead of getting a `.reregister`

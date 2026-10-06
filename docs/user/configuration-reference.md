@@ -269,6 +269,8 @@ truncate_to_repo = false
 
 `config.toml` is hot-reloaded by the running agent — no restart needed for most edits. Every reload re-resolves which config file is in effect (the highest-priority one that exists), so the agent also follows a config file that you fix after it failed to load at startup, create at a higher-priority location, or delete — deleting the active `config.toml` returns the agent to the built-in defaults. A file that exists but is invalid keeps the last good configuration.
 
+An edit made while the agent is stopped takes effect when the agent next starts. Shells that were open across the restart reload the new theme on their own. A new Fish shell that loaded the old theme at startup reloads it as soon as it registers with the agent.
+
 Use the CLI to inspect or edit values without hand-editing the file:
 
 ```bash

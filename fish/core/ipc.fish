@@ -1080,6 +1080,30 @@ function __gpy_refresh_registration_after_restart --description 'Forget this she
     set -e __gpy_last_workspace
     __gpy_log_debug ipc "Re-registration requested by agent for PID $fish_pid"
     __gpy_register_with_agent >/dev/null 2>&1
+    set -l register_status $status
+    # A successful registration already checked; this covers a refused one
+    # (the new agent's export is on disk either way).
+    __gpy_reload_if_theme_export_changed
+    return $register_status
+end
+
+# The agent may have rewritten the theme-export cache since this shell sourced
+# it: a config edited while no agent ran is only exported when the agent next
+# starts, and that write can land before this shell registers, so before the
+# shell is tracked for the agent's .reload doorbell (#701). Re-apply the export
+# when the file is newer than the one sourced, or when none was recorded (the
+# spawn fallback ran) and the file now exists. Fork-free (`path mtime` is a
+# builtin) and only run on registration, never on the per-prompt path.
+function __gpy_reload_if_theme_export_changed --description 'Re-apply the theme export if the agent rewrote it since this shell sourced it'
+    set -l cache_path (__gpy_theme_export_cache_path)
+    test -n "$cache_path" -a -f "$cache_path"; or return 0
+    set -l mtime (__gpy_file_mtime "$cache_path"); or return 0
+    if set -q __gpy_theme_export_mtime[1]; and test "$mtime" -le "$__gpy_theme_export_mtime"
+        return 0
+    end
+    __gpy_log_debug ipc "Theme export rewritten since it was sourced; reloading"
+    __gpy_apply_agent_reload
+    set -g __gpy_repaint_trigger (math (set -q __gpy_repaint_trigger; and echo $__gpy_repaint_trigger; or echo 0) + 1)
 end
 
 function __gpy_register_with_agent --description 'Register this Fish process with the GPY agent'
@@ -1119,6 +1143,9 @@ function __gpy_register_with_agent --description 'Register this Fish process wit
         set -g __gpy_last_workspace (pwd)
         __gpy_track_shell_for_agent_recovery
         __gpy_log_debug ipc "Registered Fish PID %self with agent"
+        # After tracking: an export rewrite from here on is rung as .reload by
+        # the agent; one that already landed is caught here (#701).
+        __gpy_reload_if_theme_export_changed
         return 0
     else if set -q GPY_TEST_MODE
         __gpy_log_debug ipc "Registration failed: invalid response '$response'"
