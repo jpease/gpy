@@ -75,6 +75,9 @@ type Cells = Vec<(char, Look)>;
 /// Name the imported theme and palette are installed under.
 const IMPORT_NAME: &str = "parity";
 
+/// The `SSH_CONNECTION` value of the SSH scenarios.
+const SSH_CONNECTION: &str = "192.0.2.1 50000 192.0.2.2 22";
+
 /// What is rendered for a row.
 #[derive(Debug, Clone, Copy)]
 enum Scenario {
@@ -84,6 +87,8 @@ enum Scenario {
     Duration(u64),
     /// The `hostname` module, on this machine's hostname.
     Hostname,
+    /// The `hostname` module in an SSH session (`SSH_CONNECTION` set).
+    HostnameSsh,
     /// The `character` module after a command that exited with this status.
     Character(i32),
     /// The prompt's layout: whether a blank line precedes it and whether it
@@ -104,7 +109,7 @@ impl Scenario {
         match self {
             Self::Directory(_) => "directory",
             Self::Duration(_) => "cmd_duration",
-            Self::Hostname => "hostname",
+            Self::Hostname | Self::HostnameSsh => "hostname",
             Self::Character(_) => "character",
             Self::Layout => "prompt",
             Self::Git => "git_branch",
@@ -125,7 +130,7 @@ impl Scenario {
                 "--duration-ms".to_owned(),
                 millis.to_string(),
             ]),
-            Self::Hostname => args.extend([
+            Self::Hostname | Self::HostnameSsh => args.extend([
                 "hostname".to_owned(),
                 "--hostname".to_owned(),
                 hostname.to_owned(),
@@ -219,6 +224,9 @@ fn render_with_starship(env: &CliTestEnv, config: &Path, scenario: Scenario, cwd
     if let Scenario::Character(status) = scenario {
         command.args(["--status", &status.to_string()]);
     }
+    if matches!(scenario, Scenario::HostnameSsh) {
+        command.env("SSH_CONNECTION", SSH_CONNECTION);
+    }
     let output = command.output().expect("run starship");
     assert!(
         output.status.success(),
@@ -250,7 +258,14 @@ fn render_with_gpy(env: &CliTestEnv, config: &Path, scenario: Scenario, cwd: &Pa
     }
     let owned = scenario.agent_args(cwd, &machine_hostname(env.root()));
     let args: Vec<&str> = owned.iter().map(String::as_str).collect();
-    let result = env.run_gpy_agent(&args).expect("run gpy-agent");
+    let envs: &[(&str, &str)] = if matches!(scenario, Scenario::HostnameSsh) {
+        &[("SSH_CONNECTION", SSH_CONNECTION)]
+    } else {
+        &[]
+    };
+    let result = env
+        .run_gpy_agent_with_env(&args, envs)
+        .expect("run gpy-agent");
     result.assert_success(&args.join(" "));
     result.stdout
 }
@@ -333,6 +348,7 @@ fn check_row(name: &str, config: &str, scenario: Scenario) {
         Scenario::Directory(relative) => env.root().join(relative),
         Scenario::Duration(_)
         | Scenario::Hostname
+        | Scenario::HostnameSsh
         | Scenario::Character(_)
         | Scenario::Layout
         | Scenario::Git => env.root().to_path_buf(),
@@ -453,6 +469,8 @@ parity_rows! {
     directory_without_style: Scenario::Directory("work/proj"), "[directory]\ntruncation_length = 3\n";
     cmd_duration_without_style: Scenario::Duration(5_000), "[cmd_duration]\nmin_time = 500\n";
     hostname_without_style: Scenario::Hostname, "[hostname]\nssh_only = false\n";
+    // #826: Starship's default `ssh_symbol` (a globe) shows over SSH.
+    hostname_default_ssh_symbol_over_ssh: Scenario::HostnameSsh, "[hostname]\nstyle = \"bold green\"\n";
     // #735: character symbols with trailing text or several groups.
     character_success_capitalized_bold: Scenario::Character(0), "[character]\nsuccess_symbol = \"[❯](Bold green)\"\nerror_symbol = \"[✗](Bold red)\"\n";
     character_success_trailing_space: Scenario::Character(0), "[character]\nsuccess_symbol = \"[➜](bold green) \"\nerror_symbol = \"[✗](bold red) \"\n";

@@ -665,6 +665,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   instead of warning that it is an unsupported module (#827).
 - The shell-test runner pins `XDG_RUNTIME_DIR` inside its hermetic root, so
   test agents are stopped on systems that set it (#824).
+- `gpy theme import` sets Starship's default hostname `ssh_symbol` for
+  SSH-only hostname modules, so imported themes show the globe over SSH
+  (#826).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
