@@ -504,6 +504,11 @@
           "default": false,
           "description": "Whether this is the last segment in the prompt"
         },
+        "is_ssh": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether the client session is over SSH; gates the hostname symbol (#826)"
+        },
         "prev_bg": {
           "type": "string",
           "maxLength": 64,
@@ -536,6 +541,11 @@
               "type": "boolean",
               "default": false,
               "description": "Whether this is the last segment in the prompt"
+            },
+            "is_ssh": {
+              "type": "boolean",
+              "default": false,
+              "description": "Whether the client session is over SSH; gates the hostname symbol (#826)"
             },
             "prev_bg": {
               "type": [

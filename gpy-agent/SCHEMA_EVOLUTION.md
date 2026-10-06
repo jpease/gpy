@@ -31,6 +31,26 @@ Changes are listed newest-first within each release group.
 
 ---
 
+### IPC protocol — `is_ssh` on the hostname request and response (MINOR, #826)
+
+| Property | Value |
+|---|---|
+| Scope | `Message::HostnameRequest`, `Response::Hostname`, `ShellIpcMessage` (`{"op":"hostname",...}`), `oneshot hostname --is-ssh`, fish/bash/zsh `__gpy_request_hostname` |
+| Change type | MINOR — new optional `is_ssh: bool`, `#[serde(default, skip_serializing_if = "is_false")]` on the request (`Option<bool>` on the shell form, absent = `false`); `#[serde(default)]` on the response |
+| IPC protocol | Additive — `PROTOCOL_VERSION` stays 2. An old agent ignores `is_ssh` and keeps drawing the hostname icon whenever the segment renders. An old shell omits it, so a new agent treats the session as local and draws no icon until the shell is updated |
+| Config schema | No shape change. `segments.hostname.icon` now means Starship's `ssh_symbol`: drawn only in SSH sessions, on both render paths |
+
+**What changed.** The shells already cache `__gpy_is_ssh` from `SSH_CONNECTION`/`SSH_CLIENT`/
+`SSH_TTY` at init; `__gpy_request_hostname` now takes it as a 4th argument and appends
+`"is_ssh":true` to the hostname payload when it is `1`. The agent echoes it on
+`Response::Hostname`, and `HostnameResolver` resolves `$symbol` to the theme icon only when it
+is true. The pure-shell render paths gate `__icon_hostname` on `__gpy_is_ssh` the same way.
+Visibility (`show_always` / SSH-only) is still decided by the shell. This supersedes the
+"no `is_ssh` field" note in the #259 entry below. The Starship importer now defaults
+`ssh_symbol` to `🌐 ` unconditionally, so `ssh_only = false` themes match Starship over SSH.
+
+---
+
 ### IPC protocol — published JSON schemas corrected (documentation only, #760)
 
 | Property | Value |

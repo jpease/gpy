@@ -24,9 +24,9 @@ disabled = true
 # `ssh_only = false` (verified against real starship 1.26.0), so this
 # baseline shows plain `<hostname> in ` with no icon. The paired GPY-side
 # isolated config (see starship_parity.test.fish) mirrors this by setting
-# `show_always = true` and dropping the icon for the test run only — the
-# *shipped* starship.toml preset keeps `show_always = false` and its icon, so
-# real users still get Starship's default SSH-only behavior with the same
-# glyph over an actual SSH session. See #257 for the semantic background.
+# `show_always = true` for the test run only and keeping the preset's icon,
+# which GPY likewise draws only in SSH sessions (#826). The *shipped*
+# starship.toml preset keeps `show_always = false`. See #257 for the semantic
+# background.
 [hostname]
 ssh_only = false

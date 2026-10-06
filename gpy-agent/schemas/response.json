@@ -196,6 +196,10 @@
       "properties": {
         "hostname": {
           "type": "string"
+        },
+        "is_ssh": {
+          "type": "boolean",
+          "description": "Whether the requesting client's session is over SSH (#826)"
         }
       },
       "title": "Hostname",

@@ -86,11 +86,11 @@ show_always = false
 
 # Hostname — Starship: `[$ssh_symbol$hostname]($style) in `, bold dimmed green.
 # SSH-only by default (show_always = false), matching Starship's ssh_only = true
-# default: the shell's segment_hostname_detect hides this segment off-SSH, and
-# the agent has no SSH knowledge (#259) so `$symbol` always renders whenever the
-# segment renders — it is the shell-side detect, not the agent, that keeps this
-# hidden on local sessions. The icon is Starship's default `ssh_symbol` (globe +
-# trailing space), so a real SSH session shows the same glyph as native Starship.
+# default: the shell's segment_hostname_detect hides this segment off-SSH. The
+# icon is Starship's default `ssh_symbol` (globe + trailing space); like
+# Starship, `$symbol` resolves to it only in SSH sessions (the shell reports
+# its SSH state to the agent, #826), so a theme that sets show_always = true
+# shows the bare hostname locally and the globe only over SSH.
 [segments.hostname]
 format = "[$symbol$hostname](bold dimmed green) in "
 icon = "🌐 "

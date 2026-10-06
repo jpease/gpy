@@ -803,15 +803,19 @@ function __gpy_request_clock() {
 #
 # is_last: "true" or "" (#613 -- the same convention every segment now uses).
 # The caller (hostname.zsh) always passes it explicitly, so no default here.
+# is_ssh: "1" in an SSH session ($__gpy_is_ssh). Sent as "is_ssh":true so the
+# agent draws the theme icon only over SSH (#826); omitted otherwise.
 function __gpy_request_hostname() {
     local hostname=$1
     local is_last=$2
     local prev_bg=${3:-}
+    local is_ssh=${4:-}
 
-    local json_hostname flags_tail
+    local json_hostname flags_tail ssh_json=""
     json_hostname=$(__gpy_escape_json "$hostname")
     flags_tail=$(__gpy_json_flags_tail "$is_last" "" "$prev_bg")
-    local request="{\"op\":\"hostname\",\"hostname\":\"${json_hostname}\",\"format\":\"zsh-prompt\"${flags_tail}}"
+    [[ "$is_ssh" == "1" ]] && ssh_json=',"is_ssh":true'
+    local request="{\"op\":\"hostname\",\"hostname\":\"${json_hostname}\",\"format\":\"zsh-prompt\"${flags_tail}${ssh_json}}"
 
     local result
     result=$(__gpy_send_json "$request")

@@ -33,13 +33,11 @@
 #
 #   Hostname is a special case: both Starship and GPY hide it off-SSH by
 #   default (`ssh_only`/`show_always`), so the fixture sets `ssh_only = false`
-#   and the isolated GPY config is patched to `show_always = true` with no
-#   icon for this comparison only (see `__sp_patch_hostname_visible`) — this
-#   exercises `<hostname> in ` text+colour parity, but NOT the `ssh_symbol`/
-#   icon glyph itself, since real Starship suppresses `ssh_symbol` off-SSH no
-#   matter what `ssh_only` is set to. The icon is gated by the shell's
-#   `segment_hostname_detect` over real SSH instead (#259), which this
-#   non-SSH harness cannot exercise.
+#   and the isolated GPY config is patched to `show_always = true` for this
+#   comparison only (see `__sp_patch_hostname_visible`). The preset's icon is
+#   kept: like Starship's `ssh_symbol`, GPY draws it only in SSH sessions
+#   (#826), so a local run exercises `<hostname> in ` with the icon suppressed
+#   on both sides.
 #
 # DELIBERATE EXCLUSION
 #   * package module: Starship shows `is 📦 v1.2.3`; GPY does not emulate it, so
@@ -95,17 +93,14 @@ set -g SP_DURATION 5000 # > Starship's 2s threshold so the duration module shows
 # Isolated GPY config: apply the starship theme without touching real config
 # ---------------------------------------------------------------------------
 # Override the isolated copy's [segments.hostname] block so the segment is
-# visible for this comparison, without the icon.
+# visible for this comparison.
 #
 # The shipped preset is SSH-only (show_always = false) with an icon set to
-# Starship's ssh_symbol default — correct for real use (SSH shows icon+host,
-# a local session shows nothing), since #259 means the agent cannot SSH-gate
-# the icon itself; that gating is the shell's segment_hostname_detect. This
-# harness never runs over SSH, so it forces the segment on for comparison —
-# and drops the icon, because real Starship suppresses `ssh_symbol` off-SSH
-# too (verified: `ssh_only = false` alone does not surface it — see
-# fixtures/starship_match.toml). Only the isolated test copy is patched; the
-# shipped starship.toml (and real users' SSH-only default) is untouched.
+# Starship's ssh_symbol default. This harness never runs over SSH, so it forces
+# the segment on. The icon stays: the shell reports its SSH state to the agent,
+# which draws the icon only over SSH (#826), matching real Starship, which
+# suppresses `ssh_symbol` off-SSH even with `ssh_only = false` (see
+# fixtures/starship_match.toml). Only the isolated test copy is patched.
 function __sp_patch_hostname_visible --argument-names theme_path
     set -l in_hostname 0
     set -l out_lines
@@ -114,16 +109,8 @@ function __sp_patch_hostname_visible --argument-names theme_path
             set in_hostname 0
             test "$ln" = '[segments.hostname]'; and set in_hostname 1
         end
-        if test "$in_hostname" = 1
-            switch $ln
-                case 'show_always = false'
-                    set -a out_lines 'show_always = true'
-                    continue
-                case 'icon = *'
-                    continue
-                case '*'
-                    set -a out_lines $ln
-            end
+        if test "$in_hostname" = 1; and test "$ln" = 'show_always = false'
+            set -a out_lines 'show_always = true'
         else
             set -a out_lines $ln
         end

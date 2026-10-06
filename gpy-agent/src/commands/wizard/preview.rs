@@ -460,8 +460,13 @@ fn render_segment(
         )),
         BuiltinSegment::Hostname => {
             let format = theme.segments.hostname.format.as_deref()?;
-            let resolver = HostnameResolver::new(facts.hostname.clone(), theme, ctx.position)
-                .with_glyphs(Glyphs::from(&config.ui));
+            let resolver = HostnameResolver::new(
+                facts.hostname.clone(),
+                facts.sample_is_ssh,
+                theme,
+                ctx.position,
+            )
+            .with_glyphs(Glyphs::from(&config.ui));
             crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
         }
         BuiltinSegment::Username => {
@@ -708,6 +713,7 @@ mod tests {
             username: "tester".to_owned(),
             sample_duration_ms: 128,
             sample_character_success: true,
+            sample_is_ssh: true,
         }
     }
 
@@ -1378,6 +1384,38 @@ mod tests {
             text.contains("9:41"),
             "expected the fixed demo time in clock output, got {text:?}"
         );
+    }
+
+    /// #826: the hostname icon is an SSH-only symbol; the preview draws the
+    /// segment as it looks over SSH, so the icon shows, and a local sample
+    /// drops it exactly as the real prompt does.
+    #[test]
+    fn render_segment_hostname_icon_follows_sample_ssh_state() {
+        let config = make_config(
+            &[],
+            GitLanguageFlags {
+                git: false,
+                language: false,
+            },
+        );
+        let mut theme = ThemeConfig::default();
+        theme.segments.hostname.format = Some("[$symbol$hostname](green)".to_owned());
+        theme.segments.hostname.icon = Some(Icon::new("🌐 ").expect("valid icon"));
+        let ctx = FormatterRenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
+        let text_for = |facts: &PreviewFacts| -> String {
+            render_segment("hostname", &config, &theme, facts, &ctx)
+                .expect("hostname with a format renders")
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect()
+        };
+
+        assert_eq!(text_for(&make_facts()), "🌐 host");
+        let local = PreviewFacts {
+            sample_is_ssh: false,
+            ..make_facts()
+        };
+        assert_eq!(text_for(&local), "host");
     }
 
     /// Build a `DelimiterConfig` for the cap-glyph tests below without going

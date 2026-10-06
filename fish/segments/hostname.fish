@@ -11,6 +11,10 @@
 # $hostname, a builtin read-only variable fish populates once at shell start.
 # When a theme sets __hostname_format, rendering is delegated to the agent so
 # it can apply a Starship-compatible template.
+#
+# On both paths the theme icon is Starship's ssh_symbol: drawn only in SSH
+# sessions (#826). The agent path forwards $__gpy_is_ssh so the agent can
+# gate $symbol; the pure-fish path gates __icon_hostname itself.
 
 function __gpy_hostname_trim --argument-names value delim
     test -z "$delim"; and echo -- $value; and return
@@ -43,7 +47,7 @@ function segment_hostname_render --argument-names is_last
         # $__gpy_last_segment_bg into the is_last slot and dropping prev_bg.
         set -l is_last_value ""
         test "$is_last" = true; and set is_last_value true
-        set -l result (__gpy_request_hostname $hostname $is_last_value $__gpy_last_segment_bg)
+        set -l result (__gpy_request_hostname $hostname $is_last_value "$__gpy_last_segment_bg" "$__gpy_is_ssh")
         if test -n "$result"
             printf '%s' $result
             # Track this segment's bg for the next segment's powerline
@@ -59,7 +63,7 @@ function segment_hostname_render --argument-names is_last
     # Pure-fish path: zero forks, zero IPC.
     set -l name (__gpy_hostname_trim $hostname $__hostname_trim_at)
     set -l label "$name"
-    test -n "$__icon_hostname"; and set label "$__icon_hostname $name"
+    test "$__gpy_is_ssh" = 1; and test -n "$__icon_hostname"; and set label "$__icon_hostname $name"
     gpy_section_standalone $__color_hostname_bg $__color_hostname_fg "$label" $is_last
     set -g __gpy_last_segment_bg $__color_hostname_bg
 end

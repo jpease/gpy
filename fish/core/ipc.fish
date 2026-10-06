@@ -484,12 +484,16 @@ end
 #   is_last  — "true" if this is the last prompt segment, "" otherwise (#613:
 #              same true/"" convention as every other segment now).
 #   prev_bg  — the previous segment's background, for the powerline chevron.
-function __gpy_request_hostname --argument-names host is_last prev_bg --description 'Send hostname render request to agent'
+#   is_ssh   — "1" in an SSH session ($__gpy_is_ssh), anything else otherwise.
+#              Sent as "is_ssh":true so the agent draws the theme icon only
+#              over SSH (#826); omitted (agent default false) otherwise.
+function __gpy_request_hostname --argument-names host is_last prev_bg is_ssh --description 'Send hostname render request to agent'
     set -l format ansi
     set -l escaped_host (__gpy_json_escape "$host")
 
     set -l payload (string join '' '{"op":"hostname","hostname":"' $escaped_host '","format":"' $format '"')
     set payload (string join '' $payload (__gpy_json_flags_tail "$is_last" '' "$prev_bg"))
+    test "$is_ssh" = 1; and set payload (string join '' $payload ',"is_ssh":true')
     set payload (string join '' $payload '}')
 
     set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)

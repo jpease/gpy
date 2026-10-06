@@ -1205,6 +1205,49 @@ format = "[$symbol$hostname](bold dimmed green) in "
     );
 }
 
+/// `oneshot hostname --is-ssh` draws the theme icon (Starship's `ssh_symbol`);
+/// without the flag the same theme renders the bare hostname (#826).
+#[test]
+fn test_cli_oneshot_hostname_icon_only_with_is_ssh() {
+    let env = CliTestEnv::new().expect("failed to create CLI test env");
+    let theme_content = r#"
+[ui]
+
+[segments.hostname]
+format = "[$symbol$hostname](green)"
+icon = "🌐 "
+show_always = true
+"#;
+    fs::write(env.themes_dir().join("default.toml"), theme_content)
+        .expect("failed to write hostname-icon theme");
+
+    let render = |extra: &[&str]| {
+        let mut args = vec![
+            "oneshot",
+            "hostname",
+            "--hostname",
+            "myhost",
+            "--format",
+            "ansi",
+        ];
+        args.extend_from_slice(extra);
+        let output = env
+            .run_gpy_agent(&args)
+            .expect("failed to run gpy-agent oneshot hostname");
+        output.assert_success("oneshot hostname");
+        output.stdout
+    };
+
+    let ssh = render(&["--is-ssh"]);
+    assert!(
+        ssh.contains("🌐 ") && ssh.contains("myhost"),
+        "expected the icon and hostname over SSH: {ssh:?}"
+    );
+    let local = render(&[]);
+    assert!(local.contains("myhost"), "expected the hostname: {local}");
+    assert!(!local.contains('🌐'), "expected no icon locally: {local}");
+}
+
 /// `oneshot hostname` with no `format` template configured (the default
 /// theme's shell-side path) renders nothing — the shell renders the hostname
 /// segment locally instead.

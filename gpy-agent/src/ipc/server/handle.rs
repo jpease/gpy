@@ -1127,12 +1127,14 @@ mod route_prev_bg_tests {
             hostname: "h".to_owned(),
             format: Format::Json,
             is_last: false,
+            is_ssh: true,
             prev_bg: None,
         };
         let response = registry.route(&msg).expect("routing must succeed");
         match response {
-            crate::ipc::Response::Hostname { hostname } => {
+            crate::ipc::Response::Hostname { hostname, is_ssh } => {
                 assert_eq!(hostname, "h");
+                assert!(is_ssh, "the handler must echo the request's is_ssh (#826)");
             }
             other => panic!("expected Response::Hostname, got {other:?}"),
         }
@@ -1146,13 +1148,15 @@ mod route_prev_bg_tests {
             hostname: "my-host".to_owned(),
             format: Format::Ansi,
             is_last: true,
+            is_ssh: false,
             prev_bg: Some("blue".to_owned()),
         };
         let result = ConnectionHandler::route_request_secure(&registry, &security_config, &msg);
 
         match result.response {
-            crate::ipc::Response::Hostname { hostname } => {
+            crate::ipc::Response::Hostname { hostname, is_ssh } => {
                 assert_eq!(hostname, "my-host");
+                assert!(!is_ssh);
             }
             other => panic!("expected Response::Hostname, got {other:?}"),
         }

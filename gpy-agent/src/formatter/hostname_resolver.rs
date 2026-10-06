@@ -1,7 +1,9 @@
 //! Maps the agent-echoed hostname to Starship-exact template variable names.
 //!
 //! Variable names: `hostname`, `symbol`, `sep_close`.
-//! Compatible with Starship's `hostname` module.
+//! Compatible with Starship's `hostname` module: `symbol` is Starship's
+//! `ssh_symbol`, so it resolves to the theme icon only when the client reports
+//! an SSH session (#826) and to an empty string otherwise.
 //!
 //! Note: no `style` variable — the starship-preset format string carries its
 //! own literal style span, the same way the directory/duration/git presets
@@ -15,17 +17,25 @@ use crate::theme::ThemeConfig;
 /// Resolves Starship-exact hostname variable names.
 pub struct HostnameResolver<'a> {
     hostname: String,
+    is_ssh: bool,
     theme: &'a ThemeConfig,
     pos: SegmentPosition,
     glyphs: Glyphs,
 }
 
 impl<'a> HostnameResolver<'a> {
-    /// Build a resolver for one hostname segment render.
+    /// Build a resolver for one hostname segment render; `is_ssh` is the
+    /// client-reported SSH session state that gates `symbol`.
     #[must_use]
-    pub const fn new(hostname: String, theme: &'a ThemeConfig, pos: SegmentPosition) -> Self {
+    pub const fn new(
+        hostname: String,
+        is_ssh: bool,
+        theme: &'a ThemeConfig,
+        pos: SegmentPosition,
+    ) -> Self {
         Self {
             hostname,
+            is_ssh,
             theme,
             pos,
             glyphs: Glyphs::Nerd,
@@ -56,15 +66,17 @@ impl VariableResolver for HostnameResolver<'_> {
     fn resolve(&self, name: &str) -> Option<String> {
         match name {
             "hostname" => Some(self.trimmed_hostname()),
-            "symbol" => Some(
+            "symbol" => Some(if self.is_ssh {
                 self.theme
                     .segments
                     .hostname
                     .icon
                     .as_deref()
                     .unwrap_or("")
-                    .to_owned(),
-            ),
+                    .to_owned()
+            } else {
+                String::new()
+            }),
             "sep_close" => resolve_separator(self.pos, SeparatorStyle::Terminal, self.glyphs)
                 .close
                 .map(str::to_owned),
@@ -90,74 +102,80 @@ mod tests {
         ThemeConfig::default()
     }
 
+    /// A local (non-SSH), middle-of-prompt resolver for `hostname`.
+    fn local<'a>(hostname: &str, thr: &'a ThemeConfig) -> HostnameResolver<'a> {
+        HostnameResolver::new(
+            hostname.to_owned(),
+            false,
+            thr,
+            SegmentPosition::new(IsLast::No, IsFirst::No),
+        )
+    }
+
     #[test]
     fn hostname_trimmed_at_default_dot() {
         let thr = theme();
         assert_eq!(thr.segments.hostname.trim_at, ".");
-        let res = HostnameResolver::new(
-            "host.example.com".to_owned(),
-            &thr,
-            SegmentPosition::new(IsLast::No, IsFirst::No),
+        assert_eq!(
+            local("host.example.com", &thr).resolve("hostname").unwrap(),
+            "host"
         );
-        assert_eq!(res.resolve("hostname").unwrap(), "host");
     }
 
     #[test]
     fn hostname_unchanged_when_trim_at_empty() {
         let mut thr = theme();
         thr.segments.hostname.trim_at = String::new();
-        let res = HostnameResolver::new(
-            "host.example.com".to_owned(),
-            &thr,
-            SegmentPosition::new(IsLast::No, IsFirst::No),
+        assert_eq!(
+            local("host.example.com", &thr).resolve("hostname").unwrap(),
+            "host.example.com"
         );
-        assert_eq!(res.resolve("hostname").unwrap(), "host.example.com");
     }
 
     #[test]
     fn hostname_unchanged_when_trim_at_delimiter_absent() {
         let thr = theme();
-        let res = HostnameResolver::new(
-            "localhost".to_owned(),
-            &thr,
-            SegmentPosition::new(IsLast::No, IsFirst::No),
+        assert_eq!(
+            local("localhost", &thr).resolve("hostname").unwrap(),
+            "localhost"
         );
-        assert_eq!(res.resolve("hostname").unwrap(), "localhost");
     }
 
+    /// #826: `symbol` is Starship's `ssh_symbol` — the icon only over SSH,
+    /// empty locally, and empty whenever no icon is configured.
     #[test]
-    fn symbol_resolved_when_icon_set() {
-        let mut thr = theme();
-        thr.segments.hostname.icon = Some(crate::config::types::Icon::new("🌐").unwrap());
-        let res = HostnameResolver::new(
-            "host".to_owned(),
-            &thr,
-            SegmentPosition::new(IsLast::No, IsFirst::No),
-        );
-        assert_eq!(res.resolve("symbol").unwrap(), "🌐");
-    }
+    fn symbol_matrix_is_ssh_by_icon() {
+        let no_icon = theme();
+        assert!(no_icon.segments.hostname.icon.is_none());
+        let mut with_icon = theme();
+        with_icon.segments.hostname.icon = Some(crate::config::types::Icon::new("🌐 ").unwrap());
 
-    #[test]
-    fn symbol_empty_when_icon_unset() {
-        let thr = theme();
-        assert!(thr.segments.hostname.icon.is_none());
-        let res = HostnameResolver::new(
-            "host".to_owned(),
-            &thr,
-            SegmentPosition::new(IsLast::No, IsFirst::No),
-        );
-        assert_eq!(res.resolve("symbol").unwrap(), "");
+        let cases = [
+            (true, &with_icon, "🌐 "),
+            (false, &with_icon, ""),
+            (true, &no_icon, ""),
+            (false, &no_icon, ""),
+        ];
+        for (is_ssh, thr, expected) in cases {
+            let res = HostnameResolver::new(
+                "host".to_owned(),
+                is_ssh,
+                thr,
+                SegmentPosition::new(IsLast::No, IsFirst::No),
+            );
+            assert_eq!(
+                res.resolve("symbol").unwrap(),
+                expected,
+                "is_ssh={is_ssh}, icon={:?}",
+                thr.segments.hostname.icon
+            );
+        }
     }
 
     #[test]
     fn unknown_variable_is_none() {
         let thr = theme();
-        let res = HostnameResolver::new(
-            "host".to_owned(),
-            &thr,
-            SegmentPosition::new(IsLast::No, IsFirst::No),
-        );
-        assert_eq!(res.resolve("nonsuch"), None);
+        assert_eq!(local("host", &thr).resolve("nonsuch"), None);
     }
 
     #[test]
@@ -165,6 +183,7 @@ mod tests {
         let thr = theme();
         let res = HostnameResolver::new(
             "host".to_owned(),
+            false,
             &thr,
             SegmentPosition::new(IsLast::Yes, IsFirst::No),
         );
@@ -174,24 +193,14 @@ mod tests {
     #[test]
     fn sep_close_none_when_is_last_false() {
         let thr = theme();
-        let res = HostnameResolver::new(
-            "host".to_owned(),
-            &thr,
-            SegmentPosition::new(IsLast::No, IsFirst::No),
-        );
-        assert_eq!(res.resolve("sep_close"), None);
+        assert_eq!(local("host", &thr).resolve("sep_close"), None);
     }
 
     #[test]
     fn style_is_none_for_hostname_segment() {
         let thr = theme();
-        let res = HostnameResolver::new(
-            "host".to_owned(),
-            &thr,
-            SegmentPosition::new(IsLast::No, IsFirst::No),
-        );
         assert_eq!(
-            res.resolve("style"),
+            local("host", &thr).resolve("style"),
             None,
             "hostname segment has no $style variable — format strings hardcode literal colors"
         );

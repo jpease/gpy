@@ -45,7 +45,9 @@ impl Formatter for FishAnsiFormatter {
                 Ok(render_duration_segment(*duration_ms, ctx, dialect))
             }
             Response::Character { success } => Ok(render_character_segment(*success, ctx, dialect)),
-            Response::Hostname { hostname } => Ok(render_hostname_segment(hostname, ctx, dialect)),
+            Response::Hostname { hostname, is_ssh } => {
+                Ok(render_hostname_segment(hostname, *is_ssh, ctx, dialect))
+            }
             Response::Username { username } => Ok(render_username_segment(username, ctx, dialect)),
             // A failed or disabled request omits the segment: the reply is
             // printed verbatim into the prompt, so protocol JSON must never
@@ -398,6 +400,7 @@ fn render_character_via_template(
 /// falls back to empty.
 fn render_hostname_segment(
     hostname: &str,
+    is_ssh: bool,
     ctx: &RenderContext<'_>,
     dialect: PromptDialect,
 ) -> String {
@@ -407,7 +410,7 @@ fn render_hostname_segment(
     };
     render_or_warn(
         "hostname segment",
-        render_hostname_via_template(hostname, ctx, dialect, format),
+        render_hostname_via_template(hostname, is_ssh, ctx, dialect, format),
     )
 }
 
@@ -418,13 +421,14 @@ fn render_hostname_segment(
 /// Returns a [`crate::template::TemplateError`] when `format` fails to parse or evaluate.
 fn render_hostname_via_template(
     hostname: &str,
+    is_ssh: bool,
     ctx: &RenderContext<'_>,
     dialect: PromptDialect,
     format: &str,
 ) -> crate::template::Result<String> {
     use crate::formatter::hostname_resolver::HostnameResolver;
 
-    let resolver = HostnameResolver::new(hostname.to_owned(), ctx.theme, ctx.position)
+    let resolver = HostnameResolver::new(hostname.to_owned(), is_ssh, ctx.theme, ctx.position)
         .with_glyphs(Glyphs::from(&ctx.config.ui));
     render_via_template(&resolver, ctx, dialect, format)
 }
@@ -973,6 +977,7 @@ mod tests {
         let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
         let response = Response::Hostname {
             hostname: "host.example.com".to_owned(),
+            is_ssh: false,
         };
         let got = formatter.render(&response, &rc).expect("render");
         assert_eq!(got, "", "no format → agent emits nothing");
@@ -986,6 +991,7 @@ mod tests {
         let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
         let response = Response::Hostname {
             hostname: "host.example.com".to_owned(),
+            is_ssh: false,
         };
         let got = formatter.render(&response, &rc).expect("render");
         // Default trim_at="." trims the FQDN down to the short name.
@@ -1005,6 +1011,26 @@ mod tests {
         assert_eq!(got, "on \u{1b}[1;32mhost\u{1b}[0m ");
     }
 
+    /// #826: the end-to-end render draws the theme icon only for an SSH
+    /// response; a local response renders the same format without it.
+    #[test]
+    fn hostname_icon_renders_only_over_ssh() {
+        let formatter = FishAnsiFormatter::default();
+        let (config, mut theme) = ctx();
+        theme.segments.hostname.format = Some("[$symbol$hostname](bold green) ".to_owned());
+        theme.segments.hostname.icon = Some(crate::config::types::Icon::new("🌐 ").expect("icon"));
+        let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
+        let render = |is_ssh| {
+            let response = Response::Hostname {
+                hostname: "host".to_owned(),
+                is_ssh,
+            };
+            formatter.render(&response, &rc).expect("render")
+        };
+        assert_eq!(render(true), "\u{1b}[1;32m🌐 \u{1b}[1;32mhost\u{1b}[0m ");
+        assert_eq!(render(false), "\u{1b}[1;32mhost\u{1b}[0m ");
+    }
+
     #[test]
     fn hostname_malformed_format_emits_empty() {
         let formatter = FishAnsiFormatter::default();
@@ -1013,6 +1039,7 @@ mod tests {
         let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
         let response = Response::Hostname {
             hostname: "host".to_owned(),
+            is_ssh: false,
         };
         let got = formatter.render(&response, &rc).expect("render");
         assert_eq!(got, "", "broken format → silent fallback → empty");
@@ -1190,6 +1217,7 @@ mod tests {
             Response::Character { success: true },
             Response::Hostname {
                 hostname: "box".to_owned(),
+                is_ssh: false,
             },
             Response::Username {
                 username: "ada".to_owned(),

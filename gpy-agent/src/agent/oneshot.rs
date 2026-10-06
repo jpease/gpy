@@ -77,6 +77,10 @@ pub struct OneshotRequest {
     /// `None` means this is not a hostname request; the handler defaults to empty.
     #[serde(default)]
     pub hostname: Option<String>,
+    /// Whether the session is over SSH; for `hostname` requests (#826). Gates
+    /// the theme icon exactly as the IPC `is_ssh` field does.
+    #[serde(default)]
+    pub is_ssh: bool,
     /// The effective username string to render; for `username` requests.
     /// `None` means this is not a username request; the handler defaults to empty.
     #[serde(default)]
@@ -362,6 +366,7 @@ fn handle_oneshot_hostname_parsed(request: &OneshotRequest) -> Result<String> {
 
     let response = Response::Hostname {
         hostname: request.hostname.clone().unwrap_or_default(),
+        is_ssh: request.is_ssh,
     };
     render_response(&response, format, &config, &theme, position)
 }

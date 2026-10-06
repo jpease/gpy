@@ -85,9 +85,10 @@ enum Scenario {
     Directory(&'static str),
     /// The `cmd_duration` module after a command that took this many ms.
     Duration(u64),
-    /// The `hostname` module, on this machine's hostname.
+    /// The `hostname` module, on this machine's hostname, in a local session.
     Hostname,
-    /// The `hostname` module in an SSH session (`SSH_CONNECTION` set).
+    /// The `hostname` module in an SSH session: `SSH_CONNECTION` for
+    /// Starship, `--is-ssh` for the agent (the shells' `__gpy_is_ssh`, #826).
     HostnameSsh,
     /// The `character` module after a command that exited with this status.
     Character(i32),
@@ -130,10 +131,16 @@ impl Scenario {
                 "--duration-ms".to_owned(),
                 millis.to_string(),
             ]),
-            Self::Hostname | Self::HostnameSsh => args.extend([
+            Self::Hostname => args.extend([
                 "hostname".to_owned(),
                 "--hostname".to_owned(),
                 hostname.to_owned(),
+            ]),
+            Self::HostnameSsh => args.extend([
+                "hostname".to_owned(),
+                "--hostname".to_owned(),
+                hostname.to_owned(),
+                "--is-ssh".to_owned(),
             ]),
             Self::Character(status) => args.extend([
                 "character".to_owned(),
@@ -258,14 +265,7 @@ fn render_with_gpy(env: &CliTestEnv, config: &Path, scenario: Scenario, cwd: &Pa
     }
     let owned = scenario.agent_args(cwd, &machine_hostname(env.root()));
     let args: Vec<&str> = owned.iter().map(String::as_str).collect();
-    let envs: &[(&str, &str)] = if matches!(scenario, Scenario::HostnameSsh) {
-        &[("SSH_CONNECTION", SSH_CONNECTION)]
-    } else {
-        &[]
-    };
-    let result = env
-        .run_gpy_agent_with_env(&args, envs)
-        .expect("run gpy-agent");
+    let result = env.run_gpy_agent(&args).expect("run gpy-agent");
     result.assert_success(&args.join(" "));
     result.stdout
 }
@@ -468,7 +468,10 @@ parity_rows! {
     // #734: a present module table without `style` takes Starship's default.
     directory_without_style: Scenario::Directory("work/proj"), "[directory]\ntruncation_length = 3\n";
     cmd_duration_without_style: Scenario::Duration(5_000), "[cmd_duration]\nmin_time = 500\n";
+    // #826: with `ssh_only = false` the imported default globe (Starship's
+    // `ssh_symbol`) shows over SSH and not locally, as in Starship.
     hostname_without_style: Scenario::Hostname, "[hostname]\nssh_only = false\n";
+    hostname_not_ssh_only_over_ssh: Scenario::HostnameSsh, "[hostname]\nssh_only = false\n";
     // #826: Starship's default `ssh_symbol` (a globe) shows over SSH.
     hostname_default_ssh_symbol_over_ssh: Scenario::HostnameSsh, "[hostname]\nstyle = \"bold green\"\n";
     // #735: character symbols with trailing text or several groups.
