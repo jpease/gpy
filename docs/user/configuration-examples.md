@@ -76,7 +76,7 @@ stash_enabled = false
 timeout_seconds = 3
 ```
 
-`skip_paths` disables git detection entirely under those trees. `max_ahead_behind` clamps the ahead/behind counter (rendered with a trailing `+` past the cap) instead of walking the full divergent history. `stash_enabled = false` skips the extra `git stash list` subprocess call. `timeout_seconds` fails fast on a slow repo instead of stalling the prompt.
+`skip_paths` disables git detection entirely under those trees. `max_ahead_behind` caps the displayed ahead/behind counter (a capped count renders with a trailing `+`, e.g. `↓100+`); it limits the number shown, not the git work. `stash_enabled = false` skips the extra `git stash list` subprocess call. `timeout_seconds` fails fast on a slow repo instead of stalling the prompt.
 
 ---
 
