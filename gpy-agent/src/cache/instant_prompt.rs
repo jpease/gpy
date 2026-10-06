@@ -64,7 +64,7 @@ use crate::{Error, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{PoisonError, RwLock};
+use std::sync::{Mutex, PoisonError, RwLock};
 use std::time::{Duration, SystemTime};
 
 /// Per-process counter appended to temp-file names, alongside the pid.
@@ -135,9 +135,13 @@ pub struct InstantPromptCache {
     /// In-memory record of the content last written for each `{cache_key}:{suffix}`,
     /// used to skip a redundant content write when nothing changed. The dedup
     /// path still bumps the file's mtime: shells read the mtime as "last write
-    /// or last verification" for their TTL check (#704). A lost or stale
-    /// record here means at most an occasional redundant write, never
-    /// incorrect cache content.
+    /// or last verification" for their TTL check (#704).
+    ///
+    /// Invariant (#706): a recorded entry always equals the file's content.
+    /// `write_cache_file` holds this mutex across the check, the touch, the
+    /// atomic write and the record, so concurrent writers of the same file
+    /// cannot leave the record saying X while disk holds Y. A missing entry
+    /// means at most a redundant write.
     ///
     /// Poison policy (#591): every access recovers via
     /// `unwrap_or_else(PoisonError::into_inner)` rather than silently skipping
@@ -145,7 +149,7 @@ pub struct InstantPromptCache {
     /// matches `template::parse`'s convention elsewhere in this crate -- a
     /// writer panicking mid-update should not also disable every subsequent
     /// cache interaction on this table.
-    last_written: RwLock<HashMap<String, String>>,
+    last_written: Mutex<HashMap<String, String>>,
     /// Per-repository set of `prev_bg` render contexts seen so far (`None` =
     /// context-free). The rendered ANSI bakes in the `fg:prev_bg` chevron, so a
     /// background write (watcher/registration, which has no `prev_bg`) must refresh
@@ -181,7 +185,7 @@ impl InstantPromptCache {
         let _ = prune_stale_entries(&cache_dir, SystemTime::now());
         Ok(Self {
             cache_dir,
-            last_written: RwLock::new(HashMap::new()),
+            last_written: Mutex::new(HashMap::new()),
             seen_contexts: RwLock::new(HashMap::new()),
             #[cfg(test)]
             write_calls: AtomicU64::new(0),
@@ -239,7 +243,7 @@ impl InstantPromptCache {
         std::fs::create_dir_all(&cache_dir)?;
         Ok(Self {
             cache_dir,
-            last_written: RwLock::new(HashMap::new()),
+            last_written: Mutex::new(HashMap::new()),
             seen_contexts: RwLock::new(HashMap::new()),
             #[cfg(test)]
             write_calls: AtomicU64::new(0),
@@ -502,7 +506,7 @@ impl InstantPromptCache {
         // Poison policy (#591, see `last_written`'s doc comment): recover
         // rather than silently skip.
         self.last_written
-            .write()
+            .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .retain(|map_key, _content| {
                 // map_key is `{cache_key}:{base}.{token}.{ext}`; the cache key has no
@@ -543,38 +547,31 @@ impl InstantPromptCache {
 
         // Poison policy (#591, see `last_written`'s doc comment): recover via
         // `into_inner` rather than silently skip the dedup check on a
-        // poisoned lock. Scoped to a block so the read guard is dropped
-        // before the write guard is taken below.
+        // poisoned lock. The guard is held across check, touch, write and
+        // record so the record always equals disk (#706).
+        let mut cache = self
+            .last_written
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(cached_content) = cache.get(&map_key)
+            && cached_content == content
         {
-            let cache = self
-                .last_written
-                .read()
-                .unwrap_or_else(PoisonError::into_inner);
-            if let Some(cached_content) = cache.get(&map_key)
-                && cached_content == content
+            // Verified unchanged: refresh the mtime, which shells read as
+            // "last write or last verification" (#704). A file that
+            // vanished falls through to a rewrite; other touch errors are
+            // ignored (the content on disk is still correct).
+            match std::fs::File::options()
+                .write(true)
+                .open(&cache_file)
+                .and_then(|f| f.set_modified(SystemTime::now()))
             {
-                // Verified unchanged: refresh the mtime, which shells read as
-                // "last write or last verification" (#704). A file that
-                // vanished falls through to a rewrite; other touch errors are
-                // ignored (the content on disk is still correct).
-                match std::fs::File::options()
-                    .write(true)
-                    .open(&cache_file)
-                    .and_then(|f| f.set_modified(SystemTime::now()))
-                {
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Ok(()) | Err(_) => return Ok(false),
-                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Ok(()) | Err(_) => return Ok(false),
             }
         }
 
         write_atomic(&self.cache_dir, &format!("{key}.{suffix}.{ext}"), content)?;
 
-        // Same poison policy as the read above: recover, don't skip the record.
-        let mut cache = self
-            .last_written
-            .write()
-            .unwrap_or_else(PoisonError::into_inner);
         cache.insert(map_key, content.to_owned());
         // Evict arbitrary entries to keep the in-memory dedup table bounded.
         // The map is keyed by "{cache_key}:{suffix}.{ext}" so the number of entries
@@ -1328,6 +1325,9 @@ mod tests {
         /// Backdate every file in the directory by this many seconds, standing
         /// in for the clock advancing.
         Age(u64),
+        /// `threads` writers released together by a `Barrier`, thread `i`
+        /// writing `versions[i % versions.len()]` for `(key, suffix)` (#706).
+        Concurrent(&'static str, &'static str, &'static [&'static str], usize),
     }
 
     struct CacheHarness {
@@ -1369,6 +1369,37 @@ mod tests {
                         set_mtime(&self.cache.cache_dir.join(name), when);
                     }
                     self.touched = None;
+                }
+                Op::Concurrent(key, suffix, versions, threads) => {
+                    let gate = std::sync::Barrier::new(threads);
+                    let writer_cache = &self.cache;
+                    std::thread::scope(|s| {
+                        for &content in versions.iter().cycle().take(threads) {
+                            let gate_ref = &gate;
+                            s.spawn(move || {
+                                gate_ref.wait();
+                                writer_cache
+                                    .write_cache_file(key, suffix, PromptDialect::Ansi, content)
+                                    .expect("write");
+                            });
+                        }
+                    });
+                    let name = format!("{key}.{suffix}.ansi");
+                    let recorded = self
+                        .cache
+                        .last_written
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .get(&format!("{key}:{suffix}.ansi"))
+                        .cloned()
+                        .expect("a concurrent write must be recorded");
+                    assert!(
+                        versions.contains(&recorded.as_str()),
+                        "record is a written version"
+                    );
+                    // The record must equal disk; `check` compares disk to it.
+                    self.expected.insert(name.clone(), recorded);
+                    self.touched = Some(name);
                 }
             }
             self.check();
@@ -1422,6 +1453,53 @@ mod tests {
         h.apply(&Op::Write("repo", "git.red", "v"));
         h.apply(&Op::Age(60));
         h.apply(&Op::Write("repo", "git.none", "y"));
+    }
+
+    #[test]
+    fn instant_cache_concurrent_writers_keep_record_equal_to_disk() {
+        let mut h = CacheHarness::new();
+        for _ in 0..500_u32 {
+            h.apply(&Op::Concurrent("repo", "git.none", &["A", "B"], 32));
+            h.apply(&Op::Write("repo", "git.none", "A"));
+        }
+    }
+
+    #[test]
+    fn write_cache_file_record_matches_disk_under_contention() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let cache = std::sync::Arc::new(
+            InstantPromptCache::new_in_dir(dir.path().to_path_buf()).expect("cache"),
+        );
+        let path = cache.cache_file_path("repo", "git.none", PromptDialect::Ansi);
+        for round in 0..500_u32 {
+            let gate = std::sync::Arc::new(std::sync::Barrier::new(32));
+            let handles: Vec<_> = ["A", "B"]
+                .iter()
+                .cycle()
+                .take(32)
+                .map(|&content| {
+                    let writer_cache = std::sync::Arc::clone(&cache);
+                    let writer_gate = std::sync::Arc::clone(&gate);
+                    std::thread::spawn(move || {
+                        writer_gate.wait();
+                        writer_cache
+                            .write_cache_file("repo", "git.none", PromptDialect::Ansi, content)
+                            .expect("write");
+                    })
+                })
+                .collect();
+            for handle in handles {
+                handle.join().expect("writer thread");
+            }
+            cache
+                .write_cache_file("repo", "git.none", PromptDialect::Ansi, "A")
+                .expect("write");
+            assert_eq!(
+                std::fs::read_to_string(&path).expect("read"),
+                "A",
+                "round {round}: write of A after contention must leave A on disk"
+            );
+        }
     }
 
     #[test]
