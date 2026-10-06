@@ -344,6 +344,14 @@ run_shell_tests() {
     repo_head_before="$(git rev-parse HEAD 2>/dev/null || echo none)"
     repo_worktrees_before="$(git worktree list 2>/dev/null | wc -l | tr -d ' ')"
 
+    # Build the debug binaries the suites exercise, every time (#812): an
+    # existence check let a stale target/debug/gpy-agent validate old code. A
+    # build failure aborts the suites rather than testing the previous binary.
+    # No-op when up to date.
+    if ! run_check "Build debug binaries" "(cd gpy-agent && cargo build --quiet --bin gpy --bin gpy-agent)"; then
+        return 0
+    fi
+
     # Fish integration suite (auto-discovers tests/fish/*.test.fish).
     run_check "Fish tests" "./scripts/test_fish.sh" || true
 
