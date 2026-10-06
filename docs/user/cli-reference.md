@@ -106,6 +106,12 @@ Agent stopped successfully
 Stopping is idempotent: with no agent running it prints
 `Agent is not running (socket not found)` and still exits `0`.
 
+A socket file with nothing listening is a leftover, not a running agent: `stop`
+removes it, prints `Agent is not running (stale socket removed)` and exits `0`.
+If an agent is there but cannot be stopped (it does not answer the shutdown
+request, or still answers after the shutdown wait), `stop` prints one `Error:`
+line on stderr and exits `1`.
+
 ---
 
 #### `gpy restart`

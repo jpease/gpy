@@ -811,22 +811,66 @@ async fn stop_agent() -> Result<()> {
             // process kept running at full CPU. Runs on the blocking pool
             // since it internally spins its own runtime per ping and would
             // panic if called directly on this already-running one.
-            let stopped =
-                tokio::task::spawn_blocking(move || wait_for_agent_shutdown(&socket_path))
-                    .await
-                    .unwrap_or(false);
+            let stopped = tokio::task::spawn_blocking({
+                let wait_path = socket_path.clone();
+                move || wait_for_agent_shutdown(&wait_path)
+            })
+            .await
+            .unwrap_or(false);
             if stopped {
                 println!("Agent stopped successfully");
+                Ok(())
             } else {
-                println!("Agent may still be shutting down...");
+                Err(gpy_agent::Error::agent(format!(
+                    "agent at {} was still answering after the shutdown request",
+                    socket_path.display()
+                )))
             }
         }
         Err(e) => {
-            eprintln!("Failed to send shutdown command: {e}");
-            eprintln!("You may need to use 'kill' or system signals to stop the agent");
+            if socket_is_stale(&socket_path) {
+                // Nothing is listening: the file is a leftover, not a process
+                // to signal. Only this verdict lets `stop` unlink the socket;
+                // an accepted-but-unanswered connection is a live agent (#742).
+                std::fs::remove_file(&socket_path).or_else(|remove_err| {
+                    if remove_err.kind() == std::io::ErrorKind::NotFound {
+                        Ok(())
+                    } else {
+                        Err(remove_err)
+                    }
+                })?;
+                println!("Agent is not running (stale socket removed)");
+                Ok(())
+            } else {
+                Err(gpy_agent::Error::agent(format!(
+                    "agent at {} did not answer the shutdown request ({e}); you may need to use 'kill' or system signals to stop it",
+                    socket_path.display()
+                )))
+            }
         }
     }
-    Ok(())
+}
+
+/// Whether nothing is listening on `socket_path`.
+///
+/// A fresh connection is refused (or the file vanished). Any other outcome,
+/// including an accepted connection, is evidence of a live agent and must not
+/// be treated as stale.
+#[cfg(unix)]
+fn socket_is_stale(socket_path: &std::path::Path) -> bool {
+    match std::os::unix::net::UnixStream::connect(socket_path) {
+        Ok(_) => false,
+        Err(e) => matches!(
+            e.kind(),
+            std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound
+        ),
+    }
+}
+
+/// Native Windows has no daemon to probe (#284); never claim a stale socket.
+#[cfg(not(unix))]
+fn socket_is_stale(_socket_path: &std::path::Path) -> bool {
+    false
 }
 
 /// Export theme as shell variable assignments

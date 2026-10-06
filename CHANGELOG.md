@@ -424,6 +424,11 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - The published IPC JSON schemas (`gpy-agent/schemas/`) match the agent:
   every op and `format` value, and the reply shapes the `json` format really
   sends (#760). The wire protocol is unchanged.
+- `gpy stop` and `gpy-agent stop` exit 1 with an `Error:` line when the agent
+  does not answer the shutdown request or keeps running (#742). A stale socket
+  file is removed and reported as "Agent is not running (stale socket
+  removed)" instead of `kill` advice, and `gpy restart` continues to start
+  after a failed stop.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
