@@ -988,7 +988,9 @@ end
 
 # Agent process supervision and automatic restart
 function __gpy_agent_supervisor_start --description 'Start agent supervisor for automatic restart'
-    if test "$GPY_AGENT_SUPERVISOR_ENABLED" = 0
+    # The flags exported from config.toml are the source of truth (#657, #699):
+    # with the agent disabled there is nothing to supervise.
+    if test "$GPY_AGENT_SUPERVISOR_ENABLED" = 0; or test "$GPY_AGENT_ENABLED" = 0
         return 0
     end
 
@@ -1217,7 +1219,9 @@ function __gpy_agent_supervisor_loop --description 'Background loop for agent su
     set -l last_restart_time 0
 
     while true
-        if test "$GPY_AGENT_SUPERVISOR_ENABLED" = 0
+        # Re-read both flags every iteration so a value changed after spawn
+        # stops the loop (#699).
+        if test "$GPY_AGENT_SUPERVISOR_ENABLED" = 0; or test "$GPY_AGENT_ENABLED" = 0
             break
         end
 
@@ -1335,12 +1339,12 @@ if not set -q GPY_SUPERVISOR_CHILD; and not test "$GPY_AGENT_ENABLED" = 0 -a "$G
             return
         end
 
-        if not set -q __gpy_supervisor_initialized
-            set -g __gpy_supervisor_initialized 1
-            __gpy_agent_supervisor_start
-        end
-
         if test "$GPY_AGENT_ENABLED" = 1
+            if not set -q __gpy_supervisor_initialized
+                set -g __gpy_supervisor_initialized 1
+                __gpy_agent_supervisor_start
+            end
+
             # One-time protocol version check per shell session: an agent
             # that responds to ping but speaks a different wire protocol
             # (e.g. left running across an upgrade) must be treated as not

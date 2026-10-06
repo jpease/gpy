@@ -91,13 +91,13 @@ All of these are off/default unless explicitly set — setting none of them pres
 ## Fish-Specific Issues
 
 - **Signal handling**: Fish uses one native `--on-signal SIGURG` handler, which checks the reload/re-register flag files and then repaints; it is the most reliable of the three shells — see the comparison table above. If Fish's prompt isn't repainting on signal, the watcher section above is the more likely cause than Fish's signal handling itself.
-- **Agent won't start / crash loop**: Fish runs a background supervisor loop (`__gpy_agent_supervisor_loop` in `fish/core/ipc.fish`) that health-checks the agent and restarts it. Relevant env vars, in increasing order of aggressiveness:
-  - `GPY_AGENT_SUPERVISOR_ENABLED=0` — disable the restart loop entirely (useful while debugging a crash so it doesn't keep respawning under you).
-  - `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` (default 30) — health-check cadence.
-  - `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` (default 5) — restarts attempted before the supervisor gives up.
-  - `GPY_AGENT_ENABLED=0` — disable the agent entirely (falls back to oneshot mode; slower per-prompt but no background process).
+- **Agent won't start / crash loop**: Fish runs a background supervisor loop (`__gpy_agent_supervisor_loop` in `fish/core/ipc.fish`) that health-checks the agent and restarts it. Relevant `config.toml` keys, in increasing order of aggressiveness:
+  - `[agent.supervisor] enabled = false` — disable the restart loop entirely (useful while debugging a crash so it doesn't keep respawning under you).
+  - `[agent.supervisor] check_interval_seconds` (default 30) — health-check cadence.
+  - `[agent.supervisor] max_restart_attempts` (default 5) — restarts attempted before the supervisor gives up.
+  - `[agent] enabled = false` — disable the agent entirely (falls back to oneshot mode; slower per-prompt but no background process). No supervisor is started either.
 
-  These are read by Fish with a "use if already set" pattern (`set -q VAR; or set -g VAR default`), so setting them in your shell config *before* GPY's `conf.d/gpy_init.fish` runs overrides the defaults for that session. They also get live-updated whenever the agent reloads config (`config.toml`'s `[agent]`/`[agent.supervisor]` sections) and sends a reload notification, since `gpy-agent theme export --format fish` re-exports them. If GPY seems completely disabled, check both `GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` — `gpy_init.fish` skips loading entirely when *both* are `0`.
+  The theme export (`gpy-agent theme export --format fish`) re-exports these as `GPY_AGENT_ENABLED`, `GPY_AGENT_SUPERVISOR_ENABLED`, `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` and `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` at shell start and on every config reload, so `config.toml` wins over a `set -gx` in your shell config (#657). If GPY seems completely disabled, check both `GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` in the environment fish starts with — `gpy_init.fish` skips loading entirely when *both* are `0` there.
 - **Reproducing registration issues**: `tests/fish/e2e_interactive_session.test.fish` drives a real `fish -i` on a pseudo-terminal against a real agent (two shells, one agent, repaint with no keystroke); run it, or borrow its sandbox setup, to reproduce a registration problem outside your own session. Prompt content itself is asserted by the gating `tests/fish/e2e_prompt_content.test.fish`.
 - **Abbreviations/completions**: shell completions are installed and regenerated automatically by the standard installers ([CLI Reference § Shell Completion](cli-reference.md#shell-completion)). If `gpy <TAB>` doesn't complete, confirm the `gpy` CLI binary itself is on `PATH` — completions require it.
 

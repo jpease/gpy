@@ -108,6 +108,7 @@ sections above describe the ones worth reading first.
 - `policy_helpers.test.fish`
 - `prompt_autostart_backoff.test.fish`
 - `protocol_version_mismatch.test.fish`
+- `agent_disabled_no_supervisor.test.fish`
 - `supervisor_cadence.test.fish`
 - `supervisor_output_detached.test.fish`
 - `test_helpers_scoped_kill.test.fish`

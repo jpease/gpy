@@ -314,6 +314,14 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   directory is `/`. Before, with `GPY_VERBOSE`/`GPY_DEBUG` set, its restart
   messages appeared in that terminal at random times.
 
+- Fish no longer starts an agent supervisor when the agent is disabled
+  (#699). With `[agent] enabled = false`, the first prompt spawned a
+  supervisor that never exited, and a supervisor loop restarted the agent
+  even when the shell had `GPY_AGENT_ENABLED=0`. The loop now re-reads both
+  flags on every iteration and exits when either is `0`. The Agent-Free Mode
+  docs now use the `config.toml` keys; the theme export overwrites a
+  `set -gx` in `config.fish`.
+
 - `gpy-agent start` no longer evicts a newer running agent (#780). It
   replaced the daemon on any version difference, so two installs could flip
   it back and forth. Only an older or unreadable version is replaced now.

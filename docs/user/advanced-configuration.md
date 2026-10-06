@@ -120,16 +120,25 @@ placeholders, is in [Theme Customization](theme-customization.md).
 
 ### Agent Control
 
-```fish
-# Disable agent entirely (use oneshot mode only)
-set -gx GPY_AGENT_ENABLED 0
+Turn the agent or its supervisor off in `config.toml`:
 
+```toml
+[agent]
+# Disable the agent entirely (prompts render in oneshot mode)
+enabled = false
+
+[agent.supervisor]
 # Disable automatic agent restart supervision
-set -gx GPY_AGENT_SUPERVISOR_ENABLED 0
+enabled = false
+```
 
+The theme export the shell sources on every start, and again on every config
+reload, re-exports `GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` from
+`config.toml`, so a `set -gx` in `config.fish` is overwritten (#657, #699).
+
+```fish
 # Disable file watcher (no live git status updates)
 set -gx GPY_DISABLE_WATCHER 1
-
 ```
 
 To hide the language segment, turn it off in `config.toml` rather than in
@@ -249,8 +258,9 @@ This reduces system resource usage but requires manual prompt refresh to see git
 
 For minimal overhead, run without the agent:
 
-```fish
-set -gx GPY_AGENT_ENABLED 0
+```toml
+[agent]
+enabled = false
 ```
 
 Each prompt render will use oneshot mode, which is slower (~20ms) but requires no background process.
