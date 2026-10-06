@@ -68,7 +68,13 @@ pub fn to_palette_config(scheme: &Base16Scheme) -> Result<PaletteConfig> {
     );
 
     Ok(PaletteConfig {
-        name: slugify(&scheme.name),
+        name: slugify(
+            scheme
+                .slug
+                .as_deref()
+                .filter(|slug| !slug.trim().is_empty())
+                .unwrap_or(&scheme.name),
+        ),
         description,
         colors,
     })
@@ -85,10 +91,11 @@ fn insert_role(colors: &mut BTreeMap<String, ColorSpec>, role: &str, hex: &Hex) 
 }
 
 /// Lowercase, hyphenate, and strip unsafe characters for a palette file stem.
+/// Unicode letters and digits are kept; every other run of characters becomes one `-`.
 fn slugify(name: &str) -> String {
-    name.to_ascii_lowercase()
+    name.to_lowercase()
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
         .collect::<String>()
         .trim_matches('-')
         .split('-')
@@ -161,6 +168,25 @@ palette:
         let cfg = crate::import::base16::import_scheme(SCHEME).unwrap();
         assert_eq!(cfg.name, "demo");
         assert!(cfg.colors.contains_key("red"));
+    }
+
+    fn rose_scheme(slug_line: &str) -> String {
+        format!(
+            "system: \"base16\"\nname: \"Rosé Pine\"\n{slug_line}palette:\n  base00: \"191724\"\n  base08: \"eb6f92\"\n"
+        )
+    }
+
+    #[test]
+    fn slug_field_is_preferred_over_name() {
+        let cfg =
+            crate::import::base16::import_scheme(&rose_scheme("slug: \"rose-pine\"\n")).unwrap();
+        assert_eq!(cfg.name, "rose-pine");
+    }
+
+    #[test]
+    fn non_ascii_name_is_kept_when_no_slug() {
+        let cfg = crate::import::base16::import_scheme(&rose_scheme("")).unwrap();
+        assert_eq!(cfg.name, "rosé-pine");
     }
 
     #[test]

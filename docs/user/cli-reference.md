@@ -515,7 +515,7 @@ Accepts both the modern nested layout (`system:`, `name:`, `variant:`, then a `p
 - `<file>` - Path to a base16/base24 scheme YAML file
 
 **Flags:**
-- `--name <name>` - Override the palette name (defaults to the scheme's declared `name`/`scheme` field, falling back to `imported` if the scheme declares none)
+- `--name <name>` - Override the palette name (defaults to the scheme's `slug` field, else its `name`/`scheme` field, falling back to `imported` if the scheme declares none; the name is lowercased, non-letter/digit runs become `-`, and non-ASCII letters are kept)
 - `--force` - Overwrite an existing palette of the same name, or shadow a builtin palette of that name; without it, import fails if the destination already exists or the name belongs to a builtin palette
 
 **Example:**
