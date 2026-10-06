@@ -98,6 +98,17 @@ else
     test_fail "conf.d/gpy_init.fish disabled path rendered an empty prompt"
 end
 
+# #770: the per-prompt marker reset must not fork `rm` with no operands.
+set -l scenario_a_trace (mktemp)
+env HOME=$scenario_a_home XDG_CONFIG_HOME=$scenario_a_home/.config \
+    GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
+    fish --no-config -i -c 'source fish/conf.d/gpy_init.fish; source fish/functions/fish_prompt.fish; set fish_trace 1; fish_prompt >/dev/null' </dev/null 2>$scenario_a_trace >/dev/null
+if grep -Eq -- '^-+> rm' $scenario_a_trace
+    test_fail "disabled-footprint fish_prompt forked rm: "(grep -E -- '^-+> rm' $scenario_a_trace | string collect)
+else
+    test_pass "disabled-footprint fish_prompt forked no rm (#770)"
+end
+rm -f $scenario_a_trace
 rm -f $scenario_a_err
 rm -rf $scenario_a_home
 
