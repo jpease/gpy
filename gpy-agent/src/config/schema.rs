@@ -134,6 +134,34 @@ pub fn get_config_paths() -> Vec<String> {
     )
 }
 
+/// Pick the config file in effect from `candidates` (priority order).
+///
+/// Returns `(write_path, existing)`: the path a command should write to, and
+/// the file to load, where `None` means no candidate exists and the built-in
+/// defaults apply. The first existing candidate is both; when none exists the
+/// write path is the highest-priority candidate, so a new file lands where it
+/// will actually be loaded from rather than at a shadowed lower-priority
+/// location. `None` overall means the candidate list is empty.
+///
+/// The one rule behind the CLI's reads and writes
+/// (`commands::utils::active_config_path`), `gpy-agent status`, and every
+/// `ConfigManager` load and reload, so they cannot drift apart (#788, #179).
+#[must_use]
+pub fn resolve_active_config<P: AsRef<std::path::Path>>(
+    candidates: &[P],
+) -> Option<(std::path::PathBuf, Option<std::path::PathBuf>)> {
+    candidates
+        .iter()
+        .map(AsRef::as_ref)
+        .find(|candidate| candidate.exists())
+        .map(|existing| (existing.to_path_buf(), Some(existing.to_path_buf())))
+        .or_else(|| {
+            candidates
+                .first()
+                .map(|first| (first.as_ref().to_path_buf(), None))
+        })
+}
+
 // Configuration reference (see docs/ARCHITECTURE.md):
 // - Layout: agent, git, language, ui sections with strictly validated defaults
 // - Environment variable overrides limited to the documented set (e.g., GPY_AGENT_SOCKET_PATH)
@@ -247,5 +275,62 @@ mod config_path_tests {
                 "candidates for (GPY_CONFIG_PATH={custom:?}, XDG_CONFIG_HOME={xdg_config:?}, HOME={home:?})"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod resolve_active_config_tests {
+    #![allow(clippy::missing_panics_doc)]
+
+    use super::resolve_active_config;
+    use std::path::PathBuf;
+
+    /// No candidate exists: nothing to load, and the write target is the
+    /// highest-priority candidate.
+    #[test]
+    fn none_exist_writes_to_the_first_candidate_and_loads_nothing() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let candidates = [temp.path().join("a.toml"), temp.path().join("b.toml")];
+
+        assert_eq!(
+            resolve_active_config(&candidates),
+            Some((temp.path().join("a.toml"), None))
+        );
+    }
+
+    /// Only a lower-priority candidate exists: it is the active file, for
+    /// reading and writing alike.
+    #[test]
+    fn only_a_lower_candidate_existing_is_active() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let lower = temp.path().join("b.toml");
+        std::fs::write(&lower, "").expect("write lower");
+        let candidates = [temp.path().join("a.toml"), lower.clone()];
+
+        assert_eq!(
+            resolve_active_config(&candidates),
+            Some((lower.clone(), Some(lower)))
+        );
+    }
+
+    /// Both exist: the higher-priority one shadows the other.
+    #[test]
+    fn the_highest_priority_existing_candidate_wins() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let higher = temp.path().join("a.toml");
+        let lower = temp.path().join("b.toml");
+        std::fs::write(&higher, "").expect("write higher");
+        std::fs::write(&lower, "").expect("write lower");
+
+        assert_eq!(
+            resolve_active_config(&[higher.clone(), lower]),
+            Some((higher.clone(), Some(higher)))
+        );
+    }
+
+    /// An empty candidate list has no write target at all.
+    #[test]
+    fn no_candidates_resolves_to_nothing() {
+        assert_eq!(resolve_active_config::<PathBuf>(&[]), None);
     }
 }

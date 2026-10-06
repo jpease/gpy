@@ -11,9 +11,9 @@
 //!
 //! Extension points (later issues add one row each): symlinked config.toml
 //! (#720), palette file edit (#772), poll-thread stop latency (#778),
-//! invalid-then-fixed / deleted config.toml (#788), keys removed on theme
-//! switch (#791). Instant-cache comparison joins the harness once it can seed
-//! a warm repo (`Agent` exposes no handle to its git cache).
+//! keys removed on theme switch (#791). Instant-cache comparison joins the
+//! harness once it can seed a warm repo (`Agent` exposes no handle to its git
+//! cache).
 
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -25,10 +25,10 @@
 
 use gpy_agent::agent::Agent;
 use gpy_agent::cache::theme_export::write_theme_export_to_dir;
+use gpy_agent::config::Config;
 use gpy_agent::config::defaults::DEFAULT_THEME_CONTENT;
 use gpy_agent::config::loader::load_config_from_file;
 use gpy_agent::palette::active_palette;
-use gpy_agent::template::Palette;
 use gpy_agent::theme::ThemeManager;
 use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
 use serial_test::serial;
@@ -111,6 +111,54 @@ const REAPPLY_SAME_PALETTE: Mechanism = Mechanism {
     doorbells: None,
 };
 
+const INVALID_THEN_FIXED_CONFIG: Mechanism = Mechanism {
+    name: "fix an invalid lower-priority config.toml the agent started without (#788)",
+    setup: Some(invalid_home_config_only),
+    apply: fix_home_config,
+    doorbells: None,
+};
+const DELETE_CONFIG: Mechanism = Mechanism {
+    name: "delete the active config.toml (#788)",
+    setup: None,
+    apply: delete_active_config,
+    doorbells: None,
+};
+const HIGHER_PRIORITY_CONFIG_APPEARS: Mechanism = Mechanism {
+    name: "create a higher-priority config.toml while running on a lower one (#788)",
+    setup: Some(config_lives_under_home),
+    apply: create_xdg_config,
+    doorbells: None,
+};
+
+fn invalid_home_config_only(h: &Harness) {
+    fs::remove_file(h.config_path()).expect("remove xdg config");
+    let home_config = h.home_config_path();
+    fs::create_dir_all(home_config.parent().expect("home config dir")).expect("home config dir");
+    fs::write(
+        home_config,
+        format!("[ui]\ntheme = \"{ACTIVE_THEME}\"\n\n[git]\ntimeout_seconds = 0\n"),
+    )
+    .expect("write invalid config");
+}
+
+fn fix_home_config(h: &Harness) {
+    Harness::write_config_at(&h.home_config_path(), OTHER_THEME, true);
+}
+
+fn delete_active_config(h: &Harness) {
+    fs::remove_file(h.config_path()).expect("delete config");
+}
+
+fn config_lives_under_home(h: &Harness) {
+    let home_config = h.home_config_path();
+    fs::create_dir_all(home_config.parent().expect("home config dir")).expect("home config dir");
+    fs::rename(h.config_path(), home_config).expect("move config under home");
+}
+
+fn create_xdg_config(h: &Harness) {
+    h.write_config(OTHER_THEME, true);
+}
+
 fn edit_active_palette_in_place(h: &Harness) {
     h.write_palette("#123456");
 }
@@ -163,6 +211,7 @@ fn retarget_symlinked_config(h: &Harness) {
 
 struct Harness {
     _temp: TempDir,
+    home: PathBuf,
     config_home: PathBuf,
     cache_home: PathBuf,
     prev_env: Vec<(&'static str, Option<OsString>)>,
@@ -211,6 +260,7 @@ impl Harness {
         let prev_sigurg = unsafe { sigaction(Signal::SIGURG, &handler) }.expect("install SIGURG");
         let harness = Self {
             _temp: temp,
+            home: root,
             config_home,
             cache_home,
             prev_env,
@@ -234,6 +284,12 @@ impl Harness {
 
     fn config_path(&self) -> PathBuf {
         self.gpy_config_dir().join("config.toml")
+    }
+
+    /// The lower-priority candidate under `$HOME/.config/gpy`; `XDG_CONFIG_HOME`
+    /// points elsewhere, so it is shadowed whenever the XDG file exists.
+    fn home_config_path(&self) -> PathBuf {
+        self.home.join(".config").join("gpy").join("config.toml")
     }
 
     /// A full theme whose only distinguishing field is the clock text colour,
@@ -272,8 +328,12 @@ impl Harness {
     }
 
     fn write_config(&self, theme: &str, git_enabled: bool) {
+        Self::write_config_at(&self.config_path(), theme, git_enabled);
+    }
+
+    fn write_config_at(path: &Path, theme: &str, git_enabled: bool) {
         fs::write(
-            self.config_path(),
+            path,
             format!(
                 "[ui]\ntheme = \"{theme}\"\npalette = \"{ACTIVE_PALETTE}\"\n\n[git]\nenabled = {git_enabled}\n"
             ),
@@ -281,24 +341,41 @@ impl Harness {
         .expect("write config");
     }
 
-    /// What a fresh load from disk exports, computed with the public loaders.
-    fn fresh_exports(&self) -> Vec<String> {
-        let config = load_config_from_file(&self.config_path().display().to_string())
-            .expect("fresh config load");
+    /// The config file the agent resolves: the highest-priority existing
+    /// candidate (`XDG_CONFIG_HOME`, then `HOME`), if any.
+    fn active_config_file(&self) -> Option<PathBuf> {
+        [self.config_path(), self.home_config_path()]
+            .into_iter()
+            .find(|path| path.exists())
+    }
+
+    /// What a fresh load from disk gives: the active file, or built-in
+    /// defaults when no candidate exists.
+    fn fresh_config(&self) -> Config {
+        self.active_config_file()
+            .map_or_else(Config::default, |path| {
+                load_config_from_file(&path.display().to_string()).expect("fresh config load")
+            })
+    }
+
+    /// What the agent starts with: like [`Self::fresh_config`], except that a
+    /// file which fails to load means built-in defaults (the agent's startup
+    /// fallback), so a row may begin on an invalid file.
+    fn startup_config(&self) -> Config {
+        self.active_config_file()
+            .and_then(|path| load_config_from_file(&path.display().to_string()).ok())
+            .unwrap_or_default()
+    }
+
+    /// What a load of `config` exports, computed with the public loaders.
+    fn fresh_exports(config: &Config) -> Vec<String> {
         let theme_manager = ThemeManager::new(config.ui.theme.as_str()).expect("fresh theme load");
         let scratch = TempDir::new().expect("scratch dir");
-        write_theme_export_to_dir(scratch.path(), &theme_manager, &config).expect("fresh export");
+        write_theme_export_to_dir(scratch.path(), &theme_manager, config).expect("fresh export");
         SHELL_EXPORTS
             .iter()
             .map(|file| fs::read_to_string(scratch.path().join(file)).expect("read fresh export"))
             .collect()
-    }
-
-    /// The palette a fresh load from disk resolves for the active config.
-    fn fresh_palette(&self) -> Palette {
-        let config = load_config_from_file(&self.config_path().display().to_string())
-            .expect("fresh config load");
-        active_palette(&config)
     }
 
     /// What the agent has exported to its cache dir (empty string if absent).
@@ -342,7 +419,11 @@ fn run_mechanism(mechanism: &Mechanism) {
     if let Some(setup) = mechanism.setup {
         setup(&harness);
     }
-    let before = (harness.fresh_exports(), harness.fresh_palette());
+    let startup_config = harness.startup_config();
+    let before = (
+        Harness::fresh_exports(&startup_config),
+        active_palette(&startup_config),
+    );
 
     let agent = Agent::new().expect("agent starts");
     agent.register_test_client(std::process::id(), harness.config_home.as_path());
@@ -351,7 +432,11 @@ fn run_mechanism(mechanism: &Mechanism) {
     DOORBELL_COUNTER.store(0, Ordering::Relaxed);
 
     (mechanism.apply)(&harness);
-    let expected = (harness.fresh_exports(), harness.fresh_palette());
+    let expected_config = harness.fresh_config();
+    let expected = (
+        Harness::fresh_exports(&expected_config),
+        active_palette(&expected_config),
+    );
     assert_ne!(
         before, expected,
         "[{}] the change must alter the fresh export or the row is vacuous",
@@ -469,4 +554,26 @@ fn hot_reload_switch_theme_by_name_with_poll_fallback_is_prompt() {
 #[serial]
 fn hot_reload_reapply_same_palette() {
     run_mechanism(&REAPPLY_SAME_PALETTE);
+}
+
+/// #788: the agent starts on an unparsable lower-priority config (falling
+/// back to defaults), and fixing that file must apply it.
+#[test]
+#[serial]
+fn hot_reload_invalid_config_then_fixed() {
+    run_mechanism(&INVALID_THEN_FIXED_CONFIG);
+}
+
+/// #788: deleting the active config.toml reverts the agent to defaults.
+#[test]
+#[serial]
+fn hot_reload_delete_config() {
+    run_mechanism(&DELETE_CONFIG);
+}
+
+/// #788: a higher-priority candidate appearing switches the agent to it.
+#[test]
+#[serial]
+fn hot_reload_higher_priority_config_appears() {
+    run_mechanism(&HIGHER_PRIORITY_CONFIG_APPEARS);
 }

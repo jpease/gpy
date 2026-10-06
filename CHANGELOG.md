@@ -371,6 +371,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `gpy theme use` and `gpy config set ui.theme` no longer report a false
   "Agent not reloaded" when `GPY_THEME_WATCH_POLL_MS` or
   `GPY_CONFIG_WATCH_POLL_MS` is set (#778); the poll thread stops promptly.
+- The agent re-resolves its config file on every reload (#788): fixing a
+  config that was invalid at startup applies it, deleting `config.toml` reverts
+  to defaults, and a higher-priority config file that appears is picked up.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

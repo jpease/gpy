@@ -32,7 +32,7 @@
 //! `Arc<RwLock<Arc<ThemeState>>>`, so a switch installs all three in a single write and
 //! a concurrent reader never sees a half-applied one (#588).
 
-use crate::config::schema::get_config_paths;
+use crate::config::schema::{get_config_paths, resolve_active_config};
 use crate::config::{Config, loader::load_config_from_file};
 use crate::watcher::hot_reload::{HotReloadSlot, PollTarget};
 use crate::watcher::{WatchCoordinator, WatchRegistry};
@@ -51,8 +51,10 @@ pub type ConfigReloadCallback = Arc<dyn Fn(&Config, &Config) -> Result<()> + Sen
 /// Provides thread-safe access to configuration and optional file watching
 /// for automatic reloading when the config file changes.
 pub struct ConfigManager {
-    /// Path to the config file being watched
-    config_path: PathBuf,
+    /// Config file candidates, highest priority first. Every reload re-resolves
+    /// which one is active (#788), so the manager follows a file that is fixed,
+    /// created, or deleted rather than the one chosen at startup.
+    candidates: Arc<[PathBuf]>,
     /// The loaded configuration (thread-safe shared access). The inner `Arc`
     /// lets `get()` hand out a cheap clone instead of deep-cloning `Config`.
     config: Arc<RwLock<Arc<Config>>>,
@@ -62,12 +64,12 @@ pub struct ConfigManager {
     /// Optional callback invoked after successful config reload (`old_config`, `new_config`)
     /// Wrapped in Mutex to allow setting callback through shared reference
     on_reload: Arc<Mutex<Option<ConfigReloadCallback>>>,
-    /// The registry the running watcher registered `config_path` on, so
+    /// The registry the running watcher registered the candidates on, so
     /// [`ConfigManager::stop_watching`] unregisters from the same one it
     /// registered against (#617). `None` until a watcher is started.
     watch_registry: Mutex<Option<Arc<WatchRegistry>>>,
     /// Directory of the symlink target currently watched shallowly, when
-    /// `config_path` is a symlink into another directory (#720).
+    /// the active candidate is a symlink into another directory (#720).
     canonical_watch: Arc<Mutex<Option<PathBuf>>>,
     /// Serializes every reload -- the explicit [`reload_now`](Self::reload_now)
     /// and the watcher- and poll-triggered [`reload_and_apply`](Self::reload_and_apply)
@@ -84,25 +86,19 @@ pub struct ConfigManager {
 }
 
 impl ConfigManager {
-    /// Create a new `ConfigManager` with default configuration
+    /// Create a new `ConfigManager` that starts on the built-in defaults,
+    /// without reading any file, but reloads from the standard candidate
+    /// locations.
     ///
-    /// This uses `Config::default()` without attempting to read any files.
-    /// Useful as a fallback when config file parsing fails.
+    /// The fallback when the startup config is invalid: the manager still
+    /// targets the same candidates as [`new`](Self::new), so fixing the file
+    /// that failed to load applies it on the next reload (#788).
     ///
     /// # Errors
     ///
-    /// Returns an error if the default config path cannot be determined.
+    /// Returns an error if no config path can be determined.
     pub fn with_defaults() -> Result<Self> {
-        let config_paths = get_config_paths();
-        let default_config = Config::default();
-        let default_path = config_paths
-            .first()
-            .ok_or_else(|| Error::config("No config paths available".to_owned()))?;
-
-        Ok(Self::from_parts(
-            PathBuf::from(default_path),
-            default_config,
-        ))
+        Self::from_candidates_with_defaults(Self::ambient_candidates())
     }
 
     /// Create a new `ConfigManager` for a specific config file path.
@@ -112,23 +108,42 @@ impl ConfigManager {
     /// Returns an error if the provided path cannot be converted to UTF-8 or the
     /// configuration file exists but fails to parse.
     pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let path_buf = path.as_ref().to_path_buf();
-        let config = if path_buf.exists() {
-            let path_str = path_buf
-                .to_str()
-                .ok_or_else(|| Error::config("Config path contains invalid UTF-8".to_owned()))?;
-            load_config_from_file(path_str)?
-        } else {
-            Config::default()
-        };
+        Self::from_candidates(vec![path.as_ref().to_path_buf()])
+    }
 
-        Ok(Self::from_parts(path_buf, config))
+    /// Create a new `ConfigManager` over `candidates`, highest priority first,
+    /// loading the highest-priority one that exists (or the built-in defaults
+    /// when none does). Every later reload re-resolves the same list.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `candidates` is empty, or if the active file exists
+    /// but cannot be read, parsed, or validated.
+    pub fn from_candidates(candidates: Vec<PathBuf>) -> Result<Self> {
+        Self::ensure_candidates(&candidates)?;
+        let config = Self::load_resolved(&candidates)?;
+        Ok(Self::from_parts(candidates, config))
+    }
+
+    /// Like [`from_candidates`](Self::from_candidates), but starts on the
+    /// built-in defaults without reading any file. The fallback for a startup
+    /// whose active file failed to load: later reloads still target
+    /// `candidates`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `candidates` is empty.
+    pub fn from_candidates_with_defaults(candidates: Vec<PathBuf>) -> Result<Self> {
+        Self::ensure_candidates(&candidates)?;
+        Ok(Self::from_parts(candidates, Config::default()))
     }
 
     /// Create a new `ConfigManager` by loading the default config file
     ///
-    /// This searches for config files in the standard locations:
-    /// - `$XDG_CONFIG_HOME/gpy/config.toml` (or `~/.config/gpy/config.toml`)
+    /// This searches for config files in the standard locations, in priority
+    /// order (`GPY_CONFIG_PATH`, `$XDG_CONFIG_HOME/gpy/config.toml`,
+    /// `~/.config/gpy/config.toml`, `.gpy.toml`), and re-searches on every
+    /// reload.
     ///
     /// If no config file exists, uses `Config::default()`.
     ///
@@ -136,42 +151,35 @@ impl ConfigManager {
     ///
     /// Returns an error if a config file exists but cannot be parsed or is invalid.
     pub fn new() -> Result<Self> {
-        let config_paths = get_config_paths();
-
-        // Find first existing config file
-        let existing_path = config_paths
-            .iter()
-            .find(|path| Path::new(path).exists())
-            .map(PathBuf::from);
-
-        let (config, resolved_path) = if let Some(path) = existing_path {
-            let loaded_config =
-                load_config_from_file(path.to_str().ok_or_else(|| {
-                    Error::config("Config path contains invalid UTF-8".to_owned())
-                })?)?;
-            (loaded_config, path)
-        } else {
-            // No config file found, use defaults
-            let default_config = Config::default();
-            // Use the first path as the "default" location (even though it doesn't exist yet)
-            let default_path = config_paths
-                .first()
-                .ok_or_else(|| Error::config("No config paths available".to_owned()))?;
-            (default_config, PathBuf::from(default_path))
-        };
-
-        Ok(Self::from_parts(resolved_path, config))
+        Self::from_candidates(Self::ambient_candidates())
     }
 
-    /// Build a `ConfigManager` from an already-resolved path and config,
-    /// wrapping `config` in the shared `Arc<RwLock<Arc<Config>>>` slot and
-    /// initializing hot-reload state fresh (no watcher started, no reload
+    /// The config candidates for the ambient environment, highest priority first.
+    fn ambient_candidates() -> Vec<PathBuf> {
+        get_config_paths().into_iter().map(PathBuf::from).collect()
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if `candidates` is empty.
+    fn ensure_candidates(candidates: &[PathBuf]) -> Result<()> {
+        if candidates.is_empty() {
+            return Err(Error::config("No config paths available".to_owned()));
+        }
+        Ok(())
+    }
+
+    /// Build a `ConfigManager` from its candidate list and an already-loaded
+    /// config, wrapping `config` in the shared `Arc<RwLock<Arc<Config>>>` slot
+    /// and initializing hot-reload state fresh (no watcher started, no reload
     /// callback registered).
-    fn from_parts(config_path: PathBuf, config: Config) -> Self {
+    fn from_parts(candidates: Vec<PathBuf>, config: Config) -> Self {
         Self {
-            config_path,
+            candidates: Arc::from(candidates),
             config: Arc::new(RwLock::new(Arc::new(config))),
-            hot_reload: HotReloadSlot::new(),
+            // A reload with no candidate left means defaults, so the poll
+            // thread must notice a deletion too (#788).
+            hot_reload: HotReloadSlot::new().reloading_on_missing(),
             on_reload: Arc::new(Mutex::new(None)),
             watch_registry: Mutex::new(None),
             canonical_watch: Arc::new(Mutex::new(None)),
@@ -233,12 +241,6 @@ impl ConfigManager {
         Arc::clone(&guard)
     }
 
-    /// Get the path to the config file being managed
-    #[must_use]
-    pub fn config_path(&self) -> &Path {
-        &self.config_path
-    }
-
     /// Start watching the config file for changes with automatic reload
     ///
     /// When the file changes, it will be automatically reloaded after the debounce period.
@@ -294,16 +296,18 @@ impl ConfigManager {
                 None
             };
             let rearm: Box<dyn Fn() + Send + Sync + 'static> = {
-                let path = self.config_path.clone();
+                let candidates = Arc::clone(&self.candidates);
                 let watcher = self.hot_reload.watcher_handle();
                 let canonical_dir = Arc::clone(&self.canonical_watch);
-                Box::new(move || Self::rearm_canonical_watch(&path, &watcher, &canonical_dir))
+                Box::new(move || {
+                    Self::rearm_canonical_watch(&candidates, &watcher, &canonical_dir);
+                })
             };
 
             let reload_callback = Self::create_reload_callback(
                 Arc::clone(&self.config),
                 Arc::clone(&self.reload_gate),
-                self.config_path.clone(),
+                Arc::clone(&self.candidates),
                 on_reload_option,
                 rearm,
             );
@@ -319,13 +323,11 @@ impl ConfigManager {
                 Some(Arc::clone(registry)),
             )?;
 
-            // Watch the parent directory (not just the file, since editors may delete/rename)
-            if let Some(parent) = self.config_path.parent() {
-                Self::ensure_config_directory_exists(parent)?;
-                coordinator.watch_directory(parent)?;
-            }
+            self.watch_candidate_dirs(&mut coordinator)?;
             self.arm_canonical_watch(&mut coordinator);
-            registry.register_config_path(&self.config_path);
+            for candidate in self.candidates.iter() {
+                Self::register_candidate(registry, candidate);
+            }
             if let Ok(mut slot) = self.watch_registry.lock() {
                 *slot = Some(Arc::clone(registry));
             }
@@ -342,8 +344,8 @@ impl ConfigManager {
 
         debug_log!(
             "config",
-            "Started watching config file: {:?}",
-            self.config_path
+            "Started watching config candidates: {:?}",
+            self.candidates
         );
 
         self.start_poll_fallback(debounce_duration);
@@ -351,26 +353,49 @@ impl ConfigManager {
         Ok(())
     }
 
-    /// Load, validate (via `load_config_from_file`'s own validation — no
-    /// second `validate_config` call here), and run `on_reload` against `old`.
+    /// The path [`resolve_active_config`] picks for `candidates`: the
+    /// highest-priority existing file, else the highest-priority candidate.
+    fn active_path(candidates: &[PathBuf]) -> Option<PathBuf> {
+        resolve_active_config(candidates).map(|(path, _existing)| path)
+    }
+
+    /// Load what `candidates` currently resolve to: the highest-priority
+    /// existing file, or the built-in defaults when none exists (#788). Only
+    /// "no file at all" maps to defaults; a file that exists but cannot be
+    /// read, parsed, or validated is an error, so a reload keeps the last
+    /// good config.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the active file cannot be read, parsed, or
+    /// validated.
+    fn load_resolved(candidates: &[PathBuf]) -> Result<Config> {
+        let Some((_, Some(existing))) = resolve_active_config(candidates) else {
+            return Ok(Config::default());
+        };
+        let path_str = existing
+            .to_str()
+            .ok_or_else(|| Error::config("Config path contains invalid UTF-8".to_owned()))?;
+        load_config_from_file(path_str)
+    }
+
+    /// Re-resolve and load the active config (validated via
+    /// `load_config_from_file`'s own validation — no second
+    /// `validate_config` call here), and run `on_reload` against `old`.
     /// Pure of any shared state: the caller decides what to do with the
     /// resulting `Config` (write it into the shared slot) and how to report
     /// failure (log-and-keep-old vs. propagate).
     ///
     /// # Errors
     ///
-    /// Returns an error if the file cannot be read, parsed, or fails
+    /// Returns an error if the active file cannot be read, parsed, or fails
     /// validation, or if `on_reload` rejects the change.
     fn try_reload(
-        path: &Path,
+        candidates: &[PathBuf],
         on_reload: Option<&ConfigReloadCallback>,
         old: &Config,
     ) -> Result<Config> {
-        let path_str = path
-            .to_str()
-            .ok_or_else(|| Error::config("Config path contains invalid UTF-8".to_owned()))?;
-
-        let new_config = load_config_from_file(path_str)?;
+        let new_config = Self::load_resolved(candidates)?;
 
         if let Some(callback) = on_reload {
             callback(old, &new_config)?;
@@ -379,15 +404,15 @@ impl ConfigManager {
         Ok(new_config)
     }
 
-    /// Reload the config at `config_path` and apply it if valid, or log why
-    /// the reload was skipped. Shared by the file-watcher callback
+    /// Re-resolve the active config and apply it if valid, or log why the
+    /// reload was skipped. Shared by the file-watcher callback
     /// (`create_reload_callback`) and the polling fallback
     /// (`spawn_poll_thread`) so both triggers apply the identical reload
     /// logic.
     fn reload_and_apply(
         config: &Arc<RwLock<Arc<Config>>>,
         reload_gate: &Mutex<()>,
-        config_path: &Path,
+        candidates: &[PathBuf],
         on_reload: Option<&ConfigReloadCallback>,
     ) {
         debug_log!("config", "Config file changed, reloading...");
@@ -400,7 +425,7 @@ impl ConfigManager {
             return;
         };
 
-        match Self::try_reload(config_path, on_reload, &old_config) {
+        match Self::try_reload(candidates, on_reload, &old_config) {
             Ok(new_config) => {
                 if let Ok(mut config_state) = config.write() {
                     *config_state = Arc::new(new_config);
@@ -424,12 +449,12 @@ impl ConfigManager {
     fn create_reload_callback(
         config: Arc<RwLock<Arc<Config>>>,
         reload_gate: Arc<Mutex<()>>,
-        config_path: PathBuf,
+        candidates: Arc<[PathBuf]>,
         on_reload: Option<ConfigReloadCallback>,
         rearm: Box<dyn Fn() + Send + Sync + 'static>,
     ) -> Box<dyn Fn(crate::watcher::DebouncedEvent) + Send + Sync + 'static> {
         Box::new(move |_event| {
-            Self::reload_and_apply(&config, &reload_gate, &config_path, on_reload.as_ref());
+            Self::reload_and_apply(&config, &reload_gate, &candidates, on_reload.as_ref());
             // A retarget (`ln -sf other config.toml`) lands as an event in the
             // lexical parent; follow the link to its new directory (#720).
             rearm();
@@ -440,7 +465,10 @@ impl ConfigManager {
     /// on the target inode there, which the lexical parent never reports
     /// (#720). Shallow, because it may be a whole dotfiles repo. Best-effort.
     fn arm_canonical_watch(&self, coordinator: &mut WatchCoordinator) {
-        let Some(dir) = Self::canonical_watch_dir(&self.config_path) else {
+        let Some(dir) = Self::active_path(&self.candidates)
+            .as_deref()
+            .and_then(Self::canonical_watch_dir)
+        else {
             return;
         };
         match coordinator.watch_directory_shallow(&dir) {
@@ -467,17 +495,20 @@ impl ConfigManager {
         (target_dir != link_dir).then_some(target_dir)
     }
 
-    /// Point the shallow watch on the symlink target's directory at the
-    /// current target, touching the watcher only when the target moved: each
-    /// extra watch rebuilds the `FSEvents` stream on macOS (#388).
+    /// Point the shallow watch on the active candidate's symlink target
+    /// directory at the current target, touching the watcher only when the
+    /// target moved: each extra watch rebuilds the `FSEvents` stream on macOS
+    /// (#388).
     ///
     /// Best-effort: the lexical-parent watch keeps working if this fails.
     fn rearm_canonical_watch(
-        config_path: &Path,
+        candidates: &[PathBuf],
         watcher: &Mutex<Option<WatchCoordinator>>,
         canonical_dir: &Mutex<Option<PathBuf>>,
     ) {
-        let next = Self::canonical_watch_dir(config_path);
+        let next = Self::active_path(candidates)
+            .as_deref()
+            .and_then(Self::canonical_watch_dir);
         let Ok(mut current) = canonical_dir.lock() else {
             return;
         };
@@ -518,17 +549,23 @@ impl ConfigManager {
     /// poll, and what to do when its contents change. Both halves capture only
     /// owned clones, so the poll thread outlives this borrow.
     fn poll_target(&self) -> PollTarget {
-        let path_for_poll = self.config_path.clone();
+        let candidates_for_poll = Arc::clone(&self.candidates);
+        let candidates_for_reload = Arc::clone(&self.candidates);
         let config_arc = Arc::clone(&self.config);
         let reload_gate = Arc::clone(&self.reload_gate);
         let on_reload_option = self.on_reload.lock().ok().and_then(|guard| guard.clone());
 
         PollTarget {
-            // The config path is fixed for a manager's lifetime, unlike the
-            // theme manager's, which `switch_theme` can repoint.
-            path_of: Box::new(move || Some(path_for_poll.clone())),
-            reload: Box::new(move |path: &Path| {
-                Self::reload_and_apply(&config_arc, &reload_gate, path, on_reload_option.as_ref());
+            // Re-resolved every tick, so the poll follows the active
+            // candidate as it changes (#788).
+            path_of: Box::new(move || Self::active_path(&candidates_for_poll)),
+            reload: Box::new(move |_path: &Path| {
+                Self::reload_and_apply(
+                    &config_arc,
+                    &reload_gate,
+                    &candidates_for_reload,
+                    on_reload_option.as_ref(),
+                );
             }),
         }
     }
@@ -556,6 +593,68 @@ impl ConfigManager {
             debounce_duration,
             self.poll_target(),
         );
+    }
+
+    /// Watch every candidate's parent directory, so fixing, creating, or
+    /// deleting any candidate is seen, not only the one active at startup
+    /// (#788). The highest-priority candidate's directory is created when
+    /// missing (`config set` writes there); the others are watched only when
+    /// they already exist and are absolute, which leaves out the relative
+    /// project-local `.gpy.toml`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the first candidate's directory cannot be created
+    /// or watched. A lower-priority directory that cannot be watched is
+    /// logged and skipped.
+    fn watch_candidate_dirs(&self, coordinator: &mut WatchCoordinator) -> Result<()> {
+        let mut watched: Vec<&Path> = Vec::new();
+        for (index, candidate) in self.candidates.iter().enumerate() {
+            let Some(parent) = candidate.parent() else {
+                continue;
+            };
+            if watched.contains(&parent) {
+                continue;
+            }
+            if index == 0 {
+                Self::ensure_config_directory_exists(parent)?;
+                coordinator.watch_directory(parent)?;
+            } else if candidate.is_absolute() && parent.is_dir() {
+                if let Err(e) = coordinator.watch_directory(parent) {
+                    debug_log!("config", "Failed to watch {}: {}", parent.display(), e);
+                    continue;
+                }
+            } else {
+                continue;
+            }
+            watched.push(parent);
+        }
+        Ok(())
+    }
+
+    /// Register `candidate` with `registry` under its own spelling and under
+    /// its directory's canonical one: a candidate that does not exist yet has
+    /// no canonical form, but the OS reports it under its directory's once it
+    /// is created.
+    fn register_candidate(registry: &WatchRegistry, candidate: &Path) {
+        registry.register_config_path(candidate);
+        if let Some(canonical) = Self::dir_canonical_spelling(candidate) {
+            registry.register_config_path(&canonical);
+        }
+    }
+
+    /// Undo [`register_candidate`](Self::register_candidate).
+    fn unregister_candidate(registry: &WatchRegistry, candidate: &Path) {
+        registry.unregister_config_path(candidate);
+        if let Some(canonical) = Self::dir_canonical_spelling(candidate) {
+            registry.unregister_config_path(&canonical);
+        }
+    }
+
+    /// `candidate` spelled through its canonicalized parent directory.
+    fn dir_canonical_spelling(candidate: &Path) -> Option<PathBuf> {
+        let name = candidate.file_name()?;
+        Some(std::fs::canonicalize(candidate.parent()?).ok()?.join(name))
     }
 
     /// Ensure the config directory exists, creating it if necessary
@@ -590,7 +689,9 @@ impl ConfigManager {
             .ok()
             .and_then(|mut slot| slot.take());
         if let Some(registry) = started_with {
-            registry.unregister_config_path(&self.config_path);
+            for candidate in self.candidates.iter() {
+                Self::unregister_candidate(&registry, candidate);
+            }
         }
         if let Ok(mut watched) = self.canonical_watch.lock() {
             *watched = None;
@@ -599,14 +700,18 @@ impl ConfigManager {
 
     /// Reload configuration from disk immediately.
     ///
+    /// Re-resolves the active file first: a candidate that appeared, or one
+    /// that vanished, is followed, and with no candidate left the config is
+    /// the built-in defaults (#788).
+    ///
     /// Serialized with the watcher- and poll-triggered reloads through the
     /// reload gate, so a reload the file watcher fires for the same write
     /// waits for this one and then sees the already-applied config (#661).
     ///
     /// # Errors
     ///
-    /// Returns an error if the configuration file cannot be read, parsed,
-    /// or validated, or if the in-memory config lock is poisoned.
+    /// Returns an error if the active configuration file cannot be read,
+    /// parsed, or validated, or if the in-memory config lock is poisoned.
     pub fn reload_now(&self) -> Result<()> {
         let _serialized = Self::enter_reload(&self.reload_gate);
         let old_config = self
@@ -617,7 +722,7 @@ impl ConfigManager {
 
         let on_reload_option = self.on_reload.lock().ok().and_then(|guard| guard.clone());
         let new_config =
-            Self::try_reload(&self.config_path, on_reload_option.as_ref(), &old_config)?;
+            Self::try_reload(&self.candidates, on_reload_option.as_ref(), &old_config)?;
 
         let mut guard = self
             .config
@@ -890,5 +995,146 @@ theme = "other"
              so the change is applied exactly once"
         );
         assert_eq!(manager.get().ui.theme.as_str(), "text");
+    }
+
+    /// Deleting the active config reverts to the built-in defaults instead
+    /// of failing the reload and keeping the old settings (#788).
+    #[test]
+    #[allow(clippy::missing_panics_doc)]
+    fn reload_after_delete_reverts_to_defaults() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, "[ui]\ntheme = \"text\"\n").expect("write config");
+        let manager = ConfigManager::from_candidates(vec![path.clone()]).expect("manager");
+        assert_eq!(manager.get().ui.theme.as_str(), "text");
+
+        std::fs::remove_file(&path).expect("delete config");
+
+        manager
+            .reload_now()
+            .expect("reload with no file is defaults");
+        assert_eq!(manager.get().ui.theme.as_str(), "default");
+    }
+
+    /// A higher-priority candidate that appears after startup takes over (#788).
+    #[test]
+    #[allow(clippy::missing_panics_doc)]
+    fn reload_picks_highest_priority_existing_candidate() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let higher = temp.path().join("a.toml");
+        let lower = temp.path().join("b.toml");
+        std::fs::write(&lower, "[ui]\ntheme = \"text\"\n").expect("write lower");
+        let manager = ConfigManager::from_candidates(vec![higher.clone(), lower]).expect("manager");
+        assert_eq!(manager.get().ui.theme.as_str(), "text");
+
+        std::fs::write(&higher, "[ui]\ntheme = \"starship\"\n").expect("write higher");
+        manager.reload_now().expect("reload");
+        assert_eq!(manager.get().ui.theme.as_str(), "starship");
+
+        // And back down to the lower one once the higher one is gone.
+        std::fs::remove_file(&higher).expect("delete higher");
+        manager.reload_now().expect("reload");
+        assert_eq!(manager.get().ui.theme.as_str(), "text");
+    }
+
+    /// The startup fallback keeps the whole candidate list, so fixing the
+    /// file that failed to load applies it (#788).
+    #[test]
+    #[allow(clippy::missing_panics_doc)]
+    fn fallback_manager_reloads_the_file_that_failed() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let first = temp.path().join("a.toml");
+        let failing = temp.path().join("b.toml");
+        std::fs::write(
+            &failing,
+            "[ui]\ntheme = \"text\"\n[git]\ntimeout_seconds = 0\n",
+        )
+        .expect("write invalid config");
+        assert!(
+            ConfigManager::from_candidates(vec![first.clone(), failing.clone()]).is_err(),
+            "startup on an invalid active file fails"
+        );
+        let manager = ConfigManager::from_candidates_with_defaults(vec![first, failing.clone()])
+            .expect("fallback manager");
+        assert_eq!(manager.get().ui.theme.as_str(), "default");
+
+        std::fs::write(&failing, "[ui]\ntheme = \"text\"\n").expect("fix config");
+        manager.reload_now().expect("reload");
+        assert_eq!(manager.get().ui.theme.as_str(), "text");
+    }
+
+    /// An active file that exists but is invalid keeps the last good config:
+    /// only "no file at all" means defaults (#788).
+    #[test]
+    #[allow(clippy::missing_panics_doc)]
+    fn reload_keeps_last_good_config_when_the_active_file_turns_invalid() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, "[ui]\ntheme = \"text\"\n").expect("write config");
+        let manager = ConfigManager::from_candidates(vec![path.clone()]).expect("manager");
+
+        std::fs::write(&path, "[git]\ntimeout_seconds = 0\n").expect("break config");
+
+        manager
+            .reload_now()
+            .expect_err("invalid file fails the reload");
+        assert_eq!(manager.get().ui.theme.as_str(), "text");
+    }
+
+    /// The poll fallback notices a deleted config and reverts to defaults,
+    /// without any watcher running (#788).
+    #[test]
+    #[allow(clippy::missing_panics_doc)]
+    fn poll_fallback_reverts_to_defaults_after_delete() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, "[ui]\ntheme = \"text\"\n").expect("write config");
+        let manager = ConfigManager::from_candidates(vec![path.clone()]).expect("manager");
+        assert_eq!(manager.get().ui.theme.as_str(), "text");
+
+        manager.spawn_poll_thread(Duration::from_millis(10), Duration::from_millis(10));
+        std::fs::remove_file(&path).expect("delete config");
+
+        let mut reverted = false;
+        for _ in 0_i32..300_i32 {
+            std::thread::sleep(Duration::from_millis(20));
+            if manager.get().ui.theme.as_str() == "default" {
+                reverted = true;
+                break;
+            }
+        }
+        manager.stop_watching();
+
+        assert!(reverted, "poll fallback must revert to defaults on delete");
+    }
+
+    /// Every candidate is registered with the watch registry while watching,
+    /// including one that does not exist yet, and unregistered on stop (#788).
+    #[test]
+    #[allow(clippy::missing_panics_doc)]
+    fn every_candidate_is_registered_while_watching() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let missing = temp.path().join("a.toml");
+        let existing = temp.path().join("b.toml");
+        std::fs::write(&existing, "[ui]\ntheme = \"text\"\n").expect("write config");
+        // Spelled the way the OS reports it once created (macOS: /private/var).
+        let reported = std::fs::canonicalize(temp.path())
+            .expect("canonical dir")
+            .join("a.toml");
+        let manager = ConfigManager::from_candidates(vec![missing.clone(), existing.clone()])
+            .expect("manager");
+        let registry = Arc::new(WatchRegistry::new());
+
+        manager
+            .start_watching_with(Duration::from_millis(100), &registry)
+            .expect("start watching");
+        assert!(registry.is_registered_config_path(&missing));
+        assert!(registry.is_registered_config_path(&reported));
+        assert!(registry.is_registered_config_path(&existing));
+
+        manager.stop_watching();
+        assert!(!registry.is_registered_config_path(&missing));
+        assert!(!registry.is_registered_config_path(&reported));
+        assert!(!registry.is_registered_config_path(&existing));
     }
 }
