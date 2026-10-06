@@ -189,7 +189,8 @@ fn apply_forced_switch(
         &user_set,
         outgoing_recommended,
     );
-    let palette_applied = resolve_forced_palette(config, recommended_palette, user_set.palette);
+    let (palette_applied, palette_preserved) =
+        resolve_forced_palette(config, recommended_palette, &user_set, outgoing_recommended);
     validate_prospective_activation(theme, config.ui.palette.as_str())?;
     save_config_to(path, original, config, &[])?;
 
@@ -201,8 +202,8 @@ fn apply_forced_switch(
     );
     print_summary(
         "💡 Preserved your explicit settings",
-        preserved.summary(),
-        detection_preserved,
+        join_summary(preserved.summary(), detection_preserved),
+        palette_preserved,
     );
     Ok(())
 }

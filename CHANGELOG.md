@@ -407,6 +407,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `gpy enable` and the config wizard keep the order of
   `ui.enabled_segments` and no longer drop entries the wizard does not offer
   (#739); the wizard preview follows the list order.
+- `gpy theme use --force` replaces a palette written by the outgoing theme's
+  recommendation, and lists a palette it kept under "Preserved your explicit
+  settings" (#731).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

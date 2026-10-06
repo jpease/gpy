@@ -49,20 +49,26 @@ pub(crate) fn resolve_forced_detection(
 
 /// Apply or preserve the theme's recommended palette under `--force`.
 ///
-/// Mutates `config.ui.palette` only when applied. Returns the applied-summary
-/// fragment (`Some` when applied, `None` when the user's palette is preserved).
+/// Mutates `config.ui.palette` only when applied. Returns
+/// `(applied_fragment, preserved_fragment)` — at most one is `Some`. Like the
+/// other fields, the palette is preserved only when it is a genuine user edit
+/// (present on disk and differing from the outgoing theme's recommendation).
 pub(crate) fn resolve_forced_palette(
     config: &mut config::Config,
     recommended: Option<config::types::PaletteName>,
-    user_set_palette: bool,
-) -> Option<String> {
-    let palette = recommended?;
-    if user_set_palette {
-        return None;
+    user_set: &UserSetLayoutFields,
+    outgoing: Option<&theme::RecommendedUi>,
+) -> (Option<String>, Option<String>) {
+    let Some(palette) = recommended else {
+        return (None, None);
+    };
+    let outgoing_palette = outgoing.and_then(|rec| rec.palette.as_ref());
+    if user_set.palette && Some(&config.ui.palette) != outgoing_palette {
+        return (None, Some(format!("palette ({})", config.ui.palette)));
     }
     let label = format!("palette ({})", palette.as_str());
     config.ui.palette = palette;
-    Some(label)
+    (Some(label), None)
 }
 
 /// Which `config.ui` layout fields the user explicitly wrote in `config.toml`.
@@ -387,10 +393,12 @@ mod tests {
     fn forced_palette_applies_recommended_when_user_unset() {
         let mut cfg = config::Config::default();
         let recommended = Some(PaletteName::new("starship".to_owned()).unwrap());
-        let user_set_palette = false;
-        let applied = super::resolve_forced_palette(&mut cfg, recommended, user_set_palette);
+        let user_set = UserSetLayoutFields::default();
+        let (applied, preserved) =
+            super::resolve_forced_palette(&mut cfg, recommended, &user_set, None);
         assert_eq!(cfg.ui.palette.as_str(), "starship");
         assert_eq!(applied.as_deref(), Some("palette (starship)"));
+        assert!(preserved.is_none());
     }
 
     #[test]
@@ -398,10 +406,52 @@ mod tests {
         let mut cfg = config::Config::default();
         cfg.ui.palette = PaletteName::new("nord".to_owned()).unwrap();
         let recommended = Some(PaletteName::new("starship".to_owned()).unwrap());
-        let user_set_palette = true;
-        let applied = super::resolve_forced_palette(&mut cfg, recommended, user_set_palette);
+        let user_set = UserSetLayoutFields {
+            palette: true,
+            ..UserSetLayoutFields::default()
+        };
+        let (applied, _preserved) =
+            super::resolve_forced_palette(&mut cfg, recommended, &user_set, None);
         assert_eq!(cfg.ui.palette.as_str(), "nord", "user palette preserved");
         assert!(applied.is_none());
+    }
+
+    #[test]
+    fn forced_palette_overwrites_value_owned_by_outgoing_theme() {
+        let mut cfg = config::Config::default();
+        cfg.ui.palette = PaletteName::new("starship".to_owned()).unwrap();
+        let outgoing = RecommendedUi {
+            palette: Some(PaletteName::new("starship".to_owned()).unwrap()),
+            ..RecommendedUi::default()
+        };
+        let recommended = Some(PaletteName::new("nord".to_owned()).unwrap());
+        let user_set = UserSetLayoutFields {
+            palette: true,
+            ..UserSetLayoutFields::default()
+        };
+        let result =
+            super::resolve_forced_palette(&mut cfg, recommended, &user_set, Some(&outgoing));
+        assert_eq!(cfg.ui.palette.as_str(), "nord");
+        assert_eq!(result, (Some("palette (nord)".to_owned()), None));
+    }
+
+    #[test]
+    fn forced_palette_reports_preserved_user_palette() {
+        let mut cfg = config::Config::default();
+        cfg.ui.palette = PaletteName::new("nord".to_owned()).unwrap();
+        let outgoing = RecommendedUi {
+            palette: Some(PaletteName::new("starship".to_owned()).unwrap()),
+            ..RecommendedUi::default()
+        };
+        let recommended = Some(PaletteName::new("starship".to_owned()).unwrap());
+        let user_set = UserSetLayoutFields {
+            palette: true,
+            ..UserSetLayoutFields::default()
+        };
+        let result =
+            super::resolve_forced_palette(&mut cfg, recommended, &user_set, Some(&outgoing));
+        assert_eq!(cfg.ui.palette.as_str(), "nord");
+        assert_eq!(result, (None, Some("palette (nord)".to_owned())));
     }
 
     #[test]
