@@ -1839,8 +1839,14 @@ fn worktree_git_repo(
     if matches!(repo_evidence, RepoEvidence::GenuineRepoOnly) && !attribution.is_genuine_repo() {
         return None;
     }
-    if path_matches_ignored_patterns(path, attribution.trusted_root()) {
-        return None;
+    // A directory-name token is only a hint (#719): committed files live
+    // under `vendor/`, `dist/`, `build/`, ... so inside a trusted repo root it
+    // defers to the gitignore check below. Without a trusted root there is no
+    // repo boundary to consult, so the token stays a verdict.
+    match path_matches_ignored_patterns(path, attribution.trusted_root()) {
+        Some(IgnoreTokenHit::Noise) => return None,
+        Some(IgnoreTokenHit::Directory) if attribution.trusted_root().is_none() => return None,
+        Some(IgnoreTokenHit::Directory) | None => {}
     }
     let repo = attribution.into_repo();
     // Honor the repo's .gitignore/.git/info/exclude: ignored files never
@@ -2033,34 +2039,57 @@ fn ignored_tokens() -> &'static [String] {
 ///   be one directory short or one too many. Trusting it as a scoping root
 ///   would be trading one kind of misattribution for another, so the
 ///   whole-path check is kept as the safe default.
-fn path_matches_ignored_patterns(path: &Path, repo_root: Option<&Path>) -> bool {
+///
+/// Directory-name tokens are a hint, not a verdict (#719): the result says
+/// *which* kind of token hit so `worktree_git_repo` can defer directory hits
+/// to the repo's own ignore rules (committed `vendor/`/`dist/` files must
+/// still refresh the prompt) when `repo_root` is trusted.
+fn path_matches_ignored_patterns(path: &Path, repo_root: Option<&Path>) -> Option<IgnoreTokenHit> {
     let scoped_path = repo_root.map_or(path, |root| path.strip_prefix(root).unwrap_or(path));
     let path_str = scoped_path.to_string_lossy();
     let file_name = scoped_path.file_name();
+    let mut directory_hit = false;
 
     for token in ignored_tokens() {
         if token.contains('/') {
             if path_str.contains(token) {
-                return true;
+                return Some(IgnoreTokenHit::Noise);
             }
             continue;
         }
 
         let desired = OsStr::new(token);
-
-        if file_name == Some(desired) {
-            return true;
+        let hit = file_name == Some(desired)
+            || scoped_path
+                .components()
+                .any(|component| component.as_os_str() == desired);
+        if !hit {
+            continue;
         }
-
-        if scoped_path
-            .components()
-            .any(|component| component.as_os_str() == desired)
-        {
-            return true;
+        if is_noise_file_token(token) {
+            return Some(IgnoreTokenHit::Noise);
         }
+        directory_hit = true;
     }
 
-    false
+    directory_hit.then_some(IgnoreTokenHit::Directory)
+}
+
+/// Which kind of built-in token `path_matches_ignored_patterns` hit (#719).
+enum IgnoreTokenHit {
+    /// A directory-name token (`vendor`, `dist`, `build`, ...). Only a hint:
+    /// committed files legitimately live under these names, so a hit inside a
+    /// genuine repo defers to the repo's own ignore rules.
+    Directory,
+    /// Never-meaningful noise (`.DS_Store`, `Thumbs.db`, `.git/objects`,
+    /// `.git/logs`): suppressed unconditionally.
+    Noise,
+}
+
+/// Whether a bare (slash-free) token names an OS metadata file rather than a
+/// directory.
+fn is_noise_file_token(token: &str) -> bool {
+    matches!(token, ".DS_Store" | "Thumbs.db")
 }
 
 /// Fingerprint of an ignore-source file (`.gitignore`, `.git/info/exclude`),
@@ -2470,8 +2499,11 @@ fn path_is_gitignored(repo_root: &Path, path: &Path, registry: &Arc<WatchRegistr
     !is_force_added(repo_root, path, registry)
 }
 
-/// Cheap fast-reject patterns for the highest-churn build/dependency directories,
-/// checked before the costlier git-root lookup and `.gitignore` matcher.
+/// Built-in high-churn hints for build/dependency directories and OS noise.
+///
+/// In a trusted repo a directory-name hit only defers to the `.gitignore`
+/// matcher (#719); `.DS_Store`, `Thumbs.db` and the `.git/{objects,logs}`
+/// entries are suppressed outright.
 ///
 /// These are matched as exact path components, so only well-known build-output
 /// directory names qualify. Generic words (`tmp`, `temp`, `env`) are deliberately
@@ -3107,6 +3139,9 @@ mod tests {
         std::fs::create_dir_all(&node_modules_dir).expect("nested dirs");
         let file = node_modules_dir.join("index.js");
         std::fs::write(&file, "module.exports = {};").expect("write file");
+        // Real repositories ignore `node_modules/`; the token is only a hint
+        // (#719), so the repo's own ignore rule is what suppresses the event.
+        std::fs::write(watched_root.join(".gitignore"), "node_modules/\n").expect("gitignore");
 
         let registry = test_registry(true, HashSet::from([watched_root]));
         let events = run_with_capture(|captured| {
@@ -3299,6 +3334,99 @@ mod tests {
         assert!(
             path_is_gitignored(&repo, &repo.join("other.log"), &registry),
             "an untracked file matching the ignore glob must still be suppressed"
+        );
+    }
+
+    /// Feed a content edit of `file` through `process_event` with `root` as
+    /// the only watched root and return the pending events it produced.
+    fn events_for_edit(root: &Path, file: &Path) -> Vec<PendingEvent> {
+        let registry = test_registry(true, HashSet::from([root.to_path_buf()]));
+        run_with_capture(|captured| {
+            let callback_arc: Arc<PendingCallback> = Arc::new(Box::new(move |event| {
+                captured.lock().unwrap().push(event);
+            }));
+            let evt = Event {
+                kind: EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+                paths: vec![file.to_path_buf()],
+                attrs: EventAttributes::default(),
+            };
+            FileSystemWatcher::process_event(
+                &evt,
+                &callback_arc,
+                &registry,
+                TEST_FOLLOWUP_DELAY,
+                &no_op_scheduler(),
+            );
+        })
+    }
+
+    /// Regression for #719: directory-name tokens are a hint, not a verdict.
+    ///
+    /// A committed, non-ignored file under `vendor/`, `dist/`, `build/` or
+    /// `target/` changes `git status` and must refresh the prompt; churn in an
+    /// ignored `node_modules/` must not, and a tracked file inside an ignored
+    /// `dist/` must (#435).
+    ///
+    /// # Panics
+    ///
+    /// Panics if creating the temp repo or running git fails.
+    #[test]
+    fn tracked_file_under_high_churn_token_dir_triggers_git_refresh() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let repo = std::fs::canonicalize(tmp.path()).expect("canonicalize repo");
+
+        git_in(&repo, &["init"]);
+        git_in(&repo, &["config", "user.email", "test@example.com"]);
+        git_in(&repo, &["config", "user.name", "Test User"]);
+        git_in(&repo, &["config", "commit.gpgsign", "false"]);
+        let tracked = [
+            "vendor/lib.go",
+            "dist/index.js",
+            "build/script.sh",
+            "target/keep.txt",
+        ];
+        for rel in tracked {
+            let file = repo.join(rel);
+            std::fs::create_dir_all(file.parent().expect("parent")).expect("dirs");
+            std::fs::write(&file, "committed\n").expect("write tracked file");
+        }
+        git_in(&repo, &["add", "-A"]);
+        git_in(&repo, &["commit", "-m", "init"]);
+
+        for rel in tracked {
+            let events = events_for_edit(&repo, &repo.join(rel));
+            assert_eq!(events.len(), 1, "tracked `{rel}` edit must emit one event");
+            assert_eq!(events.first().map(|e| &e.repo), Some(&repo), "`{rel}`");
+            assert!(
+                matches!(
+                    events.first().map(|e| &e.event),
+                    Some(FileEvent::Git { .. })
+                ),
+                "`{rel}` edit must be a Git event"
+            );
+        }
+
+        // Ignored churn stays suppressed.
+        std::fs::write(repo.join(".gitignore"), "node_modules/\ndist/\n").expect("gitignore");
+        let ignored = repo.join("node_modules").join("pkg").join("index.js");
+        std::fs::create_dir_all(ignored.parent().expect("parent")).expect("dirs");
+        std::fs::write(&ignored, "x\n").expect("write ignored");
+        assert!(
+            events_for_edit(&repo, &ignored).is_empty(),
+            "an ignored node_modules edit must stay suppressed"
+        );
+
+        // `dist/` is now ignored, but `dist/index.js` is tracked (force-added).
+        assert_eq!(
+            events_for_edit(&repo, &repo.join("dist/index.js")).len(),
+            1,
+            "a tracked file inside an ignored dist/ must still emit an event"
+        );
+        let untracked = repo.join("dist").join("new.js");
+        std::fs::write(&untracked, "x\n").expect("write untracked");
+        assert!(
+            events_for_edit(&repo, &untracked).is_empty(),
+            "an untracked file in an ignored dist/ must stay suppressed"
         );
     }
 
