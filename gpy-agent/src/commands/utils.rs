@@ -24,16 +24,17 @@ use std::path::Path;
 pub fn active_config_path() -> Result<String> {
     let paths = config::schema::get_config_paths();
 
-    if let Some(existing) = paths.iter().find(|path| Path::new(path).exists()) {
-        return Ok(existing.clone());
-    }
-
-    paths.into_iter().next().ok_or_else(|| {
-        Error::config(
-            "Unable to determine a config path from GPY_CONFIG_PATH, XDG_CONFIG_HOME, or HOME"
-                .to_owned(),
-        )
-    })
+    let (write_path, _existing) =
+        config::schema::resolve_active_config(&paths).ok_or_else(|| {
+            Error::config(
+                "Unable to determine a config path from GPY_CONFIG_PATH, XDG_CONFIG_HOME, or HOME"
+                    .to_owned(),
+            )
+        })?;
+    write_path
+        .into_os_string()
+        .into_string()
+        .map_err(|_| Error::config("Config path contains invalid UTF-8".to_owned()))
 }
 
 /// Load configuration from the active path for a mutating or reading command.

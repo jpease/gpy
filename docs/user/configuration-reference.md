@@ -262,7 +262,9 @@ truncate_to_repo = false
 
 ## Applying Changes
 
-`config.toml` is hot-reloaded by the running agent — no restart needed for most edits. Use the CLI to inspect or edit values without hand-editing the file:
+`config.toml` is hot-reloaded by the running agent — no restart needed for most edits. Every reload re-resolves which config file is in effect (the highest-priority one that exists), so the agent also follows a config file that you fix after it failed to load at startup, create at a higher-priority location, or delete — deleting the active `config.toml` returns the agent to the built-in defaults. A file that exists but is invalid keeps the last good configuration.
+
+Use the CLI to inspect or edit values without hand-editing the file:
 
 ```bash
 gpy config show          # Show the full effective configuration

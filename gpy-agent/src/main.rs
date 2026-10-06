@@ -750,13 +750,10 @@ async fn print_agent_status() -> Result<AgentLiveness> {
 
     // Check config file location (always show this)
     let config_paths = schema::get_config_paths();
-    let config_found = config_paths
-        .iter()
-        .find(|path| std::path::Path::new(path).exists());
 
-    match config_found {
-        Some(path) => println!("Config: {path}"),
-        None => println!("Config: Using defaults (no config file found)"),
+    match schema::resolve_active_config(&config_paths) {
+        Some((_, Some(existing))) => println!("Config: {}", existing.display()),
+        _ => println!("Config: Using defaults (no config file found)"),
     }
     println!();
 

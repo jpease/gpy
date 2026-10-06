@@ -93,6 +93,9 @@ pub struct HotReloadSlot {
     poll_stop: Arc<AtomicBool>,
     /// Handle for the poll-fallback thread, if running.
     poll_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
+    /// Whether a vanished polled file triggers the reload; see
+    /// [`reloading_on_missing`](Self::reloading_on_missing).
+    reload_on_missing: bool,
 }
 
 impl Default for HotReloadSlot {
@@ -108,7 +111,18 @@ impl HotReloadSlot {
             watcher: Arc::new(Mutex::new(None)),
             poll_stop: Arc::new(AtomicBool::new(false)),
             poll_handle: Arc::new(Mutex::new(None)),
+            reload_on_missing: false,
         }
+    }
+
+    /// Have the poll thread also run the reload when the polled file has been
+    /// gone for two consecutive ticks, for a manager whose reload maps "no
+    /// file" to a state of its own (the config manager's built-in defaults).
+    /// Without it a vanished file is skipped like an unreadable one.
+    #[must_use]
+    pub const fn reloading_on_missing(mut self) -> Self {
+        self.reload_on_missing = true;
+        self
     }
 
     /// A handle to the watcher slot, for a reload callback that must re-arm
@@ -209,19 +223,36 @@ impl HotReloadSlot {
         // strictly before any write the caller makes afterward.
         let initial_fingerprint = path_of().as_deref().and_then(content_fingerprint);
 
+        let reload_on_missing = self.reload_on_missing;
         let handle = std::thread::spawn(move || {
             let mut last_fingerprint = initial_fingerprint;
+            // A deletion is only acted on once seen on two consecutive ticks:
+            // an atomic-rename save briefly leaves no file.
+            let mut missing_once = false;
             while !stop_flag.load(Ordering::Relaxed) {
                 let Some(path) = path_of() else {
                     break;
                 };
 
-                if let Some(fingerprint) = content_fingerprint(&path) {
-                    let changed = last_fingerprint != Some(fingerprint);
-                    if changed {
-                        last_fingerprint = Some(fingerprint);
-                        reload(&path);
+                match content_fingerprint(&path) {
+                    Some(fingerprint) => {
+                        missing_once = false;
+                        let changed = last_fingerprint != Some(fingerprint);
+                        if changed {
+                            last_fingerprint = Some(fingerprint);
+                            reload(&path);
+                        }
                     }
+                    None if reload_on_missing && last_fingerprint.is_some() => {
+                        if missing_once {
+                            missing_once = false;
+                            last_fingerprint = None;
+                            reload(&path);
+                        } else {
+                            missing_once = true;
+                        }
+                    }
+                    None => {}
                 }
 
                 crate::watcher::sleep_unless_stopped(interval, &stop_flag);
