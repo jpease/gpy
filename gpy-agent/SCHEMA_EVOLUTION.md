@@ -31,6 +31,15 @@ Changes are listed newest-first within each release group.
 
 ---
 
+### IPC protocol — published JSON schemas corrected (documentation only, #760)
+
+| Property | Value |
+|---|---|
+| Scope | `schemas/message.json`, `schemas/response.json`, `schemas/README.md` |
+| Change type | Documentation correction — no wire change |
+| IPC protocol | Unchanged; `PROTOCOL_VERSION` not bumped. `message.json` now lists every `Format` value (the nonexistent `fish-ansi` is gone) and every op/field the agent accepts, in both the `op` and native forms. `response.json` now describes the flat `format: "json"` replies (`{"status":"ok"}`, `{"error":"..."}`, `{"branch":...}`; only `AgentStatus` is wrapped). `tests/schema_validation.rs` keeps the files in step with the code |
+| Config schema | No change |
+
 ### IPC protocol — single SIGURG doorbell for shell notifications (BREAKING, #674)
 
 | Property | Value |

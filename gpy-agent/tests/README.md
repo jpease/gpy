@@ -65,7 +65,7 @@ The unit tests live next to the code in `src/`.
 | `plugin_extensibility_e2e_tests.rs` | Plugin discovery, manifest validation and a real Fish runtime load of a plugin segment (needs Fish 4) |
 | `plugin_performance_tests.rs` | Plugin discovery stays within its performance budget |
 | `prev_bg_ansi.rs` | Integration test: `prev_bg` threads through the render pipeline and produces |
-| `schema_validation.rs` | Schema validation tests |
+| `schema_validation.rs` | Serde round-trips for IPC examples, plus `schemas/message.json` and `response.json` checked against `Format`, the `into_wire_message` op table and real JSON replies (#760) |
 | `signal_tests.rs` | SIGURG doorbell delivery to registered client PIDs (reloads add `<pid>.reload` flag files) |
 | `stale_socket_tests.rs` | Integration tests for `check_and_cleanup_socket` ping-retry behaviour (#317) |
 | `starship_import_golden_tests.rs` | Golden import tests: real-ish Starship configs → valid GPY artifacts |
