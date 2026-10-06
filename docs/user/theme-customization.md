@@ -202,8 +202,8 @@ If you're migrating from [Starship](https://starship.rs/) and want to start from
 
 ```bash
 gpy theme import ~/.config/starship.toml --name my-prompt --apply-layout
-gpy theme use my-prompt
 gpy palette use my-prompt
+gpy theme use my-prompt
 ```
 
 See [Migrating from Starship](migrating-from-starship.md) for the full walkthrough — config layout differences, common pitfalls, and uninstalling Starship afterward — or [Starship Importer](../dev/starship-import.md) for the flag list, module-by-module mapping table, and known lossy conversions.

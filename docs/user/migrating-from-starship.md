@@ -17,8 +17,8 @@ A practical guide for Starship users switching to GPY: what carries over automat
 gpy theme import ~/.config/starship.toml --name my-prompt --apply-layout
 
 # 3. Activate both artifacts
-gpy theme use my-prompt
 gpy palette use my-prompt
+gpy theme use my-prompt
 
 # 4. Compare the two prompts side by side, then remove Starship's init
 #    line from your shell rc file once you're happy with the result.

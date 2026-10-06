@@ -75,6 +75,42 @@ fn import_writes_palette_and_theme_files() {
 }
 
 #[test]
+fn activation_hints_list_palette_first_and_work_verbatim() {
+    let env = CliTestEnv::new().unwrap();
+    let source = env.root().join("cat.toml");
+    fs::write(
+        &source,
+        "palette = \"catppuccin_mocha\"\n[git_branch]\nstyle = \"bold mauve\"\n[palettes.catppuccin_mocha]\nmauve = \"#cba6f7\"\n",
+    )
+    .unwrap();
+    let result = env
+        .run_gpy_agent(&["theme", "import", source.to_str().unwrap(), "--name", "cat"])
+        .unwrap();
+    result.assert_success("theme import");
+
+    let palette_at = result.stdout.find("gpy palette use cat");
+    let theme_at = result.stdout.find("gpy theme use cat");
+    assert!(
+        palette_at.is_some() && theme_at.is_some() && palette_at < theme_at,
+        "palette hint must precede theme hint: {}",
+        result.stdout
+    );
+
+    // Run the printed hint commands verbatim, in the order printed.
+    let hints: Vec<Vec<&str>> = result
+        .stdout
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("gpy "))
+        .map(|rest| rest.split_whitespace().collect())
+        .filter(|args: &Vec<&str>| matches!(args.as_slice(), ["palette" | "theme", "use", _]))
+        .collect();
+    assert_eq!(hints.len(), 2, "two activation hints: {}", result.stdout);
+    for args in hints {
+        env.run_gpy(&args).unwrap().assert_success(&args.join(" "));
+    }
+}
+
+#[test]
 fn import_stdout_prints_both_artifacts_without_writing() {
     let env = CliTestEnv::new().unwrap();
     let source = write_sample(&env);

@@ -192,8 +192,8 @@ fn refuse_shadowing(name: &str) -> Result<()> {
 /// Print activation hints + recommended segment order.
 fn print_activation_hints(artifacts: &ImportArtifacts, name: &str) {
     println!("✅ Imported starship config into palette + theme '{name}'");
-    println!("   gpy theme use {name}");
     println!("   gpy palette use {name}");
+    println!("   gpy theme use {name}");
     if !artifacts.segments.is_empty() {
         let quoted: Vec<String> = artifacts
             .segments
