@@ -93,11 +93,26 @@ impl<'a> RenderContext<'a> {
     }
 
     /// Attach previous-segment colors for `prev_fg`/`prev_bg`.
+    ///
+    /// The colors are resolved through the palette at render time, exactly as a
+    /// direct `fg:<name>` would be.
     #[must_use]
     pub fn with_prev_colors(mut self, fg: Option<Color>, bg: Option<Color>) -> Self {
         self.prev_fg = fg;
         self.prev_bg = bg;
         self
+    }
+
+    /// Resolve a stored previous-segment color through the palette. A missing,
+    /// self-referential (`prev_*`) or unresolvable color is the terminal default:
+    /// a previous segment's color must never fail the current one.
+    fn resolve_prev(&self, stored: Option<&Color>) -> Color {
+        match stored {
+            Some(Color::PrevFg | Color::PrevBg) | None => Color::Named("default".to_owned()),
+            Some(color) => self
+                .resolve_color(color)
+                .unwrap_or_else(|_| Color::Named("default".to_owned())),
+        }
     }
 
     /// # Errors
@@ -116,14 +131,8 @@ impl<'a> RenderContext<'a> {
                 .get(name)
                 .filter(|resolved| !matches!(resolved, Color::Palette(_)))
                 .ok_or_else(|| TemplateError::UnknownColor { name: name.clone() }),
-            Color::PrevFg => Ok(self
-                .prev_fg
-                .clone()
-                .unwrap_or_else(|| Color::Named("default".to_owned()))),
-            Color::PrevBg => Ok(self
-                .prev_bg
-                .clone()
-                .unwrap_or_else(|| Color::Named("default".to_owned()))),
+            Color::PrevFg => Ok(self.resolve_prev(self.prev_fg.as_ref())),
+            Color::PrevBg => Ok(self.resolve_prev(self.prev_bg.as_ref())),
             Color::Rgb { .. } | Color::Ansi256(_) => Ok(color.clone()),
         }
     }
@@ -509,6 +518,78 @@ mod tests {
         assert_eq!(
             spans.first().unwrap().style.fg,
             Some(Color::Named("blue".to_owned()))
+        );
+    }
+
+    #[test]
+    fn prev_bg_resolves_through_palette() {
+        use crate::template::style::Color;
+        use std::collections::HashMap;
+        let palette = crate::template::Palette::new(HashMap::from([(
+            "black".to_owned(),
+            Color::Rgb {
+                r: 46,
+                g: 52,
+                b: 64,
+            },
+        )]));
+        let resolver = MapResolver::from_pairs([("x", "hi")]);
+        let ctx = RenderContext::new(&resolver)
+            .with_palette(palette)
+            .with_prev_colors(None, Some(Color::Named("black".to_owned())));
+        let spans = render("[X](fg:prev_bg)", &ctx).unwrap();
+        assert_eq!(
+            spans.first().unwrap().style.fg,
+            Some(Color::Rgb {
+                r: 46,
+                g: 52,
+                b: 64
+            })
+        );
+    }
+
+    #[test]
+    fn prev_fg_resolves_through_palette() {
+        use crate::template::style::Color;
+        use std::collections::HashMap;
+        let palette = crate::template::Palette::new(HashMap::from([(
+            "orange".to_owned(),
+            Color::Ansi256(208),
+        )]));
+        let resolver = MapResolver::from_pairs([("x", "hi")]);
+        let ctx = RenderContext::new(&resolver)
+            .with_palette(palette)
+            .with_prev_colors(Some(Color::Palette("orange".to_owned())), None);
+        let spans = render("[X](fg:prev_fg)", &ctx).unwrap();
+        assert_eq!(spans.first().unwrap().style.fg, Some(Color::Ansi256(208)));
+    }
+
+    #[test]
+    fn prev_bg_palette_only_role_resolves() {
+        use crate::template::style::Color;
+        use std::collections::HashMap;
+        let palette = crate::template::Palette::new(HashMap::from([(
+            "orange".to_owned(),
+            Color::Ansi256(208),
+        )]));
+        let resolver = MapResolver::from_pairs([("x", "hi")]);
+        let ctx = RenderContext::new(&resolver)
+            .with_palette(palette)
+            .with_prev_colors(None, Some(Color::Palette("orange".to_owned())));
+        let spans = render("[X](fg:prev_bg)", &ctx).unwrap();
+        assert_eq!(spans.first().unwrap().style.fg, Some(Color::Ansi256(208)));
+    }
+
+    #[test]
+    fn prev_bg_unresolvable_falls_back_to_default() {
+        use crate::template::style::Color;
+        let resolver = MapResolver::from_pairs([("x", "hi")]);
+        let ctx = RenderContext::new(&resolver)
+            .with_prev_colors(None, Some(Color::Palette("missing".to_owned())));
+        let spans = render("[X](fg:prev_bg)", &ctx).unwrap();
+        assert_eq!(
+            spans.first().unwrap().style.fg,
+            Some(Color::Named("default".to_owned()))
         );
     }
 
