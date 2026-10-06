@@ -635,6 +635,8 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - Multi-language segments chain each language pill with its own caps and
   gaps instead of giving every pill the whole segment's first/last position
   (#751).
+- Edits to tracked files under `vendor/`, `dist/`, `build/` or `target/`
+  refresh the git segment (#719); only gitignored paths are filtered.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
