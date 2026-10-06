@@ -494,37 +494,19 @@ function _install_fish_files
         # no-op, but the skip was never actually taking effect -- #324).
         set -l skip_symlink 0
 
-        # Backup existing prompt if it's not already ours
-        if test -e $dest_prompt
-            # Check if it's already a symlink to our gpy version
-            set -l is_gpy_symlink 0
-
-            if test -L $dest_prompt
-                set -l link_target (readlink $dest_prompt)
-                if test "$link_target" = "$source_prompt"
-                    set is_gpy_symlink 1
-                end
-            end
-
-            if test $is_gpy_symlink -eq 0
-                # Not our symlink - backup if it's a custom prompt
-                if test -f $dest_prompt
-                    if not grep -q -E "(GPY|__enabled_segments)" $dest_prompt 2>/dev/null
-                        set -l backup_file "$dest_prompt.backup-"(date +%Y%m%d-%H%M%S)
-                        mv $dest_prompt $backup_file
-                        echo "⚠️  Backed up existing prompt to: $backup_file"
-                    else
-                        # It's an old GPY copy, remove it
-                        rm -f $dest_prompt
-                    end
-                else if test -L $dest_prompt
-                    # Symlink to somewhere else, remove it
-                    rm -f $dest_prompt
-                end
-            else
-                # Already correct symlink, no action needed
+        # Backup existing prompt if it's not already ours. A foreign symlink
+        # (stow/yadm/chezmoi) is moved aside as a symlink, never deleted (#744).
+        if test -e $dest_prompt -o -L $dest_prompt
+            if test -L $dest_prompt; and test (readlink $dest_prompt) = "$source_prompt"
                 echo "✅ fish_prompt symlink already correct"
                 set skip_symlink 1
+            else if test -f $dest_prompt -a ! -L $dest_prompt; and grep -q -E "(GPY|__enabled_segments)" $dest_prompt 2>/dev/null
+                # It's an old GPY copy, remove it
+                rm -f $dest_prompt
+            else
+                set -l backup_file "$dest_prompt.backup."(date +%Y%m%d_%H%M%S)
+                mv $dest_prompt $backup_file
+                echo "⚠️  Backed up existing prompt to: $backup_file"
             end
         end
 

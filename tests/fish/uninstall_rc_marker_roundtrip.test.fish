@@ -539,6 +539,41 @@ for uninstaller_entry in "fish:scripts/uninstall.fish" "sh:scripts/uninstall.sh"
     rm -rf "$h_all"
 end
 
+# --- 2b. Legacy install-dev.fish backup name is restored when newest (#744) ---
+for uninstaller_entry in "fish:scripts/uninstall.fish" "sh:scripts/uninstall.sh"
+    set -l parts (string split ':' -- "$uninstaller_entry")
+    set -l u_type $parts[1]
+    set -l u_script $parts[2]
+
+    set -l h_leg (mktemp -d)
+    set -l xdg_c_leg "$h_leg/xdg-config"
+    set -l xdg_cache_leg "$h_leg/xdg-cache"
+    set -l xdg_rt_leg "$h_leg/xdg-runtime"
+    mkdir -p "$xdg_c_leg/fish/functions" "$xdg_c_leg/fish/gpy/functions" "$xdg_cache_leg" "$xdg_rt_leg"
+
+    set -l gpy_prompt_leg "$xdg_c_leg/fish/gpy/functions/fish_prompt.fish"
+    printf '%s\n' "function fish_prompt; echo gpy; end" >"$gpy_prompt_leg"
+    ln -s "$gpy_prompt_leg" "$xdg_c_leg/fish/functions/fish_prompt.fish"
+    printf '%s\n' "function fish_prompt; echo older; end" >"$xdg_c_leg/fish/functions/fish_prompt.fish.backup.20240101_000000"
+    set -l legacy_backup "$xdg_c_leg/fish/functions/fish_prompt.fish.backup-20250101-000000"
+    printf '%s\n' "function fish_prompt; echo legacy_restored; end" >"$legacy_backup"
+
+    if test "$u_type" = fish
+        printf '\n' | env HOME=$h_leg XDG_CONFIG_HOME=$xdg_c_leg XDG_CACHE_HOME=$xdg_cache_leg XDG_RUNTIME_DIR=$xdg_rt_leg GPY_AGENT_SOCKET_PATH="$xdg_rt_leg/gpy.sock" fish "$u_script" >/dev/null 2>&1
+    else
+        printf '\n' | env HOME=$h_leg XDG_CONFIG_HOME=$xdg_c_leg XDG_CACHE_HOME=$xdg_cache_leg XDG_RUNTIME_DIR=$xdg_rt_leg GPY_AGENT_SOCKET_PATH="$xdg_rt_leg/gpy.sock" GPY_SHELL=fish sh "$u_script" >/dev/null 2>&1
+    end
+
+    set -l restored_prompt "$xdg_c_leg/fish/functions/fish_prompt.fish"
+    if test -f "$restored_prompt"; and not test -L "$restored_prompt"; and test (cat "$restored_prompt") = "function fish_prompt; echo legacy_restored; end"; and not test -e "$legacy_backup"
+        __gpy_test_pass "#744 ($u_type uninstaller): newest legacy .backup-<date>-<time> prompt restored"
+    else
+        __gpy_test_fail "#744 ($u_type uninstaller): legacy install-dev backup not restored"
+    end
+
+    rm -rf "$h_leg"
+end
+
 # --- 3. Both .bashrc and .bash_profile cleaned; missing file not created ---
 set -l h_bash_only (mktemp -d)
 set -l xdg_c_bo "$h_bash_only/xdg-config"

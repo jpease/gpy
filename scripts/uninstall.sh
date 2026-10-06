@@ -232,26 +232,40 @@ if [ -e "$fish_prompt_file" ] || [ -L "$fish_prompt_file" ]; then
     echo "🤔 fish_prompt.fish already exists; preserving current prompt and backups"
 else
     # Compare timestamp suffix descending; on equal stamps, lexicographical
-    # order of the basename wins (.gpy-backup. over .backup.) (#670).
+    # order of the basename wins (.gpy-backup. over .backup. over .backup-)
+    # (#670). Three installers, three names (#744): install.sh `.gpy-backup.`,
+    # install-oneline.sh `.backup.`, and the legacy install-dev.fish
+    # `.backup-YYYYMMDD-HHMMSS`, whose stamp is normalised to `_`.
+    # A backup may itself be a symlink (a stow/yadm prompt moved aside), valid
+    # or dangling, but never one pointing back into the GPY prompt dir.
     TAB=$(printf '\t')
     eligible_backups=""
-    for candidate in "$fish_prompt_file".backup.* "$fish_prompt_file".gpy-backup.*; do
-        [ -f "$candidate" ] || continue
-        [ ! -L "$candidate" ] || continue
+    for candidate in "$fish_prompt_file".backup.* "$fish_prompt_file".gpy-backup.* "$fish_prompt_file".backup-*; do
+        [ -f "$candidate" ] || [ -L "$candidate" ] || continue
+        if [ -L "$candidate" ]; then
+            case "$(readlink "$candidate" 2>/dev/null || true)" in
+                "$fish_prompt_dir"/*) continue ;;
+            esac
+        fi
         bname="${candidate##*/}"
         case "$bname" in
             fish_prompt.fish.backup.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]|\
             fish_prompt.fish.gpy-backup.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9])
                 stamp="${bname##*.}"
-                entry="${stamp}${TAB}${bname}${TAB}${candidate}"
-                if [ -z "$eligible_backups" ]; then
-                    eligible_backups="$entry"
-                else
-                    eligible_backups="${eligible_backups}
-${entry}"
-                fi
                 ;;
+            fish_prompt.fish.backup-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9])
+                stamp="${bname##*backup-}"
+                stamp="${stamp%-*}_${stamp#*-}"
+                ;;
+            *) continue ;;
         esac
+        entry="${stamp}${TAB}${bname}${TAB}${candidate}"
+        if [ -z "$eligible_backups" ]; then
+            eligible_backups="$entry"
+        else
+            eligible_backups="${eligible_backups}
+${entry}"
+        fi
     done
 
     if [ -n "$eligible_backups" ]; then

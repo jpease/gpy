@@ -355,7 +355,11 @@ FISH_PROMPT_SOURCE="$FISH_CONFIG_DIR/gpy/functions/fish_prompt.fish"
 
 mkdir -p "$FISH_FUNCTIONS_DIR"
 
-if [ -e "$FISH_PROMPT_TARGET" ] && [ ! -L "$FISH_PROMPT_TARGET" ]; then
+# Anything that is not already GPY's own link (regular file, or a foreign
+# symlink such as a stow/yadm-managed prompt) is moved aside; `mv` keeps a
+# symlink a symlink so uninstall can restore it (#744).
+if { [ -e "$FISH_PROMPT_TARGET" ] || [ -L "$FISH_PROMPT_TARGET" ]; } \
+    && { [ ! -L "$FISH_PROMPT_TARGET" ] || [ "$(readlink "$FISH_PROMPT_TARGET")" != "$FISH_PROMPT_SOURCE" ]; }; then
     echo "📦 Backing up existing fish_prompt implementation..."
     mv "$FISH_PROMPT_TARGET" "$FISH_PROMPT_TARGET.gpy-backup.$(date +%Y%m%d_%H%M%S)"
 fi

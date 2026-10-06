@@ -181,6 +181,36 @@ end
 
 rm -rf "$home3"
 
+# ===========================================================================
+# Test 5: a custom regular-file prompt is backed up under the name both
+# uninstallers restore, `fish_prompt.fish.backup.<8>_<6>`, and a foreign
+# symlink prompt is moved aside still a symlink (#744).
+# ===========================================================================
+set -l home5 (mktemp -d)
+mkdir -p "$home5/.config/fish/functions" "$home5/dotfiles"
+printf '%s\n' 'function fish_prompt; echo mine; end' >"$home5/.config/fish/functions/fish_prompt.fish"
+set -l out5 (__gpy_run_install_dev "$home5" "$safe_path" "")
+set -l backups5 (find "$home5/.config/fish/functions" -name 'fish_prompt.fish.backup*')
+if test (count $backups5) -eq 1; and string match -rq '/fish_prompt\.fish\.backup\.[0-9]{8}_[0-9]{6}$' -- $backups5[1]; and test (cat $backups5[1]) = 'function fish_prompt; echo mine; end'
+    __gpy_test_pass "install-dev.fish: custom prompt backed up as fish_prompt.fish.backup.<date>_<time>"
+else
+    __gpy_test_fail "install-dev.fish: unexpected prompt backup name(s): $backups5 ($out5)"
+end
+
+set -l home6 (mktemp -d)
+mkdir -p "$home6/.config/fish/functions" "$home6/dotfiles"
+printf '%s\n' 'function fish_prompt; echo mine; end' >"$home6/dotfiles/fish_prompt.fish"
+ln -s "$home6/dotfiles/fish_prompt.fish" "$home6/.config/fish/functions/fish_prompt.fish"
+set -l out6 (__gpy_run_install_dev "$home6" "$safe_path" "")
+set -l backups6 (find "$home6/.config/fish/functions" -name 'fish_prompt.fish.backup.*')
+if test (count $backups6) -eq 1; and test -L $backups6[1]; and test (readlink $backups6[1]) = "$home6/dotfiles/fish_prompt.fish"; and test -f "$home6/dotfiles/fish_prompt.fish"
+    __gpy_test_pass "install-dev.fish: foreign symlink prompt moved aside as a symlink"
+else
+    __gpy_test_fail "install-dev.fish: foreign symlink prompt not preserved: $backups6 ($out6)"
+end
+
+rm -rf "$home5" "$home6"
+
 if test $failed -eq 1
     exit 1
 end
