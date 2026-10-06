@@ -872,6 +872,22 @@ impl Agent {
                 )
             }));
 
+        // Theme-file hot reloads must refresh the export and instant caches
+        // before the doorbell rings; the hook replaces the manager's direct
+        // `notify_reload` (#710).
+        let ctx_for_theme_callback = ctx.clone();
+        ctx.theme_manager.set_reload_callback(Arc::new(move || {
+            let config = ctx_for_theme_callback.config_manager.get();
+            if let Err(e) = crate::cache::write_theme_export_cache(
+                &ctx_for_theme_callback.theme_manager,
+                &config,
+            ) {
+                debug_log!("agent", "Failed to write theme export cache: {}", e);
+            }
+            events::regenerate_instant_caches_for_theme_change(&ctx_for_theme_callback, &config);
+            ctx_for_theme_callback.registry.notify_reload();
+        }));
+
         // Config changes should feel responsive, so debounce at 1 second.
         if let Err(e) = ctx
             .config_manager

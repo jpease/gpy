@@ -359,6 +359,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - Clients dropped by a repaint broadcast, or whose PID was reused by another
   process, are removed from the file watcher by the next pruning pass (#782),
   so their repository is no longer watched and re-scanned.
+- Editing the active theme file refreshes `theme-export.{fish,bash,zsh}`
+  and the instant-prompt caches before the reload doorbell (#710), instead of
+  leaving the export one edit behind.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

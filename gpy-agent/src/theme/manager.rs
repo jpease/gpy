@@ -49,6 +49,10 @@ struct ThemeState {
     theme: Arc<ThemeConfig>,
 }
 
+/// Callback run after a successful hot-reload swap (see [`ThemeManager::set_reload_callback`]).
+pub type ThemeReloadCallback = Arc<dyn Fn() + Send + Sync>;
+type ReloadHookSlot = Arc<Mutex<Option<ThemeReloadCallback>>>;
+
 /// Manages theme loading, caching, and hot-reloading
 pub struct ThemeManager {
     /// Name, path, and content of the active theme, swapped as one unit.
@@ -56,6 +60,9 @@ pub struct ThemeManager {
     /// File watcher plus poll fallback for hot-reload, shared with the other
     /// file-watching managers (#588).
     hot_reload: HotReloadSlot,
+    /// Post-reload hook. When set it replaces the direct `notify_reload` so the
+    /// owner can refresh derived caches before ringing the doorbell (#710).
+    on_reload: ReloadHookSlot,
     client_registry: Arc<Mutex<Option<Arc<crate::ipc::ClientDirectory>>>>,
     watch_debounce: Arc<Mutex<Duration>>,
     /// The `WatchRegistry` the watcher was last armed with, so
@@ -101,6 +108,7 @@ impl ThemeManager {
                 theme: Arc::new(theme),
             }))),
             hot_reload: HotReloadSlot::new(),
+            on_reload: Arc::new(Mutex::new(None)),
             client_registry: Arc::new(Mutex::new(None)),
             watch_debounce: Arc::new(Mutex::new(Duration::from_secs(5_u64))),
             watch_registry: Arc::new(Mutex::new(None)),
@@ -173,6 +181,19 @@ impl ThemeManager {
     #[must_use]
     pub fn get(&self) -> Arc<ThemeConfig> {
         Arc::clone(&self.state().theme)
+    }
+
+    /// Register the post-reload hook for hot-reloads of the theme file.
+    ///
+    /// Mirrors `ConfigManager::set_reload_callback`. When set, the hook runs
+    /// after the new theme is swapped in and **replaces** the direct
+    /// `notify_reload` doorbell: the hook owns ringing it, so it can write the
+    /// theme-export and instant caches first (#710). Name switches via
+    /// [`switch_theme`](Self::switch_theme) do not run it.
+    pub fn set_reload_callback(&self, callback: ThemeReloadCallback) {
+        if let Ok(mut slot) = self.on_reload.lock() {
+            *slot = Some(callback);
+        }
     }
 
     /// Reload the current theme from disk
@@ -311,6 +332,7 @@ impl ThemeManager {
         let started = self.hot_reload.start_watcher(|| {
             let state_arc = Arc::clone(&self.state);
             let callback_registry = client_registry.clone();
+            let on_reload = Arc::clone(&self.on_reload);
 
             let callback = Box::new(move |_event: crate::watcher::DebouncedEvent| {
                 let Ok(theme_path) = state_arc.read().map(|guard| guard.path.clone()) else {
@@ -319,6 +341,7 @@ impl ThemeManager {
                 Self::reload_and_apply(
                     &state_arc,
                     callback_registry.as_deref(),
+                    &on_reload,
                     &theme_path,
                     "watch callback",
                 );
@@ -618,7 +641,8 @@ impl ThemeManager {
     }
 
     /// Reload the theme at `theme_path` and apply it, or log why the reload
-    /// failed. Asks clients to reload (`notify_reload`) when the reload succeeds. Shared by
+    /// failed. When a reload hook is registered ([`Self::set_reload_callback`]) it runs
+    /// in place of the direct doorbell; otherwise asks clients to reload (`notify_reload`). Shared by
     /// the file-watcher callback (`start_watching`) and the polling fallback
     /// (`start_poll_fallback`) so a load failure is never silently discarded.
     /// The name and path are carried over from the state being replaced (a
@@ -628,6 +652,7 @@ impl ThemeManager {
     fn reload_and_apply(
         state_lock: &Arc<RwLock<Arc<ThemeState>>>,
         client_registry: Option<&crate::ipc::ClientDirectory>,
+        on_reload: &ReloadHookSlot,
         theme_path: &Path,
         context: &str,
     ) {
@@ -652,7 +677,13 @@ impl ThemeManager {
                 });
                 drop(guard);
 
-                if let Some(registry) = client_registry {
+                // Never invoked under the state lock (dropped above): the hook
+                // reads `theme_manager.get()`. The slot lock is released before
+                // the call as well so a hook may re-register itself.
+                let registered = on_reload.lock().ok().and_then(|slot| slot.clone());
+                if let Some(hook) = registered {
+                    hook();
+                } else if let Some(registry) = client_registry {
                     registry.notify_reload();
                 }
             }
@@ -674,6 +705,7 @@ impl ThemeManager {
     fn poll_target(&self, client_registry: Option<Arc<crate::ipc::ClientDirectory>>) -> PollTarget {
         let path_state = Arc::clone(&self.state);
         let reload_state = Arc::clone(&self.state);
+        let on_reload = Arc::clone(&self.on_reload);
 
         PollTarget {
             path_of: Box::new(move || path_state.read().ok().map(|state| state.path.clone())),
@@ -681,6 +713,7 @@ impl ThemeManager {
                 Self::reload_and_apply(
                     &reload_state,
                     client_registry.as_deref(),
+                    &on_reload,
                     path,
                     "poll fallback",
                 );
@@ -740,6 +773,7 @@ mod tests {
     use crate::shell::Shell;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     /// #572: an unresolvable theme name must error, naming the theme, instead
@@ -1157,5 +1191,58 @@ mod tests {
         );
 
         manager.stop_watching();
+    }
+
+    #[test]
+    #[allow(clippy::missing_panics_doc)]
+    fn theme_reload_runs_registered_callback_after_swap() {
+        let variant_a = DEFAULT_THEME_CONTENT;
+        let variant_b = variant_a.replacen(
+            "text_color = \"white\"\nbg_color = \"black\"\ntime_format",
+            "text_color = \"black\"\nbg_color = \"black\"\ntime_format",
+            1,
+        );
+        assert_ne!(variant_a, variant_b, "the swap anchor must have matched");
+        let parsed_a = crate::theme::parse(variant_a, "default").expect("variant A must parse");
+
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let theme_path = temp.path().join("theme.toml");
+        std::fs::write(&theme_path, variant_a).expect("write initial theme");
+        let manager = Arc::new(ThemeManager::with_theme_and_path(
+            "default",
+            parsed_a,
+            theme_path.clone(),
+        ));
+
+        let observed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let observed_in_cb = Arc::clone(&observed);
+        let manager_in_cb = Arc::clone(&manager);
+        manager.set_reload_callback(Arc::new(move || {
+            // Reads the manager: would deadlock if called under the state lock.
+            let text_color = manager_in_cb.get().segments.clock.text_color.clone();
+            if let Ok(mut seen) = observed_in_cb.lock() {
+                seen.push(text_color.to_string());
+            }
+        }));
+
+        manager.spawn_poll_thread(None, Duration::from_millis(10), Duration::from_millis(10));
+        std::fs::write(&theme_path, &variant_b).expect("write updated theme");
+
+        let mut seen_black = false;
+        for _ in 0_i32..300_i32 {
+            std::thread::sleep(Duration::from_millis(20));
+            if observed
+                .lock()
+                .is_ok_and(|seen| seen.iter().any(|color| color == "black"))
+            {
+                seen_black = true;
+                break;
+            }
+        }
+        manager.stop_watching();
+        assert!(
+            seen_black,
+            "reload callback must run after the swap and observe the new theme"
+        );
     }
 }

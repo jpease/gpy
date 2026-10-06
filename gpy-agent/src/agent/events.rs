@@ -1447,7 +1447,7 @@ pub(super) fn handle_config_reload(
 /// cold detector would block the reload handler, wedging live updates and
 /// `gpy-agent stop` (#223 guarantee: no synchronous detection on the render path).
 /// Language is therefore deferred to a background job that repaints via the doorbell.
-fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, config: &Config) {
+pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, config: &Config) {
     let theme = ctx.theme_manager.get();
     let palette = ctx.palette_cache.get();
 

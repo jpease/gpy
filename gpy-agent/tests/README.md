@@ -7,7 +7,7 @@ This directory contains the test suite for the GPY agent, including unit tests, 
 ### Test Files
 
 Every `*.rs` file directly under `gpy-agent/tests/` is its own nextest
-target (65 of them, listed below); `common/` holds the shared harnesses
+target (66 of them, listed below); `common/` holds the shared harnesses
 (`cli_harness.rs`, `fixtures.rs`, `integration_harness.rs`, `skip.rs`) and
 `snapshots/` the insta snapshots the help and formatter tests diff against.
 The unit tests live next to the code in `src/`.
@@ -42,6 +42,7 @@ The unit tests live next to the code in `src/`.
 | `git_repository_tests.rs` | Tests for git repository discovery and path normalization |
 | `git_status_tests.rs` | Comprehensive tests for git status functionality |
 | `gpy_cli_tests.rs` | Integration tests for the `gpy` CLI binary |
+| `hot_reload_class_tests.rs` | HOT-RELOAD class test: after any on-disk config/theme change settles, the exports equal a fresh load (one row per mechanism) |
 | `init_command_tests.rs` | Integration tests for `gpy-agent init` (first-run icon/config bootstrap, #411) |
 | `init_pty_tests.rs` | PTY-driven coverage of the interactive `gpy-agent init` path (#648, pins |
 | `instant_cache_regression_tests.rs` | Regression tests for instant-prompt cache invalidation bugs |
