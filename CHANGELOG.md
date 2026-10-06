@@ -498,6 +498,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   connected agent replies late (#757).
 - Bash and Zsh no longer treat an agent error reply to `register` as a
   successful registration (#758), so the next prompt retries.
+- A rejected workspace sync (for example `cd /etc`) no longer drops the
+  shell's agent registration in Fish, Bash or Zsh (#764); only a
+  "not registered" reply triggers re-registration.
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by

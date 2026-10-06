@@ -195,12 +195,17 @@ function __gpy_sync_workspace() {
     request=$(__gpy_build_workspace_payload)
     local response
     response=$(__gpy_send_json "$request" 2>/dev/null)
-    if [[ $? -ne 0 || "$response" == *"error"* || "$response" == *"not registered"* ]]; then
+    local send_status=$?
+    # Only a failed send or a lost registration (agent restarted) re-registers.
+    # Any other error reply (e.g. a rejected path like /etc) keeps the
+    # registration so the next valid cd syncs normally (#764).
+    if [[ $send_status -ne 0 || "$response" == *"not registered"* ]]; then
         __gpy_registered=""
         __gpy_last_workspace=""
         __gpy_register_with_agent
         return
     fi
+    [[ "$response" != *'"error"'* ]] || return 0
 
     __gpy_last_workspace="$PWD"
 }

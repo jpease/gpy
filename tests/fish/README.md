@@ -42,6 +42,7 @@ This directory contains integration tests for the Fish shell prompt and GPY init
 - **`ipc_security.test.fish`** - Tests IPC security features
 - **`ipc_nc_fallback_timeout.test.fish`** - Tests the `nc` fallback bounds its wait against a wedged agent (#299)
 - **`maybe_refresh_nonblocking.test.fish`** - Background git/language refreshes return at once against a slow agent, and with the agent down never fork `gpy-agent oneshot` or hide the directory segment (#685)
+- **`workspace_error_keeps_registration.test.fish`** - A workspace error reply (e.g. `cd /etc` rejected) keeps the registration; only "not registered" re-registers (#764)
 - **`main.test.fish`** - Basic smoke tests
 
 ### Every file in this directory
@@ -104,6 +105,7 @@ sections above describe the ones worth reading first.
 - `protocol_version_mismatch.test.fish`
 - `supervisor_cadence.test.fish`
 - `test_helpers_scoped_kill.test.fish`
+- `workspace_error_keeps_registration.test.fish`
 
 **Instant-prompt and theme caches**
 
