@@ -1321,6 +1321,16 @@ enabled_segments = ["clock"]
         !combined.contains(&format!("Loaded successfully ('{NONEXISTENT_THEME_NAME}'")),
         "doctor must not report a missing theme as loaded. Output: {combined}"
     );
+    assert!(
+        !output.stdout.contains("Fix the segment `format` template"),
+        "a missing theme is not a template error. Output: {}",
+        output.stdout
+    );
+    assert!(
+        output.stdout.contains("Skipped (theme failed to load)"),
+        "template line should be skipped when the theme fails to load. Output: {}",
+        output.stdout
+    );
 }
 
 /// Test end-to-end theme switching workflow

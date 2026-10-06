@@ -296,6 +296,35 @@ pub fn validate_by_name(name: &str) -> Result<ThemeValidationResult> {
     })
 }
 
+/// Which stage of validating a named theme failed.
+///
+/// Lets `gpy doctor` tell "the theme could not be loaded" apart from "the theme
+/// loaded but a segment `format` template is broken" without parsing messages.
+#[derive(Debug)]
+pub enum ThemeCheckError {
+    /// The theme does not exist, is unsafe, or failed to load/parse.
+    Load(Error),
+    /// The theme loaded but a segment `format` template is invalid.
+    Templates(Error),
+}
+
+/// Like [`validate_by_name`], but reports which validation stage failed.
+///
+/// # Errors
+///
+/// Returns [`ThemeCheckError::Load`] when the theme cannot be loaded or
+/// discovered, and [`ThemeCheckError::Templates`] when a segment template is
+/// invalid.
+pub fn validate_by_name_detailed(
+    name: &str,
+) -> std::result::Result<ThemeValidationResult, ThemeCheckError> {
+    validate_theme_name_detailed(name)?;
+    Ok(ThemeValidationResult {
+        target: name.to_owned(),
+        source: ThemeResource::NAME_LABEL.to_owned(),
+    })
+}
+
 /// Print remediation-focused diagnostics for a theme validation error.
 pub fn print_theme_validation_error(context: &str, error: &Error) {
     validation::print_validation_error::<ThemeResource>(context, error);
@@ -511,18 +540,29 @@ fn ensure_theme_discovered(theme_name: &str) -> Result<()> {
 /// Returns an error when no theme of this name exists, or when the theme
 /// cannot be loaded, validated, or contains a broken segment format template.
 fn validate_theme_name(theme_name: &str) -> Result<()> {
+    validate_theme_name_detailed(theme_name).map_err(|failure| match failure {
+        ThemeCheckError::Load(e) | ThemeCheckError::Templates(e) => e,
+    })
+}
+
+/// [`validate_theme_name`] with the failing stage preserved.
+///
+/// # Errors
+///
+/// See [`ThemeCheckError`] for the stage that failed.
+fn validate_theme_name_detailed(theme_name: &str) -> std::result::Result<(), ThemeCheckError> {
     // Load first, then check discovery: `ThemeManager::new` owns the
     // name-safety rejection (path separators, `..`, control characters) and
     // the parse/schema errors for a malformed file, and those are the more
     // specific diagnostics. Only a name that loads cleanly *because* of the
     // default-theme fallback reaches the discovery check.
-    let manager = ThemeManager::new(theme_name)?;
-    ensure_theme_discovered(theme_name)?;
+    let manager = ThemeManager::new(theme_name).map_err(ThemeCheckError::Load)?;
+    ensure_theme_discovered(theme_name).map_err(ThemeCheckError::Load)?;
     let theme = manager.get();
     let config = config::loader::load_config().unwrap_or_default();
     let palette = crate::palette::active_palette(&config);
     crate::config::validation::templates::validate_segment_templates(&theme, &palette)
-        .map_err(|e| Error::config(e.to_string()))?;
+        .map_err(|e| ThemeCheckError::Templates(Error::config(e.to_string())))?;
     Ok(())
 }
 
