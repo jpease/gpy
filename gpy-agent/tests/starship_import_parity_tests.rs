@@ -86,6 +86,11 @@ enum Scenario {
     Hostname,
     /// The `character` module after a command that exited with this status.
     Character(i32),
+    /// The prompt's layout: whether a blank line precedes it and whether it
+    /// breaks onto a second line. Starship decides this in `starship prompt`;
+    /// GPY's shells decide it from the theme's `add_newline` / `two_line`, so
+    /// the imported theme's exported `__gpy_*` flags are compared instead.
+    Layout,
 }
 
 impl Scenario {
@@ -96,6 +101,7 @@ impl Scenario {
             Self::Duration(_) => "cmd_duration",
             Self::Hostname => "hostname",
             Self::Character(_) => "character",
+            Self::Layout => "prompt",
         }
     }
 
@@ -123,6 +129,11 @@ impl Scenario {
                 "--exit-code".to_owned(),
                 status.to_string(),
             ]),
+            Self::Layout => {
+                return ["theme", "export", "--format", "fish"]
+                    .map(str::to_owned)
+                    .to_vec();
+            }
         }
         args.extend(["--format".to_owned(), "ansi".to_owned()]);
         args
@@ -255,12 +266,16 @@ fn check_row(name: &str, config: &str, scenario: Scenario) {
     fs::write(&config_path, config).expect("write starship config");
     let cwd = match scenario {
         Scenario::Directory(relative) => env.root().join(relative),
-        Scenario::Duration(_) | Scenario::Hostname | Scenario::Character(_) => {
+        Scenario::Duration(_) | Scenario::Hostname | Scenario::Character(_) | Scenario::Layout => {
             env.root().to_path_buf()
         }
     };
     fs::create_dir_all(&cwd).expect("create fixture directory");
 
+    if matches!(scenario, Scenario::Layout) {
+        check_layout_row(name, &env, &config_path, config, &cwd);
+        return;
+    }
     let starship = render_with_starship(&env, &config_path, scenario, &cwd);
     let gpy = render_with_gpy(&env, &config_path, scenario, &cwd);
 
@@ -276,6 +291,79 @@ fn check_row(name: &str, config: &str, scenario: Scenario) {
          raw gpy: {gpy:?}",
         describe(&want),
         describe(&got),
+    );
+}
+
+/// The layout Starship's full prompt draws: `(blank line before, two lines)`.
+fn starship_layout(env: &CliTestEnv, config: &Path, cwd: &Path) -> (bool, bool) {
+    let output = scrubbed("starship", env.root())
+        .env("STARSHIP_CONFIG", config)
+        .env("STARSHIP_CACHE", env.root().join(".starship-cache"))
+        .env("STARSHIP_LOG", "error")
+        .env("PWD", cwd)
+        .current_dir(cwd)
+        .arg("prompt")
+        .output()
+        .expect("run starship prompt");
+    assert!(
+        output.status.success(),
+        "starship prompt failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).expect("starship output is UTF-8");
+    let (drawn, _) = interpret(&text).expect("interpret starship prompt");
+    let drawn_text: String = drawn.into_iter().map(|(ch, _)| ch).collect();
+    let blank_before = drawn_text.starts_with('\n');
+    let two_line = drawn_text.trim().contains('\n');
+    (blank_before, two_line)
+}
+
+/// The layout the imported theme gives GPY's shells: the `0`/`1` value
+/// `gpy-agent theme export` assigns to `__gpy_<flag>`.
+fn gpy_flag(export: &str, flag: &str) -> bool {
+    let name = format!("__gpy_{flag}");
+    let line = export
+        .lines()
+        .find(|line| line.contains(&name))
+        .unwrap_or_else(|| panic!("`{name}` missing from theme export:\n{export}"));
+    line.contains('1')
+}
+
+/// A layout row: Starship's full prompt against the imported theme's flags.
+fn check_layout_row(name: &str, env: &CliTestEnv, config_path: &Path, config: &str, cwd: &Path) {
+    let want = starship_layout(env, config_path, cwd);
+    let source = config_path.to_str().expect("config path is UTF-8");
+    for args in [
+        vec![
+            "theme",
+            "import",
+            source,
+            "--name",
+            IMPORT_NAME,
+            "--apply-layout",
+        ],
+        vec!["theme", "use", IMPORT_NAME, "--force"],
+    ] {
+        env.run_gpy(&args)
+            .expect("run gpy")
+            .assert_success(&args.join(" "));
+    }
+    let owned = Scenario::Layout.agent_args(cwd, "");
+    let args: Vec<&str> = owned.iter().map(String::as_str).collect();
+    let result = env.run_gpy_agent(&args).expect("run gpy-agent");
+    result.assert_success(&args.join(" "));
+    let got = (
+        gpy_flag(&result.stdout, "add_newline"),
+        gpy_flag(&result.stdout, "two_line"),
+    );
+    assert!(
+        want == got,
+        "row `{name}` layout differs from starship\n\
+         config:\n{config}\n\
+         starship (blank line before, two lines): {want:?}\n\
+         gpy      (add_newline, two_line):        {got:?}\n\
+         theme export:\n{}",
+        result.stdout,
     );
 }
 
@@ -301,4 +389,11 @@ parity_rows! {
     character_error_trailing_space: Scenario::Character(1), "[character]\nsuccess_symbol = \"[➜](bold green) \"\nerror_symbol = \"[✗](bold red) \"\n";
     character_success_leading_trailing_space: Scenario::Character(0), "[character]\nsuccess_symbol = \" [➜](bold green)  \"\n";
     character_success_not_bold_trailing_space: Scenario::Character(0), "[character]\nsuccess_symbol = \"[➜](green) \"\nerror_symbol = \"[✗](red) \"\n";
+    // #738: `add_newline` and `$line_break` drive the prompt's layout.
+    layout_default: Scenario::Layout, "[character]\n";
+    layout_add_newline_false: Scenario::Layout, "add_newline = false\n";
+    layout_format_with_line_break: Scenario::Layout, "format = \"$directory$line_break$character\"\n";
+    layout_format_with_line_break_no_newline: Scenario::Layout, "add_newline = false\nformat = \"$directory$git_branch$cmd_duration$line_break$character\"\n";
+    layout_format_without_line_break: Scenario::Layout, "format = \"$directory$character\"\n";
+    layout_format_without_line_break_no_newline: Scenario::Layout, "add_newline = false\nformat = \"$directory$character\"\n";
 }

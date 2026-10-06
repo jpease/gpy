@@ -37,6 +37,7 @@ The importer (`gpy-agent/src/import/starship/`, exercised by `gpy-agent/tests/st
 - **Language segments** — `rust`, `python`, `nodejs`, `golang`, `java`, `ruby`, `php`, `swift`, `elixir`, `c`, `cpp`, `csharp`, `erlang`, and others fold into one GPY `language` segment, with per-language colors and attributes preserved.
 - **Clock** — `time_format` maps to GPY's `"12"`/`"24"` setting on a best-effort basis.
 - **Segment order** — pass `--apply-layout` and the derived `enabled_segments` order is written straight into `config.toml`; without it, the command just prints the suggested order.
+- **Prompt layout** — `add_newline` (default `true`) becomes `ui.add_newline`, the blank line before each prompt. `$line_break` in `format` (or no `format` at all, Starship's default two-line layout) becomes `ui.two_line = true`, which Bash and Zsh honor; Fish always renders two lines.
 
 For the full module-by-module mapping table and style-translation rules, see [Starship Importer](../dev/starship-import.md) — that document is the mechanical reference; this one is the walkthrough.
 

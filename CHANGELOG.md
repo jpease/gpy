@@ -487,6 +487,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - `gpy theme import` handles Starship character symbols with surrounding
   whitespace (`[➜](bold green) `) instead of storing the markup as literal
   text, and warns on symbols it cannot represent (#735).
+- `gpy theme import` carries Starship's `add_newline = false` and
+  `$line_break` (or the default two-line layout) into `ui.add_newline` and
+  `ui.two_line`, and no longer warns that `line_break` is unsupported (#738).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
