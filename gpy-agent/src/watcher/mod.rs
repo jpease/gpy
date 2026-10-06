@@ -900,7 +900,7 @@ const FLUSH_STOP_POLL: Duration = Duration::from_millis(25);
 ///
 /// Bounds how long [`WatchCoordinator::stop`] can block on joining the flush
 /// thread to roughly [`FLUSH_STOP_POLL`], independent of the debounce window.
-fn sleep_unless_stopped(total: Duration, stop: &AtomicBool) {
+pub(crate) fn sleep_unless_stopped(total: Duration, stop: &AtomicBool) {
     let deadline = Instant::now().checked_add(total);
     while !stop.load(Ordering::Relaxed) {
         let remaining = deadline.map_or(total, |at| at.saturating_duration_since(Instant::now()));
