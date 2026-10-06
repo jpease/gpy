@@ -591,6 +591,9 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 - Selecting a user theme that fails to parse in `gpy config wizard` no
   longer aborts the session; the selection reverts and the error is shown
   (#802).
+- `gpy theme import --help` and `gpy palette import --help` say that
+  `--force` also lets an import shadow a builtin or plugin theme or palette
+  (#821).
 - `exec fish` / `exec bash` / `exec zsh` no longer closes the terminal
   (jpease/gpy-archive#674). The re-exec'd shell keeps its PID and stayed
   registered, so the agent's SIGUSR1/SIGUSR2/SIGALRM (all terminate by
