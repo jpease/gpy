@@ -175,6 +175,28 @@ installers enforce, and how to check a download by hand, is in
 
 For the per-advisory assessment and audit history, see [Security Audit Notes](docs/dev/security-audit.md).
 
+### CI and repository policy
+
+- **Workflow permissions:** every workflow declares a read-only top-level
+  `permissions: contents: read`. Only the release's `create-release` job widens
+  it (`contents: write` to publish, `id-token: write` and `attestations: write`
+  for build provenance), and `actions/checkout` uses
+  `persist-credentials: false` everywhere because no job pushes.
+- **Pinned actions:** every `uses:` is a full 40-character commit SHA with a
+  `# vX.Y.Z` comment. Dependabot (`.github/dependabot.yml`) opens weekly
+  GitHub Actions update PRs; Cargo version-update PRs are deliberately not
+  enabled, since `cargo audit` and `cargo deny` already gate every push.
+- **Secret scanning:** GitHub secret scanning with push protection is enabled
+  on the repository (#507) and is the authoritative control. Contributors who
+  have `gitleaks` installed also get it run on staged changes by the
+  repository's pre-commit hook (`.raven/git-hooks/pre-commit` and
+  `.pre-commit-config.yaml`). A separate Gitleaks CI job is deliberately not
+  added: it would duplicate push protection, add one more pinned action or
+  binary download to maintain, and only report after a secret is already in a
+  pushed branch.
+- **Untrusted input:** workflow `run:` steps never interpolate `${{ ... }}`
+  expressions from event data; values are passed through `env:`.
+
 ## Release Integrity and Supply Chain
 
 ### What every release publishes

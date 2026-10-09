@@ -901,6 +901,14 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Security
 
+- GitHub Actions hardened (#506). Every workflow declares read-only
+  top-level `permissions` (only the release's publish job holds `contents`,
+  `id-token` and `attestations` write), every `uses:` is pinned to a full
+  commit SHA with a version comment, `actions/checkout` no longer persists
+  credentials, and `.github/dependabot.yml` opens weekly GitHub Actions update
+  PRs (Cargo version updates are deliberately not enabled). `SECURITY.md`
+  documents the CI policy, including secret scanning.
+
 - Bash and Zsh prompts no longer expand directory, branch or theme text as
   prompt code (#677). A directory or branch named `$(cmd)`, `` `cmd` ``,
   `$VAR`, or containing `\u`/`%_` prompt escapes ran or expanded on every
