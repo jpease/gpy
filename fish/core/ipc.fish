@@ -1,3 +1,24 @@
+# The home directory, with the passwd-database fallback the agent, Bash and
+# Zsh apply (#845). An empty or absent $HOME counts as unset, exactly as
+# `std::env::home_dir` treats it; `~user` is the derivation that consults the
+# passwd database. Fish re-derives HOME at startup, but a session that later
+# blanks or erases it (`set -gx HOME ''`, a wrapper) would otherwise resolve
+# `/.cache/gpy` here while the agent resolved the passwd home. Prints nothing
+# and returns 1 when no absolute home can be derived; callers then take their
+# own last resort, as the agent falls through to /tmp/gpy.
+function __gpy_home --description 'Home directory with the passwd fallback'
+    set -l home "$HOME"
+    if test -z "$home"
+        set -l user (id -un 2>/dev/null)
+        string match -qr '^[A-Za-z0-9._-]+$' -- "$user"; or return 1
+        # Fish expands `~name` through the passwd database; an unknown user
+        # stays the literal `~name`, which the absolute-path guard rejects.
+        set home ~$user
+    end
+    string match -q '/*' -- "$home"; or return 1
+    printf '%s' "$home"
+end
+
 # Resolve the runtime root with the same precedence as the agent.
 #
 # An $XDG_* variable counts as set only when it is non-empty AND absolute: the
@@ -15,8 +36,9 @@ function __gpy_runtime_root --description 'XDG runtime root for GPY'
         return
     end
     # fallback
-    if set -q HOME
-        echo "$HOME/.cache/gpy"
+    set -l home (__gpy_home)
+    if test -n "$home"
+        echo "$home/.cache/gpy"
     else
         echo /tmp/gpy
     end
@@ -31,8 +53,9 @@ end
 function __gpy_instant_cache_dir --description 'Instant-prompt cache directory'
     if set -q XDG_CACHE_HOME; and test -n "$XDG_CACHE_HOME"; and string match -q '/*' -- "$XDG_CACHE_HOME"
         echo "$XDG_CACHE_HOME/gpy/instant-prompts"
-    else if set -q HOME
-        echo "$HOME/.cache/gpy/instant-prompts"
+    else
+        set -l home (__gpy_home)
+        test -n "$home"; and echo "$home/.cache/gpy/instant-prompts"
     end
 end
 
@@ -64,51 +87,44 @@ function __gpy_ipc_endpoint --description 'Returns socket path or pipe hint'
     echo "$root/gpy.sock"
 end
 
-# Wait for socket to be available with exponential backoff
-# Returns 0 if socket becomes available, 1 if timeout
-function __gpy_socket_ready --argument-names socket_path
-    if not test -S "$socket_path"
-        return 1
-    end
-
-    if command -q timeout
-        if command -q socat
-            command timeout --foreground 1s socat -T 1 -u OPEN:/dev/null UNIX-CONNECT:$socket_path >/dev/null 2>/dev/null
-            return $status
-        else if command -q nc
-            __gpy_nc_probe_capabilities
-            if test "$__gpy_nc_supports_unix" -eq 1
-                if test "$__gpy_nc_supports_zero" -eq 1
-                    command timeout --foreground 1s nc -z -U "$socket_path" >/dev/null 2>/dev/null
-                else
-                    command timeout --foreground 1s nc -U "$socket_path" </dev/null >/dev/null 2>/dev/null
-                end
-                return $status
-            end
-        end
-    end
-
-    return 0
-end
-
-# Probe nc(1) flag support once per shell session and cache results in globals.
-# Avoids re-running `nc -h` on every IPC send.
+# Probe nc(1) for `-U` (Unix sockets) once per shell session and cache the
+# result in globals. Avoids re-running `nc -h` on every IPC send. Bash and Zsh
+# probe the same way (#850): a netcat without `-U` (netcat-traditional) must
+# read as "no client", not as a client that fails on every request.
 function __gpy_nc_probe_capabilities
     set -q __gpy_nc_probed; and return
     set -g __gpy_nc_probed 1
     set -g __gpy_nc_supports_unix 0
-    set -g __gpy_nc_supports_zero 0
     if command -q nc
         set -l help (nc -h 2>&1)
         if string match -q '*-U*' -- $help
             set -g __gpy_nc_supports_unix 1
         end
-        if string match -q '*-z*' -- $help
-            set -g __gpy_nc_supports_zero 1
-        end
     end
 end
 
+# True when some Unix-socket client exists: socat, or an nc that takes -U.
+function __gpy_ipc_client_available
+    command -q socat; and return 0
+    command -q nc; or return 1
+    __gpy_nc_probe_capabilities
+    test "$__gpy_nc_supports_unix" -eq 1
+end
+
+# Is the agent at `socket_path` answering? A ping over the same client every
+# real request uses, within a fixed one-second budget, so the check needs
+# neither coreutils `timeout` (stock macOS has none, which used to reduce this
+# to "the socket file exists") nor `nc -z` (macOS's rejects -U). With no client
+# at all there is nothing to probe with, so the file existing is the best
+# available answer (#850).
+function __gpy_socket_ready --argument-names socket_path
+    test -S "$socket_path"; or return 1
+    __gpy_ipc_client_available; or return 0
+    __gpy_ipc_send '{"op":"ping"}' 1000 "$socket_path" >/dev/null
+end
+
+# Wait for socket to be available with exponential backoff
+# Returns 0 if socket becomes available, 1 if timeout
 function __gpy_wait_for_socket --argument-names socket_path
     set -l max_attempts $GPY_SOCKET_WAIT_MAX_ATTEMPTS # Up to 2 seconds with 100ms intervals
     set -l attempt 1
@@ -152,11 +168,19 @@ function __gpy_ipc_read_complete_line --description 'Validate newline framing on
 end
 
 # Low-level send/recv with timeout. Implements fail-fast mechanism to prevent hanging.
-# Returns a single JSON line on success; prints nothing on timeout/error or on a
-# truncated (non-newline-terminated) partial write.
-function __gpy_ipc_send --argument-names payload timeout_ms
+# Prints a single JSON line on success. Returns:
+#   0  a complete reply arrived within the budget (and was printed);
+#   1  the agent could not be reached (no socket, connection refused, no
+#      usable client);
+#   2  the agent accepted the request but sent no complete reply within
+#      `timeout_ms` (slow, hung, or a truncated write). The request is already
+#      on the wire, so callers must not recompute the same segment with a
+#      oneshot fork or resend it (#757); they omit the segment this render.
+# Zsh and Bash apply the same three outcomes (#845).
+# `sock` defaults to the resolved endpoint.
+function __gpy_ipc_send --argument-names payload timeout_ms sock
     set -q timeout_ms[1]; or set timeout_ms $GPY_IPC_TIMEOUT_MS
-    set -l sock (__gpy_ipc_endpoint)
+    test -n "$sock"; or set sock (__gpy_ipc_endpoint)
 
     # Pre-flight check: socket file must exist before attempting IPC.
     # A plain existence test is enough here; the real connect will fast-fail
@@ -166,49 +190,56 @@ function __gpy_ipc_send --argument-names payload timeout_ms
         return 1
     end
 
+    set -l reply
+    set -l ps
+    # Exit status of the client process; `connected_codes` are the ones that
+    # mean "connected, then the reply did not come" rather than "never connected".
+    set -l client_status
+    set -l connected_codes 0
     if command -q socat
-        # -T accepts fractional seconds; divide directly to preserve sub-second precision
+        # -t is how long socat keeps waiting for the reply once stdin hits EOF.
+        # It must carry the budget: -T (inactivity) does not bound that wait, and
+        # the default -t 0.5 let a late reply through at ~500ms whatever
+        # GPY_IPC_TIMEOUT_MS said. Accepts fractions, so sub-second budgets hold.
         set -l secs (math "$timeout_ms / 1000")
         # Send payload, read one validated line; suppress stderr to avoid polluting prompt
-        echo $payload | socat -T $secs - UNIX-CONNECT:$sock 2>/dev/null | __gpy_ipc_read_complete_line
-        return
-    else if command -q nc
-        __gpy_nc_probe_capabilities
-        if test "$__gpy_nc_supports_unix" -eq 1
-            # Try coreutils timeout if available to enforce ms; otherwise rely on nc's defaults
-            set -l result
-            set -l nc_status
-            set -l read_status
-            if command -q timeout
-                # Use timeout with aggressive cleanup to prevent zombie processes;
-                # min 0.05s so short timeouts don't round to zero and hang
-                set -l timeout_secs (math "max(0.05, $timeout_ms / 1000)")
-                set result (echo $payload | timeout --foreground --kill-after=0.5s --signal=TERM $timeout_secs"s" nc -U $sock 2>/dev/null | __gpy_ipc_read_complete_line)
-                set read_status $status
-                set nc_status $pipestatus[-2] # Get the exit code of nc (second to last in pipeline)
-            else
-                # No coreutils timeout available: rely on nc's own -w flag so a
-                # connected-but-silent socket can't block the prompt forever.
-                # -w takes whole seconds only, so round up and floor at 1s.
-                set -l nc_w_secs (math "max(1, ceil($timeout_ms / 1000))")
-                set result (echo $payload | nc -U $sock -w $nc_w_secs 2>/dev/null | __gpy_ipc_read_complete_line)
-                set read_status $status
-                set nc_status $pipestatus[-2] # Get the exit code of nc (second to last)
-            end
-            # Require both a clean nc exit AND a newline-terminated read: a
-            # truncated/partial write from the agent (stall or crash mid-response)
-            # leaves read_status nonzero even when nc itself exits 0 (#300).
-            if test -n "$nc_status" -a "$nc_status" -eq 0 -a "$read_status" -eq 0
-                echo $result
-                return 0
-            else
-                return 1
-            end
+        set reply (echo $payload | socat -t $secs - UNIX-CONNECT:$sock 2>/dev/null | __gpy_ipc_read_complete_line)
+        set ps $pipestatus
+    else if __gpy_ipc_client_available
+        # nc with -U (the probe in __gpy_ipc_client_available vouched for it).
+        if command -q timeout
+            # Use timeout with aggressive cleanup to prevent zombie processes;
+            # min 0.05s so short timeouts don't round to zero and hang
+            set -l timeout_secs (math "max(0.05, $timeout_ms / 1000)")
+            set reply (echo $payload | timeout --foreground --kill-after=0.5s --signal=TERM $timeout_secs"s" nc -U $sock 2>/dev/null | __gpy_ipc_read_complete_line)
+            set ps $pipestatus
+            # 124: `timeout` killed a nc that had connected and was waiting.
+            set connected_codes 0 124
+        else
+            # No coreutils timeout available: rely on nc's own -w flag so a
+            # connected-but-silent socket can't block the prompt forever.
+            # -w takes whole seconds only, so round up and floor at 1s.
+            set -l nc_w_secs (math "max(1, ceil($timeout_ms / 1000))")
+            set reply (echo $payload | nc -U $sock -w $nc_w_secs 2>/dev/null | __gpy_ipc_read_complete_line)
+            set ps $pipestatus
         end
+    else
+        # Last-resort: no supported client available
+        __gpy_log_warn ipc "no suitable IPC client found (socat or nc -U)"
+        return 1
     end
 
-    # Last-resort: no supported client available
-    __gpy_log_warn ipc "no suitable IPC client found (socat or nc -U)"
+    # $ps is [echo, client, reader]. A usable reply needs a newline-terminated
+    # read: a truncated/partial write from the agent (stall or crash
+    # mid-response) leaves the reader nonzero even when the client exits 0 (#300).
+    set client_status $ps[2]
+    if test "$ps[3]" = 0; and test -n "$reply"
+        printf '%s\n' $reply
+        return 0
+    end
+    if contains -- "$client_status" $connected_codes
+        return 2
+    end
     return 1
 end
 
@@ -227,7 +258,7 @@ function __gpy_ipc_send_detached --argument-names payload timeout_ms --descripti
 
     if command -q socat
         set -l secs (math "$timeout_ms / 1000")
-        printf '%s\n' $payload | command socat -T $secs - UNIX-CONNECT:$sock >/dev/null 2>&1 &
+        printf '%s\n' $payload | command socat -t $secs - UNIX-CONNECT:$sock >/dev/null 2>&1 &
     else if command -q nc
         __gpy_nc_probe_capabilities
         test "$__gpy_nc_supports_unix" -eq 1; or return 1
@@ -328,39 +359,23 @@ function __gpy_build_data_payload --argument-names op cwd format is_last prev_bg
     echo (string join '' $payload '}')
 end
 
-# PID-scoped marker limiting oneshot-fallback forks to one per prompt render.
+# Per-render budget limiting oneshot-fallback forks to one per prompt render.
 # Without this, a dead/hung daemon costs one `gpy-agent oneshot` fork per
 # segment (git, lang, directory, duration, character -- up to 5 per prompt),
-# each with its own process-start latency (#324). fish_prompt clears the
-# marker at the start of each render; the first segment whose IPC call fails
-# claims it and forks oneshot, later segments in the same render see it
-# already claimed and render nothing rather than fork again.
-# The marker path is a session constant (TMPDIR + $fish_pid never change over
-# the shell's lifetime), so it's resolved once here at source time (ipc.fish is
-# sourced once per shell) into a global instead of re-derived every render.
-# __gpy_oneshot_marker() reads that same global, so the per-render reset
-# (fish_prompt) and the claim path below can never diverge (#342).
-set -l __gpy_oneshot_tmp_dir /tmp
-set -q TMPDIR; and test -n "$TMPDIR"; and set __gpy_oneshot_tmp_dir "$TMPDIR"
-set -g __gpy_oneshot_marker_path "$__gpy_oneshot_tmp_dir/.gpy_oneshot_used_$fish_pid"
-
-# The marker is only ever cleared at the start of the next render, so a shell
-# whose last prompt claimed it (agent down) left `.gpy_oneshot_used_<pid>`
-# behind in TMPDIR for good, and a later process reusing that PID inherited a
-# spent budget. Unconditional (unlike the supervisor's exit hook below): every
-# shell that can claim the marker must also remove it.
-function __gpy_oneshot_marker_cleanup_on_exit --on-event fish_exit
-    rm -f "$__gpy_oneshot_marker_path" 2>/dev/null
-end
-
-function __gpy_oneshot_marker --description 'Path to the current render oneshot-fallback marker'
-    printf '%s' "$__gpy_oneshot_marker_path"
-end
-
+# each with its own process-start latency (#324). fish_prompt erases
+# __gpy_oneshot_used at the start of each render; the first segment whose IPC
+# call fails claims it and forks oneshot, later segments in the same render
+# see it already claimed and render nothing rather than fork again.
+#
+# The budget is a plain global, as in Bash and Zsh (#614, #845): Fish runs
+# command substitutions and functions in the shell's own process, so a `set -g`
+# made while a segment renders inside `(...)` is visible to the next segment.
+# It used to be a `${TMPDIR}/.gpy_oneshot_used_$fish_pid` file -- a predictable
+# path another local user could pre-create to switch the fallback off, that was
+# left behind in TMPDIR whenever a shell exited with the budget spent.
 function __gpy_oneshot_claim --description 'Claim the one oneshot-fallback fork allowed for this prompt render'
-    set -l marker (__gpy_oneshot_marker)
-    test -e "$marker"; and return 1
-    touch "$marker" 2>/dev/null
+    set -q __gpy_oneshot_used; and return 1
+    set -g __gpy_oneshot_used 1
     return 0
 end
 
@@ -396,13 +411,16 @@ function __gpy_request_duration --argument-names duration_ms is_last prev_bg is_
     set payload (string join '' $payload '}')
 
     set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
+    set -l send_status $status
 
-    # Oneshot fallback when no daemon is running.
+    # Oneshot fallback when no daemon is running. Not when the daemon is
+    # running but late (send status 2): it is computing this very segment
+    # (#757), so the segment is omitted this render.
     # NOTE: oneshot fallback does not pass prev_bg — the CLI subcommand has no
     # --prev-bg flag, so the powerline opening chevron color is skipped on
     # first-shell startup until the daemon connects. is_first IS passed
     # (--first, #401), so the opening cap's presence/absence is still correct.
-    if test -z "$result"; and __gpy_resolve_agent_binary >/dev/null; and __gpy_oneshot_claim
+    if test -z "$result"; and test $send_status -ne 2; and __gpy_resolve_agent_binary >/dev/null; and __gpy_oneshot_claim
         set -l agent_binary (__gpy_resolve_agent_binary)
         set -l args duration --duration-ms "$duration_ms" --format $format
         if not test "$is_last" = true
@@ -442,11 +460,13 @@ function __gpy_request_character --argument-names success is_last prev_bg --desc
     set payload (string join '' $payload '}')
 
     set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
+    set -l send_status $status
 
-    # Oneshot fallback when no daemon is running.
+    # Oneshot fallback when no daemon is running; a late daemon (status 2) is
+    # computing this very segment, so it is omitted rather than recomputed (#757).
     # NOTE: oneshot fallback does not pass prev_bg — the CLI subcommand has no --prev-bg flag.
     # Powerline opening chevrons are skipped on first-shell startup until the daemon connects.
-    if test -z "$result"; and __gpy_resolve_agent_binary >/dev/null; and __gpy_oneshot_claim
+    if test -z "$result"; and test $send_status -ne 2; and __gpy_resolve_agent_binary >/dev/null; and __gpy_oneshot_claim
         set -l agent_binary (__gpy_resolve_agent_binary)
         # Convert boolean back to exit-code integer for the CLI flag.
         set -l exit_code 1
@@ -525,6 +545,31 @@ function __gpy_request_username --argument-names user is_last prev_bg --descript
     set -l payload (string join '' '{"op":"username","username":"' $escaped_user '","format":"' $format '"')
     set payload (string join '' $payload (__gpy_json_flags_tail "$is_last" '' "$prev_bg"))
     set payload (string join '' $payload '}')
+
+    set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
+
+    if test -z "$result"
+        return 1
+    end
+    printf '%s\n' $result
+end
+
+# Send a clock render request to the agent via IPC (#844). Used when a theme
+# sets `[segments.clock].format`, as in Bash and Zsh. Fish has no prompt-level
+# time token, so the response carries the clock's bare strftime spec where the
+# time goes; segment_clock_render swaps in the formatted time (see
+# fish/segments/clock.fish).
+#
+# No oneshot fallback: segment_clock_render falls back to its own local
+# renderer, so an unreachable agent degrades the segment to the theme's local
+# clock rather than costing a fork per prompt.
+#
+# Arguments:
+#   is_last  — "true" if this is the last prompt segment, "" otherwise (#613).
+#   is_first — "true" if this is the first prompt segment, "" otherwise.
+#   prev_bg  — the previous segment's background, for the powerline chevron.
+function __gpy_request_clock --argument-names is_last is_first prev_bg --description 'Send clock render request to agent'
+    set -l payload (string join '' '{"op":"clock","shell":"fish","format":"ansi"' (__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg") '}')
 
     set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
 
@@ -825,13 +870,17 @@ function __gpy_request --argument-names op cwd is_last prev_bg is_first --descri
 
     # Try IPC first
     set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
+    set -l send_status $status
 
-    # If IPC failed and this is a data request (git/lang), fall back to oneshot.
+    # If IPC failed and this is a data request (git/lang), fall back to oneshot
+    # -- unless the daemon was reached but is late (send status 2): it is
+    # computing this very segment, so it is omitted this render rather than
+    # recomputed by a blocking oneshot fork (#757).
     # NOTE: oneshot fallback does not pass prev_bg — the CLI subcommand has no
     # --prev-bg flag, so the powerline opening chevron color is skipped on
     # first-shell startup until the daemon connects. is_first IS passed
     # (--first, #401), so the opening cap's presence/absence is still correct.
-    if test -z "$result"; and __gpy_resolve_agent_binary >/dev/null
+    if test -z "$result"; and test $send_status -ne 2; and __gpy_resolve_agent_binary >/dev/null
         switch $op
             case git lang directory
                 set result (__gpy_oneshot_fallback $op $cwd ansi $is_last $is_first)
@@ -1333,6 +1382,24 @@ function __gpy_agent_is_healthy --description 'Check if agent is healthy and res
     return 1
 end
 
+# PIDs of the processes holding `socket_path` open, one per line. `lsof` first,
+# `fuser` (psmisc, present on minimal Linux images that lack lsof) second.
+# Returns 1 and prints nothing when neither exists, which is different from "no
+# process holds it" (returns 0, prints nothing): the caller must not read a
+# missing tool as a stale socket (#850).
+function __gpy_socket_owner_pids --argument-names socket_path
+    if command -q lsof
+        lsof -t -- "$socket_path" 2>/dev/null
+        return 0
+    else if command -q fuser
+        # psmisc prints PIDs on stdout (the path goes to stderr); BSD fuser
+        # prints "path: pid ..." there, so keep only pure-digit words.
+        string match -r '^[0-9]+$' -- (string split ' ' -- (string trim -- (fuser -- "$socket_path" 2>/dev/null)))
+        return 0
+    end
+    return 1
+end
+
 function __gpy_agent_restart --description 'Restart the agent process'
     set -l socket_path (__gpy_ipc_endpoint)
     set -l agent_binary (__gpy_resolve_agent_binary)
@@ -1345,22 +1412,29 @@ function __gpy_agent_restart --description 'Restart the agent process'
         sleep 0.5
     end
 
-    # If socket still exists, try to find and stop the process using lsof (more targeted than pgrep)
+    # If the socket still exists, find and stop the process holding it (more
+    # targeted than pgrep). Without lsof or fuser there is no way to tell a
+    # lingering agent from a stale socket file, and deleting a live agent's
+    # socket would orphan it, so leave the file for `gpy-agent start`, which
+    # reclaims a stale socket and evicts a wedged agent itself.
     if test -S "$socket_path"
-        # Use lsof to find the specific process using this socket
-        set -l socket_pid (lsof -t "$socket_path" 2>/dev/null)
-        if test -n "$socket_pid"
-            # Kill only the process using our specific socket
-            kill -TERM $socket_pid 2>/dev/null
-            sleep 0.3
-            # Force kill if still running
-            if kill -0 $socket_pid 2>/dev/null
-                kill -KILL $socket_pid 2>/dev/null
-                sleep 0.1
+        set -l socket_pid (__gpy_socket_owner_pids "$socket_path")
+        if test $status -ne 0
+            __gpy_log_warn ipc "neither lsof nor fuser found; cannot stop a lingering agent holding $socket_path (install lsof)"
+        else
+            if test -n "$socket_pid"
+                # Kill only the process using our specific socket
+                kill -TERM $socket_pid 2>/dev/null
+                sleep 0.3
+                # Force kill if still running
+                if kill -0 $socket_pid 2>/dev/null
+                    kill -KILL $socket_pid 2>/dev/null
+                    sleep 0.1
+                end
             end
+            # Clean up socket file
+            rm -f "$socket_path" 2>/dev/null
         end
-        # Clean up socket file
-        rm -f "$socket_path" 2>/dev/null
     end
 
     # Start new agent

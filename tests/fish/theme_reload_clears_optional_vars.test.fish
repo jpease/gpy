@@ -39,8 +39,8 @@ __gpy_reload_theme 0
 
 set -l failed 0
 set -l fmt (__gpy_clock_date_format)
-if test "$fmt" != "%l:%M %p"
-    echo "❌ expected 12-hour clock format '%l:%M %p' after switch, got '$fmt'"
+if test "$fmt" != "%-I:%M %p"
+    echo "❌ expected 12-hour clock format '%-I:%M %p' after switch, got '$fmt'"
     set failed 1
 end
 

@@ -2,6 +2,13 @@
 
 This directory contains integration tests for the Fish shell prompt and GPY initialization.
 
+Behaviour that must be the same in Fish, Bash and Zsh (cold-miss and variant
+fallback, slow replies, the IPC timeout and cache TTL knobs, agent-disabled and
+supervisor-disabled starts, the clock/status/root segments) is not tested here
+in Fish alone: it is a row of `tests/fixtures/shell_scenarios/scenarios.tsv`,
+run through all three shells by `tests/bash/shell_contract.test.bash` (see "The
+cross-shell contract harness" in `tests/bash/README.md`).
+
 ## Test Files
 
 ### Core Integration Tests
@@ -98,6 +105,13 @@ sections above describe the ones worth reading first.
 - `doorbell_signal.test.fish`
 - `ipc_nc_fallback_timeout.test.fish`
 - `ipc_partial_response.test.fish`
+- `ipc_no_double_send_on_slow_reply.test.fish`
+- `ipc_nc_requires_unix_support.test.fish`
+- `socket_ready_without_timeout.test.fish`
+- `agent_restart_without_lsof.test.fish`
+- `oneshot_budget.test.fish`
+- `env_knobs_honoured.test.fish`
+- `home_fallback.test.fish`
 - `ipc_request_status.test.fish`
 - `ipc_security.test.fish`
 - `json_escape_vectors.test.fish`
@@ -133,6 +147,7 @@ sections above describe the ones worth reading first.
 **Segments and rendering**
 
 - `character_status_suppression.test.fish`
+- `clock_agent_render.test.fish`
 - `clock_padding.test.fish`
 - `completions_dynamic.test.fish`
 - `directory_truncation_export.test.fish`

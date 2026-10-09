@@ -50,17 +50,19 @@ fi
 
 echo "Checking transparent clock background..."
 # Flat themes (e.g. the Starship preset) export a transparent clock bg. It must
-# map to zsh's `default` color keyword, not an unrecognized `%K{transparent}`.
+# map to the terminal default (SGR 49), not an unrecognized color name.
 source zsh/segments/clock.zsh
-# Exercise the pure-zsh fallback specifically. The clock is agent-rendered
-# whenever the theme sets [segments.clock].format and the daemon answers, so
-# without dropping the request helper this would assert against agent ANSI and
-# never reach the transparent-color mapping below.
+# Exercise the local path specifically. The clock is agent-rendered whenever the
+# theme sets [segments.clock].format (`__clock_format`) and the daemon answers,
+# so without dropping the request helper this would assert against agent ANSI
+# and never reach the transparent-color mapping below.
 (( $+functions[__gpy_request_clock] )) && unfunction __gpy_request_clock
+__clock_format=""
 __color_clock_bg="transparent" __color_clock_fg="white"
-clock_out=$(__gpy_segment_clock)
-if [[ "$clock_out" != *"%K{default}"* ]]; then
-    echo "FAIL: transparent clock bg should map to %K{default}; got: $clock_out"
+clock_out=$(__gpy_segment_clock "" "" "true")
+# The body is `fg;bg`: white text on the terminal-default background (49).
+if [[ "$clock_out" != *"37;49m"* ]]; then
+    echo "FAIL: transparent clock bg should render as default (49); got: $clock_out"
     exit 1
 fi
 

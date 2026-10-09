@@ -65,7 +65,9 @@ fn show(path: Option<&Path>) -> String {
 #[must_use]
 pub fn resolved_paths() -> Vec<(&'static str, String)> {
     let runtime_root = crate::agent::lifecycle::get_runtime_dir().ok();
-    let socket = crate::agent::lifecycle::get_socket_path().ok();
+    // Unvalidated on purpose: this is the diagnostic to run when the length
+    // check in `get_socket_path` rejects the path.
+    let socket = crate::agent::lifecycle::resolve_socket_path().ok();
     let shell_registry_dir = runtime_root.as_ref().map(|root| root.join("shells"));
 
     // `get_instant_cache_dir` is private; `cache_file_for_dir` is the public

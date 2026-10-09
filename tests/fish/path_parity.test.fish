@@ -190,6 +190,8 @@ set -g GPY_PP_CASES \
     "config_empty_no_config;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=;HOME=%T%/home3" \
     "home_unset;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf" \
     "home_unset_cache_unset;XDG_RUNTIME_DIR=%T%/run;XDG_CONFIG_HOME=%T%/conf" \
+    "home_empty;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=" \
+    "home_empty_cache_unset;XDG_RUNTIME_DIR=%T%/run;XDG_CONFIG_HOME=%T%/conf;HOME=" \
     "xdg_windows_shaped;XDG_RUNTIME_DIR=C:\\x;XDG_CACHE_HOME=C:/x;XDG_CONFIG_HOME=\\\\srv\\cfg;HOME=%T%/home" \
     "all_unset;" \
     "home_only;HOME=%T%/home" \
@@ -253,10 +255,26 @@ function __pp_dump --description 'Run one implementation and echo its key=value 
         case rust
             env $env_args $GPY_PP_BIN debug paths --format kv 2>$GPY_PP_ERR
         case fish
-            env $env_args fish --no-config -c 'source $argv[1]/fish/core/ipc.fish
+            # Fish re-derives an unset or empty HOME at startup, so the
+            # case's HOME has to be reinstated inside the child, before the
+            # resolvers run; otherwise the passwd fallback (#845) is never
+            # exercised and fish would trivially agree with the agent.
+            set -l home_mode keep
+            if contains -- HOME= $env_args
+                set home_mode empty
+            else if contains -- HOME $env_args
+                set home_mode unset
+            end
+            env $env_args fish --no-config -c 'switch $argv[2]
+    case empty
+        set -gx HOME ""
+    case unset
+        set -e HOME
+end
+source $argv[1]/fish/core/ipc.fish
 source $argv[1]/fish/core/util.fish
 source $argv[1]/fish/core/debug.fish
-__gpy_debug_paths' -- $GPY_PP_ROOT 2>$GPY_PP_ERR
+__gpy_debug_paths' -- $GPY_PP_ROOT $home_mode 2>$GPY_PP_ERR
         case bash
             env $env_args bash --noprofile --norc -c 'source "$1/bash/core/ipc.bash"; __gpy_debug_paths' bash $GPY_PP_ROOT 2>$GPY_PP_ERR
         case zsh

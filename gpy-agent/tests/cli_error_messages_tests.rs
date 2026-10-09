@@ -195,3 +195,65 @@ fn completions_into_a_closed_pipe_do_not_panic() {
         );
     }
 }
+
+/// #850: a socket path longer than `sun_path` used to surface as the kernel's
+/// bare "path must be shorter than `SUN_LEN`" from `bind`/`connect` -- first on
+/// macOS (104 bytes) where Linux (108) still accepted it. Every command now
+/// refuses it up front, naming the length, the limit and the fix.
+#[test]
+fn over_long_socket_path_is_refused_with_the_length_and_the_fix() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let long_dir = "d".repeat(150);
+    let socket = format!("/tmp/{long_dir}/gpy.sock");
+    let socket_len = socket.len();
+
+    for args in [&["status"][..], &["stop"][..]] {
+        let label = args.join(" ");
+        let result = env
+            .run_gpy_with_env(args, &[("GPY_AGENT_SOCKET_PATH", socket.as_str())])
+            .expect("spawn gpy");
+
+        assert_eq!(result.exit_code, 1_i32, "gpy {label}: {result:?}");
+        let line = result.stderr.lines().next().unwrap_or_default();
+        assert!(
+            line.starts_with("Error: "),
+            "gpy {label}: the first stderr line is an `Error:` line: {result:?}"
+        );
+        for needle in [
+            format!("is {socket_len} bytes"),
+            "GPY_AGENT_SOCKET_PATH".to_owned(),
+            "XDG_RUNTIME_DIR".to_owned(),
+        ] {
+            assert!(
+                result.stderr.contains(&needle),
+                "gpy {label}: stderr names `{needle}`: {result:?}"
+            );
+        }
+        assert!(
+            !result.stderr.contains("SUN_LEN"),
+            "gpy {label}: the kernel's bare error never reaches the user: {result:?}"
+        );
+    }
+
+    // `start` refuses before it forks a daemon that could only fail to bind.
+    let result = env
+        .run_gpy_agent_with_env(&["start"], &[("GPY_AGENT_SOCKET_PATH", socket.as_str())])
+        .expect("spawn gpy-agent");
+    assert_ne!(result.exit_code, 0_i32, "gpy-agent start: {result:?}");
+    assert!(
+        result.stderr.contains(&format!("is {socket_len} bytes")),
+        "gpy-agent start: stderr names the length: {result:?}"
+    );
+
+    // The diagnostic still prints the offending path rather than hiding it.
+    let result = env
+        .run_gpy_with_env(
+            &["debug", "paths", "--format", "kv"],
+            &[("GPY_AGENT_SOCKET_PATH", socket.as_str())],
+        )
+        .expect("spawn gpy");
+    assert!(
+        result.stdout.contains(&format!("socket={socket}")),
+        "gpy debug paths prints the over-long socket: {result:?}"
+    );
+}

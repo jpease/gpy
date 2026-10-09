@@ -57,8 +57,9 @@ function __gpy_user_config_candidates
     if set -q XDG_CONFIG_HOME; and test -n "$XDG_CONFIG_HOME"; and string match -q '/*' -- "$XDG_CONFIG_HOME"
         set -a candidates "$XDG_CONFIG_HOME/gpy/config.toml"
     end
-    if set -q HOME; and test -n "$HOME"
-        set -a candidates "$HOME/.config/gpy/config.toml"
+    set -l home (__gpy_home)
+    if test -n "$home"
+        set -a candidates "$home/.config/gpy/config.toml"
     end
     printf '%s\n' $candidates
 end
@@ -135,8 +136,9 @@ end
 function __gpy_theme_export_cache_path --description 'Path to the theme export cache file'
     if set -q XDG_CACHE_HOME; and test -n "$XDG_CACHE_HOME"; and string match -q '/*' -- "$XDG_CACHE_HOME"
         echo "$XDG_CACHE_HOME/gpy/theme-export.fish"
-    else if set -q HOME
-        echo "$HOME/.cache/gpy/theme-export.fish"
+    else
+        set -l home (__gpy_home)
+        test -n "$home"; and echo "$home/.cache/gpy/theme-export.fish"
     end
 end
 

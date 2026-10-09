@@ -150,7 +150,7 @@ function test_variant_fallback_bounded_refresh
     # repo (default prev_bg, unset -> "none" token) cold-misses and fires the
     # existing throttled background refresh (language.fish step 2), which
     # populates the `.none` variant files via the agent.
-    rm -f (__gpy_oneshot_marker) 2>/dev/null
+    set -e __gpy_oneshot_used
     set -e __gpy_last_segment_bg
     segment_language_render >/dev/null
 
@@ -171,7 +171,7 @@ function test_variant_fallback_bounded_refresh
     end
 
     # --- Render at token A: a NEW prev_bg context, never queried before. ---
-    rm -f (__gpy_oneshot_marker) 2>/dev/null
+    set -e __gpy_oneshot_used
     set -g __gpy_last_segment_bg $__gpy_test_prev_bg_a
     set -l rendered_a1 (segment_language_render)
 
@@ -212,7 +212,7 @@ function test_variant_fallback_bounded_refresh
     # following segment would chain off it) -- reset it back to token A to
     # simulate a fresh render where the PRECEDING segment again produced this
     # same background.
-    rm -f (__gpy_oneshot_marker) 2>/dev/null
+    set -e __gpy_oneshot_used
     set -g __gpy_last_segment_bg $__gpy_test_prev_bg_a
     set -l rendered_a2 (segment_language_render)
 
@@ -236,7 +236,7 @@ function test_variant_fallback_bounded_refresh
         return 1
     end
 
-    rm -f (__gpy_oneshot_marker) 2>/dev/null
+    set -e __gpy_oneshot_used
     set -g __gpy_last_segment_bg $__gpy_test_prev_bg_b
     set -l rendered_b1 (segment_language_render)
 
@@ -269,7 +269,7 @@ function test_variant_fallback_bounded_refresh
         return 1
     end
 
-    rm -f (__gpy_oneshot_marker) 2>/dev/null
+    set -e __gpy_oneshot_used
     set -g __gpy_last_segment_bg $__gpy_test_prev_bg_b
     set -l rendered_b2 (segment_language_render)
 

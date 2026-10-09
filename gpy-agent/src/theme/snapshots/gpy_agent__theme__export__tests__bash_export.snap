@@ -38,6 +38,7 @@ export __color_clock_fg="white"
 export __time_format="%H:%M\$(date)"
 export __clock_show_leading_zero="1"
 export __clock_show_seconds="1"
+export __clock_format="1"
 export __duration_threshold_ms="2500"
 export __color_directory_bg="cyan"
 export __color_duration_bg="yellow"
@@ -104,27 +105,27 @@ export __enabled_segments="clock username hostname directory git duration status
 __gpy_lang_marker_files=(.ruby-version CMakeLists.txt Cargo.toml Gemfile Makefile Package.swift Pipfile Rakefile build.gradle build.gradle.kts composer.json go.mod go.sum mix.exs package.json pom.xml pyproject.toml rebar.config requirements.txt setup.cfg setup.py tox.ini tsconfig.json)
 
 __gpy_segment_bg() {
+    local __gpy_sbg=""
+    case "$1" in
+        git) __gpy_sbg="${__color_git_clean_bg:-}" ;;
+        language) __gpy_sbg="${__color_language_bg:-}" ;;
+        directory) __gpy_sbg="${__color_directory_bg:-}" ;;
+        duration) __gpy_sbg="${__color_duration_bg:-}" ;;
+        clock) __gpy_sbg="${__color_clock_bg:-}" ;;
+        hostname) __gpy_sbg="${__color_hostname_bg:-}" ;;
+        username) __gpy_sbg="${__color_username_bg:-}" ;;
+        status)
+            if [[ "${__gpy_last_status:-0}" -eq 0 ]]; then
+                __gpy_sbg="${__color_status_ok_bg:-green}"
+            else
+                __gpy_sbg="${__color_status_fail_bg:-red}"
+            fi
+            ;;
+        *) __gpy_sbg="" ;;
+    esac
     if [[ -n "$2" ]]; then
-        case "$1" in
-            git) printf -v "$2" '%s' "${__color_git_clean_bg:-}" ;;
-            language) printf -v "$2" '%s' "${__color_language_bg:-}" ;;
-            directory) printf -v "$2" '%s' "${__color_directory_bg:-}" ;;
-            duration) printf -v "$2" '%s' "${__color_duration_bg:-}" ;;
-            clock) printf -v "$2" '%s' "${__color_clock_bg:-}" ;;
-            hostname) printf -v "$2" '%s' "${__color_hostname_bg:-}" ;;
-            username) printf -v "$2" '%s' "${__color_username_bg:-}" ;;
-            *) printf -v "$2" '%s' "" ;;
-        esac
+        printf -v "$2" '%s' "$__gpy_sbg"
     else
-        case "$1" in
-            git) printf '%s' "${__color_git_clean_bg:-}" ;;
-            language) printf '%s' "${__color_language_bg:-}" ;;
-            directory) printf '%s' "${__color_directory_bg:-}" ;;
-            duration) printf '%s' "${__color_duration_bg:-}" ;;
-            clock) printf '%s' "${__color_clock_bg:-}" ;;
-            hostname) printf '%s' "${__color_hostname_bg:-}" ;;
-            username) printf '%s' "${__color_username_bg:-}" ;;
-            *) printf '%s' "" ;;
-        esac
+        printf '%s' "$__gpy_sbg"
     fi
 }

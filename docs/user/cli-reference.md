@@ -1129,8 +1129,23 @@ GPY reads the following environment variables:
 | `GPY_NERD_FONT` | Tells `gpy-agent init` what to assume instead of asking: `1`/`true`/`yes`/`on`/`nerd` (Nerd Font present), `0`/`false`/`no`/`off`/`none`/`ascii` (absent), `unknown`; anything else falls through to detection. Setting it makes `init` non-interactive. |
 | `VISUAL`, `EDITOR` | The editor `gpy config open` launches, in that order, before the platform fallback. |
 | `GPY_DEBUG_LOG` | Path of the agent's trace log; the agent writes its debug lines there only when this is set. (`GPY_DEBUG=1` turns on the *shell* integrations' own debug output.) See [Troubleshooting](troubleshooting.md). |
+| `GPY_IPC_TIMEOUT_MS` | Shell integrations only (Fish, Zsh, Bash alike): how long a prompt render waits for the agent's reply, in milliseconds. Default `150`. A value that is not a non-negative integer falls back to the default. Export it in `config.fish`, `.zshrc` or `.bashrc` before the GPY integration is sourced. An agent that is reached but replies later is not recomputed with a `gpy-agent oneshot` fork: that segment is omitted for the render. |
+| `GPY_GIT_INSTANT_CACHE_TTL_SECONDS` | Shell integrations only: seconds after which the git instant-cache entry counts as stale. A stale entry is still shown at once and triggers a throttled background refresh. Default `5`; set and validated like `GPY_IPC_TIMEOUT_MS`. |
+| `GPY_LANGUAGE_CACHE_TTL_SECONDS` | Shell integrations only: the same for the language instant-cache entry. Default `30`. |
 
-`gpy debug paths` prints what these resolve to on the current machine.
+`gpy debug paths` prints what the path variables resolve to on the current machine. An empty `HOME` counts as unset in every shell and in the agent: the passwd database's home directory is used instead.
+
+### Fish-only switches
+
+These exist in the Fish integration only; Bash and Zsh have no counterpart. `GPY_SHOW_STATUS` is read on every render; the segment switches are read once, when the integration loads.
+
+| Switch | Effect |
+|---|---|
+| `GPY_SHOW_STATUS` | `0` hides the standalone `✔`/`✖` exit-status indicator printed before the prompt symbol. Default `1`. The indicator is never shown while the prompt symbol itself is rendered by the agent (it is already coloured by the exit status), so this matters mainly when the agent is unavailable. |
+| `GPY_SHOW_LANGUAGES` | `0` replaces the enabled-segment list with `clock duration directory git` at startup, overriding `enabled_segments` from `config.toml`. Prefer editing `enabled_segments`. |
+| `GPY_MINIMAL_SEGMENTS` | Any value (even empty) renders only the `directory` segment. A debugging and test hook; it takes precedence over `GPY_SHOW_LANGUAGES`. |
+| `GPY_TEST_SEGMENTS` | A space-separated segment list that replaces `enabled_segments`, for tests (`GPY_MINIMAL_SEGMENTS` wins when both are set). |
+| `prompt-reload` | A function, not a variable: reloads the theme and config into the running shell, mainly for debugging or when the agent is disabled. |
 
 ---
 

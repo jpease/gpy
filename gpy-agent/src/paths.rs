@@ -82,6 +82,89 @@ pub fn absolutize(path: &Path) -> PathBuf {
         .map_or_else(|| path.to_path_buf(), |dir| dir.join(path))
 }
 
+/// Bytes in `sockaddr_un.sun_path`, the field a Unix socket path must fit in,
+/// terminating NUL included: 104 on macOS and the BSDs, 108 on Linux and the
+/// other Unixes. The crate forbids `unsafe`, so this is the platform's
+/// documented size rather than `size_of_val` on a zeroed `libc::sockaddr_un`;
+/// a test pins it against the kernel by asking std to build real addresses.
+#[cfg(all(
+    unix,
+    any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    )
+))]
+pub const SUN_PATH_CAPACITY: usize = 104;
+
+/// See the BSD variant: 108 bytes on Linux and the remaining Unixes.
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    ))
+))]
+pub const SUN_PATH_CAPACITY: usize = 108;
+
+/// Why `path` cannot be a Unix socket path for a `sun_path` of `capacity`
+/// bytes (NUL included), or `None` when it fits.
+///
+/// Pure, so the boundary is testable on any platform.
+#[must_use]
+pub fn socket_path_problem(path: &Path, capacity: usize) -> Option<String> {
+    let len = path.as_os_str().len();
+    let max = capacity.saturating_sub(1);
+    if len <= max {
+        return None;
+    }
+    Some(format!(
+        "socket path '{}' is {len} bytes, but a Unix socket path holds at most {max} \
+         ({capacity} with the terminating NUL; the limit is 104 on macOS and the BSDs, \
+         108 on Linux). Shorten it: point XDG_RUNTIME_DIR (or XDG_CACHE_HOME / HOME) at a \
+         shorter directory, or set GPY_AGENT_SOCKET_PATH to a short path such as \
+         /tmp/gpy-$USER.sock",
+        path.display()
+    ))
+}
+
+/// Refuse a socket path the kernel would reject, with a message that names the
+/// length, the limit and the fix (#850).
+///
+/// macOS's `sun_path` is 104 bytes against Linux's 108, so a long `$HOME`,
+/// `XDG_RUNTIME_DIR` or `GPY_AGENT_SOCKET_PATH` fails on macOS first -- and
+/// surfaced only as the kernel's bare "path must be shorter than `SUN_LEN`" from
+/// `bind`/`connect`. Checked at the choke point every command resolves the
+/// socket through ([`crate::agent::lifecycle::get_socket_path`]), so `start`,
+/// `stop`, `status` and the daemon's own bind all say the same thing.
+///
+/// A no-op off Unix, where the transport is not a Unix socket.
+///
+/// # Errors
+///
+/// Returns an IPC error when `path` is longer than the platform allows.
+pub fn check_socket_path_len(path: &Path) -> crate::Result<()> {
+    #[cfg(unix)]
+    {
+        match socket_path_problem(path, SUN_PATH_CAPACITY) {
+            Some(problem) => Err(crate::Error::ipc(problem)),
+            None => Ok(()),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
 /// Normalise an `$XDG_*` environment value to the spec's notion of "set".
 ///
 /// The XDG Base Directory specification says an environment variable that is
@@ -625,5 +708,70 @@ mod tests {
                 "config root for (XDG_CONFIG_HOME={xdg_config:?}, HOME={home:?})"
             );
         }
+    }
+
+    /// #850: the boundary is `capacity - 1` bytes (the NUL takes the last), and
+    /// the message carries what a user needs to fix it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the boundary or the message is wrong.
+    #[test]
+    fn socket_path_problem_boundary_and_message() {
+        for capacity in [104_usize, 108_usize] {
+            let fits = format!("/{}", "a".repeat(capacity - 2));
+            assert_eq!(fits.len(), capacity - 1);
+            assert_eq!(
+                socket_path_problem(Path::new(&fits), capacity),
+                None,
+                "{} bytes fit a {capacity}-byte sun_path",
+                fits.len()
+            );
+
+            let too_long = format!("/{}", "a".repeat(capacity - 1));
+            let problem = socket_path_problem(Path::new(&too_long), capacity)
+                .expect("one byte too many is refused");
+            for needle in [
+                format!("is {capacity} bytes"),
+                format!("at most {}", capacity - 1),
+                "GPY_AGENT_SOCKET_PATH".to_owned(),
+                "XDG_RUNTIME_DIR".to_owned(),
+            ] {
+                assert!(problem.contains(&needle), "`{needle}` in: {problem}");
+            }
+        }
+    }
+
+    /// #850: the constant is the kernel's real limit on this platform, not a
+    /// guess -- std builds a socket address only for paths that fit, and a path
+    /// of exactly `SUN_PATH_CAPACITY - 1` bytes must be the longest one.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the constant disagrees with the kernel.
+    #[cfg(unix)]
+    #[test]
+    fn sun_path_capacity_matches_what_the_kernel_accepts() {
+        let longest = format!("/{}", "a".repeat(SUN_PATH_CAPACITY - 2));
+        assert!(
+            std::os::unix::net::SocketAddr::from_pathname(&longest).is_ok(),
+            "{} bytes should fit sun_path on this platform",
+            longest.len()
+        );
+        assert_eq!(check_socket_path_len(Path::new(&longest)).ok(), Some(()));
+
+        let too_long = format!("{longest}a");
+        assert!(
+            std::os::unix::net::SocketAddr::from_pathname(&too_long).is_err(),
+            "{} bytes should not fit sun_path on this platform",
+            too_long.len()
+        );
+        let error = check_socket_path_len(Path::new(&too_long))
+            .expect_err("one byte over the limit is refused")
+            .to_string();
+        assert!(
+            error.contains(&format!("is {} bytes", too_long.len())),
+            "{error}"
+        );
     }
 }

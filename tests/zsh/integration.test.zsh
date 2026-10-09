@@ -79,13 +79,25 @@ echo "PASS: fallback clock honors the configured time format"
 function __gpy_request_clock() {
     printf 'AGENT-CLOCK'
 }
+__clock_format=1
 delegated=$(__gpy_segment_clock "" "black" "true")
 if [[ "$delegated" != *"AGENT-CLOCK"* ]]; then
     echo "FAIL: clock should delegate to the agent when it answers; got: $delegated"
     exit 1
 fi
-unfunction __gpy_request_clock
 echo "PASS: clock delegates to the agent when available"
+
+# ...but only for a theme that sets [segments.clock].format (the exported
+# presence flag, #844): without one the shell draws the clock itself, and must
+# not spend an IPC round trip on it.
+__clock_format=""
+local_clock=$(__gpy_segment_clock "" "black" "true")
+if [[ "$local_clock" == *"AGENT-CLOCK"* || "$local_clock" != *'%D{'* ]]; then
+    echo "FAIL: a theme without a clock format must render the clock locally; got: $local_clock"
+    exit 1
+fi
+unfunction __gpy_request_clock
+echo "PASS: clock renders locally when the theme sets no clock format"
 
 echo "=== Testing Duration Segment ==="
 # Test with duration above threshold - agent-rendered (#199): mock the IPC call
@@ -117,29 +129,60 @@ echo "PASS: Duration hidden for 0.5s"
 # tests/zsh/e2e_agent_autostart.test.zsh (#646).
 
 echo "=== Testing Status Segment ==="
-output=$(__gpy_segment_status 0)
+# The status pill is drawn like fish's (#844): a capped pill in the theme's
+# ok/fail colors, the exit status read from __gpy_last_status (as the render
+# loop publishes it).
+__color_status_ok_bg=green __color_status_ok_fg=black __icon_status_ok="OK"
+__color_status_fail_bg=red __color_status_fail_fg=white __icon_status_fail="NO"
+__gpy_last_status=0
+output=$(__gpy_segment_status "" "" "true")
 if [[ -z "$output" ]]; then
     echo "FAIL: Status segment empty for success"
     exit 1
 fi
-# Check for green color (success) - Zsh format uses %F{green} or color code
-if [[ ! "$output" =~ "green" ]] && [[ ! "$output" =~ "32m" ]]; then
-    echo "FAIL: Status segment incorrect color for success"
+# black text (30) on the green ok background (42), icon between the caps
+if [[ "$output" != *"30;42m"*"OK"* ]]; then
+    echo "FAIL: Status segment should draw the ok pill (black on green); got: $output"
     exit 1
 fi
 echo "PASS: Status success"
 
-output=$(__gpy_segment_status 127)
+__gpy_last_status=127
+output=$(__gpy_segment_status "" "" "true")
 if [[ -z "$output" ]]; then
     echo "FAIL: Status segment empty for failure"
     exit 1
 fi
-# Check for red color (failure)
-if [[ ! "$output" =~ "red" ]] && [[ ! "$output" =~ "31m" ]]; then
-    echo "FAIL: Status segment incorrect color for failure"
+# white text (37) on the red fail background (41)
+if [[ "$output" != *"37;41m"*"NO"* || "$output" == *"OK"* ]]; then
+    echo "FAIL: Status segment should draw the fail pill (white on red); got: $output"
     exit 1
 fi
 echo "PASS: Status failure"
+
+# The next segment's chevron needs the pill's background: it follows the exit
+# status, with fish's literal fallbacks when the theme sets no color.
+__gpy_last_status=0
+if [[ "$(__gpy_segment_bg status)" != "green" ]]; then
+    echo "FAIL: __gpy_segment_bg status should be the ok background after success"
+    exit 1
+fi
+__gpy_last_status=1
+if [[ "$(__gpy_segment_bg status)" != "red" ]]; then
+    echo "FAIL: __gpy_segment_bg status should be the fail background after failure"
+    exit 1
+fi
+unset __color_status_ok_bg __color_status_fail_bg
+if [[ "$(__gpy_segment_bg status)" != "red" ]]; then
+    echo "FAIL: __gpy_segment_bg status should fall back to red with no theme color"
+    exit 1
+fi
+__gpy_last_status=0
+if [[ "$(__gpy_segment_bg status)" != "green" ]]; then
+    echo "FAIL: __gpy_segment_bg status should fall back to green with no theme color"
+    exit 1
+fi
+echo "PASS: __gpy_segment_bg status follows the exit status"
 
 echo "=== Testing Full Prompt ==="
 __enabled_segments=(status directory git clock duration language)
@@ -411,13 +454,20 @@ if ! __gpy_segment_hostname_detect; then
 fi
 echo "PASS: Hostname detect shows with show_always"
 
+# What a shell-drawn segment shows once its non-printing wrappers and SGR
+# sequences are removed (the segments are capped pills now, #844: the label sits
+# between the delimiters, with no padding of its own).
+visible_text() {
+    printf '%s' "$1" | sed -e 's/%[{}]//g' -e $'s/\033\\[[0-9;]*m//g'
+}
+
 # Pure-zsh render path: trim at first delimiter, zero forks
 unset __hostname_format
 HOST="host.example.com"
 __hostname_trim_at="."
 __icon_hostname=""
-output=$(__gpy_segment_hostname)
-if [[ "$output" != *" host "* || "$output" == *"host.example.com"* ]]; then
+output=$(visible_text "$(__gpy_segment_hostname)")
+if [[ "$output" != *"host"* || "$output" == *"host.example.com"* ]]; then
     echo "FAIL: Hostname trim did not shorten to 'host': $output"
     exit 1
 fi
@@ -425,7 +475,7 @@ echo "PASS: Hostname trimmed at delimiter"
 
 # Empty trim delimiter leaves the hostname unchanged
 __hostname_trim_at=""
-output=$(__gpy_segment_hostname)
+output=$(visible_text "$(__gpy_segment_hostname)")
 if [[ "$output" != *"host.example.com"* ]]; then
     echo "FAIL: Empty trim delimiter should leave hostname unchanged: $output"
     exit 1
@@ -437,16 +487,16 @@ echo "PASS: Hostname unchanged with empty trim delimiter"
 __gpy_is_ssh=1
 __hostname_trim_at="."
 __icon_hostname="@"
-output=$(__gpy_segment_hostname)
-if [[ "$output" != *" @ host "* ]]; then
+output=$(visible_text "$(__gpy_segment_hostname)")
+if [[ "$output" != *"@ host"* ]]; then
     echo "FAIL: Hostname icon missing from SSH render: $output"
     exit 1
 fi
 echo "PASS: Hostname icon shown over SSH when set"
 
 __gpy_is_ssh=0
-output=$(__gpy_segment_hostname)
-if [[ "$output" == *"@"* || "$output" != *" host "* ]]; then
+output=$(visible_text "$(__gpy_segment_hostname)")
+if [[ "$output" == *"@"* || "$output" != *"host"* ]]; then
     echo "FAIL: Hostname icon should be omitted in a local session: $output"
     exit 1
 fi
@@ -454,19 +504,20 @@ echo "PASS: Hostname icon omitted in a local session"
 
 __gpy_is_ssh=1
 __icon_hostname=""
-output=$(__gpy_segment_hostname)
+output=$(visible_text "$(__gpy_segment_hostname)")
 if [[ "$output" == *"@ host"* ]]; then
     echo "FAIL: Hostname icon should be omitted when unset: $output"
     exit 1
 fi
 echo "PASS: Hostname icon omitted when unset"
 
-# Confirm zsh prompt-escape structure (not raw ANSI) on the pure-zsh path.
-if [[ "$output" != *'%K{'* || "$output" != *'%F{'* || "$output" != *'%f%k'* ]]; then
-    echo "FAIL: Hostname pure-zsh render missing prompt escapes: $output"
+# The local path wraps every SGR sequence in zsh's zero-width `%{ %}` (#679).
+output=$(__gpy_segment_hostname)
+if [[ "$output" != *'%{'*'%}'* || "$output" == *'%K{'* || "$output" == *'%F{'* ]]; then
+    echo "FAIL: Hostname local render should wrap raw SGR in %{ %}: $output"
     exit 1
 fi
-echo "PASS: Hostname uses zsh prompt escapes"
+echo "PASS: Hostname wraps its SGR in %{ %}"
 
 # #826: the real request builder appends "is_ssh":true only for is_ssh=1. The
 # __gpy_send_json stub lives in the command-substitution subshell only.
@@ -634,8 +685,8 @@ echo "PASS: Username detect shows with show_always"
 unset __username_format
 USER="root"
 __icon_username=""
-output=$(__gpy_segment_username)
-if [[ "$output" != *" root "* ]]; then
+output=$(visible_text "$(__gpy_segment_username)")
+if [[ "$output" != *"root"* ]]; then
     echo "FAIL: Username pure-zsh render missing \$USER: $output"
     exit 1
 fi
@@ -643,27 +694,28 @@ echo "PASS: Username pure-zsh renders \$USER"
 
 # Icon prefixes the label when set, omitted when empty
 __icon_username="#"
-output=$(__gpy_segment_username)
-if [[ "$output" != *" # root "* ]]; then
+output=$(visible_text "$(__gpy_segment_username)")
+if [[ "$output" != *"# root"* ]]; then
     echo "FAIL: Username icon missing from render: $output"
     exit 1
 fi
 echo "PASS: Username icon shown when set"
 
 __icon_username=""
-output=$(__gpy_segment_username)
+output=$(visible_text "$(__gpy_segment_username)")
 if [[ "$output" == *"# root"* ]]; then
     echo "FAIL: Username icon should be omitted when unset: $output"
     exit 1
 fi
 echo "PASS: Username icon omitted when unset"
 
-# Confirm zsh prompt-escape structure (not raw ANSI) on the pure-zsh path.
-if [[ "$output" != *'%K{'* || "$output" != *'%F{'* || "$output" != *'%f%k'* ]]; then
-    echo "FAIL: Username pure-zsh render missing prompt escapes: $output"
+# The local path wraps every SGR sequence in zsh's zero-width `%{ %}` (#679).
+output=$(__gpy_segment_username)
+if [[ "$output" != *'%{'*'%}'* || "$output" == *'%K{'* || "$output" == *'%F{'* ]]; then
+    echo "FAIL: Username local render should wrap raw SGR in %{ %}: $output"
     exit 1
 fi
-echo "PASS: Username uses zsh prompt escapes"
+echo "PASS: Username wraps its SGR in %{ %}"
 
 # Dual-path: a non-empty __username_format routes to the agent renderer,
 # quoting every positional arg so an empty prev_bg lands in the correct slot.

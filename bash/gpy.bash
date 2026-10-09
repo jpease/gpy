@@ -12,7 +12,7 @@ GPY_BASH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # is about to source before sourcing any of them, and disable cleanly with a
 # single diagnostic if any are missing. Mirrors
 # fish/conf.d/gpy_init.fish's guard.
-for __gpy_core_file in constants ipc signals supervisor init; do
+for __gpy_core_file in constants renderer ipc signals supervisor init; do
     if [[ ! -f "$GPY_BASH_ROOT/core/$__gpy_core_file.bash" ]]; then
         echo "gpy[init]: core files not found at $GPY_BASH_ROOT - GPY disabled" >&2
         unset __gpy_core_file
@@ -23,6 +23,7 @@ unset __gpy_core_file
 
 # Source core modules
 source "$GPY_BASH_ROOT/core/constants.bash"
+source "$GPY_BASH_ROOT/core/renderer.bash"
 source "$GPY_BASH_ROOT/core/ipc.bash"
 source "$GPY_BASH_ROOT/core/signals.bash"
 source "$GPY_BASH_ROOT/core/supervisor.bash"

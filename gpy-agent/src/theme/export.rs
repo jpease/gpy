@@ -345,7 +345,12 @@ fn append_prompt_assignments(output: &mut String, shell: Shell, theme: &ThemeCon
 ///
 /// directory/duration/character render solely from agent-provided ANSI;
 /// `__gpy_*_format` toggles were retired in #199 and remain retired.
-/// Clock + status keep their shell-side rendering and color exports.
+/// Clock + status keep their shell-side rendering and color exports; the clock
+/// also exports `__clock_format`, a PRESENCE FLAG ONLY (never the raw format
+/// string, for the reasons given at `append_hostname_assignments`): the shell
+/// asks the agent to render the clock only when the theme sets
+/// `[segments.clock].format`, and draws it itself otherwise, the same in all
+/// three shells (#844).
 /// `__duration_threshold_ms` stays: the shell uses it for the
 /// detect/visibility gate before delegating the render to the agent.
 /// `__color_directory_bg` and `__color_duration_bg` are re-added so the
@@ -382,6 +387,14 @@ fn append_builtin_segment_assignments(output: &mut String, shell: Shell, theme: 
             ShellAssignment::local(
                 "__clock_show_seconds",
                 bool_flag(theme.segments.clock.show_seconds),
+            ),
+            ShellAssignment::local(
+                "__clock_format",
+                if theme.segments.clock.format.is_some() {
+                    "1"
+                } else {
+                    ""
+                },
             ),
             ShellAssignment::local(
                 "__duration_threshold_ms",
@@ -967,8 +980,9 @@ fn append_lang_marker_files(output: &mut String, shell: Shell) {
 /// [`crate::plugin::BuiltinSegment`] (git/clock/duration/
 /// language/directory/status): that type's "six builtin segments" is a
 /// config/CLI concept, while a chevron background is a distinct, Bash/Zsh-only
-/// rendering concern that also covers hostname/username but has no `status`
-/// entry (the status segment owns no powerline background of its own).
+/// rendering concern that also covers hostname/username. `status` is not in
+/// the table: its pill background depends on the previous exit status, so
+/// `append_segment_bg_function` emits a dedicated arm for it.
 pub(crate) const SEGMENT_BG_VARS: &[(&str, &str)] = &[
     ("git", "__color_git_clean_bg"),
     ("language", "__color_language_bg"),
@@ -981,8 +995,8 @@ pub(crate) const SEGMENT_BG_VARS: &[(&str, &str)] = &[
 
 /// Emit a generated `__gpy_segment_bg` function for Bash and Zsh (#614).
 ///
-/// Two calling conventions, sharing this one case table (built from
-/// `SEGMENT_BG_VARS`) instead of the four hand-copied ones this replaces:
+/// One case table (built from `SEGMENT_BG_VARS`, plus the `status` arm) with
+/// two calling conventions:
 ///   `__gpy_segment_bg SEGMENT`           -> value on stdout (external
 ///                                          callers, existing tests)
 ///   `__gpy_segment_bg SEGMENT OUT_VAR`   -> value written into `$OUT_VAR`
@@ -992,6 +1006,11 @@ pub(crate) const SEGMENT_BG_VARS: &[(&str, &str)] = &[
 ///                                          the fork-free `printf -v` pattern
 ///                                          already used elsewhere in those
 ///                                          shells' `ipc.bash`/`ipc.zsh`)
+///
+/// The `status` arm picks the pill's ok or fail background by
+/// `__gpy_last_status`, which the render loop sets to the previous command's
+/// exit status (fish reads its own global of that name), with fish's literal
+/// fallbacks (`green`/`red`) when the theme leaves a color unset (#844).
 ///
 /// A no-op for Fish: Fish tracks `__gpy_last_segment_bg` directly on each
 /// segment implementation rather than through a shared table, so its export
@@ -1009,28 +1028,36 @@ fn append_segment_bg_function(output: &mut String, shell: Shell) {
 
     output.push('\n');
     writeln!(output, "__gpy_segment_bg() {{").expect("string write");
+    writeln!(output, "    local __gpy_sbg=\"\"").expect("string write");
+    writeln!(output, "    case \"$1\" in").expect("string write");
+    for (segment, var) in SEGMENT_BG_VARS {
+        writeln!(output, "        {segment}) __gpy_sbg=\"${{{var}:-}}\" ;;").expect("string write");
+    }
+    writeln!(output, "        status)").expect("string write");
+    writeln!(
+        output,
+        "            if [[ \"${{__gpy_last_status:-0}}\" -eq 0 ]]; then"
+    )
+    .expect("string write");
+    writeln!(
+        output,
+        "                __gpy_sbg=\"${{__color_status_ok_bg:-green}}\""
+    )
+    .expect("string write");
+    writeln!(output, "            else").expect("string write");
+    writeln!(
+        output,
+        "                __gpy_sbg=\"${{__color_status_fail_bg:-red}}\""
+    )
+    .expect("string write");
+    writeln!(output, "            fi").expect("string write");
+    writeln!(output, "            ;;").expect("string write");
+    writeln!(output, "        *) __gpy_sbg=\"\" ;;").expect("string write");
+    writeln!(output, "    esac").expect("string write");
     writeln!(output, "    if [[ -n \"$2\" ]]; then").expect("string write");
-    writeln!(output, "        case \"$1\" in").expect("string write");
-    for (segment, var) in SEGMENT_BG_VARS {
-        writeln!(
-            output,
-            "            {segment}) printf -v \"$2\" '%s' \"${{{var}:-}}\" ;;"
-        )
-        .expect("string write");
-    }
-    writeln!(output, "            *) printf -v \"$2\" '%s' \"\" ;;").expect("string write");
-    writeln!(output, "        esac").expect("string write");
+    writeln!(output, "        printf -v \"$2\" '%s' \"$__gpy_sbg\"").expect("string write");
     writeln!(output, "    else").expect("string write");
-    writeln!(output, "        case \"$1\" in").expect("string write");
-    for (segment, var) in SEGMENT_BG_VARS {
-        writeln!(
-            output,
-            "            {segment}) printf '%s' \"${{{var}:-}}\" ;;"
-        )
-        .expect("string write");
-    }
-    writeln!(output, "            *) printf '%s' \"\" ;;").expect("string write");
-    writeln!(output, "        esac").expect("string write");
+    writeln!(output, "        printf '%s' \"$__gpy_sbg\"").expect("string write");
     writeln!(output, "    fi").expect("string write");
     writeln!(output, "}}").expect("string write");
 }
@@ -1135,6 +1162,7 @@ icon_color = "black"
 bg_color = "white"
 
 [segments.clock]
+format = "[$time]($style)"
 bg_color = "blue"
 text_color = "white"
 time_format = "%H:%M$(date)"
@@ -1404,7 +1432,7 @@ max_length = 42
                 "{shell:?} export must define __gpy_segment_bg(), got:\n{export}"
             );
             for (segment, var) in SEGMENT_BG_VARS {
-                let arm = format!("{segment}) printf");
+                let arm = format!("{segment}) __gpy_sbg=");
                 assert!(
                     export.contains(&arm),
                     "{shell:?} export's __gpy_segment_bg must have a case arm for \
@@ -1415,6 +1443,27 @@ max_length = 42
                     export.contains(&var_ref),
                     "{shell:?} export's __gpy_segment_bg case arm for '{segment}' must \
                      reference {var_ref}, got:\n{export}"
+                );
+            }
+        }
+    }
+
+    /// #844: the status pill's chevron background follows the exit status, so
+    /// the generated function needs a `status` arm that reads
+    /// `__gpy_last_status` and falls back to fish's `green`/`red`.
+    #[test]
+    fn bash_and_zsh_segment_bg_function_has_a_status_arm_keyed_on_last_status() {
+        for shell in [Shell::Bash, Shell::Zsh] {
+            let export = golden_export(shell);
+            for needle in [
+                "status)",
+                "${__gpy_last_status:-0}",
+                "${__color_status_ok_bg:-green}",
+                "${__color_status_fail_bg:-red}",
+            ] {
+                assert!(
+                    export.contains(needle),
+                    "{shell:?} export's __gpy_segment_bg must carry {needle:?}, got:\n{export}"
                 );
             }
         }

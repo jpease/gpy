@@ -11,6 +11,7 @@ __gpy_segment_username_detect() {
 __gpy_segment_username() {
     local is_last="${1:-}"
     local prev_bg="${2:-}"
+    local is_first="${3:-}"
 
     # Agent-resolved path when a theme set a Starship-compatible format.
     # is_last arrives already as "true"/"" (#613: init.bash's dispatch-loop
@@ -21,43 +22,12 @@ __gpy_segment_username() {
         return
     fi
 
-    # Pure-bash path: optional icon + inline ANSI (mirror hostname.bash).
-    local name="${USER:-}"
-    local icon="${__icon_username:-}"
-    local label="$name"
-    [[ -n "$icon" ]] && label="$icon $name"
+    # Local path, drawn by the shared shell-side renderer so it matches fish's
+    # pure-fish path for the same theme (#844).
+    local label="${USER:-}"
+    [[ -n "${__icon_username:-}" ]] && label="$__icon_username ${USER:-}"
 
-    local bg="${__color_username_bg:-red}"
-    local fg="${__color_username_fg:-white}"
-
-    # Convert colors to ANSI codes. `transparent` maps to the terminal default
-    # (SGR 49 bg / 39 fg) so the segment blends in instead of hitting `*)`.
-    local bg_code fg_code
-    case "$bg" in
-        black) bg_code="40" ;;
-        red) bg_code="41" ;;
-        green) bg_code="42" ;;
-        yellow) bg_code="43" ;;
-        blue) bg_code="44" ;;
-        magenta) bg_code="45" ;;
-        cyan) bg_code="46" ;;
-        white) bg_code="47" ;;
-        transparent) bg_code="49" ;;
-        *) bg_code="41" ;;
-    esac
-
-    case "$fg" in
-        black) fg_code="30" ;;
-        red) fg_code="31" ;;
-        green) fg_code="32" ;;
-        yellow) fg_code="33" ;;
-        blue) fg_code="34" ;;
-        magenta) fg_code="35" ;;
-        cyan) fg_code="36" ;;
-        white) fg_code="37" ;;
-        transparent) fg_code="39" ;;
-        *) fg_code="37" ;;
-    esac
-
-    printf '%s\n' "\[\033[${bg_code};${fg_code}m\] ${label} \[\033[0m\]"
+    __gpy_prompt_escape "$label" label
+    __gpy_section_standalone "${__color_username_bg:-}" "${__color_username_fg:-}" \
+        "$label" "$is_last" "$is_first"
 }

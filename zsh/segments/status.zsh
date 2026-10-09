@@ -1,18 +1,31 @@
 # zsh/segments/status.zsh
+#
+# Exit-status pill, drawn by the shared shell-side renderer so it matches
+# fish's segment_status_render for the same theme (#844): a themed pill
+# (`[segments.status]` ok/fail icon, text and background colors), capped like
+# every other segment. The render loop reads the previous command's exit
+# status from `__gpy_last_status`, and takes the pill's background for the
+# next segment's chevron from `__gpy_segment_bg status`, which picks the ok or
+# fail background by that same variable.
+#
+# is_last/is_first arrive already as "true"/"" (#613: init.zsh's
+# dispatch-loop convention).
 
 function __gpy_segment_status() {
-    local last_status=$1
+    local is_last=${1:-}
+    local is_first=${3:-}
 
-    # Default icons and colors
-    local icon_ok=${__icon_status_ok:-"✔"}
-    local icon_fail=${__icon_status_fail:-"✖"}
-    # Fallback colors if not set by theme
-    local color_ok=${__color_status_ok:-green}
-    local color_fail=${__color_status_fail:-red}
-
-    if [[ $last_status -eq 0 ]]; then
-        print -r -- "%F{$color_ok}$icon_ok%f"
+    local bg fg icon
+    if (( ${__gpy_last_status:-0} == 0 )); then
+        bg=${__color_status_ok_bg:-green}
+        fg=${__color_status_ok_fg:-black}
+        __gpy_status_icon ok icon
     else
-        print -r -- "%F{$color_fail}$icon_fail%f"
+        bg=${__color_status_fail_bg:-red}
+        fg=${__color_status_fail_fg:-black}
+        __gpy_status_icon fail icon
     fi
+
+    __gpy_prompt_escape "$icon" icon
+    __gpy_section_standalone "$bg" "$fg" "$icon" "$is_last" "$is_first"
 }

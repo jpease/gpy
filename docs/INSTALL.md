@@ -64,19 +64,44 @@ that requires varies by shell:
 
 | Shell | Required / recommended tools |
 |-------|-------------------------------|
-| Zsh | None required — the `zsh/net/socket` builtin module (`zsocket`) talks to the socket directly. Falls back to `socat`, then `nc -U` (which uses `awk` to compute a fractional `timeout` bound when `timeout` is present). |
-| Bash | `socat`, or `nc -U` (wrapped in `timeout` when available). No built-in fallback. |
-| Fish | `socat`, or `nc -U` (wrapped in `timeout` when available). No built-in fallback. |
+| Zsh | None required — the `zsh/net/socket` builtin module (`zsocket`) talks to the socket directly. Falls back to `socat`, then `nc -U`. |
+| Bash | `socat`, or `nc -U`. No built-in fallback. |
+| Fish | `socat`, or `nc -U`. No built-in fallback. |
+
+The same capability probe runs in all three shells: `socat` is used when it
+exists; otherwise `nc` is used only if `nc -h` lists `-U`. A netcat without
+`-U` (netcat-traditional, the `nc` on some minimal Debian and Ubuntu images)
+counts as no client at all, so install `socat` or `netcat-openbsd` there.
+
+Other tools GPY uses opportunistically, and what happens without them:
+
+| Tool | Used for | Without it |
+|------|----------|------------|
+| `timeout` (GNU coreutils) | Wraps the `nc` client in Bash, Zsh and Fish so a silent agent is abandoned after `GPY_IPC_TIMEOUT_MS` (150 ms by default). Never needed with `socat` or `zsocket`, which take the budget directly. | Not required, and stock macOS does not ship it. `nc`'s own `-w` takes whole seconds, so a connected-but-silent agent can hold the prompt for up to one second instead of 150 ms. |
+| `lsof` (or `fuser`) | Fish only. When `gpy-agent stop` leaves a lingering agent on the socket, an agent restart finds its process with `lsof -t` (`fuser` is the fallback) and kills it. | Neither is installed on many minimal Debian, Ubuntu and WSL images. The lingering agent is then left running and its socket file is kept; `gpy-agent start` reclaims a stale socket and evicts a wedged agent itself. With `GPY_DEBUG=1` the restart logs a warning naming the missing tools. |
+| `awk` | Only a fallback: Bash 5 computes a command's duration from `EPOCHREALTIME` in shell arithmetic and calls `awk` just when that value is malformed. The IPC paths use no `awk`; millisecond budgets are converted in shell arithmetic. | Duration falls back to unavailable for that one command. |
+| GNU `date` | Bash 4.x only: durations use `date +%s%N`. | BSD/macOS `date` has no `%N`; GPY probes for it once at startup and falls back to whole-second timing (a ~2 s command reads 1–3 s). Bash 5 uses `EPOCHREALTIME` and needs no `date`. |
+
+Unix socket paths are limited to 103 bytes on macOS (`sun_path` is 104 bytes
+including the NUL) and 107 on Linux. A long `$HOME`, `XDG_RUNTIME_DIR` or
+`GPY_AGENT_SOCKET_PATH` therefore fails on macOS first; `gpy-agent start`,
+`stop` and `status` refuse such a path with an error naming its length and
+the limit. Point `XDG_RUNTIME_DIR` at a shorter directory or set
+`GPY_AGENT_SOCKET_PATH` to a short path such as `/tmp/gpy-$USER.sock`.
 
 ### Degraded (oneshot) behavior
 
 When none of the above is available, or the `gpy-agent` daemon isn't
-running, all three shells fall back to forking `gpy-agent oneshot` for that
-prompt render. A PID-scoped marker file limits this to one fork per prompt
+running (nothing listens on the socket), all three shells fall back to
+forking `gpy-agent oneshot` for that prompt render. A per-render budget
+(a plain shell variable, never a file) limits this to one fork per prompt
 render, so a broken IPC path costs one extra process per prompt rather than
-one per segment. The background/live-refresh path has no such fallback:
-without a running daemon there is no `SIGURG` repaint, so the prompt stays
-static until the next render.
+one per segment. A running agent that merely answers later than
+`GPY_IPC_TIMEOUT_MS` is not treated as down: the shell has already sent it the
+request, so that segment is omitted for the render instead of being recomputed
+by a second, blocking process. The background/live-refresh path has no
+oneshot fallback: without a running daemon there is no `SIGURG` repaint, so
+the prompt stays static until the next render.
 
 ## One-Line Installation (Recommended)
 

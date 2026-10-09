@@ -590,6 +590,11 @@ impl EndpointHandle {
         use crate::debug_log;
         use std::os::unix::fs::PermissionsExt;
 
+        // The daemon can be started directly with a socket the CLI never
+        // resolved; fail with the length and the fix, not the kernel's bare
+        // "path must be shorter than SUN_LEN" (#850).
+        crate::paths::check_socket_path_len(&self.socket_path)?;
+
         debug_log!("server", "Attempting to bind socket...");
         let listener = UnixListener::bind(&self.socket_path).map_err(|e| {
             let socket_path = self.socket_path.display();

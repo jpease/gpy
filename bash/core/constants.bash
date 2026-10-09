@@ -7,6 +7,11 @@ __prompt_color="${__prompt_color:-green}"
 # Default icons (Nerd Font)
 __icon_prompt="${__icon_prompt:-❯}"
 
+# Root prompt symbol and color, drawn by the shell itself like fish's
+# (__gpy_prompt_tail in core/renderer.bash); same defaults as fish/core/init.fish.
+__icon_root_prompt="${__icon_root_prompt:-!❯!}"
+__root_prompt_color="${__root_prompt_color:-red}"
+
 # Enabled segments (space-separated list)
 __enabled_segments="${__enabled_segments:-directory git}"
 
@@ -52,6 +57,15 @@ __gpy_segment_bg() {
         clock) __gpy_sbg="${__color_clock_bg:-}" ;;
         hostname) __gpy_sbg="${__color_hostname_bg:-}" ;;
         username) __gpy_sbg="${__color_username_bg:-}" ;;
+        # The status pill's background depends on the previous exit status,
+        # which the render loop publishes as __gpy_last_status (as fish does).
+        status)
+            if [[ "${__gpy_last_status:-0}" -eq 0 ]]; then
+                __gpy_sbg="${__color_status_ok_bg:-green}"
+            else
+                __gpy_sbg="${__color_status_fail_bg:-red}"
+            fi
+            ;;
         *) __gpy_sbg="" ;;
     esac
     if [[ -n "$2" ]]; then

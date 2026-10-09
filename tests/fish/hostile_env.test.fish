@@ -75,9 +75,9 @@ function scenario_supervisor_child_shape
     pgrep -f "$sandbox/missing.sock" >/dev/null 2>&1; and test_fail "agent process left running"; or test_pass "no agent started"
 end
 
-# #770: disabled-footprint mode never defines __gpy_oneshot_marker_path; the
-# per-prompt marker reset must not fork `rm` (a stub rm first on PATH logs
-# every external call). A real marker, when defined, must still be removed.
+# #770: disabled-footprint mode never loads the oneshot budget; the per-prompt
+# budget reset must not fork `rm` (a stub rm first on PATH logs every external
+# call). A budget a previous render spent must still be reset (#845).
 function scenario_disabled_prompt_forks_no_rm
     set -l stub_dir $sandbox/stubbin
     set -l rm_log $sandbox/rm.log
@@ -106,18 +106,17 @@ echo END_RENDER >> $argv[3]' -- $sandbox/cfg/fish/conf.d/gpy_init.fish $repo_roo
     set -l forked (printf '%s\n' $log_lines[(math $begin_idx + 1)..-1] | string match -r '^rm ')
     test (count $forked) -eq 0; and test_pass "disabled-footprint prompt forked no rm"; or test_fail "disabled-footprint prompt forked rm: "(string join '; ' -- $forked)
 
-    # A defined, existing marker is still reset by the next render.
-    set -l marker $sandbox/oneshot.marker
-    touch $marker
-    env -i PATH=/usr/bin:/bin TERM=dumb HOME=$sandbox/home \
+    # A spent budget is reset by the next render.
+    set -l reset_out (env -i PATH=/usr/bin:/bin TERM=dumb HOME=$sandbox/home \
         XDG_CONFIG_HOME=$sandbox/cfg XDG_CACHE_HOME=$sandbox/cache \
         XDG_RUNTIME_DIR=$sandbox/run TMPDIR=$sandbox \
         GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
         (command -v fish) --no-config -i -c 'source $argv[1]
 source $argv[2]
-set -g __gpy_oneshot_marker_path $argv[3]
-fish_prompt >/dev/null' -- $sandbox/cfg/fish/conf.d/gpy_init.fish $repo_root/fish/functions/fish_prompt.fish $marker </dev/null >/dev/null 2>&1
-    test -e $marker; and test_fail "existing oneshot marker was not removed"; or test_pass "existing oneshot marker removed by prompt render"
+set -g __gpy_oneshot_used 1
+fish_prompt >/dev/null
+set -q __gpy_oneshot_used; and echo SPENT; or echo RESET' -- $sandbox/cfg/fish/conf.d/gpy_init.fish $repo_root/fish/functions/fish_prompt.fish </dev/null 2>/dev/null)
+    test "$reset_out[-1]" = RESET; and test_pass "spent oneshot budget reset by prompt render"; or test_fail "spent oneshot budget survived the prompt render: $reset_out"
 end
 
 function run_scenario

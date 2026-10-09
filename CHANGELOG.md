@@ -275,6 +275,86 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Fixed
 
+- The clock, status, hostname, username and root-prompt segments now render
+  the same in Fish, Bash and Zsh for the same theme (#844); a cross-shell
+  golden test renders each scenario through all three real integrations and
+  requires identical output. Fish used to always draw the clock itself while
+  Bash and Zsh asked the agent, so a templated theme (the default) differed;
+  Bash drew the status as a bare colored icon and never told the next
+  segment's chevron about it; only Fish used `__icon_root_prompt` and
+  `__root_prompt_color`; and the local hostname/username/clock fallback was an
+  uncapped block in Bash and Zsh. Now:
+  - the clock is agent-rendered in all three shells when the theme sets
+    `[segments.clock].format` (exported as the presence flag `__clock_format`,
+    like `__hostname_format`) and drawn by the shell otherwise, which also stops
+    Bash and Zsh from asking the agent for a clock on every prompt of a theme
+    without a template. Fish's clock spec now uses `%-I`/`%-H`, the same text
+    the agent embeds;
+  - Bash and Zsh draw the status pill, the local clock and the hostname and
+    username fallback with the same delimiters, colors and gap space as Fish
+    (new `bash/core/renderer.bash` and `zsh/core/renderer.zsh`, the twins of
+    Fish's `gpy_section_standalone`), keeping `\[ \]` and `%{ %}` around every
+    escape. The generated `__gpy_segment_bg` gained a `status` arm that follows
+    the exit status (`__gpy_last_status`);
+  - Bash and Zsh draw `__icon_root_prompt` in `__root_prompt_color` for root
+    without asking the agent for a character, and their fallback prompt shows
+    the exit-status indicator unless `GPY_SHOW_STATUS=0`, as Fish does;
+  - Fish no longer prints `set_color: Unknown color 'transparent'` when a
+    transparent segment sits between `match_bg` delimiters, and the Fish
+    hostname trim defaults to `.` when the theme has not loaded, like
+    Bash/Zsh.
+
+- The three shells now share one policy for the IPC timeout, the cache TTL
+  knobs, slow replies, the oneshot budget and an empty `HOME` (#845):
+  - `GPY_IPC_TIMEOUT_MS` is honoured in Fish, Zsh and Bash (Fish and Zsh
+    overwrote it at source time) and `GPY_GIT_INSTANT_CACHE_TTL_SECONDS` /
+    `GPY_LANGUAGE_CACHE_TTL_SECONDS` are honoured in Fish (it overwrote them).
+    A value that is not a non-negative integer falls back to the default.
+    Fish's `socat` call also used `-T`, which does not bound the reply wait,
+    so a late reply got through at about 500 ms whatever the budget; it uses
+    `-t` like Bash and Zsh;
+  - an agent that accepted the request but replies late is no longer
+    recomputed by a blocking `gpy-agent oneshot` fork in Fish and Bash (Zsh's
+    `zsocket` path already behaved this way, #757), and neither in Zsh when it
+    talks through `socat` or `nc`. The send helper now returns 0 for a reply,
+    1 when the agent cannot be reached and 2 when it is connected but late;
+    only 1 falls back to oneshot, for the git/language, duration and
+    character requests alike. The request is also never resent over a second
+    connection;
+  - Fish's oneshot budget is the per-render variable `__gpy_oneshot_used`, as
+    in Bash and Zsh, instead of the predictable
+    `${TMPDIR}/.gpy_oneshot_used_$fish_pid` marker file (which another local
+    user could pre-create and which a shell left behind on exit);
+  - an empty or erased `HOME` resolves the passwd home in Fish, as it already
+    did in Bash, Zsh and the agent, rather than a filesystem-root
+    `/.cache/gpy`; the path-parity test covers an empty `HOME` in all three
+    shells;
+  - the Fish-only `GPY_SHOW_STATUS`, `GPY_SHOW_LANGUAGES`,
+    `GPY_MINIMAL_SEGMENTS`, `GPY_TEST_SEGMENTS` and `prompt-reload` are now
+    documented in the CLI reference, together with the shell-side
+    `GPY_IPC_TIMEOUT_MS` and TTL variables.
+- IPC degrades the same way on every OS and shell (#850):
+  - Bash and Zsh probe `nc -h` for `-U` before using `nc`, as Fish does, so a
+    netcat without Unix-socket support (netcat-traditional) is no client
+    instead of a command that fails on every request;
+  - Fish's socket-readiness check no longer needs coreutils `timeout`: it
+    pings the agent over the same client real requests use. On stock macOS
+    (no `timeout`) it used to accept any socket file, so a stale one left by a
+    crashed agent counted as ready. It also no longer relies on `nc -z`,
+    which macOS's `nc` rejects together with `-U`;
+  - Fish's agent restart falls back to `fuser` when `lsof` is missing (minimal
+    Debian, Ubuntu and WSL images). With neither it leaves the live agent's
+    socket file alone (it used to delete it, orphaning the process) and
+    `gpy-agent start` reclaims it; `GPY_DEBUG=1` logs a warning. `timeout` and
+    `lsof`/`fuser` are listed in the INSTALL guide's tool table;
+  - Bash 4's duration probes `date +%s%N` once and uses whole-second timing
+    when `date` is BSD/macOS date, which prints a literal `N` for `%N` and made
+    every duration an arithmetic error;
+  - the agent refuses a socket path longer than `sun_path` (103 bytes on
+    macOS, 107 on Linux) with an error naming the length, the limit and the
+    fix, instead of the kernel's bare "path must be shorter than SUN_LEN";
+    `gpy debug paths` still prints the rejected path.
+
 - The directory segment rendered by the agent now shows the shell's logical
   `$PWD` instead of the symlink-resolved path (#697). `cd ~/app/current` (a
   symlink) showed the target's name, a `$HOME` reached through a symlink lost

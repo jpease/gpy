@@ -121,7 +121,7 @@ function test_variant_fallback_bounded_sync
 
     # Render at the NEW prev_bg context -- never queried for this repo before.
     cd $repo
-    rm -f (__gpy_oneshot_marker) 2>/dev/null
+    set -e __gpy_oneshot_used
     set -g __gpy_last_segment_bg $__gpy_test_prev_bg
     set -l rendered (segment_git_render)
 

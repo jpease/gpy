@@ -10,9 +10,11 @@
 //!
 //! - Zsh emits `%D{…}`, expanded by zsh every time the prompt is drawn.
 //! - Bash emits `\D{…}`, expanded by bash the same way.
-//! - Fish has no prompt-level time token, so it gets the bare spec; Fish
-//!   renders the clock locally through `__gpy_clock_date_format` and feeds
-//!   the spec to `date(1)` itself (see `fish/segments/clock.fish`).
+//! - Fish has no prompt-level time token, so it gets the bare spec, and
+//!   `segment_clock_render` (`fish/segments/clock.fish`) replaces that exact
+//!   text with the time it formatted through `__gpy_clock_date_format`, whose
+//!   spec must therefore match `ClockResolver::time_spec` character for
+//!   character.
 //!
 //! This is what lets the agent own the caps, colors and delimiters — the same
 //! template pipeline as every other segment — without an IPC round-trip per
@@ -53,11 +55,11 @@ impl<'a> ClockResolver<'a> {
 
     /// Build the `strftime(3)` spec for the configured clock format.
     ///
-    /// Mirrors Fish's `__gpy_clock_date_format` (`fish/segments/clock.fish`)
-    /// so all three shells agree on what a given configuration means. Fish
-    /// uses the blank-padded `%l`/`%k` and trims the result; the `%-I`/`%-H`
-    /// no-pad forms used here are equivalent after that trim and need no
-    /// trimming step, which a prompt-expansion token could not perform.
+    /// Identical, character for character, to Fish's `__gpy_clock_date_format`
+    /// (`fish/segments/clock.fish`) and the Bash/Zsh copies: Fish finds this
+    /// text in the agent's response and swaps in the formatted time. The
+    /// no-pad `%-I`/`%-H` forms need no trimming step, which a
+    /// prompt-expansion token could not perform.
     fn time_spec(&self) -> String {
         let clock = &self.theme.segments.clock;
         let is_24h = clock.time_format.as_deref() == Some("24");

@@ -20,17 +20,43 @@ if [[ $__gpy_bash_major -gt 4 || ($__gpy_bash_major -eq 4 && $__gpy_bash_minor -
     __gpy_have_printf_epoch=1
 fi
 
-# Duration tracking capability detection
-if [[ $__gpy_bash_major -ge 5 ]]; then
-    # Bash 5.0+: Use EPOCHREALTIME (microsecond precision)
-    __gpy_duration_method="epochrealtime"
-elif [[ $__gpy_bash_major -eq 4 ]]; then
-    # Bash 4.x: Use date fallback (10-20ms overhead)
-    __gpy_duration_method="date"
-else
-    # Bash 3.x: Disable duration tracking
-    __gpy_duration_method="none"
-fi
+# Duration tracking capability detection, by Bash major version, into the
+# variable named by $2.
+#   5+: EPOCHREALTIME (microsecond precision).
+#   4:  no EPOCHREALTIME, so shell out to `date`. Only GNU date understands
+#       `%N` (nanoseconds); BSD/macOS date prints a literal `N` (Homebrew's
+#       Bash 4 on a Mac), which would make every duration garbage. Probe it
+#       once: a digits-only answer is GNU date ("date"); anything else falls
+#       back to whole epoch seconds ("date-seconds", #850), a coarser but
+#       correct duration.
+#   3:  disabled ("none").
+__gpy_select_duration_method() {
+    local major="$1" out_var="$2" method
+    if [[ $major -ge 5 ]]; then
+        method="epochrealtime"
+    elif [[ $major -eq 4 ]]; then
+        if [[ "$(date +%s%N 2>/dev/null)" =~ ^[0-9]{12,}$ ]]; then
+            method="date"
+        else
+            method="date-seconds"
+        fi
+    else
+        method="none"
+    fi
+    printf -v "$out_var" '%s' "$method"
+}
+__gpy_duration_method=""
+__gpy_select_duration_method "$__gpy_bash_major" __gpy_duration_method
+
+# Whole epoch seconds into the variable named by $1: fork-free through the
+# `%(%s)T` printf conversion on Bash 4.2+, one `date +%s` fork before that.
+__gpy_now_seconds() {
+    if [[ $__gpy_have_printf_epoch -eq 1 ]]; then
+        printf -v "$1" '%(%s)T' -1
+    else
+        printf -v "$1" '%s' "$(date +%s)"
+    fi
+}
 
 # Duration tracking state
 __gpy_cmd_start_time=""
@@ -108,6 +134,8 @@ __gpy_preexec() {
         __gpy_cmd_start_time="$EPOCHREALTIME"
     elif [[ $__gpy_duration_method == "date" ]]; then
         __gpy_cmd_start_time=$(date +%s%N)
+    elif [[ $__gpy_duration_method == "date-seconds" ]]; then
+        __gpy_now_seconds __gpy_cmd_start_time
     fi
 }
 
@@ -216,6 +244,10 @@ __gpy_precmd() {
             end_time=$(date +%s%N)
             # Nanoseconds to milliseconds
             __gpy_cmd_duration=$(( (end_time - __gpy_cmd_start_time) / 1000000 ))
+        elif [[ $__gpy_duration_method == "date-seconds" ]]; then
+            local end_time
+            __gpy_now_seconds end_time
+            __gpy_cmd_duration=$(( (end_time - __gpy_cmd_start_time) * 1000 ))
         fi
     fi
 
@@ -322,6 +354,11 @@ __gpy_directory_segment_output() {
 __gpy_render_prompt() {
     local exit_code="${1:-0}"
 
+    # The previous command's exit status, read by the status segment and by
+    # __gpy_segment_bg's `status` arm (segments run in subshells that inherit
+    # this by fork). Same name as fish's global.
+    __gpy_last_status="$exit_code"
+
     # Reset the per-render oneshot-fallback budget so a dead daemon gets one
     # fresh oneshot fork this render, not zero forever (#324). A plain local
     # variable, not a predictable `${TMPDIR:-/tmp}/.gpy_oneshot_used_$$`
@@ -366,33 +403,30 @@ __gpy_render_prompt() {
 
         if declare -f "$segment_fn" &>/dev/null; then
             local segment_output
-            if [[ "$segment" == "status" ]]; then
-                segment_output=$($segment_fn "$exit_code")
+            # Convention (#613): "true" or "" -- the same tokens IPC
+            # payloads use (`,"is_last":true`) and every segment receives
+            # directly, with no per-segment last/first-literal conversion
+            # (mirrors fish_prompt.fish). The status segment is dispatched the
+            # same way (#844): it reads the exit status from __gpy_last_status.
+            local is_last=""
+            if (( segment_index == segment_count - 1 )); then
+                is_last="true"
+            fi
+            # Position-based, not segment-identity-based: whichever segment
+            # ends up first here (clock, duration, or anything else) gets
+            # is_first, so it can suppress an opening-cap glyph that makes
+            # no sense with nothing rendered before it (mirrors Fish).
+            local is_first=""
+            if (( segment_index == 0 )); then
+                is_first="true"
+            fi
+            if [[ "$segment" == "directory" ]]; then
+                # Memoized (#343): checked/written here (not inside
+                # __gpy_segment_directory) so a cache hit never forks --
+                # see __gpy_directory_segment_output above.
+                __gpy_directory_segment_output "$is_last" "$prev_bg" "$is_first" segment_output
             else
-                # Convention (#613): "true" or "" -- the same tokens IPC
-                # payloads use (`,"is_last":true`) and every segment receives
-                # directly, with no per-segment last/first-literal conversion
-                # (mirrors fish_prompt.fish).
-                local is_last=""
-                if (( segment_index == segment_count - 1 )); then
-                    is_last="true"
-                fi
-                # Position-based, not segment-identity-based: whichever segment
-                # ends up first here (clock, duration, or anything else) gets
-                # is_first, so it can suppress an opening-cap glyph that makes
-                # no sense with nothing rendered before it (mirrors Fish).
-                local is_first=""
-                if (( segment_index == 0 )); then
-                    is_first="true"
-                fi
-                if [[ "$segment" == "directory" ]]; then
-                    # Memoized (#343): checked/written here (not inside
-                    # __gpy_segment_directory) so a cache hit never forks --
-                    # see __gpy_directory_segment_output above.
-                    __gpy_directory_segment_output "$is_last" "$prev_bg" "$is_first" segment_output
-                else
-                    segment_output=$($segment_fn "$is_last" "$prev_bg" "$is_first")
-                fi
+                segment_output=$($segment_fn "$is_last" "$prev_bg" "$is_first")
             fi
 
             # A segment whose request fell back to oneshot signals it via
@@ -430,52 +464,42 @@ __gpy_render_prompt() {
     fi
 
     # Add final prompt character.
-    # The character is always agent-rendered (#199): the agent renders the prompt
-    # symbol colored by exit status (Starship-style). When the agent returns
-    # nothing (unavailable, or no theme template), fall back to the legacy symbol.
-    local char_success=0
-    [[ "$exit_code" -eq 0 ]] && char_success=1
-    local char_rendered
-    # The character's opening chevron uses fg:prev_bg too (default theme), so pass
-    # the background left behind by the last rendered segment.
-    #
-    # Memoized (#343): skip the IPC round-trip + fork entirely when the input
-    # tuple (theme identity + success + prev_bg) matches the last render. This
-    # write is made directly inside __gpy_render_prompt's own process (never a
-    # subshell in bash), so it persists across prompts unlike a write inside a
-    # `$()`-invoked segment function.
-    local char_key="${__gpy_theme_name:-}:${char_success}:${prev_bg}"
-    if [[ -n "$__gpy_char_cache_key" && "$char_key" == "$__gpy_char_cache_key" ]]; then
-        char_rendered="$__gpy_char_cache_val"
-    else
-        char_rendered="$(__gpy_request_character "$char_success" "true" "$prev_bg")"
-        # Never cache an empty/failed render: the agent-down fallback must
-        # retry on the very next prompt, not get stuck serving nothing forever.
-        if [[ -n "$char_rendered" ]]; then
-            __gpy_char_cache_key="$char_key"
-            __gpy_char_cache_val="$char_rendered"
+    # The character is always agent-rendered (#199) except for root: the agent
+    # renders the prompt symbol colored by exit status (Starship-style). When
+    # the agent returns nothing (unavailable, or no theme template), and for
+    # root, which never asks the agent, the shell draws the symbol itself
+    # (__gpy_prompt_tail, core/renderer.bash), exactly as fish_prompt does.
+    local char_rendered=""
+    if [[ "${__gpy_is_root:-0}" != "1" ]]; then
+        local char_success=0
+        [[ "$exit_code" -eq 0 ]] && char_success=1
+        # The character's opening chevron uses fg:prev_bg too (default theme), so pass
+        # the background left behind by the last rendered segment.
+        #
+        # Memoized (#343): skip the IPC round-trip + fork entirely when the input
+        # tuple (theme identity + success + prev_bg) matches the last render. This
+        # write is made directly inside __gpy_render_prompt's own process (never a
+        # subshell in bash), so it persists across prompts unlike a write inside a
+        # `$()`-invoked segment function.
+        local char_key="${__gpy_theme_name:-}:${char_success}:${prev_bg}"
+        if [[ -n "$__gpy_char_cache_key" && "$char_key" == "$__gpy_char_cache_key" ]]; then
+            char_rendered="$__gpy_char_cache_val"
+        else
+            char_rendered="$(__gpy_request_character "$char_success" "true" "$prev_bg")"
+            # Never cache an empty/failed render: the agent-down fallback must
+            # retry on the very next prompt, not get stuck serving nothing forever.
+            if [[ -n "$char_rendered" ]]; then
+                __gpy_char_cache_key="$char_key"
+                __gpy_char_cache_val="$char_rendered"
+            fi
         fi
     fi
     if [[ -n "$char_rendered" ]]; then
         prompt_output+="$char_rendered"
-    elif declare -f __gpy_segment_prompt &>/dev/null; then
-        prompt_output+=$(__gpy_segment_prompt "$exit_code")
     else
-        # Fallback prompt character
-        local color_code
-        # Set by constants.bash, overridden by the theme export.
-        # shellcheck disable=SC2154
-        case "$__prompt_color" in
-            red) color_code="31" ;;
-            green) color_code="32" ;;
-            yellow) color_code="33" ;;
-            blue) color_code="34" ;;
-            magenta) color_code="35" ;;
-            cyan) color_code="36" ;;
-            *) color_code="32" ;;
-        esac
-        # shellcheck disable=SC2154
-        prompt_output+="\[\033[${color_code}m\]${__icon_prompt}\[\033[0m\] "
+        local prompt_tail
+        __gpy_prompt_tail "$exit_code" prompt_tail
+        prompt_output+="$prompt_tail"
     fi
 
     # Set PS1. The agent's bash-prompt output escapes data text on the
