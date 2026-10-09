@@ -1,0 +1,35 @@
+# Fixture theme for the cross-shell segment golden test (#844): the same
+# ASCII delimiters as golden-ascii, with a 24-hour, zero-padded clock that
+# shows seconds, so the clock spec exercises every branch.
+
+[ui]
+prompt_icon = ">"
+prompt_color = "cyan"
+two_line = true
+
+[ui.prompt_open]
+icon = "<"
+icon_color = "white"
+bg_color = "transparent"
+
+[ui.prompt_close]
+icon = ")"
+icon_color = "white"
+bg_color = "transparent"
+
+[ui.segment_open]
+icon = "["
+icon_color = "white"
+bg_color = "transparent"
+
+[ui.segment_close]
+icon = "]"
+icon_color = "white"
+bg_color = "transparent"
+
+[segments.clock]
+text_color = "black"
+bg_color = "green"
+time_format = "24"
+show_leading_zero = true
+show_seconds = true

@@ -1,0 +1,58 @@
+# Fixture theme for the cross-shell segment golden test (#844): the clock,
+# hostname and username carry `format` templates, so the agent renders them
+# (`$time` resolves to each shell's own live-time token); the status pill is
+# always drawn by the shell.
+
+[ui]
+prompt_icon = "❯"
+prompt_color = "white"
+two_line = true
+
+[ui.prompt_open]
+icon = ""
+icon_color = "transparent"
+bg_color = "transparent"
+
+[ui.prompt_close]
+icon = ""
+icon_color = "match_bg"
+bg_color = "black"
+
+[ui.segment_open]
+icon = ""
+icon_color = "match_bg"
+bg_color = "transparent"
+
+[ui.segment_close]
+icon = ""
+icon_color = "match_bg"
+bg_color = "transparent"
+
+[segments.clock]
+format = "([$sep_open](fg:$bg bg:default))[ $time]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+text_color = "white"
+bg_color = "blue"
+time_format = "24"
+show_leading_zero = false
+show_seconds = false
+
+[segments.status]
+ok_icon = "✔"
+ok_text_color = "black"
+ok_bg_color = "green"
+fail_icon = "✖"
+fail_text_color = "black"
+fail_bg_color = "red"
+
+[segments.hostname]
+format = "([$sep_open](fg:$bg bg:default))[ $symbol$hostname]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+text_color = "black"
+bg_color = "yellow"
+icon = "@ "
+show_always = true
+
+[segments.username]
+format = "([$sep_open](fg:$bg bg:default))[ $username]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+text_color = "white"
+bg_color = "red"
+show_always = true

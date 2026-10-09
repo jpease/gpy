@@ -1,0 +1,37 @@
+# Fixture theme for the cross-shell segment golden test (#844): the same
+# templates as golden-template, with a 12-hour, zero-padded clock that shows
+# seconds. In Fish the agent's response carries the clock's strftime spec and
+# Fish swaps in the time, so every spec variant has to match the agent's.
+
+[ui]
+prompt_icon = "❯"
+prompt_color = "white"
+two_line = true
+
+[ui.prompt_open]
+icon = ""
+icon_color = "transparent"
+bg_color = "transparent"
+
+[ui.prompt_close]
+icon = ""
+icon_color = "match_bg"
+bg_color = "black"
+
+[ui.segment_open]
+icon = ""
+icon_color = "match_bg"
+bg_color = "transparent"
+
+[ui.segment_close]
+icon = ""
+icon_color = "match_bg"
+bg_color = "transparent"
+
+[segments.clock]
+format = "([$sep_open](fg:$bg bg:default))[ $time]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+text_color = "white"
+bg_color = "blue"
+time_format = "12"
+show_leading_zero = true
+show_seconds = true
