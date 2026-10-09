@@ -243,8 +243,8 @@ Theme data          ───→
 - No native JSON parsing (uses `socat` or `nc -U`)
 - `PROMPT_COMMAND` less elegant than Fish/Zsh hooks
 - Signal handling more complex (no clean repaint primitive)
-- Associative arrays require Bash 4.0+
-- macOS ships with Bash 3.2 (2007) - users should upgrade to 5.0+
+- Code avoids associative arrays, so it runs on Bash 3.2 (macOS default)
+- Duration needs `EPOCHREALTIME` (Bash 5.0+); Bash 3.2 disables that segment
 
 See [bash-limitations.md](../user/bash-limitations.md) for details.
 
@@ -322,7 +322,7 @@ zle reset-prompt  # Zsh-specific repaint primitive
 
 **Test matrix**:
 ```
-           Fish 3.6+  │  Zsh 5.8+  │  Bash 4.0+  │  Bash 5.0+
+           Fish 3.6+  │  Zsh 5.8+  │  Bash 3.2+  │  Bash 5.0+
 ─────────────────────┼────────────┼─────────────┼────────────
 IPC (json)       ✅  │     ✅     │      ✅     │     ✅
 Live updates     ✅  │     ✅     │      ⚠️     │     ✅

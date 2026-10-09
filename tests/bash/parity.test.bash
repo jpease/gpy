@@ -77,9 +77,10 @@ echo "✓ Supervisor"
 # Check duration tracking capability
 echo "✓ Duration method: $__gpy_duration_method (Bash ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]})"
 
-# Note: Bash doesn't have reliable exit cleanup like zshexit
-# This is documented in BASH_LIMITATIONS.md
-echo "⚠ Exit cleanup: unreliable in Bash (documented limitation)"
+# Exit cleanup: bash/core/signals.bash sets an EXIT trap that sends
+# `unregister`, chained behind any existing EXIT trap. Asserted end to end in
+# tests/bash/e2e_agent_autostart.test.bash.
+echo "✓ Exit cleanup: EXIT trap unregisters the client"
 
 # --- Cache key parity ---
 # The hand-copied "reference values computed from the Rust implementation"

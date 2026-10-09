@@ -1,6 +1,6 @@
 # shellcheck shell=bash source-path=SCRIPTDIR
 # gpy.bash - Entry point for Bash integration
-# Requires Bash 4.0+
+# Requires Bash 3.2+
 
 # Get the directory where this script is located
 GPY_BASH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
