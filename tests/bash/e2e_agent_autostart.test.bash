@@ -19,7 +19,8 @@
 #      edit to a tracked file made from outside the shell shows the dirty
 #      token on the next prompt;
 #   4. the client sent a `workspace` op for the `cd` (pins __gpy_sync_workspace);
-#   5. `exit` produces no error output.
+#   5. `exit` unregisters the client (bash/core/signals.bash's EXIT trap) and
+#      produces no error output.
 #
 # Every wait is a bounded poll; the transcript tail is dumped on failure.
 
@@ -166,6 +167,14 @@ if shell_e2e_poll 5 exited; then
     pass "the shell exited"
 else
     fail "the shell did not exit within 5 s"
+fi
+# The EXIT trap (bash/core/signals.bash, __gpy_handle_exit) sends `unregister`;
+# the agent's status report drops the client from its count.
+unregistered() { "$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep -q 'Registered Clients: 0'; }
+if shell_e2e_poll 5 unregistered; then
+    pass "exit unregistered the client"
+else
+    fail "the agent still counts a registered client after exit: $("$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep 'Registered Clients')"
 fi
 tail_text="$(shell_e2e_transcript "$off5")"
 case "$tail_text" in

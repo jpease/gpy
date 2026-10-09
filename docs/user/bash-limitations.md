@@ -21,7 +21,7 @@ These features work identically to Fish/Zsh:
 - **Clock segment** - Current time
 - **Agent IPC** - Full daemon communication
 - **Theme system** - Complete color/icon customization
-- **Config hot-reload** - Live config changes via the reload flag and SIGURG
+- **Config hot-reload** - Config changes apply at the next prompt (no SIGURG handler; see the Live updates notes in the matrix)
 - **Caching** - Sub-millisecond cache hits
 
 ---
@@ -140,22 +140,7 @@ benchmark script for a current figure.
 
 ---
 
-### 2. Shell Exit Cleanup (zshexit equivalent)
-
-**Status**: Unreliable in Bash
-
-**Why**:
-- `trap EXIT` is per-script, not shell-wide
-- Doesn't fire consistently on shell exit
-- Can miss `exit`, `logout`, or terminal close
-
-**Impact**: Agent client unregistration may be delayed
-
-**Mitigation**: Agent automatically prunes dead clients (no functional impact)
-
----
-
-### 3. Sub-millisecond Cache Display
+### 2. Sub-millisecond Cache Display
 
 **Status**: Bash 3.x only (macOS default)
 
@@ -169,7 +154,7 @@ benchmark script for a current figure.
 
 ### Minimum Requirements
 
-- **Bash 4.0+** required for basic functionality
+- **Bash 3.2+** required for basic functionality (macOS default)
 - **Bash 5.0+** recommended for full experience
 
 ### Optimal Setup
@@ -208,7 +193,7 @@ bash --version
 | Agent IPC | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Performance** | A+ | A | B+ | B | B- |
 | Transient prompt | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Exit cleanup | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| Exit cleanup | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 **Legend**: ✅ Full support | ⚠️ Works with caveats | ❌ Not available
 

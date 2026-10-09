@@ -55,7 +55,7 @@ a red result as a regression.
 |-------|------------------|
 | Fish | 3.6+ |
 | Zsh | 5.8+ |
-| Bash | 4.0+ (5.0+ recommended — see [Bash on macOS is too old](#bash-on-macos-is-too-old)) |
+| Bash | 3.2+ (5.0+ recommended — see [Bash on macOS is too old](#bash-on-macos-is-too-old)) |
 
 ### IPC transport dependencies
 
@@ -479,7 +479,7 @@ xattr -d com.apple.quarantine ~/.local/bin/gpy-agent
 
 ### Bash on macOS is too old
 
-macOS ships with Bash 3.2 (from 2007). GPY requires Bash 4.0+:
+macOS ships with Bash 3.2 (from 2007). GPY runs on it, but the duration segment is disabled there. Bash 5.0+ is recommended:
 
 ```bash
 # Install modern Bash via Homebrew

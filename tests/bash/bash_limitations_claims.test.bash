@@ -45,6 +45,7 @@ pin "$MATRIX" "| Agent IPC | ✅ | ✅ | ✅ | ✅ | ✅ |"
 pin "$MATRIX" "| Transient prompt | ✅ | ✅ | ❌ | ❌ | ❌ |"
 # The measured Bash limitation, in the words the E2E test cites.
 pin "$MATRIX" "An idle Bash prompt does not repaint by itself."
+pin "$MATRIX" "| Exit cleanup | ✅ | ✅ | ✅ | ✅ | ✅ |"
 pin "$MATRIX" "tests/bash/e2e_git_live_content.test.bash"
 
 echo "--- docs/user/troubleshooting.md shell comparison ---"
@@ -59,7 +60,7 @@ echo "--- docs/INSTALL.md minimum shell versions ---"
 INSTALL="docs/INSTALL.md"
 pin "$INSTALL" "| Fish | 3.6+ |"
 pin "$INSTALL" "| Zsh | 5.8+ |"
-pin "$INSTALL" "| Bash | 4.0+ (5.0+ recommended"
+pin "$INSTALL" "| Bash | 3.2+ (5.0+ recommended"
 
 # The tests the claims cite must exist.
 for t in tests/bash/e2e_git_live_content.test.bash tests/zsh/e2e_git_live_content.test.zsh \
