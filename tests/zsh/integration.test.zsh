@@ -273,11 +273,16 @@ fi
 function __gpy_request() {
     printf '%s:%s' "$1" "$4"
 }
-# __gpy_segment_git now reads the instant cache directly (#614) and only
-# falls through to __gpy_request on a cold miss, so this stub is only
-# reachable with a guaranteed miss -- point XDG_CACHE_HOME at an empty temp
+# __gpy_segment_git reads the instant cache directly (#614) and, on a cold
+# miss with the agent enabled, makes a bounded synchronous IPC query (#843)
+# through __gpy_sync_data_request instead of falling to oneshot, so that is the
+# stub reached here -- with a guaranteed miss: point XDG_CACHE_HOME at an empty
 # dir rather than relying on whatever real instant-prompt cache this
 # machine's own gpy-agent may have already written for this repo.
+function __gpy_sync_data_request() {
+    printf '%s:%s' "$1" "$3"
+}
+function __gpy_register_with_agent() { :; }
 local __gpy_last_segment_test_saved_xdg_cache_home=${XDG_CACHE_HOME:-}
 export XDG_CACHE_HOME=$(mktemp -d)
 git_last_output=$(__gpy_segment_git true)
@@ -292,6 +297,7 @@ if [[ "$git_last_output" != "git:true" ]]; then
     echo "FAIL: Git segment did not pass is_last=true: $git_last_output (status=$git_last_status)"
     exit 1
 fi
+unfunction __gpy_sync_data_request 2>/dev/null
 echo "PASS: Last segment context"
 
 echo "=== Testing Directory Display Modes ==="

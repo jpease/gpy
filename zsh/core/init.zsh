@@ -153,6 +153,13 @@ function __gpy_preexec() {
 add-zsh-hook preexec __gpy_preexec
 
 function __gpy_register_with_agent() {
+    __gpy_agent_enabled || return 1
+
+    # Already registered: a no-op (#419), so a segment's cold-miss or throttled
+    # refresh path (#843) never costs another round trip and agent rescan.
+    # Callers that must register again clear __gpy_registered first.
+    [[ -z "$__gpy_registered" ]] || return 0
+
     local request response
     request=$(__gpy_build_register_payload)
     # Only an explicit "status":"ok" counts (as in fish): an {"error":...}
@@ -190,6 +197,7 @@ function __gpy_build_workspace_payload() {
 }
 
 function __gpy_sync_workspace() {
+    __gpy_agent_enabled || return 0
     [[ -n "$__gpy_registered" ]] || return 0
     [[ "$__gpy_rejected_workspace" != "$PWD" ]] || return 0
     __gpy_rejected_workspace=""
@@ -256,7 +264,7 @@ function __gpy_precmd() {
     fi
 
     # Register on first run
-    if [[ -z "$__gpy_registered" ]]; then
+    if [[ -z "$__gpy_registered" ]] && __gpy_agent_enabled; then
         __gpy_register_with_agent
     fi
 
@@ -272,7 +280,8 @@ function __gpy_precmd() {
 
     # Periodic health check (#638): a dead agent is restarted from the next
     # prompt, rate limited and off the render path, mirroring Bash's
-    # __gpy_supervisor_check. It reads the enable flags itself (#762).
+    # __gpy_supervisor_check. It reads the enable flags itself (#762) and acts
+    # only with the agent and the supervisor both enabled (#842).
     __gpy_supervisor_check
 }
 

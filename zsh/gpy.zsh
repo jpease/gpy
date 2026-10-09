@@ -32,9 +32,10 @@ source "$GPY_ROOT/core/init.zsh"
 # Load theme from agent (overrides defaults in constants.zsh)
 __gpy_load_theme &>/dev/null
 
-# Try to start the agent once, gated like __gpy_supervisor_check and only
-# after the theme export has set the effective flags from config.toml (#762)
-[[ "${GPY_AGENT_SUPERVISOR_ENABLED:-1}" == 1 && "${GPY_AGENT_ENABLED:-1}" == 1 ]] && __gpy_start_agent
+# Try to start the agent once, only after the theme export has set the
+# effective flags from config.toml (#762). Gated on [agent] enabled alone:
+# [agent.supervisor] enabled = false turns off restarts, not this start (#842).
+__gpy_agent_enabled && __gpy_start_agent
 
 # Source segments
 for segment in "$GPY_ROOT"/segments/*.zsh; do

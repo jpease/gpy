@@ -6,6 +6,14 @@
 # ipc.zsh) without paying a `date` fork either way.
 zmodload zsh/datetime 2>/dev/null
 
+# True unless GPY_AGENT_ENABLED is set to something other than 1 (agent-free
+# mode, #841). Every path that would start, register with, or talk to the
+# agent consults this; prompt rendering never does, so it keeps working
+# through oneshot.
+function __gpy_agent_enabled() {
+    [[ "${GPY_AGENT_ENABLED:-1}" == "1" ]]
+}
+
 # Escape JSON string. Order matters: backslashes first (so escapes introduced
 # by later steps aren't re-escaped), then quotes, then control characters --
 # mirrors fish/core/ipc.fish's __gpy_json_escape exactly (#614), which also
@@ -154,6 +162,11 @@ function __gpy_untrack_shell_for_agent_recovery() {
     local file
     file=$(__gpy_shell_registry_file)
     rm -f "$file" "$file.reload" "$file.reregister" 2>/dev/null || true
+    # (N): an unregistered shell (e.g. agent-free mode) has no throttle files,
+    # and an unmatched glob must not print "no matches found" on shell exit.
+    local throttle_dir
+    throttle_dir="$(__gpy_runtime_root)/refresh-throttle"
+    rm -f "$throttle_dir"/$$.*(N) 2>/dev/null || true
 }
 
 # Directory holding the agent's pre-rendered instant-prompt cache files.
@@ -233,6 +246,10 @@ function __gpy_ms_to_secs() {
 # `read` in the current shell (not a pipe subshell) so `response` and `$?` are
 # both visible here.
 function __gpy_send_json() {
+    # Agent-free mode never talks to a daemon, even one another shell started:
+    # callers fall back to oneshot (#841).
+    __gpy_agent_enabled || return 1
+
     local json=$1
     local socket_path=$(__gpy_ipc_endpoint)
     local response="" read_status=1
@@ -588,6 +605,20 @@ function __gpy_json_flags_tail() {
     printf '%s' "$tail"
 }
 
+# Build the JSON request for a git/lang data op (format, is_last/is_first/
+# prev_bg tail, and the activated virtualenv for language detection -- see
+# fish/core/ipc.fish's __gpy_build_data_payload). One builder shared by
+# __gpy_request, __gpy_trigger_data_refresh and __gpy_sync_data_request so a
+# request-shape fix lands everywhere.
+function __gpy_build_data_request() {
+    local op=$1 cwd=$2 format=${3:-zsh-prompt} is_last=${4:-} prev_bg=${5:-} is_first=${6:-}
+    local json_cwd flags_tail venv_json=""
+    json_cwd=$(__gpy_escape_json "$cwd")
+    flags_tail=$(__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg")
+    [[ "$op" == "lang" ]] && venv_json="$(__gpy_lang_venv_json)"
+    printf '%s' "{\"op\":\"$op\",\"cwd\":\"$json_cwd\",\"format\":\"$format\"${flags_tail}${venv_json}}"
+}
+
 # Send a data op directly to the agent via IPC, bypassing the instant cache.
 # Used for background refreshes after serving a stale cache entry. No oneshot
 # fallback: without a running daemon there is no agent repaint, so the
@@ -598,13 +629,72 @@ function __gpy_trigger_data_refresh() {
     local is_last=${3:-false}
     local prev_bg=${4:-}
 
-    local json_cwd flags_tail venv_json=""
-    json_cwd=$(__gpy_escape_json "$cwd")
-    flags_tail=$(__gpy_json_flags_tail "$is_last" "" "$prev_bg")
-    # Forward the activated virtualenv for language detection (see fish/core/ipc.fish).
-    [[ "$op" == "lang" ]] && venv_json="$(__gpy_lang_venv_json)"
-    local request="{\"op\":\"$op\",\"cwd\":\"$json_cwd\",\"format\":\"zsh-prompt\"${flags_tail}${venv_json}}"
-    __gpy_send_json "$request" >/dev/null 2>&1
+    __gpy_send_json "$(__gpy_build_data_request "$op" "$cwd" zsh-prompt "$is_last" "$prev_bg" "")" >/dev/null 2>&1
+}
+
+# Bounded synchronous IPC query (#434/#436): one round-trip, IPC only -- never
+# the oneshot fallback, which is unbounded and would break the "graceful omit
+# within budget" contract. __gpy_send_json is gated on the socket existing (a
+# DOWN agent is an instant failure, no connect, no hang) and bounded by
+# GPY_IPC_TIMEOUT_MS. Prints the agent's rendered prompt text; non-zero on any miss.
+# The agent writes its own instant cache and notifies other shells while
+# handling the request, so a success needs no extra refresh. Mirrors the
+# inline `__gpy_ipc_send` block in fish/segments/git.fish.
+function __gpy_sync_data_request() {
+    local op=$1 cwd=$2 is_last=${3:-} prev_bg=${4:-} is_first=${5:-}
+    local response
+    response=$(__gpy_send_json "$(__gpy_build_data_request "$op" "$cwd" zsh-prompt "$is_last" "$prev_bg" "$is_first")" 2>/dev/null) || return 1
+    [[ -n "$response" ]] || return 1
+    printf '%s' "$response"
+}
+
+# Predicates over __gpy_read_instant_cache's exit-code status contract (0 fresh
+# hit, 1 miss, 2 stale hit, 4 fresh variant-fallback hit, 6 stale variant-
+# fallback hit -- bit 2 = stale, bit 4 = variant fallback). Mirror fish's
+# __gpy_cache_status_stale/_variant.
+function __gpy_cache_status_stale() { (( ($1 & 2) != 0 )); }
+function __gpy_cache_status_variant() { (( ($1 & 4) != 0 )); }
+
+# Epoch milliseconds without a fork (zsh/datetime's EPOCHREALTIME).
+function __gpy_now_ms() {
+    integer __gpy_ms=$(( EPOCHREALTIME * 1000 ))
+    print -r -- $__gpy_ms
+}
+
+# Directory of per-shell refresh-throttle stamps. Segments render inside
+# `$(...)` subshells, so an in-memory throttle variable (Fish's approach)
+# would be lost on return; the stamp lives on disk under the private runtime
+# root instead, keyed by this shell's PID.
+function __gpy_refresh_throttle_dir() {
+    print -r -- "$(__gpy_runtime_root)/refresh-throttle"
+}
+
+# Shared throttled background refresh dispatcher (port of Fish's
+# __gpy_maybe_refresh, #612). At most one refresh per 500ms per
+# op+suffix+path (+ optional prev_bg token for the variant-fallback path, so a
+# recent refresh for a different context cannot starve this one). Never
+# blocks: the request is backgrounded and its output discarded -- the goal is
+# the agent's side effects (recompute, instant-cache write, doorbell-on-change).
+# Agent-free mode never refreshes; a DOWN agent (no socket) is a cheap failure
+# inside __gpy_send_json, as before.
+function __gpy_maybe_refresh() {
+    local op=$1 root=$2 cache_suffix=$3 is_last=${4:-} prev_bg=${5:-} is_first=${6:-} throttle_key_extra=${7:-}
+    __gpy_agent_enabled || return 0
+
+    local dir stamp last_ms=0 now_ms
+    dir=$(__gpy_refresh_throttle_dir)
+    stamp="$dir/$$.$op.$cache_suffix.$(__gpy_path_to_cache_key "$root")${throttle_key_extra:+.$throttle_key_extra}"
+    now_ms=$(__gpy_now_ms)
+    [[ -r "$stamp" ]] && last_ms=$(<"$stamp")
+    [[ "$last_ms" == <-> ]] || last_ms=0
+    (( now_ms - last_ms >= 500 )) || return 0
+    mkdir -p "$dir" 2>/dev/null && print -r -- "$now_ms" >"$stamp" 2>/dev/null
+
+    # Cheap no-op once registered (#419); must run before the fork because a
+    # backgrounded child could not propagate __gpy_registered back.
+    __gpy_register_with_agent >/dev/null 2>&1
+
+    __gpy_trigger_data_refresh "$op" "$root" "$is_last" "$prev_bg" >/dev/null 2>&1 &!
 }
 
 # High-level request wrapper
@@ -642,14 +732,8 @@ function __gpy_request() {
         fi
     fi
 
-    local json_cwd flags_tail venv_json=""
-    json_cwd=$(__gpy_escape_json "$context_path")
-    flags_tail=$(__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg")
-    # Forward the activated virtualenv for language detection (see fish/core/ipc.fish).
-    [[ "$op" == "lang" ]] && venv_json="$(__gpy_lang_venv_json)"
-
-    # Use "cwd" as per protocol, not "path"
-    local request="{\"op\":\"$op\",\"cwd\":\"$json_cwd\",\"format\":\"$format\"${flags_tail}${venv_json}}"
+    local request
+    request=$(__gpy_build_data_request "$op" "$context_path" "$format" "$is_last" "$prev_bg" "$is_first")
 
     __gpy_send_json "$request"
     local send_status=$?

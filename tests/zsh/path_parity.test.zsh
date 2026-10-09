@@ -67,12 +67,13 @@ compare() {
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/gpy-path-parity.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
-# The theme export sets the supervisor flag from config.toml after gpy.zsh
-# loads (#762), so disable it in every config dir the cases resolve to;
-# otherwise sourcing gpy.zsh starts an agent.
+# The theme export sets the agent and supervisor flags from config.toml after
+# gpy.zsh loads (#762), so disable the agent in every config dir the cases
+# resolve to (the supervisor flag alone only stops restarts, #842); otherwise
+# sourcing gpy.zsh starts an agent.
 for cfg in "$tmp/config" "$tmp/home/.config"; do
     mkdir -p "$cfg/gpy"
-    printf '[agent.supervisor]\nenabled = false\n' >"$cfg/gpy/config.toml"
+    printf '[agent]\nenabled = false\n\n[agent.supervisor]\nenabled = false\n' >"$cfg/gpy/config.toml"
 done
 compare xdg_all_set HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache" XDG_RUNTIME_DIR="$tmp/run"
 compare runtime_unset HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache"

@@ -183,7 +183,9 @@ sync_dir=$(mktemp -d)
 __gpy_registered=1
 __gpy_last_workspace="/definitely/not/current"
 pushd "$sync_dir" >/dev/null || exit 1
-__gpy_sync_workspace
+# The sandbox config disables the agent (sourcing must not start one); workspace
+# sync is agent-only, so enable it for this call.
+GPY_AGENT_ENABLED=1 __gpy_sync_workspace
 popd >/dev/null || exit 1
 rm -rf "$sync_dir"
 captured_workspace_payload=$(cat "$captured_workspace_file")
@@ -223,8 +225,12 @@ s.bind(sys.argv[1])
     else
         __gpy_supervisor_test_saved_socket=$GPY_AGENT_SOCKET_PATH
         __gpy_supervisor_test_saved_enabled=$GPY_AGENT_SUPERVISOR_ENABLED
+        __gpy_supervisor_test_saved_agent=$GPY_AGENT_ENABLED
 
         export GPY_AGENT_SOCKET_PATH="$supervisor_test_sock"
+        # The sandbox config disables the agent (sourcing must not start one);
+        # restart supervision needs it enabled (#842).
+        export GPY_AGENT_ENABLED=1
         export GPY_AGENT_SUPERVISOR_ENABLED=1
         # Wide enough that three back-to-back calls in this test all land
         # within one window, independent of how long the test takes to run.
@@ -397,7 +403,8 @@ s.bind(sys.argv[1])
         else
             unset GPY_AGENT_SUPERVISOR_ENABLED
         fi
-        unset __gpy_supervisor_test_saved_socket __gpy_supervisor_test_saved_enabled
+        export GPY_AGENT_ENABLED=$__gpy_supervisor_test_saved_agent
+        unset __gpy_supervisor_test_saved_socket __gpy_supervisor_test_saved_enabled __gpy_supervisor_test_saved_agent
     fi
 fi
 rm -rf "$supervisor_test_tmp_dir"
@@ -417,11 +424,16 @@ fi
 __gpy_request() {
     printf '%s:%s' "$1" "$4"
 }
-# __gpy_segment_git now reads the instant cache directly (#614) and only
-# falls through to __gpy_request on a cold miss, so this stub is only
-# reachable with a guaranteed miss -- point XDG_CACHE_HOME at an empty temp
+# __gpy_segment_git reads the instant cache directly (#614) and, on a cold
+# miss with the agent enabled, makes a bounded synchronous IPC query (#843)
+# through __gpy_sync_data_request instead of falling to oneshot, so that is the
+# stub reached here -- with a guaranteed miss: point XDG_CACHE_HOME at an empty
 # dir rather than relying on whatever real instant-prompt cache this
 # machine's own gpy-agent may have already written for this repo.
+__gpy_sync_data_request() {
+    printf '%s:%s' "$1" "$3"
+}
+__gpy_register_with_agent() { :; }
 __gpy_last_segment_test_saved_xdg_cache_home=${XDG_CACHE_HOME:-}
 __gpy_last_segment_test_tmp_cache_home="$(mktemp -d)"
 export XDG_CACHE_HOME="$__gpy_last_segment_test_tmp_cache_home"
@@ -438,6 +450,7 @@ if [[ "$git_last_output" != "git:true" ]]; then
     echo "FAIL: Git segment did not pass is_last=true: $git_last_output (status=$git_last_status)"
     exit 1
 fi
+unset -f __gpy_sync_data_request
 echo "PASS: Last segment context"
 
 echo "=== Testing Full Prompt ==="

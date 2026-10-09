@@ -49,6 +49,16 @@ test_require_command() {
 #                           resolve (build if needed) the debug agent, prepend
 #                           it to PATH, git-init $SHELL_E2E_REPO with one
 #                           commit, arm an EXIT trap that tears everything down
+# shell_e2e_agent_free_begin / shell_e2e_agent_free_end
+#                           source the integration without a daemon starting
+#                           under it, then put PATH back. The theme export
+#                           re-sets GPY_AGENT_ENABLED from config.toml, so an
+#                           env value alone cannot keep the startup start away
+#                           (#841, #842); with no gpy-agent on PATH there is
+#                           neither an export nor an agent to start. Run
+#                           `GPY_AGENT_ENABLED=0 source ...` between the two
+#                           calls, then export GPY_AGENT_ENABLED=1 for the
+#                           call-time reads.
 # shell_e2e_start_agent     start the agent, wait <= 3 s until it answers
 # shell_e2e_stop_agent      stop it (socket-scoped force kill as a fallback)
 # shell_e2e_spawn_client SH spawn an interactive bash or zsh on a pty through
@@ -196,6 +206,17 @@ shell_e2e_poll() {
         _attempts=$(( _attempts - 1 ))
     done
     return 1
+}
+
+# A PATH with no gpy-agent on it (system directories only); the previous PATH
+# is kept for shell_e2e_agent_free_end.
+shell_e2e_agent_free_begin() {
+    SHELL_E2E_SAVED_PATH="$PATH"
+    PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+}
+
+shell_e2e_agent_free_end() {
+    PATH="$SHELL_E2E_SAVED_PATH"
 }
 
 shell_e2e_start_agent() {
