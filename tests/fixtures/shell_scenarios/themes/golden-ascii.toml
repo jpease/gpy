@@ -1,0 +1,58 @@
+# Fixture theme for the cross-shell segment golden test (#844): ASCII
+# delimiters, no segment templates, so the clock, status, hostname and
+# username are all drawn by the shell itself. Named colors only: every shell
+# maps them to the same SGR codes.
+
+[ui]
+prompt_icon = ">"
+prompt_color = "cyan"
+root_prompt_icon = "#"
+root_prompt_color = "yellow"
+two_line = true
+
+[ui.prompt_open]
+icon = "<"
+icon_color = "white"
+bg_color = "transparent"
+
+[ui.prompt_close]
+icon = ")"
+icon_color = "white"
+bg_color = "transparent"
+
+[ui.segment_open]
+icon = "["
+icon_color = "white"
+bg_color = "transparent"
+
+[ui.segment_close]
+icon = "]"
+icon_color = "white"
+bg_color = "transparent"
+
+[segments.clock]
+text_color = "white"
+bg_color = "blue"
+time_format = "12"
+show_leading_zero = false
+show_seconds = false
+
+[segments.status]
+ok_icon = "ok"
+ok_text_color = "black"
+ok_bg_color = "cyan"
+fail_icon = "ERR"
+fail_text_color = "white"
+fail_bg_color = "magenta"
+
+[segments.hostname]
+text_color = "black"
+bg_color = "yellow"
+icon = "@"
+show_always = true
+
+[segments.username]
+text_color = "white"
+bg_color = "red"
+icon = "~"
+show_always = true

@@ -1,0 +1,93 @@
+# Cross-shell contract scenarios (#844, #847). The ONE place a drift fix adds a
+# row: tests/bash/shell_contract.test.bash runs every row through the real Fish,
+# Bash and Zsh integrations (tests/lib/shell_scenarios/render.*), each in its own
+# sandbox, and requires the normalized prompt AND the observable side effects to
+# be identical across the three shells.
+#
+# One scenario per line, TAB-separated. A cell is never empty: write `-`. The
+# last five columns are optional; leave them off for a row against a live agent.
+#
+#   name  theme  segments  status  env  flags  agent  cwd  config  prime  expect
+#
+# name      unique label (SCN_FILTER=<regex> selects rows by it)
+# theme     a theme in themes/ (copied into the sandbox), a built-in theme name,
+#           or `variant-git` (the default theme with the git opening separator
+#           read from the previous segment's colour, built by the harness)
+# segments  comma-separated [ui] enabled_segments
+# status    the previous command's exit status the prompt is rendered for
+# env       space-separated KEY=VALUE pairs exported to the shell under test, or -
+#           (HOME=, GPY_IPC_TIMEOUT_MS=150, GPY_GIT_INSTANT_CACHE_TTL_SECONDS=0 ...)
+# flags     comma-separated, or -:
+#             root                force the root-session flag
+#             mask_seconds        the clock shows seconds, which differ between
+#                                 the shells' samples of the time
+#             drop_variants       after the `prime` render, delete every git
+#                                 instant-cache entry but the context-free `.none`
+#             down_after_prime    stop the agent after the `prime` render
+#             aged_cache          wait 2.2 s after the `prime` render, so what it
+#                                 cached is older than a 1 s TTL
+# agent     up    the real agent, behind the recording IPC proxy (default)
+#           down  no agent and no socket
+#           slow  up, but a data request (git, directory, ...) is held 1.8 s
+#                 before the agent sees it; register/ping/status are not
+# cwd       `repo` (a scratch git repo with one commit), or an absolute path;
+#           `-` is the checkout (default)
+# config    extra config.toml text appended after [ui] ("\n" is a newline), or -.
+#           The supervisor is off unless the text has an [agent.supervisor] table
+# prime     segments of a throw-away render done first (so the instant cache
+#           holds something), after which the observation log is cleared, or -
+# expect    space-separated absolute checks applied to EACH shell, or -:
+#             starts=N  oneshots=a,b|-  registers=N  ipc_total=N  ipc.<op>=N
+#             other_calls=a,b|-   (the keys effects.py prints; an absent ipc.<op> is 0)
+#             prompt~=TEXT  prompt!~=TEXT   (normalized prompt contains / lacks TEXT)
+#
+# Side effects are what the shells did to the agent, seen from outside: `gpy-agent`
+# invocations (start/restart are recorded but not performed; oneshot forks) and IPC
+# requests by op, minus ping/status/unregister (see effects.py). A cross-shell
+# difference fails the row even without an `expect`; `expect` pins the value so
+# three shells that regress together fail too.
+#
+# --- golden rows (#844): shell-drawn clock, status, hostname, username, root prompt
+ascii-ok	golden-ascii	clock,status,hostname,username	0	SSH_CONNECTION=10.0.0.1	-
+ascii-fail	golden-ascii	clock,status,hostname,username	127	SSH_CONNECTION=10.0.0.1	-
+ascii-local-session	golden-ascii	clock,status,hostname,username	1	-	-
+ascii-status-only	golden-ascii	status	0	-	-
+ascii-status-first	golden-ascii	status,hostname	3	-	-
+ascii-status-last	golden-ascii	clock,status	3	-	-
+ascii-root	golden-ascii	clock,status,username	0	-	root
+ascii-root-fail-no-indicator	golden-ascii	clock,username	2	GPY_SHOW_STATUS=0	root
+ascii-clock-24h-seconds	golden-ascii-24h	clock	0	-	mask_seconds
+powerline-ok	golden-powerline	clock,status,hostname,username	0	SSH_CONNECTION=10.0.0.1 COLORTERM=truecolor	-
+powerline-fail	golden-powerline	clock,status,hostname,username	1	COLORTERM=truecolor	-
+powerline-root	golden-powerline	status,username	0	COLORTERM=truecolor	root
+template-ok	golden-template	clock,status,hostname,username	0	SSH_CONNECTION=10.0.0.1	-
+template-fail	golden-template	clock,status,hostname,username	1	-	-
+template-root	golden-template	clock,status,username	0	-	root
+starship-flat	starship	clock,status	0	-	-
+template-clock-12h-seconds	golden-template-12h	clock	0	-	mask_seconds
+
+# --- behaviour rows (#847): the drifts the cross-shell epic fixed
+# #841 agent disabled: the prompt still renders (oneshot), nothing is started or registered
+disabled	default	directory	0	-	-	down	repo	[agent]\nenabled = false	-	starts=0 registers=0 ipc_total=0 oneshots=directory
+# #842 `[agent.supervisor] enabled=false` only gates restarts: the agent is still started
+supervisor-off-down	default	directory,git	0	-	-	down	repo	[agent.supervisor]\nenabled = false	-	starts=1 registers=0 oneshots=directory prompt!~=main
+# #843 cold git miss, agent down: the segment is omitted, no foreground `oneshot git`
+cold-miss-down	default	directory,git	0	-	-	down	repo	-	-	starts=1 registers=0 oneshots=directory prompt!~=main
+# #843 cold git miss, agent up: one bounded synchronous query
+cold-miss-up	default	directory,git	0	-	-	up	repo	-	-	starts=0 registers=1 oneshots=- ipc.git=1 prompt~=main
+# #843 variant fallback: a git entry for the wrong previous colour is corrected by one bounded sync query...
+variant-up	variant-git	status,git	0	-	drop_variants	up	repo	-	git	starts=0 oneshots=- ipc.git=1 prompt~=main
+# ...or, with the agent gone, the context-free entry is served as is
+variant-down	variant-git	status,git	0	-	drop_variants,down_after_prime	up	repo	-	git	starts=1 oneshots=character ipc_total=0 prompt~=main
+# #845 slow reply (connected, late): omitted, no oneshot fork, no resend. Two git requests
+# are the sync query plus the one throttled background refresh a miss queues; a resend
+# of the sync query would make it three.
+slow-reply	default	directory,git	0	GPY_IPC_TIMEOUT_MS=150	-	slow	repo	-	-	starts=0 registers=1 oneshots=- ipc.git=2 prompt!~=main
+# #845 GPY_IPC_TIMEOUT_MS is honoured: a budget longer than the delay uses the late reply
+ipc-timeout-long	default	directory,git	0	GPY_IPC_TIMEOUT_MS=5000	-	slow	repo	-	-	starts=0 oneshots=- ipc.git=1 prompt~=main
+# #845 GPY_GIT_INSTANT_CACHE_TTL_SECONDS is honoured: a fresh entry is served with no git request...
+ttl-fresh	default	directory,git	0	GPY_GIT_INSTANT_CACHE_TTL_SECONDS=3600	-	up	repo	-	git	starts=0 oneshots=- ipc.git=0 prompt~=main
+# ...and an expired one is still drawn (stale) and the agent is asked to refresh it
+ttl-expired	default	directory,git	0	GPY_GIT_INSTANT_CACHE_TTL_SECONDS=1	aged_cache	up	repo	-	git	starts=0 oneshots=- ipc.git=1 prompt~=main
+# #845 empty HOME: the same prompt and requests with HOME= as with a home
+empty-home	default	directory,git	0	HOME=	-	up	repo	-	-	starts=0 registers=1 oneshots=- ipc.git=1 prompt~=main
