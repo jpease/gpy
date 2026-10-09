@@ -571,7 +571,7 @@ exec fish  # or zsh, bash
 
 - GPY runs in WSL (Windows Subsystem for Linux)
 - Use the Linux installation instructions within WSL
-- Native Windows (PowerShell) is not supported
+- Native Windows (PowerShell) is not supported for the prompt integration or the agent (IPC is Unix-socket only). Only the CLI builds and runs there; see the operating-systems table above.
 
 ## Support
 

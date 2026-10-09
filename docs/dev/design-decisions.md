@@ -23,7 +23,7 @@ GPY is a **Fish shell prompt enhancement tool**. All design decisions should be 
 - TCP fallback would never be used in practice
 
 **Decision**: Use **Unix domain sockets primarily**. Simple, clean, covers 100% of real usage on Unix-like systems.
-*Note: The agent contains minimal, non-blocking code for Windows named pipes as a transport layer, though this is not a primary support target as Fish shell runs in WSL on Windows.*
+*Note: There is no Windows transport. Named pipes are not implemented: `ipc/transport.rs` and the client/server entry points return `native_windows_unsupported()` on non-Unix targets, so native Windows is CLI-only and the prompt integration runs under WSL.*
 
 ### ❌ **Premature Optimization**
 
