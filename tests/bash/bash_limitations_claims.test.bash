@@ -42,7 +42,13 @@ pin "$MATRIX" "| **Duration** | ✅ | ✅ | ✅ | ⚠️ | ❌ |"
 pin "$MATRIX" "| **Live updates** | ✅ idle prompt repaints | ✅ idle prompt repaints | ⚠️ shown at next prompt | ⚠️ shown at next prompt | ⚠️ shown at next prompt |"
 pin "$MATRIX" "| Config hot-reload | ✅ | ✅ | ✅ | ✅ | ✅ |"
 pin "$MATRIX" "| Agent IPC | ✅ | ✅ | ✅ | ✅ | ✅ |"
-pin "$MATRIX" "| Transient prompt | ✅ | ✅ | ❌ | ❌ | ❌ |"
+pin "$MATRIX" "| Transient prompt | ❌ | ❌ | ❌ | ❌ | ❌ |"
+# The row above is only true while no shell implements it; fail loudly when one does.
+if grep -rliE 'transient[ _-]?prompt' fish bash zsh >/dev/null 2>&1; then
+    fail "a shell file mentions 'transient': if the transient prompt is now implemented, update the matrix rows and the troubleshooting table"
+else
+    pass "no shell implements a transient prompt"
+fi
 # The measured Bash limitation, in the words the E2E test cites.
 pin "$MATRIX" "An idle Bash prompt does not repaint by itself."
 pin "$MATRIX" "| Exit cleanup | ✅ | ✅ | ✅ | ✅ | ✅ |"

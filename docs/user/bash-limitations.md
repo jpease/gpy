@@ -129,12 +129,11 @@ benchmark script for a current figure.
 
 ### 1. Transient Prompt
 
-**Status**: Not implemented in Bash version
+**Status**: Not implemented in any shell (Fish, Zsh or Bash)
 
 **Why**:
-- Bash has no clean way to rewrite prompt history
-- Would require fragile terminal control sequences
-- High risk of breaking terminal state
+- No shell integration collapses the previous prompt after you press Enter
+- In Bash it would additionally need fragile terminal control sequences to rewrite prompt history, with a high risk of breaking terminal state
 
 **Workaround**: Use full prompt mode (standard behavior)
 
@@ -192,7 +191,7 @@ bash --version
 | Config hot-reload | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Agent IPC | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Performance** | A+ | A | B+ | B | B- |
-| Transient prompt | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Transient prompt | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Exit cleanup | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 **Legend**: ✅ Full support | ⚠️ Works with caveats | ❌ Not available
@@ -218,7 +217,6 @@ bash --version
 
 ⚠️ **Consider alternatives**:
 - macOS with default Bash 3.2 → Use Fish or Zsh
-- Need transient prompt → Use Fish or Zsh
 - Need absolute fastest performance → Use Fish or Zsh
 
 ### Migration Path
@@ -269,6 +267,6 @@ Bash support in GPY is **production-ready** with understood trade-offs:
 - ✅ **Core functionality**: 100% feature parity for git/language/segments
 - ⚠️ **Advanced features**: Some limitations (duration precision, live updates reliability)
 - ⚠️ **Performance**: 20-30% slower than Zsh, still faster than Starship
-- ❌ **Missing**: Transient prompt, reliable exit cleanup
+- ❌ **Missing**: Transient prompt (not implemented in any shell)
 
 **Bottom line**: Bash 5 users get ~90% of the Fish/Zsh experience. Bash 3/4 users get ~75%. Still better than most alternatives.

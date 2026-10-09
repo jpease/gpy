@@ -37,7 +37,7 @@ Condensed from the full [Bash Limitations](bash-limitations.md) matrix, with Fis
 |---|---|---|---|---|
 | Live updates | Full: idle prompt repaints in place | Full: idle prompt repaints in place (re-rendered in `TRAPURG`, #637) | Shown at the next prompt: readline cannot repaint an idle prompt (measured, see [Bash Limitations](bash-limitations.md#2-live-updates)) | Same as Bash 5.x |
 | Config/theme hot-reload | Full | Full | Full | Full |
-| Transient prompt | Yes | Yes | No | No |
+| Transient prompt | No | No | No | No |
 | Duration segment precision | Millisecond | Millisecond (`EPOCHREALTIME`) | Millisecond (`EPOCHREALTIME`) | Not available — segment disabled |
 | Relative performance | Fastest (A+) | A | B+ | B- (slowest) |
 | Signal mechanism | One `--on-signal SIGURG` handler | Native `TRAPURG` function | No trap: SIGURG ignored, flags read at the next prompt (#678) | Same as Bash 5.x |
@@ -113,7 +113,7 @@ Zsh is at parity with Fish for live updates: `TRAPURG` re-renders `PROMPT` and c
 
 ## Bash-Specific Issues
 
-Bash support is functionally complete but has real, well-documented caveats: duration-segment precision varies by Bash version (disabled entirely on Bash 3.x, macOS's default), live updates are less reliable than Fish/Zsh due to Bash's `trap` mechanism, transient prompt isn't implemented, and overall performance is 20-30% slower than Zsh. macOS ships Bash 3.2 by default — most Bash-related reports trace back to that. See [Bash Limitations](bash-limitations.md) for the full version matrix, benchmarks, migration paths, and known-issues list; that document is authoritative and this guide won't restate it.
+Bash support is functionally complete but has real, well-documented caveats: duration-segment precision varies by Bash version (disabled entirely on Bash 3.x, macOS's default), live updates are shown at the next prompt rather than repainting an idle one, and overall performance is 20-30% slower than Zsh. macOS ships Bash 3.2 by default — most Bash-related reports trace back to that. See [Bash Limitations](bash-limitations.md) for the full version matrix, benchmarks, migration paths, and known-issues list; that document is authoritative and this guide won't restate it.
 
 ---
 
