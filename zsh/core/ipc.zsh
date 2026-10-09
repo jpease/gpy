@@ -231,7 +231,43 @@ function __gpy_ms_to_secs() {
     printf -v "$out_var" '%d.%03d' "$(( ms / 1000 ))" "$(( ms % 1000 ))"
 }
 
-# Send raw JSON message to agent
+# Does nc(1) take -U (Unix sockets)? Probed once with `nc -h` and cached, the
+# way Fish does (#850): netcat-traditional has no -U, and treating it as a
+# client would fail every request after forking it. The cache lives in the
+# shell, but prompt segments run in `$(...)` subshells that cannot write it
+# back, so the probe is also run once at source time when nc is the client
+# that would be used (below).
+typeset -g __gpy_nc_supports_unix=""
+function __gpy_nc_probe_capabilities() {
+    [[ -n "$__gpy_nc_supports_unix" ]] && return 0
+    local help
+    __gpy_nc_supports_unix=0
+    if (( $+commands[nc] )); then
+        help="$(nc -h 2>&1)"
+        [[ "$help" == *-U* ]] && __gpy_nc_supports_unix=1
+    fi
+    return 0
+}
+if __gpy_agent_enabled && ! (( $+commands[socat] )); then
+    __gpy_nc_probe_capabilities
+fi
+
+# True when a socat or nc client (the fallbacks behind zsocket) is usable.
+function __gpy_ipc_client_available() {
+    (( $+commands[socat] )) && return 0
+    (( $+commands[nc] )) || return 1
+    __gpy_nc_probe_capabilities
+    [[ "$__gpy_nc_supports_unix" == 1 ]]
+}
+
+# Send raw JSON message to agent. Prints the reply and returns:
+#   0  a complete reply arrived within GPY_IPC_TIMEOUT_MS;
+#   1  the agent could not be reached (no socket, connection refused, no
+#      usable client, agent-free mode);
+#   2  the agent accepted the request but sent no complete reply in the
+#      budget. The request is already on the wire, so the caller must not
+#      recompute the segment with a oneshot fork (#757); it omits the segment
+#      this render. Bash and Fish apply the same three outcomes (#845).
 #
 # Every read here checks its own exit status rather than just `-n "$response"`:
 # `read` (both the zsocket fd read and the `IFS= read -r < <(...)` process-
@@ -245,6 +281,13 @@ function __gpy_ms_to_secs() {
 # so the socat/nc branches use process substitution instead, which keeps
 # `read` in the current shell (not a pipe subshell) so `response` and `$?` are
 # both visible here.
+#
+# The socat/nc client's exit status rides the same stream, as `\037<status>\n`
+# after whatever the client printed: `read` has no other way to learn whether
+# the client connected (a late agent: exit 0, or 124 when `timeout` killed nc)
+# or never did (a refused or vanished socket: exit 1). A complete reply is
+# read before the trailer ever matters; a partial or absent one leaves the
+# marker in the line. \037 (unit separator) is not emitted by any renderer.
 function __gpy_send_json() {
     # Agent-free mode never talks to a daemon, even one another shell started:
     # callers fall back to oneshot (#841).
@@ -252,7 +295,7 @@ function __gpy_send_json() {
 
     local json=$1
     local socket_path=$(__gpy_ipc_endpoint)
-    local response="" read_status=1
+    local response="" read_status=1 client_status="" connected_codes=" 0 "
     local zsocket_connected=0 timeout_secs
     # One reply budget for every transport (#757); guarded against a
     # non-numeric GPY_IPC_TIMEOUT_MS by __gpy_ms_to_secs.
@@ -297,16 +340,13 @@ function __gpy_send_json() {
             print -r -- "$response"
             return 0
         fi
-        # 2 = connected, but no complete reply within the budget: the agent
-        # is alive and still working, so the caller must not fork a oneshot
-        # (#757). 1 stays "could not reach the agent".
         return 2
     fi
 
     # 2. Try socat
     read_status=1
     if (( $+commands[socat] )); then
-        IFS= read -r response < <(print -r -- "$json" | socat -t $timeout_secs - UNIX-CONNECT:"$socket_path" 2>/dev/null)
+        IFS= read -r response < <(print -r -- "$json" | socat -t $timeout_secs - UNIX-CONNECT:"$socket_path" 2>/dev/null; printf '\037%s\n' "$?")
         read_status=$?
 
     # 3. Try nc (BSD/macOS style with -U). nc's -w only accepts whole
@@ -314,15 +354,22 @@ function __gpy_send_json() {
     # second rather than the ~150ms IPC target ($GPY_IPC_TIMEOUT_MS); wrap
     # with `timeout` for a tighter bound when it's available (#324). Falls
     # back to the coarser -w 1 bound otherwise.
-    elif (( $+commands[nc] )); then
+    elif __gpy_ipc_client_available; then
         if (( $+commands[timeout] )); then
-            IFS= read -r response < <(print -r -- "$json" | timeout "$timeout_secs" nc -U "$socket_path" -w 1 2>/dev/null)
+            IFS= read -r response < <(print -r -- "$json" | timeout "$timeout_secs" nc -U "$socket_path" -w 1 2>/dev/null; printf '\037%s\n' "$?")
+            # 124: `timeout` killed an nc that had connected and was waiting.
+            connected_codes=" 0 124 "
         else
-            IFS= read -r response < <(print -r -- "$json" | nc -U "$socket_path" -w 1 2>/dev/null)
+            IFS= read -r response < <(print -r -- "$json" | nc -U "$socket_path" -w 1 2>/dev/null; printf '\037%s\n' "$?")
         fi
         read_status=$?
     else
         return 1
+    fi
+
+    if [[ "$response" == *$'\037'* ]]; then
+        client_status=${response##*$'\037'}
+        response=""
     fi
 
     if [[ $read_status -eq 0 && -n "$response" ]]; then
@@ -330,6 +377,13 @@ function __gpy_send_json() {
         return 0
     fi
 
+    # No usable reply. A client that connected, or a complete-but-empty reply
+    # line, means the agent is alive: report it as late, not as unreachable.
+    if [[ -n "$client_status" ]]; then
+        [[ "$connected_codes" == *" $client_status "* ]] && return 2
+    elif [[ $read_status -eq 0 ]]; then
+        return 2
+    fi
     return 1
 }
 
@@ -820,13 +874,16 @@ function __gpy_request_duration() {
     flags_tail=$(__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg")
     local request="{\"op\":\"duration\",\"duration_ms\":${duration_ms},\"format\":\"zsh-prompt\"${flags_tail}}"
 
-    local result
+    local result send_status
     result=$(__gpy_send_json "$request")
+    send_status=$?
 
     # NOTE: oneshot fallback does not pass prev_bg — the CLI subcommand has no
     # --prev-bg flag (mirrors fish). is_first IS passed (--first, #401).
+    # Status 2 (connected, reply late) never forks one: the agent is computing
+    # this segment already (#757).
     local used_oneshot=0
-    if [[ -z "$result" ]] && (( $+commands[gpy-agent] )) && __gpy_oneshot_claim; then
+    if [[ -z "$result" ]] && (( send_status != 2 )) && (( $+commands[gpy-agent] )) && __gpy_oneshot_claim; then
         used_oneshot=1
         local -a args
         args=(duration --duration-ms "$duration_ms" --format zsh-prompt)
@@ -953,10 +1010,12 @@ function __gpy_request_character() {
     flags_tail=$(__gpy_json_flags_tail "$is_last" "" "$prev_bg")
     local request="{\"op\":\"character\",\"success\":${success_val},\"format\":\"zsh-prompt\"${flags_tail}}"
 
-    local result used_oneshot=0
+    local result send_status used_oneshot=0
     result=$(__gpy_send_json "$request")
+    send_status=$?
 
-    if [[ -z "$result" ]] && (( $+commands[gpy-agent] )) && __gpy_oneshot_claim; then
+    # Status 2 (connected, reply late) never forks a oneshot (#757).
+    if [[ -z "$result" ]] && (( send_status != 2 )) && (( $+commands[gpy-agent] )) && __gpy_oneshot_claim; then
         used_oneshot=1
         local exit_code=1
         [[ "$success" == "1" ]] && exit_code=0

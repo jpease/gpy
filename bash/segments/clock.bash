@@ -5,8 +5,11 @@
 #
 # Mirrors fish's `__gpy_clock_date_format` and the agent's
 # `ClockResolver::time_spec`, which is the authority whenever the agent
-# renders. This copy exists for the fallback path below; the `%-I`/`%-H`
-# no-pad forms match what fish produces after its `string trim`.
+# renders. This copy exists for the local path below; the `%-I`/`%-H` no-pad
+# forms match what fish produces after its `string trim`.
+#
+# Two calling conventions, as __gpy_segment_bg: `__gpy_clock_time_spec` prints
+# the spec; `__gpy_clock_time_spec OUT_VAR` assigns it fork-free.
 __gpy_clock_time_spec() {
     local time_format="${__time_format:-12}"
     local leading_zero="${__clock_show_leading_zero:-0}"
@@ -21,10 +24,14 @@ __gpy_clock_time_spec() {
         hour="%-I"
     fi
 
-    local spec="${hour}:%M"
-    [[ "$show_seconds" == "1" ]] && spec="${spec}:%S"
-    [[ "$time_format" != "24" ]] && spec="${spec} %p"
-    printf '%s' "$spec"
+    local __spec="${hour}:%M"
+    [[ "$show_seconds" == "1" ]] && __spec="${__spec}:%S"
+    [[ "$time_format" != "24" ]] && __spec="${__spec} %p"
+    if [[ -n "${1:-}" ]]; then
+        printf -v "$1" '%s' "$__spec"
+    else
+        printf '%s' "$__spec"
+    fi
 }
 
 # is_last/is_first arrive already as "true"/"" (#613: init.bash's dispatch-loop
@@ -34,11 +41,12 @@ __gpy_segment_clock() {
     local prev_bg="${2:-}"
     local is_first="${3:-}"
 
-    # Agent-rendered whenever the theme sets `[segments.clock].format`, like
-    # every other segment. The agent owns the powerline caps, the delimiter
-    # colors and the time format; the response embeds bash's `\D{…}` token so
-    # the clock keeps ticking without an IPC call per second.
-    if declare -F __gpy_request_clock >/dev/null 2>&1; then
+    # Agent-rendered whenever the theme sets `[segments.clock].format` (the
+    # exported `__clock_format` presence flag, as for hostname/username), the
+    # same rule as Fish (#844). The agent owns the powerline caps, the
+    # delimiter colors and the time format; the response embeds bash's `\D{...}`
+    # token so the clock keeps ticking without an IPC call per second.
+    if [[ -n "${__clock_format:-}" ]] && declare -F __gpy_request_clock >/dev/null 2>&1; then
         local rendered
         rendered="$(__gpy_request_clock "$is_last" "$prev_bg" "$is_first")"
         if [[ -n "$rendered" ]]; then
@@ -47,43 +55,14 @@ __gpy_segment_clock() {
         fi
     fi
 
-    # Fallback: no clock template in the theme, or the agent is unreachable.
-    # Renders an uncapped block — bash has no local powerline-cap renderer —
-    # but still honors the configured time format so a fallback clock does not
-    # silently disagree with fish about what "12-hour, no seconds" means.
-    local bg="${__color_clock_bg:-cyan}"
-    local fg="${__color_clock_fg:-black}"
-    local icon="${__icon_clock:-}"
-
-    # Convert colors to ANSI codes. `transparent` (e.g. the flat Starship preset)
-    # maps to the terminal default (SGR 49 bg / 39 fg) so the clock blends in
-    # instead of falling through to the `*)` fallback color.
-    local bg_code fg_code
-    case "$bg" in
-        black) bg_code="40" ;;
-        red) bg_code="41" ;;
-        green) bg_code="42" ;;
-        yellow) bg_code="43" ;;
-        blue) bg_code="44" ;;
-        magenta) bg_code="45" ;;
-        cyan) bg_code="46" ;;
-        white) bg_code="47" ;;
-        transparent) bg_code="49" ;;
-        *) bg_code="46" ;;
-    esac
-
-    case "$fg" in
-        black) fg_code="30" ;;
-        red) fg_code="31" ;;
-        green) fg_code="32" ;;
-        yellow) fg_code="33" ;;
-        blue) fg_code="34" ;;
-        magenta) fg_code="35" ;;
-        cyan) fg_code="36" ;;
-        white) fg_code="37" ;;
-        transparent) fg_code="39" ;;
-        *) fg_code="30" ;;
-    esac
-
-    printf '%s\n' "\[\033[${bg_code};${fg_code}m\] ${icon} \D{$(__gpy_clock_time_spec)} \[\033[0m\]"
+    # Local path: no clock template in the theme, or the agent is unreachable.
+    # Drawn by the shared shell-side renderer, so the caps, colors and gap match
+    # fish's local clock for the same theme. The `\D{...}` token is bash's own
+    # live-time prompt escape, expanded at every draw.
+    local spec pad
+    __gpy_clock_time_spec spec
+    # Leading pad, like fish: keeps the time off the segment's opening cap.
+    __gpy_prompt_escape "${__prompt_time_pad- }" pad
+    __gpy_section_standalone "${__color_clock_bg:-}" "${__color_clock_fg:-}" \
+        "${pad}\\D{${spec}}" "$is_last" "$is_first"
 }

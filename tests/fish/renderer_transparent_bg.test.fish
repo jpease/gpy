@@ -71,6 +71,30 @@ else
     check "append: transparent bg emits no set_color error (stderr: $err2)" fail
 end
 
+# --- gpy_section_standalone, delimiters that borrow a transparent bg ---
+# The powerline themes draw their caps in `match_bg`/`match_text`: the segment's
+# OWN colors, which for a flat clock/status are `transparent`. The keyword must
+# be mapped to the default before a delimiter borrows it, or set_color gets the
+# literal `transparent` (#844).
+set -g __prompt_open_color match_bg
+set -g __prompt_close_color match_text
+set -g __segment_delimiter_color match_bg
+set -g __segment_delimiter_bg match_text
+for position in first middle
+    for last in true ""
+        set -g __gpy_segment_position $position
+        set -l err_file3 (mktemp)
+        gpy_section_standalone transparent transparent x $last 2>$err_file3 >/dev/null
+        set -l err3 (cat $err_file3)
+        rm -f $err_file3
+        if not string match -q '*Unknown color*' -- "$err3"
+            check "standalone ($position, last='$last'): match_bg/match_text over a transparent segment emits no set_color error" pass
+        else
+            check "standalone ($position, last='$last'): match_bg/match_text over a transparent segment emits no set_color error (stderr: $err3)" fail
+        end
+    end
+end
+
 rm -f $err_file $err_file2
 
 if test $fail_count -gt 0

@@ -60,8 +60,11 @@ function segment_hostname_render --argument-names is_last
         return
     end
 
-    # Pure-fish path: zero forks, zero IPC.
-    set -l name (__gpy_hostname_trim $hostname $__hostname_trim_at)
+    # Pure-fish path: zero forks, zero IPC. An unset trim delimiter means the
+    # default `.`, as in Bash/Zsh (#844); an explicit empty one means "no trim".
+    set -l trim_at .
+    set -q __hostname_trim_at; and set trim_at "$__hostname_trim_at"
+    set -l name (__gpy_hostname_trim $hostname "$trim_at")
     set -l label "$name"
     test "$__gpy_is_ssh" = 1; and test -n "$__icon_hostname"; and set label "$__icon_hostname $name"
     gpy_section_standalone $__color_hostname_bg $__color_hostname_fg "$label" $is_last

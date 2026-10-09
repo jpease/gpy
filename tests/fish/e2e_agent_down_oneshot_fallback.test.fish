@@ -106,7 +106,7 @@ function test_agent_down_oneshot_fallback
 
     # New render, agent down + stale cache present. Clear the per-render oneshot
     # marker first (fish_prompt normally does this each prompt).
-    rm -f (__gpy_oneshot_marker) 2>/dev/null
+    set -e __gpy_oneshot_used
     set -l after (segment_git_render)
 
     if test -z "$after"
@@ -121,28 +121,6 @@ function test_agent_down_oneshot_fallback
         print_test_result "Agent-down render reflects new state (oneshot fallback)" FAIL "render served the STALE clean value instead of the fresh dirty one"
         cleanup_test_files
         return 1
-    end
-
-    # The claimed marker must not outlive the shell: a fresh fish that sources
-    # the integration, claims its own marker and exits normally leaves nothing
-    # named after its PID in TMPDIR (a later process reusing the PID would
-    # otherwise start with a spent oneshot budget).
-    set -l child_marker (fish -c '
-        source $argv[1]/fish/core/init.fish >/dev/null 2>&1
-        __gpy_oneshot_claim
-        __gpy_oneshot_marker
-        test -e (__gpy_oneshot_marker); or echo NOT_CLAIMED' -- $__gpy_root 2>/dev/null)
-    if test -e "$child_marker[1]"
-        print_test_result "oneshot marker is removed when the shell exits" FAIL "$child_marker[1] survived the shell that claimed it"
-        rm -f "$child_marker[1]"
-        cleanup_test_files
-        return 1
-    else if test "$child_marker[-1]" = NOT_CLAIMED
-        print_test_result "oneshot marker is removed when the shell exits" FAIL "the child shell never claimed its marker"
-        cleanup_test_files
-        return 1
-    else
-        print_test_result "oneshot marker is removed when the shell exits" PASS
     end
 
     cleanup_test_files

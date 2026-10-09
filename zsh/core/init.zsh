@@ -287,6 +287,11 @@ function __gpy_precmd() {
 
 function __gpy_render_prompt() {
     local last_ret=$1
+
+    # The previous command's exit status, read by the status segment and by
+    # __gpy_segment_bg's `status` arm (segments run in `$(...)` subshells that
+    # inherit this by fork). Same name as fish's global.
+    typeset -g __gpy_last_status=$last_ret
     # Blank line before the prompt for visual separation between commands
     # (theme-controlled via `__gpy_add_newline`, default on). Fish has always
     # done this unconditionally; bash/zsh had no equivalent, so the same theme
@@ -327,94 +332,91 @@ function __gpy_render_prompt() {
     local segment_index=1
     for seg in $segments_to_render; do
         if (( $+functions[__gpy_segment_$seg] )); then
-            if [[ "$seg" == "status" ]]; then
-                p+="$(__gpy_segment_$seg $last_ret)"
-            else
-                # Convention (#613): "true" or "" -- the same tokens IPC
-                # payloads use (`,"is_last":true`) and every segment receives
-                # directly, with no per-segment last/first-literal conversion
-                # (mirrors fish_prompt.fish).
-                local is_last=""
-                if (( segment_index == segment_count )); then
-                    is_last="true"
-                fi
-                # Position-based, not segment-identity-based: whichever segment
-                # ends up first here (clock, duration, or anything else) gets
-                # is_first, so it can suppress an opening-cap glyph that makes
-                # no sense with nothing rendered before it (mirrors Fish).
-                local is_first=""
-                if (( segment_index == 1 )); then
-                    is_first="true"
-                fi
-                # Declared WITH a value: a bare `local seg_out` on the second
-                # loop iteration re-declares an existing local, and zsh prints
-                # `seg_out=...` for that (TYPESET_SILENT is off by default),
-                # which landed inside PROMPT as a stray line above every
-                # prompt with two or more segments, and on the terminal when
-                # rendered from a trap (#637).
-                local seg_out=""
-                # A segment whose request fell back to oneshot signals it via
-                # GPY_SEG_STATUS_ONESHOT (#614): captured as soon as each
-                # `seg_out=$(...)` assignment below runs (before any further
-                # command -- e.g. the directory relay-file write -- would
-                # otherwise overwrite `$?`) and folded into the per-render
-                # budget so later segments' subshells (which inherit
-                # __gpy_oneshot_used by fork) don't fork oneshot again. A
-                # cache-hit assignment (plain `seg_out=$__gpy_dir_cache_val`,
-                # no command substitution) always yields 0 here, never
-                # GPY_SEG_STATUS_ONESHOT -- correct, since no request ran.
-                local seg_status=0
-                if [[ "$seg" == "directory" ]]; then
-                    # Memoized (#343). Reading the cache vars here is safe even
-                    # though this whole function runs inside precmd's `$(...)`
-                    # subshell -- see the cache var declarations above for why
-                    # a cache-miss *write* has to go through a relay file
-                    # instead of a direct assignment.
-                    #
-                    # is_last/is_first arrive already as "true"/"" (above), so
-                    # the cache key just normalizes the empty case to the
-                    # literal "false" it has always used -- no last/first-literal
-                    # conversion needed here anymore.
-                    local is_last_bool="${is_last:-false}"
-                    local is_first_bool="${is_first:-false}"
-                    local dir_key="${__gpy_theme_name:-}:${PWD}:${is_last_bool}:${is_first_bool}:${prev_bg}"
-                    if [[ -n "$__gpy_dir_cache_key" && "$dir_key" == "$__gpy_dir_cache_key" ]]; then
-                        seg_out="$__gpy_dir_cache_val"
-                    else
-                        seg_out="$(__gpy_segment_$seg "$is_last" "$prev_bg" "$is_first")"
-                        seg_status=$?
-                        # Never cache an empty/failed render: the agent-down
-                        # fallback must retry next prompt, not get stuck
-                        # serving nothing forever. Empty relay path == mktemp
-                        # failed, so memoization is disabled (no insecure
-                        # fallback path) -- skip the relay write entirely.
-                        if [[ -n "$seg_out" && -n "$__gpy_dir_cache_relay_path" ]]; then
-                            printf '%s\n%s' "$dir_key" "$seg_out" > "$__gpy_dir_cache_relay_path" 2>/dev/null
-                        fi
-                    fi
+            # Convention (#613): "true" or "" -- the same tokens IPC
+            # payloads use (`,"is_last":true`) and every segment receives
+            # directly, with no per-segment last/first-literal conversion
+            # (mirrors fish_prompt.fish). The status segment is dispatched the
+            # same way (#844): it reads the exit status from __gpy_last_status.
+            local is_last=""
+            if (( segment_index == segment_count )); then
+                is_last="true"
+            fi
+            # Position-based, not segment-identity-based: whichever segment
+            # ends up first here (clock, duration, or anything else) gets
+            # is_first, so it can suppress an opening-cap glyph that makes
+            # no sense with nothing rendered before it (mirrors Fish).
+            local is_first=""
+            if (( segment_index == 1 )); then
+                is_first="true"
+            fi
+            # Declared WITH a value: a bare `local seg_out` on the second
+            # loop iteration re-declares an existing local, and zsh prints
+            # `seg_out=...` for that (TYPESET_SILENT is off by default),
+            # which landed inside PROMPT as a stray line above every
+            # prompt with two or more segments, and on the terminal when
+            # rendered from a trap (#637).
+            local seg_out=""
+            # A segment whose request fell back to oneshot signals it via
+            # GPY_SEG_STATUS_ONESHOT (#614): captured as soon as each
+            # `seg_out=$(...)` assignment below runs (before any further
+            # command -- e.g. the directory relay-file write -- would
+            # otherwise overwrite `$?`) and folded into the per-render
+            # budget so later segments' subshells (which inherit
+            # __gpy_oneshot_used by fork) don't fork oneshot again. A
+            # cache-hit assignment (plain `seg_out=$__gpy_dir_cache_val`,
+            # no command substitution) always yields 0 here, never
+            # GPY_SEG_STATUS_ONESHOT -- correct, since no request ran.
+            local seg_status=0
+            if [[ "$seg" == "directory" ]]; then
+                # Memoized (#343). Reading the cache vars here is safe even
+                # though this whole function runs inside precmd's `$(...)`
+                # subshell -- see the cache var declarations above for why
+                # a cache-miss *write* has to go through a relay file
+                # instead of a direct assignment.
+                #
+                # is_last/is_first arrive already as "true"/"" (above), so
+                # the cache key just normalizes the empty case to the
+                # literal "false" it has always used -- no last/first-literal
+                # conversion needed here anymore.
+                local is_last_bool="${is_last:-false}"
+                local is_first_bool="${is_first:-false}"
+                local dir_key="${__gpy_theme_name:-}:${PWD}:${is_last_bool}:${is_first_bool}:${prev_bg}"
+                if [[ -n "$__gpy_dir_cache_key" && "$dir_key" == "$__gpy_dir_cache_key" ]]; then
+                    seg_out="$__gpy_dir_cache_val"
                 else
-                    # Quote all args: an unquoted empty $is_last collapses to zero
-                    # words in zsh, which would shift $prev_bg/$is_first out of place.
                     seg_out="$(__gpy_segment_$seg "$is_last" "$prev_bg" "$is_first")"
                     seg_status=$?
+                    # Never cache an empty/failed render: the agent-down
+                    # fallback must retry next prompt, not get stuck
+                    # serving nothing forever. Empty relay path == mktemp
+                    # failed, so memoization is disabled (no insecure
+                    # fallback path) -- skip the relay write entirely.
+                    if [[ -n "$seg_out" && -n "$__gpy_dir_cache_relay_path" ]]; then
+                        printf '%s\n%s' "$dir_key" "$seg_out" > "$__gpy_dir_cache_relay_path" 2>/dev/null
+                    fi
                 fi
+            else
+                # Quote all args: an unquoted empty $is_last collapses to zero
+                # words in zsh, which would shift $prev_bg/$is_first out of place.
+                seg_out="$(__gpy_segment_$seg "$is_last" "$prev_bg" "$is_first")"
+                seg_status=$?
+            fi
 
-                if [[ "$seg_status" -eq "$GPY_SEG_STATUS_ONESHOT" ]]; then
-                    __gpy_oneshot_used=1
-                fi
+            if [[ "$seg_status" -eq "$GPY_SEG_STATUS_ONESHOT" ]]; then
+                __gpy_oneshot_used=1
+            fi
 
-                p+="$seg_out"
-                if [[ -n "$seg_out" ]]; then
-                    # Advance prev_bg to this segment's background for the next
-                    # chevron. __gpy_segment_bg (constants.zsh default,
-                    # overridden by the agent's `theme export` -- #614) is
-                    # called directly (not via `$(...)`) with an out-var so
-                    # this never forks a subshell on the hot render path
-                    # (#342); mirrors bash so both shells stay identical.
-                    local seg_bg=""
-                    __gpy_segment_bg "$seg" seg_bg
-                    [[ -n "$seg_bg" ]] && prev_bg="$seg_bg"
-                fi
+            p+="$seg_out"
+            if [[ -n "$seg_out" ]]; then
+                # Advance prev_bg to this segment's background for the next
+                # chevron. __gpy_segment_bg (constants.zsh default,
+                # overridden by the agent's `theme export` -- #614) is
+                # called directly (not via `$(...)`) with an out-var so
+                # this never forks a subshell on the hot render path
+                # (#342); mirrors bash so both shells stay identical.
+                local seg_bg=""
+                __gpy_segment_bg "$seg" seg_bg
+                [[ -n "$seg_bg" ]] && prev_bg="$seg_bg"
             fi
         fi
         (( segment_index += 1 ))
@@ -428,37 +430,43 @@ function __gpy_render_prompt() {
     fi
 
     # Prompt char.
-    # The character is always agent-rendered (#199): the agent renders the prompt
-    # symbol colored by exit status (Starship-style). When the agent returns
-    # nothing (unavailable, or no theme template), fall back to the legacy symbol.
-    local char_success=0
-    [[ "$last_ret" -eq 0 ]] && char_success=1
-    local char_rendered
-    # The character's opening chevron uses fg:prev_bg too (default theme), so pass
-    # the background left behind by the last rendered segment.
-    #
-    # Memoized (#343): skip the IPC round-trip + fork entirely when the input
-    # tuple (theme identity + success + prev_bg) matches the last render. See
-    # the cache var declarations above for why a cache-miss write goes through
-    # a relay file instead of a direct assignment (this function runs inside
-    # precmd's `$(...)` subshell).
-    local char_key="${__gpy_theme_name:-}:${char_success}:${prev_bg}"
-    if [[ -n "$__gpy_char_cache_key" && "$char_key" == "$__gpy_char_cache_key" ]]; then
-        char_rendered="$__gpy_char_cache_val"
-    else
-        char_rendered=$(__gpy_request_character "$char_success" "true" "$prev_bg")
-        # Never cache an empty/failed render: the agent-down fallback must
-        # retry on the very next prompt, not get stuck serving nothing forever.
-        # Empty relay path == mktemp failed, so memoization is disabled (no
-        # insecure fallback path) -- skip the relay write entirely.
-        if [[ -n "$char_rendered" && -n "$__gpy_char_cache_relay_path" ]]; then
-            printf '%s\n%s' "$char_key" "$char_rendered" > "$__gpy_char_cache_relay_path" 2>/dev/null
+    # The character is always agent-rendered (#199) except for root: the agent
+    # renders the prompt symbol colored by exit status (Starship-style). When
+    # the agent returns nothing (unavailable, or no theme template), and for
+    # root, which never asks the agent, the shell draws the symbol itself
+    # (__gpy_prompt_tail, core/renderer.zsh), exactly as fish_prompt does.
+    local char_rendered=""
+    if [[ "${__gpy_is_root:-0}" != "1" ]]; then
+        local char_success=0
+        [[ "$last_ret" -eq 0 ]] && char_success=1
+        # The character's opening chevron uses fg:prev_bg too (default theme), so pass
+        # the background left behind by the last rendered segment.
+        #
+        # Memoized (#343): skip the IPC round-trip + fork entirely when the input
+        # tuple (theme identity + success + prev_bg) matches the last render. See
+        # the cache var declarations above for why a cache-miss write goes through
+        # a relay file instead of a direct assignment (this function runs inside
+        # precmd's `$(...)` subshell).
+        local char_key="${__gpy_theme_name:-}:${char_success}:${prev_bg}"
+        if [[ -n "$__gpy_char_cache_key" && "$char_key" == "$__gpy_char_cache_key" ]]; then
+            char_rendered="$__gpy_char_cache_val"
+        else
+            char_rendered=$(__gpy_request_character "$char_success" "true" "$prev_bg")
+            # Never cache an empty/failed render: the agent-down fallback must
+            # retry on the very next prompt, not get stuck serving nothing forever.
+            # Empty relay path == mktemp failed, so memoization is disabled (no
+            # insecure fallback path) -- skip the relay write entirely.
+            if [[ -n "$char_rendered" && -n "$__gpy_char_cache_relay_path" ]]; then
+                printf '%s\n%s' "$char_key" "$char_rendered" > "$__gpy_char_cache_relay_path" 2>/dev/null
+            fi
         fi
     fi
     if [[ -n "$char_rendered" ]]; then
         p+="$char_rendered"
     else
-        p+="%F{$__prompt_color}${__icon_prompt}%f "
+        local prompt_tail
+        __gpy_prompt_tail "$last_ret" prompt_tail
+        p+="$prompt_tail"
     fi
 
     print -r -- "$p"

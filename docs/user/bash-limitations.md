@@ -35,12 +35,12 @@ These features work identically to Fish/Zsh:
 | Bash Version | Duration Precision | Notes |
 |--------------|-------------------|-------|
 | **Bash 5.0+** | ✅ Millisecond | Uses `EPOCHREALTIME` (like Zsh) |
-| **Bash 4.x** | ⚠️ 10-20ms overhead | Uses `date +%s%N` (slower) |
+| **Bash 4.x** | ⚠️ 10-20ms overhead with GNU `date`; whole seconds with BSD/macOS `date` | Uses `date +%s%N` (slower). BSD/macOS `date` has no `%N` (it prints a literal `N`), so GPY probes `date` once at startup and falls back to whole-second timing there |
 | **Bash 3.x** | ❌ Not supported | No nanosecond timing, segment disabled |
 
 **Impact**:
 - Bash 5: Works perfectly, matches Zsh
-- Bash 4: Works but adds ~15ms overhead per prompt render
+- Bash 4: Works but adds ~15ms overhead per prompt render; with BSD/macOS `date` (Homebrew's Bash 4 on a Mac) durations have whole-second resolution
 - Bash 3: Duration segment will not display (macOS default)
 
 **Workaround**: Upgrade to Bash 5 via Homebrew (macOS) or package manager (Linux)

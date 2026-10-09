@@ -145,7 +145,7 @@ set -gx GPY_AGENT_SOCKET_PATH $tmp/absent.sock
 source "$repo_root/fish/segments/language.fish"
 cd $tmp/proj
 rm -f $tmp/calls.log
-rm -f $__gpy_oneshot_marker_path
+set -e __gpy_oneshot_used
 set -e __gpy_last_segment_bg
 set -l lang_out (segment_language_render "" true)
 
@@ -154,7 +154,7 @@ if test -e $tmp/calls.log
 else
     check "cold-miss language render forks no gpy-agent" PASS
 end
-if test -e $__gpy_oneshot_marker_path
+if set -q __gpy_oneshot_used
     check "cold-miss language render leaves the oneshot budget unclaimed" FAIL
 else
     check "cold-miss language render leaves the oneshot budget unclaimed" PASS

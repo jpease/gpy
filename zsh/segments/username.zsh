@@ -11,6 +11,7 @@ function __gpy_segment_username_detect() {
 function __gpy_segment_username() {
     local is_last=${1:-}
     local prev_bg=${2:-}
+    local is_first=${3:-}
 
     # Agent-resolved path when a theme set a Starship-compatible format.
     # is_last arrives already as "true"/"" (#613: init.zsh's dispatch-loop
@@ -21,15 +22,12 @@ function __gpy_segment_username() {
         return
     fi
 
-    # Pure-zsh path: optional icon + zsh prompt-escape colors (mirror hostname.zsh).
-    local name=${USER:-}
-    local icon=${__icon_username:-""}
-    local label=$name
-    [[ -n "$icon" ]] && label="$icon $name"
+    # Local path, drawn by the shared shell-side renderer so it matches fish's
+    # pure-fish path for the same theme (#844).
+    local label=${USER:-}
+    [[ -n "${__icon_username:-}" ]] && label="$__icon_username ${USER:-}"
 
-    local bg=${__color_username_bg:-red}
-    local fg=${__color_username_fg:-white}
-    [[ $bg == transparent ]] && bg=default
-    [[ $fg == transparent ]] && fg=default
-    print -r -- "%K{$bg}%F{$fg} $label %f%k"
+    __gpy_prompt_escape "$label" label
+    __gpy_section_standalone "${__color_username_bg:-}" "${__color_username_fg:-}" \
+        "$label" "$is_last" "$is_first"
 }

@@ -85,7 +85,7 @@ function test_cold_miss_agent_up_renders_synchronously
     # bounded synchronous IPC query inside the cold-miss branch should
     # populate correct output on THIS very render.
     cd $repo
-    rm -f (__gpy_oneshot_marker) 2>/dev/null
+    set -e __gpy_oneshot_used
     set -l rendered (segment_git_render)
 
     if test -n "$rendered"
@@ -128,7 +128,7 @@ function test_cold_miss_agent_down_omits_within_budget
     end
 
     cd $repo
-    rm -f (__gpy_oneshot_marker) 2>/dev/null
+    set -e __gpy_oneshot_used
     set -l rendered (segment_git_render)
 
     if test -z "$rendered"

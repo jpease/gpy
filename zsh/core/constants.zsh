@@ -21,14 +21,15 @@ typeset -g __gpy_icon_nerd_prompt="❯"
 typeset -g __gpy_ui_prompt_icon="❯"
 typeset -g __prompt_color="green"
 typeset -g __icon_prompt="❯"
-typeset -g __icon_root_prompt="#"
+typeset -g __icon_root_prompt="!❯!"
 typeset -g __root_prompt_color="red"
 
 # Initialize segments array
 typeset -g -a __enabled_segments=()
 
-# IPC Timeouts
-typeset -g GPY_IPC_TIMEOUT_MS=150
+# IPC round-trip bound in milliseconds. An environment value overrides the
+# default, as in Bash and Fish (#845); __gpy_ms_to_secs rejects a non-numeric one.
+typeset -g GPY_IPC_TIMEOUT_MS=${GPY_IPC_TIMEOUT_MS:-150}
 
 # Git instant-cache TTL (seconds). This is the pull-based self-heal bound when
 # an agent repaint push is missed: cached git output is still served instantly,
@@ -67,6 +68,15 @@ function __gpy_segment_bg() {
         clock) __gpy_sbg="${__color_clock_bg:-}" ;;
         hostname) __gpy_sbg="${__color_hostname_bg:-}" ;;
         username) __gpy_sbg="${__color_username_bg:-}" ;;
+        # The status pill's background depends on the previous exit status,
+        # which the render loop publishes as __gpy_last_status (as fish does).
+        status)
+            if [[ "${__gpy_last_status:-0}" -eq 0 ]]; then
+                __gpy_sbg="${__color_status_ok_bg:-green}"
+            else
+                __gpy_sbg="${__color_status_fail_bg:-red}"
+            fi
+            ;;
         *) __gpy_sbg="" ;;
     esac
     if [[ -n "$2" ]]; then

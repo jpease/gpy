@@ -23,13 +23,12 @@ function fish_prompt
     set -e __gpy_git_root_this_render_dir
     set -e __gpy_git_root_this_render
 
-    # Reset the per-render oneshot-fallback marker so a dead daemon gets one
-    # fresh oneshot fork this render, not zero forever (#324). The path is a
-    # session constant resolved once at source time into
-    # __gpy_oneshot_marker_path (core/ipc.fish); reuse it directly and guard
-    # the rm with a builtin existence check so the healthy path (marker never
-    # created) costs zero forks instead of a cmd-sub + rm every prompt (#342).
-    set -q __gpy_oneshot_marker_path[1]; and test -e "$__gpy_oneshot_marker_path"; and rm -f -- "$__gpy_oneshot_marker_path"
+    # Reset the per-render oneshot-fallback budget so a dead daemon gets one
+    # fresh oneshot fork this render, not zero forever (#324). The budget is
+    # the global __gpy_oneshot_used (claimed by __gpy_oneshot_claim in
+    # core/ipc.fish); erasing it is a builtin, so the healthy path costs zero
+    # forks, and it is safe when ipc.fish is not loaded (#342).
+    set -e __gpy_oneshot_used
 
     # Clear any clock pre-render from a previous pass so a stale value never leaks
     # into a render where the clock segment doesn't run (#342).

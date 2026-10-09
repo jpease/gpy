@@ -58,8 +58,27 @@ pub fn get_runtime_dir() -> Result<PathBuf> {
 ///
 /// # Errors
 ///
-/// Returns an error if the runtime directory cannot be created.
+/// Returns an error if the runtime directory cannot be created, or if the
+/// resolved path is longer than a Unix socket path can be on this platform
+/// (104 bytes on macOS, 108 on Linux -- see
+/// [`crate::paths::check_socket_path_len`]), which fails here with the length,
+/// the limit and the fix instead of as the kernel's bare "path must be shorter
+/// than `SUN_LEN`" from `bind` or `connect` (#850).
 pub fn get_socket_path() -> Result<PathBuf> {
+    let path = resolve_socket_path()?;
+    crate::paths::check_socket_path_len(&crate::paths::absolutize(&path))?;
+    Ok(path)
+}
+
+/// The socket path exactly as configured, before the length check.
+///
+/// For diagnostics (`gpy debug paths`) that must still print an over-long
+/// path; everything that binds or connects goes through [`get_socket_path`].
+///
+/// # Errors
+///
+/// Returns an error if the runtime directory cannot be created.
+pub fn resolve_socket_path() -> Result<PathBuf> {
     if let Some(override_path) = SOCKET_OVERRIDE.get() {
         return Ok(override_path.clone());
     }

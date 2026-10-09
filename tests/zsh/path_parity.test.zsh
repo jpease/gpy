@@ -29,6 +29,11 @@ if [ ! -x "$GPY_BIN" ]; then
     }
 fi
 
+# The file each case sources before calling __gpy_debug_paths. Cases whose HOME
+# is empty resolve the passwd home, so they source only the core resolvers:
+# gpy.zsh would also read that real home's config and may start an agent.
+PARITY_SRC=zsh/gpy.zsh
+
 failures=0
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 pass() { echo "PASS: $*"; }
@@ -42,7 +47,7 @@ compare() {
     case_name="$1"
     shift
     agent="$(env -i PATH="$PATH" "$@" "$GPY_BIN" debug paths --format kv)"
-    shell="$(env -i PATH="$PATH" "$@" zsh -c 'source "$1/zsh/gpy.zsh"; __gpy_debug_paths' _ "$ROOT")"
+    shell="$(env -i PATH="$PATH" "$@" zsh -c 'source "$1/$2"; __gpy_debug_paths' _ "$ROOT" "$PARITY_SRC")"
     for key in ${=ALL_KEYS}; do
         a="$(printf '%s\n' "$agent" | sed -n "s/^$key=//p")"
         s="$(printf '%s\n' "$shell" | sed -n "s/^$key=//p")"
@@ -82,6 +87,13 @@ compare xdg_unset HOME="$tmp/home"
 compare xdg_windows_shaped HOME="$tmp/home" XDG_CONFIG_HOME='\\srv\cfg' XDG_CACHE_HOME='C:/x' XDG_RUNTIME_DIR='C:\x'
 # GPY_AGENT_SOCKET_PATH overrides only the socket, never the runtime root.
 compare socket_override HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/run" GPY_AGENT_SOCKET_PATH="$tmp/custom.sock"
+# #845: an empty HOME is "unset" -- the agent, Fish and Bash take the passwd
+# home, and Zsh must not build a filesystem-root `/.cache/gpy` path instead.
+PARITY_SRC=zsh/core/ipc.zsh
+compare home_empty HOME= XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache" XDG_RUNTIME_DIR="$tmp/run"
+compare home_empty_cache_unset HOME= XDG_CONFIG_HOME="$tmp/config" XDG_RUNTIME_DIR="$tmp/run"
+compare home_unset_cache_unset XDG_CONFIG_HOME="$tmp/config" XDG_RUNTIME_DIR="$tmp/run"
+PARITY_SRC=zsh/gpy.zsh
 
 # --- cache key encoding, against a file the agent wrote ----------------------------
 echo "--- cache key encoding ---"

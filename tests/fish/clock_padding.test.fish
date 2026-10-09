@@ -96,9 +96,12 @@ else
     check "clock content still contains the rendered time (got: '$__test_clock_content')" fail
 end
 
-# --- Date format strings (#644): the exact date(1) spec for each clock mode.
+# --- Date format strings (#644): the exact strftime spec for each clock mode.
 # The prompt folds this into its single `date` call, so a wrong spec here is
-# a wrong clock for every render.
+# a wrong clock for every render. It is also the spec the agent embeds in a
+# templated clock (ClockResolver::time_spec, and Bash/Zsh's copies): when the
+# agent renders the clock (#844) fish finds this exact text in the response, so
+# the no-pad forms are `%-I`/`%-H`, not the blank-padded `%l`/`%k`.
 function check_format --argument-names label time_format leading_zero seconds expected
     set -g __time_format $time_format
     set -g __clock_show_leading_zero $leading_zero
@@ -111,12 +114,12 @@ function check_format --argument-names label time_format leading_zero seconds ex
     end
 end
 
-check_format "12h, no leading zero, no seconds" 12 0 0 '%l:%M %p'
+check_format "12h, no leading zero, no seconds" 12 0 0 '%-I:%M %p'
 check_format "12h, leading zero" 12 1 0 '%I:%M %p'
 check_format "24h, leading zero" 24 1 0 '%H:%M'
-check_format "24h, bare hour" 24 0 0 '%k:%M'
+check_format "24h, bare hour" 24 0 0 '%-H:%M'
 check_format "24h, leading zero, seconds" 24 1 1 '%H:%M:%S'
-check_format "12h, seconds keep AM/PM after the seconds" 12 0 1 '%l:%M:%S %p'
+check_format "12h, seconds keep AM/PM after the seconds" 12 0 1 '%-I:%M:%S %p'
 
 if test $fail_count -gt 0
     echo "RESULT: $fail_count failed, $pass_count passed"

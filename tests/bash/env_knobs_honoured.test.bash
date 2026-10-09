@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# tests/bash/env_knobs_honoured.test.bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# GPY_IPC_TIMEOUT_MS and the two instant-cache TTL knobs are honoured when set
+# in the environment before the shell integration loads, identically in all
+# three shells (#845; tests/fish/env_knobs_honoured.test.fish and
+# tests/zsh/env_knobs_honoured.test.zsh are the twins). Zsh used to overwrite
+# GPY_IPC_TIMEOUT_MS with 150 at source time; Fish overwrote all three.
+#
+# Bash already honoured them; this pins it, together with the guard that keeps
+# a non-numeric value from breaking arithmetic: the IPC budget falls back to
+# 150 ms inside __gpy_ms_to_secs, and a bad TTL falls back to its default when
+# the cache entry's age is compared.
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT" || exit 1
+
+failures=0
+check() {
+    if [[ "$3" == "$2" ]]; then
+        echo "PASS: $1"
+    else
+        echo "FAIL: $1 (expected [$2], got [$3])"
+        failures=$((failures + 1))
+    fi
+}
+
+# constants_with VAR=VALUE...: "ipc git lang" as a child bash sees them.
+# shellcheck disable=SC2016 # the child shell expands its own variables
+constants_with() {
+    env -u GPY_IPC_TIMEOUT_MS -u GPY_GIT_INSTANT_CACHE_TTL_SECONDS -u GPY_LANGUAGE_CACHE_TTL_SECONDS "$@" \
+        bash -c '. "$1/bash/core/constants.bash"; echo "$GPY_IPC_TIMEOUT_MS $GPY_GIT_INSTANT_CACHE_TTL_SECONDS $GPY_LANGUAGE_CACHE_TTL_SECONDS"' _ "$ROOT"
+}
+
+check "defaults when nothing is set" "150 5 30" "$(constants_with)"
+check "GPY_IPC_TIMEOUT_MS is honoured" "750 5 30" "$(constants_with GPY_IPC_TIMEOUT_MS=750)"
+check "GPY_GIT_INSTANT_CACHE_TTL_SECONDS is honoured" "150 11 30" "$(constants_with GPY_GIT_INSTANT_CACHE_TTL_SECONDS=11)"
+check "GPY_LANGUAGE_CACHE_TTL_SECONDS is honoured" "150 5 22" "$(constants_with GPY_LANGUAGE_CACHE_TTL_SECONDS=22)"
+
+# shellcheck source=bash/core/ipc.bash
+. bash/core/ipc.bash
+secs=""
+__gpy_ms_to_secs 750 secs
+check "an IPC budget of 750 ms is 0.750 s" "0.750" "$secs"
+__gpy_ms_to_secs fast secs
+check "a non-numeric IPC budget falls back to 150 ms" "0.150" "$secs"
+
+# A non-numeric TTL must not break the freshness comparison: the entry is read
+# with the default TTL (git: 5 s), so a 60-second-old entry is stale and a
+# fresh one is not.
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/gpy-knobs.XXXXXX")"
+trap 'rm -rf "$tmp"' EXIT
+export XDG_CACHE_HOME="$tmp/cache"
+mkdir -p "$tmp/repo/.git" "$XDG_CACHE_HOME/gpy/instant-prompts"
+key="$(__gpy_path_to_cache_key "$(realpath "$tmp/repo")")"
+entry="$XDG_CACHE_HOME/gpy/instant-prompts/$key.git.none.bash"
+printf 'cached' >"$entry"
+export GPY_GIT_INSTANT_CACHE_TTL_SECONDS=soon
+__gpy_read_instant_cache git "$tmp/repo" >/dev/null 2>&1
+check "a non-numeric TTL still reads a fresh entry as fresh" "0" "$?"
+touch -t 200001010000 "$entry"
+__gpy_read_instant_cache git "$tmp/repo" >/dev/null 2>&1
+status=$?
+check "a non-numeric TTL falls back to the default and ages an old entry to stale" "2" "$status"
+
+[[ "$failures" -eq 0 ]] || exit 1
+echo "PASS: bash env knobs"

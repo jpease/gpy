@@ -11,7 +11,7 @@ GPY_ROOT=${0%/*}
 # is about to source before sourcing any of them, and disable cleanly with a
 # single diagnostic if any are missing. Mirrors
 # fish/conf.d/gpy_init.fish's guard.
-for __gpy_core_file in constants ipc signals supervisor init; do
+for __gpy_core_file in constants renderer ipc signals supervisor init; do
     if [[ ! -f "$GPY_ROOT/core/$__gpy_core_file.zsh" ]]; then
         print -r -- "gpy[init]: core files not found at $GPY_ROOT - GPY disabled" >&2
         unset __gpy_core_file
@@ -22,6 +22,7 @@ unset __gpy_core_file
 
 # Source core modules
 source "$GPY_ROOT/core/constants.zsh"
+source "$GPY_ROOT/core/renderer.zsh"
 source "$GPY_ROOT/core/ipc.zsh"
 source "$GPY_ROOT/core/signals.zsh"
 source "$GPY_ROOT/core/supervisor.zsh"

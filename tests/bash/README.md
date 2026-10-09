@@ -17,9 +17,11 @@ Exercise `bash/gpy.bash` and its segments.
 | Live daemon, no terminal | `e2e_agent_down_stale_git` (agent down, then up), `e2e_git_cold_miss_bounded_sync`, `e2e_git_variant_fallback_bounded_sync`, `e2e_lang_variant_fallback_bounded_refresh`, `maybe_refresh_nonblocking`, `path_parity` (`gpy debug paths` vs `__gpy_debug_paths`, cache key against a file the agent wrote), `prompt_text_literal` (directory and branch names with `$(…)`, backticks, `\` and `!` show literally in the expanded PS1: fresh render, oneshot fallback, instant cache), `prompt_nonprinting` (every agent SGR escape in PS1 sits inside `\[ \]`: fresh render, instant cache) | real `gpy-agent`, functions called directly |
 | Interactive, no agent | `debug_trap_preserves_last_arg` (`$_` survives the DEBUG trap: `mkdir -p d && cd $_`), `doorbell_no_reentry` (on a pty: a SIGURG burst never nests renders or blocks the shell, `wait` is not interrupted, a reload flag is applied by the next prompt), `duration_measures_command_line` (`__gpy_cmd_duration` spans the whole command line: other `PROMPT_COMMAND` entries, lists, loops, a SIGURG, idle time, string and array `PROMPT_COMMAND`) | none: a real `bash -i` fed on stdin or on a pty, supervisor off, socket that does not exist |
 | Function-level | `basic`, `integration`, `debug_trap`, `duration_math`, `cache_key_vectors` (`__gpy_path_to_cache_key` matches the agent encoder on every row of `tests/fixtures/cache_key_vectors.tsv`, #705), `xdg_absoluteness_vectors` (XDG_* values are honoured iff absolute, per `tests/fixtures/xdg_absoluteness_vectors.tsv`, #774), `venv_forwarding_vectors` (`lang` requests forward `$VIRTUAL_ENV`, else a non-base `$CONDA_PREFIX`, per `tests/fixtures/venv_forwarding_vectors.tsv`, #729), `json_escape_vectors`, `json_flags_tail`, `load_theme_cache`, `instant_cache_status`, `is_first_instant_cache`, `language_marker_prefilter` (the pre-filter accepts every marker in the agent-exported `__gpy_lang_marker_files`, rejects an empty dir, defers when unset, #785), `oneshot_budget`, `agent_disabled_prompt`, `supervisor_flag_contract` (the same config through bash, zsh and fish), `parity`, `prompt_dispatch_positions`, `omitted_segment_positions` (a language cold miss is dropped before positions are assigned, so its neighbour keeps the first/last form), `segment_bg_export`, `missing_core_file_disables_cleanly`, `completions` | none (`integration` runs with the supervisor off and a socket that does not exist) |
+| Shell-drawn segments | `local_segment_renderer` (the status pill, local clock, hostname/username fallback and root prompt go through `bash/core/renderer.bash`: the render loop hands the next segment the pill's ok/fail background as `prev_bg`, root draws `__icon_root_prompt` in `__root_prompt_color` and never asks the agent for a character, hostile hostnames/usernames/icons show literally, the color table maps names, bright names, hex and 0-255; #844) | none: stubbed character request, supervisor off, socket that does not exist |
+| Cross-shell contract | `shell_contract` (#844, #847: the harness that checks the three shells BEHAVE the same; see "The cross-shell contract harness" below. Every row of `tests/fixtures/shell_scenarios/scenarios.tsv` is run through the real Fish, Bash and Zsh integrations (`tests/lib/shell_scenarios/render.{fish,bash,zsh}`), each in its own sandbox, and the prompts, normalized to the style and text of each visible run by `tests/lib/normalize_prompt.py`, AND the side effects (agent starts, `gpy-agent oneshot` forks, IPC requests, registrations) must be identical across shells and equal the row's `expect` values; Bash's PS1 and Zsh's PROMPT sources must keep every escape inside `\[ \]` / `%{ %}`) | real `gpy-agent` behind a recording IPC proxy, a recording `gpy-agent` wrapper on `PATH`; needs `fish` and `zsh` |
 | Hostile environment | `hostile_env` (fresh child bash whose rc builds traps and `PROMPT_COMMAND` before sourcing `gpy.bash`; asserts the user's environment survives), `prompt_command_preserves_status` (user `PROMPT_COMMAND` hooks that run after `__gpy_precmd` still see the command's `$?`; system bash 3.2 and the running bash) | none: supervisor off, socket that does not exist |
 | Supervisor config | `startup_respects_config` (the startup `gpy-agent start` honours `[agent] enabled` from the theme export, and not `[agent.supervisor] enabled`, #837, #842) | a stub `gpy-agent` on `PATH` |
-| IPC edge cases | `ipc_partial_response`, `protocol_version_mismatch`, `ipc_nc_fallback_timeout`, `ipc_timeout_honors_budget` (the socat transport honours `GPY_IPC_TIMEOUT_MS`: a reply at 120 ms is used, no oneshot forked), `register_rejects_error_reply` (an `{"error":…}` reply to register does not count as registered), `workspace_error_keeps_registration` (a workspace error other than "not registered" keeps the registration) | a python3 fake listener |
+| IPC edge cases | `ipc_partial_response`, `ipc_no_double_send_on_slow_reply` (every available transport sends a slow request once and reports "connected, late" without forking oneshot, #845), `ipc_nc_requires_unix_support` (an `nc` whose help lacks `-U` is no client, #850), `env_knobs_honoured` (`GPY_IPC_TIMEOUT_MS` and the TTL variables, #845), `duration_date_probe` (Bash 4 falls back to whole seconds when `date` has no `%N`, #850), `protocol_version_mismatch`, `ipc_nc_fallback_timeout`, `ipc_timeout_honors_budget` (the socat transport honours `GPY_IPC_TIMEOUT_MS`: a reply at 120 ms is used, no oneshot forked), `register_rejects_error_reply` (an `{"error":…}` reply to register does not count as registered), `workspace_error_keeps_registration` (a workspace error other than "not registered" keeps the registration) | a python3 fake listener |
 | Installers, real binaries | `install_e2e_real_binary` (`install.sh`: install, first `fish -i` prompt through config.fish, upgrade with an old `agent.version`, `scripts/uninstall.fish`), `install_oneline_e2e_real_binary` (`install-oneline.sh` for fish, zsh and bash behind a fake `curl`, first prompt on a pty, `scripts/uninstall.*`), `installer_backup_retention` (`install-oneline.sh` and `install.sh` run three times over stub binaries: exactly one `gpy-agent.backup.*` and one `gpy.backup.*` survive and hold the previous run's binary (#807)), `install_oneline_failed_upgrade` (`install-oneline.sh` over a working install with a checksum-valid but non-runnable agent or CLI: the old binaries stay byte-identical, no `.gpy*.new.*` staging file is left, a broken agent fails the install, a broken CLI only warns (#806); a good upgrade still replaces both) | the debug `gpy-agent` and `gpy` (stub binaries for the failed-upgrade test), installed into a sandboxed `~/.local/bin` |
 | Installer required files | `install_oneline_required_fish_files` (`install-oneline.sh` for fish behind a fake `curl` that fails one URL: a missing `conf.d/gpy_init.fish` or `functions/fish_prompt.fish` aborts the install with no `gpy-init` block in `config.fish` and no `fish_prompt.fish` symlink, while a missing segment only warns (#808)) | stub `gpy-agent` and `gpy`, installed into a sandboxed `~/.local/bin` |
 | Installer rc files | `installer_rc_matrix` (rows of installer x shell x hostile `HOME`/`XDG_CONFIG_HOME` layout, including a space in the path and a symlinked `fish_prompt.fish` that must survive install + uninstall (#744): after install every targeted shell, interactive login and non-login, sources gpy exactly once with empty stderr, and after uninstall every rc file is byte-identical to before; `refuse` rows must touch nothing) | the debug `gpy-agent` and `gpy`, installed into sandboxed homes; each row stops its agent |
@@ -32,6 +34,47 @@ Exercise `bash/gpy.bash` and its segments.
 | Gate and scripts | `shell_suites_build_agent` (`scripts/test_fish.sh` and `run_shell_tests` build the debug `gpy`/`gpy-agent` unconditionally, not behind an existence check, and honour `CARGO_TARGET_DIR`) | the two scripts, read as text |
 | Gate and scripts | `quality_check_fix_cwd` (`quality-check.sh --fix` run from another directory cds to the repo root and does not reformat `.fish` files under the caller's cwd) | none |
 | Gate and scripts | `install_hooks_prek` (`scripts/install-hooks.sh` over hook symlinks into `.raven/git-hooks/`: leaves prek shims for `pre-commit`, `pre-push` and `commit-msg`, no `.legacy` hook, and the tracked script untouched; #666) | a stub `prek` on `PATH` |
+
+### The cross-shell contract harness: `shell_contract`
+
+One table, `tests/fixtures/shell_scenarios/scenarios.tsv`, is the single place a
+cross-shell drift fix adds a test. A row is a scenario (theme, segments, exit
+status, env, config, cwd, agent state, an optional priming render); the harness
+runs it through Fish, Bash and Zsh, each in a fresh sandbox, and fails when
+
+- the normalized prompts differ between shells,
+- the side effects differ between shells, or
+- a shell misses an absolute value in the row's `expect` column (so three shells
+  that regress together still fail).
+
+Side effects are seen from outside the shells, never through their own logging:
+a recording `gpy-agent` wrapper first on `PATH` (agent `start`/`restart` calls
+are recorded and not performed; `oneshot` forks and everything else are passed
+to the real binary), and a recording IPC proxy
+(`tests/lib/shell_scenarios/ipc_proxy.py`) between the shells and the real
+agent, which can hold data requests to play a late agent.
+`tests/lib/shell_scenarios/effects.py` turns both logs into `starts`,
+`oneshots`, `registers`, `ipc_total` and `ipc.<op>`; readiness probes
+(`ping`, `status`) and shell-exit `unregister` are not counted.
+
+**To add a row for a drift fix:** append a line to `scenarios.tsv` (the file's
+header documents every column and flag), name it after the drift, put the
+issue number in a comment above it, and run just that row:
+
+```bash
+SCN_FILTER='^my-row$' SCN_VERBOSE=1 bash tests/bash/shell_contract.test.bash
+```
+
+`SCN_VERBOSE=1` prints each shell's side effects, `gpy-agent` calls, IPC
+requests and normalized prompt, which is how to pick the `expect` values. Pin
+the behaviour the fix established (`starts=0 oneshots=- ipc.git=1 ...`), not the
+whole log. The row must fail on the pre-fix code of the shell that drifted. A
+new kind of agent state or observation belongs in the harness, not in a
+one-off per-shell test. The per-shell tests (`e2e_git_cold_miss_bounded_sync`,
+`ipc_no_double_send_on_slow_reply`, `agent_disabled_prompt`, ...) stay for
+function-level detail; the table is where equivalence is asserted. The Fish and
+Zsh suites run no copy of this file: `scripts/quality-check.sh` runs it once
+with the Bash suites.
 
 ### The live-daemon harness: `tests/lib/shell_e2e.sh`
 

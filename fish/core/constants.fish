@@ -79,13 +79,37 @@ set -g __gpy_color_swift red
 set -g __gpy_color_zig yellow
 set -g __gpy_color_erlang red
 
+# Pure: prints `value` if it is a non-negative integer, else `default`.
+# Applied below to every numeric GPY_* the supervisor/autostart code used to
+# re-validate at every use site with its own `string match -qr '^[0-9]+$'`
+# (#612) -- validating once here means those use sites can trust the value.
+#
+# The six supervisor/autostart values are re-applied at their ipc.fish use sites too (not just here):
+# several tests (tests/fish/supervisor_cadence.test.fish,
+# tests/fish/prompt_autostart_backoff.test.fish) `set -gx` these AFTER
+# sourcing this file, bypassing this load-time pass entirely, and a real
+# theme/config reload can do the same. The use-site call validates whatever
+# value is current at read time; it's the same pure helper, not a
+# reintroduced inline regex, so `rg` for the old `string match -qr
+# '^[0-9]+$'` pattern in ipc.fish still finds nothing.
+function __gpy_uint_or_default --argument-names value default --description 'Pure: value if a non-negative integer, else default'
+    set -q value[1]; or set value ""
+    if string match -qr '^[0-9]+$' -- "$value"
+        printf '%s' "$value"
+    else
+        printf '%s' "$default"
+    end
+end
+
 # ============================================================================
 # IPC COMMUNICATION TIMEOUTS
 # ============================================================================
 
 # Timeout for IPC socket communication (milliseconds)
-# This is the maximum time to wait for a response from the agent
-set -g GPY_IPC_TIMEOUT_MS 150
+# This is the maximum time to wait for a response from the agent. A
+# non-negative integer in the environment overrides the default, as in Bash and
+# Zsh (#845); anything else falls back to it.
+set -g GPY_IPC_TIMEOUT_MS (__gpy_uint_or_default "$GPY_IPC_TIMEOUT_MS" 150)
 
 # Delay after starting agent before first connection attempt (milliseconds)
 # Gives the agent time to initialize and create the socket
@@ -115,38 +139,16 @@ set -g GPY_CIRCUIT_BREAKER_BACKOFF_SECONDS 60
 # This is the pull-based self-heal bound when a SIGURG repaint push is missed:
 # cached git output is still served instantly, but entries older than this flag
 # a throttled background refresh.
-set -g GPY_GIT_INSTANT_CACHE_TTL_SECONDS 5
+set -g GPY_GIT_INSTANT_CACHE_TTL_SECONDS (__gpy_uint_or_default "$GPY_GIT_INSTANT_CACHE_TTL_SECONDS" 5)
 
 # Cache TTL for language instant cache (seconds)
-# Reserved for compatibility; rendered language cache is preserved until the
-# agent rewrites or clears it so clock repaints do not hide stable segments.
-set -g GPY_LANGUAGE_CACHE_TTL_SECONDS 30
+# An entry older than this is still served (so clock repaints do not hide stable
+# segments) but is flagged stale, which triggers a throttled background refresh.
+set -g GPY_LANGUAGE_CACHE_TTL_SECONDS (__gpy_uint_or_default "$GPY_LANGUAGE_CACHE_TTL_SECONDS" 30)
 
 # ============================================================================
 # SUPERVISOR CONFIGURATION
 # ============================================================================
-
-# Pure: prints `value` if it is a non-negative integer, else `default`.
-# Applied below to every numeric GPY_* the supervisor/autostart code used to
-# re-validate at every use site with its own `string match -qr '^[0-9]+$'`
-# (#612) -- validating once here means those use sites can trust the value.
-#
-# These six are re-applied at their ipc.fish use sites too (not just here):
-# several tests (tests/fish/supervisor_cadence.test.fish,
-# tests/fish/prompt_autostart_backoff.test.fish) `set -gx` these AFTER
-# sourcing this file, bypassing this load-time pass entirely, and a real
-# theme/config reload can do the same. The use-site call validates whatever
-# value is current at read time; it's the same pure helper, not a
-# reintroduced inline regex, so `rg` for the old `string match -qr
-# '^[0-9]+$'` pattern in ipc.fish still finds nothing.
-function __gpy_uint_or_default --argument-names value default --description 'Pure: value if a non-negative integer, else default'
-    set -q value[1]; or set value ""
-    if string match -qr '^[0-9]+$' -- "$value"
-        printf '%s' "$value"
-    else
-        printf '%s' "$default"
-    end
-end
 
 # Health check interval for supervisor (seconds)
 # How often the supervisor checks if the agent is healthy

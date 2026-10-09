@@ -404,10 +404,10 @@ FISH_CORE_FILES="constants.fish debug.fish init.fish ipc.fish renderer.fish util
 FISH_SEGMENT_FILES="clock.fish devtools.fish directory.fish duration.fish git.fish hostname.fish language.fish status.fish username.fish"
 FISH_FUNCTION_FILES="fish_prompt.fish"
 
-ZSH_CORE_FILES="constants.zsh init.zsh ipc.zsh signals.zsh supervisor.zsh"
+ZSH_CORE_FILES="constants.zsh init.zsh ipc.zsh renderer.zsh signals.zsh supervisor.zsh"
 ZSH_SEGMENT_FILES="clock.zsh directory.zsh duration.zsh git.zsh hostname.zsh language.zsh status.zsh username.zsh"
 
-BASH_CORE_FILES="constants.bash init.bash ipc.bash signals.bash supervisor.bash"
+BASH_CORE_FILES="constants.bash init.bash ipc.bash renderer.bash signals.bash supervisor.bash"
 BASH_SEGMENT_FILES="clock.bash directory.bash duration.bash git.bash hostname.bash language.bash status.bash username.bash"
 
 # Download shell files based on shell type

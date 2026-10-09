@@ -180,6 +180,13 @@ function gpy_section_standalone --argument-names bg fg content is_last
     set -l end_fg
     set -l end_bg
 
+    # The segment's own bg/fg may be the `transparent` keyword (e.g. a flat theme's
+    # shell-rendered clock). Map it to the terminal default BEFORE the delimiter
+    # colors borrow it via `match_bg`/`match_text` below; otherwise `set_color`
+    # errors with "Unknown color 'transparent'" and prints to stderr every render.
+    test "$bg" = transparent; and set bg ""
+    test "$fg" = transparent; and set fg ""
+
     switch $__gpy_segment_position
         case first
             set start_delim $__segment_delim_first
@@ -249,12 +256,6 @@ function gpy_section_standalone --argument-names bg fg content is_last
         case transparent
             set end_bg ""
     end
-
-    # The segment's own bg/fg may be the `transparent` keyword (e.g. a flat theme's
-    # shell-rendered clock). Map it to the terminal default; otherwise `set_color`
-    # errors with "Unknown color 'transparent'" and prints to stderr every render.
-    test "$bg" = transparent; and set bg ""
-    test "$fg" = transparent; and set fg ""
 
     # Ensure colors have fallbacks if empty
     test -z "$bg"; and set bg normal
