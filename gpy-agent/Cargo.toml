@@ -112,7 +112,7 @@ nix = { version = "0.31", features = ["signal", "process", "fs", "user"] }
 # platform-specific (partly unsafe) lookups instead of us reimplementing them.
 sysinfo = "0.39"
 
-# Note: No Windows-specific dependencies needed - Fish runs on WSL which is a Unix environment
+# No Windows-specific dependencies: the crate builds natively on Windows as a CLI-only target. The IPC transport is Unix-socket only (see `ipc::native_windows_unsupported`), so the agent does not run there; Fish runs under WSL.
 
 [target."cfg(unix)".dev-dependencies]
 # PTY-backed integration test for wizard terminal restoration (#460): spawns

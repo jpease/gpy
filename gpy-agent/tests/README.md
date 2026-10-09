@@ -270,9 +270,10 @@ cargo llvm-cov nextest --features test-support --html --open
 
 ## Platform Compatibility
 
-All tests are designed to work on:
-- **macOS** (Darwin) - primary development platform
-- **Linux** - CI/CD environment
+Tests are exercised on:
+- **macOS** (Darwin) - primary development platform; the full suite, including the shell end-to-end tiers, runs on the maintainer's pre-push gate
+- **Linux** - the ubuntu leg of `pr-gate.yml`; manual `workflow_dispatch` only (automatic `pull_request` trigger disabled, #556)
+- **Windows** - `windows-gate.yml` (build, lib tests, CLI integration targets); manual dispatch only (#556, #651)
 - **BSD** (untested but should work)
 
 Signal-based tests use conditional compilation (`#[cfg(unix)]`) and are skipped on Windows.
