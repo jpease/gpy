@@ -82,11 +82,12 @@ pub fn absolutize(path: &Path) -> PathBuf {
         .map_or_else(|| path.to_path_buf(), |dir| dir.join(path))
 }
 
-/// Bytes in `sockaddr_un.sun_path`, the field a Unix socket path must fit in,
-/// terminating NUL included: 104 on macOS and the BSDs, 108 on Linux and the
-/// other Unixes. The crate forbids `unsafe`, so this is the platform's
-/// documented size rather than `size_of_val` on a zeroed `libc::sockaddr_un`;
-/// a test pins it against the kernel by asking std to build real addresses.
+/// Bytes in `sockaddr_un.sun_path`, terminating NUL included.
+///
+/// 104 on macOS and the BSDs, 108 on Linux and the other Unixes. The crate
+/// forbids `unsafe`, so this is the platform's documented size rather than
+/// `size_of_val` on a zeroed `libc::sockaddr_un`; a test pins it against the
+/// kernel by asking std to build real addresses.
 #[cfg(all(
     unix,
     any(
@@ -153,10 +154,8 @@ pub fn socket_path_problem(path: &Path, capacity: usize) -> Option<String> {
 pub fn check_socket_path_len(path: &Path) -> crate::Result<()> {
     #[cfg(unix)]
     {
-        match socket_path_problem(path, SUN_PATH_CAPACITY) {
-            Some(problem) => Err(crate::Error::ipc(problem)),
-            None => Ok(()),
-        }
+        socket_path_problem(path, SUN_PATH_CAPACITY)
+            .map_or(Ok(()), |problem| Err(crate::Error::ipc(problem)))
     }
     #[cfg(not(unix))]
     {
@@ -742,9 +741,10 @@ mod tests {
         }
     }
 
-    /// #850: the constant is the kernel's real limit on this platform, not a
-    /// guess -- std builds a socket address only for paths that fit, and a path
-    /// of exactly `SUN_PATH_CAPACITY - 1` bytes must be the longest one.
+    /// #850: the constant is the kernel's real limit on this platform.
+    ///
+    /// std builds a socket address only for paths that fit, so a path of
+    /// exactly `SUN_PATH_CAPACITY - 1` bytes must be the longest one.
     ///
     /// # Panics
     ///

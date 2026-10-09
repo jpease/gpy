@@ -196,7 +196,9 @@ fn completions_into_a_closed_pipe_do_not_panic() {
     }
 }
 
-/// #850: a socket path longer than `sun_path` used to surface as the kernel's
+/// #850: a socket path longer than `sun_path` is refused up front.
+///
+/// It used to surface as the kernel's
 /// bare "path must be shorter than `SUN_LEN`" from `bind`/`connect` -- first on
 /// macOS (104 bytes) where Linux (108) still accepted it. Every command now
 /// refuses it up front, naming the length, the limit and the fix.
@@ -246,14 +248,14 @@ fn over_long_socket_path_is_refused_with_the_length_and_the_fix() {
     );
 
     // The diagnostic still prints the offending path rather than hiding it.
-    let result = env
+    let debug_result = env
         .run_gpy_with_env(
             &["debug", "paths", "--format", "kv"],
             &[("GPY_AGENT_SOCKET_PATH", socket.as_str())],
         )
         .expect("spawn gpy");
     assert!(
-        result.stdout.contains(&format!("socket={socket}")),
-        "gpy debug paths prints the over-long socket: {result:?}"
+        debug_result.stdout.contains(&format!("socket={socket}")),
+        "gpy debug paths prints the over-long socket: {debug_result:?}"
     );
 }
