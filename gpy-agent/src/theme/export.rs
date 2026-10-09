@@ -1034,22 +1034,19 @@ fn append_segment_bg_function(output: &mut String, shell: Shell) {
         writeln!(output, "        {segment}) __gpy_sbg=\"${{{var}:-}}\" ;;").expect("string write");
     }
     writeln!(output, "        status)").expect("string write");
+    let (status_var, ok_var, fail_var) = (
+        "__gpy_last_status",
+        "__color_status_ok_bg",
+        "__color_status_fail_bg",
+    );
     writeln!(
         output,
-        "            if [[ \"${{__gpy_last_status:-0}}\" -eq 0 ]]; then"
+        "            if [[ \"${{{status_var}:-0}}\" -eq 0 ]]; then"
     )
     .expect("string write");
-    writeln!(
-        output,
-        "                __gpy_sbg=\"${{__color_status_ok_bg:-green}}\""
-    )
-    .expect("string write");
+    writeln!(output, "                __gpy_sbg=\"${{{ok_var}:-green}}\"").expect("string write");
     writeln!(output, "            else").expect("string write");
-    writeln!(
-        output,
-        "                __gpy_sbg=\"${{__color_status_fail_bg:-red}}\""
-    )
-    .expect("string write");
+    writeln!(output, "                __gpy_sbg=\"${{{fail_var}:-red}}\"").expect("string write");
     writeln!(output, "            fi").expect("string write");
     writeln!(output, "            ;;").expect("string write");
     writeln!(output, "        *) __gpy_sbg=\"\" ;;").expect("string write");
