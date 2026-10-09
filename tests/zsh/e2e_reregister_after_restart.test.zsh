@@ -88,10 +88,14 @@ scanned() {
     [ "${now:-0}" -gt "$scans_before" ]
 }
 shell_e2e_poll 5 scanned || fail "the restarted agent never scanned the repo after re-registration"
-cache_file="$(ls "$XDG_CACHE_HOME"/gpy/instant-prompts/*.git.*.zsh 2>/dev/null | head -n 1)"
-cp "$cache_file" "$SHELL_E2E_ROOT/before.ansi" 2>/dev/null || true
+# The agent refreshes the context-free `.none` files on every change; a
+# `{token}` file exists only for a prev_bg the restarted agent was asked about
+# (the shell's bounded query), and a restarted agent removes the stale ones at
+# startup, so which file `ls | head -1` finds is a race.
+git_digest() { find "$XDG_CACHE_HOME/gpy/instant-prompts" -name '*.git*.none.zsh' -exec cat {} + 2>/dev/null | cksum; }
+digest_before="$(git_digest)"
 echo dirty >>"$SHELL_E2E_REPO/tracked.txt"
-cache_changed() { [ -n "$cache_file" ] && ! cmp -s "$cache_file" "$SHELL_E2E_ROOT/before.ansi"; }
+cache_changed() { [ "$(git_digest)" != "$digest_before" ]; }
 if shell_e2e_poll 10 cache_changed; then
     pass "the restarted agent rewrote the instant cache for the edit"
 else

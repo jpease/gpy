@@ -513,18 +513,29 @@ impl InstantPromptCache {
         contexts.clone()
     }
 
-    /// Remove rendered language prompt cache files, in every position variant
-    /// (`lang`, `lang_last`, `lang_first`, `lang_first_last`).
+    /// Remove the cache files a freshly started agent cannot keep current:
+    /// rendered language prompts, in every position variant (`lang`,
+    /// `lang_last`, `lang_first`, `lang_first_last`), and every
+    /// context-specific entry (a `{token}` other than `none`), in every dialect.
+    ///
+    /// The set of `prev_bg` contexts to refresh ([`Self::known_contexts`]) lives
+    /// in memory, so after a restart a background write (watcher, registration)
+    /// refreshes only the context-free `none` files. A surviving
+    /// `{key}.git.blue.bash` would be served as fresh and never updated: an idle
+    /// shell would repaint on the doorbell and still show the pre-edit status
+    /// until a render found the entry stale. With the file gone the shell takes
+    /// the variant-fallback path, which serves the correct `none` content and
+    /// re-registers its context with the agent.
     ///
     /// Best-effort, like [`prune_stale_entries`]: an unreadable directory or
     /// an entry that cannot be removed (including `NotFound` from another
     /// agent clearing the same directory concurrently, #815) is logged and
     /// skipped, never fatal to agent startup (#773). Chunked entries (#771)
     /// are cleared too, and chunk directories left empty are removed.
-    pub fn clear_language_files(&self) {
+    pub fn clear_unrefreshable_files(&self) {
         let bases = SEGMENT_POSITIONS.map(|pos| variant_suffix("lang", pos.is_last, pos.is_first));
 
-        clear_language_files_in(&self.cache_dir, &bases);
+        clear_unrefreshable_files_in(&self.cache_dir, &bases);
 
         // Poison policy (#591, see `last_written`'s doc comment): recover
         // rather than silently skip.
@@ -535,11 +546,15 @@ impl InstantPromptCache {
                 // map_key is `{cache_key}:{base}.{token}.{ext}`; the cache key has no
                 // colon (path separators are escaped), so split on the first one.
                 let suffix = map_key.split_once(':').map_or("", |(_key, s)| s);
-                !bases.iter().any(|base| {
+                let is_language = bases.iter().any(|base| {
                     suffix
                         .strip_prefix(base.as_str())
                         .is_some_and(|rest| rest.starts_with('.'))
-                })
+                });
+                // `{base}.{token}.{ext}`: the token is the second-to-last
+                // component.
+                let token = suffix.rsplit('.').nth(1).unwrap_or("");
+                !(is_language || token != NO_PREV_BG_TOKEN)
             });
     }
 
@@ -953,16 +968,16 @@ fn is_chunk_dir(entry: &std::fs::DirEntry) -> bool {
             .is_some_and(|name| name.chars().count() == CACHE_KEY_CHUNK_CHARS)
 }
 
-/// Remove language cache files from `dir` and its chunk directories (#771),
-/// removing chunk directories left empty. See
-/// [`InstantPromptCache::clear_language_files`].
-fn clear_language_files_in(dir: &Path, bases: &[String]) {
+/// Remove language and context-specific cache files from `dir` and its chunk
+/// directories (#771), removing chunk directories left empty. See
+/// [`InstantPromptCache::clear_unrefreshable_files`].
+fn clear_unrefreshable_files_in(dir: &Path, bases: &[String]) {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) => {
             debug_log!(
                 "cache",
-                "Could not scan {} to clear language caches: {e}",
+                "Could not scan {} to clear unrefreshable caches: {e}",
                 dir.display()
             );
             return;
@@ -971,7 +986,7 @@ fn clear_language_files_in(dir: &Path, bases: &[String]) {
     for entry in entries.flatten() {
         let path = entry.path();
         if is_chunk_dir(&entry) {
-            clear_language_files_in(&path, bases);
+            clear_unrefreshable_files_in(&path, bases);
             // Fails, harmlessly, unless it is now empty.
             let _ = std::fs::remove_dir(&path);
             continue;
@@ -990,19 +1005,23 @@ fn clear_language_files_in(dir: &Path, bases: &[String]) {
             && PromptDialect::ALL
                 .iter()
                 .any(|dialect| dialect.cache_ext() == ext)
-            && let Some((without_token, _token)) = stem.rsplit_once('.')
+            && let Some((without_token, token)) = stem.rsplit_once('.')
             && let Some((_key, base)) = without_token.rsplit_once('.')
-            && bases.iter().any(|lang_base| lang_base == base)
+            && (bases.iter().any(|lang_base| lang_base == base) || token != NO_PREV_BG_TOKEN)
             && let Err(e) = std::fs::remove_file(&path)
         {
             debug_log!(
                 "cache",
-                "Could not remove language cache {}: {e}",
+                "Could not remove unrefreshable cache {}: {e}",
                 path.display()
             );
         }
     }
 }
+
+/// Cache-filename token of a context-free render (no `prev_bg`): the one
+/// [`InstantPromptCache::clear_unrefreshable_files`] keeps.
+const NO_PREV_BG_TOKEN: &str = "none";
 
 /// Filesystem-safe token identifying the previous-segment background a cache
 /// entry was rendered with.
@@ -1017,7 +1036,7 @@ fn clear_language_files_in(dir: &Path, bases: &[String]) {
 /// The shells derive the SAME token from the SAME wire string they sent as
 /// `prev_bg`, so both sides resolve the identical cache file without a subprocess.
 /// The Fish/Bash/Zsh implementations (`__gpy_prev_bg_token`) MUST stay in lockstep
-/// with this rule. Tokens never contain a `.`, which `clear_language_files` relies
+/// with this rule. Tokens never contain a `.`, which `clear_unrefreshable_files` relies
 /// on to parse `{key}.{base}.{token}.{ext}` filenames.
 fn prev_bg_token(prev_bg: Option<&str>) -> String {
     match prev_bg {
@@ -1025,7 +1044,7 @@ fn prev_bg_token(prev_bg: Option<&str>) -> String {
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
             .collect(),
-        _ => "none".to_owned(),
+        _ => NO_PREV_BG_TOKEN.to_owned(),
     }
 }
 
@@ -2434,7 +2453,7 @@ mod tests {
     }
 
     #[test]
-    fn test_clear_language_files_keeps_git_cache() {
+    fn test_clear_unrefreshable_files_keeps_only_context_free_git_cache() {
         let temp_dir = tempfile::TempDir::new().expect("temp cache dir");
         let cache =
             InstantPromptCache::new_in_dir(temp_dir.path().join("instant-prompts")).expect("cache");
@@ -2445,6 +2464,9 @@ mod tests {
             cache
                 .write_cache_file("repo", "git.none", dialect, "git status")
                 .expect("write git cache");
+            cache
+                .write_cache_file("repo", "git_last.blue", dialect, "git status")
+                .expect("write context-specific git cache");
             cache
                 .write_cache_file("repo", "lang.none", dialect, "ruby 4.0.5")
                 .expect("write lang cache");
@@ -2459,10 +2481,16 @@ mod tests {
                 .expect("write lang_first_last cache");
         }
 
-        cache.clear_language_files();
+        cache.clear_unrefreshable_files();
 
         for dialect in PromptDialect::ALL {
             assert!(cache.cache_file_path("repo", "git.none", dialect).exists());
+            assert!(
+                !cache
+                    .cache_file_path("repo", "git_last.blue", dialect)
+                    .exists(),
+                "a context-specific git file would never be refreshed after a restart"
+            );
             assert!(!cache.cache_file_path("repo", "lang.none", dialect).exists());
             assert!(
                 !cache
@@ -2479,7 +2507,7 @@ mod tests {
     }
 
     #[test]
-    fn clear_language_files_skips_unremovable_entries() {
+    fn clear_unrefreshable_files_skips_unremovable_entries() {
         let temp_dir = tempfile::TempDir::new().expect("temp cache dir");
         let cache_dir = temp_dir.path().join("instant-prompts");
         let cache = InstantPromptCache::new_in_dir(cache_dir.clone()).expect("cache");
@@ -2492,7 +2520,7 @@ mod tests {
             .write_cache_file("repo", "lang.none", PromptDialect::Ansi, "ruby 4.0.5")
             .expect("write lang cache");
 
-        cache.clear_language_files();
+        cache.clear_unrefreshable_files();
 
         assert!(
             !cache
@@ -2503,10 +2531,10 @@ mod tests {
         assert!(blocker.is_dir(), "the unremovable entry is left in place");
     }
 
-    /// `clear_language_files` reaches chunked entries and removes the chunk
+    /// `clear_unrefreshable_files` reaches chunked entries and removes the chunk
     /// directories it empties, but keeps git caches and their dirs (#771).
     #[test]
-    fn clear_language_files_clears_chunked_entries() {
+    fn clear_unrefreshable_files_clears_chunked_entries() {
         let temp_dir = tempfile::TempDir::new().expect("temp cache dir");
         let cache_dir = temp_dir.path().join("instant-prompts");
         let cache = InstantPromptCache::new_in_dir(cache_dir.clone()).expect("cache");
@@ -2522,7 +2550,7 @@ mod tests {
                 .expect("write");
         }
 
-        cache.clear_language_files();
+        cache.clear_unrefreshable_files();
 
         assert!(
             !cache_dir.join("l".repeat(50)).exists(),
@@ -3188,7 +3216,7 @@ mod tests {
         assert_eq!(prev_bg_token(Some("bright-green")), "bright_green");
         assert!(
             !prev_bg_token(Some("a.b")).contains('.'),
-            "token must never contain a dot (clear_language_files relies on this)"
+            "token must never contain a dot (clear_unrefreshable_files relies on this)"
         );
     }
 

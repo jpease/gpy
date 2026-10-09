@@ -892,6 +892,12 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
   and Zsh no longer skip their startup start when the supervisor is off
   (#842). One contract test runs the same config through all three shells.
 - Zsh shells that never registered no longer print `no matches found` on exit.
+- A restarted agent no longer leaves context-specific cache files
+  (`{key}.git*.{prev_bg}.{ext}`) behind. It forgets which `prev_bg` contexts to
+  refresh, so a surviving file was served as fresh and never updated: an idle
+  shell repainted on the doorbell and still showed the pre-edit status. Startup
+  now removes them (alongside the language files it already cleared), and the
+  shell's variant-fallback path re-registers its context.
 
 ### Security
 
