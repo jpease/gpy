@@ -1,0 +1,20 @@
+# Dependabot version updates: GitHub Actions only (#506).
+#
+# Every `uses:` in .github/workflows is pinned to a full commit SHA with a
+# `# vX.Y.Z` comment. A pin never moves on its own, so without this file the
+# pins go stale silently; weekly Dependabot PRs are what keep SHA pinning
+# maintainable (a few PRs a year). tests/bash/workflow_hardening.test.bash
+# keeps the pins and the permissions blocks honest.
+#
+# Cargo version-update PRs are deliberately NOT configured: on a solo project
+# they are a steady stream of noise, and the quality gate already runs
+# `cargo audit` and `cargo deny` on every push, which catches the class that
+# matters. Dependabot alerts and security updates (not version updates) are
+# enabled in the repository settings (#507), so real vulnerabilities still
+# surface without a `cargo` entry here.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

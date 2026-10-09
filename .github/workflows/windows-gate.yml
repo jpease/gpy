@@ -22,6 +22,10 @@ name: Windows gate
 on:
   workflow_call:
 
+# Least privilege (#506): the token is read-only unless a job below asks for more.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: ""
@@ -38,13 +42,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         # No `toolchain:` input: the action resolves the pin from
         # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
         # See that file for why CI must not install @stable (#189, #518).
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           rust-src-dir: gpy-agent
           cache: false
@@ -54,12 +60,12 @@ jobs:
         run: ./scripts/check-active-toolchain.sh
 
       - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: gpy-agent
 
       - name: Install nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
           tool: cargo-nextest
 

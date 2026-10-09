@@ -49,6 +49,10 @@ on:
         type: boolean
         default: false
 
+# Least privilege (#506): the token is read-only unless a job below asks for more.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: ""
@@ -72,14 +76,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         # No `toolchain:` input: the action resolves the pin from
         # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
         # See that file for why CI must not install @stable (#189, #518).
         # llvm-tools-preview backs the coverage step below (#654).
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           rust-src-dir: gpy-agent
           cache: false
@@ -90,19 +96,19 @@ jobs:
         run: ./scripts/check-active-toolchain.sh
 
       - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: gpy-agent
 
       - name: Install Rust tooling (nextest, audit, deny, llvm-cov)
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
           tool: cargo-nextest,cargo-audit,cargo-deny,cargo-llvm-cov,just
 
       # `just lint` is `moon run gpy-agent:clippy` (#584); nothing installed
       # moon here, so the lint leg could never have run in CI (#651).
       - name: Install moon
-        uses: moonrepo/setup-toolchain@v0
+        uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: false
 
@@ -144,7 +150,7 @@ jobs:
 
       - name: Upload coverage artifact
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-lcov
           path: gpy-agent/lcov.info
@@ -159,7 +165,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Build the image and run the fresh install
         run: ./scripts/test-fresh-install.sh
@@ -175,10 +183,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           rust-src-dir: gpy-agent
           cache: false
@@ -189,17 +199,17 @@ jobs:
         run: ./scripts/check-active-toolchain.sh
 
       - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: gpy-agent
 
       - name: Install Rust tooling (nextest, audit, deny)
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
           tool: cargo-nextest,cargo-audit,cargo-deny,just
 
       - name: Install moon
-        uses: moonrepo/setup-toolchain@v0
+        uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: false
 
