@@ -102,7 +102,7 @@ Controls the background agent process that serves prompt data over IPC.
 
 ### `[agent.supervisor]`
 
-Controls automatic restart of a crashed or unresponsive agent process.
+Controls automatic restart of a crashed or unresponsive agent process. In every shell (Bash, Zsh, Fish) this flag governs restarts only: with `enabled = false` the shell still starts the agent once when it starts (as long as `[agent] enabled` is `true`), but a crashed agent stays down afterwards. Only `[agent] enabled = false` (`GPY_AGENT_ENABLED=0`) stops shells from starting, registering with, or supervising an agent.
 
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|

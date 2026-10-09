@@ -487,6 +487,13 @@ __gpy_render_prompt() {
 }
 
 __gpy_register_with_agent() {
+    __gpy_agent_enabled || return 1
+
+    # Already registered: a no-op (#419), so a segment's cold-miss or throttled
+    # refresh path (#843) never costs another round trip and agent rescan.
+    # Callers that must register again clear __gpy_registered first.
+    [[ -z "$__gpy_registered" ]] || return 0
+
     local socket_path
     socket_path=$(__gpy_ipc_endpoint)
     [[ -S "$socket_path" ]] || return 1
@@ -530,6 +537,7 @@ __gpy_build_workspace_payload() {
 }
 
 __gpy_sync_workspace() {
+    __gpy_agent_enabled || return 0
     [[ -n "$__gpy_registered" ]] || return 0
     [[ "$__gpy_rejected_workspace" != "$PWD" ]] || return 0
     __gpy_rejected_workspace=""
@@ -657,18 +665,14 @@ __gpy_setup_hooks() {
 
 # Initialize GPY
 __gpy_init() {
-    # Check if GPY should be enabled
-    if [[ -n "${GPY_AGENT_ENABLED:-}" && "${GPY_AGENT_ENABLED:-}" != "1" ]]; then
-        return
-    fi
-
-    # Start supervisor if enabled
-    if [[ -z "${GPY_AGENT_SUPERVISOR_ENABLED:-}" || "${GPY_AGENT_SUPERVISOR_ENABLED:-}" == "1" ]]; then
+    # Agent-free mode (GPY_AGENT_ENABLED=0) starts no agent, no supervisor and
+    # no registration, but still installs the prompt hook: every render goes
+    # through oneshot (#841). GPY_AGENT_SUPERVISOR_ENABLED does not gate the
+    # startup start; it only controls restarts (__gpy_supervisor_check, #842).
+    if __gpy_agent_enabled; then
         __gpy_supervisor_start &>/dev/null
+        __gpy_register_with_agent &>/dev/null
     fi
-
-    # Register client with agent
-    __gpy_register_with_agent &>/dev/null
 
     # Setup prompt hooks
     __gpy_setup_hooks

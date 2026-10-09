@@ -874,6 +874,24 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 - Memory leak from accumulated dead PIDs when Fish processes crash or are killed without unregistering
 - Wasted signal delivery attempts (SIGUSR1) to non-existent processes
+- Bash and Zsh git and language segments now match Fish on a cache miss, a
+  variant-fallback read and a stale entry (#843). A cold git miss with the
+  agent down omits the segment instead of forking a foreground
+  `gpy-agent oneshot`; with the agent up it makes one bounded synchronous IPC
+  query (`GPY_IPC_TIMEOUT_MS`). A `.none` variant served for a real previous
+  background now corrects the opening chevron colour (git: bounded synchronous
+  query; language: throttled background refresh). Stale-entry refreshes are
+  throttled to one per 500 ms per segment and path instead of one per render.
+- Bash with `[agent] enabled = false` now installs its prompt hook and renders
+  every prompt through oneshot (previously `PS1` was never set); Bash and Zsh
+  start, register and supervise nothing in that mode, and Zsh no longer
+  registers with an agent unconditionally (#841).
+- `[agent.supervisor] enabled = false` now means the same in Bash, Zsh and
+  Fish: it disables restarts only, and the startup start depends on
+  `[agent] enabled` alone, as documented. Fish already behaved this way; Bash
+  and Zsh no longer skip their startup start when the supervisor is off
+  (#842). One contract test runs the same config through all three shells.
+- Zsh shells that never registered no longer print `no matches found` on exit.
 
 ### Security
 

@@ -23,6 +23,9 @@ export XDG_CACHE_HOME="$TMP_ROOT/cache"
 export GPY_LANGUAGE_ENABLED=1
 
 source zsh/gpy.zsh
+# Agent-free sandbox config (above) keeps sourcing from starting a daemon; the
+# refresh the cold miss still requests is dispatched only with the agent enabled.
+export GPY_AGENT_ENABLED=1
 source zsh/segments/language.zsh
 
 FAILED=0

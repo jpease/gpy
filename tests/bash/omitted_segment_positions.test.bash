@@ -23,6 +23,9 @@ export GPY_AGENT_SOCKET_PATH="$TMP_ROOT/missing.sock"
 export GPY_LANGUAGE_ENABLED=1
 
 source bash/gpy.bash
+# Agent-free sandbox config (above) keeps sourcing from starting a daemon; the
+# refresh the cold miss still requests is dispatched only with the agent enabled.
+export GPY_AGENT_ENABLED=1
 source bash/segments/language.bash
 
 FAILED=0

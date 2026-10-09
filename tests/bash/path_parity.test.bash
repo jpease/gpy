@@ -71,10 +71,11 @@ tmp="$(mktemp -d "${TMPDIR:-/tmp}/gpy-path-parity.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 # gpy.bash decides on its startup agent start from the environment, but every
 # later supervisor check reads the flag the theme export sets from config.toml,
-# so disable it in every config dir the cases resolve to as well (#836).
+# so disable it in every config dir the cases resolve to as well (#836). Only
+# `[agent] enabled = false` keeps the startup start away (#842).
 for cfg in "$tmp/config" "$tmp/home/.config"; do
     mkdir -p "$cfg/gpy"
-    printf '[agent.supervisor]\nenabled = false\n' >"$cfg/gpy/config.toml"
+    printf '[agent]\nenabled = false\n\n[agent.supervisor]\nenabled = false\n' >"$cfg/gpy/config.toml"
 done
 compare xdg_all_set HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache" XDG_RUNTIME_DIR="$tmp/run"
 compare runtime_unset HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache"

@@ -4,7 +4,9 @@
 # Regression test for #837: bash's startup `gpy-agent start` must honour the
 # GPY_AGENT_ENABLED / GPY_AGENT_SUPERVISOR_ENABLED flags the theme export
 # sets from config.toml, so gpy.bash may start the agent only after the
-# export has loaded (the zsh twin is #762).
+# export has loaded (the zsh twin is #762). Only [agent] enabled gates the
+# startup start; [agent.supervisor] enabled = false turns off restarts alone
+# (#842, see supervisor_flag_contract.test.bash).
 #
 # A stub gpy-agent stands in for the agent: it logs argv, always fails
 # `status`, and prints a theme export whose flags come from STUB_AGENT and
@@ -60,7 +62,7 @@ check() {
 }
 
 check "[agent] enabled = false skips the startup start" 0 "$(starts_for 0 1)"
-check "[agent.supervisor] enabled = false skips the startup start" 0 "$(starts_for 1 0)"
+check "[agent.supervisor] enabled = false still makes the startup start" 1 "$(starts_for 1 0)"
 # Control: both enabled still starts the missing agent, so the stub is wired.
 check "both enabled starts the agent once" 1 "$(starts_for 1 1)"
 

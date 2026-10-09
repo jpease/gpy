@@ -60,10 +60,9 @@ __gpy_supervisor_start() {
     # covers both callers.
     __gpy_protocol_version_checked=0
 
-    # Check if supervisor is disabled
-    if [[ -n "${GPY_AGENT_SUPERVISOR_ENABLED:-}" && "${GPY_AGENT_SUPERVISOR_ENABLED:-}" != "1" ]]; then
-        return
-    fi
+    # Not gated on GPY_AGENT_SUPERVISOR_ENABLED: that flag only controls
+    # restarts (__gpy_supervisor_check), not the startup start (#842).
+    __gpy_agent_enabled || return 0
 
     # Check if agent is already running
     if __gpy_supervisor_is_running; then
@@ -109,7 +108,8 @@ __gpy_supervisor_last_check_time=0
 __gpy_supervisor_check_attempts=0
 
 __gpy_supervisor_check() {
-    # Only check if supervisor is enabled
+    # Restart supervision needs both the agent and the supervisor enabled
+    __gpy_agent_enabled || return
     if [[ -z "${GPY_AGENT_SUPERVISOR_ENABLED:-}" || "${GPY_AGENT_SUPERVISOR_ENABLED:-}" != "1" ]]; then
         return
     fi

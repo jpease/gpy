@@ -35,8 +35,7 @@ __gpy_segment_language_detect() {
 # every variant, plus the context-free `.none` entry, and repaints.
 __gpy_segment_language_omit() {
     __gpy_instant_cache_present lang "$PWD" && return 1
-    __gpy_trigger_data_refresh "lang" "$PWD" "" "" >/dev/null 2>&1 &
-    disown $! 2>/dev/null
+    __gpy_maybe_refresh "lang" "$PWD" lang "" "" ""
     return 0
 }
 
@@ -65,16 +64,26 @@ __gpy_segment_language() {
         # positions were assigned (#766); this still catches entries that
         # exist only for other prev_bg contexts (no `.none`), where the
         # previous segment keeps its not-last form until the agent repaints.
-        __gpy_trigger_data_refresh "lang" "$PWD" "$is_last" "$prev_bg" >/dev/null 2>&1 &
-        disown $! 2>/dev/null
+        __gpy_maybe_refresh "lang" "$PWD" "$cache_suffix" "$is_last" "$prev_bg" "$is_first"
         return 0
     fi
 
     echo "$response"
 
+    # 2b. Variant fallback (#454, bit 4): the read served the `.none`
+    # context-free entry because no token-specific file exists yet for this
+    # render's real prev_bg -- the language text is right but the opening
+    # chevron colour is wrong. Like Fish, this is a throttled BACKGROUND
+    # refresh (never a synchronous query, so language keeps its never-blocks
+    # guarantee): the agent's response writes the token-specific file for the
+    # NEXT render. Throttled per prev_bg token so a recent refresh for a
+    # different context cannot starve this one.
+    if __gpy_cache_status_variant "$cache_status"; then
+        __gpy_maybe_refresh "lang" "$PWD" "$cache_suffix" "$is_last" "$prev_bg" "$is_first" "$(__gpy_prev_bg_token "$prev_bg")"
+    fi
+
     # 3. Stale hit (bit 2 set: status 2 or 6): serve above, refresh in background
     if (( (cache_status & 2) != 0 )); then
-        __gpy_trigger_data_refresh "lang" "$PWD" "$is_last" "$prev_bg" >/dev/null 2>&1 &
-        disown $! 2>/dev/null
+        __gpy_maybe_refresh "lang" "$PWD" "$cache_suffix" "$is_last" "$prev_bg" "$is_first"
     fi
 }

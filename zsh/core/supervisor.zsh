@@ -4,7 +4,9 @@
 # Both functions are always defined. The enable flags come from the theme
 # export (config.toml), which loads after this file, so they are read when
 # each function acts, never at source time (#762). gpy.zsh makes the one
-# startup __gpy_start_agent call after __gpy_load_theme.
+# startup __gpy_start_agent call after __gpy_load_theme, gated on
+# GPY_AGENT_ENABLED alone: GPY_AGENT_SUPERVISOR_ENABLED=0 only turns off
+# mid-session restarts (#842), and agent-free mode starts nothing (#841).
 
 function __gpy_start_agent() {
     # Check if agent is already running. `gpy-agent status` exits 0 for any

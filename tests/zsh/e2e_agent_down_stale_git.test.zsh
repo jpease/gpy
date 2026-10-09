@@ -33,7 +33,13 @@ printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory
 export GPY_AGENT_ENABLED=1
 export GPY_GIT_INSTANT_CACHE_TTL_SECONDS=5
 cd "$SHELL_E2E_REPO" || exit 1
-source "$ROOT/zsh/gpy.zsh"
+# Source with the agent disabled and off PATH so sourcing cannot autostart one
+# (the supervisor flag only gates restarts, #842, and the theme export would
+# re-set GPY_AGENT_ENABLED from config.toml); enable it afterwards.
+shell_e2e_agent_free_begin
+GPY_AGENT_ENABLED=0 source "$ROOT/zsh/gpy.zsh"
+shell_e2e_agent_free_end
+export GPY_AGENT_ENABLED=1
 
 backdate() {
     python3 -c "import os,sys,time; os.utime(sys.argv[1], (time.time()-60, time.time()-60))" "$1"
