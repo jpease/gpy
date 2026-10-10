@@ -48,7 +48,7 @@ exec_rc="$exec_dir/.zshrc"
 printf 'echo "EXEC_STARTED=$$"\nwhile [ ! -e "%s" ]; do sleep 0.05; done\nsource "%s/zsh/gpy.zsh"\n' \
     "$release" "$ROOT" >"$exec_rc"
 off="$(shell_e2e_size)"
-shell_e2e_send "exec env ZDOTDIR='$exec_dir' zsh -i\r"
+shell_e2e_send "exec env ZDOTDIR='$exec_dir' zsh -d -i\r"
 shell_e2e_wait_for "EXEC_STARTED=$client_pid" 10 "$off" >/dev/null || { fail "the exec'd zsh never started"; shell_e2e_dump_transcript; exit 1; }
 counted() { "$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep -q 'Registered Clients: 1'; }
 shell_e2e_poll 5 counted || fail "the PID is not registered across exec; the notification cannot reach it"
