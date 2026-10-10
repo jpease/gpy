@@ -286,6 +286,14 @@ __gpy_ipc_client_available() {
 # never did (a refused or vanished socket: exit 1). A complete reply is read
 # before the trailer ever matters; a partial or absent one leaves the marker in
 # the line. \037 (unit separator) is not emitted by any renderer.
+#
+# `exec 2>/dev/null` opens each substitution: `read` closes its end as soon as
+# the reply line arrives, so the trailer `printf` (and, for a client that
+# exits early, the `echo`) can write to a closed pipe. Where SIGPIPE is
+# ignored -- a shell spawned by Python, Node, .NET (every GitHub Actions
+# step) or many IDE terminals inherits that -- the write fails with EPIPE and
+# bash prints "printf: write error: Broken pipe" into the prompt, once per
+# request. Nothing in the substitution's stderr is wanted.
 __gpy_send_json() {
     # Agent-free mode (GPY_AGENT_ENABLED=0) never talks to a daemon, even one
     # another shell started: callers fall back to oneshot (#841).
@@ -303,7 +311,7 @@ __gpy_send_json() {
 
     # Try socat first (most reliable)
     if command -v socat &>/dev/null; then
-        IFS= read -r response < <(echo "$json" | socat -t "$timeout_secs" - "UNIX-CONNECT:$socket_path" 2>/dev/null; printf '\037%s\n' "$?")
+        IFS= read -r response < <(exec 2>/dev/null; echo "$json" | socat -t "$timeout_secs" - "UNIX-CONNECT:$socket_path" 2>/dev/null; printf '\037%s\n' "$?")
         read_status=$?
     # Try nc with -U flag (Unix socket). nc's -w only accepts whole seconds, so
     # a hung-but-connected agent stalls the prompt for a full second rather
@@ -311,11 +319,11 @@ __gpy_send_json() {
     # it's available (#324). Falls back to the coarser -w 1 bound otherwise.
     elif __gpy_ipc_client_available; then
         if command -v timeout &>/dev/null; then
-            IFS= read -r response < <(echo "$json" | timeout "$timeout_secs" nc -U "$socket_path" -w 1 2>/dev/null; printf '\037%s\n' "$?")
+            IFS= read -r response < <(exec 2>/dev/null; echo "$json" | timeout "$timeout_secs" nc -U "$socket_path" -w 1 2>/dev/null; printf '\037%s\n' "$?")
             # 124: `timeout` killed an nc that had connected and was waiting.
             connected_codes=" 0 124 "
         else
-            IFS= read -r response < <(echo "$json" | nc -U "$socket_path" -w 1 2>/dev/null; printf '\037%s\n' "$?")
+            IFS= read -r response < <(exec 2>/dev/null; echo "$json" | nc -U "$socket_path" -w 1 2>/dev/null; printf '\037%s\n' "$?")
         fi
         read_status=$?
     else
