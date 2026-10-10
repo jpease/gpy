@@ -31,13 +31,15 @@
 //!
 //! ## Windows (#478)
 //!
-//! Only the **cache** root gets a native-Windows branch, via the [`Os`] enum
+//! The **cache** root gets a native-Windows branch, via the [`Os`] enum
 //! and [`cache_root_for`]'s third parameter. The **runtime** root does not:
 //! IPC (the socket/PID-file consumer of `runtime_root_for`) is Unix-socket
 //! based and unimplemented on native Windows (see
 //! [`crate::ipc::native_windows_unsupported`]), so a Windows runtime-root
 //! branch would resolve a path nothing ever creates. The **config** root
-//! is out of #478's scope too (not mentioned in that issue's Scope section).
+//! takes an [`Os`] too, but only so an explicit Windows-absolute
+//! `XDG_CONFIG_HOME` is honoured (as `XDG_CACHE_HOME` is); its fallback stays
+//! `$HOME/.config/gpy`, with no `%APPDATA%` branch.
 //!
 //! Native-Windows GPY can therefore resolve `%LOCALAPPDATA%\gpy` correctly
 //! (this module) and run the CLI standalone, but has **no shell
@@ -309,6 +311,21 @@ pub enum Os {
     Windows,
 }
 
+impl Os {
+    /// The OS this binary was compiled for: the value an impure call site
+    /// passes to this module's pure resolvers. The only `cfg!(windows)` in
+    /// this module, kept out of the resolvers themselves so each stays
+    /// table-testable from any host.
+    #[must_use]
+    pub const fn host() -> Self {
+        if cfg!(windows) {
+            Self::Windows
+        } else {
+            Self::Unix
+        }
+    }
+}
+
 /// The runtime root for a given environment, with no I/O and no ambient
 /// reads.
 ///
@@ -388,10 +405,10 @@ pub fn cache_root_for(
 /// The config root for a given environment, with no I/O and no ambient
 /// reads.
 ///
-/// Unix rules only (#774): a Windows-shaped `XDG_CONFIG_HOME` is relative and
-/// ignored; native-Windows config resolution is out of scope.
-///
-/// Precedence:
+/// Precedence, with `XDG_CONFIG_HOME` judged absolute by `os`'s rules
+/// ([`xdg_value`], #774): a Windows-shaped value is relative and ignored
+/// under [`Os::Unix`], and honoured under [`Os::Windows`], exactly like the
+/// `XDG_CACHE_HOME` override of [`cache_root_for`]:
 /// 1. `$XDG_CONFIG_HOME/gpy`
 /// 2. `$HOME/.config/gpy`, falling back to a bare `.config/gpy` relative path
 ///    when `HOME` is also unset.
@@ -404,8 +421,8 @@ pub fn cache_root_for(
 /// divergence was deliberately preserved once (#477) but is gone now that
 /// theme resolution unified onto this function.
 #[must_use]
-pub fn config_root_for(xdg_config_home: Option<&str>, home: Option<&str>) -> PathBuf {
-    if let Some(xdg_config) = xdg_value(xdg_config_home, Os::Unix) {
+pub fn config_root_for(xdg_config_home: Option<&str>, home: Option<&str>, os: Os) -> PathBuf {
+    if let Some(xdg_config) = xdg_value(xdg_config_home, os) {
         return PathBuf::from(xdg_config).join("gpy");
     }
     let home_dir = home.unwrap_or(".");
@@ -667,7 +684,7 @@ mod tests {
     fn home_dir_resolves_on_this_machine() {
         let home = home_dir().expect("a home directory must be resolvable");
         assert!(
-            home.starts_with('/'),
+            Path::new(&home).is_absolute(),
             "home directory should be absolute, got {home:?}"
         );
     }
@@ -702,11 +719,31 @@ mod tests {
 
         for (xdg_config, home, expected) in cases {
             assert_eq!(
-                config_root_for(xdg_config, home),
+                config_root_for(xdg_config, home, Os::Unix),
                 PathBuf::from(expected),
                 "config root for (XDG_CONFIG_HOME={xdg_config:?}, HOME={home:?})"
             );
         }
+    }
+
+    /// A Windows-absolute `XDG_CONFIG_HOME` is honoured under `Os::Windows`
+    /// (the CLI's `XDG_*` override, like the cache root's) and relative, so
+    /// ignored, under `Os::Unix`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the resolver disagrees with the documented precedence.
+    #[test]
+    fn config_root_windows_xdg_override() {
+        let xdg = Some(r"C:\Users\u\cfg");
+        assert_eq!(
+            config_root_for(xdg, Some("/home/u"), Os::Windows),
+            PathBuf::from(r"C:\Users\u\cfg").join("gpy"),
+        );
+        assert_eq!(
+            config_root_for(xdg, Some("/home/u"), Os::Unix),
+            PathBuf::from("/home/u/.config/gpy"),
+        );
     }
 
     /// #850: the boundary is `capacity - 1` bytes (the NUL takes the last), and

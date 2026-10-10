@@ -102,13 +102,13 @@ pub fn config_candidates_for(
     custom_path: Option<&str>,
     xdg_config: Option<&str>,
     home: Option<&str>,
+    os: crate::paths::Os,
 ) -> Vec<String> {
     [
         custom_path
             .filter(|path| !path.is_empty())
             .map(ToOwned::to_owned),
-        crate::paths::xdg_value(xdg_config, crate::paths::Os::Unix)
-            .map(|xdg| format!("{xdg}/gpy/config.toml")),
+        crate::paths::xdg_value(xdg_config, os).map(|xdg| format!("{xdg}/gpy/config.toml")),
         home.map(|h| format!("{h}/.config/gpy/config.toml")),
     ]
     .into_iter()
@@ -139,6 +139,7 @@ pub fn get_config_paths() -> Vec<String> {
         custom_path.as_deref(),
         xdg_config.as_deref(),
         home.as_deref(),
+        crate::paths::Os::host(),
     )
 }
 
@@ -178,6 +179,7 @@ pub fn resolve_active_config<P: AsRef<std::path::Path>>(
 #[cfg(test)]
 mod config_path_tests {
     use super::config_candidates_for;
+    use crate::paths::Os;
 
     /// One row: `GPY_CONFIG_PATH`, `XDG_CONFIG_HOME`, `HOME`, then the
     /// expected candidate list.
@@ -268,11 +270,33 @@ mod config_path_tests {
     fn config_candidate_precedence() {
         for (custom, xdg_config, home, expected) in CANDIDATE_CASES {
             assert_eq!(
-                config_candidates_for(custom, xdg_config, home),
+                config_candidates_for(custom, xdg_config, home, Os::Unix),
                 expected.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>(),
                 "candidates for (GPY_CONFIG_PATH={custom:?}, XDG_CONFIG_HOME={xdg_config:?}, HOME={home:?})"
             );
         }
+    }
+
+    /// A Windows-absolute `XDG_CONFIG_HOME` is the first candidate under
+    /// `Os::Windows` and ignored (relative) under `Os::Unix`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the resolver disagrees with the documented precedence.
+    #[test]
+    fn config_candidates_honour_windows_xdg_only_under_windows_rules() {
+        let xdg = Some(r"C:\Users\u\cfg");
+        assert_eq!(
+            config_candidates_for(None, xdg, Some("/h"), Os::Windows),
+            [
+                r"C:\Users\u\cfg/gpy/config.toml",
+                "/h/.config/gpy/config.toml"
+            ],
+        );
+        assert_eq!(
+            config_candidates_for(None, xdg, Some("/h"), Os::Unix),
+            ["/h/.config/gpy/config.toml"],
+        );
     }
 }
 

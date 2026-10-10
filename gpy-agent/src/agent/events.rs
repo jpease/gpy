@@ -1634,6 +1634,21 @@ mod tests {
         }
     }
 
+    /// `path` as a URL argument for `git`: the canonical form the agent
+    /// keys on is `\\?\`-prefixed on Windows, a spelling `git` does not take
+    /// as a repository location.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `path` is not valid UTF-8.
+    fn git_url(path: &Path) -> String {
+        let text = path.to_str().expect("utf-8 path");
+        text.strip_prefix(r"\\?\")
+            .filter(|plain| !plain.starts_with("UNC\\"))
+            .unwrap_or(text)
+            .to_owned()
+    }
+
     /// # Panics
     ///
     /// Panics if creating or initializing the temporary repository fails.
@@ -3769,12 +3784,25 @@ mod tests {
     /// that have broken the pipeline before: a TAB (#775), a leading `:`
     /// (pathspec magic, #713), spaces, and files inside directories that do
     /// not exist yet, which git collapses into one untracked `dir/` entry
-    /// (#711).
+    /// (#711). Windows forbids TAB and `:` in a filename (os error 123), so
+    /// those two spellings exist only on Unix.
+    #[cfg(not(windows))]
     const ORACLE_NAMES: [&str; 8] = [
         "a.txt",
         "b c.txt",
         "tab\tname.txt",
         ":colon.txt",
+        "src/lib.txt",
+        "newdir/x.txt",
+        "newdir/deep/y.txt",
+        "other/z.txt",
+    ];
+
+    /// The Windows subset of the Unix list above: every name valid there.
+    #[cfg(windows)]
+    const ORACLE_NAMES: [&str; 6] = [
+        "a.txt",
+        "b c.txt",
         "src/lib.txt",
         "newdir/x.txt",
         "newdir/deep/y.txt",
@@ -3911,21 +3939,24 @@ mod tests {
         let (parent_tmp, repo) = create_temp_repo();
         fs::write(repo.join("t.txt"), "t\n").expect("write t.txt");
         commit_all(&repo);
-        let source_arg = source.to_str().expect("utf-8 source path");
+        let source_arg = git_url(&source);
+        let added = std::process::Command::new("git")
+            .args([
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                &source_arg,
+                "sub",
+            ])
+            .current_dir(&repo)
+            .output()
+            .expect("spawn git submodule add");
         assert!(
-            git_in(
-                &repo,
-                &[
-                    "-c",
-                    "protocol.file.allow=always",
-                    "submodule",
-                    "add",
-                    "-q",
-                    source_arg,
-                    "sub",
-                ],
-            ),
-            "git submodule add failed"
+            added.status.success(),
+            "git submodule add failed: {}",
+            String::from_utf8_lossy(&added.stderr)
         );
         commit_all(&repo);
         let sub = repo.join("sub");

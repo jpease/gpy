@@ -555,11 +555,18 @@ mod tests {
         );
 
         // The synchronous reply's render must land in the request path's
-        // entries (key ends `_sdocs`), not only in the project root's.
+        // entries (key ends `docs`, after the escaped path separator: `_s`
+        // for `/`, `_b` for the `\` of a native Windows path), not only in
+        // the project root's.
+        let docs_marker = if cfg!(windows) {
+            "_bdocs.lang"
+        } else {
+            "_sdocs.lang"
+        };
         let docs_entry_rendered = std::fs::read_dir(cache_dir.path())
             .expect("read cache dir")
             .flatten()
-            .filter(|entry| entry.file_name().to_string_lossy().contains("_sdocs.lang"))
+            .filter(|entry| entry.file_name().to_string_lossy().contains(docs_marker))
             .any(|entry| {
                 std::fs::read_to_string(entry.path()).is_ok_and(|prompt| !prompt.is_empty())
             });

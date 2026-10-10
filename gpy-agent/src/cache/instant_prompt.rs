@@ -1596,14 +1596,18 @@ mod tests {
         WriteVariants(usize, &'static str),
         /// Age every file past `CACHE_ENTRY_MAX_AGE` and run the startup
         /// sweep, which must empty the directory, chunk dirs included (#771).
+        #[cfg(unix)]
         Sweep,
     }
 
-    /// Independent model of the on-disk name of `(key, suffix)` (#771):
-    /// flat up to 200 characters, else 50-character chunks joined by `/`.
+    /// Independent model of the on-disk name of `(key, suffix)` (#771).
+    ///
+    /// Flat up to 200 characters, else 50-character chunks joined by `/`.
+    /// Native Windows never chunks: its keys are capped by
+    /// `windows_harden_cache_key` instead (#478).
     fn expected_name(key: &str, suffix: &str) -> String {
         let chars: Vec<char> = key.chars().collect();
-        let stem = if chars.len() <= 200 {
+        let stem = if cfg!(windows) || chars.len() <= 200 {
             key.to_owned()
         } else {
             chars
@@ -1672,6 +1676,7 @@ mod tests {
             }
         }
 
+        #[cfg(unix)]
         fn sweep(&mut self) {
             let when = SystemTime::now()
                 .checked_sub(CACHE_ENTRY_MAX_AGE)
@@ -1689,6 +1694,7 @@ mod tests {
         fn apply(&mut self, op: &Op) {
             match *op {
                 Op::WriteVariants(key_len, content) => self.write_variants(key_len, content),
+                #[cfg(unix)]
                 Op::Sweep => self.sweep(),
                 Op::DeleteDir => {
                     std::fs::remove_dir_all(&self.cache.cache_dir).expect("remove dir");
@@ -1781,6 +1787,9 @@ mod tests {
         h.apply(&Op::WriteVariants(225, "y"));
     }
 
+    // Chunking is a Unix-only scheme: native Windows keys are capped by
+    // `windows_harden_cache_key` and a 300-byte key is simply skipped (#478).
+    #[cfg(unix)]
     #[test]
     fn instant_cache_writes_and_sweeps_a_chunked_300_byte_key() {
         let mut h = CacheHarness::new();
@@ -2533,6 +2542,7 @@ mod tests {
 
     /// `clear_unrefreshable_files` reaches chunked entries and removes the chunk
     /// directories it empties, but keeps git caches and their dirs (#771).
+    #[cfg(unix)]
     #[test]
     fn clear_unrefreshable_files_clears_chunked_entries() {
         let temp_dir = tempfile::TempDir::new().expect("temp cache dir");
@@ -2871,7 +2881,15 @@ mod tests {
         std::fs::create_dir_all(repo.join(".git")).expect("git dir");
         let canonical = std::fs::canonicalize(&repo).expect("canonicalize");
         let key = path_to_cache_key(&canonical);
+        // Unix chunks an over-long key into directories; native Windows caps
+        // it by hardening instead, so it never exceeds NAME_MAX there (#478).
+        #[cfg(unix)]
         assert!(key.len() > 255, "the key alone must exceed NAME_MAX");
+        #[cfg(windows)]
+        assert!(
+            key.chars().count() <= WINDOWS_CACHE_KEY_MAX_LEN + 18,
+            "the Windows key is capped by hardening"
+        );
         let config = Config::default();
 
         let wrote = cache
