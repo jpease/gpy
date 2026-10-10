@@ -287,14 +287,14 @@ jobs:
           done
 
       - name: Upload agent binary artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.asset_name }}
           path: gpy-agent/target/${{ matrix.target }}/release-dist/${{ matrix.artifact_name }}
           if-no-files-found: error
 
       - name: Upload CLI binary artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.cli_asset_name }}
           path: gpy-agent/target/${{ matrix.target }}/release-dist/${{ matrix.cli_artifact_name }}
@@ -355,7 +355,7 @@ jobs:
       # per-binary .sha256 sidecars, which is where install-oneline.sh fetches
       # its verification metadata from.
       - name: Upload release payload
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gpy-release-package
           path: |
