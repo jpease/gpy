@@ -17,7 +17,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 MODE="${GPY_PERF_CANARY_MODE:-warn}"
-BASE_REF="${GPY_PERF_CANARY_BASE_REF:-@{upstream}}"
+# The default is quoted: unquoted, the `}` of `@{upstream}` ends the expansion
+# early and a set GPY_PERF_CANARY_BASE_REF comes out with a stray `}` appended.
+BASE_REF="${GPY_PERF_CANARY_BASE_REF:-"@{upstream}"}"
 SAMPLE_SIZE="${GPY_PERF_CANARY_SAMPLE_SIZE:-20}"
 WARM_UP_SECONDS="${GPY_PERF_CANARY_WARMUP_SECONDS:-1}"
 MEASUREMENT_SECONDS="${GPY_PERF_CANARY_MEASUREMENT_SECONDS:-1}"

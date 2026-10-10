@@ -34,12 +34,12 @@ repos:
         types: [rust]
         files: ^gpy-agent/
         pass_filenames: true
-    -   id: clippy-strict
-        name: clippy-strict
-        description: Run strict clippy checks for the Rust agent
-        entry: just clippy-strict
+    -   id: moon-lint
+        name: moon-lint
+        description: Run the stricter moon clippy gate (nursery/cargo/restriction lints, all features); a superset of plain clippy (#584)
+        entry: just lint
         language: system
-        files: \.rs$
+        files: '(\.rs$|(^|/)Cargo\.(toml|lock)$|^moon\.yml$)'
         pass_filenames: false
     -   id: fish-check
         name: fish-check
@@ -78,64 +78,18 @@ repos:
         entry: bash -c 'command -v gitleaks >/dev/null 2>&1 || exit 0; gitleaks git --staged --redact'
         language: system
         pass_filenames: false
-    # --- Pre-push gates (path-aware) ---
-    # The push diff drives which gates run. A shell-only push (no Rust/config/build
-    # paths) skips the Rust toolchain entirely; a Rust-touching push still runs the
-    # shell suites because the shells consume the agent's rendered output (e.g.
-    # starship_parity checks fish output against the agent binary).
-    #
-    #   rust-gate / moon-lint   : Rust source, Cargo manifests, config/, justfile,
-    #   / cargo-clean             moon.yml, scripts/  → skipped for shell-only pushes.
-    #                             moon-lint (#584) is the stricter nursery/cargo/
-    #                             restriction-lint gate; rust-gate covers the
-    #                             deny-warnings/pedantic baseline via Cargo.toml's
-    #                             [lints] table. Both are required.
-    #   shell-gate              : the above OR *.fish/*.bash/*.zsh + shell test dirs
-    #   perf-canary             : any shell or Rust source change
+    # --- Pre-push ---
+    # Only the cheap outbound check runs on push. The heavy gates (the Rust
+    # toolchain gate, the Fish/Bash/Zsh suites, a clean rebuild) run in CI
+    # (.github/workflows/pr-gate.yml) on every pull request, where Actions
+    # minutes are free, and so does the perf job. `moon-lint` (the stricter
+    # clippy pass) runs on commit and again on push, so a commit made with
+    # --no-verify is still linted. `just check-shell`, `just check-rust` and
+    # `just perf-canary` remain for a local run; none is a hook.
     -   id: raven-ai-attribution-outbound
         name: raven-ai-attribution-outbound
         description: Block AI-authorship credits from leaking into content about to be pushed
         entry: python3 .raven/git-hooks/lib/check-ai-attribution-content.py outbound
         language: system
         pass_filenames: false
-        stages: [pre-push]
-    -   id: cargo-clean
-        name: cargo-clean
-        description: Clean build artifacts before push to ensure a fresh state
-        entry: just clean
-        language: system
-        pass_filenames: false
-        files: '(\.rs$|(^|/)Cargo\.(toml|lock)$|^config/|^justfile$|^moon\.yml$|^scripts/)'
-        stages: [pre-push]
-    -   id: rust-gate
-        name: rust-gate
-        description: Run Rust toolchain checks before push (skipped for shell-only pushes)
-        entry: just check-rust
-        language: system
-        pass_filenames: false
-        files: '(\.rs$|(^|/)Cargo\.(toml|lock)$|^config/|^justfile$|^moon\.yml$|^scripts/)'
-        stages: [pre-push]
-    -   id: moon-lint
-        name: moon-lint
-        description: Run the stricter moon clippy gate (nursery/cargo/restriction lints) before push (#584)
-        entry: just lint
-        language: system
-        pass_filenames: false
-        files: '(\.rs$|(^|/)Cargo\.(toml|lock)$|^config/|^justfile$|^moon\.yml$|^scripts/)'
-        stages: [pre-push]
-    -   id: shell-gate
-        name: shell-gate
-        description: Run Fish/Bash/Zsh integration suites before push
-        entry: just check-shell
-        language: system
-        pass_filenames: false
-        files: '(\.(fish|bash|zsh)$|^tests/(fish|bash|zsh)/|\.rs$|(^|/)Cargo\.(toml|lock)$|^config/|^scripts/)'
-        stages: [pre-push]
-    -   id: perf-canary
-        name: perf-canary
-        description: Compare focused benchmarks against the last pushed commit on this machine
-        entry: just perf-canary
-        language: system
-        pass_filenames: false
-        files: '(\.(fish|bash|zsh|rs)$|^config/)'
         stages: [pre-push]

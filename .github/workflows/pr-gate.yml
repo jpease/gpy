@@ -2,9 +2,10 @@ name: PR Quality Gate
 
 # The full gate on every pull request: Rust toolchain, strict lint and the
 # Fish/Bash/Zsh integration suites on Linux and macOS, the CLI-only Windows
-# leg, and a clean-container fresh install. It backstops the path-aware local
-# pre-push hook, so a misclassified "shell-only" push cannot land a Rust
-# regression; the local hook stays fast, CI stays comprehensive.
+# leg, and a clean-container fresh install, plus the non-gating coverage and
+# performance jobs. The local hooks are only the cheap checks (the strict clippy
+# pass on commit and push); everything heavy runs here, so a push is fast and CI
+# stays comprehensive.
 #
 # The required status check is `gate-result`. Every leg is its own job, so a
 # failure in one never hides the verdict of another (#651), and the
@@ -253,6 +254,76 @@ jobs:
         with:
           name: coverage-lcov
           path: gpy-agent/lcov.info
+          if-no-files-found: warn
+
+  perf:
+    # Performance on every push to a pull request. Two checks, both on one
+    # ubuntu runner so base and head are measured on the same machine:
+    #
+    #   1. the absolute budgets in tests/performance-baselines.json
+    #      (`bench.sh --ci`): IPC round trip, cold git status, cache and
+    #      config/theme loading, version spawn, language detection;
+    #   2. the base-vs-head canary (`perf-canary.sh`): the PR's base commit and
+    #      its head built and benchmarked back to back, in warn mode.
+    #
+    # Non-gating until the variance of a shared runner is known: a hosted
+    # runner is noisier than the maintainer's machine, and a gate that cries
+    # wolf gets disabled. Read the job summary and the `perf-results`
+    # artifact on every PR; make it a `needs` of gate-result (and drop
+    # `continue-on-error`) once the budgets have held across enough runs.
+    # Not a `needs` of gate-result, so it can never block a merge yet.
+    name: Performance (non-gating)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The canary builds the PR's base commit in a worktree.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          rust-src-dir: gpy-agent
+          cache: false
+
+      - name: Verify the pinned toolchain is active
+        shell: bash
+        run: ./scripts/check-active-toolchain.sh
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: gpy-agent
+
+      - name: Absolute performance budgets
+        run: ./scripts/bench.sh --ci
+
+      - name: Base-vs-head canary
+        if: ${{ github.event_name == 'pull_request' && !cancelled() }}
+        env:
+          GPY_PERF_CANARY_BASE_REF: ${{ github.event.pull_request.base.sha }}
+        run: |
+          ./scripts/perf-canary.sh --mode warn 2>&1 | tee perf-canary.txt
+          {
+            echo '### perf-canary (base vs head, same runner)'
+            echo '```'
+            cat perf-canary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload performance results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: perf-results
+          path: |
+            bench-results.json
+            perf-canary.txt
           if-no-files-found: warn
 
   fresh-install:
