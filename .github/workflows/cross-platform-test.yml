@@ -68,15 +68,12 @@ jobs:
         shell: bash
         run: ./scripts/check-active-toolchain.sh
 
-      - name: Install Fish (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y fish
-
-      - name: Install Fish (macOS)
-        if: runner.os == 'macOS'
-        run: brew install fish
+      # The lib tests that source generated theme code run it through Fish,
+      # Bash and Zsh, and under CI a missing shell fails them (#650), so the
+      # smoke job installs the same prerequisites as the PR gate.
+      - name: Install shells and shell-suite prerequisites
+        if: runner.os != 'Windows'
+        uses: ./.github/actions/install-shells
 
       - name: Build agent
         working-directory: gpy-agent
