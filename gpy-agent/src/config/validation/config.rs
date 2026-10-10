@@ -94,9 +94,13 @@ mod tests {
         assert!(validate_enabled_segments(&["clock".to_owned(), "bad@seg".to_owned()]).is_err());
     }
 
+    /// Platform-neutral cases only.
+    ///
+    /// Whether a rooted path such as `/tmp` is absolute is platform-specific
+    /// (`/tmp` has no drive on Windows), so the absolute-path cases live in the
+    /// `cfg(unix)` / `cfg(windows)` tests below.
     #[test]
     fn test_validate_skip_paths() {
-        assert!(validate_skip_paths(&["/tmp".to_owned(), "/var".to_owned()]).is_ok());
         assert!(validate_skip_paths(&["~/test".to_owned()]).is_ok());
         assert!(validate_skip_paths(&["relative/path".to_owned()]).is_err());
     }

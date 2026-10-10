@@ -141,18 +141,26 @@ impl<'a> DirectoryResolver<'a> {
 
 /// Lexically normalize a cwd without touching the filesystem.
 ///
-/// Drops trailing `/` and `.` components. `..` is kept (resolving it lexically
-/// would change meaning across symlinks). A cwd that is only `.` is returned
-/// unchanged.
+/// Drops trailing `/`, repeated `/` and `.` components. `..` is kept
+/// (resolving it lexically would change meaning across symlinks). A cwd that
+/// is only `.` is returned unchanged.
+///
+/// Works on the string, not through [`Path::components`]: every display mode
+/// below splits on `/`, and rebuilding a `PathBuf` would rewrite the
+/// separators to the host's (`\` on native Windows), which none of them
+/// understand.
 fn normalize_cwd(cwd: &str) -> String {
-    let normalized: PathBuf = Path::new(cwd)
-        .components()
-        .filter(|c| !matches!(c, std::path::Component::CurDir))
-        .collect();
-    if normalized.as_os_str().is_empty() {
+    let joined = cwd
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>()
+        .join("/");
+    if cwd.starts_with('/') {
+        format!("/{joined}")
+    } else if joined.is_empty() {
         cwd.to_owned()
     } else {
-        normalized.to_string_lossy().into_owned()
+        joined
     }
 }
 
@@ -967,6 +975,17 @@ mod tests {
         assert_eq!(contract_home(&normalize_cwd("/h/u/"), Some("/h/u")), "~");
     }
 
+    /// The cwd is the shell's `/`-separated string: normalization drops
+    /// empty and `.` parts and keeps `..`, on every host.
+    #[test]
+    fn normalize_cwd_works_on_the_slash_separated_string() {
+        assert_eq!(normalize_cwd("/usr//local/./proj/"), "/usr/local/proj");
+        assert_eq!(normalize_cwd("/"), "/");
+        assert_eq!(normalize_cwd("/."), "/");
+        assert_eq!(normalize_cwd("."), ".");
+        assert_eq!(normalize_cwd("./a/../b"), "a/../b");
+    }
+
     #[test]
     fn anchor_returns_none_for_basename_and_outside_repo() {
         let root = Path::new("/home/u/dev/x/myrepo");
@@ -1184,6 +1203,11 @@ mod tests {
         assert_eq!(anchor_root(Some(link), Some(&home)), None);
     }
 
+    // `$HOME` contraction is a `/`-separated string operation on the cwd a
+    // Unix shell reports (`contract_home` needs `/` right after the home
+    // prefix), so a canonical Windows `\\?\C:\...` home can never contract;
+    // native Windows has no prompt integration and no `HOME`.
+    #[cfg(unix)]
     #[test]
     fn truncate_to_repo_ignores_repo_rooted_at_home_via_resolver() {
         let tmp = tempdir().expect("temp dir");

@@ -166,10 +166,15 @@ fn relative_gpy_config_path_is_made_absolute() {
     let (temp, home, xdg) = isolated_dirs();
     let workdir = temp.path().join("work");
     fs::create_dir_all(&workdir).unwrap();
-    let expected = fs::canonicalize(&workdir)
-        .unwrap()
-        .join("rel")
-        .join("custom.toml");
+    // The child's current directory is `workdir` exactly as passed. Unix
+    // reports it canonical (macOS `/var` -> `/private/var`); Windows
+    // `canonicalize` would add a `\\?\` prefix the child never sees.
+    let base = if cfg!(windows) {
+        workdir.clone()
+    } else {
+        fs::canonicalize(&workdir).unwrap()
+    };
+    let expected = base.join("rel").join("custom.toml");
 
     let output = run_gpy(
         &["debug", "paths", "--format", "kv"],
@@ -191,10 +196,19 @@ fn relative_gpy_config_path_is_made_absolute() {
             .unwrap_or_else(|| panic!("{key} missing from:\n{stdout}"))
             .to_owned()
     };
-    assert_eq!(value_of("config_path"), expected.display().to_string());
+    // Compared as `Path`s: on Windows the joined relative part keeps its `/`
+    // while `expected` uses `\`, and `Path` equality is per component.
     assert_eq!(
-        value_of("config_candidates").split('|').next(),
-        Some(expected.display().to_string().as_str())
+        Path::new(&value_of("config_path")),
+        expected.as_path(),
+        "debug paths config_path"
+    );
+    assert_eq!(
+        value_of("config_candidates")
+            .split('|')
+            .next()
+            .map(Path::new),
+        Some(expected.as_path())
     );
 }
 

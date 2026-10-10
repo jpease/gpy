@@ -520,6 +520,7 @@ impl ThemeManager {
         crate::paths::config_root_for(
             crate::paths::root_var("XDG_CONFIG_HOME").as_deref(),
             crate::paths::home_dir().as_deref(),
+            crate::paths::Os::host(),
         )
         .join("themes")
     }

@@ -11,3 +11,8 @@
 
 # Raven: normalize shipped hook/script line endings (see README.md)
 .raven/git-hooks/lib/check-gate-relaxation.py text eol=lf
+
+# Every text file is LF in the working tree on every platform. A native
+# Windows checkout otherwise turns the embedded theme/palette TOML
+# (include_str!) and the docs and fixtures the tests read into CRLF (#514).
+* text=auto eol=lf

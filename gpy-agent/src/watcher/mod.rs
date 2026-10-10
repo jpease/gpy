@@ -2173,7 +2173,9 @@ mod tests {
     #[test]
     fn config_path_lookup_is_pure_no_resolution() {
         let registry = WatchRegistry::new();
-        let nonexistent = PathBuf::from("/tmp/gpy-agent-602-does-not-exist/gpy.toml");
+        // Absolute on every host (`/tmp/...` has no drive, so on Windows it
+        // would be absolutized against the current directory).
+        let nonexistent = std::env::temp_dir().join("gpy-agent-602-does-not-exist/gpy.toml");
         registry.register_config_path(&nonexistent);
 
         // Exact match: the byte-identical path used at registration is found,
@@ -2187,7 +2189,8 @@ mod tests {
 
         // A different, never-registered nonexistent path must not match:
         // proves this isn't a permissive "any unresolvable path passes" bug.
-        let unregistered = PathBuf::from("/tmp/gpy-agent-602-also-does-not-exist/other.toml");
+        let unregistered =
+            std::env::temp_dir().join("gpy-agent-602-also-does-not-exist/other.toml");
         assert!(
             !registry.is_registered_config_path(&unregistered),
             "lookup must be exact HashSet::contains, matching only what was registered"

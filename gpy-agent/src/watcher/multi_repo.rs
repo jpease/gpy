@@ -2499,7 +2499,9 @@ mod tests {
         );
 
         // Config-path registration is per-watcher too.
-        let config_path = PathBuf::from("/nowhere/gpy/config.toml");
+        // Absolute on every host: a drive-less `/nowhere/...` would be
+        // absolutized against the current directory on Windows.
+        let config_path = std::env::temp_dir().join("nowhere/gpy/config.toml");
         first.registry().register_config_path(&config_path);
         assert!(first.registry().is_registered_config_path(&config_path));
         assert!(

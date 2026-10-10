@@ -994,10 +994,16 @@ fn test_config_open_uses_editor_and_creates_missing_file() {
         config_path.exists(),
         "Config open should create the config file"
     );
-    assert!(
-        output
-            .stdout
-            .contains(&format!("Opened config: {}", config_path.display())),
+    // Compared as a `Path`, not a string: on Windows the printed path joins
+    // the XDG root with `/` while `config_path()` joins with `\`, and `Path`
+    // equality is per component.
+    let opened = output
+        .stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("Opened config: "));
+    assert_eq!(
+        opened.map(std::path::Path::new),
+        Some(config_path.as_path()),
         "Config open should report the opened path"
     );
 }

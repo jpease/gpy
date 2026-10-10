@@ -357,6 +357,9 @@ fn test_cli_config_reload_succeeds_without_agent() {
     );
 }
 
+// The background agent exists only on Unix; the Windows twin below pins what
+// `start` does there instead.
+#[cfg(unix)]
 #[test]
 fn test_cli_start_respects_agent_enabled_false() {
     const DISABLED_CONFIG: &str = r#"
@@ -399,6 +402,23 @@ enabled_segments = ["clock", "duration", "directory", "git"]
     assert!(
         stdout.trim().is_empty(),
         "expected no stdout output when agent is disabled, got '{stdout}'"
+    );
+}
+
+/// Native Windows has no background agent: `start` refuses with a platform
+/// error before it ever consults `agent.enabled` (the CLI-only claim, #514).
+#[cfg(windows)]
+#[test]
+fn test_cli_start_is_unsupported_on_native_windows() {
+    let (exit_code, stdout, stderr) = run_gpy_agent_with_config("", &["start"]);
+    assert_eq!(exit_code, 1_i32, "start must fail on Windows: {stderr}");
+    assert!(
+        stderr.contains("Background agent not supported on this platform"),
+        "expected the unsupported-platform notice in stderr, got '{stderr}'"
+    );
+    assert!(
+        stdout.trim().is_empty(),
+        "expected no stdout output, got '{stdout}'"
     );
 }
 
