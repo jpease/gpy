@@ -143,6 +143,16 @@ jobs:
         with:
           auto-install: false
 
+      # On a pull_request moon diffs against $GITHUB_BASE_REF, which a shallow
+      # checkout does not have as a local ref ("fatal: ambiguous argument
+      # 'main'"). The lint does not depend on the diff, so give moon a ref by
+      # that name at HEAD.
+      - name: Give moon a base ref (pull_request only)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git branch -f "$BASE_REF" HEAD
+
       - name: Moon lint gate (#584)
         run: just lint
 

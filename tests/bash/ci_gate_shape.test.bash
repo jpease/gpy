@@ -243,6 +243,11 @@ if printf '%s\n' "$lint" | grep -q 'moonrepo/setup-toolchain' && printf '%s\n' "
 else
     fail "pr-gate lint must install moon (moonrepo/setup-toolchain) and run just lint"
 fi
+if printf '%s\n' "$lint" | grep -qF 'git branch -f "$BASE_REF" HEAD'; then
+    pass "pr-gate lint gives moon a local base ref on pull_request (shallow checkout)"
+else
+    fail "pr-gate lint must create the base ref moon diffs against on a pull_request (fatal: ambiguous argument 'main')"
+fi
 validate="$(job_block "$RELEASE" validate)"
 if printf '%s\n' "$validate" | grep -q 'moonrepo/setup-toolchain' && printf '%s\n' "$validate" | grep -q 'run: just lint'; then
     pass "release validate installs moon and runs just lint"
