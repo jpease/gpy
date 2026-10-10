@@ -591,6 +591,8 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
 
     use super::*;
+    use ratatui::layout::Rect;
+    use ratatui::{TerminalOptions, Viewport};
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -759,11 +761,20 @@ mod tests {
     /// It used to call crossterm directly, so a `RecordingTerminalOps`
     /// double can now observe the full success-path lifecycle end-to-end —
     /// not just the failure-path setup rollback the tests above cover.
+    ///
+    /// The backend uses a fixed viewport: `Terminal::new` asks the terminal
+    /// for its size, which falls back to opening `/dev/tty` and fails on a
+    /// CI runner with no controlling terminal.
     #[test]
     fn terminal_guard_drop_restores_via_ops_on_success_path() {
         let ops = Rc::new(RecordingTerminalOps::default());
         let guard = TerminalGuard::new_with_ops(Rc::clone(&ops), || {
-            Terminal::new(CrosstermBackend::new(io::stdout()))
+            Terminal::with_options(
+                CrosstermBackend::new(io::stdout()),
+                TerminalOptions {
+                    viewport: Viewport::Fixed(Rect::new(0, 0, 80, 24)),
+                },
+            )
         })
         .expect("both stages and backend init succeed");
 
