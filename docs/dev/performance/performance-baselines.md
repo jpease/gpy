@@ -4,10 +4,11 @@ This document describes how to establish and maintain performance baselines for 
 
 These baselines are engineering diagnostics. They are meant to help us compare GPY to earlier GPY revisions, detect regressions, and validate improvements. They are not promises about the exact latency any user will see on their own machine.
 
-The hook-time `perf-canary` workflow follows the same philosophy. It compares a
-small set of microbenchmarks against the last pushed commit on the same machine
-so regressions are easier to catch early, while still tolerating ordinary
-developer-machine noise. Treat it as a relative signal, not an absolute truth.
+The `perf-canary` script follows the same philosophy. It compares a small set
+of microbenchmarks against a base commit on the same machine (locally the last
+pushed commit; in CI the pull request's base, in the `perf` job of
+`pr-gate.yml`) so regressions are easier to catch early, while still tolerating
+ordinary machine noise. Treat it as a relative signal, not an absolute truth.
 
 The project’s current `<10ms` target is for user-visible cached/instant
 response behavior. It is not a claim that fresh full git or language

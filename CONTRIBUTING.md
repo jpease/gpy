@@ -74,7 +74,7 @@ Run before pushing — this is what CI also runs:
 It covers: Fish syntax and formatting, Rust formatting, strict Clippy, Rust
 unit/integration tests, doc tests, `cargo audit` and `cargo deny`, an
 unused-dependency check, shellcheck over every shell script in the repository,
-and (in CI and pre-push, optional locally) a release build.
+and (in CI, optional locally) a release build.
 
 Shell scripts must be shellcheck-clean or carry an inline
 `# shellcheck disable=` with a reason on the line beneath it. A bare disable
@@ -157,10 +157,13 @@ Every test tier and the command that runs it is in
 ```
 
 Installs `prek` shims so `git commit` and `git push` run the relevant checks
-automatically: `pre-commit` runs fast, file-type-scoped checks (Clippy,
-rustfmt, Fish syntax/formatting); `commit-msg` strips AI attribution trailers;
-`pre-push` runs the shell suites always, and the Rust suite too when
-Rust-relevant files changed. `.raven/git-hooks/` holds the scripts those hooks
+automatically: `pre-commit` runs fast, file-type-scoped checks (the strict
+`moon` Clippy pass, rustfmt, Fish syntax/formatting); `commit-msg` strips AI
+attribution trailers; `pre-push` repeats the Clippy pass and the outbound
+attribution check. The heavy gates (the Rust toolchain gate, the Fish/Bash/Zsh
+suites and the performance job) run in CI on every pull request; run
+`just check-rust`, `just check-shell` or `just perf-canary` yourself when you
+want them locally. `.raven/git-hooks/` holds the scripts those hooks
 call; `.pre-commit-config.yaml` wires them. If `.git/hooks/` already holds
 symlinks into `.raven/git-hooks/`, the script replaces them with prek shims.
 

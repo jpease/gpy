@@ -152,9 +152,9 @@ else
         fail "gate-result needs 'if: \${{ always() }}', or a failed leg leaves it skipped (not red)"
     fi
     needs_line="$(printf '%s\n' "$agg" | grep -E '^    needs: \[' | head -n 1)"
-    # Every job except the aggregator and the non-gating coverage run gates.
+    # Every job except the aggregator and the non-gating coverage and perf runs gates.
     while IFS= read -r job; do
-        case "$job" in gate-result | coverage) continue ;; esac
+        case "$job" in gate-result | coverage | perf) continue ;; esac
         if [[ "$needs_line" =~ [\[,\ ]${job}[],\ ] ]]; then
             pass "gate-result needs $job"
         else
@@ -165,6 +165,11 @@ else
         fail "gate-result must not need the non-gating coverage job"
     else
         pass "gate-result ignores the non-gating coverage job"
+    fi
+    if [[ "$needs_line" =~ [\[,\ ]perf[],\ ] ]]; then
+        fail "gate-result must not need the non-gating perf job (until its variance is known)"
+    else
+        pass "gate-result ignores the non-gating perf job"
     fi
     if printf '%s\n' "$agg" | grep -qF 'select(.value.result != "success")'; then
         pass "gate-result fails unless every needed job succeeded (skipped counts as not run)"
@@ -177,6 +182,12 @@ if printf '%s\n' "$coverage" | grep -qE '^    continue-on-error: true$'; then
     pass "coverage is non-gating (continue-on-error)"
 else
     fail "coverage must stay non-gating: continue-on-error: true"
+fi
+perf="$(job_block "$PR_GATE" perf)"
+if printf '%s\n' "$perf" | grep -qE '^    continue-on-error: true$'; then
+    pass "perf is non-gating (continue-on-error)"
+else
+    fail "perf must stay non-gating until the runner's variance is known: continue-on-error: true"
 fi
 
 echo "--- (d) the shell-driving legs install every shell-suite prerequisite ---"

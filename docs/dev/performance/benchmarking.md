@@ -109,7 +109,7 @@ Optional:
 - Huge repo stress: `just bench-huge`
 - Baseline comparison/update: `just bench-baseline`
 - Zsh-specific: `just bench-zsh`
-- Same-machine pre-push canary: `just perf-canary`
+- Same-machine canary against the last pushed commit: `just perf-canary` (CI runs it against the PR base in the non-gating `perf` job of `pr-gate.yml`, together with the budgets in `tests/performance-baselines.json`)
 
 ## End-to-End Prompt & Memory Benchmark
 
