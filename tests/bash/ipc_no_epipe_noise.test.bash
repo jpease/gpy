@@ -70,6 +70,8 @@ fi
 
 # The client: bash with SIGPIPE inherited as ignored, its stdout and stderr
 # captured separately.
+# The single quotes are deliberate: the code runs in the child bash, not here.
+# shellcheck disable=SC2016
 client='source bash/core/ipc.bash
 for _ in $(seq 1 '"$requests"'); do
     __gpy_send_json "{\"op\":\"ping\"}"
