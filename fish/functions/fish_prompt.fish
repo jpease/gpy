@@ -140,7 +140,12 @@ function fish_prompt
 
     # Final prompt symbol with optional status indicator
     set_color normal
-    echo
+    # Two-line layout is a theme option (`ui.two_line`, exported as
+    # `__gpy_two_line`), read the same way by Bash and Zsh: a theme without it
+    # keeps the character on the segments' line (#856).
+    if test "$__gpy_two_line" = 1
+        echo
+    end
 
     # Resolve the prompt character first so the status indicator can react to it.
     # The character is always agent-rendered for non-root (#199): the agent applies

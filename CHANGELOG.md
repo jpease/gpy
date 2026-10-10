@@ -275,6 +275,29 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Fixed
 
+- The integration tests that run the built binaries no longer look for them at
+  a hard-coded `./target/debug/...` (#861). Under `cargo llvm-cov` the binaries
+  are built into `target/llvm-cov-target`, so
+  `cli_integration_tests::test_cli_concurrent_oneshot_commands` failed with
+  "No such file or directory" in the coverage job; they now use
+  `CARGO_BIN_EXE_gpy-agent` / `CARGO_BIN_EXE_gpy`, which cargo points at the
+  binary under test. The same change covers every other test in
+  `cli_integration_tests` and `theme_schema_tests` that spawned a binary by that
+  path, which could otherwise run a stale one.
+
+- Fish now reads the theme's `ui.two_line` like Bash and Zsh (#856). It used to
+  always put the prompt character on its own line, so a theme without
+  `two_line` (the built-in `text`, or any custom theme that never set it)
+  drew two lines in Fish and one in Bash and Zsh. Fish users on such a theme
+  now get the one-line layout the other shells already drew; set
+  `two_line = true` in the theme to keep two lines.
+
+- With `[agent] enabled = false`, Fish now renders the git segment through
+  `gpy-agent oneshot` on a cold cache, as Bash and Zsh do (#855). It used to
+  omit the segment, so the segment before it was drawn as the last one (closing
+  cap) while Bash and Zsh drew it with the gap separator; and a git-only prompt
+  showed no git at all. The cross-shell contract test gained rows for both.
+
 - The clock, status, hostname, username and root-prompt segments now render
   the same in Fish, Bash and Zsh for the same theme (#844); a cross-shell
   golden test renders each scenario through all three real integrations and
