@@ -424,7 +424,7 @@ function __gpy_render_prompt() {
 
     # Two-line layout (opt-in via theme): render the segments on one line and
     # the prompt character on the next. Default themes export 0 → single-line
-    # (no regression). Fish is always two-line and ignores this flag.
+    # (no regression). Fish reads the same flag (#856).
     if [[ "${__gpy_two_line:-0}" == "1" ]]; then
         p+=$'\n'
     fi

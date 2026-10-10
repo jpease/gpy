@@ -123,7 +123,7 @@ show_seconds = true
 
     write_config(&xdg_config, "[ui]\ntheme = \"export-test\"\n");
 
-    let output = Command::new("./target/debug/gpy-agent")
+    let output = Command::new(env!("CARGO_BIN_EXE_gpy-agent"))
         .args(["theme", "export", "--format", "fish"])
         .env("XDG_CONFIG_HOME", &xdg_config)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -303,7 +303,7 @@ fn theme_use_force_writes_recommended_ui_settings() {
     // field from the preset.
     write_config(&xdg_config, "[ui]\ntheme = \"default\"\n");
 
-    let output = Command::new("./target/debug/gpy")
+    let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
         .args(["theme", "use", "starship", "--force"])
         .env("XDG_CONFIG_HOME", &xdg_config)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -363,7 +363,7 @@ fn theme_use_force_preserves_explicit_user_preferences() {
         "[ui]\ntheme = \"default\"\nenabled_segments = [\"clock\", \"git\"]\nshow_icons = false\n",
     );
 
-    let output = Command::new("./target/debug/gpy")
+    let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
         .args(["theme", "use", "starship", "--force"])
         .env("XDG_CONFIG_HOME", &xdg_config)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -413,7 +413,7 @@ fn theme_use_apply_layout_alias_warns_but_still_applies() {
     let xdg_config = temp_dir.path().join("config");
     write_config(&xdg_config, "[ui]\ntheme = \"default\"\n");
 
-    let output = Command::new("./target/debug/gpy")
+    let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
         .args(["theme", "use", "starship", "--apply-layout"])
         .env("XDG_CONFIG_HOME", &xdg_config)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -455,7 +455,7 @@ fn theme_use_force_applies_recommended_detection_mode() {
     // default theme recommends content; user has not set detection_mode.
     write_config(&xdg_config, "[ui]\ntheme = \"default\"\n");
 
-    let output = Command::new("./target/debug/gpy")
+    let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
         .args(["theme", "use", "starship", "--force"])
         .env("XDG_CONFIG_HOME", &xdg_config)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -495,7 +495,7 @@ fn theme_use_force_preserves_explicit_detection_mode() {
         "[ui]\ntheme = \"text\"\n\n[language]\ndetection_mode = \"markers\"\n",
     );
 
-    let output = Command::new("./target/debug/gpy")
+    let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
         .args(["theme", "use", "default", "--force"])
         .env("XDG_CONFIG_HOME", &xdg_config)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -532,7 +532,7 @@ fn theme_use_without_force_preserves_config_and_hints() {
         "[ui]\ntheme = \"default\"\nenabled_segments = [\"clock\", \"git\"]\n",
     );
 
-    let output = Command::new("./target/debug/gpy")
+    let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
         .args(["theme", "use", "starship"])
         .env("XDG_CONFIG_HOME", &xdg_config)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -574,7 +574,7 @@ fn theme_use_default_force_restores_builtin_layout() {
     write_config(&xdg_config, "[ui]\ntheme = \"default\"\n");
 
     let run = |args: &[&str]| {
-        let output = Command::new("./target/debug/gpy")
+        let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
             .args(args)
             .env("XDG_CONFIG_HOME", &xdg_config)
             .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -613,7 +613,7 @@ fn two_line_export_follows_each_theme() {
 
     let export = |theme: &str| -> String {
         write_config(&xdg_config, &format!("[ui]\ntheme = \"{theme}\"\n"));
-        let output = Command::new("./target/debug/gpy-agent")
+        let output = Command::new(env!("CARGO_BIN_EXE_gpy-agent"))
             .args(["theme", "export", "--format", "fish"])
             .env("XDG_CONFIG_HOME", &xdg_config)
             .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -627,14 +627,13 @@ fn two_line_export_follows_each_theme() {
         String::from_utf8(output.stdout).expect("utf8 stdout")
     };
 
-    // The Starship preset enables two-line on bash/zsh.
+    // The Starship preset enables two-line.
     assert!(
         export("starship").contains("__gpy_two_line \"1\""),
         "starship preset should export two-line on"
     );
-    // The default theme now does too. Fish has always rendered the prompt
-    // character on its own line and ignores this flag, so leaving bash/zsh
-    // single-line here made the same theme look different per shell.
+    // The default theme does too, so it keeps the two-line look it always had
+    // in Fish now that Fish reads this flag like Bash and Zsh.
     assert!(
         export("default").contains("__gpy_two_line \"1\""),
         "default theme should export two-line on"

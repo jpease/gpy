@@ -804,7 +804,7 @@ fn test_cli_concurrent_oneshot_commands() {
                 let temp_repo = create_test_git_repo().expect("Failed to create test git repo");
                 let temp_path = temp_repo.path();
 
-                let output = Command::new("./target/debug/gpy-agent")
+                let output = Command::new(env!("CARGO_BIN_EXE_gpy-agent"))
                     .args([
                         "oneshot",
                         "git",
@@ -1157,7 +1157,7 @@ theme = "default"
     fs::write(config_dir.join("config.toml"), config_content).expect("Failed to write config file");
 
     // Run theme export with custom XDG_CONFIG_HOME
-    let output = Command::new("./target/debug/gpy-agent")
+    let output = Command::new(env!("CARGO_BIN_EXE_gpy-agent"))
         .args(["theme", "export", "--format", "fish"])
         .env("XDG_CONFIG_HOME", custom_config_dir.to_str().unwrap())
         .output()

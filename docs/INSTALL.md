@@ -24,7 +24,7 @@ restating it.
 |----|---------|
 | Linux (x86_64, aarch64) | Full on x86_64: every tier, including the shell end-to-end suites (Fish, Bash and Zsh against a real agent on a pseudo-terminal), runs on every pull request on `ubuntu-latest` (Fish 4, zsh, bash), and a fresh install into an empty `$HOME` on a stock `ubuntu:24.04` container renders a first prompt in fish, zsh and bash (`scripts/test-fresh-install.sh`). aarch64 binaries are built and checked against the glibc floor but not run in CI. Release binaries need glibc 2.31 or newer (e.g. Ubuntu 20.04+, Debian 11+); the release job rejects a binary that references a newer glibc and runs the x86_64 binaries in `ubuntu:20.04` (`GPY_GLIBC_FLOOR` in `.github/workflows/release.yml`, #694) |
 | macOS 11+ (Intel and Apple Silicon) | Full: every tier, including the shell end-to-end suites, runs on every pull request on `macos-latest` (Apple Silicon) and on the maintainer's pre-push gate. Intel binaries are built and checksummed in the release but only the Apple Silicon ones are run |
-| Windows, via WSL | Recommended — run the Linux instructions inside WSL. WSL itself is not exercised in CI (the Linux legs run on `ubuntu-latest`, not under WSL); WSL-specific handling and a recorded WSL smoke run are tracked in #849 |
+| Windows, via WSL | Recommended — run the Linux instructions inside WSL. `.github/workflows/wsl-smoke.yml` builds the agent in Ubuntu 24.04 under WSL 2 on a Windows runner and runs `scripts/wsl-smoke.sh` and the cross-shell contract suite there, when its own files change, weekly and on demand (it is not part of the PR gate, #849). See [Windows (WSL)](#windows-wsl) for what is WSL-specific |
 | Windows, native | CLI-only; the prompt integration does not run there. The claim is backed by the five CLI integration targets the Windows gate runs on every pull request (`gpy_cli_tests`, `cli_config_mutation_tests`, `theme_import_tests`, `init_command_tests`, `cli_integration_tests`; `.github/workflows/windows-gate.yml`, #653). See [Windows (WSL)](#windows-wsl) below for what "not supported" covers. |
 
 What CI actually backs: `pr-gate.yml` runs on every pull request to `main`
@@ -599,8 +599,19 @@ exec fish  # or zsh, bash
 
 ### Windows (WSL)
 
-- GPY runs in WSL (Windows Subsystem for Linux)
+- GPY runs in WSL (Windows Subsystem for Linux); WSL 2 with a distribution such as Ubuntu is what the CI smoke run uses
 - Use the Linux installation instructions within WSL
+
+What differs from a native Linux install, and what to do about it:
+
+| Item | Behaviour under WSL | What to do |
+|---|---|---|
+| Where the repositories live | A repository under `/mnt/c` (or any `/mnt/<drive>`) is on the Windows filesystem, reached over drvfs/9p. `git` is slower there, and on a mount without the `metadata` option an ordinary user cannot create a repository there at all (`git init` fails with `chmod ... Operation not permitted`, observed on the CI runner) and `inotify` may not report changes, so live updates rely on the agent's watcher probe falling back to polling, the periodic reconcile (every 45 s) and the repaint on each command. | Keep repositories in the Linux filesystem (`~/src/...`); if you must use a Windows drive, mount it with `options = "metadata"` under `[automount]` in `/etc/wsl.conf`. For one you must keep on a Windows drive, either set `git.skip_paths = ["/mnt/c"]` to drop git detection there, or start the agent with `GPY_WATCH_FORCE_POLL=1` to poll without waiting for the probe (see [troubleshooting](user/troubleshooting.md#wsl)). |
+| `$HOME`, cache and runtime directories | GPY serialises agent start with a file lock and keeps its socket in the runtime directory. Neither is tested on a drvfs or network `$HOME`. | Keep `$HOME` (WSL's default `/home/<user>`) and `XDG_RUNTIME_DIR`/`XDG_CACHE_HOME` on the Linux filesystem. |
+| Windows programs on `PATH` | WSL's interop appends the Windows `PATH` by default. The agent runs language tools by bare name (`node`, `python3`, `mise`, ...), never with `.exe`, so a Windows install is reached only if it ships an extensionless file of that name. This has not been traced on a real machine. | If the language segment shows a Windows tool's version, or is slow, set `[interop]` `appendWindowsPath = false` in `/etc/wsl.conf` and restart WSL (`wsl --shutdown`). |
+| Nerd Font detection | The terminal that draws the glyphs is a Windows application, so the Linux font directories and `fc-list` say nothing about it. `gpy-agent init` reports the fonts as undetectable and defaults to ASCII icons. | Install a Nerd Font on Windows and select it in your terminal, then `gpy config set ui.show_icons true`; or set `GPY_NERD_FONT=nerd` (or `none`) to answer `gpy-agent init` up front. |
+| `gpy config open` | Uses `$VISUAL`, then `$EDITOR`, then `wslview` (from the `wslu` package) when it is installed, then `xdg-open`, which is usually missing on WSL. | Set `$EDITOR` (for example `export EDITOR=nano`), or `sudo apt install wslu`. |
+
 - Native Windows (PowerShell) is not supported for the prompt integration or the agent (IPC is Unix-socket only). Only the CLI builds and runs there; see the operating-systems table above.
 
 ## Support

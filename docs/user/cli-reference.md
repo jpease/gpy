@@ -780,7 +780,7 @@ This command respects `GPY_CONFIG_PATH` when set. Otherwise it opens the standar
 Editor selection order:
 - `$VISUAL`
 - `$EDITOR`
-- Platform default opener as a fallback
+- Platform default opener as a fallback: `open -t` on macOS, `xdg-open` on Linux (on WSL, `wslview` when it is installed, then `xdg-open`), `start` on Windows
 
 **Example:**
 ```bash
@@ -1126,7 +1126,7 @@ GPY reads the following environment variables:
 | `XDG_RUNTIME_DIR` | Runtime root: `$XDG_RUNTIME_DIR/gpy`: the socket, `agent.version`, the shell registry. |
 | `GPY_AGENT_SOCKET_PATH` | Override the socket path alone (the runtime root is unchanged). Every command and every shell must see the same value. The agent's version marker then lives at `<socket>.version` instead of `agent.version`. Every socket, default or override, also gets a `<socket>.lock` start lock next to it. |
 | `HOME` | Fallback for the config and cache roots when the XDG variables are unset. |
-| `GPY_NERD_FONT` | Tells `gpy-agent init` what to assume instead of asking: `1`/`true`/`yes`/`on`/`nerd` (Nerd Font present), `0`/`false`/`no`/`off`/`none`/`ascii` (absent), `unknown`; anything else falls through to detection. Setting it makes `init` non-interactive. |
+| `GPY_NERD_FONT` | Tells `gpy-agent init` what to assume instead of asking: `1`/`true`/`yes`/`on`/`nerd` (Nerd Font present), `0`/`false`/`no`/`off`/`none`/`ascii` (absent), `unknown`; anything else falls through to detection. Setting it makes `init` non-interactive. Under WSL detection always reports `unknown` (the terminal's fonts are on the Windows side), so set this to answer for it. |
 | `VISUAL`, `EDITOR` | The editor `gpy config open` launches, in that order, before the platform fallback. |
 | `GPY_DEBUG_LOG` | Path of the agent's trace log; the agent writes its debug lines there only when this is set. (`GPY_DEBUG=1` turns on the *shell* integrations' own debug output.) See [Troubleshooting](troubleshooting.md). |
 | `GPY_IPC_TIMEOUT_MS` | Shell integrations only (Fish, Zsh, Bash alike): how long a prompt render waits for the agent's reply, in milliseconds. Default `150`. A value that is not a non-negative integer falls back to the default. Export it in `config.fish`, `.zshrc` or `.bashrc` before the GPY integration is sourced. An agent that is reached but replies later is not recomputed with a `gpy-agent oneshot` fork: that segment is omitted for the render. |

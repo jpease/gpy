@@ -433,6 +433,8 @@ pub mod template;
 pub mod theme;
 /// Filesystem watching for real-time updates.
 pub mod watcher;
+/// Windows Subsystem for Linux detection (#849).
+pub mod wsl;
 
 pub use error::{Error, Result};
 pub use shell::Shell;

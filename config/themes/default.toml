@@ -6,9 +6,8 @@ prompt_icon = "❯"
 prompt_color = "white"
 root_prompt_icon = "!❯!"
 root_prompt_color = "red"
-# Segments on one line, the prompt character on the next. Fish has always
-# rendered this way and ignores the flag; bash and zsh previously defaulted to
-# a single line, so the same theme looked different depending on the shell.
+# Segments on one line, the prompt character on the next. Fish, Bash and Zsh
+# all read this flag, so the same theme looks the same in every shell.
 two_line = true
 
 [ui.prompt_open]

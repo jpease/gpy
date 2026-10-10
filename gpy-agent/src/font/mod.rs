@@ -167,6 +167,13 @@ const FC_LIST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
 #[cfg(target_os = "linux")]
 fn detect_from_platform() -> FontCapability {
+    // Under WSL the terminal, and so the font that draws the glyphs, is a
+    // Windows application: fontconfig and the Linux font directories describe
+    // fonts the terminal cannot see, so neither a hit nor a miss says anything
+    // about it. Report that honestly; `GPY_NERD_FONT` answers it (#849).
+    if crate::wsl::is_wsl() {
+        return FontCapability::Unknown;
+    }
     // Prefer fontconfig's index (authoritative and fast) when available; fall
     // back to scanning common font directories if `fc-list` is not installed,
     // fails, or (#590) hangs past FC_LIST_TIMEOUT.

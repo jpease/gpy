@@ -137,12 +137,11 @@ pub struct UiTheme {
     #[serde(default)]
     pub root_prompt_color: Option<types::ColorSpec>,
 
-    /// Opt-in two-line layout for bash/zsh: render the enabled segments on one
-    /// line and the prompt character on the next (Starship-style).
+    /// Opt-in two-line layout: render the enabled segments on one line and the
+    /// prompt character on the next (Starship-style).
     ///
-    /// Default `false` keeps bash/zsh single-line (no regression). Fish already
-    /// renders two-line and ignores this flag. Exported to shells as
-    /// `__gpy_two_line` (`0`/`1`).
+    /// Default `false` keeps the prompt on a single line in Fish, Bash and Zsh
+    /// alike. Exported to shells as `__gpy_two_line` (`0`/`1`).
     #[serde(default)]
     pub two_line: bool,
 
