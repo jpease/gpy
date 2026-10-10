@@ -6,6 +6,7 @@ This guide covers all methods for installing GPY on your system.
 
 - [Supported Platforms and Shells](#supported-platforms-and-shells)
 - [One-Line Installation (Recommended)](#one-line-installation-recommended)
+- [Homebrew](#homebrew)
 - [Verifying Your Download](#verifying-your-download)
 - [Manual Installation](#manual-installation)
 - [Building from Source](#building-from-source)
@@ -237,6 +238,23 @@ Completion types:
 - `gpy theme use <TAB>`, `gpy theme validate <TAB>` — Installed theme names
 - `gpy palette use <TAB>`, `gpy palette validate <TAB>` — Installed palette names
 - `gpy enable <TAB>`, `gpy disable <TAB>` — Available segment names
+
+## Homebrew
+
+GPY ships through a personal tap, `jpease/homebrew-tap` (not homebrew-core):
+
+```bash
+brew install jpease/tap/gpy
+```
+
+The formula builds `gpy` and `gpy-agent` from the tagged source tarball and
+installs the Fish files under Homebrew's `share/gpy`. It is Fish-only and does
+not modify your dotfiles: run the commands in the printed caveats (copy the
+shell files, install completions, source `gpy_init.fish` from
+`~/.config/fish/config.fish`), restart Fish, then run `gpy-agent init` and
+`gpy doctor`. Zsh and Bash use the one-line installer.
+
+The formula lives in the tap, not in this repository.
 
 ## Verifying Your Download
 

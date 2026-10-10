@@ -45,6 +45,17 @@ GPY uses [Nerd Font](https://www.nerdfonts.com) icons when it finds a Nerd Font
 and ASCII icons otherwise. Switch with `gpy config set ui.show_icons true` (or
 `false`); see [Icons and Nerd Fonts](docs/INSTALL.md#icons-and-nerd-fonts).
 
+### Homebrew
+
+Fish only; builds from source against the tagged release.
+
+```bash
+brew install jpease/tap/gpy
+```
+
+Homebrew does not edit your dotfiles. Follow the caveats it prints, or see
+[Homebrew](docs/INSTALL.md#homebrew).
+
 ### From source
 
 Needs Rust 1.99+ and Fish:

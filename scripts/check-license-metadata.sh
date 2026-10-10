@@ -29,7 +29,6 @@ check_field() {
 
 check_field "Cargo.toml" "gpy-agent/Cargo.toml" '^license = "[^"]*"'
 check_field "Fisher manifest" "fish/fisher.json" '"license": *"[^"]*"'
-check_field "Homebrew formula" "Formula/gpy.rb" 'license "[^"]*"'
 # The release workflow no longer generates its own Fisher manifest (#492): it
 # ships the committed fish/fisher.json, and scripts/package-release.sh refuses
 # to build the Fisher archive unless that manifest still declares GPL.

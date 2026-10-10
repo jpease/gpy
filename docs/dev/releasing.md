@@ -1,11 +1,11 @@
 # Releasing GPY
 
 How to cut a GPY release, and what the automated gate checks so you do not have
-to. GPY has never been released — `git tag` is empty — so the first pass through
-this document is v0.1.0.
+to. The first release was v0.1.0 (2026-10-10).
 
-Distribution today is GitHub Releases plus the one-line installer. Nothing else
-is operational: see [Distribution channels](#distribution-channels).
+Distribution is GitHub Releases, the one-line installer, and the
+`jpease/homebrew-tap` Homebrew tap: see
+[Distribution channels](#distribution-channels).
 
 ## Version-bearing files
 
@@ -109,6 +109,16 @@ Everything below runs on `main`, with a clean tree.
     prompt renders. The one-line installer fetches itself from the tag, not from
     `main`.
 
+12. **Update the Homebrew tap.** The formula lives in `jpease/homebrew-tap`
+    (`Formula/gpy.rb`), not in this repository. Point `url` at the new tag
+    tarball, set `sha256` from the real digest, then check it installs:
+
+    ```sh
+    curl -sL https://github.com/jpease/gpy/archive/refs/tags/vX.Y.Z.tar.gz | shasum -a 256
+    brew style Formula/gpy.rb
+    brew install --build-from-source jpease/tap/gpy
+    ```
+
 ## What the gate checks for you
 
 | Check | Where |
@@ -145,15 +155,16 @@ project's fault to a first-time user.
   [OS and shell support matrix](../INSTALL.md#supported-platforms-and-shells).
   Do not restate that matrix here or anywhere else.
 
-**Not operational — do not document as available:**
-
-- **Homebrew.** `Formula/gpy.rb` exists but carries a placeholder `sha256`, and
-  there is no tap. Distribution will be a personal tap,
-  `jpease/homebrew-tap`, and every reference must be tap-qualified — the bare
-  `brew install <name>` form implies homebrew-core and is banned repo-wide by
+- **Homebrew** — the personal tap `jpease/homebrew-tap`, installed with
+  `brew install jpease/tap/gpy` (Fish only; builds from the tag tarball). Every
+  reference must be tap-qualified — the bare `brew install <name>` form implies
+  homebrew-core and is banned repo-wide by
   `tests/bash/crate_publish_boundary.test.bash`. homebrew-core itself needs 90
   forks, 90 watchers, 225 stars and a repo at least 30 days old; it is a
-  post-launch goal, not a launch blocker. Tracked by #515.
+  post-launch goal (#512).
+
+**Not operational — do not document as available:**
+
 - **Fisher.** `release.yml` publishes `fisher-gpy.tar.gz`, but the plugin tree
   ships no agent binary, so it is not a standalone install. It is not offered by
   the installers or by any doc page.
@@ -162,22 +173,3 @@ project's fault to a first-time user.
   files the prompt renders from.
 - **Debian and Arch.** No package is built. The release workflow used to
   advertise both; #492 removed the claims rather than the other way round.
-
-## First release (v0.1.0) — one-time steps
-
-Ordinary releases start at [Cutting a release](#cutting-a-release). The first
-one has extra work, tracked separately:
-
-1. #509 makes the repository public and rewrites history. Do this before
-   tagging: the tag has to be reachable, and Homebrew and Fisher both need a
-   public repository to fetch from.
-2. #507 covers the release-workflow dry run.
-3. #515 cuts the v0.1.0 tag and finishes `Formula/gpy.rb` — confirm the `url`
-   matches the tag, then set the real `sha256` from
-   `curl -sL <url> | shasum -a 256`. Do not create the tap or announce Homebrew
-   until that digest is real.
-
-The CHANGELOG's `## [0.1.0]` section is already the collapsed first-release
-entry: nothing shipped before it, so what used to sit under `[Unreleased]` and
-under a phantom `[0.1.1]` heading is part of v0.1.0 (#495). Only step 3 above
-remains before it can carry a date.

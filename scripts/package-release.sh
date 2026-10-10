@@ -167,7 +167,7 @@ done
 
 # --- shell integrations -----------------------------------------------------
 
-# Copied whole: install.sh and the Homebrew formula both expect the
+# Copied whole: install.sh expects the
 # fish/{core,segments,functions,conf.d,completions} tree intact, and the
 # bash/zsh trees are self-contained entry point + core/ + segments/.
 for shell_dir in fish bash zsh; do
