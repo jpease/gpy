@@ -5,9 +5,8 @@
 # Windows is CLI-only (the prompt integration needs Unix domain sockets,
 # which native Windows does not provide), and no document may claim a
 # support level that a green CI run does not back. The `windows-latest` leg
-# of `.github/workflows/cross-platform-test.yml` runs on manual dispatch only:
-# its push-to-main and weekly-cron triggers were disabled on 2026-09-02 (#556)
-# and has never been green (#482).
+# is the reusable `.github/workflows/windows-gate.yml`, called by pr-gate.yml
+# (every pull request) and cross-platform-test.yml (post-merge and weekly).
 #
 # Also locks in the real IPC transport chain documented for #496: Zsh can
 # run with no external tool at all (the `zsh/net/socket` builtin), Fish and
@@ -140,8 +139,13 @@ PR_GATE=".github/workflows/pr-gate.yml"
 if [[ ! -f "$PR_GATE" ]]; then
     fail "$PR_GATE not found"
 else
+    # The Windows leg is the reusable windows-gate.yml; it is a PR gate when
+    # pr-gate.yml runs on pull_request and calls it, and that workflow runs on
+    # windows-latest.
+    WINDOWS_GATE=".github/workflows/windows-gate.yml"
     pr_gate_has_windows=0
-    grep -qE '^\s*runs-on:\s*windows-latest' "$PR_GATE" &&
+    grep -qE '^\s*runs-on:\s*windows-latest' "$WINDOWS_GATE" &&
+        grep -qE '^    uses: \./\.github/workflows/windows-gate\.yml$' "$PR_GATE" &&
         grep -qE '^\s*pull_request:' "$PR_GATE" && pr_gate_has_windows=1
 
     if [[ $pr_gate_has_windows -eq 1 ]]; then
@@ -151,6 +155,9 @@ else
         fi
         if grep -nEi 'windows.{0,80}(never (gone|been) green|no green CI run)' "$INSTALL_DOC"; then
             fail "$INSTALL_DOC says the Windows leg has never been green, but $PR_GATE gates PRs on it"
+        fi
+        if tr '\n' ' ' <"$INSTALL_DOC" | grep -qEi 'windows[^.]{0,120}(manual dispatch|dispatching|disabled)|(trigger|triggers)[^.]{0,80}(is|are) (temporarily )?disabled'; then
+            fail "$INSTALL_DOC says the Windows leg is manual or its trigger is disabled, but $PR_GATE gates PRs on it (#556)"
         fi
         grep -qF 'pr-gate.yml' "$INSTALL_DOC" ||
             fail "$INSTALL_DOC does not mention pr-gate.yml, which is what actually backs the Windows claim"

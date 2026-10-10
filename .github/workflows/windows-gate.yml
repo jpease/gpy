@@ -21,6 +21,9 @@ name: Windows gate
 
 on:
   workflow_call:
+  # Dispatchable alone so the Windows leg can be re-run without the rest of
+  # the PR gate.
+  workflow_dispatch:
 
 # Least privilege (#506): the token is read-only unless a job below asks for more.
 permissions:
@@ -39,6 +42,7 @@ jobs:
   windows:
     name: Windows lib and CLI tests
     runs-on: windows-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -81,13 +85,16 @@ jobs:
         run: cargo test --locked --lib --verbose
 
       - name: CLI integration tests (the targets behind the CLI-only claim)
+        if: ${{ !cancelled() }}
         working-directory: gpy-agent
+        # Runs even when the lib step failed, so one red step never hides the
+        # other's verdict.
         # Hermetic CLI targets: each drives the built binaries through
         # CliTestEnv with an isolated HOME/XDG_* (honoured by the Windows
         # path resolver) and no running agent. Socket-dependent lifecycle
         # tests live in other targets under #[cfg(unix)].
         run: >-
-          cargo nextest run --locked --features test-support
+          cargo nextest run --locked --no-fail-fast --features test-support
           --test gpy_cli_tests
           --test cli_config_mutation_tests
           --test theme_import_tests

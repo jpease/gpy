@@ -22,23 +22,28 @@ restating it.
 
 | OS | Support |
 |----|---------|
-| Linux (x86_64, aarch64) | Release binaries need glibc 2.31 or newer (e.g. Ubuntu 20.04+, Debian 11+); the release job rejects a binary that references a newer glibc and runs the x86_64 binaries in `ubuntu:20.04` (`GPY_GLIBC_FLOOR` in `.github/workflows/release.yml`, #694). Build- and unit-tested in CI; a fresh install into an empty `$HOME` on a stock `ubuntu:24.04` container renders a first prompt in fish, zsh and bash (`scripts/test-fresh-install.sh`). The shell end-to-end tier has not yet had a recorded green Linux run in Actions (#651 tracks the first one, after which this row becomes "Full") |
-| macOS 11+ (Intel and Apple Silicon) | Full: every tier, including the shell end-to-end suites, runs on the maintainer's pre-push gate |
-| Windows, via WSL | Recommended — run the Linux instructions inside WSL |
-| Windows, native | CLI-only; the prompt integration does not run there. The claim is backed by the five CLI integration targets the Windows gate runs (`gpy_cli_tests`, `cli_config_mutation_tests`, `theme_import_tests`, `init_command_tests`, `cli_integration_tests`; `.github/workflows/windows-gate.yml`), once that leg has a recorded green run (#653). See [Windows (WSL)](#windows-wsl) below for what "not supported" covers. |
+| Linux (x86_64, aarch64) | Full on x86_64: every tier, including the shell end-to-end suites (Fish, Bash and Zsh against a real agent on a pseudo-terminal), runs on every pull request on `ubuntu-latest` (Fish 4, zsh, bash), and a fresh install into an empty `$HOME` on a stock `ubuntu:24.04` container renders a first prompt in fish, zsh and bash (`scripts/test-fresh-install.sh`). aarch64 binaries are built and checked against the glibc floor but not run in CI. Release binaries need glibc 2.31 or newer (e.g. Ubuntu 20.04+, Debian 11+); the release job rejects a binary that references a newer glibc and runs the x86_64 binaries in `ubuntu:20.04` (`GPY_GLIBC_FLOOR` in `.github/workflows/release.yml`, #694) |
+| macOS 11+ (Intel and Apple Silicon) | Full: every tier, including the shell end-to-end suites, runs on every pull request on `macos-latest` (Apple Silicon) and on the maintainer's pre-push gate. Intel binaries are built and checksummed in the release but only the Apple Silicon ones are run |
+| Windows, via WSL | Recommended — run the Linux instructions inside WSL. WSL itself is not exercised in CI (the Linux legs run on `ubuntu-latest`, not under WSL); WSL-specific handling and a recorded WSL smoke run are tracked in #849 |
+| Windows, native | CLI-only; the prompt integration does not run there. The claim is backed by the five CLI integration targets the Windows gate runs on every pull request (`gpy_cli_tests`, `cli_config_mutation_tests`, `theme_import_tests`, `init_command_tests`, `cli_integration_tests`; `.github/workflows/windows-gate.yml`, #653). See [Windows (WSL)](#windows-wsl) below for what "not supported" covers. |
 
-What CI actually backs: `pr-gate.yml` and `cross-platform-test.yml` share one
-`windows-latest` leg (`windows-gate.yml`) that builds the agent with `cargo
-build --locked`, runs the library unit tests with `cargo test --locked --lib`,
-and, since #653, the five CLI integration targets listed in the table above
-through nextest. As of 2026-09-02 that leg is no longer
-gated on `pull_request` — the workflow's automatic trigger is temporarily
-disabled to control metered GitHub Actions minutes on this private repo
-(issue #556). `cross-platform-test.yml`'s `push`-to-`main` and weekly-cron
-legs are disabled for the same reason, so Windows coverage now comes only
-from dispatching either workflow manually (`gh workflow run pr-gate.yml`)
-before merging. So the Windows **build and library unit tests** are covered,
-but not as a required gate on the PR itself while this holds.
+What CI actually backs: `pr-gate.yml` runs on every pull request to `main`
+(and on manual dispatch), and `cross-platform-test.yml` runs after every push
+to `main`, weekly, and on manual dispatch. The PR gate runs the Rust gate
+(format, strict clippy, nextest, doc tests, `cargo audit`, `cargo deny`, a
+release build), the strict `just lint` layer, and the Fish, Bash and Zsh
+integration suites on `ubuntu-latest` and `macos-latest`, each as its own job
+so one failure never hides another's verdict; a clean-container fresh install
+on `ubuntu:24.04`; and the Windows leg. The one check to require in the branch
+ruleset is `gate-result`, which fails unless every one of those jobs
+succeeded. The PR gate runs on pull requests from forks with a read-only
+token and no secrets.
+
+The Windows leg is one reusable workflow (`windows-gate.yml`) that
+`pr-gate.yml` and `cross-platform-test.yml` both call. It builds the agent
+with `cargo build --locked`, runs the library unit tests with `cargo test
+--locked --lib`, and the five CLI integration targets listed in the table
+above through nextest.
 
 What CI does not cover on native Windows is the shell integration, and it
 never will: the prompt talks to the agent over a Unix domain socket, which

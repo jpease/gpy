@@ -1,18 +1,27 @@
 name: Cross-Platform Smoke
 
-# 2026-09-02: automatic `push`/`schedule` triggers disabled and macOS split
-# out of the automatic matrix -- same reasoning as pr-gate.yml's 2026-09-02
-# note. This repo is private, so GitHub Actions minutes are metered with a
-# 10x multiplier on macOS runners, and this workflow ran a full macOS smoke
-# test on every merge to main with no concurrency dedup. Re-enable `push`
-# (and add a concurrency group while at it) once minutes reset, or drop this
-# note entirely once the repo goes public (epic #489) -- GitHub Actions on
-# GitHub-hosted runners is free and unlimited for public repos.
+# Post-merge and weekly smoke test on Linux, macOS and Windows: build the
+# agent, run the library unit tests, syntax-check the Fish tree. It is the
+# lighter, scheduled sibling of pr-gate.yml, and it earns its place by
+# catching what only appears on `main` or only with time: a runner image
+# update (`ubuntu-latest`, `macos-latest` and `windows-latest` all float) or a
+# toolchain change that no open PR exercised.
+#
+# History: the `push` and `schedule` triggers were switched off, and macOS
+# split into a manual-only job, on 2026-09-02 to stop the private repository's
+# 10x macOS minute multiplier burning the account's allowance (#556).
+# Hosted-runner minutes are free for a public repository, so both are back.
+#
+# The Windows leg is the same reusable workflow pr-gate.yml calls
+# (windows-gate.yml, #653), not a second copy of its steps. Keeping it here as
+# well as in the PR gate was a decision (#514): it is free, and a post-merge
+# and weekly run on `main` catches Windows drift that no PR touched.
 on:
-  # push:
-  #   branches: [main]
-  # schedule:
-  #   - cron: '0 9 * * 1'
+  push:
+    branches: [main]
+  schedule:
+    # Mondays 09:00 UTC: runner-image and toolchain drift with no commit.
+    - cron: '0 9 * * 1'
   workflow_dispatch:
 
 # Least privilege (#506): the token is read-only unless a job below asks for more.
@@ -22,21 +31,23 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+# A burst of merges supersedes itself on a branch; `main` runs are never
+# cancelled, so every merge keeps its own result.
 concurrency:
   group: cross-platform-smoke-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   smoke:
     name: Smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        # macos-latest moved to the manual `smoke-macos` job below (see the
-        # 2026-09-02 note above); windows-latest to the shared
-        # windows-gate.yml, called by the `windows` job below (#653).
-        os: [ubuntu-latest]
+        # windows-latest is the shared windows-gate.yml, called by the
+        # `windows` job below (#653).
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - name: Checkout
@@ -63,9 +74,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y fish
 
+      - name: Install Fish (macOS)
+        if: runner.os == 'macOS'
+        run: brew install fish
+
       - name: Build agent
         working-directory: gpy-agent
-        # Cargo.lock is now committed (it is an application crate), so --locked
+        # Cargo.lock is committed (it is an application crate), so --locked
         # gives reproducible cross-platform builds and fails loudly if the lock
         # drifts from Cargo.toml.
         run: cargo build --locked --verbose
@@ -73,57 +88,14 @@ jobs:
       - name: Rust smoke tests
         working-directory: gpy-agent
         # Library unit tests are hermetic (no fish/agent/socket deps), so they
-        # are the right cross-platform smoke — including Windows IPC coverage.
-        # (The former `cross_platform_validation_tests` target was deleted in
-        # cc610df9; the workflow was never updated, reddening main on every push.)
+        # are the right cross-platform smoke, including Windows IPC coverage.
         run: cargo test --locked --lib --verbose
 
       - name: Fish syntax smoke
-        if: runner.os != 'Windows'
         shell: bash
-        # Fish sources now live under fish/** (core, segments, functions,
-        # conf.d); the old top-level core/segments/themes globs no longer exist.
+        # Fish sources live under fish/** (core, segments, functions, conf.d).
         run: find fish install-dev.fish -name '*.fish' -print0 | xargs -0 -n1 fish -n
 
   windows:
     name: Windows lib and CLI tests
     uses: ./.github/workflows/windows-gate.yml
-
-  smoke-macos:
-    # Manual only -- see the 2026-09-02 note above. Dispatch from the Actions
-    # tab, or `gh workflow run cross-platform-test.yml`, when you want macOS
-    # smoke coverage beyond what the mandatory local pre-push hook already ran.
-    if: github.event_name == 'workflow_dispatch'
-    name: Smoke (macos-latest, manual)
-    runs-on: macos-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-        with:
-          rust-src-dir: gpy-agent
-          cache: false
-
-      - name: Verify the pinned toolchain is active
-        shell: bash
-        run: ./scripts/check-active-toolchain.sh
-
-      - name: Install Fish (macOS)
-        run: brew install fish
-
-      - name: Build agent
-        working-directory: gpy-agent
-        run: cargo build --locked --verbose
-
-      - name: Rust smoke tests
-        working-directory: gpy-agent
-        run: cargo test --locked --lib --verbose
-
-      - name: Fish syntax smoke
-        shell: bash
-        run: find fish install-dev.fish -name '*.fish' -print0 | xargs -0 -n1 fish -n
