@@ -28,7 +28,6 @@ if not command -q python3
     test_skip "python3 not installed, cannot simulate a wedged listener"
 end
 
-set -l real_date (command -v date)
 set -l test_tmp_dir (mktemp -d)
 set -l sock $test_tmp_dir/gpy-wedged-test.sock
 
@@ -70,11 +69,11 @@ ln -s (command -v head) $fake_bin_dir/head
 set -gx GPY_AGENT_SOCKET_PATH $sock
 set -l saved_path $PATH
 
-set -l start_ns ($real_date +%s%N)
+set -l start_ns (test_now_ns)
 set -gx PATH $fake_bin_dir
 set -l result (__gpy_ipc_send '{"op":"ping"}' 300)
 set -gx PATH $saved_path
-set -l end_ns ($real_date +%s%N)
+set -l end_ns (test_now_ns)
 
 _ipc_nc_fallback_cleanup $listener_pid $test_tmp_dir
 functions -e _ipc_nc_fallback_cleanup

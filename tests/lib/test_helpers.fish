@@ -395,6 +395,19 @@ function test_skip
     exit 0
 end
 
+# Nanoseconds since the epoch, identical on every platform (#848). `date
+# +%s%N` is GNU-only: BSD/macOS date prints a literal `N`, which `math` then
+# rejects. perl's Time::HiRes ships with macOS and every Linux base image.
+# The interpreter is resolved once, at source time, so a test that later
+# restricts PATH to force a fallback path can still time itself.
+set -g __gpy_test_clock_bin (command -v perl)
+function test_now_ns
+    if test -z "$__gpy_test_clock_bin"
+        test_skip "perl not installed, cannot take a nanosecond timestamp"
+    end
+    $__gpy_test_clock_bin -MTime::HiRes=time -e 'printf "%d\n", time() * 1e9'
+end
+
 # Print test header
 function print_test_header
     echo ""

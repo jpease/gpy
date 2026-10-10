@@ -65,10 +65,13 @@ if [[ ! -f "$SECURITY" ]]; then
     exit 1
 fi
 
-# Body of a `##`/`###` heading block, by heading text.
+# Body of a `##`/`###` heading block, by heading text. `^###? ` rather than
+# `^#{2,3} `: the runner's awk is mawk, which mis-handles the interval
+# expression (it matches `## A` but not `### B`) and silently ended every
+# section at the first `###` heading (#848).
 section_body() {
     awk -v want="$1" '
-        /^#{2,3} / {
+        /^###? / {
             heading = $0
             sub(/^#+ /, "", heading)
             grab = (heading == want)

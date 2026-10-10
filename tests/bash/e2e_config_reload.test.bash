@@ -52,15 +52,16 @@ shell_e2e_poll 5 registered || fail "client $client_pid never registered"
 
 export_file="$XDG_CACHE_HOME/gpy/theme-export.bash"
 [ -f "$export_file" ] || fail "no theme export at $export_file"
-before_mtime="$(stat -f %m "$export_file" 2>/dev/null || stat -c %Y "$export_file")"
+# The export carries show_icons=1 now (asserted next); a rewrite is the only
+# way it can come to carry show_icons=0, so the content is the evidence. No
+# mtime comparison: `stat` takes different flags on GNU and BSD (#848).
 grep -q 'GPY_UI_SHOW_ICONS="1"' "$export_file" || fail "export does not carry show_icons=1 before the edit"
 
 # --- the edit ----------------------------------------------------------------------
 printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' >"$config"
 
 export_rewritten() {
-    now="$(stat -f %m "$export_file" 2>/dev/null || stat -c %Y "$export_file")"
-    [ "$now" != "$before_mtime" ] && grep -q 'GPY_UI_SHOW_ICONS="0"' "$export_file"
+    grep -q 'GPY_UI_SHOW_ICONS="0"' "$export_file"
 }
 if shell_e2e_poll 10 export_rewritten; then
     pass "the theme export was rewritten with show_icons=0"

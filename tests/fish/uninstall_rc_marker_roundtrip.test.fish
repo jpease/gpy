@@ -676,7 +676,7 @@ for uninstaller in "sh scripts/uninstall.sh" "fish --no-config scripts/uninstall
     else
         __gpy_test_fail "#671 ($uninstaller): symlinked rc file was replaced by a regular file"
     end
-    set -l mode (stat -f %Lp "$h6/dots/bashrc" 2>/dev/null; or stat -c %a "$h6/dots/bashrc")
+    set -l mode (stat -c %a "$h6/dots/bashrc" 2>/dev/null; or stat -f %Lp "$h6/dots/bashrc")
     if test "$mode" = 600
         __gpy_test_pass "#671 ($uninstaller): rc file mode preserved"
     else
