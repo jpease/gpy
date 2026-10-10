@@ -64,7 +64,7 @@ jobs:
           # prompt character themselves instead of asking the agent, which
           # changes what the contract suite observes (variant-down,
           # text-theme). Run as an ordinary user, like a real WSL session.
-          wsl-shell-user: smoke
+          wsl-shell-user: user
           # `build-essential`/`pkg-config` for cargo, `git` for the fixtures,
           # `util-linux` for findmnt, `software-properties-common` for the Fish
           # PPA, and `zsh`/`socat`/`netcat-openbsd`/`python3`/`jq` for the shell
@@ -125,10 +125,10 @@ jobs:
       - name: WSL smoke (fonts and git on both filesystems)
         shell: wsl-bash -u root {0}
         run: |
-          . /home/smoke/.gpy-wsl-env
+          . /home/user/.gpy-wsl-env
           export GPY_WSL_DRVFS_DIR
-          cd /home/smoke/gpy
-          GPY_AGENT_BIN=/home/smoke/gpy/gpy-agent/target/debug/gpy-agent scripts/wsl-smoke.sh
+          cd /home/user/gpy
+          GPY_AGENT_BIN=/home/user/gpy/gpy-agent/target/debug/gpy-agent scripts/wsl-smoke.sh
 
       - name: Cross-shell contract suite
         shell: wsl-bash {0}
