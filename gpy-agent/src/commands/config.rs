@@ -326,6 +326,25 @@ fn launch_shell_editor(editor: &str, config_path: &std::path::Path) -> Result<()
     }
 }
 
+/// The desktop opener to use on Linux.
+///
+/// `xdg-open` everywhere, except under WSL, where it is usually not installed
+/// and `wslview` (from `wslu`) is what opens a file in the Windows default
+/// application: there `wslview` is preferred when it is on `PATH` (#849).
+#[cfg(all(unix, not(target_os = "macos")))]
+fn linux_opener() -> &'static str {
+    const WSL_OPENER: &str = "wslview";
+    if crate::wsl::is_wsl()
+        && std::env::var_os("PATH").is_some_and(|path| {
+            std::env::split_paths(&path).any(|dir| dir.join(WSL_OPENER).is_file())
+        })
+    {
+        WSL_OPENER
+    } else {
+        "xdg-open"
+    }
+}
+
 /// Launch the platform-default file opener for the config path.
 ///
 /// # Errors
@@ -342,7 +361,7 @@ fn launch_default_editor(config_path: &std::path::Path) -> Result<()> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     let mut command = {
-        let mut cmd = Command::new("xdg-open");
+        let mut cmd = Command::new(linux_opener());
         cmd.arg(config_path);
         cmd
     };

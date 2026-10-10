@@ -275,6 +275,21 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Fixed
 
+- WSL gets its own handling and documentation (#849). Under WSL the agent no
+  longer scans the Linux font directories for a Nerd Font, since the terminal
+  that draws the glyphs is a Windows application and cannot see them:
+  `gpy-agent init` reports the fonts as undetectable and defaults to ASCII
+  icons (`GPY_NERD_FONT` still answers it). `gpy config open` prefers
+  `wslview` when it is installed, before the `xdg-open` that is usually
+  missing on WSL. WSL is recognised from the kernel release or
+  `WSL_DISTRO_NAME` (`gpy_agent::wsl`). The WSL section of `docs/INSTALL.md`
+  and the troubleshooting guide now cover repositories on `/mnt/<drive>`
+  (polling, `git.skip_paths`, `GPY_WATCH_FORCE_POLL`), the Windows `PATH`
+  interop, `$HOME` on a Windows drive and fonts, and the three watcher
+  variables are documented. `.github/workflows/wsl-smoke.yml` builds the agent
+  in Ubuntu under WSL on a Windows runner and runs `scripts/wsl-smoke.sh` and
+  the cross-shell contract suite there.
+
 - The integration tests that run the built binaries no longer look for them at
   a hard-coded `./target/debug/...` (#861). Under `cargo llvm-cov` the binaries
   are built into `target/llvm-cov-target`, so

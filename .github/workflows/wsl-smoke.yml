@@ -1,0 +1,125 @@
+name: WSL Smoke
+
+# Run GPY inside a real WSL 2 distribution on a Windows runner (#849).
+#
+# Every other Linux leg runs on `ubuntu-latest`, so until this the claim that
+# WSL is a supported way to run GPY was backed by nothing that ran under WSL.
+# This job builds the agent in Ubuntu under WSL and runs scripts/wsl-smoke.sh
+# (the WSL-specific checks, against a repository on the Linux filesystem and
+# one on the Windows drive) and then the cross-shell contract suite, so Fish,
+# Bash and Zsh are exercised against a real agent under the WSL kernel.
+#
+# Not part of pr-gate.yml: it adds a Windows runner and a distribution install
+# to a gate that is already long, and what it guards (WSL-only behaviour)
+# changes rarely. It runs when its own files change, weekly (runner-image and
+# WSL drift), and on demand.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/wsl-smoke.yml
+      - scripts/wsl-smoke.sh
+  schedule:
+    # Mondays 09:30 UTC, after the cross-platform smoke.
+    - cron: '30 9 * * 1'
+  workflow_dispatch:
+
+# Least privilege (#506): the token is read-only unless a job below asks for more.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: wsl-smoke-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  wsl:
+    name: WSL smoke (Ubuntu 24.04)
+    runs-on: windows-latest
+    timeout-minutes: 75
+
+    steps:
+      # Windows checks text out with CRLF by default, which breaks every
+      # shell script the suites source.
+      - name: Check text out with LF endings
+        shell: bash
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up WSL
+        uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
+        with:
+          distribution: Ubuntu-24.04
+          use-cache: true
+          set-as-default: true
+          # `build-essential`/`pkg-config` for cargo, `git` for the fixtures,
+          # `util-linux` for findmnt, `software-properties-common` for the Fish
+          # PPA, and `zsh`/`socat`/`netcat-openbsd`/`python3`/`jq` for the shell
+          # suites' IPC and pty drivers (the list in
+          # .github/actions/install-shells).
+          additional-packages: >-
+            build-essential pkg-config curl ca-certificates git util-linux
+            software-properties-common zsh socat netcat-openbsd python3 jq
+
+      - name: Show the WSL environment
+        shell: wsl-bash {0}
+        run: |
+          uname -a
+          cat /proc/sys/kernel/osrelease
+          echo "WSL_DISTRO_NAME=$WSL_DISTRO_NAME"
+          pwd
+          findmnt -T "$PWD" || true
+
+      - name: Install Fish 4
+        # Ubuntu 24.04's apt carries Fish 3.7; the suites need Fish 4 (the same
+        # PPA .github/actions/install-shells uses).
+        shell: wsl-bash {0}
+        run: |
+          sudo add-apt-repository -y ppa:fish-shell/release-4
+          sudo apt-get update
+          sudo apt-get install -y fish
+          fish --version
+
+      # Build and test from a copy on the Linux filesystem: cargo and the shell
+      # suites on the checkout's drvfs mount are slow and not what a WSL user
+      # who follows the install guide runs. The checkout itself is the
+      # Windows-drive repository the smoke script exercises.
+      - name: Copy the checkout to the Linux filesystem
+        shell: wsl-bash {0}
+        run: |
+          echo "GPY_WSL_DRVFS_DIR=$PWD" >> "$HOME/.gpy-wsl-env"
+          cp -a . "$HOME/gpy"
+
+      - name: Install Rust toolchain
+        # rustup reads the channel from gpy-agent/rust-toolchain.toml.
+        shell: wsl-bash {0}
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          . "$HOME/.cargo/env"
+          cd "$HOME/gpy/gpy-agent"
+          rustup toolchain install
+          ../scripts/check-active-toolchain.sh
+
+      - name: Build agent
+        shell: wsl-bash {0}
+        run: |
+          . "$HOME/.cargo/env"
+          cd "$HOME/gpy/gpy-agent"
+          cargo build --locked
+
+      - name: WSL smoke
+        shell: wsl-bash {0}
+        run: |
+          . "$HOME/.cargo/env"
+          . "$HOME/.gpy-wsl-env"
+          export GPY_WSL_DRVFS_DIR
+          cd "$HOME/gpy"
+          scripts/wsl-smoke.sh --contract
