@@ -6,7 +6,7 @@
 #
 # Layout: enabled segments render on one line, then the prompt character `❯`
 # (colored green on success / red on failure) renders on the next line.
-# `two_line = true` enables this on bash/zsh; fish is already two-line.
+# `two_line = true` enables this in fish, bash and zsh.
 #
 # Segment order, directory display, and icon visibility come from config
 # (`[ui]` in config.toml), not from this theme file. This preset *recommends*
@@ -19,7 +19,7 @@ prompt_icon = "❯"
 prompt_color = "green"
 root_prompt_icon = "❯"
 root_prompt_color = "red"
-# Opt-in two-line layout for bash/zsh (segments line + character line).
+# Opt-in two-line layout (segments line + character line).
 two_line = true
 
 # Settings applied to `config.ui` by `gpy theme use starship --force`.

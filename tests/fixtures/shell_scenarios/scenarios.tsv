@@ -91,3 +91,10 @@ ttl-fresh	default	directory,git	0	GPY_GIT_INSTANT_CACHE_TTL_SECONDS=3600	-	up	re
 ttl-expired	default	directory,git	0	GPY_GIT_INSTANT_CACHE_TTL_SECONDS=1	aged_cache	up	repo	-	git	starts=0 oneshots=- ipc.git=1 prompt~=main
 # #845 empty HOME: the same prompt and requests with HOME= as with a home
 empty-home	default	directory,git	0	HOME=	-	up	repo	-	-	starts=0 registers=1 oneshots=- ipc.git=1 prompt~=main
+# #855 agent disabled, two data segments: git is not omitted in any shell (it renders through oneshot, or
+# draws nothing once the directory has spent the one-fork budget), so the directory is never the last segment
+disabled-two-segments	default	directory,git	0	-	-	down	repo	[agent]\nenabled = false	-	starts=0 registers=0 ipc_total=0 oneshots=directory prompt!~=main
+# #855 agent disabled, git alone: the segment renders through oneshot
+disabled-git-only	default	git	0	-	-	down	repo	[agent]\nenabled = false	-	starts=0 registers=0 ipc_total=0 oneshots=git prompt~=main
+# #856 a theme without two_line (built-in `text`) draws the character on the segments' line in every shell
+text-theme	text	directory,status	0	-	-	up	repo	-	-	starts=0 registers=1 ipc.character=1

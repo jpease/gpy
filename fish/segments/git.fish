@@ -38,9 +38,11 @@ end
 # segment never takes a first/last position it cannot fill (#766). That is the
 # cold miss with the agent down: no instant-cache entry for this repo in any
 # variant and no socket, where segment_git_render can only omit (and its
-# background refresh has no listener). Builtin-only, since it runs on every
-# prompt.
+# background refresh has no listener). Agent-free mode (GPY_AGENT_ENABLED=0)
+# never omits: it renders through oneshot (#841, #855), as Bash and Zsh do.
+# Builtin-only, since it runs on every prompt.
 function segment_git_omit
+    test "$GPY_AGENT_ENABLED" = 0; and return 1
     not __gpy_instant_cache_present git $PWD; and not test -S (__gpy_ipc_endpoint)
 end
 
@@ -80,6 +82,17 @@ function segment_git_render --argument-names is_last is_first
     set -l cache_status $status
 
     if test "$cache_status" -eq 1
+        # Agent-free mode (GPY_AGENT_ENABLED=0, #841, #855): there is no daemon
+        # to query or wait for, so render through the oneshot fallback, as
+        # Bash and Zsh do.
+        if test "$GPY_AGENT_ENABLED" = 0
+            set -l fresh (__gpy_oneshot_fallback git "$root" ansi "$is_last" "$is_first")
+            if test -n "$fresh"
+                printf '%s' "$fresh"
+                set -g __gpy_last_segment_bg $__color_git_clean_bg
+            end
+            return 0
+        end
         # 2. Cold miss (#434). Register (foreground, cheap no-op once
         #    registered) so future watcher pushes reach this shell, then
         #    attempt a BOUNDED synchronous IPC query so the FIRST prompt shows

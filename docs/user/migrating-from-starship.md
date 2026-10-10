@@ -38,7 +38,7 @@ The importer (`gpy-agent/src/import/starship/`, exercised by `gpy-agent/tests/st
 - **Clock** — `time_format` maps to GPY's `"12"`/`"24"` setting on a best-effort basis.
 - **Username and hostname** — `format`, `style_root`, `show_always` (username) and `format`, `style`, `ssh_only`, `ssh_symbol`, `trim_at` (hostname) carry over. As in Starship, the hostname's `ssh_symbol` (default `🌐 `) shows only in SSH sessions, even with `ssh_only = false`.
 - **Segment order** — pass `--apply-layout` and the derived `enabled_segments` order is written straight into `config.toml`; without it, the command just prints the suggested order.
-- **Prompt layout** — `add_newline` (default `true`) becomes `ui.add_newline`, the blank line before each prompt. `$line_break` in `format` (or no `format` at all, Starship's default two-line layout) becomes `ui.two_line = true`, which Bash and Zsh honor; Fish always renders two lines.
+- **Prompt layout** — `add_newline` (default `true`) becomes `ui.add_newline`, the blank line before each prompt. `$line_break` in `format` (or no `format` at all, Starship's default two-line layout) becomes `ui.two_line = true`, which Fish, Bash and Zsh all honor.
 
 For the full module-by-module mapping table and style-translation rules, see [Starship Importer](../dev/starship-import.md) — that document is the mechanical reference; this one is the walkthrough.
 
