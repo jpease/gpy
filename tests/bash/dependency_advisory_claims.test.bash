@@ -231,6 +231,8 @@ if [[ "$audit_ran" -eq 1 ]]; then
         echo "note: cargo audit reports no advisories; coverage checks are vacuous"
     fi
 else
+    echo "cargo audit output (first lines), to tell a missing tool from a failed fetch:"
+    printf '%s\n' "${audit_output:-<cargo audit was not run: not installed>}" | head -n 15 | sed 's/^/    /'
     echo "SKIP: cargo audit could not scan the lockfile (not installed, or the"
     echo "      advisory database is unavailable offline); the advisory-ID list"
     echo "      could not be derived. Every other assertion below still runs."

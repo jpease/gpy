@@ -189,7 +189,7 @@ run_shell() {
     cd "$SHELL_E2E_REPO" || exit 1
     case "$shell" in
         fish) python3 "$SHELL_E2E_PTY" start "$SHELL_E2E_SESSION" -- fish -i ;;
-        zsh) python3 "$SHELL_E2E_PTY" start "$SHELL_E2E_SESSION" -- zsh -i ;;
+        zsh) python3 "$SHELL_E2E_PTY" start "$SHELL_E2E_SESSION" -- zsh -d -i ;;
         bash) python3 "$SHELL_E2E_PTY" start "$SHELL_E2E_SESSION" -- bash -i ;;
     esac || fail "$shell: could not spawn the shell on a pty"
     if shell_e2e_wait_for 'repo' 15 >/dev/null; then

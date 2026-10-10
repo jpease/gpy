@@ -239,7 +239,7 @@ check_start() {
     err="$SB/start.err"
     case "$shell" in
         fish) loaded="$("$@" -i -c 'functions -q __gpy_load_theme; and echo loaded' </dev/null 2>"$err")" ;;
-        zsh) loaded="$("$@" -i -c 'whence -w __gpy_load_theme >/dev/null && echo loaded' </dev/null 2>"$err")" ;;
+        zsh) loaded="$("$@" -d -i -c 'whence -w __gpy_load_theme >/dev/null && echo loaded' </dev/null 2>"$err")" ;;
         bash) loaded="$("$@" -i -c 'declare -F __gpy_load_theme >/dev/null && echo loaded' </dev/null 2>"$err")" ;;
     esac
     # A tty-less interactive bash always prints these two job-control lines;
@@ -251,7 +251,7 @@ check_start() {
     : >"$trace"
     case "$shell" in
         fish) "$@" -i --profile-startup="$trace" -c true </dev/null >/dev/null 2>&1; pat='> source .*/gpy_init\.fish' ;;
-        zsh) "$@" -i -x -c true </dev/null >/dev/null 2>"$trace"; pat='source .*/gpy/zsh/gpy\.zsh'"'"'?$' ;;
+        zsh) "$@" -d -i -x -c true </dev/null >/dev/null 2>"$trace"; pat='source .*/gpy/zsh/gpy\.zsh'"'"'?$' ;;
         bash) "$@" -i -x -c true </dev/null >/dev/null 2>"$trace"; pat='source .*/gpy/bash/gpy\.bash'"'"'?$' ;;
     esac
     count="$(grep -Ec "$pat" "$trace")"

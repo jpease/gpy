@@ -138,7 +138,10 @@ chmod 700 "$SANDBOX/runtime"
 # the resolved cargo directory goes first on PATH, ahead of any version-
 # manager shim that would need $HOME to work, and CARGO_HOME/RUSTUP_HOME keep
 # pointing at the real ones.
-real_cargo="$(rustup which cargo 2>/dev/null || command -v cargo)"
+# Asked from gpy-agent/: the pin (rust-toolchain.toml) lives there, and from
+# the repository root rustup answers with the machine default instead (1.98.1
+# on the macOS runner image, which cannot build the 1.99 crate).
+real_cargo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../gpy-agent" && { rustup which cargo 2>/dev/null || command -v cargo; })"
 real_cargo_dir="$(dirname "$real_cargo")"
 real_home="$HOME"
 
