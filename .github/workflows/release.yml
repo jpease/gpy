@@ -108,7 +108,7 @@ jobs:
         # No `toolchain:` input: the action resolves the pin from
         # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
         # See that file for why CI must not install @stable (#189, #518).
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           rust-src-dir: gpy-agent
           cache: false
@@ -226,7 +226,7 @@ jobs:
         # No `toolchain:` input: the action resolves the pin from
         # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
         # See that file for why CI must not install @stable (#189, #518).
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           rust-src-dir: gpy-agent
           # No Swatinem step in this job, so keep the action's own cache.
@@ -325,7 +325,7 @@ jobs:
         # No `toolchain:` input: the action resolves the pin from
         # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
         # See that file for why CI must not install @stable (#189, #518).
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           rust-src-dir: gpy-agent
           cache: false
