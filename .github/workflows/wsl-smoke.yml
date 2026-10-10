@@ -120,11 +120,19 @@ jobs:
           cd "$HOME/gpy/gpy-agent"
           cargo build --locked
 
-      - name: WSL smoke
+      # As root: the drvfs checkout is owned by root and mounted without the
+      # `metadata` option, so an ordinary user cannot `git init` on it.
+      - name: WSL smoke (fonts and git on both filesystems)
+        shell: wsl-bash -u root {0}
+        run: |
+          . /home/smoke/.gpy-wsl-env
+          export GPY_WSL_DRVFS_DIR
+          cd /home/smoke/gpy
+          GPY_AGENT_BIN=/home/smoke/gpy/gpy-agent/target/debug/gpy-agent scripts/wsl-smoke.sh
+
+      - name: Cross-shell contract suite
         shell: wsl-bash {0}
         run: |
           . "$HOME/.cargo/env"
-          . "$HOME/.gpy-wsl-env"
-          export GPY_WSL_DRVFS_DIR
           cd "$HOME/gpy"
-          scripts/wsl-smoke.sh --contract
+          scripts/wsl-smoke.sh --contract-only
