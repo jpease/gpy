@@ -5622,6 +5622,10 @@ mod tests {
 
         watcher.force_poll_fallback(Duration::from_secs(1));
         let after_first = wait_for_any_event(&events, Duration::from_secs(2));
+        // Let the first swap's whole rescan burst land before clearing: on a
+        // slow runner (macOS) later events of that burst arrive after the
+        // first one and were counted as the second swap's.
+        std::thread::sleep(Duration::from_millis(400));
         events.lock().unwrap().clear();
         watcher.force_poll_fallback(Duration::from_secs(1));
         std::thread::sleep(Duration::from_millis(200));

@@ -307,7 +307,7 @@ shell_e2e_spawn_client() {
         zsh)
             printf 'echo "GPY_E2E_PID=$$"\nsource "%s/zsh/gpy.zsh"\n' "$_repo_root" >"$_rc_dir/.zshrc"
             ZDOTDIR="$_rc_dir" python3 "$SHELL_E2E_PTY" start "$SHELL_E2E_SESSION" -- \
-                zsh -i
+                zsh -d -i
             ;;
         *)
             echo "FAIL: shell_e2e_spawn_client: unknown shell '$_shell'"
