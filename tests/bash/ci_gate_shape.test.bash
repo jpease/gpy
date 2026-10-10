@@ -243,6 +243,8 @@ if printf '%s\n' "$lint" | grep -q 'moonrepo/setup-toolchain' && printf '%s\n' "
 else
     fail "pr-gate lint must install moon (moonrepo/setup-toolchain) and run just lint"
 fi
+# The literal contains $BASE_REF on purpose: it is the workflow's text, not ours.
+# shellcheck disable=SC2016
 if printf '%s\n' "$lint" | grep -qF 'git branch -f "$BASE_REF" HEAD'; then
     pass "pr-gate lint gives moon a local base ref on pull_request (shallow checkout)"
 else
