@@ -60,6 +60,11 @@ jobs:
           distribution: Ubuntu-24.04
           use-cache: true
           set-as-default: true
+          # The default WSL user is root, and as root the shells draw the
+          # prompt character themselves instead of asking the agent, which
+          # changes what the contract suite observes (variant-down,
+          # text-theme). Run as an ordinary user, like a real WSL session.
+          wsl-shell-user: smoke
           # `build-essential`/`pkg-config` for cargo, `git` for the fixtures,
           # `util-linux` for findmnt, `software-properties-common` for the Fish
           # PPA, and `zsh`/`socat`/`netcat-openbsd`/`python3`/`jq` for the shell
@@ -80,12 +85,12 @@ jobs:
 
       - name: Install Fish 4
         # Ubuntu 24.04's apt carries Fish 3.7; the suites need Fish 4 (the same
-        # PPA .github/actions/install-shells uses).
-        shell: wsl-bash {0}
+        # PPA .github/actions/install-shells uses). Needs root, hence `-u root`.
+        shell: wsl-bash -u root {0}
         run: |
-          sudo add-apt-repository -y ppa:fish-shell/release-4
-          sudo apt-get update
-          sudo apt-get install -y fish
+          add-apt-repository -y ppa:fish-shell/release-4
+          apt-get update
+          apt-get install -y fish
           fish --version
 
       # Build and test from a copy on the Linux filesystem: cargo and the shell

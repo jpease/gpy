@@ -125,6 +125,11 @@ fi
 
 # --- the cross-shell contract suite -------------------------------------------
 if (( RUN_CONTRACT )); then
+    if (( EUID == 0 )); then
+        # As root the shells draw the prompt character themselves, so the
+        # contract rows that count character requests cannot pass.
+        fail "the contract suite must run as an ordinary user, not root"
+    fi
     if CI="${CI:-1}" bash "$ROOT/tests/bash/shell_contract.test.bash"; then
         pass "cross-shell contract suite"
     else
