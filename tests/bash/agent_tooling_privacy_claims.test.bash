@@ -106,6 +106,22 @@ PRIVATE_PATHS=(.agents .codex docs/superpowers AGENTS.md CLAUDE.md .raven/manife
 # excluded, (g) is about nothing public pointing at them once they are gone.
 CUTOVER_PATHS=(.agents/ .codex/ docs/superpowers/ AGENTS.md CLAUDE.md .gemini/ GEMINI.md)
 
+# (b)'s CLAUDE.md pointer, (d) and (f) judge the maintainer's working tree,
+# where the agent tooling is kept on disk and excluded from git (#504). A
+# fresh clone -- a contributor's, or CI's checkout -- holds none of it and
+# none of the `.git/info/exclude` entries, so there is nothing to keep and
+# nothing to lose: those checks are reported "N/A" there instead of failing
+# (not as a SKIP, which is a failure under CI, #650). A tree that has ANY of
+# the private paths on disk or excluded is the maintainer's, and then every
+# one of them must be present.
+maintainer_tree=0
+for private in "${PRIVATE_PATHS[@]}"; do
+    if [[ -e "$private" ]] || git check-ignore -q --no-index -- "$private" 2>/dev/null; then
+        maintainer_tree=1
+        break
+    fi
+done
+
 WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
@@ -236,7 +252,9 @@ fi
 # recorded fix was a specific conversion: symlink -> one-line pointer. The
 # on-disk test keeps holding after #509 untracks the file, when the index
 # sweep no longer sees it.
-if [[ ! -e CLAUDE.md ]]; then
+if [[ $maintainer_tree -eq 0 ]]; then
+    echo "  N/A: a fresh clone carries no CLAUDE.md (see maintainer_tree above)"
+elif [[ ! -e CLAUDE.md ]]; then
     fail "CLAUDE.md is missing; it is the pointer that gives Claude Code the AGENTS.md instructions (#504)"
 elif [[ -L CLAUDE.md ]]; then
     fail "CLAUDE.md is a symlink; it was converted to a regular file so a Windows checkout gets the pointer rather than the literal text 'AGENTS.md' (#504)"
@@ -348,7 +366,11 @@ fi
 # look deletable to anyone who does not know they are about to stop being
 # tracked.
 echo "--- #504 private paths present on disk ---"
+if [[ $maintainer_tree -eq 0 ]]; then
+    echo "  N/A: a fresh clone carries no agent tooling (see maintainer_tree above)"
+fi
 for private in "${PRIVATE_PATHS[@]}"; do
+    [[ $maintainer_tree -eq 1 ]] || break
     before_failures=$failures
     if [[ ! -e "$private" ]]; then
         fail "private path '$private' is missing; #504 keeps the agent tooling in the working tree and excludes it at the #509 cutover, so deleting it loses the tooling rather than hiding it"
@@ -411,8 +433,10 @@ if [[ -d .agents/skills ]]; then
     else
         echo "  .agents/ is no longer tracked (#509 cutover); skipping"
     fi
-else
+elif [[ $maintainer_tree -eq 1 ]]; then
     fail ".agents/skills/ is missing; AGENTS.md names it the canonical location for reusable skills (#504)"
+else
+    echo "  N/A: a fresh clone carries no agent tooling (see maintainer_tree above)"
 fi
 
 # --- (g) no public file references a path the cutover removes ---------------
