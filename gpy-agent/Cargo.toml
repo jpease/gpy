@@ -24,8 +24,8 @@ categories = ["command-line-utilities", "development-tools"]
 
 # Never published to crates.io (#502). A registry install would place the two
 # binaries and nothing else -- not the fish/, bash/ and zsh/ trees the prompt
-# renders from -- so it could only ever produce a broken install. Distribution is GitHub Releases plus, in future, a Homebrew
-# tap. This also means the library surface carries no semver guarantee; see the
+# renders from -- so it could only ever produce a broken install. Distribution is GitHub Releases plus the
+# jpease/homebrew-tap Homebrew tap. This also means the library surface carries no semver guarantee; see the
 # crate root docs.
 publish = false
 

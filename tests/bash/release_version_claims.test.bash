@@ -12,7 +12,8 @@
 #
 # The distribution half is the same discipline applied to install channels: an
 # instruction for a channel that does not work is a bug report waiting to be
-# filed. Homebrew has a formula with a placeholder checksum and no tap, no
+# filed. Homebrew is operational through the jpease/homebrew-tap tap (#515; the
+# formula lives in that repository, not here), no
 # Debian or Arch package is built, the crate sets `publish = false` (#502), and
 # the Fisher plugin ships no agent binary. None of those may be offered to a
 # user by an installer or a doc page.
@@ -29,15 +30,13 @@
 # Asserts:
 #   (a) the CHANGELOG declares exactly one released version and no phantom
 #       [0.1.1] heading survives
-#   (b) Cargo.toml, fisher.json, the CHANGELOG, and Formula/gpy.rb's tag URL
-#       all agree on that one version
+#   (b) Cargo.toml, fisher.json and the CHANGELOG all agree on that one version
 #   (c) every released CHANGELOG heading has a link reference and no link
 #       reference points at a version with no section
 #   (d) the release date is an ISO date or the literal YYYY-MM-DD placeholder
 #   (e) scripts/release-notes.sh renders non-empty notes for that version
 #   (f) no installer or doc advertises a non-operational channel
-#   (g) Formula/gpy.rb still declares itself unfinished, and says so in a way
-#       that names the issue that finishes it
+#   (g) the formula is not vendored here: it lives in jpease/homebrew-tap
 #   (h) SECURITY.md's supported-versions table names the released minor line
 #       and nothing else
 #   (i) docs/dev/releasing.md exists and the version-bearing files it
@@ -102,10 +101,8 @@ CHANGELOG_VERSION="$(printf '%s\n' "$release_headings" | head -1 |
 echo "--- version declarations agree ---"
 CARGO_VERSION="$(grep -m1 '^version = ' "$MANIFEST" | sed 's/version = "\(.*\)"/\1/')"
 FISHER_VERSION="$(grep -m1 '"version"' "$FISHER" | sed 's/.*"version": *"\([^"]*\)".*/\1/')"
-FORMULA_VERSION="$(grep -m1 -oE 'refs/tags/v[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' "$FORMULA" |
-    sed -E 's#refs/tags/v(.*)\.tar\.gz#\1#')"
 
-for pair in "$MANIFEST:$CARGO_VERSION" "$FISHER:$FISHER_VERSION" "$FORMULA:$FORMULA_VERSION"; do
+for pair in "$MANIFEST:$CARGO_VERSION" "$FISHER:$FISHER_VERSION"; do
     where="${pair%%:*}"
     what="${pair#*:}"
     if [[ -z "$what" ]]; then
@@ -153,11 +150,11 @@ while IFS= read -r doc; do
     channel_scan+=("$doc")
 done < <(find docs -name '*.md' -type f | sort)
 
-# Each entry is "<label>|<extended regex>". The Homebrew and apt patterns are
-# anchored on a gpy-shaped package name so legitimate `brew install bash` /
-# `apt install jq` prerequisite lines are not flagged.
+# Each entry is "<label>|<extended regex>". The apt pattern is anchored on a
+# gpy-shaped package name so legitimate `apt install jq` prerequisite lines are
+# not flagged. Homebrew is operational (tap-qualified only); the bare
+# homebrew-core form is banned by tests/bash/crate_publish_boundary.test.bash.
 channel_patterns=(
-    "Homebrew|brew (install|tap) [^ ]*(gpy|jpease)"
     "crates.io|cargo install gpy"
     "Debian|apt(-get)? install [^ ]*gpy|dpkg -i"
     "Arch|pacman -S [^ ]*gpy|yay -S [^ ]*gpy|makepkg|PKGBUILD"
@@ -174,22 +171,10 @@ for target in "${channel_scan[@]}"; do
     done
 done
 
-# --- (g) the Homebrew formula still admits it is unfinished ------------------
-echo "--- Homebrew formula declares itself unfinished ---"
-if [[ ! -f "$FORMULA" ]]; then
-    fail "$FORMULA not found"
-else
-    formula_sha="$(grep -m1 -oE '^[[:space:]]*sha256 "[^"]*"' "$FORMULA" | sed 's/.*"\(.*\)"/\1/')"
-    if [[ "$formula_sha" == "REPLACE_WITH_ACTUAL_SHA256" ]]; then
-        # A placeholder checksum is fine only while the file says out loud what
-        # has to happen and which issue owns it.
-        grep -qF '#515' "$FORMULA" ||
-            fail "$FORMULA has a placeholder sha256 but does not name #515, the issue that computes it"
-        grep -qF "$RELEASE_DOC" "$FORMULA" ||
-            fail "$FORMULA has a placeholder sha256 but does not point at $RELEASE_DOC"
-    elif [[ ! "$formula_sha" =~ ^[0-9a-f]{64}$ ]]; then
-        fail "$FORMULA declares sha256 '$formula_sha', which is neither the placeholder nor a SHA-256 digest"
-    fi
+# --- (g) the formula lives in the tap, not here ------------------------------
+echo "--- Homebrew formula is not vendored in this repository ---"
+if [[ -e "$FORMULA" ]]; then
+    fail "$FORMULA exists; the formula lives in jpease/homebrew-tap (#515), where it carries the real tag digest"
 fi
 
 # --- (h) SECURITY.md supports exactly the released minor line ----------------

@@ -23,6 +23,7 @@ handle_error() {
     # that deliver the agent are listed.
     echo "📚 Alternative installation methods:"
     echo "   • One-line installer: curl -sS https://raw.githubusercontent.com/jpease/gpy/main/install-oneline.sh | sh"
+    echo "   • Homebrew (Fish): brew install jpease/tap/gpy"
     echo "   • Manual: Use install-dev.fish if you have the source"
     echo ""
     exit "$exit_code"
