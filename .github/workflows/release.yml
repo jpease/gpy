@@ -23,6 +23,11 @@ on:
         description: 'Release version (e.g., v1.0.0)'
         required: true
         type: string
+      publish:
+        description: 'Create the GitHub release (a tag push always publishes; a manual run only builds, packages and smoke-tests unless this is set)'
+        required: false
+        type: boolean
+        default: false
 
 # Least privilege (#506): the token is read-only unless a job below asks for more.
 permissions:
@@ -44,6 +49,7 @@ jobs:
   validate:
     name: Validate Release
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -120,11 +126,8 @@ jobs:
       - name: Install Rust tooling (nextest, audit, deny)
         uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
-          tool: cargo-nextest,cargo-audit,cargo-deny,just
+          tool: cargo-nextest,cargo-audit,cargo-deny,just,shellcheck
 
-      # socat and netcat back the IPC partial-response and protocol-mismatch
-      # suites. The old job also apt-installed "timeout", which is not a
-      # package (it ships in coreutils), so this step failed on every run.
       - name: Install moon
         # `just lint` is `moon run gpy-agent:clippy` (#584).
         uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
@@ -132,13 +135,10 @@ jobs:
           auto-install: false
 
       - name: Install shells and shell-suite prerequisites
-        # The same list pr-gate.yml installs (#650): under CI a missing
-        # prerequisite fails the test that needs it instead of skipping.
-        run: |
-          sudo add-apt-repository -y ppa:fish-shell/release-4
-          sudo apt-get update
-          sudo apt-get install -y fish zsh socat netcat-openbsd python3 jq hyperfine
-          curl -sS https://starship.rs/install.sh | sh -s -- -y
+        # The same list pr-gate.yml installs (#650), from the same action:
+        # under CI a missing prerequisite fails the test that needs it
+        # instead of skipping. Includes hyperfine for the perf budgets below.
+        uses: ./.github/actions/install-shells
 
       # The same gate a PR runs (pr-gate.yml), so a tag cannot ship something
       # that would not have merged. `just lint` was missing here until #651,
@@ -154,13 +154,17 @@ jobs:
 
       # tests/performance-baselines.json is enforced by nothing else in a
       # hook or workflow (the pre-push canary only warns); a tag is the one
-      # place the budgets must hold (#652).
+      # place the budgets must hold (#652). This runs on a shared GitHub-hosted
+      # runner, which is noisy: the budgets are the file's loose `max` ceilings
+      # (not the `target` figures) plus the scripts' own tolerance, so they
+      # catch an order-of-magnitude regression, not a few percent.
       - name: Performance budgets
         run: just bench-ci
 
   build:
     name: Build Release Binaries
     needs: validate
+    timeout-minutes: 60
     strategy:
       matrix:
         include:
@@ -300,6 +304,7 @@ jobs:
     name: Create Release Package
     needs: [validate, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -366,15 +371,18 @@ jobs:
   smoke:
     # Run what is about to be published (#652): the archive's install.sh,
     # both `--version`s, a oneshot render, a responding agent, and one prompt
-    # per shell on Linux; the two .exe `--version`s and `gpy --help` on
-    # Windows (CLI-only). macOS binaries are built and checksummed but not
-    # smoke-run: that runner bills 10x (see pr-gate.yml).
+    # per shell on Linux and on macOS (the arm64 runner runs the aarch64
+    # binaries; the x86_64 macOS binaries are built and checksummed but
+    # not run); the two .exe `--version`s and `gpy --help` on Windows
+    # (CLI-only). The macOS leg used to be left out because that runner billed
+    # 10x on the private repository; hosted runners are free now (#556).
     name: Smoke-run packaged binaries (${{ matrix.os }})
     needs: [validate, package]
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
@@ -388,11 +396,9 @@ jobs:
           name: gpy-release-package
           path: dist
 
-      - name: Install shells (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y fish zsh python3 socat
+      - name: Install shells (Linux and macOS)
+        if: runner.os != 'Windows'
+        uses: ./.github/actions/install-shells
 
       - name: Smoke-run the packaged binaries
         shell: bash
@@ -420,7 +426,12 @@ jobs:
   create-release:
     name: Create GitHub Release
     needs: [validate, build, package, smoke]
+    # A tag push always publishes. A manual dispatch is a dry run of everything
+    # above (validate, build, package, smoke) unless `publish` is set, so the
+    # whole pipeline can be exercised without creating a release.
+    if: ${{ github.event_name == 'push' || inputs.publish }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
       # Build-provenance attestation (#494): id-token signs the Sigstore
@@ -445,11 +456,8 @@ jobs:
       # says; an attestation proves the release page itself came from this
       # repository's CI.
       #
-      # Free for public repositories only, so this is gated rather than
-      # unconditional: while the repository is private (epic #489 flips it) a
-      # tag would otherwise fail here having already built everything.
+      # Free for public repositories only, which this one now is.
       - name: Attest build provenance
-        if: ${{ !github.event.repository.private }}
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-path: |

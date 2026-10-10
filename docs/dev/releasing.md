@@ -83,7 +83,11 @@ Everything below runs on `main`, with a clean tree.
    `validate` job resolves the version once and passes it downstream as a job
    output, so the package and release jobs cannot disagree with what it checked.
    Dispatch takes the version as an input (`vX.Y.Z`) and validates it against
-   the same three files on the default branch.
+   the same three files on the checked-out ref. A dispatch is a dry run: it
+   validates, builds, packages and smoke-runs the artifacts on Linux, macOS
+   and Windows, and publishes nothing unless `-f publish=true` is passed
+   (`gh -R jpease/gpy workflow run release.yml --ref <branch> -f
+   version=vX.Y.Z`). A tag push always publishes.
 
 9. **Watch the run.** `validate` → `build` (five targets) → `package` →
    `release`. The gate that runs on a pull request runs here too, so a tag

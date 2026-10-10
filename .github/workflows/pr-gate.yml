@@ -1,53 +1,41 @@
 name: PR Quality Gate
 
-# Backstop for the path-aware local pre-push hook: every PR runs the full gate
-# (Rust toolchain + Fish/Bash/Zsh integration suites) so that a misclassified
-# "shell-only" push cannot land a Rust regression. The local hook stays fast;
-# CI stays comprehensive.
+# The full gate on every pull request: Rust toolchain, strict lint and the
+# Fish/Bash/Zsh integration suites on Linux and macOS, the CLI-only Windows
+# leg, and a clean-container fresh install. It backstops the path-aware local
+# pre-push hook, so a misclassified "shell-only" push cannot land a Rust
+# regression; the local hook stays fast, CI stays comprehensive.
 #
-# windows-gate joined this workflow in #482, once the Windows lib-test leg
-# (previously only run post-merge by cross-platform-test.yml) turned green:
-# path resolution centralized with a real Windows branch (#477/#478), and
-# three previously-undiagnosed Windows-only bugs fixed (cache-key test
-# platform dispatch #487, a hardcoded-/tmp test, and builtin-theme matching
-# using a hardcoded / separator against \-joined Windows paths). It mirrors
-# cross-platform-test.yml's windows-latest steps exactly (build + lib tests
-# only -- no Fish/Bash/Zsh: native Windows has no shell integration, IPC is
-# Unix-socket-only) so a PR can no longer land a Windows-breaking regression
-# silently, the way the #472 compile error sat on main for two days before
-# anyone noticed. config::manager::tests::poll_fallback_reloads_without_any_watcher_running
-# is a known pre-existing intermittent timing flake on this leg (#482); a red
-# windows-gate run should be re-run once before treating it as a real
-# regression.
+# The required status check is `gate-result`. Every leg is its own job, so a
+# failure in one never hides the verdict of another (#651), and the
+# `gate-result` job at the bottom fails unless every leg succeeded. Require
+# that one name in the branch ruleset rather than the individual legs, whose
+# names carry the OS matrix.
 #
-# 2026-09-02: automatic `pull_request` trigger disabled and macOS split out of
-# the automatic matrix -- this repo is private, so GitHub Actions minutes are
-# metered with a 10x multiplier on macOS runners, and a day and a half of PR
-# churn burned ~1600 of the account's 2000 monthly minutes almost entirely on
-# that multiplier (85% of the gate's billed cost for the same wall-clock time
-# as ubuntu). The mandatory local pre-push hook already runs the full gate,
-# macOS included, on the dev's own machine before a push can land, so the
-# automatic macOS leg here was mostly re-proving what already ran locally.
-# Re-enable the `pull_request` trigger once minutes reset, or drop this whole
-# note once the repo goes public (epic #489) -- GitHub Actions on
-# GitHub-hosted runners is free and unlimited for public repos, multiplier
-# included, and this workaround stops mattering.
+# History: the automatic triggers were switched off on 2026-09-02, and macOS
+# was split into a manual-only job, to stop the private repository's 10x macOS
+# minute multiplier burning the account's allowance (#556). Hosted-runner
+# minutes are free and unlimited for a public repository, which removes the
+# only reason for either decision: the triggers are back, macOS is back in the
+# automatic matrix (the 2026-09-03 "macOS stays manual" decision was about
+# cost, not coverage, and it reverses with the cost), and nothing here is
+# opt-in any more.
+#
+# Fork safety: `pull_request`, never `pull_request_target`. A fork's PR runs
+# this file from its own branch with a read-only token and no secrets, and
+# nothing below uses either. Keep it that way: a `pull_request_target` or a
+# secret in this workflow would hand an untrusted PR the repository's trust.
+#
+# The Windows leg (windows-gate.yml, #482/#653) is CLI-only: native Windows
+# has no shell integration, the agent's IPC is a Unix socket. It mirrors
+# cross-platform-test.yml's Windows leg by being the same reusable workflow.
+# config::manager::tests::poll_fallback_reloads_without_any_watcher_running is
+# a known intermittent timing flake on that leg (#482); re-run the failed job
+# once before treating a red Windows result as a real regression.
 on:
-  # pull_request:
-  #   branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
-    # A manual dispatch runs the cheap ubuntu leg by default. The metered
-    # legs are opt-in per run so an ubuntu-only re-check never bills the 10x
-    # macOS or 2x Windows multiplier (#651).
-    inputs:
-      run_macos:
-        description: "Also run the macOS quality gate (10x metered minutes)"
-        type: boolean
-        default: false
-      run_windows:
-        description: "Also run the Windows gate (2x metered minutes)"
-        type: boolean
-        default: false
 
 # Least privilege (#506): the token is read-only unless a job below asks for more.
 permissions:
@@ -57,22 +45,21 @@ env:
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: ""
 
+# A new push to a PR supersedes the run in flight; a manual dispatch groups by
+# its ref the same way.
 concurrency:
-  group: pr-gate-${{ github.ref }}
+  group: pr-gate-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  gate:
-    name: Quality gate (${{ matrix.os }})
+  rust:
+    name: Rust gate (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        # macos-latest moved to the manual `macos-gate` job below (see the
-        # 2026-09-02 note above) -- ubuntu stays automatic, it's the cheap
-        # leg (1x) and catches real cross-platform bugs the dev's own macOS
-        # pre-push run cannot.
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - name: Checkout
@@ -84,12 +71,11 @@ jobs:
         # No `toolchain:` input: the action resolves the pin from
         # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
         # See that file for why CI must not install @stable (#189, #518).
-        # llvm-tools-preview backs the coverage step below (#654).
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           rust-src-dir: gpy-agent
           cache: false
-          components: clippy, rustfmt, llvm-tools-preview
+          components: clippy, rustfmt
 
       - name: Verify the pinned toolchain is active
         shell: bash
@@ -100,86 +86,30 @@ jobs:
         with:
           workspaces: gpy-agent
 
-      - name: Install Rust tooling (nextest, audit, deny, llvm-cov)
+      - name: Install Rust tooling (nextest, audit, deny)
         uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
-          tool: cargo-nextest,cargo-audit,cargo-deny,cargo-llvm-cov,just
+          tool: cargo-nextest,cargo-audit,cargo-deny,just
 
-      # `just lint` is `moon run gpy-agent:clippy` (#584); nothing installed
-      # moon here, so the lint leg could never have run in CI (#651).
-      - name: Install moon
-        uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
-        with:
-          auto-install: false
-
-      # Every prerequisite the shell suites need (#650): Fish 4 from the
-      # project PPA (apt's 3.7 makes the plugin E2E and the Fish-4-syntax
-      # tests skip), zsh, socat and netcat for the IPC edge suites, python3
-      # for the pty driver and fake listeners, jq for the JSON assertions,
-      # and starship for the parity suites. Under CI a missing prerequisite
-      # is a failed test, not a skip, so this list must stay complete.
-      - name: Install shells and shell-suite prerequisites (Linux)
-        run: |
-          sudo add-apt-repository -y ppa:fish-shell/release-4
-          sudo apt-get update
-          sudo apt-get install -y fish zsh socat netcat-openbsd python3 jq shellcheck
-          curl -sS https://starship.rs/install.sh | sh -s -- -y
-          fish --version
-          starship --version
+      # The Rust integration targets drive real shells (fish_integration_tests,
+      # the plugin runtime E2E), and under CI a missing shell fails them.
+      - name: Install shells and shell-suite prerequisites
+        uses: ./.github/actions/install-shells
 
       - name: Rust toolchain gate
         run: just check-rust
 
-      # The lint and shell legs report independently of the Rust leg (#651):
-      # a Rust failure used to skip both, hiding every shell verdict.
-      - name: Moon lint gate (#584)
-        if: ${{ !cancelled() }}
-        run: just lint
-
-      - name: Shell integration gate
-        if: ${{ !cancelled() }}
-        run: just check-shell
-
-      # Non-gating (#654): a line-coverage figure for gpy-agent, printed in
-      # the log and uploaded as lcov.info. No threshold yet; the number is
-      # recorded in docs/dev/testing.md.
-      - name: Coverage (non-gating)
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        run: just coverage
-
-      - name: Upload coverage artifact
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: coverage-lcov
-          path: gpy-agent/lcov.info
-          if-no-files-found: warn
-
-  fresh-install:
-    # A stock ubuntu:24.04 container with an empty $HOME installs GPY from
-    # an archive built from this checkout and renders one prompt in fish,
-    # zsh and bash (#652). Docker is free on the ubuntu runner; see
-    # tests/docker/Dockerfile.fresh-install and scripts/test-fresh-install.sh.
-    name: Fresh install in a clean container
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-
-      - name: Build the image and run the fresh install
-        run: ./scripts/test-fresh-install.sh
-
-  macos-gate:
-    # Manual only, and only when asked for -- see the 2026-09-02 note above.
-    # Run before merging anything non-trivial:
-    # `gh workflow run pr-gate.yml --ref <branch> -f run_macos=true`, or
-    # dispatch from the Actions tab.
-    if: github.event_name == 'workflow_dispatch' && inputs.run_macos
-    name: Quality gate (macos-latest, manual)
-    runs-on: macos-latest
+  lint:
+    # `just lint` is `moon run gpy-agent:clippy` (#584): the strict
+    # nursery/cargo/restriction lint layer on top of the baseline `cargo
+    # clippy` the Rust gate already runs.
+    name: Lint gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - name: Checkout
@@ -203,35 +133,161 @@ jobs:
         with:
           workspaces: gpy-agent
 
-      - name: Install Rust tooling (nextest, audit, deny)
+      - name: Install just
         uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
-          tool: cargo-nextest,cargo-audit,cargo-deny,just
+          tool: just
 
       - name: Install moon
         uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: false
 
-      - name: Install shells (macOS)
-        # Also install bash: macOS's system bash is 3.2, which lacks features
-        # the bash suites use (associative arrays) and resets traps in subshells.
-        # quality-check.sh picks this newer bash for the bash suites.
-        run: brew install fish zsh bash
-
-      - name: Rust toolchain gate
-        run: just check-rust
-
       - name: Moon lint gate (#584)
         run: just lint
+
+  shell:
+    name: Shell gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          rust-src-dir: gpy-agent
+          cache: false
+
+      - name: Verify the pinned toolchain is active
+        shell: bash
+        run: ./scripts/check-active-toolchain.sh
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: gpy-agent
+
+      # shellcheck comes from here rather than apt so every runner lints with
+      # one version; cargo-audit backs the dependency-advisory claims test,
+      # which fails under CI when it cannot scan the lockfile (#650).
+      - name: Install just, shellcheck and cargo-audit
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: just,shellcheck,cargo-audit
+
+      # Every prerequisite the suites need (#650): Fish 4, zsh, bash, socat,
+      # netcat, python3, jq, shellcheck and starship. A missing one is a
+      # failed test under CI, never a skip.
+      - name: Install shells and shell-suite prerequisites
+        uses: ./.github/actions/install-shells
 
       - name: Shell integration gate
         run: just check-shell
 
+  coverage:
+    # Non-gating (#654): a line-coverage figure for gpy-agent, printed in the
+    # log and uploaded as lcov.info. No threshold yet; the number is recorded
+    # in docs/dev/testing.md. Not a `needs` of gate-result, so it can never
+    # block a merge.
+    name: Coverage (non-gating)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        # llvm-tools-preview backs cargo-llvm-cov.
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          rust-src-dir: gpy-agent
+          cache: false
+          components: clippy, rustfmt, llvm-tools-preview
+
+      - name: Verify the pinned toolchain is active
+        shell: bash
+        run: ./scripts/check-active-toolchain.sh
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: gpy-agent
+
+      - name: Install Rust tooling (nextest, llvm-cov)
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-nextest,cargo-llvm-cov,just
+
+      - name: Install shells and shell-suite prerequisites
+        uses: ./.github/actions/install-shells
+
+      - name: Coverage
+        run: just coverage
+
+      - name: Upload coverage artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-lcov
+          path: gpy-agent/lcov.info
+          if-no-files-found: warn
+
+  fresh-install:
+    # A stock ubuntu:24.04 container with an empty $HOME installs GPY from
+    # an archive built from this checkout and renders one prompt in fish,
+    # zsh and bash (#652). See tests/docker/Dockerfile.fresh-install and
+    # scripts/test-fresh-install.sh.
+    name: Fresh install in a clean container
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Build the image and run the fresh install
+        run: ./scripts/test-fresh-install.sh
+
   windows-gate:
-    name: Windows lib and CLI tests
-    # Automatic on a PR; on a manual dispatch only when asked for (#651).
     # The steps live in windows-gate.yml, shared with cross-platform-test.yml
     # (#653).
-    if: github.event_name != 'workflow_dispatch' || inputs.run_windows
     uses: ./.github/workflows/windows-gate.yml
+
+  gate-result:
+    # The one stable name to require in the branch ruleset. `if: always()` so
+    # it still runs, and fails, when a leg failed or was cancelled: a skipped
+    # required job would otherwise read as "not run" rather than red, and a
+    # job that never started reports no status at all. Each leg is listed in
+    # `needs` explicitly; add every new gating job here
+    # (tests/bash/ci_gate_shape.test.bash checks this list covers each job).
+    name: gate-result
+    if: ${{ always() }}
+    needs: [rust, lint, shell, fresh-install, windows-gate]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Every gating leg succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          bad="$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result != "success") | .key')"
+          if [ -n "$bad" ]; then
+            echo "::error::gating leg(s) did not succeed: $(echo "$bad" | tr '\n' ' ')"
+            exit 1
+          fi
