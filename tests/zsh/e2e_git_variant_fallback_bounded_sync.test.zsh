@@ -84,6 +84,9 @@ else
 fi
 
 # --- agent unreachable: serve the .none bytes unchanged -------------------------------
+# Stop the agent first so its background refresh cannot re-create the token file
+# after the rm below (#863).
+shell_e2e_stop_agent
 rm -f "$cache_dir"/*".git_last.$PREV_BG.zsh"
 saved_socket="$GPY_AGENT_SOCKET_PATH"
 export GPY_AGENT_SOCKET_PATH="$SHELL_E2E_ROOT/absent.sock"
