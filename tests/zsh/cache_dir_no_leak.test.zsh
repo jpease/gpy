@@ -73,7 +73,7 @@ if (( ${#before} == 1 && ${#after} == 1 )) && [[ $before == $after ]]; then
 else
     fail "live sibling: before=(${before}) after=(${after})"
 fi
-[[ -d $after && "$(stat -f %Lp "$after" 2>/dev/null || stat -c %a "$after")" == 700 ]] \
+[[ -d $after && "$(stat -c %a "$after" 2>/dev/null || stat -f %Lp "$after")" == 700 ]] \
     && pass "live dir mode 0700" || fail "live dir not 0700"
 exec 9>&-
 wait $LIVE_PID 2>/dev/null; LIVE_PID=

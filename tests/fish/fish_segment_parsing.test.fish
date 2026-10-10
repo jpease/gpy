@@ -1,6 +1,9 @@
 #!/usr/bin/env fish
 # Test Fish segment parsing of the new Fish-friendly format
 
+# Shared test helpers (test_now_ns: a portable nanosecond clock)
+source tests/lib/test_helpers.fish
+
 # Source the core files first
 source fish/core/util.fish
 source fish/core/ipc.fish
@@ -195,10 +198,10 @@ function test_parsing_performance
     set -l sample_git_data (string join -- ' ' $sample_git_parts)
 
     # Time the parsing (should be very fast)
-    set -l start_time (date +%s%N)
+    set -l start_time (test_now_ns)
     set -l parsed_args (string split -- ' ' "$sample_git_data")
     argparse --ignore-unknown 'branch=' 'ahead=' 'behind=' -- $parsed_args >/dev/null 2>&1
-    set -l end_time (date +%s%N)
+    set -l end_time (test_now_ns)
 
     set -l duration_ns (math "$end_time - $start_time")
     set -l duration_ms (math "$duration_ns / 1000000")

@@ -181,9 +181,13 @@ shell_e2e_timeout_scale() {
     [ -n "$_cores" ] || _cores=1
     _load1="$( { sysctl -n vm.loadavg 2>/dev/null || cat /proc/loadavg 2>/dev/null; } | tr -d '{}' | awk '{print $1}')"
     [ -n "$_load1" ] || _load1=0
-    awk -v load="$_load1" -v cores="$_cores" 'BEGIN {
+    # The awk variable is `loadavg`, not `load`: gawk reserves `load` (the
+    # @load directive) and aborts with "cannot use gawk builtin `load' as
+    # variable name", which left every poll budget empty on a runner whose
+    # awk is gawk (#848).
+    awk -v loadavg="$_load1" -v cores="$_cores" 'BEGIN {
         if (cores < 1) cores = 1
-        ratio = load / cores
+        ratio = loadavg / cores
         scale = ratio
         if (scale < 1) scale = 1
         if (scale > int(scale)) scale = int(scale) + 1

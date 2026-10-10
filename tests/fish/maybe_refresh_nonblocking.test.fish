@@ -114,9 +114,9 @@ set -l saved_path $PATH
 for op in git lang
     rm -f $tmp/server.log
     set -gx PATH $fake_bin
-    set -l start_ns ($real_date +%s%N)
+    set -l start_ns (test_now_ns)
     __gpy_maybe_refresh $op $tmp/proj $op "" black ""
-    set -l end_ns ($real_date +%s%N)
+    set -l end_ns (test_now_ns)
     set -gx PATH $saved_path
     set -l elapsed_ms (math --scale=0 "($end_ns - $start_ns) / 1000000")
 
