@@ -212,11 +212,11 @@ echo "--- every reported advisory is ignored deliberately and documented ---"
 audit_output=""
 audit_ran=0
 if command -v cargo >/dev/null 2>&1 && cargo audit --version >/dev/null 2>&1; then
-    audit_output="$(cd "$ROOT/gpy-agent" && cargo audit 2>&1 || true)"
+    audit_output="$(cd "$ROOT/gpy-agent" && CARGO_TERM_COLOR=never cargo audit --color never 2>&1 || true)"
     if ! printf '%s' "$audit_output" | grep -q 'Scanning Cargo.lock'; then
         # Advisory-database fetch needs the network. Retry against whatever
         # copy is already on disk before giving up.
-        audit_output="$(cd "$ROOT/gpy-agent" && cargo audit --no-fetch 2>&1 || true)"
+        audit_output="$(cd "$ROOT/gpy-agent" && CARGO_TERM_COLOR=never cargo audit --no-fetch --color never 2>&1 || true)"
     fi
     if printf '%s' "$audit_output" | grep -q 'Scanning Cargo.lock'; then
         audit_ran=1

@@ -119,7 +119,7 @@ exit'
         expect "$label, array element 0" A1 "1 42"
         expect "$label, array element 1" A2 "1 42"
     else
-        echo "SKIP: array PROMPT_COMMAND needs bash >= 5.1 ($label)"
+        echo "N/A: array PROMPT_COMMAND needs bash >= 5.1 ($label)"
     fi
 done
 
