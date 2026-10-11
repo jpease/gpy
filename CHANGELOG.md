@@ -275,6 +275,13 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Fixed
 
+- Honor accepted agent shutdown requests even when the requester disconnects
+  before receiving the acknowledgement, preventing eviction from leaving a
+  live daemon behind (#862).
+- Isolate the Zsh unreachable-agent cache fallback fixture from background
+  cache writes, and synchronize the slow-reply IPC fixture with the client
+  timeout instead of relying on a fixed reply delay (#863, #864).
+
 - WSL gets its own handling and documentation (#849). Under WSL the agent no
   longer scans the Linux font directories for a Nerd Font, since the terminal
   that draws the glyphs is a Windows application and cannot see them:

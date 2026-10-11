@@ -278,10 +278,10 @@ impl ConnectionHandler {
             .await
         {
             warn_log!("connection", "Failed to send response: {e}");
-            return Ok(should_shutdown);
         }
 
-        // If shutdown was requested, trigger the shutdown signal
+        // An accepted shutdown must take effect even if the requester timed
+        // out and disconnected before receiving its acknowledgement.
         if should_shutdown {
             let _ = self.shutdown_tx.send(());
         }
@@ -593,6 +593,40 @@ mod tests {
         ));
 
         (handler_registry, instant_cache, language_cache)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shutdown_survives_client_disconnect_before_acknowledgement() {
+        let (handler_registry, _instant_cache, _language_cache) = test_handler_registry();
+        let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
+        let theme_manager = Arc::new(ThemeManager::builtin("default").expect("theme"));
+        let palette_cache = Arc::new(PaletteCache::from_config(&config_manager.get()));
+        let (shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
+        let handler = ConnectionHandler {
+            security_config: GuardSettings::default(),
+            config_manager,
+            theme_manager,
+            palette_cache,
+            latency_tracker: Arc::new(crate::ipc::LatencyTracker::new(100)),
+            shutdown_tx,
+            handler_registry,
+        };
+        let (client, server) = UnixStream::pair().expect("socket pair");
+        let (_reader, mut writer) = server.into_split();
+        drop(client);
+        let registry = Arc::new(ClientDirectory::new());
+        assert!(
+            handler
+                .process_message_line(br#"{"op":"shutdown"}"#, &mut writer, &registry)
+                .await
+                .expect("handle shutdown")
+        );
+        assert_eq!(
+            shutdown_rx.try_recv(),
+            Ok(()),
+            "a disconnected client must not cancel an accepted shutdown"
+        );
     }
 
     /// #680: a prompt request whose `cwd` fails path validation is answered

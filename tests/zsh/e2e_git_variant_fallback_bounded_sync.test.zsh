@@ -84,19 +84,56 @@ else
 fi
 
 # --- agent unreachable: serve the .none bytes unchanged -------------------------------
-# Stop the agent first so its background refresh cannot re-create the token file
-# after the rm below (#863).
-shell_e2e_stop_agent
-rm -f "$cache_dir"/*".git_last.$PREV_BG.zsh"
-saved_socket="$GPY_AGENT_SOCKET_PATH"
-export GPY_AGENT_SOCKET_PATH="$SHELL_E2E_ROOT/absent.sock"
-out2="$(__gpy_segment_git "true" "$PREV_BG" "")"
-export GPY_AGENT_SOCKET_PATH="$saved_socket"
+# Copy the real .none entry into a cache root the running agent never inherited.
+# A background refresh rewrites every remembered prev_bg, even after the socket
+# disappears, so deleting the original token file is not fixture isolation (#863).
+fallback_cache_home="$SHELL_E2E_ROOT/fallback-cache"
+fallback_cache_dir="$fallback_cache_home/gpy/instant-prompts"
+none_files=("$cache_dir"/*".git_last.none.zsh"(N))
+if [ "${#none_files}" -ne 1 ]; then
+    fail "expected one real .none git cache file to isolate, got ${#none_files}"
+    exit 1
+fi
+none_file="${none_files[1]}"
+mkdir -p "$fallback_cache_dir" || exit 1
+cp "$none_file" "$fallback_cache_dir/" || exit 1
+fallback_bytes="$(<"$fallback_cache_dir/${none_file:t}")"
+
+# This scenario covers a fresh variant fallback, not stale-cache oneshot
+# recovery. Keep the copied entry fresh even when the gate heavily loads the host.
+fallback_read="$(
+    export XDG_CACHE_HOME="$fallback_cache_home" GPY_GIT_INSTANT_CACHE_TTL_SECONDS=3600
+    __gpy_read_instant_cache git_last "$SHELL_E2E_REPO" "$PREV_BG"
+)"
+fallback_cache_rc=$?
+if [ "$fallback_cache_rc" -eq 4 ]; then
+    pass "the isolated cache reports a fresh .none variant fallback"
+else
+    fail "expected isolated cache status 4, got $fallback_cache_rc"
+fi
+[ "$fallback_read" = "$fallback_bytes" ] || fail "the isolated cache did not read the real .none bytes"
+
+out2="$(
+    export XDG_CACHE_HOME="$fallback_cache_home" GPY_AGENT_SOCKET_PATH="$SHELL_E2E_ROOT/absent.sock" \
+        GPY_GIT_INSTANT_CACHE_TTL_SECONDS=3600
+    __gpy_segment_git "true" "$PREV_BG" ""
+)"
+rc2=$?
 case "$out2" in
     "") fail "with the agent unreachable the .none fallback was not served" ;;
     *"38;5;$PREV_BG"*) fail "with the agent unreachable the render unexpectedly carried the prev_bg chevron" ;;
-    *) pass "with the agent unreachable the .none fallback is served unchanged" ;;
+    *)
+        if [ "$out2" = "$fallback_bytes" ]; then
+            pass "with the agent unreachable the .none fallback is served unchanged"
+        else
+            fail "with the agent unreachable the render changed the real .none fallback bytes"
+        fi
+        ;;
 esac
+[ "$rc2" -eq 0 ] || fail "expected unreachable fallback status 0, got $rc2"
+fallback_token_files=("$fallback_cache_dir"/*".git_last.$PREV_BG.zsh"(N))
+[ "${#fallback_token_files}" -eq 0 ] && pass "the isolated cache still has no token-specific file" \
+    || fail "the unreachable render wrote a token-specific file into the isolated cache"
 
 if [ "$failures" -gt 0 ]; then
     echo "FAILED: $failures assertion(s)"

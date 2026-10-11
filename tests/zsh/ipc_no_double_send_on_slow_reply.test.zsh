@@ -1,20 +1,17 @@
 #!/usr/bin/env zsh
 # tests/zsh/ipc_no_double_send_on_slow_reply.test.zsh
 #
-# Regression test for #575: a slow-but-alive agent must not get the same
-# request sent to it twice. __gpy_send_json's zsocket read has a 0.1s
-# timeout; before the fix, a nonzero read_status from that timeout (agent
-# connected fine, just answering slowly) fell straight through into the
-# socat/nc fallback, which re-sent the *same* JSON payload over a brand new
-# connection and waited again. One logical request became two on the wire.
+# Regression tests for #575/#864: a connected agent that has not replied must
+# get exactly one request, and __gpy_send_json must return status 2 with no
+# output when its response budget expires.
 #
-# The "slow-but-alive agent" is simulated with a Python listener that
-# accepts a connection, records it (so the test can count exactly how many
-# connections were made), sleeps 200ms -- comfortably past the zsocket
-# read's 100ms timeout -- then sends a complete reply and keeps listening
-# for a bounded extra window. If the bug were present, that second window
-# is exactly where the socat/nc re-send would land as a second recorded
-# connection; the fix must leave it recording only one.
+# Do not schedule a reply a fixed interval after accept(): the client can be
+# descheduled between connecting and entering read -t, making even a "late"
+# reply available before its read budget begins (#864). Instead the listener
+# holds every accepted socket open without replying until the synchronous
+# send returns. A control FIFO then tells it to drain pending connections and
+# record the requests, including any socat/nc fallback re-send. No sleep decides
+# whether the response timed out or how many requests reached the listener.
 
 ROOT=${0:a:h:h:h}
 # Shared skip contract (#650): exits 0 locally, fails under CI.
@@ -23,91 +20,130 @@ cd "$ROOT"
 
 source zsh/core/ipc.zsh
 
-if ! command -v python3 &>/dev/null; then
-    test_skip "python3 not installed, cannot simulate a slow-to-reply agent"
+test_require_command python3 "python3 not installed, cannot simulate a slow-to-reply agent"
+if ! zmodload zsh/net/socket 2>/dev/null; then
+    test_skip "zsh/net/socket not available, cannot exercise the builtin transport"
 fi
 
 test_tmp_dir=$(mktemp -d)
 test_result=0
+listener_pid=""
+control_fd=""
 
 cleanup() {
-    kill -9 "$1" 2>/dev/null
-}
-
-sock="$test_tmp_dir/gpy-slow-reply-test.sock"
-count_file="$test_tmp_dir/connection-count"
-reply_delay_secs=0.2
-listener_lifetime_secs=2.0
-
-# Accepts connections in a loop until listener_lifetime_secs elapses (or the
-# listening socket's accept() itself times out), recording one line per
-# accepted connection before replying -- so a fixed client (one connection)
-# and a buggy client (a zsocket connection plus a socat/nc re-send) are
-# distinguishable purely by counting lines afterward, without relying on
-# timing alone.
-python3 -c '
-import socket, sys, time
-
-sock_path, count_path, reply_delay, lifetime = sys.argv[1], sys.argv[2], float(sys.argv[3]), float(sys.argv[4])
-
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sock_path)
-s.listen(5)
-
-deadline = time.time() + lifetime
-while True:
-    remaining = deadline - time.time()
-    if remaining <= 0:
-        break
-    s.settimeout(remaining)
-    try:
-        conn, _ = s.accept()
-    except socket.timeout:
-        break
-
-    with open(count_path, "a") as f:
-        f.write("connection\n")
-
-    time.sleep(reply_delay)
-    try:
-        conn.sendall(b"{\"status\":\"ok\"}\n")
-    except OSError:
-        pass
-    conn.close()
-' "$sock" "$count_file" "$reply_delay_secs" "$listener_lifetime_secs" &
-listener_pid=$!
-disown 2>/dev/null
-
-for _ in {1..20}; do
-    [[ -S "$sock" ]] && break
-    sleep 0.1
-done
-
-if [[ ! -S "$sock" ]]; then
-    cleanup "$listener_pid"
+    if [[ -n "$listener_pid" ]]; then
+        kill "$listener_pid" 2>/dev/null
+        wait "$listener_pid" 2>/dev/null
+    fi
+    [[ -n "$control_fd" ]] && exec {control_fd}>&-
     rm -rf "$test_tmp_dir"
-    test_skip "could not create test Unix socket listener"
+}
+trap cleanup EXIT
+
+sock="$test_tmp_dir/gpy.sock"
+count_file="$test_tmp_dir/connection-count"
+request_file="$test_tmp_dir/requests"
+ready_file="$test_tmp_dir/ready"
+control_file="$test_tmp_dir/control"
+mkfifo "$control_file"
+# Keep both FIFO ends open so startup and a failed listener cannot block the
+# completion notification. Only the listener reads the notification.
+exec {control_fd}<>"$control_file"
+
+python3 -c '
+import os, select, socket, sys, time
+
+sock_path, count_path, request_path, ready_path, control_path = sys.argv[1:]
+connections = []
+control = os.open(control_path, os.O_RDONLY | os.O_NONBLOCK)
+
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+    listener.bind(sock_path)
+    listener.listen(5)
+    listener.setblocking(False)
+    with open(ready_path, "w") as ready:
+        ready.write("ready\n")
+
+    def accept_pending():
+        while True:
+            try:
+                conn, _ = listener.accept()
+            except BlockingIOError:
+                return
+            connections.append(conn)
+
+    deadline = time.monotonic() + 10
+    try:
+        while True:
+            # This is only a fixture watchdog, never the response delay. If
+            # it fires, the listener fails rather than making EOF look like
+            # the response timeout being tested.
+            remaining = max(0, deadline - time.monotonic())
+            readable, _, _ = select.select([listener, control], [], [], remaining)
+            if not readable:
+                raise RuntimeError("fixture watchdog expired before the client returned")
+            accept_pending()
+            if control in readable:
+                if os.read(control, 65536) != b"done\n":
+                    raise RuntimeError("invalid client completion notification")
+                # The synchronous client is finished: any fallback connect
+                # has already happened, even if this process was descheduled.
+                accept_pending()
+                break
+
+        requests = []
+        for conn in connections:
+            conn.settimeout(1)
+            chunks = []
+            while True:
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            requests.append(b"".join(chunks))
+        with open(count_path, "w") as counts:
+            counts.write("connection\n" * len(connections))
+        with open(request_path, "wb") as recorded:
+            recorded.write(b"".join(requests))
+    finally:
+        for conn in connections:
+            conn.close()
+        os.close(control)
+' "$sock" "$count_file" "$request_file" "$ready_file" "$control_file" &
+listener_pid=$!
+
+# Readiness is acknowledged after listen(), not merely after bind() creates
+# the socket path. This bounded poll is a startup watchdog only.
+for _ in {1..100}; do
+    [[ -f "$ready_file" ]] && break
+    sleep 0.05
+done
+if [[ ! -f "$ready_file" ]]; then
+    echo "FAIL: test Unix socket listener never became ready"
+    exit 1
 fi
 
-export GPY_AGENT_SOCKET_PATH="$sock"
+# Pin the premise instead of inheriting a caller budget or agent-free mode.
+export GPY_AGENT_SOCKET_PATH="$sock" GPY_IPC_TIMEOUT_MS=100 GPY_AGENT_ENABLED=1
 result="$(__gpy_send_json '{"op":"ping"}')"
+send_rc=$?
 
-# __gpy_send_json is synchronous, so any fallback re-send it was going to
-# make has already happened by the time it returns. This is just a small
-# safety margin before reading the connection count.
-sleep 0.3
+print -r -u "$control_fd" -- done
+wait "$listener_pid"
+listener_status=$?
+listener_pid=""
 
-cleanup "$listener_pid"
-# Give the killed listener process a moment to actually exit so its last
-# recorded connection (if any) is fully flushed to disk before we read it.
-sleep 0.1
+# A clean completion proves the fixture stayed open without replying until
+# the client returned; its own watchdog/EOF cannot satisfy the timeout check.
+if (( listener_status != 0 )); then
+    echo "FAIL: slow-reply fixture exited with status $listener_status"
+    test_result=1
+fi
 
 connection_count=0
 if [[ -f "$count_file" ]]; then
     connection_count=$(wc -l < "$count_file" | tr -d ' ')
 fi
-
-rm -rf "$test_tmp_dir"
 
 # Primary assertion (the acceptance criterion itself): the slow reply must
 # not have caused a second request over a different connection.
@@ -118,13 +154,21 @@ else
     test_result=1
 fi
 
-# Secondary assertion: __gpy_send_json should give up at its own 100ms
-# zsocket read timeout rather than return a stale response fetched via a
-# fallback re-send.
-if [[ -z "$result" ]]; then
-    echo "PASS: __gpy_send_json returned no response, as expected when the reply arrives after its read timeout"
+# Status 2 distinguishes an actual connected response timeout from a missing
+# socket/client (status 1); the fixture has not sent a byte or closed a socket.
+if (( send_rc == 2 )) && [[ -z "$result" ]]; then
+    echo "PASS: __gpy_send_json timed out with status 2 and no response"
 else
-    echo "FAIL: __gpy_send_json returned a response instead of timing out: got '$result'"
+    echo "FAIL: expected status 2 and no response, got status $send_rc and '$result'"
+    test_result=1
+fi
+
+# Count the request itself too, not just accepted sockets: an empty connection
+# or two sends on the same connection must not pass the no-double-send check.
+if printf '%s\n' '{"op":"ping"}' | cmp -s - "$request_file"; then
+    echo "PASS: listener received exactly one complete ping request"
+else
+    echo "FAIL: listener did not receive exactly one complete ping request"
     test_result=1
 fi
 
