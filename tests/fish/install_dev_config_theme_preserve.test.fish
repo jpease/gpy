@@ -37,7 +37,7 @@ end
 # Expose tools, not their installation directories: Homebrew can also contain
 # the developer's live gpy-agent.
 set -l safe_path (mktemp -d)
-for tool in fish rsync mkdir cp cmp rm readlink grep date mv ln
+for tool in fish rsync mkdir cp cmp rm readlink grep date mv ln cat
     set -l executable (command -s $tool)
     if test -z "$executable"
         __gpy_test_fail "sandbox: required tool $tool is unavailable"

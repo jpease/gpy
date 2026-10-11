@@ -107,7 +107,6 @@ def prepare_git(upstream_path, cwd, cache_dir, timeout):
         raise RuntimeError("git preparation left the shell instant cache warm")
 
 
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("listen")

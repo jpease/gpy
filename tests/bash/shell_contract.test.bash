@@ -85,6 +85,8 @@ proxy_ready() {
 start_proxy() {
     local sandbox="$1"
     shift
+    # -S: the proxy is stdlib-only; skip site-packages so a developer's .pth
+    # warnings cannot land in proxy.err, which is printed on a failed start.
     python3 -S "$SCN_LIB/ipc_proxy.py" "$sandbox/p.sock" "$sandbox/ipc.log" \
         --ready-file "$sandbox/proxy.ready" "$@" >"$sandbox/proxy.out" 2>"$sandbox/proxy.err" &
     proxy_pid=$!
