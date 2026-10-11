@@ -275,6 +275,13 @@ The `GPY_SHOW_STATUS` indicator is now gated on the runtime agent-render outcome
 
 ### Fixed
 
+- Isolate the development-installer preservation test from installed `gpy`
+  binaries using a tool-only PATH (#865).
+- Prepare daemon git state while keeping shell instant caches cold in the
+  cross-shell contract harness, avoiding first-use timing flakes (#866).
+- Publish the replacement socket atomically before the stale-socket fixture
+  acknowledges shutdown, eliminating its missing-path race (#867).
+
 - Honor accepted agent shutdown requests even when the requester disconnects
   before receiving the acknowledgement, preventing eviction from leaving a
   live daemon behind (#862).

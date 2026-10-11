@@ -77,16 +77,19 @@ stop_proxy() {
     proxy_pid=""
 }
 
+proxy_ready() {
+    [[ -f "$1/proxy.ready" ]] && kill -0 "$proxy_pid" 2>/dev/null
+}
+
 # Start the recording proxy on $1/p.sock. $2.. are ipc_proxy.py's mode flags.
 start_proxy() {
-    local sandbox="$1" _
+    local sandbox="$1"
     shift
-    python3 "$SCN_LIB/ipc_proxy.py" "$sandbox/p.sock" "$sandbox/ipc.log" "$@" &
+    python3 -S "$SCN_LIB/ipc_proxy.py" "$sandbox/p.sock" "$sandbox/ipc.log" \
+        --ready-file "$sandbox/proxy.ready" "$@" >"$sandbox/proxy.out" 2>"$sandbox/proxy.err" &
     proxy_pid=$!
-    for _ in $(seq 1 50); do
-        [[ -S "$sandbox/p.sock" ]] && return 0
-        sleep 0.1
-    done
+    shell_e2e_poll 15 proxy_ready "$sandbox" && return 0
+    cat "$sandbox/proxy.err" >&2
     return 1
 }
 
@@ -199,6 +202,15 @@ run_shell() {
             shell_e2e_start_agent || return 1
             local -a proxy_args=(--upstream "$sandbox/r.sock")
             [[ "$row_agent" == slow ]] && proxy_args+=(--slow "$SLOW_REPLY_SECONDS")
+            if [[ "$row_prime" == - && "$row_cwd" == repo && ",$row_segments," == *,git,* ]]; then
+                # The contract is a cold SHELL cache, not a first-use daemon
+                # benchmark. Prepare real git status outside the observed IPC
+                # log, then assert/remove every instant entry before listening.
+                # Neither the shell's IPC budget nor its render path changes.
+                proxy_args+=(--prepare-git "$sandbox/repo"
+                    --instant-cache "$sandbox/cache/gpy/instant-prompts"
+                    --prepare-timeout "$((10 * $(shell_e2e_timeout_scale)))")
+            fi
             start_proxy "$sandbox" "${proxy_args[@]}" || { fail "$row_name: proxy did not start"; return 1; }
             ;;
         down) ;;
@@ -212,8 +224,8 @@ run_shell() {
         local saved_segments="$row_segments"
         write_config "$sandbox" "$row_prime"
         SCN_RAW_OUT="" run_driver "$sandbox" "$sh" "$sandbox/prime.out" "$sandbox/prime.err"
-        # The agent writes the cache entries after it replies: wait until the
-        # directory has been quiet for 0.3 s.
+        # Wait for the priming render's context-free and variant entries to
+        # settle before selecting the cache state this row exercises.
         local seen="" now
         for _ in $(seq 1 50); do
             now="$(find "$sandbox/cache/gpy/instant-prompts" -maxdepth 1 -name '*git*' 2>/dev/null | sort | tr '\n' ' ')"

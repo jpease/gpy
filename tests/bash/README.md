@@ -57,6 +57,12 @@ agent, which can hold data requests to play a late agent.
 `oneshots`, `registers`, `ipc_total` and `ipc.<op>`; readiness probes
 (`ping`, `status`) and shell-exit `unregister` are not counted.
 
+Unprimed live-agent git rows prepare the daemon's git backend outside the
+observation log, then remove and verify the absence of its shell-visible
+instant-cache entries before the proxy becomes ready. The shell still takes
+the real cold-cache path with its normal IPC budget; first-use daemon work is
+not part of the cross-shell timing comparison.
+
 **To add a row for a drift fix:** append a line to `scenarios.tsv` (the file's
 header documents every column and flag), name it after the drift, put the
 issue number in a comment above it, and run just that row:

@@ -82,7 +82,9 @@ sections above describe the ones worth reading first.
 **Installers, uninstallers and release plumbing**
 
 - `install_completions_wiring.test.fish`
-- `install_dev_config_theme_preserve.test.fish`
+- `install_dev_config_theme_preserve.test.fish` runs the real Fish-only installer
+  with a tool-only PATH, excluding installed `gpy`/`gpy-agent` binaries even
+  when they share a directory with Fish or rsync.
 - `install_dev_remove_conflicting_binaries.test.fish`
 - `install_dev_stop_running_agent.test.fish`
 - `install_dev_verify_no_debug_log.test.fish`

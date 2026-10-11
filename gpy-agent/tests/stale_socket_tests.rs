@@ -132,6 +132,17 @@ impl Responder {
     }
 
     fn spawn_with(socket_path: &Path, behaviour: Behaviour, first_delay: Duration) -> Self {
+        Self::spawn_with_before_shutdown_ack(socket_path, behaviour, first_delay, || {})
+    }
+
+    /// Run a fixture-specific publication step before acknowledging shutdown.
+    /// Other responders keep their existing shutdown behaviour via the no-op hook.
+    fn spawn_with_before_shutdown_ack(
+        socket_path: &Path,
+        behaviour: Behaviour,
+        first_delay: Duration,
+        before_shutdown_ack: impl FnOnce() + Send + 'static,
+    ) -> Self {
         let alive = behaviour != Behaviour::Wedged;
         let exit_on_shutdown = behaviour == Behaviour::AliveUntilShutdown;
         let listener = std::os::unix::net::UnixListener::bind(socket_path)
@@ -146,6 +157,7 @@ impl Responder {
 
         let handle = std::thread::spawn(move || {
             let mut conn_index = 0_usize;
+            let mut shutdown_publication = Some(before_shutdown_ack);
             while !stop_clone.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
@@ -159,6 +171,9 @@ impl Responder {
                             shutdown_requests_clone.fetch_add(1, Ordering::Relaxed);
                         }
                         if is_shutdown && exit_on_shutdown {
+                            if let Some(publish) = shutdown_publication.take() {
+                                publish();
+                            }
                             let _ = stream.write_all(ACK_WIRE_FORM);
                             break;
                         }
@@ -396,32 +411,46 @@ fn eviction_does_not_unlink_a_replacement_agents_socket() {
     let socket_path = get_socket_path().expect("compute redirected socket path");
     let version_path = get_version_file_path().expect("compute redirected version path");
     std::fs::write(&version_path, "0.0.0-old\n").expect("write the old agent's version");
-    let old = Arc::new(Responder::spawn_exiting_on_shutdown(
+    // Bind the replacement in advance, but keep the old socket at the public
+    // path until shutdown. Rename publishes it atomically, without a missing
+    // path interval that eviction could legitimately interpret as no agent.
+    let replacement_path = socket_path.with_file_name("next.sock");
+    let _replacement = Responder::spawn(&replacement_path, true, Duration::ZERO);
+    let (published_tx, published_rx) = std::sync::mpsc::channel();
+    let old = Responder::spawn_with_before_shutdown_ack(
         &socket_path,
+        Behaviour::AliveUntilShutdown,
         Duration::ZERO,
-    ));
-
-    let replacer = {
-        let old_agent = Arc::clone(&old);
-        let replacer_socket = socket_path.clone();
-        std::thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while old_agent.shutdown_requests() == 0 {
-                assert!(
-                    Instant::now() < deadline,
-                    "old agent never got its shutdown"
-                );
-                std::thread::sleep(Duration::from_millis(5));
+        {
+            let public_path = socket_path.clone();
+            move || {
+                // Eviction cannot recheck the path until the shutdown ack.
+                std::fs::rename(&replacement_path, &public_path)
+                    .expect("atomically publish the replacement socket");
+                let meta = std::fs::metadata(&public_path).expect("stat published replacement");
+                published_tx
+                    .send((meta.ino(), meta.ctime(), meta.ctime_nsec()))
+                    .expect("record replacement publication before shutdown ack");
             }
-            std::fs::remove_file(&replacer_socket).expect("old agent unlinks its socket");
-            let replacement = Responder::spawn(&replacer_socket, true, Duration::ZERO);
-            let meta = std::fs::metadata(&replacer_socket).expect("stat replacement socket");
-            (replacement, meta.ino(), meta.ctime(), meta.ctime_nsec())
-        })
-    };
+        },
+    );
+    let old_ino = std::fs::metadata(&socket_path)
+        .expect("stat old agent socket before eviction")
+        .ino();
 
     let is_running = check_and_cleanup_socket(&socket_path);
-    let (_replacement, ino, ctime, ctime_nsec) = replacer.join().expect("replacer thread");
+    let (ino, ctime, ctime_nsec) = published_rx
+        .try_recv()
+        .expect("replacement fixture must publish before eviction returns");
+    assert_eq!(
+        old.shutdown_requests(),
+        1,
+        "the old agent must receive exactly one shutdown before publication"
+    );
+    assert_ne!(
+        ino, old_ino,
+        "the fixture must publish a different socket before the eviction verdict"
+    );
 
     assert!(
         is_running,

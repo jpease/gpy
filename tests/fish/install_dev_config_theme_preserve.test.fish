@@ -34,7 +34,22 @@ function __gpy_test_pass --argument-names msg
     echo "✅ $msg"
 end
 
-set -l safe_path /usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin
+# Expose tools, not their installation directories: Homebrew can also contain
+# the developer's live gpy-agent.
+set -l safe_path (mktemp -d)
+for tool in fish rsync mkdir cp cmp rm readlink grep date mv ln
+    set -l executable (command -s $tool)
+    if test -z "$executable"
+        __gpy_test_fail "sandbox: required tool $tool is unavailable"
+        rm -rf "$safe_path"
+        exit 1
+    end
+    ln -s "$executable" "$safe_path/$tool"
+end
+
+function __gpy_cleanup_tool_path --on-event fish_exit --inherit-variable safe_path
+    rm -rf "$safe_path"
+end
 
 function __gpy_run_install_dev --argument-names home_dir safe_path extra_flag
     set -l flags --fish-only
@@ -45,16 +60,16 @@ function __gpy_run_install_dev --argument-names home_dir safe_path extra_flag
         fish --no-config install-dev.fish $flags 2>&1
 end
 
-# Sanity check: confirm gpy-agent is genuinely unreachable under the
+# Sanity check: confirm gpy and gpy-agent are genuinely unreachable under the
 # scrubbed environment before relying on that property below. If this ever
 # fails, the hot-reload verification branch could start a real background
 # agent process, so treat it as a hard test failure rather than silently
 # proceeding.
-set -l path_check (env PATH=$safe_path fish --no-config -c 'command -v gpy-agent; or echo NOTFOUND' 2>&1)
+set -l path_check (env PATH=$safe_path fish --no-config -c 'command -v gpy gpy-agent; or echo NOTFOUND' 2>&1)
 if test "$path_check" = NOTFOUND
-    __gpy_test_pass "sandbox: gpy-agent is unreachable under scrubbed PATH/--no-config"
+    __gpy_test_pass "sandbox: gpy and gpy-agent are unreachable under scrubbed PATH/--no-config"
 else
-    __gpy_test_fail "sandbox: gpy-agent is still reachable ($path_check) -- refusing to run install-dev.fish"
+    __gpy_test_fail "sandbox: installed gpy binary is still reachable ($path_check) -- refusing to run install-dev.fish"
     exit 1
 end
 

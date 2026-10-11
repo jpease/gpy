@@ -46,6 +46,11 @@
 # requests by op, minus ping/status/unregister (see effects.py). A cross-shell
 # difference fails the row even without an `expect`; `expect` pins the value so
 # three shells that regress together fail too.
+# Unprimed live-agent repo/git rows start with a verified-empty shell instant
+# cache. Fixture setup first completes one unobserved real-agent git query and
+# removes its instant entries, so the bounded render tests shell cold-miss
+# behavior rather than cold daemon worker/cache setup speed under host load.
+# Slow rows still impose their full 1.8 s delay on every observed data request.
 #
 # --- golden rows (#844): shell-drawn clock, status, hostname, username, root prompt
 ascii-ok	golden-ascii	clock,status,hostname,username	0	SSH_CONNECTION=10.0.0.1	-

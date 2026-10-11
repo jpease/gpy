@@ -6,16 +6,23 @@ Listens on a Unix socket the shells under test are pointed at and writes one
 line per request (the request's `op`) to a log, so "which IPC requests did this
 shell send" is observable without trusting any shell's own logging.
 
-    ipc_proxy.py LISTEN LOG --upstream SOCKET
+    ipc_proxy.py LISTEN LOG --upstream SOCKET --ready-file FILE
         forward each request to the real agent and relay its reply (the agent
         is up; the proxy only watches)
-    ipc_proxy.py LISTEN LOG --upstream SOCKET --slow SECONDS
+    ipc_proxy.py LISTEN LOG --upstream SOCKET --ready-file FILE --slow SECONDS
         the same for register/unregister/ping/status, but a data request (git,
         directory, character, ...) is recorded, held for SECONDS and then
         forwarded: an agent that is up and registered but late computing a
         segment. A shell whose IPC budget is shorter must neither resend nor
         recompute the segment itself (#845); one whose budget is longer uses
         the real reply.
+
+With --prepare-git CWD --instant-cache DIR, first query the real agent outside
+the observation log and wait for its reply and all context-free cache variants.
+Then remove those shell-visible git entries before accepting any shell traffic:
+the shell starts cold, but its bounded query does not also benchmark first-use
+git workers and cache publication under the full gate's host load (#866).
+--ready-file is published only after preparation and listen() have completed.
 
 A register request is forwarded with its cwd replaced by `/` (see unwarmed).
 A connection that closes without sending a request is logged as `(empty)`.
@@ -24,6 +31,7 @@ The proxy exits after --lifetime seconds (default 120) as a backstop.
 import argparse
 import json
 import os
+from pathlib import Path
 import socket
 import sys
 import threading
@@ -70,14 +78,52 @@ def op_of(line):
     return str(op) if op else "(no-op)"
 
 
+def prepare_git(upstream_path, cwd, cache_dir, timeout):
+    """Warm only the daemon's backend; leave the shell's instant cache cold."""
+    request = json.dumps({"op": "git", "cwd": cwd, "format": "json"}).encode() + b"\n"
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
+        upstream.settimeout(timeout)
+        upstream.connect(upstream_path)
+        upstream.sendall(request)
+        reply = read_line(upstream)
+    if not reply.endswith(b"\n"):
+        raise RuntimeError("git preparation received no complete agent reply")
+    status = json.loads(reply)
+    if not isinstance(status, dict) or not status.get("branch"):
+        raise RuntimeError(f"git preparation failed: {status!r}")
+
+    # A successful git reply follows the worker and synchronous handler's
+    # publication. Assert that premise instead of waiting for a directory's
+    # filenames to appear unchanged while a writer might still be working.
+    cache = Path(cache_dir)
+    for suffix in ("git", "git_last", "git_first", "git_first_last"):
+        for dialect in ("ansi", "bash", "zsh"):
+            entries = list(cache.glob(f"*.{suffix}.none.{dialect}"))
+            if len(entries) != 1 or entries[0].stat().st_size == 0:
+                raise RuntimeError(f"git preparation lacks {suffix}.none.{dialect}")
+    for entry in cache.glob("*.git*.*"):
+        entry.unlink()
+    if any(cache.glob("*.git*.*")):
+        raise RuntimeError("git preparation left the shell instant cache warm")
+
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("listen")
     parser.add_argument("log")
     parser.add_argument("--upstream", required=True)
+    parser.add_argument("--ready-file", required=True)
+    parser.add_argument("--prepare-git")
+    parser.add_argument("--instant-cache")
+    parser.add_argument("--prepare-timeout", type=float, default=10)
     parser.add_argument("--slow", type=float)
     parser.add_argument("--lifetime", type=float, default=120)
     args = parser.parse_args()
+    if args.prepare_git:
+        if not args.instant_cache:
+            parser.error("--prepare-git requires --instant-cache")
+        prepare_git(args.upstream, args.prepare_git, args.instant_cache, args.prepare_timeout)
 
     lock = threading.Lock()
 
@@ -111,6 +157,7 @@ def main():
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(args.listen)
     server.listen(16)
+    Path(args.ready_file).touch()
     deadline = time.time() + args.lifetime
     while True:
         left = deadline - time.time()
