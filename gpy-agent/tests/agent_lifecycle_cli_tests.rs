@@ -337,6 +337,16 @@ fn pids_matching(needle: &Path) -> Vec<String> {
         .collect()
 }
 
+/// `ps` rows (pid, parent, state, age, argv) for `pids`, so a failing
+/// duplicate-daemon assertion says what the survivors are (#862).
+fn describe_pids(pids: &[String]) -> String {
+    let output = std::process::Command::new("ps")
+        .args(["-o", "pid,ppid,stat,etime,args", "-p", &pids.join(",")])
+        .output()
+        .expect("run ps");
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
 /// Sends `SIGTERM` to every daemon started with `--socket <path>`, so a
 /// failing run never leaks a duplicate agent the socket cannot reach.
 struct DaemonReaper(PathBuf);
@@ -376,19 +386,14 @@ fn concurrent_starts_during_eviction_leave_one_daemon() {
     let _ = first.wait().expect("first racing start");
     let _ = second.wait().expect("second racing start");
 
-    // The evicted daemon exits asynchronously; on a slow runner it can outlive
-    // a fixed sleep (#862). A genuine duplicate never exits, so poll to a
-    // generous deadline and assert on the settled state.
-    let deadline = std::time::Instant::now() + Duration::from_secs(15);
-    let mut daemons = pids_matching(&sandbox.socket_path);
-    while daemons.len() > 1 && std::time::Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(100));
-        daemons = pids_matching(&sandbox.socket_path);
-    }
+    std::thread::sleep(Duration::from_secs(1));
+
+    let daemons = pids_matching(&sandbox.socket_path);
     assert_eq!(
         daemons.len(),
         1,
-        "exactly one daemon must survive: {daemons:?}"
+        "exactly one daemon must survive: {daemons:?}\n{}",
+        describe_pids(&daemons)
     );
 }
 
