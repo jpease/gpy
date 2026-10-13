@@ -12,9 +12,7 @@ use crate::{Error, Result};
 /// Build an `Error::Config` from a structured [`ValidationError`] with kind
 /// [`ValidationErrorKind::InvalidValue`].
 ///
-/// `Display` is `"Invalid {expected}: {value}"`, matching every pre-#628
-/// `Error::config(format!("Invalid ...: {v}"))` call this file used to build
-/// by hand.
+/// `Display` is `"Invalid {expected}: {value}"`.
 fn invalid_value(field_path: &str, expected: &'static str, value: impl Into<String>) -> Error {
     ValidationError {
         field_path: field_path.to_owned(),
@@ -322,8 +320,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
             // {value}" template without either duplicating this one-off
             // wording as a bespoke `Display` arm (defeating the point of a
             // shared, reusable kind) or losing the hint. Single call site,
-            // low structural payoff — left as plain `Error::config` text
-            // (#628).
+            // low structural payoff — left as plain `Error::config` text.
             c.language.display = v.parse().map_err(|_| {
                 Error::config(format!(
                     "Invalid language.display '{v}'. Use 'icon' or 'text'"
@@ -342,8 +339,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
             // by this call site — wrapping it in a structured shape here
             // would mean either re-deriving that wording as a bespoke
             // `Display` arm (duplicating logic that already lives in
-            // `types.rs`) or losing it. Left as plain `Error::config` text
-            // (#628).
+            // `types.rs`) or losing it. Left as plain `Error::config` text.
             c.language.filter = v.parse().map_err(Error::config)?;
             Ok(())
         }),
@@ -565,17 +561,10 @@ pub fn validate_config_key(key: &str) -> bool {
     CONFIG_KEYS.iter().any(|m| m.key == key)
 }
 
-// Helper functions
-//
 // The four generic parsers below (`parse_bool_field`/`parse_u64_field`/
-// `parse_u32_field`/`parse_usize_field`) don't know their own key -- unlike
-// the `ok_or_else` sites above (each customizes its own message inline), a
-// generic parser is shared across many `ConfigKeyMeta` entries. #628 threads
-// the key through as a `field_path` parameter instead, since every call site
-// already has its own key literal at hand (each closure is written once per
-// `ConfigKeyMeta` entry); `Display` text is unchanged (`"Invalid {expected}:
-// {value}"` reproduces the old `"Invalid boolean/u64/u32/usize value: {s}"}`
-// wording byte-for-byte), so this is pure structure, not a wording change.
+// `parse_u32_field`/`parse_usize_field`) are shared across many
+// `ConfigKeyMeta` entries, so each takes the key as a `field_path` parameter
+// from its call site's own key literal.
 
 ///
 /// # Errors
@@ -645,16 +634,10 @@ mod tests {
     use crate::config::validation::ValidationError;
     use crate::config::{Config, types};
 
-    /// `gpy config set agent.timeout_seconds abc` must still yield the exact
-    /// pre-#628 message.
-    ///
-    /// Going through the public `set_config_value` entry point exactly as
-    /// the CLI does. Before the structured type existed there was nothing to
-    /// downcast `source()` to; this is that "no structure yet" case made
-    /// concrete through the public API, not just a direct `ValidationError`
-    /// construction.
+    /// `gpy config set` errors render the exact user-facing messages, going
+    /// through the public `set_config_value` entry point as the CLI does.
     #[test]
-    fn set_config_value_preserves_exact_pre_628_messages() {
+    fn set_config_value_error_messages() {
         let cases: &[(&str, &str, &str)] = &[
             ("agent.timeout_seconds", "abc", "Invalid u64 value: abc"),
             ("agent.timeout_seconds", "0", "Invalid agent timeout: 0"),
@@ -873,7 +856,7 @@ mod tests {
         let Error::Config { source, .. } = &err else {
             panic!("expected Error::Config, got {err:?}");
         };
-        let source_ref = source.as_ref().expect("source must be Some after #628");
+        let source_ref = source.as_ref().expect("source must be Some");
         let validation_error = source_ref
             .downcast_ref::<ValidationError>()
             .expect("source must downcast to ValidationError");

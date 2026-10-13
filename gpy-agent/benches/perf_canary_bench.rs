@@ -6,38 +6,29 @@
 //!
 //! Run with: cargo bench --bench `perf_canary_bench`
 //!
-//! Previously also carried `language_detect_rust/python/node`, dropped in
-//! #537: their 2-3-file synthetic corpus measured as unstable diagnostic
-//! noise (a 23% baseline swing between runs with no code change), and the
-//! `language_detection` budget in `tests/performance-baselines.json` already
-//! gates language detection properly, against a realistic-sized corpus, via
-//! `./scripts/bench.sh --ci`. See `scripts/perf-canary.sh`'s `BENCHMARKS`
-//! array for the corresponding removal.
+//! Language detection is not measured here: it is gated by the
+//! `language_detection` budget in `tests/performance-baselines.json` against a
+//! realistic-sized corpus via `./scripts/bench.sh --ci`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::missing_panics_doc)]
+
+#[path = "support/git_repo.rs"]
+mod git_repo;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use gpy_agent::git::status::load_repository_state;
 use gpy_agent::ipc::server::EndpointHandle;
 use gpy_agent::security::GuardSettings;
-use std::fs;
 use std::hint::black_box;
-use std::process::Command;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::runtime::Runtime;
 
-fn env_usize(name: &str, default: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(default)
-}
-
-fn env_u64(name: &str, default: u64) -> u64 {
+/// Read `name` from the environment, falling back to `default` when unset or unparsable.
+fn env_or<T: FromStr>(name: &str, default: T) -> T {
     std::env::var(name)
         .ok()
         .and_then(|value| value.parse().ok())
@@ -48,56 +39,15 @@ fn canary_config() -> Criterion {
     // The pre-push canary is an early warning diagnostic, so we intentionally
     // use a smaller sample window than the full benchmark workflow.
     Criterion::default()
-        .sample_size(env_usize("GPY_PERF_CANARY_SAMPLE_SIZE", 20))
-        .warm_up_time(Duration::from_secs(env_u64(
+        .sample_size(env_or("GPY_PERF_CANARY_SAMPLE_SIZE", 20))
+        .warm_up_time(Duration::from_secs(env_or(
             "GPY_PERF_CANARY_WARMUP_SECONDS",
             1,
         )))
-        .measurement_time(Duration::from_secs(env_u64(
+        .measurement_time(Duration::from_secs(env_or(
             "GPY_PERF_CANARY_MEASUREMENT_SECONDS",
             1,
         )))
-}
-
-fn setup_git_repo(num_files: usize) -> TempDir {
-    let dir = tempfile::Builder::new()
-        .prefix("gpy-perf-canary-git")
-        .tempdir_in("/tmp")
-        .expect("failed to create temp dir");
-    let path = dir.path();
-
-    Command::new("git")
-        .args(["init"])
-        .current_dir(path)
-        .output()
-        .unwrap();
-    Command::new("git")
-        .args(["config", "user.email", "bench@test.com"])
-        .current_dir(path)
-        .output()
-        .unwrap();
-    Command::new("git")
-        .args(["config", "user.name", "Bench"])
-        .current_dir(path)
-        .output()
-        .unwrap();
-
-    for i in 0..num_files {
-        fs::write(path.join(format!("file_{i}.txt")), "content").unwrap();
-    }
-
-    Command::new("git")
-        .args(["add", "."])
-        .current_dir(path)
-        .output()
-        .unwrap();
-    Command::new("git")
-        .args(["commit", "-m", "init"])
-        .current_dir(path)
-        .output()
-        .unwrap();
-
-    dir
 }
 
 fn build_ipc_server(socket_path: &std::path::Path) -> EndpointHandle {
@@ -138,7 +88,7 @@ fn wait_for_socket(rt: &Runtime, socket_path: &std::path::Path) {
 fn setup_ipc_server(rt: &Runtime) -> std::path::PathBuf {
     let temp_dir = tempfile::Builder::new()
         .prefix("gpy-perf-canary-ipc")
-        .tempdir_in("/tmp")
+        .tempdir()
         .unwrap();
     let socket_path = temp_dir.path().join("gpy.sock");
     let mut server = build_ipc_server(&socket_path);
@@ -169,7 +119,7 @@ fn bench_ipc_roundtrip(c: &mut Criterion, rt: &Runtime, socket_path: &std::path:
 fn bench_perf_canary(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let socket_path = setup_ipc_server(&rt);
-    let repo = setup_git_repo(100);
+    let repo = git_repo::committed_repo(100);
     let repo_path = repo.path().to_str().unwrap();
 
     bench_ipc_roundtrip(c, &rt, &socket_path);

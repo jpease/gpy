@@ -2,26 +2,20 @@
 # tests/bash/json_flags_tail.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression/contract test for #613.
-#
-# Before this issue, is_last/is_first/prev_bg JSON tail-building was
-# hand-duplicated across several IPC request builders in bash/core/ipc.bash,
-# and each segment re-converted the dispatch loop's is_last/is_first into
-# whatever local convention it felt like using. This exercises
-# __gpy_json_flags_tail directly across every (is_last, is_first, prev_bg)
+# __gpy_json_flags_tail is the one place the is_last/is_first/prev_bg JSON
+# tail is built for every IPC request builder in bash/core/ipc.bash. This
+# exercises it directly across every (is_last, is_first, prev_bg)
 # combination, plus a prev_bg that needs JSON escaping.
 #
 # NOTE: this table MUST stay identical to tests/fish/json_flags_tail.test.fish
 # and tests/zsh/json_flags_tail.test.zsh -- the three shells' JSON tail output
 # must be byte-for-byte the same for the same inputs.
-#
-# Must FAIL on a tree without __gpy_json_flags_tail (function undefined).
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
 # The theme export re-sets the supervisor flag from config.toml, so disable
-# it in a sandbox config; the missing socket stays there too (#836).
+# it in a sandbox config; the missing socket stays there too.
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-json-flags-tail.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
 source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"

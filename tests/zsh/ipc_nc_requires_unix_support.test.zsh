@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Zsh probes `nc -h` for `-U` before using nc as the IPC client, exactly as
-# Fish does (#850). netcat-traditional (the `nc` on some minimal Debian and
-# Ubuntu images) has no Unix-socket support: Zsh used to run `nc -U` against
-# it on every request anyway.
+# Fish does. netcat-traditional (the `nc` on some minimal Debian and
+# Ubuntu images) has no Unix-socket support, so running `nc -U` against it
+# would fail on every request.
 #
 # `nc` here is a stub script on a PATH that holds nothing else (no socat), and
 # `zmodload` is shadowed so zsocket is unavailable: nc is the only transport.
@@ -26,9 +26,6 @@ source zsh/core/ipc.zsh
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/gpy-nc-probe.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 zmodload() { [[ "$1" == "zsh/net/socket" ]] && return 1; builtin zmodload "$@"; }
 
@@ -96,5 +93,4 @@ else
     fail "nc with -U never got the socket: $(tr '\n' '|' <"$log")"
 fi
 
-(( failures == 0 )) || exit 1
-echo "PASS: zsh nc capability probe"
+test_finish "zsh nc capability probe"

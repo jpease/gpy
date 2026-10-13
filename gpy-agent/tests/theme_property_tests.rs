@@ -18,10 +18,6 @@ use gpy_agent::shell::Shell;
 use gpy_agent::theme::ThemeManager;
 use proptest::prelude::*;
 
-// ============================================================================
-// Property Test Strategies (Generators)
-// ============================================================================
-
 /// Strategy for generating valid hex colors
 fn hex_color_strategy() -> impl Strategy<Value = String> {
     prop::string::string_regex("#[0-9a-fA-F]{6}").expect("hex color regex should compile")
@@ -77,10 +73,6 @@ fn segment_name_strategy() -> impl Strategy<Value = String> {
 // Note: segment_config_strategy removed - not used in current tests
 // Can be re-added when needed for segment configuration property tests
 
-// ============================================================================
-// Property Tests for Colors
-// ============================================================================
-
 proptest! {
     /// Property: Hex colors are always valid when generated
     #[test]
@@ -116,27 +108,7 @@ proptest! {
     }
 }
 
-// ============================================================================
-// Property Tests for Configuration
-// ============================================================================
-
 proptest! {
-    /// Property: Config with random boolean flags is always valid
-    #[test]
-    fn prop_config_bools_always_valid(
-        git_enabled in bool_strategy(),
-        language_enabled in bool_strategy(),
-        agent_enabled in bool_strategy(),
-        show_icons in bool_strategy()
-    ) {
-        // Verify that creating a Config with random boolean values succeeds
-        let _config = Config::default();
-
-        // These fields should accept any boolean value
-        let _ = format!("{git_enabled}{language_enabled}{agent_enabled}{show_icons}");
-        prop_assert!(true); // Test passes if we reach here without panic
-    }
-
     /// Property: Segment names are always lowercase with underscores
     #[test]
     fn prop_segment_names_valid_format(name in segment_name_strategy()) {
@@ -150,10 +122,6 @@ proptest! {
         prop_assert!(!name.ends_with('_'));
     }
 }
-
-// ============================================================================
-// Property Tests for Theme Export
-// ============================================================================
 
 proptest! {
     /// Property: Theme export to Fish format never produces empty output
@@ -186,10 +154,6 @@ proptest! {
     }
 }
 
-// ============================================================================
-// Property Tests for Segment Ordering
-// ============================================================================
-
 proptest! {
     /// Property: Segment order is preserved in configuration
     #[test]
@@ -221,10 +185,6 @@ proptest! {
         prop_assert!(duplicates.iter().all(|s| s == &segment));
     }
 }
-
-// ============================================================================
-// Property Tests for Edge Cases
-// ============================================================================
 
 proptest! {
     /// Property: Empty theme configuration is valid
@@ -265,10 +225,6 @@ proptest! {
     }
 }
 
-// ============================================================================
-// Property Tests for Invariants
-// ============================================================================
-
 proptest! {
     /// Invariant: Theme export is idempotent
     #[test]
@@ -299,12 +255,8 @@ proptest! {
     }
 }
 
-// ============================================================================
-// Regression Tests (Property-based)
-// ============================================================================
-
 proptest! {
-    /// Regression: Theme export never includes raw ANSI escape codes
+    /// Property: Theme export never includes raw ANSI escape codes
     #[test]
     fn regression_no_raw_ansi_in_export(_seed in any::<u32>()) {
         let config = Config::default();
@@ -317,7 +269,7 @@ proptest! {
         prop_assert!(!export.contains('\x1b'));
     }
 
-    /// Regression: Segment count never exceeds reasonable limit
+    /// Property: Segment count never exceeds reasonable limit
     #[test]
     fn regression_segment_count_reasonable(
         segments in prop::collection::vec(segment_name_strategy(), 0..100)

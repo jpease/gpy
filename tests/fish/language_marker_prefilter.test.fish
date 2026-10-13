@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-# Test (#785): segment_language_detect iterates __gpy_lang_marker_files, the
+# Test: segment_language_detect iterates __gpy_lang_marker_files, the
 # list the agent's `theme export` generates from marker_file_names(). Sources
 # a REAL export from the debug binary (in a temp XDG) and asserts the
 # pre-filter accepts a non-git dir holding each marker (incl. setup.py,

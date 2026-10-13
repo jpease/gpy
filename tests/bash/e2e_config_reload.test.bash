@@ -3,15 +3,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # config.toml edit -> theme export rewritten -> `<pid>.reload` flag + SIGURG
-# doorbell -> Bash's next prompt reloads and re-renders (#647 row 3).
+# doorbell -> Bash's next prompt reloads and re-renders.
 #
 # `integration.test.bash` covers the reload flag with `__gpy_load_theme`
-# stubbed; nothing drove a real Bash client through a real config change.
+# stubbed; this drives a real Bash client through a real config change.
 # With a real agent and a `bash -i` on a pty, flipping `show_icons` in
 # config.toml must:
 #   (a) rewrite $XDG_CACHE_HOME/gpy/theme-export.bash (mtime and content),
-#   (b) show the change at the NEXT prompt: Bash ignores the SIGURG (no trap,
-#       #678) and readline cannot repaint an idle prompt
+#   (b) show the change at the NEXT prompt: Bash installs no SIGURG trap and
+#       readline cannot repaint an idle prompt
 #       (docs/user/bash-limitations.md); the prompt drawn after one Enter
 #       consumes the reload flag, re-sources the export and renders the new
 #       PS1, recorded here as the measured behaviour,
@@ -22,12 +22,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT/tests/lib/shell_e2e.sh"
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
-config="$XDG_CONFIG_HOME/gpy/config.toml"
-printf '[ui]\nshow_icons = true\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' >"$config"
+shell_e2e_text_config '"directory", "git"' true
 shell_e2e_start_agent || exit 1
 export GPY_AGENT_ENABLED=1
 export GPY_AGENT_SUPERVISOR_ENABLED=1
@@ -54,11 +50,11 @@ export_file="$XDG_CACHE_HOME/gpy/theme-export.bash"
 [ -f "$export_file" ] || fail "no theme export at $export_file"
 # The export carries show_icons=1 now (asserted next); a rewrite is the only
 # way it can come to carry show_icons=0, so the content is the evidence. No
-# mtime comparison: `stat` takes different flags on GNU and BSD (#848).
+# mtime comparison: `stat` takes different flags on GNU and BSD.
 grep -q 'GPY_UI_SHOW_ICONS="1"' "$export_file" || fail "export does not carry show_icons=1 before the edit"
 
 # --- the edit ----------------------------------------------------------------------
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' >"$config"
+shell_e2e_text_config '"directory", "git"'
 
 export_rewritten() {
     grep -q 'GPY_UI_SHOW_ICONS="0"' "$export_file"
@@ -99,7 +95,5 @@ fi
 shell_e2e_send 'exit\r'
 if [ "$failures" -gt 0 ]; then
     shell_e2e_dump_transcript
-    echo "FAILED: $failures assertion(s)"
-    exit 1
 fi
-echo "PASS: bash config edit reaches the next prompt via the reload doorbell"
+test_finish "bash config edit reaches the next prompt via the reload doorbell"

@@ -4,8 +4,6 @@
 
 This guide covers advanced configuration options for GPY beyond the basic setup.
 
-**Last Updated:** 2026-04-08
-
 ---
 
 ## Configuration Files
@@ -134,7 +132,7 @@ enabled = false
 
 The theme export the shell sources on every start, and again on every config
 reload, re-exports `GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` from
-`config.toml`, so a `set -gx` in `config.fish` is overwritten (#657, #699).
+`config.toml`, so a `set -gx` in `config.fish` is overwritten.
 
 ```fish
 # Disable file watcher (no live git status updates)
@@ -144,7 +142,7 @@ set -gx GPY_DISABLE_WATCHER 1
 To hide the language segment, turn it off in `config.toml` rather than in
 the shell: the theme export the shell sources on every start re-exports
 `GPY_LANGUAGE_ENABLED` (and every other segment flag) from `config.toml`, so
-a `set -gx` in `config.fish` is overwritten (#657).
+a `set -gx` in `config.fish` is overwritten.
 
 ```toml
 [language]
@@ -263,7 +261,7 @@ For minimal overhead, run without the agent:
 enabled = false
 ```
 
-Each prompt render will use oneshot mode, which is slower (~20ms) but requires no background process. This holds in Bash, Zsh and Fish alike: the prompt hook is still installed, but no agent is started, no supervisor runs, and the shell never registers with an agent.
+Each prompt render will use oneshot mode, which is slower but requires no background process. This holds in Bash, Zsh and Fish alike: the prompt hook is still installed, but no agent is started, no supervisor runs, and the shell never registers with an agent.
 
 `[agent.supervisor] enabled = false` (`GPY_AGENT_SUPERVISOR_ENABLED=0`) is different: it only turns off restarts. Shells still start the agent once at startup; if it later crashes, it stays down until you restart it (`gpy restart`).
 

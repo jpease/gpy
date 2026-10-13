@@ -38,7 +38,7 @@ pub static SOCKET_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
 /// 4. `/tmp/gpy`
 ///
 /// The precedence itself is computed by the pure, table-tested
-/// [`crate::paths::runtime_root_for`] (#477); this wrapper owns only the
+/// [`crate::paths::runtime_root_for`]; this wrapper owns only the
 /// ambient env reads and the directory-creation side effect.
 ///
 /// # Errors
@@ -63,7 +63,7 @@ pub fn get_runtime_dir() -> Result<PathBuf> {
 /// (104 bytes on macOS, 108 on Linux -- see
 /// [`crate::paths::check_socket_path_len`]), which fails here with the length,
 /// the limit and the fix instead of as the kernel's bare "path must be shorter
-/// than `SUN_LEN`" from `bind` or `connect` (#850).
+/// than `SUN_LEN`" from `bind` or `connect`.
 pub fn get_socket_path() -> Result<PathBuf> {
     let path = resolve_socket_path()?;
     crate::paths::check_socket_path_len(&crate::paths::absolutize(&path))?;
@@ -84,9 +84,8 @@ pub fn resolve_socket_path() -> Result<PathBuf> {
     }
 
     // Check for custom socket path in environment (matches Fish shell logic).
-    // An empty value is "unset", not "the empty path": honouring `GPY_AGENT_SOCKET_PATH=`
-    // used to make the agent resolve nothing while Bash and Zsh fell through
-    // to the runtime root and talked to a socket nobody was bound to (#626).
+    // An empty value is "unset", not "the empty path", matching Bash and Zsh,
+    // which fall through to the runtime root (#626).
     if let Some(custom_path) = socket_path_override() {
         return Ok(custom_path);
     }
@@ -100,7 +99,7 @@ pub fn resolve_socket_path() -> Result<PathBuf> {
 /// Shared by every socket resolver in the crate (`ipc::client`,
 /// `ipc::server::handle`, and [`get_socket_path`]) so they cannot disagree
 /// about what an empty override means -- all four implementations (agent,
-/// Fish, Bash, Zsh) now read it as "no override" (#626).
+/// Fish, Bash, Zsh) read it as "no override".
 #[must_use]
 pub fn socket_path_override() -> Option<PathBuf> {
     std::env::var_os("GPY_AGENT_SOCKET_PATH")
@@ -113,7 +112,7 @@ pub fn socket_path_override() -> Option<PathBuf> {
 /// The default socket's agent keeps `<runtime>/agent.version`, the path the
 /// installers and uninstallers name. An agent on an overridden socket
 /// (`--socket` / `GPY_AGENT_SOCKET_PATH`) uses `<socket>.version`, so agents
-/// on different sockets never read or remove each other's marker (#780).
+/// on different sockets never read or remove each other's marker.
 ///
 /// # Errors
 ///
@@ -176,7 +175,7 @@ fn compare_agent_versions(left: &AgentVersion<'_>, right: &AgentVersion<'_>) -> 
 /// Whether a running agent at `running` should be replaced by this binary.
 ///
 /// Only an older running version is replaced, or one whose recorded version
-/// does not parse, so a corrupt marker still self-heals (#780).
+/// does not parse, so a corrupt marker still self-heals.
 #[cfg(unix)]
 fn should_replace(running: &str, binary: &str) -> bool {
     let Some(running_version) = parse_agent_version(running) else {
@@ -228,17 +227,16 @@ pub fn test_socket_bind(socket_path: &PathBuf) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Which step of a ping decided its answer (#539).
+/// Which step of a ping decided its answer.
 ///
 /// `ping_agent_blocking` collapses five distinct outcomes into `Ok(false)`, and
 /// they carry very different evidence: `ECONNREFUSED` means nothing is
 /// listening, while a read timeout means the agent *accepted* the connection
-/// and is therefore alive. Shutdown detection has been treating them alike.
+/// and is therefore alive.
 ///
 /// Counting them is `#[cfg(test)]` because it exists to let a test say why a
-/// ping failed. It is relaxed atomics and no I/O on purpose: instrumenting this
-/// path with stderr writes made the ubuntu failure stop reproducing across four
-/// CI runs, so the measurement must not touch the timing it measures.
+/// ping failed. It is relaxed atomics and no I/O on purpose: stderr writes on
+/// this path perturb the timing enough to hide the races being measured.
 ///
 /// The counters are process-global. Under nextest, which runs one test per
 /// process, that is exact. Under a threaded `cargo test` a concurrent ping from
@@ -292,24 +290,18 @@ macro_rules! ping_outcome {
     }};
 }
 
-/// Record which way a connect failed, when the probe is compiled in (#539).
-///
-/// Split into two `#[cfg]`-gated definitions rather than one function with an
-/// internal `#[cfg(test)]` branch: only the `#[cfg(not(test))]` body is
-/// const-able (the `#[cfg(test)]` body calls non-const atomic bookkeeping), so
-/// a single definition can never be `const fn` in both configurations at once.
-#[cfg(all(unix, test))]
+/// Record which way a connect failed, when the probe is compiled in.
+// Without the probe the body is empty, which nursery lints as `const`; with it
+// the body does atomic bookkeeping and cannot be.
+#[cfg(unix)]
+#[cfg_attr(not(test), allow(clippy::missing_const_for_fn))]
 fn record_connect_failure(e: &std::io::Error) {
-    ping_probe::record_connect_errno(e.raw_os_error().unwrap_or(-1_i32));
-    ping_probe::bump(&ping_probe::CONNECT_ERROR);
-}
-
-/// Record which way a connect failed, when the probe is compiled in (#539).
-///
-/// No-op: the probe counters only exist under `#[cfg(test)]`. See the
-/// `#[cfg(test)]` sibling definition above for the real implementation.
-#[cfg(all(unix, not(test)))]
-const fn record_connect_failure(e: &std::io::Error) {
+    #[cfg(test)]
+    {
+        ping_probe::record_connect_errno(e.raw_os_error().unwrap_or(-1_i32));
+        ping_probe::bump(&ping_probe::CONNECT_ERROR);
+    }
+    #[cfg(not(test))]
     let _ = e;
 }
 
@@ -318,7 +310,7 @@ const fn record_connect_failure(e: &std::io::Error) {
 /// `None` either way: the caller reports "no answer" for both. Which of the two
 /// happened is recorded for the probe, because they are not equivalent
 /// evidence -- a refused connect means nothing is listening, while a timeout
-/// means the connect never resolved (#539).
+/// means the connect never resolved.
 #[cfg(unix)]
 async fn ping_connect(socket_path: &PathBuf) -> Option<tokio::net::UnixStream> {
     match tokio::time::timeout(
@@ -340,16 +332,14 @@ async fn ping_connect(socket_path: &PathBuf) -> Option<tokio::net::UnixStream> {
 }
 
 /// What a single ping attempt established, before a round of retries folds
-/// them into an [`AgentLiveness`] verdict (#539, #548).
+/// them into an [`AgentLiveness`] verdict.
 ///
 /// The distinction that matters: `NotListening` means nothing accepted the
 /// connection at all (refused, or the connect never resolved in budget) --
 /// weak evidence, since a busy local runtime can produce the same shape.
 /// `AcceptedNoReply` means the agent *did* accept the connection and either
 /// timed out, closed, or sent something unrecognized on the read -- strong
-/// evidence something is there and alive, just not answering. Both used to
-/// collapse into the same `Ok(false)`, and `ping_agent_liveness_with` read
-/// them as identical evidence toward "dead."
+/// evidence something is there and alive, just not answering.
 #[cfg(unix)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PingOutcome {
@@ -365,25 +355,24 @@ enum PingOutcome {
 /// attempt took.
 ///
 /// Owns the actual connect/write/read logic; [`ping_agent_blocking`] is a
-/// thin `Result<bool>` projection of it kept for its existing callers (#548).
+/// thin `Result<bool>` projection of it.
 ///
 /// # Errors
 ///
 /// Returns an error if runtime creation fails, or if the ping message could
 /// not be written to an accepted connection -- the connect succeeded, so
 /// something is listening, but the exchange itself did not complete, which is
-/// a local failure, not evidence about the agent (#546).
+/// a local failure, not evidence about the agent.
 #[cfg(unix)]
 fn ping_agent_outcome(socket_path: &PathBuf) -> Result<PingOutcome> {
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    // A current-thread runtime, not the multi-threaded default (#539). One
-    // connect, one write, one read needs no worker pool, and the default
-    // spawned one per ping -- roughly thirty runtimes and a hundred-odd
-    // threads over a single `wait_for_agent_shutdown`. That churn is the
-    // likeliest source of a ping that fails locally without ever reaching the
-    // agent, which is the failure this call site must not mistake for death.
+    // A current-thread runtime, not the multi-threaded default. One connect,
+    // one write, one read needs no worker pool, and a pool per ping means
+    // dozens of runtimes and threads over a single `wait_for_agent_shutdown`.
+    // That churn can make a ping fail locally without ever reaching the
+    // agent, which this call site must not mistake for death.
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -396,14 +385,12 @@ fn ping_agent_outcome(socket_path: &PathBuf) -> Result<PingOutcome> {
 
         let (mut reader, mut writer) = stream.into_split();
 
-        // One write, message and newline together (#539). Sending them
-        // separately let a server that answers the first write and closes --
-        // which is the normal shape of a request/response server, and exactly
-        // what this module's own fake agent does -- deliver EPIPE on the
-        // second. On ubuntu CI that raced: the agent answered 17 pings, then
-        // three in a row failed on the trailing newline, and shutdown detection
-        // called the agent stopped. A ping must not depend on the peer keeping
-        // the connection open between two halves of one message.
+        // One write, message and newline together. A request/response server
+        // that answers the first write and closes -- exactly what this
+        // module's own fake agent does -- can deliver EPIPE on a separate
+        // second write, and shutdown detection would read that as a stopped
+        // agent. A ping must not depend on the peer keeping the connection
+        // open between two halves of one message.
         let ping_msg = b"{\"op\":\"ping\"}\n";
 
         if let Err(e) = writer.write_all(ping_msg).await {
@@ -411,7 +398,7 @@ fn ping_agent_outcome(socket_path: &PathBuf) -> Result<PingOutcome> {
             // The connect succeeded, so something is listening on this socket.
             // Failing to finish the exchange says the ping did not complete,
             // never that the agent is gone -- report it as the local failure it
-            // is so the caller classifies it as indeterminate (#546).
+            // is so the caller classifies it as indeterminate.
             return Err(Error::ipc(format!("ping write failed: {e}")));
         }
 
@@ -424,10 +411,10 @@ fn ping_agent_outcome(socket_path: &PathBuf) -> Result<PingOutcome> {
                 };
                 let response = String::from_utf8_lossy(chunk);
                 // A real reply is a `Response`, so decide on the decoded
-                // value rather than on substrings of the raw bytes (#573):
-                // `contains("ok")` matched any error message with "ok" in
-                // it. The daemon renders `Ack` through the JSON formatter as
-                // `{"status":"ok"}` (`ipc::ACK_WIRE_JSON`), not as serde's
+                // value rather than on substrings of the raw bytes:
+                // `contains("ok")` would match any error message with "ok"
+                // in it. The daemon renders `Ack` through the JSON formatter
+                // as `{"status":"ok"}` (`ipc::ACK_WIRE_JSON`), not as serde's
                 // `"Ack"`, so the decoder has to accept the formatter shape
                 // or a live agent is never seen answering.
                 if crate::ipc::decode_wire_reply(&response).is_ok_and(|reply| is_ack(&reply)) {
@@ -455,9 +442,8 @@ fn ping_agent_outcome(socket_path: &PathBuf) -> Result<PingOutcome> {
 
 /// Blocking version of `ping_agent` for startup coordination
 ///
-/// A thin `Result<bool>` projection of [`ping_agent_outcome`] (#548): its
-/// contract is unchanged for its callers, which only ever needed "did it
-/// answer," never which of the non-answering shapes happened.
+/// The yes/no answer from [`ping_agent_outcome`], for callers that need only
+/// "did it answer," never which of the non-answering shapes happened.
 ///
 /// # Errors
 ///
@@ -482,13 +468,12 @@ pub fn ping_agent_blocking(_socket_path: &PathBuf) -> Result<bool> {
     Ok(false)
 }
 
-/// Whether `response` is the agent's acknowledgement of a command (#573).
+/// Whether `response` is the agent's acknowledgement of a command.
 ///
 /// The one place that decides what "acknowledged" means, so the shutdown,
-/// reload, and ping paths cannot drift apart. Deciding on the decoded value
-/// rather than on substrings of the raw reply is the point: the old
-/// `contains("ok")` check also matched an [`crate::ipc::Response::Error`]
-/// whose message happened to contain "ok".
+/// reload, and ping paths cannot drift apart. It decides on the decoded value,
+/// never on substrings of the raw reply: a `contains("ok")` check would also
+/// match an [`crate::ipc::Response::Error`] whose message contains "ok".
 #[cfg(unix)]
 #[must_use]
 const fn is_ack(response: &crate::ipc::Response) -> bool {
@@ -497,20 +482,19 @@ const fn is_ack(response: &crate::ipc::Response) -> bool {
 
 /// Send `message` (a JSON op body, without a trailing newline) to the agent
 /// listening at `socket_path` and decode its reply as a
-/// [`crate::ipc::Response`] (#573).
+/// [`crate::ipc::Response`].
 ///
 /// The whole exchange -- connect, write, read -- is bounded by `budget`, so no
 /// caller can hang on a wedged agent that accepts connections and never
-/// answers. The message and its newline go out in a single write (#539): a
+/// answers. The message and its newline go out in a single write: a
 /// request/response server that answers and closes can deliver EPIPE on a
-/// separate second write, which is how a ping to a live agent used to be read
-/// as no answer.
+/// separate second write, turning a live agent's answer into no answer.
 ///
 /// [`ping_agent_outcome`] deliberately keeps its own connect/write/read rather
 /// than calling this. Its callers need the difference between a write error, a
 /// read timeout, a clean close, and an unrecognized body, and collapsing those
 /// into one `Err` would throw away the evidence `ping_agent_liveness_with`
-/// classifies on (#546, #548).
+/// classifies on.
 ///
 /// # Errors
 ///
@@ -591,7 +575,7 @@ pub async fn send_shutdown_command() -> Result<()> {
 
 /// Send shutdown command to agent (native Windows stub).
 ///
-/// Native Windows has no daemon to shut down yet (#284).
+/// Native Windows has no daemon to shut down yet.
 ///
 /// # Errors
 ///
@@ -612,7 +596,7 @@ pub async fn send_shutdown_command() -> Result<()> {
 /// Returns an error only when the socket path itself cannot be computed. Every
 /// failure of the exchange is a `Ok(false)`, not an error: the caller's
 /// question is "was the reload confirmed", and an unconfirmed reload must
-/// never be reported as a success (#323).
+/// never be reported as a success.
 #[cfg(unix)]
 pub async fn send_config_reload_command() -> Result<bool> {
     let socket_path = get_socket_path()?;
@@ -628,15 +612,13 @@ pub async fn send_config_reload_command() -> Result<bool> {
     .await;
 
     // A failed exchange, a read timeout, or an unrecognized reply all mean we
-    // never confirmed the agent acknowledged the reload; reporting `Ok(true)`
-    // here would tell the caller the config was reloaded when it may not have
-    // been (#323).
+    // never confirmed the agent acknowledged the reload, so it is not a success.
     Ok(outcome.is_ok_and(|response| is_ack(&response)))
 }
 
 /// Send config reload command to agent (native Windows stub).
 ///
-/// Native Windows has no daemon to reload yet (#284); always reports "not delivered".
+/// Native Windows has no daemon to reload yet; always reports "not delivered".
 ///
 /// # Errors
 ///
@@ -708,7 +690,7 @@ pub async fn query_agent_status() -> Result<AgentStatusInfo> {
 
 /// Query the running agent for its status via IPC (native Windows stub).
 ///
-/// Native Windows has no daemon to query yet (#284).
+/// Native Windows has no daemon to query yet.
 ///
 /// # Errors
 ///
@@ -726,10 +708,9 @@ pub async fn query_agent_status() -> Result<AgentStatusInfo> {
 #[cfg(unix)]
 fn parse_agent_status_response(json: &str) -> Result<AgentStatusInfo> {
     // Decode the reply as the `Response` the daemon actually serialized rather
-    // than hand-walking `serde_json::Value` (#573). The hand-walk defaulted
-    // every missing or mistyped field ("unknown", 0), so a malformed payload
-    // was reported to the user as a plausible-looking status; a payload that
-    // does not deserialize is now an error, which is what it is.
+    // than hand-walking `serde_json::Value`: a payload that does not
+    // deserialize is an error, never a plausible-looking status built from
+    // defaulted fields.
     match serde_json::from_str::<crate::ipc::Response>(json) {
         Ok(crate::ipc::Response::AgentStatus {
             version,
@@ -775,7 +756,7 @@ pub fn check_protocol_version_compatibility(agent_protocol_version: u8) {
     }
 }
 
-/// Number of ping attempts before an existing socket is declared stale (#317).
+/// Number of ping attempts before an existing socket is declared stale.
 ///
 /// A single missed 500ms ping is not proof the agent is dead: it may be
 /// momentarily busy (blocked on a slow `canonicalize`, or under load) and miss
@@ -789,12 +770,12 @@ pub fn check_protocol_version_compatibility(agent_protocol_version: u8) {
 #[cfg(unix)]
 const PING_STALE_ATTEMPTS: u32 = 3;
 
-/// Backoff slept between failed ping attempts (#317).
+/// Backoff slept between failed ping attempts.
 #[cfg(unix)]
 const PING_STALE_BACKOFF: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// Maximum time to wait for a shutdown-signalled agent to stop responding
-/// before proceeding to unlink its socket (#317).
+/// before proceeding to unlink its socket.
 ///
 /// Bounds the version-mismatch restart so a wedged old agent cannot hang
 /// startup forever; if it elapses we proceed anyway. The IPC server's own
@@ -804,20 +785,18 @@ const PING_STALE_BACKOFF: std::time::Duration = std::time::Duration::from_millis
 #[cfg(unix)]
 const SHUTDOWN_WAIT_MAX: std::time::Duration = std::time::Duration::from_secs(3);
 
-/// Poll interval while waiting for the old agent to stop responding (#317).
+/// Poll interval while waiting for the old agent to stop responding.
 #[cfg(unix)]
 const SHUTDOWN_WAIT_POLL: std::time::Duration = std::time::Duration::from_millis(100);
 
-/// What a round of pings could establish about the agent (#539, #548).
+/// What a round of pings could establish about the agent.
 ///
 /// The distinction that matters is between "the agent did not answer", "we
-/// never managed to ask", and "the agent is definitely there but wedged". The
-/// first two used to be reported as a dead agent, and acting on the second
-/// one is destructive: it unlinks a live agent's socket and forks a duplicate
-/// over it. The third one used to be folded into the first, which is also
-/// wrong: an accepted-but-unanswered connection is strong evidence of life,
-/// not death -- but it still cannot be left alone the way an unverifiable
-/// round can, so it gets its own verdict and its own eviction path.
+/// never managed to ask", and "the agent is definitely there but wedged".
+/// Reading the second as death is destructive: it unlinks a live agent's
+/// socket and forks a duplicate over it. The third is strong evidence of
+/// life, not death -- but it still cannot be left alone the way an
+/// unverifiable round can, so it gets its own verdict and its own eviction path.
 #[cfg(unix)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum AgentLiveness {
@@ -830,7 +809,7 @@ enum AgentLiveness {
     /// reply (read timeout, read closed, or an unrecognized body). Strong
     /// evidence the agent is alive but wedged -- unlike `Indeterminate`, this
     /// justifies eviction, just not the silent unlink-as-dead treatment
-    /// `NotResponding` gets (#548). A round mixing this with a `NotListening`
+    /// `NotResponding` gets. A round mixing this with a `NotListening`
     /// attempt resolves to `NotResponding` instead: a genuinely dead agent
     /// that got replaced mid-round could plausibly produce a mixed round, so
     /// only a round of consistent accepted-no-reply evidence earns this
@@ -842,7 +821,7 @@ enum AgentLiveness {
     Indeterminate,
 }
 
-/// Ping the agent, retrying before concluding anything (#317, #539).
+/// Ping the agent, retrying before concluding anything.
 ///
 /// See [`PING_STALE_ATTEMPTS`] for the retry count and timing rationale.
 #[cfg(unix)]
@@ -886,7 +865,7 @@ where
         AgentLiveness::Indeterminate
     } else if saw_accepted_no_reply && !saw_not_listening {
         // Only a round of *consistent* accepted-no-reply evidence earns the
-        // stronger verdict (#548): mixing in even one `NotListening` could be
+        // stronger verdict: mixing in even one `NotListening` could be
         // a genuinely dead agent that a fresh one raced to replace mid-round,
         // so that mix resolves toward `NotResponding` below instead.
         AgentLiveness::AcceptedNoReply
@@ -896,30 +875,25 @@ where
 }
 
 /// Poll the agent until it stops responding to pings, or `SHUTDOWN_WAIT_MAX`
-/// elapses (#317).
+/// elapses.
 ///
-/// Replaces a fixed 2s sleep that could unlink the socket while the old agent
-/// was still alive. Returns early the moment the agent stops answering, and is
-/// bounded so a stuck old agent cannot hang startup indefinitely.
+/// Returns early the moment the agent stops answering, and is bounded so a
+/// stuck old agent cannot hang startup indefinitely.
 ///
 /// Returns `true` once the agent is confirmed to have stopped responding, or
 /// `false` if `SHUTDOWN_WAIT_MAX` elapses while it is still answering pings
-/// (e.g. stuck draining an in-flight blocking task, #390) — callers that need
+/// (e.g. stuck draining an in-flight blocking task) — callers that need
 /// to report accurate shutdown status (as opposed to `check_and_cleanup_socket`'s
 /// bounded-fallback-then-proceed-anyway use) should check this.
 ///
 /// Each poll uses [`ping_agent_liveness`], not a single bare ping: a
-/// live-but-busy agent can miss one 500ms ping under load (#317, and
-/// reproduced for this function's own tests under a fully parallel test run,
-/// #390), so a single miss must not be read as "stopped."
+/// live-but-busy agent can miss one 500ms ping under load, so a single miss
+/// must not be read as "stopped."
 ///
 /// A round that could not be completed locally ([`AgentLiveness::Indeterminate`])
-/// is not a shutdown. On ubuntu CI this function reported a confirmed shutdown
-/// against a fake agent that had answered 29 pings and was still accepting
-/// connections (#539); the pings had failed before ever reaching it, and every
-/// such failure counted as evidence of death. An indeterminate round now keeps
-/// polling, and if the budget runs out the answer is "not confirmed stopped" --
-/// which is what this function's `false` already means.
+/// is not a shutdown: pings that fail before reaching the agent say nothing
+/// about it. An indeterminate round keeps polling, and if the budget runs out
+/// the answer is `false`, "not confirmed stopped".
 #[cfg(unix)]
 #[must_use]
 pub fn wait_for_agent_shutdown(socket_path: &PathBuf) -> bool {
@@ -939,7 +913,7 @@ pub fn wait_for_agent_shutdown(socket_path: &PathBuf) -> bool {
 
 /// Poll the agent until it stops responding to pings.
 ///
-/// Native Windows has no daemon to wait on yet (#284); always reports "not
+/// Native Windows has no daemon to wait on yet; always reports "not
 /// confirmed stopped" so `stop_agent` prints its indeterminate message rather
 /// than claiming a shutdown it cannot observe.
 #[cfg(not(unix))]
@@ -948,7 +922,7 @@ pub fn wait_for_agent_shutdown(_socket_path: &PathBuf) -> bool {
     false
 }
 
-/// What the identity-aware wait could establish about an evicted agent (#723).
+/// What the identity-aware wait could establish about an evicted agent.
 #[cfg(unix)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum ShutdownWait {
@@ -973,7 +947,7 @@ fn socket_released(socket_path: &Path, identity: SocketIdentity) -> bool {
 }
 
 /// Wait until the socket captured as `identity` stops answering or leaves the
-/// path, bounded by `SHUTDOWN_WAIT_MAX` (#723).
+/// path, bounded by `SHUTDOWN_WAIT_MAX`.
 ///
 /// Unlike [`wait_for_agent_shutdown`], which pings whatever is bound at the
 /// path, a replacement agent's answers are never read as the old agent
@@ -1006,10 +980,10 @@ pub(crate) fn wait_for_socket_release(
 }
 
 /// Remove the socket and its version marker only while the path still holds
-/// the captured socket (#723).
+/// the captured socket.
 ///
 /// Re-`stat`s immediately before unlinking; the residual check-then-unlink
-/// window is inherent (#317). When the identity changed, both files belong to
+/// window is inherent. When the identity changed, both files belong to
 /// a replacement and are left alone.
 #[cfg(unix)]
 fn remove_socket_if_unchanged(socket_path: &Path, identity: SocketIdentity) {
@@ -1026,21 +1000,19 @@ fn remove_socket_if_unchanged(socket_path: &Path, identity: SocketIdentity) {
 ///
 /// Attempt a graceful shutdown, wait (bounded) for the socket captured as
 /// `identity` to stop answering or leave the path, then unlink it and its
-/// version marker only if it is still the captured one (#317, #723).
+/// version marker only if it is still the captured one.
 ///
 /// Returns `true` when the old agent was already replaced by a responsive
 /// agent, so the caller must not fork another one.
 ///
 /// Shared by the version-mismatch branch (a live but incompatible agent) and
-/// the `AcceptedNoReply` branch (a live but unresponsive one, #548) -- both
-/// are "give the old agent one real chance to leave, then replace it
-/// regardless," and #548 reuses this rather than inventing a second path.
+/// the `AcceptedNoReply` branch (a live but unresponsive one) -- both are
+/// "give the old agent one real chance to leave, then replace it regardless."
 #[cfg(unix)]
 fn evict_wedged_agent(socket_path: &PathBuf, identity: SocketIdentity) -> bool {
     // Attempt graceful shutdown (best-effort; ignored on failure). A
-    // current-thread runtime, matching ping_agent_outcome's fix (#539): one
-    // connect-write-read behind a single `block_on` needs no worker pool, and
-    // the multi-threaded default spawned one thread per core to do nothing.
+    // current-thread runtime, as in `ping_agent_outcome`: one
+    // connect-write-read behind a single `block_on` needs no worker pool.
     if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -1078,14 +1050,14 @@ pub fn check_and_cleanup_socket(socket_path: &PathBuf) -> bool {
         return false;
     };
 
-    // Retry before declaring the socket stale (#317): a single missed 500ms
+    // Retry before declaring the socket stale: a single missed 500ms
     // ping can happen to a live-but-busy agent. Only unlink its socket (and
     // fork a replacement) once every attempt has reached it and gone
     // unanswered.
     let liveness = ping_agent_liveness(socket_path);
 
     // A round we could not complete locally says nothing about the agent, and
-    // the two ways of being wrong here are not symmetric (#539). Treating a
+    // the two ways of being wrong here are not symmetric. Treating a
     // live agent as stale unlinks the socket out from under a running daemon
     // and forks a second one over it. Treating a dead agent as live costs this
     // one invocation an agent, and the next prompt tries again. So an
@@ -1096,7 +1068,7 @@ pub fn check_and_cleanup_socket(socket_path: &PathBuf) -> bool {
     }
 
     // Every attempt reached the agent and none was answered -- strong
-    // evidence it is alive but wedged, unlike `Indeterminate` (#548). Unlike
+    // evidence it is alive but wedged, unlike `Indeterminate`. Unlike
     // `NotResponding`, this cannot be silently cleaned up as if the agent
     // were dead: give it the same defined eviction path a version-mismatched
     // agent already gets, independent of version matching.
@@ -1130,7 +1102,7 @@ pub fn check_and_cleanup_socket(socket_path: &PathBuf) -> bool {
     } else {
         // Socket exists but the agent is unresponsive across every retry -
         // clean up the stale socket so a fresh agent can bind, unless it was
-        // replaced in the meantime (#723).
+        // replaced in the meantime.
         eprintln!("Cleaning up stale socket...");
         remove_socket_if_unchanged(socket_path, identity);
         false
@@ -1214,11 +1186,11 @@ mod stale_socket_tests {
     ///
     /// `ack_wire_form_is_what_the_json_formatter_emits` pins this against
     /// the real formatter, so a fixture built on it cannot drift from the
-    /// daemon the way the post-#573 `"Ack"` fixture did.
+    /// daemon's real reply.
     const ACK_WIRE_FORM: &[u8] = b"{\"status\":\"ok\"}\n";
 
-    // Fix C: the version-mismatch restart must not sleep a fixed 2s; it polls
-    // and returns promptly once the old agent stops responding.
+    // Shutdown waiting polls and returns promptly once the agent stops
+    // responding, instead of sleeping a fixed interval.
     #[test]
     fn wait_for_agent_shutdown_returns_promptly_when_dead() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1238,7 +1210,7 @@ mod stale_socket_tests {
         );
     }
 
-    /// #723: a socket rebound at the path is a release of the captured one,
+    /// A socket rebound at the path is a release of the captured one,
     /// even though something still answers there.
     #[test]
     fn wait_for_socket_release_sees_a_rebound_path_as_released() {
@@ -1309,7 +1281,7 @@ mod stale_socket_tests {
         assert_eq!(calls, 1, "a responding agent must not be pinged again");
     }
 
-    /// The real "confirmed stop" scenario (#548).
+    /// The real "confirmed stop" scenario.
     ///
     /// Every attempt never even reached the agent (refused / connect-timeout),
     /// which is the only shape that justifies unlinking the socket and forking
@@ -1327,17 +1299,10 @@ mod stale_socket_tests {
         );
     }
 
-    /// #548: a round that reached the agent on every attempt (connection
-    /// accepted) but never got answered is strong evidence of a wedged-but-alive
-    /// agent, not a dead one.
+    /// Pings that all reached the agent but went unanswered resolve to
+    /// `AcceptedNoReply`.
     ///
-    /// It must resolve to `AcceptedNoReply`, not the `NotResponding` verdict
-    /// that used to fold every unanswered shape together (renamed from the
-    /// pre-#548
-    /// `unanswered_pings_that_all_reached_the_agent_are_a_confirmed_stop`,
-    /// whose name is no longer accurate under the tri-state split: reaching
-    /// the agent every time is exactly the case that must NOT be read as a
-    /// confirmed stop any more).
+    /// That pattern indicates a wedged-but-alive agent, never a confirmed stop.
     #[test]
     fn unanswered_pings_that_all_reached_the_agent_are_accepted_no_reply() {
         let unanswered = (0..PING_STALE_ATTEMPTS)
@@ -1351,7 +1316,7 @@ mod stale_socket_tests {
         );
     }
 
-    /// #548: a single ping in the round that never reached the agent at all is
+    /// A single ping in the round that never reached the agent at all is
     /// enough to deny the `AcceptedNoReply` verdict, mirroring how a single
     /// local failure denies a confirmed-stop verdict below.
     ///
@@ -1373,7 +1338,7 @@ mod stale_socket_tests {
         );
     }
 
-    /// The #539 regression.
+    /// A local failure poisons the whole round.
     ///
     /// A ping that never reached the agent is not evidence about the agent, and mixing one
     /// into an otherwise unanswered round must not produce a verdict that unlinks a live
@@ -1392,7 +1357,7 @@ mod stale_socket_tests {
         );
     }
 
-    /// #548: the same guard, but against the new `AcceptedNoReply` evidence.
+    /// The same guard against `AcceptedNoReply` evidence.
     ///
     /// Even overwhelming evidence that the agent is alive-but-wedged must not
     /// be trusted if part of the round never made it out of this process.
@@ -1426,20 +1391,18 @@ mod stale_socket_tests {
         assert_eq!(calls, 2);
     }
 
-    /// A single aborted connection must not retire the fake agent (#539).
+    /// A single aborted connection must not retire the fake agent.
     ///
     /// `ECONNABORTED` is the normal way a queued connection reports that its
     /// client went away before `accept()` reached it -- exactly what a ping
     /// that hit its 500ms budget leaves behind -- and `EINTR` is a signal, not
-    /// a failure. A real server retries both; this fixture used to treat every
-    /// accept error as fatal, drop its listener, and leave the test measuring
-    /// an agent that had genuinely departed. The cap stops a genuinely broken
-    /// listener from spinning forever.
+    /// a failure. A real server retries both, and so does this fixture; the
+    /// cap stops a genuinely broken listener from spinning forever.
     const MAX_TRANSIENT_ACCEPT_ERRORS: u32 = 64;
 
     /// What the fake agent actually did, recorded with relaxed atomic stores so
-    /// the server's timing is not perturbed -- stderr writes in this path made
-    /// the #539 failure stop reproducing.
+    /// the server's timing is not perturbed -- stderr writes on this path hide
+    /// the races under test.
     struct FakeAgentCounters {
         answered: Arc<AtomicU32>,
         transient_errors: Arc<AtomicU32>,
@@ -1546,15 +1509,12 @@ mod stale_socket_tests {
         })
     }
 
-    /// #539: an agent that answers and immediately closes the connection is
-    /// alive, and the ping must say so.
+    /// An agent that answers and immediately closes the connection is alive,
+    /// and the ping must say so.
     ///
     /// This is the ordinary shape of a request/response server, and it is what
-    /// the fake agent above does. While the ping was sent as two writes, the
-    /// second one could land after the server had already replied and dropped
-    /// the stream, and EPIPE there was reported as "no answer" -- for an agent
-    /// that had just answered. Sending the whole message in one write removes
-    /// the window rather than narrowing it.
+    /// the fake agent above does. The ping goes out as one write, so no second
+    /// write can land after the server has replied and dropped the stream.
     #[test]
     fn a_reply_then_close_is_still_a_live_agent() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1583,10 +1543,9 @@ mod stale_socket_tests {
         );
     }
 
-    // #390 follow-up: `gpy stop` must not report success while the agent is
-    // still answering pings (e.g. stuck draining an in-flight blocking task).
-    // A fake socket server that keeps answering "ok" forever simulates that
-    // stuck-but-still-responding state.
+    // `gpy stop` must not report success while the agent is still answering
+    // pings (e.g. stuck draining an in-flight blocking task). A fake socket
+    // server that keeps answering "ok" forever simulates that state.
     #[test]
     fn wait_for_agent_shutdown_reports_still_responding_on_timeout() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1594,10 +1553,8 @@ mod stale_socket_tests {
 
         // A real blocking `accept()` loop (no busy-polling) so responding to
         // a ping only ever waits on the kernel's own connection wakeup, not
-        // on this thread getting rescheduled soon enough to poll — a
-        // nonblocking poll loop was flaky under a fully parallel test run
-        // (#390 follow-up) because scheduler jitter could occasionally miss
-        // `ping_agent_blocking`'s 500ms connect/read budget.
+        // on this thread getting rescheduled within `ping_agent_blocking`'s
+        // 500ms connect/read budget.
         let listener =
             std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fake socket");
         let stop = Arc::new(AtomicBool::new(false));
@@ -1631,17 +1588,13 @@ mod stale_socket_tests {
         );
     }
 
-    // ---- #573: acknowledgements are decided by decoding, not by substring ----
-
     /// Pins the fixtures above to the daemon's real reply.
     ///
     /// `handle_ping` and the config-reload handler both answer `Response::Ack`,
     /// and the connection renders every non-status reply through the
     /// requested formatter (JSON by default), which writes `Ack` as
-    /// `{"status":"ok"}`. #573 pinned the fixtures to serde's `"Ack"`
-    /// instead, a shape no live daemon sends, so every CLI acknowledgement
-    /// went unrecognised; both encodings decode now, and the fixture sends
-    /// the one the daemon does.
+    /// `{"status":"ok"}`. Both that and serde's `"Ack"` decode; the fixture
+    /// sends the one the daemon does.
     #[test]
     fn ack_wire_form_is_what_the_json_formatter_emits() {
         use crate::formatter::{Format, RenderContext, SegmentPosition, create_formatter};
@@ -1662,8 +1615,8 @@ mod stale_socket_tests {
         );
     }
 
-    /// Serde's own encoding of `Ack` (what a `Response` round-trips to) keeps
-    /// decoding as well, so nothing that speaks the native form regresses.
+    /// Serde's own encoding of `Ack` (what a `Response` round-trips to) also
+    /// decodes as an acknowledgement.
     #[test]
     fn a_native_ack_over_the_wire_is_an_acknowledgement() {
         let response = request_against(b"\"Ack\"\n").expect("native Ack decodes");
@@ -1683,12 +1636,11 @@ mod stale_socket_tests {
         assert!(!super::is_ack(&response));
     }
 
-    /// The #573 regression, stated directly.
+    /// An `Error` reply whose message contains "ok" is a failure.
     ///
-    /// `Response::Error { message: "something not ok here" }` is a *failure*
-    /// reply, and the old `response.contains("ok")` check matched it -- the
-    /// assertion below proves the substring really is present, so this is not
-    /// a hypothetical. Only `Response::Ack` is an acknowledgement.
+    /// The assertion below proves the substring really is present, so a
+    /// `contains("ok")` check would match it. Only `Response::Ack` is an
+    /// acknowledgement.
     #[test]
     fn an_error_reply_containing_ok_is_not_an_acknowledgement() {
         let failure = Response::Error {
@@ -1698,7 +1650,7 @@ mod stale_socket_tests {
 
         assert!(
             wire.contains("ok"),
-            "premise: the old substring check would have matched this reply ({wire})"
+            "premise: a substring check would match this reply ({wire})"
         );
         assert!(
             !super::is_ack(&failure),
@@ -1747,7 +1699,7 @@ mod stale_socket_tests {
         outcome
     }
 
-    /// The same regression over a real socket round-trip: an agent that
+    /// The same check over a real socket round-trip: an agent that
     /// answers a `config_reload` with an error mentioning "ok" must not be
     /// read as having reloaded.
     #[test]
@@ -1799,9 +1751,8 @@ mod stale_socket_tests {
         assert_eq!(info.cache_entries, 12_usize);
     }
 
-    /// #573: the hand-walked parser defaulted every field it could not read,
-    /// so a payload missing `protocol_version` was reported to the user as a
-    /// real status with protocol 0. It is a parse failure.
+    /// A payload missing `protocol_version` is a parse failure, never a real
+    /// status with defaulted fields.
     #[test]
     fn a_malformed_agent_status_is_an_error_not_a_zeroed_status() {
         let partial = r#"{"AgentStatus":{"version":"9.9.9"}}"#;

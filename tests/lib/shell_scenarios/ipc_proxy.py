@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Recording IPC stand-in for the cross-shell contract harness (#847).
+"""Recording IPC stand-in for the cross-shell contract harness.
 
 Listens on a Unix socket the shells under test are pointed at and writes one
 line per request (the request's `op`) to a log, so "which IPC requests did this
@@ -14,14 +14,14 @@ shell send" is observable without trusting any shell's own logging.
         directory, character, ...) is recorded, held for SECONDS and then
         forwarded: an agent that is up and registered but late computing a
         segment. A shell whose IPC budget is shorter must neither resend nor
-        recompute the segment itself (#845); one whose budget is longer uses
+        recompute the segment itself; one whose budget is longer uses
         the real reply.
 
 With --prepare-git CWD --instant-cache DIR, first query the real agent outside
 the observation log and wait for its reply and all context-free cache variants.
 Then remove those shell-visible git entries before accepting any shell traffic:
 the shell starts cold, but its bounded query does not also benchmark first-use
-git workers and cache publication under the full gate's host load (#866).
+git workers and cache publication under the full gate's host load.
 --ready-file is published only after preparation and listen() have completed.
 
 A register request is forwarded with its cwd replaced by `/` (see unwarmed).

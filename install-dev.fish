@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # GPY Development Installation Script
-# ===================================
 # For active development use only. End users should use install.sh
 #
 # Usage:
@@ -39,7 +38,7 @@ for arg in $argv
         case --help -h
             set show_help 1
         case '*'
-            echo "❌ Unknown option: $arg"
+            echo "Error: Unknown option: $arg"
             echo "   Run with --help for usage"
             exit 1
     end
@@ -75,7 +74,7 @@ end
 
 function _check_repo_root
     if not test -d gpy-agent
-        echo "❌ gpy-agent directory not found"
+        echo "Error: gpy-agent directory not found"
         echo "   Run this script from the GPY repository root"
         return 1
     end
@@ -84,7 +83,7 @@ end
 
 function _check_rsync
     if not command -q rsync
-        echo "⚠️  rsync not found, falling back to cp"
+        echo "Warning: rsync not found, falling back to cp"
         return 1
     end
     return 0
@@ -93,7 +92,7 @@ end
 # Where `cargo build --release` puts the binaries. Cargo honours
 # CARGO_TARGET_DIR (a shared cache, a CI layout, the from-source install test
 # in tests/bash/install_from_source_docs.test.bash); this script has to look
-# where cargo wrote, not at a hardcoded gpy-agent/target (#635).
+# where cargo wrote, not at a hardcoded gpy-agent/target.
 function _release_dir
     if set -q CARGO_TARGET_DIR; and test -n "$CARGO_TARGET_DIR"
         echo "$CARGO_TARGET_DIR/release"
@@ -103,44 +102,41 @@ function _release_dir
 end
 
 function _build_agent
-    echo "🔨 Building agent (release mode)..."
+    echo "Building agent (release mode)..."
     cd gpy-agent
     if cargo build --release
-        echo "✅ Agent built successfully"
+        echo "Agent built successfully"
         cd ..
         return 0
     else
-        echo "❌ Agent build failed"
+        echo "Error: Agent build failed"
         cd ..
         return 1
     end
 end
 
 function _stop_running_agent
-    echo "🛑 Stopping any running agent..."
+    echo "Stopping any running agent..."
 
     if not command -q gpy-agent
-        echo "✅ No agent binary in PATH; nothing to stop"
+        echo "No agent binary in PATH; nothing to stop"
         return 0
     end
 
     # Resolve this machine's own agent socket the same way `gpy-agent
     # status` reports it (the "Socket Path: ..." line), rather than assuming
-    # a fixed location. `gpy-agent stop` already polls (bounded, #317,
+    # a fixed location. `gpy-agent stop` already polls (bounded by
     # SHUTDOWN_WAIT_MAX in gpy-agent/src/agent/lifecycle/mod.rs) until the
-    # agent stops responding, so no fixed sleep is needed here either
-    # (#615).
+    # agent stops responding, so no fixed sleep is needed here.
     set -l socket_path (gpy-agent status 2>/dev/null | string match -rg '^Socket Path: (.*)$')
 
     gpy-agent stop 2>/dev/null
 
     # Only escalate if the agent is still responding after a graceful stop.
-    # Never match by process name: a bare `pkill -9 gpy-agent` used to kill
-    # every gpy-agent on the host, including a contributor's live
+    # Never match by process name: that would also kill a contributor's live
     # dogfooding daemon and test agents bound to their own gpy-test-*.sock
-    # (see scripts/cleanup-test-agents.sh) (#615). Only the PID actually
-    # bound to this socket is targeted, TERM first then KILL after a
-    # bounded poll.
+    # (see scripts/cleanup-test-agents.sh). Only the PID actually bound to
+    # this socket is targeted, TERM first then KILL after a bounded poll.
     if test -n "$socket_path"; and gpy-agent status 2>/dev/null | string match -q '*Running and Responding*'
         if command -q lsof
             set -l socket_pid (lsof -t -- "$socket_path" 2>/dev/null)
@@ -157,7 +153,7 @@ function _stop_running_agent
                 end
             end
         else
-            echo "⚠️  lsof not found; cannot safely stop the lingering agent (refusing to kill by process name)"
+            echo "Warning: lsof not found; cannot safely stop the lingering agent (refusing to kill by process name)"
         end
     end
 
@@ -173,7 +169,7 @@ function _stop_running_agent
     end
     rm -f "$HOME/.cache/gpy/gpy.sock" 2>/dev/null
 
-    echo "✅ Agent stopped and cleaned up"
+    echo "Agent stopped and cleaned up"
     return 0
 end
 
@@ -187,7 +183,7 @@ function _clear_instant_prompt_cache
 
     if test -d "$cache_dir"
         rm -f "$cache_dir"/*.ansi 2>/dev/null
-        echo "✅ Cleared instant prompt cache"
+        echo "Cleared instant prompt cache"
     end
 end
 
@@ -197,7 +193,7 @@ function _remove_conflicting_binaries --argument-names install_dir
     # (e.g. a leftover `cargo install` copy in ~/.cargo/bin). Tool-manager
     # shims (mise/asdf) are left alone: they fall through to PATH.
     #
-    # Deletion is limited to copies under $HOME (#693). A shadowing copy
+    # Deletion is limited to copies under $HOME. A shadowing copy
     # anywhere else (another user's home, /usr/local/bin, a Homebrew prefix)
     # is reported, not removed: with HOME pointed at a sandbox, `sudo -E` or a
     # second account, "earlier on PATH" says nothing about who owns the file.
@@ -209,7 +205,7 @@ function _remove_conflicting_binaries --argument-names install_dir
     if not contains -- $target_dir (path resolve $PATH)
         for name in gpy gpy-agent
             set -l in_use (type -P $name 2>/dev/null)
-            test -n "$in_use"; and echo "ℹ️  $install_dir is not on PATH; $name resolves to $in_use instead (left in place)"
+            test -n "$in_use"; and echo "Note: $install_dir is not on PATH; $name resolves to $in_use instead (left in place)"
         end
         return 0
     end
@@ -241,11 +237,11 @@ function _remove_conflicting_binaries --argument-names install_dir
 
             # Confirm this is actually our binary before deleting it: an
             # unrelated third-party tool earlier on PATH must not be removed
-            # just because it happens to share the name (#324). Our clap
+            # just because it happens to share the name. Our clap
             # `--version` output starts with the binary name.
             set -l found_version ("$found" --version 2>/dev/null)
             if not string match -q "$name *" -- $found_version
-                echo "⚠️  Found $name earlier on PATH but it doesn't look like ours, leaving it: $found"
+                echo "Warning: Found $name earlier on PATH but it doesn't look like ours, leaving it: $found"
                 continue
             end
 
@@ -254,29 +250,29 @@ function _remove_conflicting_binaries --argument-names install_dir
             # Plain prefix comparison: HOME may contain glob metacharacters.
             set -l home_prefix "$home_dir/"
             if test -z "$home_dir"; or test (string sub -l (string length -- $home_prefix) -- "$found_dir/") != "$home_prefix"
-                echo "⚠️  $found shadows the install but is outside \$HOME, leaving it. If it is a stale copy, remove it: rm '$found'"
+                echo "Warning: $found shadows the install but is outside \$HOME, leaving it. If it is a stale copy, remove it: rm '$found'"
                 continue
             end
 
-            rm -f $found; and echo "🧹 Removed conflicting $name shadowing the install: $found"
+            rm -f $found; and echo "Removed conflicting $name shadowing the install: $found"
         end
     end
 end
 
 function _install_agent_binary
-    echo "📦 Installing binaries..."
+    echo "Installing binaries..."
 
     set -l agent_binary (_release_dir)/gpy-agent
     set -l cli_binary (_release_dir)/gpy
 
     if not test -f $agent_binary
-        echo "❌ Agent binary not found at $agent_binary"
+        echo "Error: Agent binary not found at $agent_binary"
         echo "   Build the agent first or use --fish-only"
         return 1
     end
 
     if not test -f $cli_binary
-        echo "❌ CLI binary not found at $cli_binary"
+        echo "Error: CLI binary not found at $cli_binary"
         echo "   Build failed or incomplete"
         return 1
     end
@@ -292,10 +288,9 @@ function _install_agent_binary
         install -m 755 $agent_binary $install_dir/gpy-agent
     else
         cp $agent_binary $install_dir/gpy-agent
-        # Scoped to com.apple.quarantine rather than `xattr -c`, which stripped
-        # every extended attribute (#494). A locally built binary is not
-        # quarantined in the first place; this is belt-and-braces for a binary
-        # copied in from elsewhere.
+        # Scoped to com.apple.quarantine so other extended attributes survive.
+        # A locally built binary is not quarantined in the first place; this
+        # covers a binary copied in from elsewhere.
         if command -q xattr
             xattr -d com.apple.quarantine $install_dir/gpy-agent 2>/dev/null
         end
@@ -313,8 +308,8 @@ function _install_agent_binary
         chmod +x $install_dir/gpy
     end
 
-    echo "✅ Installed to $install_dir/gpy"
-    echo "✅ Installed to $install_dir/gpy-agent"
+    echo "Installed to $install_dir/gpy"
+    echo "Installed to $install_dir/gpy-agent"
 
     # Drop any older builds that would shadow what we just installed.
     _remove_conflicting_binaries $install_dir
@@ -323,7 +318,7 @@ function _install_agent_binary
 end
 
 function _install_fish_files
-    echo "🐠 Installing Fish files..."
+    echo "Installing Fish files..."
 
     # Determine Fish config directory
     set -l fish_config_dir
@@ -359,14 +354,14 @@ function _install_fish_files
     # Check if all source directories exist
     for dir in $fish_files $config_dirs
         if not test -d $dir
-            echo "❌ Source directory not found: $dir"
+            echo "Error: Source directory not found: $dir"
             return 1
         end
     end
 
     # Check if config file exists
     if not test -f $config_file
-        echo "❌ Source file not found: $config_file"
+        echo "Error: Source file not found: $config_file"
         return 1
     end
 
@@ -374,7 +369,7 @@ function _install_fish_files
     echo "   Installing configuration files to $gpy_config_dir..."
     # Copy directories. Never delete: even under --clean, merge shipped
     # theme files into place without removing anything not present in the
-    # source, so a user's own custom theme file survives (#311).
+    # source, so a user's own custom theme file survives.
     if _check_rsync
         rsync -a $config_dirs $gpy_config_dir/
     else
@@ -383,12 +378,12 @@ function _install_fish_files
     # Copy the shipped config.toml only on first install. Once it exists,
     # never touch it in place -- write the shipped default beside it as
     # config.toml.new so the user can review/merge new options at their own
-    # pace instead of losing customizations silently (#311).
+    # pace instead of losing customizations silently.
     if not test -e $gpy_config_dir/config.toml
         cp $config_file $gpy_config_dir/config.toml
     else if not cmp -s $config_file $gpy_config_dir/config.toml
         cp $config_file $gpy_config_dir/config.toml.new
-        echo "📝 New default config available: $gpy_config_dir/config.toml.new"
+        echo "New default config available: $gpy_config_dir/config.toml.new"
         echo "   Your existing config.toml was left untouched; review the .new file for any changes."
     end
 
@@ -406,20 +401,15 @@ function _install_fish_files
         cp fish/conf.d/gpy_init.fish "$fish_conf_d_dir/gpy_init.fish"
     end
 
-    # Install Fish completions as ONE autoloadable file, `completions/gpy.fish`:
-    # the STRUCTURAL completions (subcommand/flag names), regenerated from the
-    # just-installed CLI on every run rather than checked in so they can never
-    # drift from the binary on disk, followed by the small, checked-in
-    # `completions/gpy-dynamic.fish` glue that supplies live
-    # theme/palette/segment names via `gpy __complete <kind>` (#328, #329).
     # Fish autoloads `completions/<command>.fish` only for the command of that
-    # name, so the glue must be appended to gpy.fish, not copied beside it
-    # (#702). If the gpy CLI isn't on disk (e.g. `--fish-only`, which skips
-    # the binary build/install) or generation fails, gpy.fish is the glue
-    # alone; the prompt itself doesn't depend on shell completions.
+    # name, so the structural completions (regenerated from the installed CLI
+    # so they cannot drift from it) and the checked-in gpy-dynamic.fish glue
+    # (live theme/palette/segment names via `gpy __complete <kind>`) share ONE
+    # file, completions/gpy.fish. Without the CLI (e.g. `--fish-only`) or if
+    # generation fails, gpy.fish is the glue alone.
     set -l fish_completions_dir "$fish_config_dir/completions"
     mkdir -p $fish_completions_dir
-    # Older installs copied the glue as its own (never autoloaded) file.
+    # The glue is never autoloaded as its own file; remove any stray copy.
     rm -f "$fish_completions_dir/gpy-dynamic.fish"
 
     set -l fish_completions_generated 0
@@ -427,12 +417,12 @@ function _install_fish_files
     if test -x $dev_gpy_cli
         if $dev_gpy_cli completions fish >"$fish_completions_dir/gpy.fish"
             set fish_completions_generated 1
-            echo "✅ Generated structural completions: $fish_completions_dir/gpy.fish"
+            echo "Generated structural completions: $fish_completions_dir/gpy.fish"
         else
-            echo "⚠️  Could not generate gpy completions (gpy completions fish failed)"
+            echo "Warning: Could not generate gpy completions (gpy completions fish failed)"
         end
     else
-        echo "⚠️  gpy CLI not installed; skipping structural shell completions"
+        echo "Warning: gpy CLI not installed; skipping structural shell completions"
     end
 
     if test -f fish/completions/gpy-dynamic.fish
@@ -441,7 +431,7 @@ function _install_fish_files
         else
             cat fish/completions/gpy-dynamic.fish >"$fish_completions_dir/gpy.fish"
         end
-        echo "✅ Installed dynamic completions glue into: $fish_completions_dir/gpy.fish"
+        echo "Installed dynamic completions glue into: $fish_completions_dir/gpy.fish"
     end
 
     # Install fish_prompt function as symlink (consistent with install.sh)
@@ -449,18 +439,15 @@ function _install_fish_files
         mkdir -p "$fish_config_dir/functions"
         set -l dest_prompt "$fish_config_dir/functions/fish_prompt.fish"
         set -l source_prompt "$gpy_fish_dir/functions/fish_prompt.fish"
-        # Declared here (function scope), not inside the `if` block below: a
-        # `set -l` inside an if/end block is scoped to that block in fish, so
-        # setting it there never becomes visible to the check after `end`
-        # (harmless today since re-linking an already-correct symlink is a
-        # no-op, but the skip was never actually taking effect -- #324).
+        # Declared at function scope: a `set -l` inside the if/end block below
+        # would be invisible to the check after its `end`.
         set -l skip_symlink 0
 
         # Backup existing prompt if it's not already ours. A foreign symlink
-        # (stow/yadm/chezmoi) is moved aside as a symlink, never deleted (#744).
+        # (stow/yadm/chezmoi) is moved aside as a symlink, never deleted.
         if test -e $dest_prompt -o -L $dest_prompt
             if test -L $dest_prompt; and test (readlink $dest_prompt) = "$source_prompt"
-                echo "✅ fish_prompt symlink already correct"
+                echo "fish_prompt symlink already correct"
                 set skip_symlink 1
             else if test -f $dest_prompt -a ! -L $dest_prompt; and grep -q -E "(GPY|__enabled_segments)" $dest_prompt 2>/dev/null
                 # It's an old GPY copy, remove it
@@ -468,21 +455,21 @@ function _install_fish_files
             else
                 set -l backup_file "$dest_prompt.backup."(date +%Y%m%d_%H%M%S)
                 mv $dest_prompt $backup_file
-                echo "⚠️  Backed up existing prompt to: $backup_file"
+                echo "Warning: Backed up existing prompt to: $backup_file"
             end
         end
 
         # Create symlink if needed
         if test $skip_symlink -eq 0
             ln -sf "$source_prompt" "$dest_prompt"
-            echo "✅ Installed fish_prompt symlink"
+            echo "Installed fish_prompt symlink"
         end
     end
 
     # Check for old installation and provide migration notice
     if test -d "$HOME/.config/gpy/core"
         echo ""
-        echo "⚠️  Old installation detected with Fish files in ~/.config/gpy/"
+        echo "Warning: Old installation detected with Fish files in ~/.config/gpy/"
         echo "   GPY now separates configuration and implementation:"
         echo "   - Configuration: ~/.config/gpy/ (themes, config)"
         echo "   - Fish files: ~/.config/fish/gpy/ (core, segments, functions)"
@@ -492,25 +479,25 @@ function _install_fish_files
         echo ""
     end
 
-    echo "✅ Configuration installed to $gpy_config_dir"
-    echo "✅ Fish files installed to $gpy_fish_dir"
+    echo "Configuration installed to $gpy_config_dir"
+    echo "Fish files installed to $gpy_fish_dir"
     return 0
 end
 
 function _verify_installation
     echo ""
-    echo "🔍 Verifying installation..."
+    echo "Verifying installation..."
 
     # Check agent binary
     if command -q gpy-agent
         set -l agent_version (gpy-agent --version 2>/dev/null | string trim)
         if test -n "$agent_version"
-            echo "✅ Agent: $agent_version"
+            echo "Agent: $agent_version"
         else
-            echo "⚠️  Agent installed but version check failed"
+            echo "Warning: Agent installed but version check failed"
         end
     else
-        echo "⚠️  Agent not in PATH (add ~/.local/bin to PATH)"
+        echo "Warning: Agent not in PATH (add ~/.local/bin to PATH)"
     end
 
     # Check Fish files
@@ -524,27 +511,26 @@ function _verify_installation
     set -l gpy_fish_dir "$fish_config_dir/gpy"
 
     if test -d "$gpy_fish_dir/core"
-        echo "✅ Fish files installed"
+        echo "Fish files installed"
     else
-        echo "❌ Fish files not found"
+        echo "Error: Fish files not found"
         return 1
     end
 
     # Verify hot-reload capability (development builds only)
     if command -q gpy-agent
         echo ""
-        echo "🔄 Testing config hot-reload..."
+        echo "Testing config hot-reload..."
 
         # Probe with a private temp dir and a throwaway debug-logged agent.
         # The agent reopens GPY_DEBUG_LOG on every line, so the daemon that
-        # outlives this script must never be the one carrying it (#743).
+        # outlives this script must never be the one carrying it.
         set -l probe_dir (mktemp -d)
         set -l debug_log $probe_dir/agent.log
         env GPY_DEBUG_LOG=$debug_log gpy-agent start >/dev/null 2>&1
 
-        # Poll for the hot-reload success line instead of a fixed sleep: the
-        # agent logs it well under a second in practice, and a fixed 3s
-        # sleep padded every dev install with dead time regardless (#615).
+        # Poll for the hot-reload success line (bounded at 5s) rather than
+        # sleeping a fixed time.
         set -l hot_reload_enabled 0
         for i in (seq 1 50)
             if test -f $debug_log; and grep -q "Config hot-reload enabled" $debug_log
@@ -557,14 +543,14 @@ function _verify_installation
         # Check for hot-reload success message
         if test -f $debug_log
             if test $hot_reload_enabled -eq 1
-                echo "✅ Config hot-reload: ENABLED (1-second debounce)"
+                echo "Config hot-reload: ENABLED (1-second debounce)"
             else
-                echo "⚠️  Config hot-reload: UNKNOWN STATUS"
+                echo "Warning: Config hot-reload: UNKNOWN STATUS"
                 echo "   Debug log: $debug_log (removed after the probe)"
             end
 
         else
-            echo "⚠️  Could not verify hot-reload (debug log not created)"
+            echo "Warning: Could not verify hot-reload (debug log not created)"
             echo "   Agent may not have started - check: gpy-agent status"
         end
 
@@ -578,8 +564,7 @@ function _verify_installation
 end
 
 # Main installation flow
-echo "🐠 GPY Development Installation"
-echo "================================"
+echo "GPY Development Installation"
 echo ""
 
 # Check we're in the right place
@@ -597,13 +582,13 @@ if test $no_build -eq 0; and test $fish_only -eq 0
         exit 1
     end
 else
-    echo "⏭️  Skipping agent build"
+    echo "Skipping agent build"
 
     # If --fish-only, we don't even need the agent binary
     if test $fish_only -eq 0
         # But if --no-build, verify the binary exists
         if not test -f (_release_dir)/gpy-agent
-            echo "❌ Agent binary not found"
+            echo "Error: Agent binary not found"
             echo "   Build the agent first or use --fish-only"
             exit 1
         end
@@ -627,7 +612,7 @@ end
 _verify_installation
 
 echo ""
-echo "🎉 Installation complete!"
+echo "Installation complete!"
 echo ""
 
 echo "Next steps:"
@@ -636,9 +621,9 @@ echo "  2. Check prompt: type something and press Enter"
 echo ""
 
 if test $fish_only -eq 1
-    echo "💡 Tip: Use --fish-only for fast Fish-only updates during development"
+    echo "Tip: Use --fish-only for fast Fish-only updates during development"
 else if test $clean_sync -eq 1
-    echo "💡 Tip: Used --clean for a pristine sync"
+    echo "Tip: Used --clean for a pristine sync"
 end
 
 # Cleanup global variables

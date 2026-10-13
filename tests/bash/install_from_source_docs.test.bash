@@ -2,13 +2,11 @@
 # tests/bash/install_from_source_docs.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The documented from-source install, executed verbatim from a clean checkout
-# (#635, pinned for #649).
+# The documented from-source install, executed verbatim from a clean checkout.
 #
-# README.md's "From source" section told users to `git clone` and run
-# `bash install.sh`, which cannot work: install.sh is the release-archive
-# installer and dies on the missing, checksummed bin/ payload a checkout does
-# not carry. Nothing executed the instructions, so nothing noticed. This test
+# install.sh is the release-archive installer and dies on the missing,
+# checksummed bin/ payload a checkout does not carry, so the from-source docs
+# must never route through it. This test
 # extracts `git archive HEAD` into a scratch directory, runs every fenced
 # `bash` block of README.md's "From source" section and docs/INSTALL.md's
 # "Install Locally" section against a sandboxed HOME/XDG_*, and asserts the
@@ -19,7 +17,7 @@
 # Cost: this builds the agent in release mode, like a real user would. The
 # scratch checkout's gpy-agent/target is symlinked at this repo's, so the
 # dependency graph is warm and only the crate itself is rebuilt (~2 min);
-# a truly cold build is what #652's clean-container job measures. Because of
+# a truly cold build is what the clean-container CI job measures. Because of
 # that cost the test runs under CI or GPY_GATE_RELEASE=1 (the same switch
 # that gates the release-build leg in scripts/quality-check.sh) and reports
 # a SKIP otherwise -- never a silent pass.
@@ -31,7 +29,7 @@
 #   (d) INSTALL.md's Zsh/Bash block exits 0 and both integrations source
 #       cleanly in their shells
 #   (d2) the rc lines those steps wrote sit inside `# >>> gpy-init >>>` blocks
-#       and scripts/uninstall.sh leaves no gpy line behind (#809); and every
+#       and scripts/uninstall.sh leaves no gpy line behind; and every
 #       rc append in docs/INSTALL.md is marker-wrapped
 #   (e) nothing was written outside the sandbox HOME
 
@@ -47,12 +45,6 @@ test_require_command cargo "cargo not installed; the documented from-source path
 test_require_command fish "fish not installed; README's from-source path uses install-dev.fish"
 test_require_command zsh
 test_require_command bash
-
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
 
 # --- extract the documented commands ----------------------------------------
 
@@ -92,13 +84,11 @@ install_block="$(doc_bash_blocks "$ROOT/docs/INSTALL.md" "### Install Locally")"
 
 [[ -n "$readme_block" ]] || fail "README.md has no bash block under '### From source'"
 [[ -n "$install_block" ]] || fail "docs/INSTALL.md has no bash block under '### Install Locally'"
-if [[ $failures -gt 0 ]]; then
-    exit 1
-fi
+[[ $failures -eq 0 ]] || test_finish
 
 # Every documented rc append (Fish config.fish, Zsh, Bash) must sit in a
 # fenced snippet that also writes the gpy-init markers, or scripts/uninstall.*
-# leave a dangling `source` line behind (#809).
+# leave a dangling `source` line behind.
 unmarked_appends="$(awk '
     /^```/ {
         if (infence) { if (append && !marked) printf "%s", snippet; infence = 0 }
@@ -146,7 +136,7 @@ real_cargo_dir="$(dirname "$real_cargo")"
 real_home="$HOME"
 
 # Resolve every tool the documented commands launch by name BEFORE sealing,
-# so the sandbox PATH can be built from these directories alone (#749).
+# so the sandbox PATH can be built from these directories alone.
 tool_dirs=""
 for tool in fish zsh bash git rsync; do
     tool_path="$(command -v "$tool" 2>/dev/null)" || continue
@@ -175,24 +165,23 @@ sandbox_env=(
     "LANG=${LANG:-C.UTF-8}"
 )
 
+# True once no process holds socket `$1`.
+socket_released() {
+    [[ -z "$(lsof -t "$1" 2>/dev/null)" ]]
+}
+
 # Stop exactly the agent this test started: ask through the sandbox's own
 # socket (sandbox env, not the caller's), then TERM/KILL whatever still holds
-# that socket. Never a name-based kill (#484).
+# that socket. Never a name-based kill.
 stop_sandbox_agent() {
-    local sock="$SANDBOX/runtime/gpy/gpy.sock" agent="$SANDBOX_HOME/.local/bin/gpy-agent" pid i
+    local sock="$SANDBOX/runtime/gpy/gpy.sock" agent="$SANDBOX_HOME/.local/bin/gpy-agent" pid
     if [[ -x "$agent" ]]; then
         env -i "${sandbox_env[@]}" "$agent" stop >/dev/null 2>&1 || true
     fi
     command -v lsof >/dev/null 2>&1 || return 0
-    for ((i = 0; i < 30; i++)); do
-        [[ -n "$(lsof -t "$sock" 2>/dev/null)" ]] || return 0
-        sleep 0.1
-    done
+    shell_e2e_poll 3 socket_released "$sock" && return 0
     for pid in $(lsof -t "$sock" 2>/dev/null); do kill -TERM "$pid" 2>/dev/null || true; done
-    for ((i = 0; i < 30; i++)); do
-        [[ -n "$(lsof -t "$sock" 2>/dev/null)" ]] || return 0
-        sleep 0.1
-    done
+    shell_e2e_poll 3 socket_released "$sock" && return 0
     for pid in $(lsof -t "$sock" 2>/dev/null); do kill -KILL "$pid" 2>/dev/null || true; done
 }
 
@@ -205,7 +194,8 @@ cleanup() {
 trap cleanup EXIT
 
 # Tripwire: any gpy/gpy-agent the caller's PATH resolves outside the sandbox
-# must be byte-for-byte the same file afterwards (#693 deleted real ones).
+# must be byte-for-byte the same file afterwards: install-dev deletes
+# "conflicting" binaries it can see.
 caller_binaries_snapshot() {
     local name found
     for name in gpy gpy-agent; do
@@ -263,7 +253,7 @@ grep -q 'source ~/.config/gpy/bash/gpy.bash' "$SANDBOX_HOME/.bashrc" 2>/dev/null
 
 # Each integration must source without error in its shell; the agent is kept
 # off so sourcing never spawns a daemon from inside this test. The theme
-# export re-sets the supervisor flag from config.toml (#836), so these two
+# export re-sets the supervisor flag from config.toml, so these two
 # runs also read a supervisor-off config through an empty cache of their own.
 mkdir -p "$SANDBOX/supervisor-off"
 (source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX/supervisor-off")
@@ -277,7 +267,7 @@ if ! env -i "${sandbox_env[@]}" "${supervisor_off_env[@]}" GPY_AGENT_ENABLED=0 G
     fail "sourcing the installed Bash integration failed: $(cat "$SANDBOX/bash-source.log")"
 fi
 
-# --- (d2) the documented rc lines are marker-wrapped and uninstallable (#809) ---
+# --- (d2) the documented rc lines are marker-wrapped and uninstallable ---
 
 for rc in .zshrc .bashrc; do
     grep -qF '# >>> gpy-init >>>' "$SANDBOX_HOME/$rc" 2>/dev/null || fail "$rc line is not wrapped in the gpy-init markers"
@@ -307,8 +297,4 @@ $caller_binaries_before
 $(caller_binaries_snapshot)"
 fi
 
-if [[ $failures -gt 0 ]]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: documented from-source install works from a clean checkout"
+test_finish "documented from-source install works from a clean checkout"

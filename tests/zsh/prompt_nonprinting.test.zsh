@@ -2,10 +2,10 @@
 # tests/zsh/prompt_nonprinting.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #679 (twin of tests/bash/prompt_nonprinting.test.bash):
-# agent-rendered SGR escapes reached PROMPT without zsh's `%{ %}` zero-width
-# markers, so ZLE counted every escape byte as a printed column. Typed input
-# wrapped early and Ctrl-A put the cursor on the wrong row.
+# Twin of tests/bash/prompt_nonprinting.test.bash: agent-rendered SGR escapes
+# must reach PROMPT inside zsh's `%{ %}` zero-width markers. Otherwise ZLE
+# counts every escape byte as a printed column, typed input wraps early and
+# Ctrl-A puts the cursor on the wrong row.
 #
 # With a live sandboxed agent and the default theme, render the real prompt
 # and assert that once every `%{...%}` region is removed from PROMPT, no ESC
@@ -16,9 +16,6 @@ ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { print -r -- "FAIL: $*"; failures=$((failures + 1)); }
-pass() { print -r -- "PASS: $*"; }
 
 printf '[ui]\ntheme = "default"\nenabled_segments = ["directory", "git"]\n\n[agent.supervisor]\nenabled = false\n' \
     >"$XDG_CONFIG_HOME/gpy/config.toml"
@@ -72,8 +69,4 @@ fi
 
 shell_e2e_stop_agent
 
-if [ "$failures" -ne 0 ]; then
-    echo "=== $failures FAILED ==="
-    exit 1
-fi
-echo "=== All Tests Passed ==="
+test_finish

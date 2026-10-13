@@ -2,22 +2,24 @@
 # tests/bash/omitted_segment_positions.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #766 (mirrors tests/fish/omitted_segment_positions.test.fish).
+# Mirrors tests/fish/omitted_segment_positions.test.fish.
 #
 # __gpy_render_prompt assigns first/last positions from the detect pass,
 # before anything renders. The language segment passes detect on a project
-# marker but prints nothing on a cold miss (no instant-cache entry), so its
-# neighbour lost its first-segment form or kept a trailing separator. Drives
-# the real dispatch loop with no agent socket, an empty instant cache and a
-# directory stub that prints the is_last/is_first it was called with.
+# marker but prints nothing on a cold miss (no instant-cache entry), and its
+# neighbour must still get its first-segment form and no trailing separator.
+# Drives the real dispatch loop with no agent socket, an empty instant cache
+# and a directory stub that prints the is_last/is_first it was called with.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 cd "$ROOT" || exit 1
 
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-# Supervisor off in a sandbox config: the theme export re-sets the flag (#836).
+# Supervisor off in a sandbox config: the theme export re-sets the flag.
 source "$ROOT/tests/lib/supervisor_off.bash" "$TMP_ROOT"
 export GPY_AGENT_SOCKET_PATH="$TMP_ROOT/missing.sock"
 export GPY_LANGUAGE_ENABLED=1
@@ -59,10 +61,7 @@ __enabled_segments="language directory"
 __gpy_render_prompt 0
 check "language cold miss: directory is first and last" true \
     "$([[ "$PS1" == *"DIR[true|true]"* ]] && echo true || echo false)"
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-    [[ -s "$REFRESH_LOG" ]] && break
-    sleep 0.1
-done
+shell_e2e_poll 1 test -s "$REFRESH_LOG" || true
 check "language cold miss still requests one refresh" lang "$(cat "$REFRESH_LOG" 2>/dev/null)"
 
 # --- Language cold miss in the middle: neighbours keep their positions ---

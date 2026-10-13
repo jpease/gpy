@@ -2,13 +2,12 @@
 # tests/bash/duration_measures_command_line.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #684: __gpy_debug_trap recorded the command start time
-# on every DEBUG-trap firing, i.e. before every simple command. Any other
-# PROMPT_COMMAND entry reset it right before __gpy_precmd measured (about
-# 0 ms; macOS Terminal.app and VTE set one), a list or loop counted only its
-# last command, and a doorbell during the command reset it too. The start
-# time is now armed once per command line by __gpy_arm_preexec, the last
-# PROMPT_COMMAND entry.
+# The command start time is armed once per command line by
+# __gpy_arm_preexec, the last PROMPT_COMMAND entry, never on every DEBUG-trap
+# firing. Recording it before every simple command would let any other
+# PROMPT_COMMAND entry reset it right before __gpy_precmd measures (about
+# 0 ms; macOS Terminal.app and VTE set one), make a list or loop count only
+# its last command, and let a doorbell during the command reset it too.
 #
 # Drives a real interactive bash (the interpreter running this file) with
 # gpy loaded, feeding lines on stdin with pauses where timing matters, and
@@ -31,20 +30,16 @@ T="$(mktemp -d "${TMPDIR:-/tmp}/gpy-duration.XXXXXX")"
 cleanup() { rm -rf "$T"; }
 trap cleanup EXIT
 # The child's XDG_CONFIG_HOME ($T/config) disables the supervisor: the theme
-# export would re-set the env flag below from config.toml (#836).
+# export would re-set the env flag below from config.toml.
 source "$ROOT/tests/lib/supervisor_off.bash" "$T"
 
-# Scrub every GPY_* variable inherited from the developer's shell (#270).
+# Scrub every GPY_* variable inherited from the developer's shell.
 gpy_scrub=()
 while IFS='=' read -r __gpy_env_name _; do
     case "$__gpy_env_name" in
         GPY_*) gpy_scrub+=(-u "$__gpy_env_name") ;;
     esac
 done < <(env)
-
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 # `make_rc NAME BEFORE AFTER` -- an rc file that runs BEFORE, sources
 # gpy.bash, writes its PID to $T/NAME.pid, then runs AFTER.
@@ -110,19 +105,24 @@ expect_at_least "$out" D_loop 1100 "for i in 1 2 3; do sleep 0.4; done"
 
 echo "=== a SIGURG during the command does not reset the start time ==="
 feed_urg() {
-    sleep 1
+    # This session's rc writes the PID file once gpy is loaded.
+    shell_e2e_poll 10 test -s "$T/plain.pid" || return
     printf '%s\n' 'sleep 1.5'
+    # The doorbell must land 0.5 s into the 1.5 s command, and the report is
+    # typed only after the command has finished.
     sleep 0.5
     kill -URG "$(cat "$T/plain.pid")"
     sleep 1.5
     printf '%s\n' 'echo "D_urg=$__gpy_cmd_duration"' 'exit'
 }
+rm -f "$T/plain.pid"
 out="$(run_session plain feed_urg)"
 expect_at_least "$out" D_urg 1400 "SIGURG 0.5 s into sleep 1.5"
 
 echo "=== idle time at the prompt is never counted ==="
 feed_idle() {
     printf '%s\n' 'true'
+    # Idle at the prompt for 1.5 s; none of it may be counted.
     sleep 1.5
     printf '%s\n' 'true' 'echo "D_idle=$__gpy_cmd_duration"' 'exit'
 }
@@ -163,8 +163,4 @@ if (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1) )
     expect_below "$out" D_idle 200 "true after 1.5 s idle, ':' element appended after gpy"
 fi
 
-if ((failures > 0)); then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "=== All Tests Passed ==="
+test_finish

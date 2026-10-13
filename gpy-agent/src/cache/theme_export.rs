@@ -49,13 +49,13 @@ pub fn write_theme_export_cache(
 /// `theme-export.bash`, `theme-export.zsh`) -- Bash and Zsh's
 /// `__gpy_load_theme` (bash/core/init.bash, zsh/core/init.zsh) source their
 /// cache file the same way Fish already does, instead of forking `gpy-agent
-/// theme export` on every shell start (#614). No call-site change needed:
+/// theme export` on every shell start. No call-site change needed:
 /// startup and config reload already call this function, and now cover all
 /// three shells for free.
 ///
 /// A file whose bytes already match the new export is left untouched, so its
 /// mtime only moves when its content does: shells compare it with the mtime
-/// they sourced to spot an export rewritten while they were not told (#701).
+/// they sourced to spot an export rewritten while they were not told.
 /// Returns `true` if any of the three files was (re)written.
 ///
 /// Separated from `write_theme_export_cache` so tests (and hermetic Criterion
@@ -139,7 +139,7 @@ mod tests {
 
     /// Bash and zsh get their own cache files beside `theme-export.fish`.
     ///
-    /// #614: written on every call, atomically (temp+rename, no `.tmp-`
+    /// Written on every call, atomically (temp+rename, no `.tmp-`
     /// leftovers) -- Bash and Zsh `__gpy_load_theme` source these instead of
     /// forking `gpy-agent theme export` on every shell start.
     #[test]
@@ -179,7 +179,7 @@ mod tests {
         );
     }
 
-    /// #701: an identical export reports "unchanged", a different one "changed".
+    /// An identical export reports "unchanged", a different one "changed".
     ///
     /// The startup warm-up rings shells only on a change, and shells spot a
     /// rewrite by its mtime, so an identical export must also leave every file

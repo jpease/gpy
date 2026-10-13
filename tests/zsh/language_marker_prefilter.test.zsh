@@ -2,7 +2,7 @@
 # tests/zsh/language_marker_prefilter.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #785: the language pre-filter iterates __gpy_lang_marker_files, the list the
+# The language pre-filter iterates __gpy_lang_marker_files, the list the
 # agent's `theme export` generates from marker_file_names(). This test sources
 # a REAL export from the debug binary (in a temp XDG) and asserts the
 # pre-filter accepts a non-git dir holding each marker (incl. setup.py,

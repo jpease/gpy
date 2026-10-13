@@ -106,11 +106,9 @@ const NOT_RELOADED_NOTICE: &str =
 /// it up, and the answer is printed.
 #[cfg(unix)]
 pub fn reload_agent_and_notify() {
-    // The lifecycle sender resolves the socket with the canonical resolver --
-    // the same one the server binds with. A second copy used to live here and
-    // omitted the XDG_CACHE_HOME step, so with XDG_CACHE_HOME set and
-    // XDG_RUNTIME_DIR unset it connected to a path nothing listened on and
-    // reported success while the running agent never reloaded (#475).
+    // The lifecycle sender resolves the socket with the same canonical
+    // resolver the server binds with (including the XDG_CACHE_HOME step), so
+    // the reload reaches the socket the running agent listens on.
     let outcome = tokio::runtime::Runtime::new()
         .map_err(|e| Error::process("runtime".to_owned(), e.to_string()))
         .and_then(|runtime| {
@@ -124,11 +122,7 @@ pub fn reload_agent_and_notify() {
     }
 }
 
-/// Reload the running agent's config -- native Windows stub (#284).
-///
-/// GPY's IPC transport is Unix-socket based and not yet implemented on native
-/// Windows, so there is never a daemon to reload; prints the same notice the
-/// Unix path prints when no agent is running.
+/// Native Windows stub; see `crate::ipc::native_windows_unsupported`.
 #[cfg(not(unix))]
 pub fn reload_agent_and_notify() {
     println!("{NOT_RELOADED_NOTICE}");

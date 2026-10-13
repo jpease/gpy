@@ -2,18 +2,16 @@ name: Windows gate
 
 # The one definition of the Windows leg (#653). pr-gate.yml and
 # cross-platform-test.yml both call this instead of carrying their own copy
-# of the steps, so the two cannot drift apart again.
+# of the steps, so the two cannot drift apart.
 #
 # What runs here, and why only this: native Windows is CLI-only -- the
 # prompt integration talks to the agent over a Unix domain socket, which
-# native Windows does not provide, so no Fish/Bash/Zsh suite runs. Until
-# #653 the leg ran `cargo build --locked` and the library unit tests only;
-# every CLI test target is an integration target excluded by `--lib`, so the
-# one thing Windows is claimed to support had never been tested there. The
-# five hermetic CLI targets now run through nextest after the lib tests
-# (their Windows compile is reproduced first with `cargo check --locked
-# --target x86_64-pc-windows-gnu --profile test` in a Linux container with
-# mingw-w64, so the leg compiles the first time it runs).
+# native Windows does not provide, so no Fish/Bash/Zsh suite runs. Every CLI
+# test target is an integration target excluded by `--lib`, so the five
+# hermetic CLI targets run through nextest after the lib tests; that is what
+# backs the CLI-only support claim. (Their Windows compile can be reproduced
+# with `cargo check --locked --target x86_64-pc-windows-gnu --profile test`
+# in a Linux container with mingw-w64.)
 #
 # config::manager::tests::poll_fallback_reloads_without_any_watcher_running
 # is a known intermittent timing flake on this leg (#482); re-run once
@@ -53,7 +51,7 @@ jobs:
       - name: Install Rust toolchain
         # No `toolchain:` input: the action resolves the pin from
         # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
-        # See that file for why CI must not install @stable (#189, #518).
+        # See that file for why CI must not install @stable (#518).
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           rust-src-dir: gpy-agent

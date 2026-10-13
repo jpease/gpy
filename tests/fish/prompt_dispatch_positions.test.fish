@@ -2,21 +2,19 @@
 # tests/fish/prompt_dispatch_positions.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #629.
-#
-# fish_prompt's segment dispatch loop declared `set -l is_last` and
-# `set -l is_first` with no value, which creates an EMPTY LIST (zero
-# elements), not an empty string. Fish expands an empty list to zero
-# arguments, so for any segment that is first-but-not-last, the call
+# fish_prompt's segment dispatch loop must pass every segment its
+# is_last/is_first flags in the correct positional slots. Declaring them as
+# `set -l is_last` with no value creates an EMPTY LIST (zero elements), not an
+# empty string; Fish expands an empty list to zero arguments, so in
 #
 #   segment_{$segment}_render $is_last $is_first
 #
-# silently drops the empty `is_last` slot and `is_first`'s value shifts into
-# the `is_last` argument position instead. This test drives the real
-# fish_prompt dispatch loop (fish/functions/fish_prompt.fish, sourced after
-# fish/core/init.fish exactly as other prompt-rendering tests do) with three
-# stub segments and asserts each one receives is_last/is_first in the correct
-# positions. It must FAIL on the unfixed fish_prompt.fish.
+# a first-but-not-last segment would silently drop the empty `is_last` slot
+# and receive `is_first`'s value in the `is_last` position. This test drives
+# the real fish_prompt dispatch loop (fish/functions/fish_prompt.fish, sourced
+# after fish/core/init.fish exactly as other prompt-rendering tests do) with
+# three stub segments and asserts each one receives is_last/is_first in the
+# correct positions.
 
 set -g pass_count 0
 set -g fail_count 0
@@ -47,7 +45,7 @@ mkdir -p $XDG_CONFIG_HOME/gpy
 
 # Agent enabled but the supervisor disabled: exercises the full init path
 # without spawning a persistent daemon, and fish_prompt degrades gracefully
-# when no agent is reachable (tests/fish/README.md "Best Practices" #2).
+# when no agent is reachable.
 # Setting BOTH GPY_AGENT_ENABLED and GPY_AGENT_SUPERVISOR_ENABLED to 0 would
 # trip init.fish's "completely disabled" early-exit and skip segment loading
 # entirely, so only the supervisor is disabled here.
@@ -86,8 +84,8 @@ set -gx GPY_TEST_SEGMENTS "stuba stubb stubc"
 
 source fish/core/init.fish
 # fish_prompt lives in an autoloaded function file, not init.fish -- source it
-# explicitly, as other prompt-rendering tests do (see segment_lazy_reload.test.fish
-# #270), instead of relying on the developer's installed copy.
+# explicitly, as other prompt-rendering tests do, instead of relying on the
+# developer's installed copy.
 source fish/functions/fish_prompt.fish
 
 fish_prompt >/dev/null
@@ -98,9 +96,8 @@ else
     check "dispatch loop invoked all three stub segments (got: $__stub_calls)" fail
 end
 
-# #613: the dispatch loop's is_last/is_first convention is "true"/"" (not the
-# old "last"/"first" literals) -- the assertion strength here is unchanged,
-# only the literal values are.
+# The dispatch loop's is_last/is_first convention is "true" for set and ""
+# for unset.
 check "first segment gets is_first set, is_last empty" (test "$__stub_calls[1]" = "stuba:|true"; and echo pass; or echo fail)
 check "middle segment gets both empty" (test "$__stub_calls[2]" = "stubb:|"; and echo pass; or echo fail)
 check "last segment gets is_last set, is_first empty" (test "$__stub_calls[3]" = "stubc:true|"; and echo pass; or echo fail)

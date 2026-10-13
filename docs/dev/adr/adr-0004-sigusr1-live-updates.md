@@ -1,190 +1,59 @@
-# ADR-0004: SIGUSR1 for Live Prompt Updates
+# ADR-0004: Signal-Driven Live Prompt Updates
 
 ## Status
 
-Accepted (2024-11)
+Accepted (2024-11). Partly superseded:
 
-Superseded in part by [ADR-0007](adr-0007-sigurg-doorbell-notifications.md): the agent now sends SIGURG instead of SIGUSR1.
+- [ADR-0007](adr-0007-sigurg-doorbell-notifications.md): the agent sends SIGURG, not SIGUSR1, and Bash installs no handler.
+- The original version of this ADR showed the Fish handler calling `commandline -f repaint` directly. That does not repaint an idle prompt from signal context; the handler bumps a variable and an `--on-variable` handler repaints, as described in [ADR-0006](adr-0006-async-terminal-updates.md).
+
+The decision itself, a filesystem watcher in the agent that signals registered shells, is current.
 
 ## Context
 
-Users expect their prompt to update in real-time when the working directory changes:
-- File modifications in a git repo should update git status indicators
-- Creating/deleting files should trigger prompt refresh
-- Branch switches should immediately reflect in prompt
+A prompt that shows git state goes stale when files change while the shell sits idle, or when another terminal changes the repository. Without live updates the user has to press Enter to see the current state.
 
-Without live updates, users must press Enter or run a command to see the updated prompt.
+Requirements:
 
-### Requirements
+1. Update within a few hundred milliseconds of a filesystem change.
+2. Never interrupt typing.
+3. No constant polling while nothing changes.
 
-1. **Responsive**: Update within 150-500ms of filesystem change
-2. **Non-intrusive**: Don't interrupt user typing
-3. **Efficient**: Don't poll constantly (battery drain)
-4. **Safe**: Work with any Fish shell version
+### Alternatives considered
 
-### Considered Alternatives
-
-1. **Polling (check every N seconds)**
-   - ✅ Simple to implement
-   - ❌ Battery drain (continuous CPU usage)
-   - ❌ Slow response (up to N seconds delay)
-   - ❌ Unnecessary work when idle
-
-2. **Fish Event Handlers (on directory change)**
-   - ✅ Native Fish integration
-   - ❌ Only triggers on `cd` commands
-   - ❌ Misses file changes in current directory
-   - ❌ No support for external changes
-
-3. **SIGUSR1 Signal + Filesystem Watching**
-   - ✅ Event-driven (no polling)
-   - ✅ Fast response (< 500ms)
-   - ✅ Battery efficient (idle when no changes)
-   - ✅ Works across all shells
-   - ⚠️ Requires signal handling in Fish
+1. **Polling every N seconds**: simple, but costs CPU while idle and lags by up to N seconds.
+2. **Shell event handlers on `cd`**: native, but miss changes made in the current directory or by other processes.
+3. **Agent-side filesystem watcher plus a signal to each registered shell**: event-driven and idle when nothing changes; requires a signal handler in each shell.
 
 ## Decision
 
-Use **SIGUSR1 signal** to notify Fish shell of prompt updates, triggered by a **filesystem watcher** in the Rust agent.
-
-### Architecture
+The agent watches registered repositories with the `notify` crate (FSEvents on macOS, inotify on Linux), debounces events, recomputes state, and signals the registered shell PIDs for that repository.
 
 ```
-File Change → Watcher (notify crate) → Debouncer (100ms) → Signal Sender
-                                                                  ↓
-                                                            SIGUSR1 → Fish Process
-                                                                  ↓
-                                                      Fish Trap Handler → Prompt Repaint
+File change -> watcher (notify) -> debouncer -> recompute -> signal registered shells -> repaint
 ```
 
-### Implementation Details
-
-**Rust Agent (gpy-agent):**
-- Uses `notify` crate for filesystem watching
-- Watches `.git/` directory and worktree
-- Debounces events (100ms) to avoid signal spam
-- Sends SIGUSR1 to registered Fish processes
-- Tracks PIDs in client registry
-
-**Fish Shell (init.fish):**
-```fish
-function __gpy_handle_sigusr1 --on-signal SIGUSR1
-    # Re-render prompt without adding newline
-    commandline -f repaint
-end
-```
-
-**Signal Safety:**
-- SIGUSR1 is user-defined, safe to use
-- Fish handles signals gracefully
-- No data race (just triggers repaint)
-
-**Debouncing:**
-- 100ms default (configurable)
-- Coalesces multiple rapid changes
-- Per-repository tracking
-- Minimum 50ms between signals per client
+- Debounce window: `GPY_DEBOUNCE_MS`, default 100 ms.
+- Minimum interval between repaint signals to one shell: `GPY_SIGUSR1_THROTTLE_MS`, default 150 ms.
+- `GPY_DISABLE_WATCHER=1` disables the repository watcher.
+- A periodic reconcile (default 45 s) catches changes the watcher missed, and polling backends exist for filesystems that deliver no events (see [Troubleshooting](../../user/troubleshooting.md#diagnostic-and-fallback-environment-variables)).
 
 ## Consequences
 
 ### Positive
 
-1. **Instant Updates**: Prompt refreshes automatically
-   - Git status updates on file save
-   - Branch changes immediately visible
-   - No need to press Enter
-
-2. **Battery Efficient**: Event-driven, no polling
-   - Watcher uses inotify (Linux) or FSEvents (macOS)
-   - Agent sleeps when no changes
-   - Minimal CPU usage
-
-3. **User Experience**: Feels magical
-   - "It just works" - no user action needed
-   - Mirrors VS Code's file watching
-   - Professional, polished UX
-
-4. **Flexible**: Can trigger any Fish function
-   - Not just prompt repaints
-   - Could trigger custom user functions
-   - Extensible for future features
+- Idle Fish and Zsh prompts show repository changes without a keystroke.
+- No work while nothing changes.
 
 ### Negative
 
-1. **Complexity**: More moving parts
-   - Filesystem watcher code
-   - Signal handling in Fish
-   - PID tracking and cleanup
-   - Debouncing logic
-
-2. **Edge Cases**: Signals can be tricky
-   - Must handle process crashes (stale PIDs)
-   - Race conditions possible (rare)
-   - Signal delivery not guaranteed
-
-3. **Debugging**: Async behavior harder to debug
-   - Updates happen "magically"
-   - Timing issues non-deterministic
-   - Must log signal delivery for troubleshooting
-
-4. **Platform Differences**: Watcher behavior varies
-   - Linux inotify vs macOS FSEvents
-   - Different event granularity
-   - WSL has some limitations
-
-### Mitigation Strategies
-
-1. **Robust PID Management**
-   - Periodic cleanup of dead PIDs (every 60s)
-   - Validate PID existence before signaling
-   - Handle ESRCH (no such process) gracefully
-
-2. **Comprehensive Logging**
-   - Debug log all signal deliveries
-   - Track watcher events
-   - Log debouncer state
-
-3. **Disable Option**: Respect user preference
-   - `GPY_DISABLE_WATCHER=1` environment variable
-   - Config option: `watcher.enabled = false`
-   - Clear documentation
-
-4. **Graceful Degradation**
-   - If signals fail, fall back to manual updates
-   - Show warning only once (not on every prompt)
-   - Provide troubleshooting guide
-
-## Performance Characteristics
-
-**Latency Breakdown:**
-- Filesystem event detected: 0-50ms
-- Debouncer delay: 100ms (configurable)
-- Signal delivery: < 1ms
-- Fish repaint: 5-20ms
-- **Total**: 105-170ms typical
-
-**Resource Usage:**
-- Memory: ~2MB for watcher
-- CPU: < 0.1% when idle
-- Battery: Negligible impact
-
-## Edge Cases Handled
-
-- **Multiple Fish instances**: Each PID tracked separately
-- **Fish process crash**: PID cleanup detects and removes
-- **Agent restart**: Clients re-register on next prompt
-- **Debouncer batching**: Multiple rapid changes → single signal
-- **Symlink changes**: Watcher follows symlinks correctly
-
-## Security Considerations
-
-- **Signal safety**: SIGUSR1 is safe, doesn't interrupt syscalls
-- **PID validation**: Verify PID belongs to Fish process (via `/proc`)
-- **No shell injection**: Signal only, no command execution
-- **User isolation**: Only signal user's own processes
+- More moving parts: watcher, debouncer, PID registry and cleanup, a handler in each shell.
+- Signal delivery is not guaranteed and watcher behaviour differs by platform; the reconcile pass and the per-prompt render bound how long a missed event can leave the prompt stale.
+- Asynchronous behaviour is harder to debug than a synchronous render.
 
 ## Related
 
 - [ADR-0001](adr-0001-hybrid-rust-fish-architecture.md) - Architecture overview
-- [ADR-0006: Async Terminal Updates](adr-0006-async-terminal-updates.md) - Implementation details
+- [ADR-0006](adr-0006-async-terminal-updates.md) - Fish repaint pattern
+- [ADR-0007](adr-0007-sigurg-doorbell-notifications.md) - SIGURG doorbell and flag files
 - [watcher/](../../../gpy-agent/src/watcher/) - Watcher implementation

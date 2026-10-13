@@ -320,8 +320,8 @@ impl ZshResetState {
         if !self.active {
             return;
         }
-        // Reset zsh-native fg/bg/bold unconditionally (matches the historical
-        // baseline), then clear any extra attributes that were actually used.
+        // Reset zsh-native fg/bg/bold unconditionally, then clear any extra
+        // attributes that were actually used.
         out.push_str("%f%k%b");
         if self.attr_resets & Self::UNDERLINE != 0 {
             out.push_str("%u");
@@ -338,8 +338,8 @@ impl ZshResetState {
     }
 }
 
-/// Encode `spans` as zsh prompt escapes. Not wired into live output yet (#185);
-/// shipped tested so the preset work can adopt it without re-deriving the mapping.
+/// Encode `spans` as zsh-native prompt escapes. Live output uses
+/// [`encode_zsh_prompt`]; this is the tested zsh-native color mapping.
 ///
 /// Mirrors [`encode_ansi`]'s group-boundary reset (#288): the reset is emitted
 /// whenever a styled span is immediately followed by a default-style (empty
@@ -449,7 +449,7 @@ mod tests {
         }
     }
 
-    /// Regression for #677: data text must reach bash as literal text, not
+    /// Data text must reach bash as literal text, not
     /// as `$(...)`, backtick or `\x` prompt code.
     #[test]
     fn bash_prompt_escapes_expansion_chars() {
@@ -457,7 +457,7 @@ mod tests {
         assert_eq!(encode_bash_prompt(&spans), "a\\\\\\\\b\\\\$(x)\\\\`y\\\\`%");
     }
 
-    /// Regression for #677: data text must reach zsh as literal text, not as
+    /// Data text must reach zsh as literal text, not as
     /// `$(...)`, backtick or `%x` prompt code.
     #[test]
     fn zsh_prompt_escapes_expansion_chars() {
@@ -556,7 +556,7 @@ mod tests {
         (spans, visible)
     }
 
-    /// Regression for #679: readline counts every byte outside `\[ \]` as a
+    /// Readline counts every byte outside `\[ \]` as a
     /// printed column, so every SGR must sit inside the markers.
     #[test]
     fn bash_prompt_wraps_every_sgr_in_nonprinting_markers() {
@@ -568,7 +568,7 @@ mod tests {
         assert_eq!(printed, visible);
     }
 
-    /// Regression for #679: ZLE counts every byte outside `%{ %}` as a
+    /// ZLE counts every byte outside `%{ %}` as a
     /// printed column, so every SGR must sit inside the markers.
     #[test]
     fn zsh_prompt_wraps_every_sgr_in_nonprinting_markers() {
@@ -627,7 +627,7 @@ mod tests {
 
     #[test]
     fn styled_span_followed_by_default_span_resets_at_the_boundary() {
-        // Regression for #265 (hostname preset parity): a styled group followed
+        // A styled group followed
         // by literal default-style text (e.g. `[$symbol$hostname](style) in `)
         // must reset immediately after the styled text, not only at the very
         // end — otherwise the trailing literal text visually inherits the
@@ -711,8 +711,7 @@ mod tests {
     }
 
     /// #752: when the next style overrides everything the previous one set,
-    /// nothing leaks and the bytes stay exactly as before the fix (no reset
-    /// between every pair of styled spans).
+    /// nothing leaks and no reset is emitted between the styled spans.
     #[test]
     fn adjacent_styled_spans_without_leak_emit_no_reset() {
         let spans = [
@@ -870,8 +869,8 @@ mod tests {
         }
     }
 
-    /// Regression for #232: the starship preset renders java as `red dimmed`.
-    /// The old encoder dropped `dimmed`, so non-bold java rendered plain in zsh.
+    /// The starship preset renders java as `red dimmed`; `dimmed` must
+    /// survive so non-bold java does not render plain in zsh.
     #[test]
     fn zsh_red_dimmed_java_survives() {
         use super::encode_zsh;
@@ -918,11 +917,11 @@ mod tests {
         );
     }
 
-    /// Regression for #288: a styled group followed by literal default-style
+    /// A styled group followed by literal default-style
     /// text must reset at the boundary.
     ///
     /// Otherwise the trailing text inherits the preceding span's still-active
-    /// zsh style, the same bug the ansi encoder fixed.
+    /// zsh style, as in the ansi encoder.
     #[test]
     fn zsh_styled_span_followed_by_default_span_resets_at_the_boundary() {
         use super::encode_zsh;

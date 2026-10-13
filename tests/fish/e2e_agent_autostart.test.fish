@@ -7,9 +7,7 @@
 #![allow(clippy::doc_markdown)]
 
 # SPDX-License-Identifier: GPL-3.0-or-later
-# ============================================================================
 # E2E Test: Agent Start and Registration
-# ============================================================================
 #
 # This test validates that the GPY agent can start and that Fish shells
 # can successfully register with the running agent.
@@ -28,7 +26,7 @@
 #
 # Real interactive sessions (repaint with no keystroke, two shells on one
 # agent, config reload on a Fish client) are driven on a pseudo-terminal by
-# tests/fish/e2e_interactive_session.test.fish (#645).
+# tests/fish/e2e_interactive_session.test.fish.
 #
 # Test Flow:
 # 1. Ensure no agent is currently running
@@ -69,9 +67,9 @@ function test_agent_autostart
 
     # Verify agent is actually stopped. Socket-scoped (not a bare `pgrep -x
     # gpy-agent`, which cannot distinguish this test's own agent from an
-    # unrelated live daemon elsewhere on the machine, see #486).
+    # unrelated live daemon elsewhere on the machine).
     if not __gpy_agent_stopped
-        print_test_result "Agent Stop" "FAIL" "Agent still running after stop"
+        print_test_result "Agent Stop" FAIL "Agent still running after stop"
         return 1
     end
     echo "✓ Agent stopped"
@@ -79,31 +77,31 @@ function test_agent_autostart
     echo ""
     echo "Starting agent manually (simulating auto-start)..."
     if not start_test_agent
-        print_test_result "Agent Start" "FAIL" "Failed to start agent"
+        print_test_result "Agent Start" FAIL "Failed to start agent"
         return 1
     end
     echo "✓ Agent started"
-    print_test_result "Agent Start" "PASS"
+    print_test_result "Agent Start" PASS
 
     # Verify agent is responsive
     echo ""
     echo "Verifying agent is responsive..."
     if not wait_for_agent 5
-        print_test_result "Agent Responsive" "FAIL" "Agent started but not responding"
+        print_test_result "Agent Responsive" FAIL "Agent started but not responding"
         return 1
     end
 
-    print_test_result "Agent Responsive" "PASS"
+    print_test_result "Agent Responsive" PASS
 
     # Verify agent status
     echo ""
     echo "Testing agent ping..."
     set -l ping_result (gpy-agent status 2>&1)
     if not string match -q "*Running and Responding*" -- $ping_result
-        print_test_result "Agent Ping" "FAIL" "Ping failed: $ping_result"
+        print_test_result "Agent Ping" FAIL "Ping failed: $ping_result"
         return 1
     end
-    print_test_result "Agent Ping" "PASS"
+    print_test_result "Agent Ping" PASS
 
     # CI runners never run install-dev.fish, so ~/.config/fish/gpy does not
     # exist there (it only does on a contributor machine that has installed
@@ -125,9 +123,9 @@ function test_agent_autostart
     ' -- $repo_root 2>&1)
 
     if string match -q "*REGISTERED*" -- $register_result
-        print_test_result "Shell Registration" "PASS"
+        print_test_result "Shell Registration" PASS
     else
-        print_test_result "Shell Registration" "FAIL" "Shell failed to register: $register_result"
+        print_test_result "Shell Registration" FAIL "Shell failed to register: $register_result"
         return 1
     end
 
@@ -140,11 +138,11 @@ function test_agent_autostart
     ' -- $repo_root 2>&1)
     set -l init_result $init_output[-1]
 
-    if test "$init_result" = "0"
-        print_test_result "GPY Initialization" "PASS"
+    if test "$init_result" = 0
+        print_test_result "GPY Initialization" PASS
     else
         set -l init_diagnostics (string join "; " -- $init_output[1..-2])
-        print_test_result "GPY Initialization" "FAIL" "Init returned status: $init_result; output: $init_diagnostics"
+        print_test_result "GPY Initialization" FAIL "Init returned status: $init_result; output: $init_diagnostics"
         return 1
     end
 

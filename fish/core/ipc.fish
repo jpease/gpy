@@ -74,10 +74,8 @@ end
 
 # Path to the Unix domain socket (Unix) or pipe hint on Windows.
 function __gpy_ipc_endpoint --description 'Returns socket path or pipe hint'
-    # Allow override for testing. An empty value is "unset", not "the empty
-    # path": honouring it used to make this shell resolve nothing while Bash
-    # and Zsh fell through to the runtime root, so the two halves of the same
-    # session disagreed about where the agent listens (#626).
+    # Allow override for testing. An empty value counts as unset, matching
+    # Bash and Zsh, so all shells resolve the same endpoint.
     if set -q GPY_AGENT_SOCKET_PATH; and test -n "$GPY_AGENT_SOCKET_PATH"
         echo "$GPY_AGENT_SOCKET_PATH"
         return
@@ -113,10 +111,9 @@ end
 
 # Is the agent at `socket_path` answering? A ping over the same client every
 # real request uses, within a fixed one-second budget, so the check needs
-# neither coreutils `timeout` (stock macOS has none, which used to reduce this
-# to "the socket file exists") nor `nc -z` (macOS's rejects -U). With no client
-# at all there is nothing to probe with, so the file existing is the best
-# available answer (#850).
+# neither coreutils `timeout` (absent on stock macOS) nor `nc -z` (macOS's
+# rejects -U). With no client at all there is nothing to probe with, so the
+# file existing is the best available answer.
 function __gpy_socket_ready --argument-names socket_path
     test -S "$socket_path"; or return 1
     __gpy_ipc_client_available; or return 0
@@ -367,12 +364,10 @@ end
 # call fails claims it and forks oneshot, later segments in the same render
 # see it already claimed and render nothing rather than fork again.
 #
-# The budget is a plain global, as in Bash and Zsh (#614, #845): Fish runs
-# command substitutions and functions in the shell's own process, so a `set -g`
-# made while a segment renders inside `(...)` is visible to the next segment.
-# It used to be a `${TMPDIR}/.gpy_oneshot_used_$fish_pid` file -- a predictable
-# path another local user could pre-create to switch the fallback off, that was
-# left behind in TMPDIR whenever a shell exited with the budget spent.
+# The budget is a plain global, as in Bash and Zsh: Fish runs command
+# substitutions and functions in the shell's own process, so a `set -g` made
+# while a segment renders inside `(...)` is visible to the next segment. It is
+# not a TMPDIR marker file, which another local user could pre-create.
 function __gpy_oneshot_claim --description 'Claim the one oneshot-fallback fork allowed for this prompt render'
     set -q __gpy_oneshot_used; and return 1
     set -g __gpy_oneshot_used 1
@@ -463,9 +458,8 @@ function __gpy_request_character --argument-names success is_last prev_bg --desc
     set -l send_status $status
 
     # Oneshot fallback when no daemon is running; a late daemon (status 2) is
-    # computing this very segment, so it is omitted rather than recomputed (#757).
-    # NOTE: oneshot fallback does not pass prev_bg — the CLI subcommand has no --prev-bg flag.
-    # Powerline opening chevrons are skipped on first-shell startup until the daemon connects.
+    # computing this very segment, so it is omitted rather than recomputed.
+    # prev_bg is not passed (see __gpy_request_duration).
     if test -z "$result"; and test $send_status -ne 2; and __gpy_resolve_agent_binary >/dev/null; and __gpy_oneshot_claim
         set -l agent_binary (__gpy_resolve_agent_binary)
         # Convert boolean back to exit-code integer for the CLI flag.
@@ -501,8 +495,7 @@ end
 #              `host` rather than `hostname` because `$hostname` is a
 #              read-only electric variable in fish — using it as an
 #              --argument-names binding is a hard error.
-#   is_last  — "true" if this is the last prompt segment, "" otherwise (#613:
-#              same true/"" convention as every other segment now).
+#   is_last  — "true" if this is the last prompt segment, "" otherwise.
 #   prev_bg  — the previous segment's background, for the powerline chevron.
 #   is_ssh   — "1" in an SSH session ($__gpy_is_ssh), anything else otherwise.
 #              Sent as "is_ssh":true so the agent draws the theme icon only
@@ -535,8 +528,7 @@ end
 # Arguments:
 #   user     — the effective username string ($USER). Named `user` rather than
 #              `username` for symmetry with __gpy_request_hostname's `host`.
-#   is_last  — "true" if this is the last prompt segment, "" otherwise (#613:
-#              same true/"" convention as every other segment now).
+#   is_last  — "true" if this is the last prompt segment, "" otherwise.
 #   prev_bg  — the previous segment's background, for the powerline chevron.
 function __gpy_request_username --argument-names user is_last prev_bg --description 'Send username render request to agent'
     set -l format ansi
@@ -744,10 +736,8 @@ end
 #   4 = fresh, served via the `.none` variant fallback
 #   6 = stale, served via the `.none` variant fallback
 #
-# Git and language caches used to be two hand-duplicated branches differing
-# only in which TTL var they read and which global they set; now it's one
-# path parameterised by TTL (via __gpy_cache_freshness), selected by whether
-# `suffix` starts with `lang`.
+# Git and language caches share this path, parameterised by TTL (via
+# __gpy_cache_freshness) and selected by whether `suffix` starts with `lang`.
 function __gpy_read_instant_cache --argument-names suffix cwd prev_bg --description 'Read instant-prompt cache; status via exit code (see comment above)'
     set -q cwd[1]; or set cwd $PWD
     if test -z "$suffix"

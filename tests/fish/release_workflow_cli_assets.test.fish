@@ -2,14 +2,12 @@
 # tests/fish/release_workflow_cli_assets.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #327: the release pipeline must build and publish the
-# user-facing `gpy` CLI binary as a release asset for every target it already
-# ships the `gpy-agent` daemon for. Before this change release.yml only
-# uploaded gpy-agent-<target> assets, so no install path could fetch `gpy`
-# from a GitHub release.
+# The release pipeline must build and publish the user-facing `gpy` CLI
+# binary as a release asset for every target it ships the `gpy-agent` daemon
+# for; otherwise no install path can fetch `gpy` from a GitHub release.
 #
 # Static/text-level check in the same spirit as
-# install_oneline_file_lists.test.fish (#308): it parses release.yml with the
+# install_oneline_file_lists.test.fish: it parses release.yml with the
 # same pure-fish/grep tooling the rest of the suite uses, deliberately NOT a
 # YAML CLI. The sibling install tests avoid external tools so the suite stays
 # portable across CI runners; `yq` in particular is ambiguous (mikefarah vs
@@ -21,13 +19,13 @@
 # cli_asset_name, (2) the CLI asset names are the expected parallel set, and
 # (3) the packaging step requires each CLI asset and the release uploads them.
 #
-# #492 moved the publish contract: create-release no longer names each
-# `release-artifacts/<asset>/<file>` path individually (that list duplicated the
-# build matrix a third time and silently drifted from it). Packaging now renames
-# every artifact to its asset name under `gpy-release/bin/`, fails closed on any
-# that is absent, and create-release uploads that directory. So the per-asset
-# assertion moved to scripts/package-release.sh's EXPECTED_ASSETS list, which is
-# what actually enforces "every target ships a gpy binary".
+# Publishing goes through packaging: scripts/package-release.sh renames every
+# artifact to its asset name under `gpy-release/bin/`, fails closed on any
+# that is absent, and create-release uploads that directory rather than
+# naming each `release-artifacts/<asset>/<file>` path (a list that would
+# duplicate the build matrix and drift from it). So the per-asset assertion
+# targets package-release.sh's EXPECTED_ASSETS list, which is what actually
+# enforces "every target ships a gpy binary".
 
 set -l script_dir (dirname (status --filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)

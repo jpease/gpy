@@ -1,4 +1,4 @@
-//! Windows Subsystem for Linux detection (#849).
+//! Windows Subsystem for Linux detection.
 //!
 //! A WSL distribution is a Linux system in every way the agent can observe
 //! except three: the terminal (and so the fonts) lives on the Windows side,

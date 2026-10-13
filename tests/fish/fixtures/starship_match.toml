@@ -1,5 +1,4 @@
 # Parity baseline config for tests/fish/starship_parity.test.fish
-# ---------------------------------------------------------------------------
 # This is native Starship's built-in default configuration with two
 # documented deviations: the `package` module is disabled, and `hostname`'s
 # `ssh_only` is turned off.
@@ -25,7 +24,7 @@ disabled = true
 # baseline shows plain `<hostname> in ` with no icon. The paired GPY-side
 # isolated config (see starship_parity.test.fish) mirrors this by setting
 # `show_always = true` for the test run only and keeping the preset's icon,
-# which GPY likewise draws only in SSH sessions (#826). The *shipped*
+# which GPY likewise draws only in SSH sessions. The *shipped*
 # starship.toml preset keeps `show_always = false`. See #257 for the semantic
 # background.
 [hostname]

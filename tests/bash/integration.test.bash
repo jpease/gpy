@@ -16,16 +16,16 @@ cd "$ROOT" || exit 1
 
 # Drop inherited repo-scoping git env (GIT_DIR/GIT_WORK_TREE/...) so the worktree
 # fixture below targets its own throwaway repo, not this one, when run from a git
-# hook — `git -C <tmp>` does not override these (#275).
+# hook — `git -C <tmp>` does not override these.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
     GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
     GIT_PREFIX GIT_NAMESPACE 2>/dev/null || true
-# Hermetic XDG dirs (#632): __gpy_load_theme sources a theme-export cache from
-# $XDG_CACHE_HOME/gpy when one exists (#614), which would replace the built-in
+# Hermetic XDG dirs: __gpy_load_theme sources a theme-export cache from
+# $XDG_CACHE_HOME/gpy when one exists, which would replace the built-in
 # defaults this file asserts on with the developer's own theme. The sandbox
 # config also disables the supervisor (the theme export re-sets the env flag),
 # or a later prompt's supervisor check starts a real agent on the "missing"
-# socket, which lives in the sandbox, never in the checkout (#835, #836).
+# socket, which lives in the sandbox, never in the checkout.
 __gpy_integration_xdg_root=$(mktemp -d "${TMPDIR:-/tmp}/gpy-it-xdg.XXXXXX")
 source tests/lib/supervisor_off.bash "$__gpy_integration_xdg_root"
 export GPY_AGENT_SOCKET_PATH="$__gpy_integration_xdg_root/missing.sock"
@@ -43,8 +43,7 @@ fi
 echo "PASS: Clock segment working"
 
 # The fallback must honor the configured time format rather than hardcoding
-# 24-hour, which is what it did before the clock became agent-rendered and is
-# why bash showed 17:21:42 beside fish's 5:21 PM under the same theme.
+# 24-hour, so bash shows the same 5:21 PM as fish under a 12-hour theme.
 spec="$(__time_format=12 __clock_show_seconds=0 __gpy_clock_time_spec)"
 if [[ "$spec" != "%-I:%M %p" ]]; then
     echo "FAIL: 12-hour spec should be '%-I:%M %p'; got: $spec"
@@ -69,7 +68,7 @@ fi
 echo "PASS: clock delegates to the agent when available"
 
 # ...but only for a theme that sets [segments.clock].format (the exported
-# presence flag, #844): without one the shell draws the clock itself, and must
+# presence flag): without one the shell draws the clock itself, and must
 # not spend an IPC round trip on it.
 __clock_format=""
 local_clock="$(__gpy_segment_clock "" "black" "true")"
@@ -81,13 +80,13 @@ unset -f __gpy_request_clock
 echo "PASS: clock renders locally when the theme sets no clock format"
 
 echo "=== Testing Duration Segment ==="
-# Test with duration above threshold - agent-rendered (#199): mock the IPC call
+# Test with duration above threshold - agent-rendered: mock the IPC call
 # so the test validates delegation without requiring a live agent.
 __gpy_request_duration() {
     printf '\033[33m 3.5s \033[0m'
 }
 # Pin the threshold so the test is independent of theme configuration.
-# The variable the agent exports is __duration_threshold_ms (#203).
+# The variable the agent exports is __duration_threshold_ms.
 __duration_threshold_ms=2000
 __gpy_cmd_duration=3500
 output=$(__gpy_segment_duration)
@@ -115,10 +114,10 @@ fi
 # and a socket that does not exist, so it cannot assert on either. The live
 # renders (branch, dirty marker, registration, workspace sync) are asserted
 # against a real agent and an interactive bash on a pty in
-# tests/bash/e2e_agent_autostart.test.bash (#646).
+# tests/bash/e2e_agent_autostart.test.bash.
 
 echo "=== Testing Status Segment ==="
-# The status pill is drawn like fish's (#844): a capped pill in the theme's
+# The status pill is drawn like fish's: a capped pill in the theme's
 # ok/fail colors, the exit status read from __gpy_last_status (as the render
 # loop publishes it).
 __color_status_ok_bg=green __color_status_ok_fg=black __icon_status_ok="OK"
@@ -239,15 +238,13 @@ if [[ "$captured_workspace_payload" != *'"op":"workspace"'* ]]; then
 fi
 echo "PASS: Bash workspace sync"
 
-echo "=== Testing Supervisor Check Round-Trip Cost (#340) ==="
-# Regression test for #340: __gpy_supervisor_check used to call
-# __gpy_supervisor_is_running (a ping round-trip, plus a second
-# __gpy_check_protocol_version status round-trip) as its very first action,
-# before the existing rate-limit gate -- so a HEALTHY agent paid for both
-# round-trips on every single prompt; only the restart itself was
-# rate-limited. This verifies the restructured check: the rate-limit gate
-# runs before any IPC call, and the protocol-version check is cached after
-# its first success so a healthy agent only ever pays for the ping.
+echo "=== Testing Supervisor Check Round-Trip Cost ==="
+# __gpy_supervisor_check must run its rate-limit gate before any IPC call
+# (the __gpy_supervisor_is_running ping and the
+# __gpy_check_protocol_version status round-trip), so a HEALTHY agent does
+# not pay for both round-trips on every prompt, and must cache the
+# protocol-version check after its first success so a healthy agent only
+# ever pays for the ping.
 supervisor_test_tmp_dir=$(mktemp -d)
 supervisor_test_sock="$supervisor_test_tmp_dir/gpy-supervisor-healthy.sock"
 
@@ -272,7 +269,7 @@ s.bind(sys.argv[1])
 
         export GPY_AGENT_SOCKET_PATH="$supervisor_test_sock"
         # The sandbox config disables the agent (sourcing must not start one);
-        # restart supervision needs it enabled (#842).
+        # restart supervision needs it enabled.
         export GPY_AGENT_ENABLED=1
         export GPY_AGENT_SUPERVISOR_ENABLED=1
         # Wide enough that three back-to-back calls in this test all land
@@ -291,10 +288,8 @@ s.bind(sys.argv[1])
             case "$1" in
                 *'"op":"ping"'*)
                     # The daemon's real acknowledgement (its JSON formatter
-                    # renders Ack as {"status":"ok"}); the stub used to
-                    # answer an invented {"op":"pong"} the daemon never
-                    # sends, which is exactly what supervisor.bash was
-                    # wrongly waiting for (#638).
+                    # renders Ack as {"status":"ok"}); supervisor.bash must
+                    # accept exactly that, not an invented {"op":"pong"}.
                     printf '{"status":"ok"}'
                     ;;
                 *'"op":"status"'*)
@@ -348,10 +343,10 @@ s.bind(sys.argv[1])
         echo "PASS: third consecutive healthy supervisor check within the rate-limit window makes 0 round-trips"
 
         # Down-path restart must invalidate the protocol cache in the PARENT
-        # shell (#340 review gap). __gpy_supervisor_start runs backgrounded
+        # shell. __gpy_supervisor_start runs backgrounded
         # (`&`) on the down-path, so any cache reset inside it happens in a
         # subshell and never reaches the parent. If the parent kept a stale
-        # cached "1", the next health check would skip the #307 protocol
+        # cached "1", the next health check would skip the protocol
         # check on whatever agent takes over the socket post-restart -- so a
         # mismatched daemon appearing after the restart would go undetected.
         # Simulate a dead agent and confirm the parent's cache is cleared the
@@ -368,7 +363,7 @@ s.bind(sys.argv[1])
         __gpy_supervisor_check
 
         if [[ "$__gpy_protocol_version_checked" != "0" ]]; then
-            echo "FAIL: down-path restart left parent protocol cache stale (__gpy_protocol_version_checked=$__gpy_protocol_version_checked, want 0); a post-restart mismatched agent would be skipped (#307/#340)"
+            echo "FAIL: down-path restart left parent protocol cache stale (__gpy_protocol_version_checked=$__gpy_protocol_version_checked, want 0); a post-restart mismatched agent would be skipped"
             rm -rf "$supervisor_test_tmp_dir"
             exit 1
         fi
@@ -377,12 +372,12 @@ s.bind(sys.argv[1])
             rm -rf "$supervisor_test_tmp_dir"
             exit 1
         fi
-        echo "PASS: down-path restart invalidates the parent shell's protocol cache so the next health check re-checks the protocol (#307/#340)"
+        echo "PASS: down-path restart invalidates the parent shell's protocol cache so the next health check re-checks the protocol"
 
         # The interval and attempt cap come from the names the theme export
-        # emits ([agent.supervisor] in config.toml), read on every check
-        # (#762). Two prompts 15 s apart with a 60 s interval probe once; the
-        # old 10 s default probed twice.
+        # emits ([agent.supervisor] in config.toml), read on every check.
+        # Two prompts 15 s apart with a 60 s interval probe once; a 10 s
+        # interval would probe twice.
         __gpy_supervisor_probe_count=0
         __gpy_supervisor_is_running() { __gpy_supervisor_probe_count=$((__gpy_supervisor_probe_count + 1)); return 1; }
         unset GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS
@@ -393,11 +388,11 @@ s.bind(sys.argv[1])
         __gpy_supervisor_last_check_time=$((__gpy_supervisor_last_check_time - 15))
         __gpy_supervisor_check
         if [[ "$__gpy_supervisor_probe_count" != "1" ]]; then
-            echo "FAIL: two checks 15 s apart with GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=60 probed $__gpy_supervisor_probe_count time(s), want 1 (#762)"
+            echo "FAIL: two checks 15 s apart with GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=60 probed $__gpy_supervisor_probe_count time(s), want 1"
             rm -rf "$supervisor_test_tmp_dir"
             exit 1
         fi
-        echo "PASS: GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS sets the health-check interval (#762)"
+        echo "PASS: GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS sets the health-check interval"
 
         # max_restart_attempts=1: a persistently dead agent gets one restart.
         export GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS=0
@@ -408,11 +403,11 @@ s.bind(sys.argv[1])
         __gpy_supervisor_check
         __gpy_supervisor_check
         if [[ "$__gpy_supervisor_check_attempts" != "1" ]]; then
-            echo "FAIL: GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS=1 allowed $__gpy_supervisor_check_attempts restart(s), want 1 (#762)"
+            echo "FAIL: GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS=1 allowed $__gpy_supervisor_check_attempts restart(s), want 1"
             rm -rf "$supervisor_test_tmp_dir"
             exit 1
         fi
-        echo "PASS: GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS caps restarts (#762)"
+        echo "PASS: GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS caps restarts"
         unset GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS __gpy_supervisor_probe_count
 
         # Restore the real supervisor functions the stubs shadowed above.
@@ -453,9 +448,8 @@ fi
 rm -rf "$supervisor_test_tmp_dir"
 
 echo "=== Testing Last Segment Context ==="
-# #613: dispatch passes is_last/is_first as "true"/"" (not the old
-# "last"/"first" literals) directly to every segment -- no per-segment
-# conversion.
+# Dispatch passes is_last/is_first as "true"/"" directly to every segment --
+# no per-segment conversion.
 __gpy_segment_alpha() { printf 'alpha:%s|' "$1"; }
 __gpy_segment_beta() { printf 'beta:%s|' "$1"; }
 __enabled_segments="alpha beta"
@@ -467,8 +461,8 @@ fi
 __gpy_request() {
     printf '%s:%s' "$1" "$4"
 }
-# __gpy_segment_git reads the instant cache directly (#614) and, on a cold
-# miss with the agent enabled, makes a bounded synchronous IPC query (#843)
+# __gpy_segment_git reads the instant cache directly and, on a cold
+# miss with the agent enabled, makes a bounded synchronous IPC query
 # through __gpy_sync_data_request instead of falling to oneshot, so that is the
 # stub reached here -- with a guaranteed miss: point XDG_CACHE_HOME at an empty
 # dir rather than relying on whatever real instant-prompt cache this
@@ -512,10 +506,10 @@ echo "=== Testing Doorbell Reload (lazy segment gap regression) ==="
 # segments already in the enabled list). So a theme switch that enables a
 # segment new to this shell's __enabled_segments already has its detect/render
 # functions in memory; the reload only needs to refresh __enabled_segments
-# (via __gpy_load_theme) and re-render. This guards against a future
-# regression to per-segment lazy sourcing that would reintroduce the gap Fish
-# had (#296). Bash consumes the doorbell's flags at the next prompt, in
-# __gpy_precmd, before it renders (#678).
+# (via __gpy_load_theme) and re-render. This guards against per-segment lazy
+# sourcing, which would leave a newly enabled segment undefined until the
+# next shell. Bash consumes the doorbell's flags at the next prompt, in
+# __gpy_precmd, before it renders.
 doorbell_dir=$(mktemp -d)
 __gpy_shell_flag_base="$doorbell_dir/$$"
 # What the agent does for a config change: leave the reload flag (and ring
@@ -571,7 +565,7 @@ mkdir -p "$temp_dir/alpha/beta/project"
 pushd "$temp_dir/alpha/beta/project" >/dev/null || exit 1
 HOME="$temp_dir"
 
-# Directory is agent-rendered (#199); the shell passes GPY_UI_DIRECTORY_DISPLAY and
+# Directory is agent-rendered; the shell passes GPY_UI_DIRECTORY_DISPLAY and
 # $PWD to the agent via __gpy_request. Mock __gpy_request to simulate the agent
 # returning formatted path strings for each display mode so the assertions can
 # verify delegation without requiring a live agent.
@@ -677,7 +671,7 @@ fi
 echo "PASS: Hostname detect shows with show_always"
 
 # What a shell-drawn segment shows once its non-printing wrappers and SGR
-# sequences are removed (the segments are capped pills now, #844: the label sits
+# sequences are removed (the segments are capped pills: the label sits
 # between the delimiters, with no padding of its own).
 visible_text() {
     printf '%s' "$1" | sed -e 's/\\\[//g' -e 's/\\\]//g' -e $'s/\033\\[[0-9;]*m//g'
@@ -704,7 +698,7 @@ if [[ "$output" != *"host.example.com"* ]]; then
 fi
 echo "PASS: Hostname unchanged with empty trim delimiter"
 
-# Icon prefixes the label over SSH when set, and is omitted when empty. #826:
+# Icon prefixes the label over SSH when set, and is omitted when empty;
 # the icon is Starship's ssh_symbol, so a local session omits it too.
 __gpy_is_ssh=1
 __hostname_trim_at="."
@@ -733,7 +727,7 @@ if [[ "$output" == *"@ host"* ]]; then
 fi
 echo "PASS: Hostname icon omitted when unset"
 
-# #826: the real request builder appends "is_ssh":true only for is_ssh=1. The
+# The real request builder appends "is_ssh":true only for is_ssh=1. The
 # __gpy_send_json stub lives in the command-substitution subshell only.
 output=$(__gpy_send_json() { printf '%s' "$1"; }; __gpy_request_hostname h "" "" 1)
 if [[ "$output" != '{"op":"hostname","hostname":"h","format":"bash-prompt","is_ssh":true}' ]]; then
@@ -755,8 +749,8 @@ echo "PASS: Hostname request payload carries is_ssh only over SSH"
 # variable (it would be dropped when the subshell exits) — encode the args the
 # stub received directly into its stdout instead.
 #
-# #613: is_last is forwarded as-is ("true"/"") -- no more per-segment
-# last/first-literal conversion to a "true"/"false" string.
+# is_last is forwarded as-is ("true"/"") -- no per-segment conversion to a
+# "true"/"false" string.
 __gpy_request_hostname() {
     printf 'AGENT[%s|%s|%s|%s|argc=%s]' "$1" "$2" "$3" "$4" "$#"
 }
@@ -769,7 +763,7 @@ if [[ "$output" != "AGENT[host.example.com|true|cyan|0|argc=4]" ]]; then
 fi
 echo "PASS: Hostname dual-path routes to agent renderer with correctly-ordered args"
 
-# #826: the 4th arg carries __gpy_is_ssh for an SSH session too.
+# The 4th arg carries __gpy_is_ssh for an SSH session too.
 __gpy_is_ssh=1
 output=$(__gpy_segment_hostname true "cyan")
 if [[ "$output" != "AGENT[host.example.com|true|cyan|1|argc=4]" ]]; then
@@ -915,8 +909,8 @@ echo "PASS: Username icon omitted when unset"
 # Dual-path: a non-empty __username_format routes to the agent renderer,
 # quoting every positional arg so an empty prev_bg lands in the correct slot.
 #
-# #613: is_last is forwarded as-is ("true"/"") -- no more per-segment
-# last/first-literal conversion to a "true"/"false" string.
+# is_last is forwarded as-is ("true"/"") -- no per-segment conversion to a
+# "true"/"false" string.
 __gpy_request_username() {
     printf 'AGENT[%s|%s|%s|argc=%s]' "$1" "$2" "$3" "$#"
 }
@@ -978,7 +972,7 @@ unset __gpy_username_test_had_user __gpy_username_test_saved_user \
     __gpy_username_test_had_icon __gpy_username_test_saved_icon \
     __gpy_username_test_had_format __gpy_username_test_saved_format
 
-echo "=== Testing Character/Directory Render Memoization (#343) ==="
+echo "=== Testing Character/Directory Render Memoization ==="
 # __gpy_request_character and __gpy_segment_directory are both invoked via
 # command substitution (from __gpy_render_prompt / __gpy_directory_segment_output),
 # which forks a subshell -- an in-memory counter incremented inside a stub

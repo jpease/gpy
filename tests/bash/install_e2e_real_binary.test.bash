@@ -2,14 +2,13 @@
 # tests/bash/install_e2e_real_binary.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# install.sh -> first prompt -> upgrade -> uninstall, with the real binaries
-# (#649, pins #642).
+# install.sh -> first prompt -> upgrade -> uninstall, with the real binaries.
 #
 # Every other installer test substitutes `#!/bin/sh\nexit 0` for the
 # binaries, so `gpy-agent init` writing config.toml, `gpy-agent start`
 # daemonising against the sandboxed XDG directories, `gpy completions fish`
 # producing loadable output at the installed path, and the first shell
-# loading through the rc block were never exercised together. This test
+# loading through the rc block are exercised together only here. This test
 # builds a package shaped like an extracted gpy-release.tar.gz around the
 # debug binaries and drives the whole lifecycle in a sandboxed HOME:
 #
@@ -30,7 +29,7 @@
 #             any XDG directory
 #
 # Nothing here touches the checkout: the package, HOME and every XDG
-# directory live under the GPY test root the harness owns (#619).
+# directory live under the GPY test root the harness owns.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tests/lib/shell_e2e.sh
@@ -40,9 +39,6 @@ test_require_command fish
 test_require_command lsof "lsof is needed to find the PID bound to the agent socket"
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 GPY_CLI="$ROOT/gpy-agent/target/debug/gpy"
 if [ ! -x "$GPY_CLI" ]; then
@@ -103,7 +99,6 @@ installed_agent_responding() {
     "$HOME/.local/bin/gpy-agent" status 2>/dev/null | grep -q 'Running and Responding'
 }
 
-# =====================================================================================
 echo "--- install ---"
 (cd "$PKG" && bash ./install.sh) >"$SHELL_E2E_ROOT/install1.log" 2>&1
 rc=$?
@@ -175,10 +170,9 @@ shell_e2e_send 'exit\r'
 shell_e2e_stop_client
 cd "$SHELL_E2E_ROOT" || exit 1
 
-# =====================================================================================
 echo "--- upgrade ---"
 # The harness overrides the socket path, so the agent records its version next
-# to the socket rather than in the runtime root's agent.version (#780).
+# to the socket rather than in the runtime root's agent.version.
 VERSION_FILE="$GPY_AGENT_SOCKET_PATH.version"
 [ -f "$VERSION_FILE" ] || fail "no version marker at $VERSION_FILE"
 printf '0.0.0-old\n' >"$VERSION_FILE"
@@ -226,7 +220,6 @@ else
     fail "agent.version is '$(cat "$VERSION_FILE")', expected $binary_version"
 fi
 
-# =====================================================================================
 echo "--- uninstall ---"
 SUPERVISOR_PIDFILE="$XDG_RUNTIME_DIR/gpy/supervisor.pid"
 supervisor_pid="$(cat "$SUPERVISOR_PIDFILE" 2>/dev/null || true)"
@@ -273,8 +266,4 @@ else
     pass "the gpy-init block was removed from config.fish"
 fi
 
-if [ "$failures" -gt 0 ]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: install.sh installs, upgrades and uninstalls with the real binaries"
+test_finish "install.sh installs, upgrades and uninstalls with the real binaries"

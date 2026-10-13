@@ -13,7 +13,7 @@ RESET='\033[0m'
 
 info() { printf "${BLUE}ℹ${RESET} %s\n" "$1"; }
 success() { printf "${GREEN}✓${RESET} %s\n" "$1"; }
-warn() { printf "${YELLOW}⚠${RESET} %s\n" "$1"; }
+warn() { printf "${YELLOW}Warning:${RESET} %s\n" "$1"; }
 error() { printf "${RED}✗${RESET} %s\n" "$1"; }
 
 # Change to gpy-agent directory
@@ -48,7 +48,7 @@ write_sidecar() {
     printf '%s  %s\n' "$(sha256_of "$file")" "$(basename "$file")" >"$file.sha256"
 }
 
-# Linux binaries are pinned to the release workflow's glibc floor (#694, #818):
+# Linux binaries are pinned to the release workflow's glibc floor (#694):
 # a plain `cargo build` links the build host's glibc. The floor is read from
 # GPY_GLIBC_FLOOR in release.yml so there is one source of truth.
 GLIBC_FLOOR=$(sed -n 's/^  GPY_GLIBC_FLOOR: "\([0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' ../.github/workflows/release.yml)
@@ -88,7 +88,7 @@ build_target() {
     esac
     if "${build_cmd[@]}"; then
         # install.sh needs BOTH the agent and the CLI per platform, each with a
-        # .sha256 sidecar (#327, #494), so stage the pair with its sidecars.
+        # .sha256 sidecar (#494), so stage the pair with its sidecars.
         local agent_path="target/$target/release-dist/gpy-agent"
         local cli_path="target/$target/release-dist/gpy"
         local cli_name="gpy-${output_name#gpy-agent-}"

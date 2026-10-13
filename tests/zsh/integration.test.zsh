@@ -9,7 +9,7 @@ cd "$ROOT"
 
 # Drop inherited repo-scoping git env (GIT_DIR/GIT_WORK_TREE/...) so the worktree
 # fixture below targets its own throwaway repo, not this one, when run from a git
-# hook — `git -C <tmp>` does not override these (#275).
+# hook — `git -C <tmp>` does not override these.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
     GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
     GIT_PREFIX GIT_NAMESPACE 2>/dev/null || true
@@ -33,8 +33,8 @@ function __gpy_finish_test() {
 }
 trap __gpy_finish_test EXIT
 
-# Hermetic XDG dirs (#632): __gpy_load_theme sources a theme-export cache from
-# $XDG_CACHE_HOME/gpy when one exists (#614), which would replace the built-in
+# Hermetic XDG dirs: __gpy_load_theme sources a theme-export cache from
+# $XDG_CACHE_HOME/gpy when one exists, which would replace the built-in
 # defaults this file asserts on with the developer's own theme.
 __gpy_integration_xdg_root=$(mktemp -d "${TMPDIR:-/tmp}/gpy-it-xdg.XXXXXX")
 export XDG_CACHE_HOME="$__gpy_integration_xdg_root/cache"
@@ -60,8 +60,7 @@ fi
 echo "PASS: $output"
 
 # The fallback must honor the configured time format rather than hardcoding
-# 24-hour, which is what it did before the clock became agent-rendered and is
-# why zsh showed 17:21:42 beside fish's 5:21 PM under the same theme.
+# 24-hour, so zsh shows the same 5:21 PM as fish under the same theme.
 __time_format=12 __clock_show_seconds=0 spec=$(__gpy_clock_time_spec)
 if [[ "$spec" != "%-I:%M %p" ]]; then
     echo "FAIL: 12-hour spec should be '%-I:%M %p'; got: $spec"
@@ -88,7 +87,7 @@ fi
 echo "PASS: clock delegates to the agent when available"
 
 # ...but only for a theme that sets [segments.clock].format (the exported
-# presence flag, #844): without one the shell draws the clock itself, and must
+# presence flag): without one the shell draws the clock itself, and must
 # not spend an IPC round trip on it.
 __clock_format=""
 local_clock=$(__gpy_segment_clock "" "black" "true")
@@ -100,7 +99,7 @@ unfunction __gpy_request_clock
 echo "PASS: clock renders locally when the theme sets no clock format"
 
 echo "=== Testing Duration Segment ==="
-# Test with duration above threshold - agent-rendered (#199): mock the IPC call
+# Test with duration above threshold - agent-rendered: mock the IPC call
 # so the test validates delegation without requiring a live agent.
 function __gpy_request_duration() {
     printf '\033[33m 3.5s \033[0m'
@@ -126,10 +125,10 @@ echo "PASS: Duration hidden for 0.5s"
 # and a socket that does not exist, so it cannot assert on either. The live
 # renders (branch, dirty marker, registration, workspace sync, unregister on
 # exit) are asserted against a real agent and an interactive zsh on a pty in
-# tests/zsh/e2e_agent_autostart.test.zsh (#646).
+# tests/zsh/e2e_agent_autostart.test.zsh.
 
 echo "=== Testing Status Segment ==="
-# The status pill is drawn like fish's (#844): a capped pill in the theme's
+# The status pill is drawn like fish's: a capped pill in the theme's
 # ok/fail colors, the exit status read from __gpy_last_status (as the render
 # loop publishes it).
 __color_status_ok_bg=green __color_status_ok_fg=black __icon_status_ok="OK"
@@ -200,9 +199,9 @@ echo "=== Testing Doorbell Reload (lazy segment gap regression) ==="
 # segments already in the enabled list). So a theme switch that enables a
 # segment new to this shell's __enabled_segments already has its detect/render
 # functions in memory; the doorbell's reload only needs to refresh
-# __enabled_segments (via __gpy_load_theme) before the next render. This
-# guards against a future regression to per-segment lazy sourcing that would
-# reintroduce the gap Fish had (#296).
+# __enabled_segments (via __gpy_load_theme) before the next render.
+# Per-segment lazy sourcing would leave a newly enabled segment without its
+# functions until the shell sourced it.
 doorbell_dir=$(mktemp -d)
 doorbell_stderr="$doorbell_dir/stderr"
 __gpy_shell_flag_base="$doorbell_dir/$$"
@@ -302,9 +301,8 @@ fi
 echo "PASS: Zsh agent payloads"
 
 echo "=== Testing Last Segment Context ==="
-# #613: dispatch passes is_last/is_first as "true"/"" (not the old
-# "last"/"first" literals) directly to every segment -- no per-segment
-# conversion.
+# Dispatch passes is_last/is_first as "true"/"" directly to every segment --
+# no per-segment conversion.
 function __gpy_segment_alpha() { printf 'alpha:%s|' "$1" }
 function __gpy_segment_beta() { printf 'beta:%s|' "$1" }
 __enabled_segments=(alpha beta)
@@ -316,8 +314,8 @@ fi
 function __gpy_request() {
     printf '%s:%s' "$1" "$4"
 }
-# __gpy_segment_git reads the instant cache directly (#614) and, on a cold
-# miss with the agent enabled, makes a bounded synchronous IPC query (#843)
+# __gpy_segment_git reads the instant cache directly and, on a cold
+# miss with the agent enabled, makes a bounded synchronous IPC query
 # through __gpy_sync_data_request instead of falling to oneshot, so that is the
 # stub reached here -- with a guaranteed miss: point XDG_CACHE_HOME at an empty
 # dir rather than relying on whatever real instant-prompt cache this
@@ -350,7 +348,7 @@ pushd "$temp_dir/alpha/beta/project" >/dev/null || exit 1
 HOME="$temp_dir"
 GPY_UI_DIRECTORY_MAX_LENGTH=1000
 
-# Directory is agent-rendered (#199); the shell passes GPY_UI_DIRECTORY_DISPLAY and
+# Directory is agent-rendered; the shell passes GPY_UI_DIRECTORY_DISPLAY and
 # $PWD to the agent via __gpy_request. Mock __gpy_request to simulate the agent
 # returning formatted path strings for each display mode so the assertions can
 # verify delegation without requiring a live agent.
@@ -412,8 +410,7 @@ echo "PASS: Directory display modes"
 
 echo "=== Testing Hostname Segment ==="
 
-# Preserve ambient state so mutations here don't leak into later test sections
-# (test hygiene note flagged by the reviewer on the bash equivalent of this task).
+# Preserve ambient state so mutations here don't leak into later test sections.
 __gpy_hostname_test_had_host=${+HOST}
 __gpy_hostname_test_saved_host=$HOST
 __gpy_hostname_test_had_is_ssh=${+__gpy_is_ssh}
@@ -455,7 +452,7 @@ fi
 echo "PASS: Hostname detect shows with show_always"
 
 # What a shell-drawn segment shows once its non-printing wrappers and SGR
-# sequences are removed (the segments are capped pills now, #844: the label sits
+# sequences are removed (the segments are capped pills: the label sits
 # between the delimiters, with no padding of its own).
 visible_text() {
     printf '%s' "$1" | sed -e 's/%[{}]//g' -e $'s/\033\\[[0-9;]*m//g'
@@ -482,8 +479,8 @@ if [[ "$output" != *"host.example.com"* ]]; then
 fi
 echo "PASS: Hostname unchanged with empty trim delimiter"
 
-# Icon prefixes the label over SSH when set, and is omitted when empty. #826:
-# the icon is Starship's ssh_symbol, so a local session omits it too.
+# Icon prefixes the label over SSH when set, and is omitted when empty.
+# The icon is Starship's ssh_symbol, so a local session omits it too.
 __gpy_is_ssh=1
 __hostname_trim_at="."
 __icon_hostname="@"
@@ -511,7 +508,7 @@ if [[ "$output" == *"@ host"* ]]; then
 fi
 echo "PASS: Hostname icon omitted when unset"
 
-# The local path wraps every SGR sequence in zsh's zero-width `%{ %}` (#679).
+# The local path wraps every SGR sequence in zsh's zero-width `%{ %}`.
 output=$(__gpy_segment_hostname)
 if [[ "$output" != *'%{'*'%}'* || "$output" == *'%K{'* || "$output" == *'%F{'* ]]; then
     echo "FAIL: Hostname local render should wrap raw SGR in %{ %}: $output"
@@ -519,7 +516,7 @@ if [[ "$output" != *'%{'*'%}'* || "$output" == *'%K{'* || "$output" == *'%F{'* ]
 fi
 echo "PASS: Hostname wraps its SGR in %{ %}"
 
-# #826: the real request builder appends "is_ssh":true only for is_ssh=1. The
+# The real request builder appends "is_ssh":true only for is_ssh=1. The
 # __gpy_send_json stub lives in the command-substitution subshell only.
 output=$(function __gpy_send_json() { print -rn -- "$1"; }; __gpy_request_hostname h "" "" 1)
 if [[ "$output" != '{"op":"hostname","hostname":"h","format":"zsh-prompt","is_ssh":true}' ]]; then
@@ -541,8 +538,8 @@ echo "PASS: Hostname request payload carries is_ssh only over SSH"
 # variable (it would be dropped when the subshell exits) — encode the args the
 # stub received directly into its stdout instead.
 #
-# #613: is_last is forwarded as-is ("true"/"") -- no more per-segment
-# last/first-literal conversion to a "true"/"false" string.
+# is_last is forwarded as-is ("true"/""), never converted to a
+# "true"/"false" string.
 function __gpy_request_hostname() {
     printf 'AGENT[%s|%s|%s|%s|argc=%s]' "$1" "$2" "$3" "$4" "$#"
 }
@@ -555,7 +552,7 @@ if [[ "$output" != "AGENT[host.example.com|true|cyan|0|argc=4]" ]]; then
 fi
 echo "PASS: Hostname dual-path routes to agent renderer with correctly-ordered args"
 
-# #826: the 4th arg carries __gpy_is_ssh for an SSH session too.
+# The 4th arg carries __gpy_is_ssh for an SSH session too.
 __gpy_is_ssh=1
 output=$(__gpy_segment_hostname true "cyan")
 if [[ "$output" != "AGENT[host.example.com|true|cyan|1|argc=4]" ]]; then
@@ -566,7 +563,7 @@ echo "PASS: Hostname dual-path forwards __gpy_is_ssh as the 4th arg"
 
 # is_last must stay the possibly-empty string (not "false") when this is not
 # the last segment, and an empty prev_bg must still land in the 3rd slot (not
-# shift left) — the bug class called out for this task. argc=4 proves the
+# shift left). argc=4 proves the
 # empty prev_bg was passed as a real (empty) positional arg, not omitted.
 output=$(__gpy_segment_hostname "" "")
 if [[ "$output" != "AGENT[host.example.com|||1|argc=4]" ]]; then
@@ -709,7 +706,7 @@ if [[ "$output" == *"# root"* ]]; then
 fi
 echo "PASS: Username icon omitted when unset"
 
-# The local path wraps every SGR sequence in zsh's zero-width `%{ %}` (#679).
+# The local path wraps every SGR sequence in zsh's zero-width `%{ %}`.
 output=$(__gpy_segment_username)
 if [[ "$output" != *'%{'*'%}'* || "$output" == *'%K{'* || "$output" == *'%F{'* ]]; then
     echo "FAIL: Username local render should wrap raw SGR in %{ %}: $output"
@@ -720,8 +717,8 @@ echo "PASS: Username wraps its SGR in %{ %}"
 # Dual-path: a non-empty __username_format routes to the agent renderer,
 # quoting every positional arg so an empty prev_bg lands in the correct slot.
 #
-# #613: is_last is forwarded as-is ("true"/"") -- no more per-segment
-# last/first-literal conversion to a "true"/"false" string.
+# is_last is forwarded as-is ("true"/""), never converted to a
+# "true"/"false" string.
 function __gpy_request_username() {
     printf 'AGENT[%s|%s|%s|argc=%s]' "$1" "$2" "$3" "$#"
 }
@@ -823,7 +820,7 @@ function __gpy_memo_call_count() {
     wc -c < "$1" 2>/dev/null | tr -d ' '
 }
 
-# Mirrors __gpy_precmd's exact render + relay-consumption sequence (#343) --
+# Mirrors __gpy_precmd's exact render + relay-consumption sequence --
 # see the cache var declarations in zsh/core/init.zsh for why a cache-miss
 # write inside __gpy_render_prompt's subshell has to be relayed through a
 # file -- without its unrelated agent-registration/workspace-sync side

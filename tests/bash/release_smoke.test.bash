@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # scripts/smoke-release.sh executes the packaged binaries and fails on a
-# broken one (#652).
+# broken one.
 #
 # The release workflow's smoke job runs that script against the payload
 # scripts/package-release.sh produced. This builds the same payload locally
@@ -43,9 +43,6 @@ case "$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)" in
 esac
 
 VERSION="v$("$GPY_AGENT" --version | awk '{print $2}')"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 work="$(mktemp -d "$(shell_e2e_test_root)/release-smoke.XXXXXX" 2>/dev/null || mktemp -d "${TMPDIR:-/tmp}/release-smoke.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
@@ -119,8 +116,4 @@ else
     tail -n 20 "$work/broken/smoke.log"
 fi
 
-if [ "$failures" -gt 0 ]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: the release smoke run executes the packaged binaries and catches a broken one"
+test_finish "the release smoke run executes the packaged binaries and catches a broken one"

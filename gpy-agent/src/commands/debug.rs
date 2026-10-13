@@ -187,10 +187,7 @@ pub fn prompt() -> Result<()> {
     })
 }
 
-/// Run the debug prompt timing analysis -- native Windows stub (#284).
-///
-/// GPY's IPC transport is Unix-socket based and not yet implemented on native
-/// Windows; this diagnostic is unavailable there.
+/// Native Windows stub; see `crate::ipc::native_windows_unsupported`.
 ///
 /// # Errors
 ///

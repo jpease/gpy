@@ -5,15 +5,9 @@
 //! Palettes are resolved in this precedence order (highest wins):
 //!
 //! 1. **User** — `~/.config/gpy/palettes/<name>.toml` (or `$XDG_CONFIG_HOME/gpy/palettes/<name>.toml`).
-//! 2. **Plugin** — provided by a discovered plugin (reserved for a future sub-project;
-//!    plugin manifests do not yet carry a `palettes` field — see SP2).
+//! 2. **Plugin** — not produced for palettes: plugin manifests carry no
+//!    `palettes` field.
 //! 3. **Builtin** — embedded in the binary (`"default"` → [`DEFAULT_PALETTE_CONTENT`]).
-//!
-//! # Plugin palettes (deferred)
-//!
-//! [`PaletteSource::Plugin`] is present for forward-compatibility, but SP1 does **not**
-//! wire plugin palette discovery. Adding it requires a plugin-manifest schema change that
-//! is out of scope for SP1. The variant is a no-op until a later sub-project lands.
 
 use crate::config::defaults::{
     CATPPUCCIN_FRAPPE_PALETTE_CONTENT, CATPPUCCIN_LATTE_PALETTE_CONTENT,
@@ -46,10 +40,8 @@ pub(crate) const BUILTIN_PALETTES: &[(&str, &str)] = &[
 
 /// Source metadata for a discovered palette.
 ///
-/// Themes and palettes shared one enum shape and one precedence ordering, so
-/// both names now refer to the single [`crate::config::discovery::Source`]
-/// (#588). `Source::Plugin` stays unconstructed for palettes: plugin palette
-/// discovery is still deferred (see this module's header).
+/// Shared with theme discovery as [`crate::config::discovery::Source`];
+/// `Source::Plugin` is never constructed for palettes.
 pub type PaletteSource = Source;
 
 /// A palette entry exposed to CLI/runtime discovery.
@@ -66,8 +58,8 @@ pub type DiscoveredPalette = Discovered;
 /// `commands::palette` sites use `new` purely as a name-validity probe). No
 /// struct field, `Arc`, or static holds one anywhere in the crate.
 ///
-/// That is why #588 gave hot-reload to `ConfigManager` and `ThemeManager` but
-/// not here: attaching a
+/// That is why `ConfigManager` and `ThemeManager` hot-reload but this does
+/// not: attaching a
 /// [`HotReloadSlot`](crate::watcher::hot_reload::HotReloadSlot) to a value with
 /// this lifetime would spawn and join a watcher thread per render. The
 /// long-lived palette state is [`crate::palette::PaletteCache`], and that — not
@@ -134,7 +126,6 @@ impl PaletteManager {
         let mut merged: BTreeMap<String, DiscoveredPalette> = BTreeMap::new();
 
         discovery::insert_builtins(&mut merged, BUILTIN_PALETTES);
-        // Plugin palettes deferred to a later sub-project (SP2+).
         Self::insert_user_palettes(&mut merged);
 
         merged.into_values().collect()

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Generate a CycloneDX 1.5 SBOM for the gpy-agent workspace.
 #
-# Added in gpy#494. Every published release ships an SBOM alongside the
+# Every published release ships an SBOM alongside the
 # binaries so downstream consumers can answer "is GPY affected by CVE-X"
 # without cloning the repository and resolving Cargo.lock themselves.
 #
@@ -16,8 +16,7 @@
 #
 # Deliberately not using cargo-cyclonedx or syft: both would add a
 # network-installed tool to the release pipeline that the local quality gate
-# cannot run, so the SBOM step would only ever be exercised by a tag push --
-# the exact failure mode #492 was filed for. cargo and jq are already gate
+# cannot run, so the SBOM step would only ever be exercised by a tag push. cargo and jq are already gate
 # dependencies.
 #
 # Usage:

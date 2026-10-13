@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 # tests/zsh/cache_dir_no_leak.test.zsh
 #
-# #763: the private render-cache dir ($TMPDIR/gpy_cache_*) must not leak on
+# The private render-cache dir ($TMPDIR/gpy_cache_*) must not leak on
 # re-source, `exec zsh`, or a killed shell, and a live shell's dir must never
 # be removed by a sibling. Children never start an agent: none is on their
 # PATH. Paths reach children only as environment/argv.
@@ -13,9 +13,7 @@ LIVE_PID=
 mkdir -p "$SANDBOX/tmp" "$SANDBOX/zdot"
 print -r -- 'source "$GPY_TEST_ROOT/zsh/gpy.zsh"' >"$SANDBOX/zdot/.zshrc"
 
-failures=0
-fail() { print -r -- "FAIL: $*"; failures=$((failures + 1)); }
-pass() { print -r -- "PASS: $*"; }
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
 # child_env <cmd...>: run a command in a scrubbed environment.
 child_env() {
@@ -29,6 +27,8 @@ child_env() {
 run_zsh() { print -r -- "$1" | child_env zsh -i >/dev/null 2>&1; }
 
 leftovers() { local -a d; d=("$SANDBOX"/tmp/gpy_cache_*(N)); print -r -- ${#d}; }
+# A native loop, not shell_e2e_poll: that helper runs under sticky `emulate sh`,
+# which disables the `(N)` glob qualifier `leftovers` relies on.
 wait_dir() { local i; for i in {1..50}; do (( $(leftovers) > 0 )) && return; sleep 0.1; done; }
 
 expect_zero() {
@@ -79,8 +79,4 @@ exec 9>&-
 wait $LIVE_PID 2>/dev/null; LIVE_PID=
 expect_zero "live shell after exit"
 
-if ((failures > 0)); then
-    print -r -- "=== $failures assertion(s) failed ==="
-    exit 1
-fi
-print -r -- "=== All Tests Passed ==="
+test_finish

@@ -4,145 +4,90 @@
 //! These functions are used by serde's `#[serde(default = "...")]` attributes and
 //! by the `Default` trait implementations for configuration structs.
 
-// ============================================================================
-// Boolean defaults
-// ============================================================================
+use crate::config::types::{ColorSpec, Icon};
+
+/// Build an [`Icon`] from a hardcoded default literal.
+///
+/// # Panics
+/// Panics if `s` is not a valid icon; callers pass only known-good literals.
+#[expect(
+    clippy::expect_used,
+    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
+)]
+fn icon(s: &'static str) -> Icon {
+    Icon::new(s).expect("Default icon must be valid")
+}
+
+/// Build a [`ColorSpec`] from a hardcoded default literal.
+///
+/// # Panics
+/// Panics if `s` is not a valid color; callers pass only known-good literals.
+#[expect(
+    clippy::expect_used,
+    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
+)]
+fn color(s: &'static str) -> ColorSpec {
+    ColorSpec::new(s).expect("Hardcoded default color must be valid")
+}
 
 /// Default value for boolean flags (enabled)
 pub(crate) const fn default_true() -> bool {
     true
 }
 
-// ============================================================================
-// Git defaults
-// ============================================================================
-
 /// Default maximum ahead/behind count (0 = unlimited)
 pub(crate) const fn default_max_ahead_behind() -> usize {
     100
 }
 
-use crate::config::types::{ColorSpec, Icon};
-
-// ============================================================================
-// Git icon defaults
-// ============================================================================
-
 /// Default git ahead indicator
-///
-/// # Panics
-/// Panics if the default icon is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_git_icon_ahead() -> Icon {
-    Icon::new("↑").expect("Default icon must be valid")
+    icon("↑")
 }
 
 /// Default git behind indicator
-///
-/// # Panics
-/// Panics if the default icon is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_git_icon_behind() -> Icon {
-    Icon::new("↓").expect("Default icon must be valid")
+    icon("↓")
 }
 
 /// Default git staged files indicator
-///
-/// # Panics
-/// Panics if the default icon is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_git_icon_staged() -> Icon {
-    Icon::new("✚").expect("Default icon must be valid")
+    icon("✚")
 }
 
 /// Default git unstaged files indicator
-///
-/// # Panics
-/// Panics if the default icon is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_git_icon_unstaged() -> Icon {
-    Icon::new("✱").expect("Default icon must be valid")
+    icon("✱")
 }
 
 /// Default git untracked files indicator
-///
-/// # Panics
-/// Panics if the default icon is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_git_icon_untracked() -> Icon {
-    Icon::new("?").expect("Default icon must be valid")
+    icon("?")
 }
 
 /// Default git conflicts indicator
-///
-/// # Panics
-/// Panics if the default icon is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_git_icon_conflicts() -> Icon {
-    Icon::new("✖").expect("Default icon must be valid")
+    icon("✖")
 }
 
 /// Default git stash indicator (Unicode `icon_set`).
 ///
-/// Nerd Font alternates for this and the two glyphs below are added when the
-/// resolver consumes `[git] icon_set` (#245) — wiring icon-set selection in
-/// before there is a render-time consumer would leave dead code.
-///
-/// # Panics
-/// Panics if the default icon is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
+/// Nerd Font alternates for this and the two glyphs below belong with the
+/// resolver that consumes `[git] icon_set` (#245); there is no render-time
+/// consumer yet.
 pub(crate) fn default_git_icon_stash() -> Icon {
-    Icon::new("≡").expect("Default icon must be valid")
+    icon("≡")
 }
 
 /// Default detached-HEAD indicator (Unicode `icon_set`)
-///
-/// # Panics
-/// Panics if the default icon is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_git_icon_detached() -> Icon {
-    Icon::new("➦").expect("Default icon must be valid")
+    icon("➦")
 }
 
 /// Default in-progress-operation indicator (Unicode `icon_set`)
-///
-/// # Panics
-/// Panics if the default icon is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_git_icon_in_progress() -> Icon {
-    Icon::new("↻").expect("Default icon must be valid")
+    icon("↻")
 }
-
-// ============================================================================
-// Language defaults
-// ============================================================================
 
 /// Default language display mode
 pub(crate) const fn default_language_show() -> crate::config::types::LanguageDisplay {
@@ -153,10 +98,6 @@ pub(crate) const fn default_language_show() -> crate::config::types::LanguageDis
 pub(crate) const fn default_language_filter() -> crate::config::types::LanguageFilter {
     crate::config::types::LanguageFilter::All
 }
-
-// ============================================================================
-// UI defaults
-// ============================================================================
 
 /// Default enabled segments in order
 pub(crate) fn default_enabled_segments() -> Vec<String> {
@@ -169,34 +110,15 @@ pub(crate) fn default_enabled_segments() -> Vec<String> {
     ]
 }
 
-// ============================================================================
-// Delimiter defaults
-// ============================================================================
-
 /// Default delimiter background color (transparent)
-///
-/// # Panics
-/// Panics if the default color is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_delimiter_bg_transparent() -> ColorSpec {
-    ColorSpec::new("transparent").expect("Hardcoded default color must be valid")
+    color("transparent")
 }
-
-// ============================================================================
-// Duration defaults
-// ============================================================================
 
 /// Default duration threshold in milliseconds
 pub(crate) const fn default_duration_threshold() -> u64 {
     100
 }
-
-// ============================================================================
-// Character segment defaults
-// ============================================================================
 
 /// Default success symbol for the character segment (prompt `❯`)
 pub(crate) fn default_character_success_symbol() -> String {
@@ -209,119 +131,48 @@ pub(crate) fn default_character_error_symbol() -> String {
 }
 
 /// Default foreground color when the last command succeeded
-///
-/// # Panics
-/// Panics if the default color is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_character_success_color() -> ColorSpec {
-    ColorSpec::new("green").expect("Hardcoded default color must be valid")
+    color("green")
 }
 
 /// Default foreground color when the last command failed
-///
-/// # Panics
-/// Panics if the default color is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_character_error_color() -> ColorSpec {
-    ColorSpec::new("red").expect("Hardcoded default color must be valid")
+    color("red")
 }
 
-// ============================================================================
-// Status segment defaults
-// ============================================================================
-
 /// Default background color for successful command status
-///
-/// # Panics
-/// Panics if the default color is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_status_ok_bg() -> ColorSpec {
-    ColorSpec::new("green").expect("Hardcoded default color must be valid")
+    color("green")
 }
 
 /// Default text color for successful command status
-///
-/// # Panics
-/// Panics if the default color is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_status_ok_text() -> ColorSpec {
-    ColorSpec::new("black").expect("Hardcoded default color must be valid")
+    color("black")
 }
 
 /// Default background color for failed command status
-///
-/// # Panics
-/// Panics if the default color is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_status_fail_bg() -> ColorSpec {
-    ColorSpec::new("red").expect("Hardcoded default color must be valid")
+    color("red")
 }
 
 /// Default text color for failed command status
-///
-/// # Panics
-/// Panics if the default color is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_status_fail_text() -> ColorSpec {
-    ColorSpec::new("black").expect("Hardcoded default color must be valid")
+    color("black")
 }
 
-// ============================================================================
-// UI theme defaults
-// ============================================================================
-
 /// Default user prompt icon
-///
-/// # Panics
-/// Panics if the default icon is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_ui_prompt() -> Icon {
-    Icon::new("❯").expect("Default icon must be valid")
+    icon("❯")
 }
 
 /// Default root prompt icon
-///
-/// # Panics
-/// Panics if the default icon is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_ui_root_prompt() -> Icon {
-    Icon::new("!❯!").expect("Default icon must be valid")
+    icon("!❯!")
 }
 
 /// Default root prompt color
-///
-/// # Panics
-/// Panics if the default color is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_ui_root_prompt_color() -> ColorSpec {
-    ColorSpec::new(DEFAULT_UI_ROOT_PROMPT_COLOR).expect("Hardcoded default color must be valid")
+    color(DEFAULT_UI_ROOT_PROMPT_COLOR)
 }
 
 /// Default prompt open delimiter
@@ -344,58 +195,25 @@ pub(crate) fn default_ui_segment_close_delimiter() -> String {
     " ".to_owned()
 }
 
-// ============================================================================
-// Color defaults
-// ============================================================================
-
 /// Default white color
-///
-/// # Panics
-/// Panics if the default color is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_color_white() -> ColorSpec {
-    ColorSpec::new("white").expect("Hardcoded default color must be valid")
+    color("white")
 }
 
 /// Default black color
-///
-/// # Panics
-/// Panics if the default color is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_color_black() -> ColorSpec {
-    ColorSpec::new("black").expect("Hardcoded default color must be valid")
+    color("black")
 }
 
 /// Default red color (username segment root/sudo warning pill)
-///
-/// # Panics
-/// Panics if the default color is invalid.
-#[expect(
-    clippy::expect_used,
-    reason = "argument is a compile-time-constant literal; parsing it is infallible in practice"
-)]
 pub(crate) fn default_color_red() -> ColorSpec {
-    ColorSpec::new("red").expect("Hardcoded default color must be valid")
+    color("red")
 }
-
-// ============================================================================
-// Hostname defaults
-// ============================================================================
 
 /// Default hostname trim delimiter: trims at the first `.` (FQDN -> short name).
 pub(crate) fn default_hostname_trim_at() -> String {
     ".".to_owned()
 }
-
-// ============================================================================
-// Public constants
-// ============================================================================
 
 /// Default color for the user prompt icon when not specified in theme files
 pub const DEFAULT_UI_PROMPT_COLOR: &str = "white";
@@ -415,10 +233,6 @@ pub const DEFAULT_SEGMENT_OPEN: &str = " ";
 /// Static constant for default segment close delimiter
 pub const DEFAULT_SEGMENT_CLOSE: &str = " ";
 
-// ============================================================================
-// Embedded Theme Contents
-// ============================================================================
-
 /// Embedded content of the default theme
 pub const DEFAULT_THEME_CONTENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -437,7 +251,7 @@ pub const STARSHIP_THEME_CONTENT: &str = include_str!(concat!(
     "/../config/themes/starship.toml"
 ));
 
-/// Embedded default palette TOML (identity ANSI map until SP2 finalizes it).
+/// Embedded default palette TOML (identity ANSI map).
 pub const DEFAULT_PALETTE_CONTENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../config/palettes/default.toml"

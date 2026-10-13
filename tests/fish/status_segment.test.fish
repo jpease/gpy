@@ -3,7 +3,7 @@
 # tracking. `__gpy_last_segment_bg` must reflect the background the status
 # pill actually rendered (ok vs fail branch, each with its own color and its
 # own literal fallback) so the NEXT segment's opening chevron blends
-# correctly. Regression for #453 (status never updated the tracker at all).
+# correctly.
 #
 # Sources the segment file directly and stubs gpy_section_standalone, mirroring
 # hostname_segment.test.fish / username_segment.test.fish.

@@ -2,7 +2,7 @@
 # tests/bash/cache_key_vectors.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #705: __gpy_path_to_cache_key must produce the same Unix key as the agent's
+# __gpy_path_to_cache_key must produce the same Unix key as the agent's
 # encoder for every row of tests/fixtures/cache_key_vectors.tsv (also read by
 # the Rust, Zsh and Fish tests). See the fixture's header for the format.
 
@@ -13,7 +13,7 @@ source bash/core/ipc.bash
 
 FIXTURE="tests/fixtures/cache_key_vectors.tsv"
 
-# Non-ASCII stems count characters only under a UTF-8 locale (#771).
+# Non-ASCII stems count characters only under a UTF-8 locale.
 for utf8_locale in C.UTF-8 en_US.UTF-8 ""; do
     [[ -n "$utf8_locale" ]] || { echo "FAIL: no UTF-8 locale available"; exit 1; }
     export LC_ALL="$utf8_locale"
@@ -51,7 +51,7 @@ while IFS=$'\t' read -r input_col expected_col stem_col _rest; do
         echo "FAIL: case $CASE_COUNT ($input_col): expected [$expected_col], got [$actual]"
         FAILED=1
     fi
-    # #771: the relative cache-file path the reader builds from the key.
+    # The relative cache-file path the reader builds from the key.
     stem="$actual"
     __gpy_chunk_cache_key stem
     if [[ "$stem.git.none.bash" == "$stem_col.git.none.bash" && -n "$stem_col" ]]; then

@@ -1,16 +1,16 @@
 #!/usr/bin/env fish
-# Regression test for #299: the `nc -U` fallback used when coreutils `timeout`
-# (and `socat`) are unavailable must not hang forever against a
-# connected-but-silent socket — that freezes the prompt on stock macOS.
+# The `nc -U` fallback used when coreutils `timeout` (and `socat`) are
+# unavailable must not hang forever against a connected-but-silent socket —
+# that would freeze the prompt on stock macOS.
 #
 # The "wedged agent" is simulated with a tiny Python listener that accept()s
 # the connection and then goes silent. Plain `nc -l` can't stand in for this:
 # nc auto-closes as soon as it sees the client's half-close, which masks the
-# bug this test guards against.
+# hang this test guards against.
 #
 # The listener self-destructs after a few seconds so this test has a hard,
-# deterministic upper bound even if the fallback regresses and hangs again —
-# no fragile background-job PID tracking required.
+# deterministic upper bound even if the fallback hangs — no fragile
+# background-job PID tracking required.
 
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
@@ -19,7 +19,7 @@ source "$repo_root/fish/core/constants.fish"
 source "$repo_root/fish/core/util.fish"
 source "$repo_root/fish/core/ipc.fish"
 
-print_test_header "IPC nc fallback timeout (#299)"
+print_test_header "IPC nc fallback timeout"
 
 if not command -q nc
     test_skip "nc not installed, cannot exercise this fallback"
@@ -45,10 +45,7 @@ time.sleep(float(sys.argv[2]))
 ' $sock $listener_lifetime_secs &
 set -l listener_pid $last_pid
 
-for i in (seq 1 20)
-    test -S $sock; and break
-    sleep 0.1
-end
+poll_until 2 test -S $sock
 
 function _ipc_nc_fallback_cleanup --argument-names listener_pid test_tmp_dir
     kill -9 $listener_pid 2>/dev/null
@@ -82,8 +79,8 @@ set -l elapsed_ms (math "($end_ns - $start_ns) / 1000000")
 set -l test_result PASS
 
 # Acceptance criterion: must return within ~1s. The listener self-destructs
-# at {$listener_lifetime_secs}s, so a regression that removes `-w` would show
-# up as ~{$listener_lifetime_secs}000ms here rather than a real hang.
+# at {$listener_lifetime_secs}s, so a fallback without `-w` would show up as
+# ~{$listener_lifetime_secs}000ms here rather than a real hang.
 set -l deadline_ms (math "$listener_lifetime_secs * 1000 - 500")
 if test $elapsed_ms -lt $deadline_ms
     print_test_result "nc fallback returns instead of hanging" PASS "{$elapsed_ms}ms"

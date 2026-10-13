@@ -2,15 +2,13 @@
 # tests/zsh/prompt_dispatch_positions.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression/contract test for #613 (mirrors tests/fish/prompt_dispatch_positions.test.fish).
+# Contract test for segment positions (mirrors tests/fish/prompt_dispatch_positions.test.fish).
 #
 # Drives the real __gpy_render_prompt dispatch loop (zsh/core/init.zsh) with
 # three stub segments and asserts each receives is_last/is_first as "true"/""
 # in the correct position -- "true" for the segment at that edge, "" for
-# everywhere else. Before #613 the existing "Last Segment Context" coverage in
-# integration.test.zsh only exercised is_last (via the "last" literal); this
-# adds is_first coverage against the actual dispatch loop, not just a direct
-# segment call.
+# everywhere else. This covers is_first as well as is_last against the actual
+# dispatch loop, not just a direct segment call.
 
 ROOT=${0:a:h:h:h}
 cd "$ROOT" || exit 1

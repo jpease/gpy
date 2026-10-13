@@ -124,9 +124,7 @@ just fmt-check       # cargo fmt --check
 ./scripts/test_fish.sh
 fish tests/fish/<name>.test.fish            # a single suite
 
-# Bash and Zsh integration tests (auto-discovered by quality-check.sh;
-# tests/bash/README.md and tests/zsh/README.md list every file and which
-# are repo-policy checks rather than shell tests)
+# Bash and Zsh integration tests (auto-discovered by quality-check.sh)
 bash tests/bash/<name>.test.bash
 zsh tests/zsh/<name>.test.zsh
 

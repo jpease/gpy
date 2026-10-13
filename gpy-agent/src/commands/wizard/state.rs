@@ -97,13 +97,13 @@ pub struct WizardState {
     /// Pending per-field edits to the active theme's `ThemeConfig`, or `None`
     /// when no theme field has been edited this session. Unlike
     /// `selected_theme`/`selected_palette`/segments (which live in
-    /// `config.toml`), these fields live in the per-theme TOML file, so they
-    /// persist through a different path — `save` writes this to the user
-    /// themes directory via [`ThemeManager::save_user_theme`] (#407).
+    /// `config.toml`), these fields live in the per-theme TOML file, so `save`
+    /// writes them to the user themes directory via
+    /// [`ThemeManager::save_user_theme`].
     ///
     /// Seeded and accumulated by [`patch_active_theme`](Self::patch_active_theme)
     /// and discarded by [`select_theme`](Self::select_theme) when the theme
-    /// changes (the edits described the previously-selected theme).
+    /// changes.
     pending_theme: Option<ThemeConfig>,
 }
 
@@ -134,9 +134,8 @@ impl WizardState {
     /// available-themes/palettes/segments lists — no discovery I/O.
     ///
     /// [`Self::new`] is the I/O-performing wrapper around this; tests call
-    /// this directly with fixed lists so wizard unit tests are deterministic
-    /// regardless of what themes/palettes a developer happens to have
-    /// installed under `$HOME/.config/gpy/` (#607).
+    /// this directly with fixed lists so they don't depend on what's
+    /// installed under `$HOME/.config/gpy/`.
     pub(crate) fn from_parts(
         config: Config,
         available_themes: Vec<String>,
@@ -178,8 +177,6 @@ impl WizardState {
             pending_theme: None,
         }
     }
-
-    // --- read accessors used by rendering (later tasks) ---
 
     pub(crate) fn available_themes(&self) -> &[String] {
         &self.available_themes
@@ -229,14 +226,8 @@ impl WizardState {
 
     /// The builtin segment `Section::Segments`'s cursor currently sits on, or
     /// `None` when focus isn't on `Section::Segments`, the cursor is out of
-    /// range, or the highlighted segment isn't a builtin (e.g. it's a plugin
-    /// segment). The single entry point every per-segment picker guard
-    /// (`cycle_directory_display`, `cycle_language_display`,
-    /// `toggle_language_show_versions`, `cycle_clock_time_format`,
-    /// `toggle_clock_show_seconds`, `toggle_duration_show_milliseconds`,
-    /// `toggle_git_show_branch`/`toggle_git_show_ahead_behind`/
-    /// `toggle_git_show_stash`) compares against, replacing what used to be
-    /// five near-identical `is_*_segment_focused` predicates.
+    /// range, or the highlighted segment isn't a builtin (e.g. a plugin
+    /// segment). Every per-segment picker guards on this.
     pub(crate) fn focused_builtin(&self) -> Option<crate::plugin::BuiltinSegment> {
         if self.focus != Section::Segments {
             return None;
@@ -397,14 +388,11 @@ impl WizardState {
         &self.filter_query
     }
 
-    // --- transitions ---
-
     pub(crate) fn select_theme(&mut self, name: &str) {
         if self.available_themes.iter().any(|t| t == name) {
             if name != self.selected_theme {
-                // Pending per-field edits described the previously-selected
-                // theme; switching themes drops them rather than misapplying
-                // one theme's field edits onto a different theme's file.
+                // Pending per-field edits belong to the old theme; drop them
+                // rather than misapply them onto a different theme's file.
                 self.pending_theme = None;
             }
             name.clone_into(&mut self.selected_theme);
@@ -421,13 +409,10 @@ impl WizardState {
     /// until [`save`](crate::commands::wizard::save) writes it to the user
     /// themes directory via [`ThemeManager::save_user_theme`].
     ///
-    /// This is the generic per-field theme-edit entry point (#407): the
-    /// clock/duration/git (and eventual per-swatch color) pickers each call it
-    /// with a closure touching only their own field, so nothing else in the
-    /// theme changes. It performs no I/O — the caller supplies the loaded
-    /// `base` — keeping it a pure state transition like every other method
-    /// here. Switching themes ([`select_theme`](Self::select_theme)) discards
-    /// any pending edits.
+    /// Each theme-scoped picker (clock/duration/git) calls this with a closure
+    /// touching only its own field, so nothing else in the theme changes. It
+    /// performs no I/O — the caller supplies the loaded `base`. Switching
+    /// themes ([`select_theme`](Self::select_theme)) discards pending edits.
     pub(crate) fn patch_active_theme(
         &mut self,
         base: &ThemeConfig,
@@ -512,109 +497,73 @@ impl WizardState {
         self.selected_language_show_versions = !self.selected_language_show_versions;
     }
 
-    /// Toggle the clock segment's time format between `"12"` and `"24"`,
-    /// via `patch_active_theme` (#407) since — unlike directory/language
-    /// display — this field lives in the per-theme TOML, not `config.toml`.
-    ///
-    /// A no-op unless `Section::Segments`'s cursor is on `"clock"` (see
-    /// `focused_builtin`) — mirrors `cycle_directory_display`/
-    /// `cycle_language_display`'s guard-inside-the-transition pattern. Takes
-    /// no `forward` direction: like language's icon/text, only 2 variants
-    /// exist with no natural earlier/later ordering, so `keys.rs`'s shared
-    /// `[`/`]` handler flips to the other one either way, same as
-    /// `cycle_language_display`.
-    pub(crate) fn cycle_clock_time_format(&mut self, base: &ThemeConfig) {
-        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Clock) {
-            return;
+    /// Patch the active theme with `patch` when `segment` is the builtin under
+    /// the Segments cursor; a no-op otherwise.
+    fn patch_focused_segment_theme(
+        &mut self,
+        segment: crate::plugin::BuiltinSegment,
+        base: &ThemeConfig,
+        patch: impl FnOnce(&mut ThemeConfig),
+    ) {
+        if self.focused_builtin() == Some(segment) {
+            self.patch_active_theme(base, patch);
         }
+    }
+
+    /// Flip the clock's time format between `"12"` and `"24"` in the active
+    /// theme. No-op unless `"clock"` is under the Segments cursor.
+    pub(crate) fn cycle_clock_time_format(&mut self, base: &ThemeConfig) {
         let next = if self.clock_time_format(base) == "24" {
             "12"
         } else {
             "24"
         };
-        self.patch_active_theme(base, |theme| {
+        self.patch_focused_segment_theme(crate::plugin::BuiltinSegment::Clock, base, |theme| {
             theme.segments.clock.time_format = Some(next.to_owned());
         });
     }
 
-    /// Toggle whether the clock segment shows seconds, via
-    /// `patch_active_theme` (#407) — see `cycle_clock_time_format`.
-    ///
-    /// A no-op unless `Section::Segments`'s cursor is on `"clock"` (see
-    /// `focused_builtin`) — mirrors `toggle_language_show_versions`'s
-    /// guard-inside-the-transition pattern.
+    /// Toggle whether the clock shows seconds. No-op unless `"clock"` is
+    /// under the Segments cursor.
     pub(crate) fn toggle_clock_show_seconds(&mut self, base: &ThemeConfig) {
-        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Clock) {
-            return;
-        }
         let next = !self.clock_show_seconds(base);
-        self.patch_active_theme(base, |theme| {
+        self.patch_focused_segment_theme(crate::plugin::BuiltinSegment::Clock, base, |theme| {
             theme.segments.clock.show_seconds = Some(next);
         });
     }
 
-    /// Toggle whether the duration segment renders millisecond precision
-    /// (`2.500s`) versus whole seconds only (`2s`), via `patch_active_theme`
-    /// (#407) — see `cycle_clock_time_format`.
-    ///
-    /// A no-op unless `Section::Segments`'s cursor is on `"duration"` (see
-    /// `focused_builtin`) — mirrors
-    /// `toggle_clock_show_seconds`'s guard-inside-the-transition pattern.
+    /// Toggle duration between millisecond (`2.500s`) and whole-second (`2s`)
+    /// precision. No-op unless `"duration"` is under the Segments cursor.
     pub(crate) fn toggle_duration_show_milliseconds(&mut self, base: &ThemeConfig) {
-        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Duration) {
-            return;
-        }
         let next = !self.duration_show_milliseconds(base);
-        self.patch_active_theme(base, |theme| {
+        self.patch_focused_segment_theme(crate::plugin::BuiltinSegment::Duration, base, |theme| {
             theme.segments.duration.show_milliseconds = next;
         });
     }
 
-    /// Toggle whether the git segment renders the branch name, via
-    /// `patch_active_theme` (#407) — see `cycle_clock_time_format`. The git
-    /// content-visibility toggles (branch/ahead-behind/stash) together form
-    /// the "which git info to show" multi-select (#410); each is an
-    /// independent `Option<bool>` on `GitTheme` defaulting to on when unset.
-    ///
-    /// A no-op unless `Section::Segments`'s cursor is on `"git"` (see
-    /// `focused_builtin`) — mirrors `toggle_clock_show_seconds`'s
-    /// guard-inside-the-transition pattern.
+    /// Toggle whether git shows the branch name. No-op unless `"git"` is
+    /// under the Segments cursor.
     pub(crate) fn toggle_git_show_branch(&mut self, base: &ThemeConfig) {
-        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Git) {
-            return;
-        }
         let next = !self.git_show_branch(base);
-        self.patch_active_theme(base, |theme| {
+        self.patch_focused_segment_theme(crate::plugin::BuiltinSegment::Git, base, |theme| {
             theme.segments.git.show_branch = Some(next);
         });
     }
 
-    /// Toggle whether the git segment renders the ahead/behind arrows, via
-    /// `patch_active_theme` (#407) — see `toggle_git_show_branch`.
-    ///
-    /// A no-op unless `Section::Segments`'s cursor is on `"git"` (see
-    /// `focused_builtin`).
+    /// Toggle whether git shows ahead/behind arrows. No-op unless `"git"` is
+    /// under the Segments cursor.
     pub(crate) fn toggle_git_show_ahead_behind(&mut self, base: &ThemeConfig) {
-        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Git) {
-            return;
-        }
         let next = !self.git_show_ahead_behind(base);
-        self.patch_active_theme(base, |theme| {
+        self.patch_focused_segment_theme(crate::plugin::BuiltinSegment::Git, base, |theme| {
             theme.segments.git.show_ahead_behind = Some(next);
         });
     }
 
-    /// Toggle whether the git segment renders the stash indicator, via
-    /// `patch_active_theme` (#407) — see `toggle_git_show_branch`.
-    ///
-    /// A no-op unless `Section::Segments`'s cursor is on `"git"` (see
-    /// `focused_builtin`).
+    /// Toggle whether git shows the stash indicator. No-op unless `"git"` is
+    /// under the Segments cursor.
     pub(crate) fn toggle_git_show_stash(&mut self, base: &ThemeConfig) {
-        if self.focused_builtin() != Some(crate::plugin::BuiltinSegment::Git) {
-            return;
-        }
         let next = !self.git_show_stash(base);
-        self.patch_active_theme(base, |theme| {
+        self.patch_focused_segment_theme(crate::plugin::BuiltinSegment::Git, base, |theme| {
             theme.segments.git.show_stash = Some(next);
         });
     }
@@ -899,8 +848,8 @@ mod tests {
     ///
     /// Wizard unit tests build `WizardState` via [`test_state`], which feeds
     /// these into `WizardState::from_parts` instead of calling `WizardState::new`
-    /// (which performs real filesystem discovery) — this is what makes the
-    /// tests deterministic regardless of what's actually on disk (#607).
+    /// (which performs real filesystem discovery), so tests are deterministic
+    /// regardless of what's on disk.
     const FIXED_THEMES: [&str; 3] = ["default", "starship", "text"];
     const FIXED_PALETTES: [&str; 8] = [
         "catppuccin-frappe",
@@ -1286,8 +1235,8 @@ mod tests {
 
     #[test]
     fn apply_to_keeps_default_git_and_language_in_enabled_segments() {
-        // #692: a wizard save with no changes must not drop git/language from
-        // the rendered prompt.
+        // A wizard save with no changes must not drop git/language from the
+        // rendered prompt.
         let state = test_state(Config::default());
         let mut applied = Config::default();
         state.apply_to(&mut applied);
@@ -2082,7 +2031,7 @@ mod tests {
         }
 
         // Apply onto the config the wizard started from, as `save_to` does: a
-        // deselected git/language keeps any existing list entry (#692), so a
+        // deselected git/language keeps any existing list entry, so a
         // `Config::default()` target would legitimately retain them.
         let mut applied = config;
         state.apply_to(&mut applied);
@@ -2131,8 +2080,6 @@ mod tests {
         assert_eq!(Section::Segments.prev(), Section::Palette);
         assert_eq!(Section::Palette.prev(), Section::Theme);
     }
-
-    // --- cursor tests ---
 
     #[test]
     fn theme_cursor_starts_at_selected_theme_index() {
@@ -2376,8 +2323,6 @@ mod tests {
         assert_ne!(state.is_segment_enabled(&target), before);
     }
 
-    // --- filtered_indices tests ---
-
     #[test]
     fn filtered_indices_is_identity_when_query_empty() {
         let state = test_state(make_config(
@@ -2457,8 +2402,6 @@ mod tests {
         );
         let _ = start;
     }
-
-    // --- filter mutation tests ---
 
     fn segments_focused_state() -> WizardState {
         let mut state = test_state(make_config(

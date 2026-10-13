@@ -6,7 +6,7 @@
 ROOT=${0:a:h:h:h}
 cd "$ROOT"
 
-# Hermetic when run directly (#820): the developer's theme export
+# Hermetic when run directly: the developer's theme export
 # ($XDG_CACHE_HOME/gpy/theme-export.zsh) and exported GPY_* settings (e.g.
 # GPY_LANGUAGE_ENABLED=0) would otherwise override the built-in defaults
 # these checks assert on. quality-check.sh sets its own XDG dirs; this makes
@@ -17,7 +17,7 @@ done
 unset gpy_var
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 parity_xdg_root="$(mktemp -d "${TMPDIR:-/tmp}/gpy-parity-xdg.XXXXXX")"
-# Sourcing the entry point starts a supervised gpy-agent (#750): stop it before
+# Sourcing the entry point starts a supervised gpy-agent: stop it before
 # its socket directory is removed.
 trap 'shell_e2e_stop_agent_under "$parity_xdg_root/cache" "$parity_xdg_root/config"; rm -rf "$parity_xdg_root"' EXIT
 mkdir -p "$parity_xdg_root/cache" "$parity_xdg_root/config"
@@ -60,11 +60,8 @@ if [[ ! " ${zshexit_functions[@]} " =~ " __gpy_zshexit " ]]; then
 fi
 echo "✓ Cleanup hook"
 
-# --- Cache key parity ---
-# The hand-copied cache-key "reference values from the Rust implementation"
-# that used to live here could drift from the encoder unnoticed. The key
-# encoding is now pinned against a file the agent itself writes, in
-# tests/zsh/path_parity.test.zsh (#647).
+# Cache-key encoding parity is pinned against a file the agent itself writes,
+# in tests/zsh/path_parity.test.zsh.
 
 # --- Warm cache hit: no IPC roundtrip ---
 echo "=== Warm Cache Hit Tests ==="
@@ -122,8 +119,8 @@ if [[ ! -f "$cache_file" ]]; then
 fi
 echo "✓ stale cache file preserved after serve"
 
-# Staleness is now carried entirely by the exit code (#614: bit 2 set --
-# status 2 or 6 -- signals staleness); no more `__gpy_git_stale_$$` temp file.
+# Staleness is carried entirely by the exit code (bit 2 set -- status 2 or
+# 6 -- signals staleness).
 if (( (stale_status & 2) != 0 )); then
     echo "✓ stale status bit set to signal background refresh needed"
 else
@@ -137,11 +134,11 @@ fi
 rm -rf "$tmpdir"
 rm -f "$cache_file"
 
-# --- Language segment detection walks ancestors (#174) ---
+# --- Language segment detection walks ancestors ---
 echo "=== Language Subdir Detection Tests ==="
 
 source zsh/segments/language.zsh
-# The pre-filter iterates the agent-exported marker list (#785); this block
+# The pre-filter iterates the agent-exported marker list; this block
 # tests the ancestor walk, so a one-entry list suffices. The full export is
 # covered by language_marker_prefilter.test.zsh.
 typeset -g -a __gpy_lang_marker_files=(Cargo.toml)
@@ -172,7 +169,7 @@ _assert_detect "not detected in plain dir" 1 "$detect_empty"
 
 rm -rf "$detect_proj" "$detect_empty"
 
-# --- Non-Git language cache hit (#173) ---
+# --- Non-Git language cache hit ---
 echo "=== Non-Git Language Cache Tests ==="
 
 nongit=$(mktemp -d)
@@ -235,7 +232,7 @@ if [[ "$two_line_prompt" != *$'\n'* ]]; then
 fi
 echo "✓ two-line prompt inserts newline before character"
 
-# --- prev_bg powerline parity (#220, #222) ---
+# --- prev_bg powerline parity ---
 echo "=== prev_bg Powerline Parity Tests ==="
 
 # Token derivation must match the Rust prev_bg_token contract.
@@ -264,7 +261,7 @@ echo "✓ cache read falls back to none render when context file absent"
 rm -rf "$pb_repo"
 rm -f "$cache_dir/$pb_key.git.none.zsh"
 
-# Request payloads MUST carry prev_bg (the bug: zsh omitted it). Stub the
+# Request payloads MUST carry prev_bg. Stub the
 # transport to capture the JSON to a file — duration/character send inside a
 # command-substitution subshell, so an in-memory var would not propagate. The
 # stub also echoes a response so request wrappers skip the oneshot fallback.
@@ -298,7 +295,7 @@ _assert_payload_has_prev_bg "character request" "green"
 
 rm -f "$__gpy_capture_file"
 
-# #729: `lang` requests forward $VIRTUAL_ENV, else $CONDA_PREFIX for a non-base
+# `lang` requests forward $VIRTUAL_ENV, else $CONDA_PREFIX for a non-base
 # conda env; `git` requests never carry virtual_env. Both send paths are checked
 # through the stubbed __gpy_send_json above.
 echo "=== virtual_env Forwarding ==="
@@ -345,8 +342,8 @@ done
 rm -f "$__gpy_capture_file"
 echo "✓ virtual_env forwarding: conda env, precedence, base skip, git omits"
 
-# Render loop must advance prev_bg across segments (subshell-safe tracking). This
-# is the #220 regression: before the fix zsh segments received no prev_bg at all.
+# Render loop must advance prev_bg across segments (subshell-safe tracking), so
+# every segment receives the previous segment's background.
 # Segments run inside command substitution, so the stubs record what they receive
 # to a file (an in-memory var would not survive the subshell — the very reason the
 # render loop, not the segment, owns the tracker).

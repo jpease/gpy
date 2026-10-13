@@ -1,9 +1,8 @@
 #!/usr/bin/env fish
 # GPY_IPC_TIMEOUT_MS and the two instant-cache TTL knobs are honoured when set
-# in the environment before the shell integration loads, as they already were
-# in Bash and (for the TTLs) Zsh (#845). fish/core/constants.fish used to
-# overwrite all three with its defaults at source time, so exporting one in
-# config.fish did nothing.
+# in the environment before the shell integration loads, as in Bash and (for
+# the TTLs) Zsh: fish/core/constants.fish must not overwrite them with its
+# defaults at source time, or exporting one in config.fish would do nothing.
 #
 # Each case runs a child fish with only the knob under test set, sources the
 # constants the way init does, and reads the values back. A value that is not a
@@ -13,7 +12,7 @@ set -l script_dir (path dirname (status --current-filename))
 set -g repo_root (cd "$script_dir/../.." && pwd)
 source "$repo_root/tests/lib/test_helpers.fish"
 
-print_test_header "Env knobs are honoured (#845)"
+print_test_header "Env knobs are honoured"
 
 set -g failures 0
 function check --argument-names label ok detail

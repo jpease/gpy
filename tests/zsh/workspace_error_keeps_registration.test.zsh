@@ -1,11 +1,11 @@
 #!/usr/bin/env zsh
 # tests/zsh/workspace_error_keeps_registration.test.zsh
 #
-# Regression test for #764 (sibling of the fish fix): __gpy_sync_workspace must
+# Like fish's, __gpy_sync_workspace must
 # keep the registration when the workspace reply is an error other than
-# "not registered" (e.g. `cd /etc` rejected by the path validator). It used to
-# clear __gpy_registered, the re-register from the same rejected directory
-# failed too, and every later cd skipped the sync.
+# "not registered" (e.g. `cd /etc` rejected by the path validator). Clearing
+# __gpy_registered would make the re-register from the same rejected directory
+# fail too, and every later cd would skip the sync.
 #
 # A python3 listener plays the agent: `workspace`/`register` from a directory
 # named `denied` -> error; `workspace` from `lost` -> "not registered"; else
@@ -69,19 +69,13 @@ while True:
 ' "$sock" "$oplog" &
 listener_pid=$!
 disown "$listener_pid" 2>/dev/null
-for _ in {1..30}; do
-    [[ -S "$sock" ]] && break
-    sleep 0.1
-done
-[[ -S "$sock" ]] || test_skip "could not create test Unix socket listener"
+shell_e2e_poll 3 test -S "$sock" || test_skip "could not create test Unix socket listener"
 
-test_result=0
 check() {
     if [[ "$2" == "$3" ]]; then
-        echo "PASS: $1"
+        pass "$1"
     else
-        echo "FAIL: $1: want [$2], got [$3]"
-        test_result=1
+        fail "$1: want [$2], got [$3]"
     fi
 }
 count_ops() { grep -c "^$1 " "$oplog"; }
@@ -106,7 +100,7 @@ check "error reply keeps __gpy_registered" "1" "$__gpy_registered"
 check "error reply does not re-register" "1" "$(count_ops register)"
 check "error reply leaves __gpy_last_workspace untouched" "$before_ws" "$__gpy_last_workspace"
 
-# Further prompts in the rejected directory must not re-send the workspace op (#833).
+# Further prompts in the rejected directory must not re-send the workspace op.
 __gpy_sync_workspace
 __gpy_sync_workspace
 __gpy_sync_workspace
@@ -128,4 +122,4 @@ __gpy_sync_workspace
 check "'not registered' re-registers" "2" "$(count_ops register)"
 check "re-register restores registration" "1" "$__gpy_registered"
 
-exit "$test_result"
+test_finish

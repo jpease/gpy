@@ -2,12 +2,12 @@
 # tests/fish/json_escape_vectors.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #614: shared JSON-escape test vector file
+# Shared JSON-escape test vector file
 # (tests/fixtures/json_escape_vectors.tsv), run by all three shells, so
 # __gpy_json_escape (Fish), __gpy_escape_json (Bash), and __gpy_escape_json
-# (Zsh) can never silently drift apart again. Fish's implementation
-# (fish/core/ipc.fish) already escapes \n/\r/\t; this test is what proves it
-# against the same vectors bash/zsh check.
+# (Zsh) can never silently drift apart. This proves Fish's implementation
+# (fish/core/ipc.fish), including its \n/\r/\t escaping, against the same
+# vectors bash/zsh check.
 
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)

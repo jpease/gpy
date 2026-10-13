@@ -473,15 +473,11 @@ pub struct DirectoryTheme {
 
 impl Default for DirectoryTheme {
     fn default() -> Self {
-        #[expect(
-            clippy::expect_used,
-            reason = "\"blue\" is a compile-time-constant color name; parsing it is infallible in practice"
-        )]
         Self {
             format: None,
             open: None,
             close: None,
-            bg_color: types::ColorSpec::new("blue").expect("Hardcoded default color must be valid"),
+            bg_color: const_color("blue"),
             text_color: default_color_white(),
         }
     }
@@ -697,16 +693,15 @@ pub struct GitTheme {
     pub git_style: HashMap<String, String>,
 }
 
-/// A hardcoded default git state color.
+/// A hardcoded default color from a compile-time-constant name.
 ///
 /// # Panics
-/// Panics if `name` is not a valid color — only ever called with the
-/// compile-time-constant names below, so this is infallible in practice.
+/// Panics if `name` is not a valid color; callers pass only known-good literals.
 #[expect(
     clippy::expect_used,
-    reason = "only ever called with compile-time-constant color names below, so this is infallible in practice"
+    reason = "only ever called with compile-time-constant color names, so this is infallible in practice"
 )]
-fn git_default_color(name: &str) -> types::ColorSpec {
+fn const_color(name: &'static str) -> types::ColorSpec {
     types::ColorSpec::new(name).expect("Hardcoded default color must be valid")
 }
 
@@ -718,18 +713,18 @@ impl Default for GitTheme {
             close: None,
             bg_color: default_color_black(),
             text_color: default_color_white(),
-            clean_bg_color: Some(git_default_color("green")),
-            clean_text_color: Some(git_default_color("white")),
-            dirty_bg_color: Some(git_default_color("red")),
-            dirty_text_color: Some(git_default_color("white")),
-            ahead_behind_bg_color: Some(git_default_color("yellow")),
-            ahead_behind_text_color: Some(git_default_color("black")),
-            conflicts_bg_color: Some(git_default_color("red")),
-            conflicts_text_color: Some(git_default_color("white")),
-            untracked_only_bg_color: Some(git_default_color("cyan")),
-            untracked_only_text_color: Some(git_default_color("black")),
-            in_progress_bg_color: Some(git_default_color("magenta")),
-            in_progress_text_color: Some(git_default_color("white")),
+            clean_bg_color: Some(const_color("green")),
+            clean_text_color: Some(const_color("white")),
+            dirty_bg_color: Some(const_color("red")),
+            dirty_text_color: Some(const_color("white")),
+            ahead_behind_bg_color: Some(const_color("yellow")),
+            ahead_behind_text_color: Some(const_color("black")),
+            conflicts_bg_color: Some(const_color("red")),
+            conflicts_text_color: Some(const_color("white")),
+            untracked_only_bg_color: Some(const_color("cyan")),
+            untracked_only_text_color: Some(const_color("black")),
+            in_progress_bg_color: Some(const_color("magenta")),
+            in_progress_text_color: Some(const_color("white")),
             branch_text_color: None,
             arrows_text_color: None,
             staged_text_color: None,
@@ -773,10 +768,8 @@ impl GitState {
     /// Determine git state from repository status, in precedence order:
     /// `Conflicts > InProgress > Modified > UntrackedOnly > AheadBehind > Clean`.
     ///
-    /// Promoted from `formatter::fish_ansi` (previously private to that module,
-    /// `determine_git_state`) so both the real Fish-ANSI renderer and the
-    /// config wizard's live preview (`commands::wizard::preview`, #373) share
-    /// one precedence implementation instead of maintaining two copies. Lives
+    /// Shared by the Fish-ANSI renderer and the config wizard's live preview
+    /// (`commands::wizard::preview`) so precedence has one implementation. Lives
     /// here on `GitState` rather than as a free function in `crate::git`
     /// because `crate::git` has no existing dependency on `crate::theme` (and
     /// this keeps that direction unchanged), while `GitState` — the type this
@@ -1014,9 +1007,9 @@ mod tests {
     }
 
     #[test]
-    fn git_content_visibility_flags_default_none_for_backward_compat() {
-        // A theme that predates #410 sets none of the new flags; they must
-        // deserialize as `None` (always-on behavior), an additive/MINOR change.
+    fn git_content_visibility_flags_default_none() {
+        // A theme that sets none of the visibility flags must deserialize them
+        // as `None` (always-on behavior).
         let git = GitTheme::default();
         assert_eq!(git.show_branch, None);
         assert_eq!(git.show_ahead_behind, None);
@@ -1172,9 +1165,7 @@ show_stash = true
 
     /// Base fixture for `GitState::from_status` precedence tests.
     ///
-    /// A clean, non-diverged repo. Relocated from `formatter::fish_ansi`
-    /// alongside the promoted `determine_git_state` logic (now
-    /// `GitState::from_status`, #373).
+    /// A clean, non-diverged repo.
     fn precedence_status() -> RepositoryStatus {
         RepositoryStatus {
             branch: "main".to_owned(),

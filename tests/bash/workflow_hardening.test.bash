@@ -2,7 +2,7 @@
 # tests/bash/workflow_hardening.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The hardening of .github/ cannot regress silently (#506).
+# The hardening of .github/ cannot regress silently.
 #   (a) every `uses:` that is not a local reusable workflow is pinned to a
 #       full 40-hex commit SHA followed by a `# vX.Y.Z` comment
 #   (b) every workflow declares a top-level `permissions:` block, and none of
@@ -18,9 +18,8 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 shopt -s nullglob
 workflows=(.github/workflows/*.yml)
@@ -116,8 +115,4 @@ else
     fi
 fi
 
-if [[ "$failures" -gt 0 ]]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: workflows keep their hardening"
+test_finish "workflows keep their hardening"

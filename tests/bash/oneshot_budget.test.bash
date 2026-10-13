@@ -2,7 +2,7 @@
 # tests/bash/oneshot_budget.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #614: a dead daemon must cost at most ONE `gpy-agent oneshot` fork per
+# A dead daemon must cost at most ONE `gpy-agent oneshot` fork per
 # prompt render, and that budget must be enforced with a plain per-render
 # shell variable (__gpy_oneshot_used) instead of a predictable
 # ${TMPDIR:-/tmp}/.gpy_oneshot_used_$$ marker file. Segments run inside
@@ -53,7 +53,7 @@ STUB
 chmod +x "$STUB_BIN_DIR/gpy-agent"
 
 export PATH="$STUB_BIN_DIR:$PATH"
-# Supervisor off in a sandbox config: the theme export re-sets the flag (#836).
+# Supervisor off in a sandbox config: the theme export re-sets the flag.
 source "$ROOT/tests/lib/supervisor_off.bash" "$TMP_DIR"
 export GPY_AGENT_SOCKET_PATH="$TMP_DIR/dead-agent.sock"
 

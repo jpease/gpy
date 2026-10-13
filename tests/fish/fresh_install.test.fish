@@ -57,15 +57,15 @@ set -gx GPY_AGENT_SUPERVISOR_ENABLED 0
 
 # Source into the current scope, NOT through a pipe: `source ... | string match`
 # runs source in a subshell, so every function/variable it defines (icons,
-# segment functions) is discarded — the test then only passed where a local
-# gpy install happened to be autoloaded. Redirect stderr to a file and inspect
+# segment functions) is discarded and the test would only pass where a local
+# gpy install happens to be autoloaded. Redirect stderr to a file and inspect
 # it separately instead.
 set -l init_errlog (mktemp)
 source fish/core/init.fish 2>$init_errlog
 # The prompt function is autoloaded from fish/functions/ on an installed
 # system; here it has to be sourced, or `fish_prompt` below is fish's own
 # default prompt and every prompt assertion in this file tests the wrong
-# program (which is exactly what happened before #644).
+# program.
 source fish/functions/fish_prompt.fish
 if string match -q "*error*" -- (cat $init_errlog)
     test_fail "Init failed with no existing config"
@@ -107,7 +107,7 @@ if test -n "$prompt_output"
 else
     test_fail "fish_prompt failed with defaults"
 end
-# Content, not presence (#644): a fresh install's first prompt must carry
+# Content, not presence: a fresh install's first prompt must carry
 # the prompt character and must not leak JSON.
 if string match -q "*$__icon_prompt*" -- "$prompt_output"; and not string match -q '*{"*' -- "$prompt_output"
     test_pass "first prompt renders the prompt character '$__icon_prompt' with no JSON"

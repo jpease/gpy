@@ -3,15 +3,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # The socat and nc transports follow the same slow-reply policy as zsocket
-# (#845; tests/zsh/ipc_no_double_send_on_slow_reply.test.zsh covers zsocket).
+# (tests/zsh/ipc_no_double_send_on_slow_reply.test.zsh covers zsocket).
 #
 # An agent that accepted the request but answers late is working on it. The
 # shell must (a) put the request on the wire exactly once, never resend over a
-# second connection (#575), and (b) report "connected, no reply" (status 2,
-# empty output) so no caller recomputes the segment with a blocking
-# `gpy-agent oneshot` fork (#757). Before #845 only the zsocket path did;
-# socat/nc reported status 1 and the caller forked oneshot. Only an agent that
-# cannot be reached at all (status 1) may fall back to oneshot.
+# second connection, and (b) report "connected, no reply" (status 2, empty
+# output) so no caller recomputes the segment with a blocking
+# `gpy-agent oneshot` fork. Only an agent that cannot be reached at all
+# (status 1) may fall back to oneshot.
 #
 # A python3 listener plays the slow agent and records one line per accepted
 # connection. `zmodload` is shadowed so zsocket is unavailable, and each
@@ -37,10 +36,6 @@ trap cleanup EXIT
 
 # Hide the builtin transport so the external clients are the ones exercised.
 zmodload() { [[ "$1" == "zsh/net/socket" ]] && return 1; builtin zmodload "$@"; }
-
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 real_path=$PATH
 # make_shim NAME TOOL...: a PATH holding only the named tools.
@@ -84,11 +79,7 @@ while True:
     c.close()
 ' "$tmp/slow.sock" "$tmp/connections" "$1" "$2" &
     listener_pid=$!
-    local i
-    for i in {1..30}; do
-        [[ -S "$tmp/slow.sock" ]] && return 0
-        sleep 0.1
-    done
+    shell_e2e_poll 3 test -S "$tmp/slow.sock" && return 0
     test_skip "could not create test Unix socket listener"
 }
 
@@ -109,6 +100,8 @@ check_transport() {
     send_rc=$?
     PATH=$real_path
     rehash
+    # Window for a fallback resend to connect: a second request has no event
+    # to poll for, so wait it out before the count is read.
     sleep 0.3
     stop_listener
     [[ -f "$tmp/connections" ]] && connections=$(wc -l <"$tmp/connections" | tr -d ' ')
@@ -197,5 +190,4 @@ else
     fail "dead socket: output '$out', oneshot log '$(cat "$oneshot_log")'"
 fi
 
-(( failures == 0 )) || exit 1
-echo "PASS: zsh slow-reply policy holds on every available transport"
+test_finish "zsh slow-reply policy holds on every available transport"

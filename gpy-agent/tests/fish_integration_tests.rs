@@ -1,11 +1,8 @@
-//! Fish shell integration tests
+//! Fish shell integration tests: prompt startup with and without the agent,
+//! and agent stability across repeated fish invocations.
 //!
-//! These tests verify that the GPY agent correctly integrates with Fish shell,
-//! including auto-start behavior and prompt initialization.
-//!
-//! **Note**: These tests use the `gpy-agent` binary from the build output
-//! (via `env!("CARGO_BIN_EXE_gpy-agent")`) rather than expecting it in PATH.
-//! This ensures tests work reliably in CI and on dev machines.
+//! The agent under test is the cargo-built binary
+//! (`env!("CARGO_BIN_EXE_gpy-agent")`), not whatever is on `PATH`.
 
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
@@ -14,8 +11,6 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::default_numeric_fallback)]
 
-mod test_harness;
-
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -23,7 +18,8 @@ use tempfile::TempDir;
 
 #[path = "common/skip.rs"]
 mod skip;
-use test_harness::EventFlag;
+#[path = "common/wait.rs"]
+mod wait;
 
 /// Get the path to the gpy-agent binary built by cargo
 const fn get_gpy_agent_path() -> &'static str {
@@ -35,14 +31,8 @@ const fn get_gpy_agent_path() -> &'static str {
 /// Every `gpy-agent stop`/`start`/`status` invocation and every `fish -c`
 /// spawn in this file MUST carry `GPY_AGENT_SOCKET_PATH` pointing at this
 /// path. Without it, each of those subprocesses falls through to the
-/// production default socket (`get_socket_path()`'s unset-env-var fallback)
-/// -- on a machine with a live dogfooding daemon (the normal state for any
-/// contributor actually using gpy), `stop` sends a real shutdown to that
-/// daemon. Confirmed as the root cause of a daemon that repeatedly died
-/// during `cargo nextest run`, reproduced with `GPY_DEBUG_LOG` enabled on the
-/// real daemon: its log showed `[server] Received shutdown signal` at the
-/// exact second a test run using this file's old, unisolated `stop` calls
-/// was executing.
+/// production default socket (`get_socket_path()`'s unset-env-var fallback),
+/// and `stop` would shut down a developer's live daemon.
 fn isolated_socket() -> (TempDir, String) {
     let dir = TempDir::new().expect("create temp dir for isolated socket");
     let socket_path = dir
@@ -59,9 +49,9 @@ fn isolated_socket() -> (TempDir, String) {
 /// `gpy-agent start` reads `config.toml` (a developer's `agent.enabled =
 /// false` turns it into a no-op), and a running agent writes theme exports
 /// into the cache root, so without this the developer's `~/.config/gpy` and
-/// `~/.cache/gpy` take part in the test (#664). `HOME` goes too: config
-/// lookup falls back to `$HOME/.config/gpy/config.toml` when the
-/// `$XDG_CONFIG_HOME` one is missing.
+/// `~/.cache/gpy` take part in the test. `HOME` goes too: config lookup falls
+/// back to `$HOME/.config/gpy/config.toml` when the `$XDG_CONFIG_HOME` one is
+/// missing.
 fn isolate_user_dirs<'cmd>(command: &'cmd mut Command, dir: &Path) -> &'cmd mut Command {
     command
         .env("HOME", dir)
@@ -77,107 +67,6 @@ fn assert_agent_binary_exists(agent_path: &str) {
         Path::new(agent_path).exists(),
         "Agent binary not found at {agent_path} - did the build fail?"
     );
-}
-
-/// Test that the agent auto-starts when Fish initializes
-///
-/// This end-to-end test verifies:
-/// 1. Fish can be launched with GPY enabled
-/// 2. The agent automatically starts on the first prompt
-/// 3. The agent process is running after Fish initialization
-#[tokio::test]
-#[cfg(unix)]
-#[ignore = "fish -c never renders a prompt, and the agent auto-starts from fish_prompt, so this \
-            can only pass vacuously (it did, until #636 made `status` exit non-zero for a \
-            stopped agent). #645 replaces it with a PTY-driven interactive session."]
-async fn test_agent_auto_starts_with_fish() {
-    // Check if fish is available
-    if Command::new("fish").arg("--version").output().is_err() {
-        skip::skip_test("fish shell not found in PATH");
-        return;
-    }
-
-    let agent_path = get_gpy_agent_path();
-    assert_agent_binary_exists(agent_path);
-
-    let (_socket_dir, socket_path) = isolated_socket();
-
-    // Stop any existing agent -- scoped to this test's own isolated socket,
-    // never the ambient default (see `isolated_socket`'s doc comment).
-    let _ = Command::new(agent_path)
-        .arg("stop")
-        .env("GPY_AGENT_SOCKET_PATH", &socket_path)
-        .output();
-
-    // Wait for agent to fully stop
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Create a flag to track if the test script completed
-    let test_completed = EventFlag::new();
-    let test_completed_clone = test_completed.clone();
-
-    // Spawn fish with a command that triggers the prompt
-    let fish_task = tokio::spawn({
-        let task_socket_path = socket_path.clone();
-        async move {
-            let output = Command::new("fish")
-                .arg("-c")
-                .arg("echo 'Test initialized'")
-                .env("GPY_AGENT_ENABLED", "1")
-                .env("GPY_AGENT_SUPERVISOR_ENABLED", "1")
-                .env("GPY_AGENT_SOCKET_PATH", &task_socket_path)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output();
-
-            test_completed_clone.set();
-            output
-        }
-    });
-
-    // Wait for fish command to complete (should be quick)
-    let completed = test_completed.wait_until_set(Duration::from_secs(5)).await;
-    assert!(completed, "Fish command should complete within 5 seconds");
-
-    let output = fish_task
-        .await
-        .expect("Fish task panicked")
-        .expect("Fish command failed");
-
-    // Verify fish ran successfully
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    if !output.status.success() {
-        eprintln!("Fish stdout: {stdout}");
-        eprintln!("Fish stderr: {stderr}");
-        panic!("Fish command failed with status: {}", output.status);
-    }
-
-    // Give the agent a moment to start (it runs in background via disown)
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Check if agent is now running
-    let status_output = Command::new(agent_path)
-        .arg("status")
-        .env("GPY_AGENT_SOCKET_PATH", &socket_path)
-        .output()
-        .expect("Failed to check agent status");
-
-    let status_stdout = String::from_utf8_lossy(&status_output.stdout);
-
-    // Assert on the report line, not on the exit code: before #636 `status`
-    // exited 0 whether or not anything was running, so a success check was vacuous.
-    assert!(
-        status_stdout.contains("Status: Running and Responding"),
-        "Agent should be running after Fish initialization. Status output: {status_stdout}"
-    );
-
-    // Clean up: stop the agent
-    let _ = Command::new(agent_path)
-        .arg("stop")
-        .env("GPY_AGENT_SOCKET_PATH", &socket_path)
-        .output();
 }
 
 /// Test that Fish prompt initialization works without agent
@@ -241,31 +130,27 @@ async fn test_agent_handles_rapid_fish_restarts() {
 
     let (socket_dir, socket_path) = isolated_socket();
 
-    // Stop any existing agent -- scoped to this test's own isolated socket,
-    // never the ambient default (see `isolated_socket`'s doc comment).
-    let _ = isolate_user_dirs(&mut Command::new(agent_path), socket_dir.path())
-        .arg("stop")
-        .env("GPY_AGENT_SOCKET_PATH", &socket_path)
-        .output();
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Start the agent manually
+    // Start the agent on this test's isolated socket.
     let start_output = isolate_user_dirs(&mut Command::new(agent_path), socket_dir.path())
         .arg("start")
         .env("GPY_AGENT_SOCKET_PATH", &socket_path)
         .output()
         .expect("Failed to start agent");
 
-    if !start_output.status.success() {
-        eprintln!(
-            "Agent start output: {}",
-            String::from_utf8_lossy(&start_output.stderr)
-        );
-        panic!("Failed to start agent");
-    }
+    assert!(
+        start_output.status.success(),
+        "Failed to start agent: {}",
+        String::from_utf8_lossy(&start_output.stderr)
+    );
 
-    // Give agent time to fully start
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    let socket = Path::new(&socket_path);
+    assert!(
+        wait::wait_until_async(Duration::from_secs(5), Duration::from_millis(25), || {
+            socket.exists()
+        })
+        .await,
+        "agent socket {socket_path} did not appear after start"
+    );
 
     // Run multiple fish instances in rapid succession
     for i in 0..5 {
@@ -283,9 +168,6 @@ async fn test_agent_handles_rapid_fish_restarts() {
             "Fish iteration {i} failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-
-        // Small delay between iterations
-        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     // Agent should still be responsive

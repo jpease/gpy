@@ -223,7 +223,7 @@ fn handle_segment_picker_key(
             state.toggle_duration_show_milliseconds(theme);
             Some(WizardAction::Continue)
         }
-        // The git segment's content-visibility multi-select (#410): each key
+        // The git segment's content-visibility multi-select: each key
         // toggles one independent `GitTheme` `show_*` flag while `"git"` is
         // highlighted, a no-op otherwise (each `toggle_git_*` guards on
         // `focused_builtin`). Mnemonics: `b`ranch, `a`head/behind,
@@ -268,7 +268,7 @@ mod tests {
     /// Fixed, deterministic stand-in for `WizardState::new`'s real discovery.
     ///
     /// See `state.rs`'s own `FIXED_THEMES`/`FIXED_PALETTES`/`FIXED_SEGMENTS`
-    /// for the rationale (#607). Kept in sync with those exact values.
+    /// for the rationale. Kept in sync with those exact values.
     fn test_state(config: Config) -> WizardState {
         WizardState::from_parts(
             config,
@@ -871,8 +871,6 @@ mod tests {
         assert_eq!(action, WizardAction::Continue);
         assert_eq!(new_mode, InputMode::ConfirmQuit);
     }
-
-    // --- filter mode tests ---
 
     #[test]
     fn slash_key_enters_filter_mode() {

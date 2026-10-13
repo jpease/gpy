@@ -7,15 +7,13 @@ name: Cross-Platform Smoke
 # update (`ubuntu-latest`, `macos-latest` and `windows-latest` all float) or a
 # toolchain change that no open PR exercised.
 #
-# History: the `push` and `schedule` triggers were switched off, and macOS
-# split into a manual-only job, on 2026-09-02 to stop the private repository's
-# 10x macOS minute multiplier burning the account's allowance (#556).
-# Hosted-runner minutes are free for a public repository, so both are back.
+# Hosted-runner minutes are free for a public repository, so macOS runs in the
+# automatic matrix alongside Linux and Windows (#556).
 #
 # The Windows leg is the same reusable workflow pr-gate.yml calls
-# (windows-gate.yml, #653), not a second copy of its steps. Keeping it here as
-# well as in the PR gate was a decision (#514): it is free, and a post-merge
-# and weekly run on `main` catches Windows drift that no PR touched.
+# (windows-gate.yml), not a second copy of its steps. It runs here as well as
+# in the PR gate because a post-merge and weekly run on `main` catches Windows
+# drift that no PR touched.
 on:
   push:
     branches: [main]
@@ -58,7 +56,7 @@ jobs:
       - name: Install Rust toolchain
         # No `toolchain:` input: the action resolves the pin from
         # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
-        # See that file for why CI must not install @stable (#189, #518).
+        # See that file for why CI must not install @stable (#518).
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           rust-src-dir: gpy-agent

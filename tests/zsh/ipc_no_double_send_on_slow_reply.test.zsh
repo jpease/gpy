@@ -1,20 +1,20 @@
 #!/usr/bin/env zsh
 # tests/zsh/ipc_no_double_send_on_slow_reply.test.zsh
 #
-# Regression tests for #575/#864: a connected agent that has not replied must
+# A connected agent that has not replied must
 # get exactly one request, and __gpy_send_json must return status 2 with no
 # output when its response budget expires.
 #
 # Do not schedule a reply a fixed interval after accept(): the client can be
 # descheduled between connecting and entering read -t, making even a "late"
-# reply available before its read budget begins (#864). Instead the listener
+# reply available before its read budget begins. Instead the listener
 # holds every accepted socket open without replying until the synchronous
 # send returns. A control FIFO then tells it to drain pending connections and
 # record the requests, including any socat/nc fallback re-send. No sleep decides
 # whether the response timed out or how many requests reached the listener.
 
 ROOT=${0:a:h:h:h}
-# Shared skip contract (#650): exits 0 locally, fails under CI.
+# Shared skip contract: exits 0 locally, fails under CI.
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 cd "$ROOT"
 
@@ -26,7 +26,6 @@ if ! zmodload zsh/net/socket 2>/dev/null; then
 fi
 
 test_tmp_dir=$(mktemp -d)
-test_result=0
 listener_pid=""
 control_fd=""
 
@@ -113,11 +112,9 @@ with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
 listener_pid=$!
 
 # Readiness is acknowledged after listen(), not merely after bind() creates
-# the socket path. This bounded poll is a startup watchdog only.
-for _ in {1..100}; do
-    [[ -f "$ready_file" ]] && break
-    sleep 0.05
-done
+# the socket path.
+listener_ready() { [[ -f "$ready_file" ]]; }
+shell_e2e_poll 5 listener_ready
 if [[ ! -f "$ready_file" ]]; then
     echo "FAIL: test Unix socket listener never became ready"
     exit 1
@@ -136,8 +133,7 @@ listener_pid=""
 # A clean completion proves the fixture stayed open without replying until
 # the client returned; its own watchdog/EOF cannot satisfy the timeout check.
 if (( listener_status != 0 )); then
-    echo "FAIL: slow-reply fixture exited with status $listener_status"
-    test_result=1
+    fail "slow-reply fixture exited with status $listener_status"
 fi
 
 connection_count=0
@@ -145,31 +141,28 @@ if [[ -f "$count_file" ]]; then
     connection_count=$(wc -l < "$count_file" | tr -d ' ')
 fi
 
-# Primary assertion (the acceptance criterion itself): the slow reply must
+# Primary assertion: the slow reply must
 # not have caused a second request over a different connection.
 if [[ "$connection_count" -eq 1 ]]; then
-    echo "PASS: exactly one connection was made for one logical request"
+    pass "exactly one connection was made for one logical request"
 else
-    echo "FAIL: expected exactly one connection, got $connection_count"
-    test_result=1
+    fail "expected exactly one connection, got $connection_count"
 fi
 
 # Status 2 distinguishes an actual connected response timeout from a missing
 # socket/client (status 1); the fixture has not sent a byte or closed a socket.
 if (( send_rc == 2 )) && [[ -z "$result" ]]; then
-    echo "PASS: __gpy_send_json timed out with status 2 and no response"
+    pass "__gpy_send_json timed out with status 2 and no response"
 else
-    echo "FAIL: expected status 2 and no response, got status $send_rc and '$result'"
-    test_result=1
+    fail "expected status 2 and no response, got status $send_rc and '$result'"
 fi
 
 # Count the request itself too, not just accepted sockets: an empty connection
 # or two sends on the same connection must not pass the no-double-send check.
 if printf '%s\n' '{"op":"ping"}' | cmp -s - "$request_file"; then
-    echo "PASS: listener received exactly one complete ping request"
+    pass "listener received exactly one complete ping request"
 else
-    echo "FAIL: listener did not receive exactly one complete ping request"
-    test_result=1
+    fail "listener did not receive exactly one complete ping request"
 fi
 
-exit "$test_result"
+test_finish

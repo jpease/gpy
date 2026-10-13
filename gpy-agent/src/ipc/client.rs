@@ -1,10 +1,8 @@
-//! Test-only IPC client with length-prefixed framing
+//! Test-only IPC client for Rust integration tests.
 //!
-//! **WARNING:** This client uses length-prefixed message framing and is NOT
-//! compatible with the production server or Fish shell, which use newline-delimited JSON.
-//!
-//! This module is intended for Rust integration tests only.
-//! Production IPC from Fish uses simple newline-delimited JSON over `gpy.sock`.
+//! **WARNING:** This client uses length-prefixed message framing over
+//! `gpy-test.sock` and is NOT compatible with the production server, which
+//! speaks newline-delimited JSON over `gpy.sock`.
 
 #[cfg(unix)]
 use super::protocol;
@@ -21,10 +19,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(unix)]
 use tokio::net::UnixStream;
 
-/// Test-only IPC client with length-prefixed framing
-///
-/// **Not compatible with production server!**
-/// Uses length-prefixed messages instead of newline-delimited JSON.
+/// Test-only IPC client; see the module docs for its framing.
 pub struct SessionHandle {
     #[cfg(unix)]
     stream: UnixStream,
@@ -56,7 +51,7 @@ impl SessionHandle {
         Ok(Self { stream })
     }
 
-    /// Connect to the agent -- native Windows stub (#284).
+    /// Connect to the agent -- native Windows stub.
     ///
     /// # Errors
     ///
@@ -68,14 +63,11 @@ impl SessionHandle {
 
     /// Get the default socket path (matches server implementation)
     fn default_socket_path() -> PathBuf {
-        // Check for custom socket path in environment (matches Fish shell logic).
-        // Empty means unset, exactly as every shell reads it (#626).
+        // Same override as the shells: an empty value means unset.
         if let Some(custom_path) = crate::agent::lifecycle::socket_path_override() {
             return custom_path;
         }
 
-        // Unix socket path for tests - uses gpy-test.sock to avoid conflicts
-        // Production uses gpy.sock with newline-delimited protocol
         let runtime_root = Self::get_runtime_root();
         runtime_root.join("gpy-test.sock")
     }
@@ -144,7 +136,7 @@ impl SessionHandle {
         protocol::deserialize_response(&response_bytes)
     }
 
-    /// Send a message and wait for response -- native Windows stub (#284).
+    /// Send a message and wait for response -- native Windows stub.
     ///
     /// # Errors
     ///
@@ -154,16 +146,18 @@ impl SessionHandle {
         Err(crate::ipc::native_windows_unsupported())
     }
 
-    /// Check if agent is reachable
+    /// Check if the agent answers a ping: `Ok(true)` on `Ack`, `Ok(false)` on
+    /// any other response.
     ///
     /// # Errors
     ///
-    /// Returns an error if the ping request fails to send or receive.
+    /// Returns an error if the ping request fails to send or the response
+    /// cannot be received or deserialized.
     pub async fn ping(&mut self) -> Result<bool> {
-        match self.send_request(Message::Ping).await {
-            Ok(Response::Ack) => Ok(true),
-            Ok(_) | Err(_) => Ok(false), // Unexpected response or connection failed
-        }
+        Ok(matches!(
+            self.send_request(Message::Ping).await?,
+            Response::Ack
+        ))
     }
 
     /// Close the connection
@@ -175,7 +169,10 @@ impl SessionHandle {
     /// Get the socket path being used
     #[must_use]
     pub fn socket_path() -> String {
-        Self::default_socket_path().to_string_lossy().to_string()
+        Self::default_socket_path()
+            .into_os_string()
+            .into_string()
+            .unwrap_or_else(|raw| raw.to_string_lossy().into_owned())
     }
 
     /// Convenience method for sending git status request

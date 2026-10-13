@@ -10,7 +10,7 @@
 #
 # Children never start a gpy-agent: the supervisor is disabled in the sandbox
 # config.toml, for a real agent's theme export, and in the environment, for
-# the stub agents that export nothing (#836); the socket path points at a
+# the stub agents that export nothing; the socket path points at a
 # file that does not exist. Paths reach the child only as environment/argv,
 # never interpolated into code.
 
@@ -21,9 +21,7 @@ trap cleanup EXIT
 mkdir -p "$SANDBOX/cfg/gpy" "$SANDBOX/cache" "$SANDBOX/run"
 print -r -- $'[agent.supervisor]\nenabled = false' >"$SANDBOX/cfg/gpy/config.toml"
 
-failures=0
-fail() { print -r -- "FAIL: $*"; failures=$((failures + 1)); }
-pass() { print -r -- "PASS: $*"; }
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
 # run_child <prelude> <input>: sets CHILD_OUT to the child's merged output.
 # The rc file runs <prelude>, then sources gpy.zsh from $GPY_TEST_ROOT; <input>
@@ -111,8 +109,4 @@ run_scenario nounset_no_xdg
 run_scenario nounset_runtime_only
 run_scenario cache_dir_lifecycle
 
-if ((failures > 0)); then
-    print -r -- "=== $failures scenario assertion(s) failed ==="
-    exit 1
-fi
-print -r -- "=== All Tests Passed ==="
+test_finish

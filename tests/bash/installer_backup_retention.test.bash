@@ -2,9 +2,9 @@
 # tests/bash/installer_backup_retention.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Both installers keep at most ONE backup per binary (#807). Every run used to
-# copy the installed gpy-agent and gpy to a new `<bin>.backup.<stamp>` file
-# that nothing pruned, so ~/.local/bin grew by two full binaries per run.
+# Both installers keep at most ONE backup per binary. Copying the installed
+# gpy-agent and gpy to a new `<bin>.backup.<stamp>` file on every run without
+# pruning would grow ~/.local/bin by two full binaries per run.
 #
 # install-oneline.sh (behind a fake `curl`) and install.sh (against a staged
 # bin/ payload) are each run three times, a second apart so the stamps differ,
@@ -33,10 +33,6 @@ case "$(uname -s | tr '[:upper:]' '[:lower:]')" in
         ;;
     *) test_skip "the installers do not support $(uname -s)" ;;
 esac
-
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 digest_of() {
     if command -v sha256sum >/dev/null 2>&1; then
@@ -137,7 +133,7 @@ for n in 1 2 3; do
         sh "$ROOT/install-oneline.sh" </dev/null >"$SHELL_E2E_ROOT/oneline/run$n.log" 2>&1
     rc=$?
     [ "$rc" -eq 0 ] || fail "install-oneline.sh run $n exited $rc: $(cat "$SHELL_E2E_ROOT/oneline/run$n.log")"
-    [ "$n" -eq 3 ] || sleep 1
+    [ "$n" -eq 3 ] || sleep 1 # backup stamps have one-second resolution
 done
 check_backups install-oneline.sh "$bindir"
 
@@ -158,12 +154,8 @@ for n in 1 2 3; do
         >"$SHELL_E2E_ROOT/pkg/run$n.log" 2>&1
     rc=$?
     [ "$rc" -eq 0 ] || fail "install.sh run $n exited $rc: $(cat "$SHELL_E2E_ROOT/pkg/run$n.log")"
-    [ "$n" -eq 3 ] || sleep 1
+    [ "$n" -eq 3 ] || sleep 1 # backup stamps have one-second resolution
 done
 check_backups install.sh "$bindir"
 
-if [ "$failures" -gt 0 ]; then
-    echo "FAIL: $failures check(s) failed"
-    exit 1
-fi
-echo "PASS: each installer keeps exactly one backup per binary across repeated runs"
+test_finish "each installer keeps exactly one backup per binary across repeated runs"

@@ -26,7 +26,7 @@
 
 set -uo pipefail
 
-# --- Configuration -----------------------------------------------------------
+# Configuration
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -58,7 +58,7 @@ if [[ " ${*:-} " == *" --ci "* ]] || [[ "${CI:-}" == "true" ]]; then
   CI_MODE=true
 fi
 
-# --- Output helpers ----------------------------------------------------------
+# Output helpers
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -82,7 +82,7 @@ record_budget() {
   fi
 }
 
-# --- Cleanup -----------------------------------------------------------------
+# Cleanup
 
 cleanup() {
   stop_daemon >/dev/null 2>&1 || true
@@ -90,7 +90,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# --- Dependency checks -------------------------------------------------------
+# Dependency checks
 
 require_tools() {
   local missing=()
@@ -121,7 +121,7 @@ ensure_agent_built() {
   return 0
 }
 
-# --- Budget loading ----------------------------------------------------------
+# Budget loading
 
 # budget_ms KEY -> prints the max_ms budget, or empty if undefined.
 budget_ms() { jq -r ".budgets.${1}.max_ms // empty" "$BASELINE_FILE" 2>/dev/null; }
@@ -138,7 +138,7 @@ within_budget() {
     'BEGIN { exit !(m <= b * (1 + t / 100)) }'
 }
 
-# --- Daemon lifecycle --------------------------------------------------------
+# Daemon lifecycle
 
 daemon_pid() { pgrep -f "gpy-agent start --socket ${BENCH_SOCKET}" 2>/dev/null | head -1; }
 
@@ -168,7 +168,7 @@ stop_daemon() {
   return 0
 }
 
-# --- Prompt command builder --------------------------------------------------
+# Prompt command builder
 
 # Fish setup that loads THIS checkout's prompt for directory $1.
 # fish_function_path is prepended with the repo's functions dir so we always
@@ -197,7 +197,7 @@ prompt_loop_command() {
     "$(prompt_setup "$target")" "$iters" "${prep:+$prep; }"
 }
 
-# --- Measurement helpers -----------------------------------------------------
+# Measurement helpers
 
 # preflight_render CMD -> 0 if the command exits 0 and prints non-empty output.
 # This is what makes a silent empty/zero measurement impossible: a render that
@@ -254,10 +254,10 @@ run_latency() {
 
   if within_budget "$mean_ms" "$budget"; then
     pass "$label: ${mean_ms}ms/render (budget ${budget}ms +${TOLERANCE_PCT}%)"
-    REPORT_ROWS+=("| $label | <${budget}ms | ${mean_ms}ms | ✅ |")
+    REPORT_ROWS+=("| $label | <${budget}ms | ${mean_ms}ms | pass |")
   else
     record_budget "$label: ${mean_ms}ms exceeds budget ${budget}ms (+${TOLERANCE_PCT}%)"
-    REPORT_ROWS+=("| $label | <${budget}ms | ${mean_ms}ms | ❌ |")
+    REPORT_ROWS+=("| $label | <${budget}ms | ${mean_ms}ms | over budget |")
   fi
   return 0
 }
@@ -285,14 +285,14 @@ check_memory() {
   fi
   if within_budget "$measured" "$budget"; then
     pass "$label: ${measured}MB (budget ${budget}MB)"
-    REPORT_ROWS+=("| $label | <${budget}MB | ${measured}MB | ✅ |")
+    REPORT_ROWS+=("| $label | <${budget}MB | ${measured}MB | pass |")
   else
     record_budget "$label: ${measured}MB exceeds budget ${budget}MB"
-    REPORT_ROWS+=("| $label | <${budget}MB | ${measured}MB | ❌ |")
+    REPORT_ROWS+=("| $label | <${budget}MB | ${measured}MB | over budget |")
   fi
 }
 
-# --- Fixtures ----------------------------------------------------------------
+# Fixtures
 
 make_large_repo() {
   info "Building large synthetic repository (offline)..."
@@ -314,7 +314,7 @@ make_large_repo() {
   printf 'new file\n' >"$LARGE_REPO/untracked.txt"
 }
 
-# --- Scenarios ---------------------------------------------------------------
+# Scenarios
 
 # Fish snippets (run before each in-process render) that put the instant cache
 # into a given state. A for-loop glob is used deliberately: it is quote-free (so
@@ -402,7 +402,7 @@ scenario_memory() {
   stop_daemon
 }
 
-# --- Report ------------------------------------------------------------------
+# Report
 
 generate_report() {
   local report="$RESULTS_DIR/prompt-memory-report.md"
@@ -419,7 +419,7 @@ generate_report() {
   info "Report written to $report"
 }
 
-# --- Main --------------------------------------------------------------------
+# Main
 
 main() {
   info "Starting GPY prompt & memory benchmark (mode: $([[ "$CI_MODE" == true ]] && echo CI || echo local))"
@@ -446,20 +446,20 @@ print_summary() {
   info "Summary: ${HARD_FAILURES} hard failure(s), ${BUDGET_FAILURES} budget overage(s)"
 
   if [[ "$HARD_FAILURES" -gt 0 ]]; then
-    fail "❌ Benchmark integrity failures detected — results are not trustworthy"
+    fail "Benchmark integrity failures detected — results are not trustworthy"
     return 1
   fi
 
   if [[ "$BUDGET_FAILURES" -gt 0 ]]; then
     if [[ "$CI_MODE" == true ]]; then
-      fail "❌ ${BUDGET_FAILURES} budget(s) exceeded"
+      fail "${BUDGET_FAILURES} budget(s) exceeded"
       return 1
     fi
-    warn "⚠️  ${BUDGET_FAILURES} budget(s) exceeded (warnings only in local mode)"
+    warn "${BUDGET_FAILURES} budget(s) exceeded (warnings only in local mode)"
     return 0
   fi
 
-  pass "✅ All scenarios measured and within budget"
+  pass "All scenarios measured and within budget"
   return 0
 }
 

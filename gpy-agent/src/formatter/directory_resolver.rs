@@ -321,8 +321,7 @@ fn repo_anchored_path(
 /// Shorten each non-final path component to its first character (hidden
 /// components keep the leading `.` plus one more).
 ///
-/// The shells no longer abbreviate paths themselves (the Fish helper that
-/// mirrored this was dead code and removed in #644); this is the one
+/// The shells do not abbreviate paths themselves; this is the one
 /// implementation, asserted end to end by
 /// `tests/fish/e2e_prompt_content.test.fish`.
 ///

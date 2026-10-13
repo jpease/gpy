@@ -2,10 +2,9 @@
 # tests/fish/install_dev_config_theme_preserve.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #311: install-dev.fish's _install_fish_files
-# unconditionally overwrote ~/.config/gpy/config.toml on every dev install
-# (no backup), and used `rsync -a --delete` on config/themes/ under
-# --clean, silently deleting a user's customized config and any
+# install-dev.fish's _install_fish_files must never overwrite a user's
+# ~/.config/gpy/config.toml (a divergent config gets a config.toml.new
+# sibling instead), and the themes sync under --clean must never delete a
 # user-authored custom theme file.
 #
 # Runs the REAL install-dev.fish script with --fish-only (no agent build,
@@ -73,10 +72,8 @@ else
     exit 1
 end
 
-# ===========================================================================
-# Test 1: an existing customized config.toml is left untouched, and a
-# config.toml.new sibling with the shipped default appears instead.
-# ===========================================================================
+# --- Test 1: an existing customized config.toml is left untouched, and a
+# config.toml.new sibling with the shipped default appears instead. ---
 set -l home1 (mktemp -d)
 mkdir -p "$home1/.config/gpy"
 set -l custom_config "$home1/.config/gpy/config.toml"
@@ -106,10 +103,8 @@ else
     end
 end
 
-# ===========================================================================
-# Test 2: idempotency -- running install-dev.fish --fish-only twice in a
-# row does not misbehave.
-# ===========================================================================
+# --- Test 2: idempotency -- running install-dev.fish --fish-only twice in a
+# row does not misbehave. ---
 __gpy_run_install_dev "$home1" "$safe_path" "" >/dev/null 2>&1
 if test -f "$home1/.config/gpy/config.toml.new"
     if diff -q "$repo_root/config/config.toml" "$home1/.config/gpy/config.toml.new" >/dev/null 2>&1
@@ -128,11 +123,8 @@ end
 
 rm -rf "$home1"
 
-# ===========================================================================
-# Test 3: a user-created theme file survives the themes sync under --clean
-# (the flavor that used `rsync -a --delete`), and shipped themes are still
-# copied/updated correctly.
-# ===========================================================================
+# --- Test 3: a user-created theme file survives the themes sync under
+# --clean, and shipped themes are still copied/updated correctly. ---
 set -l home2 (mktemp -d)
 mkdir -p "$home2/.config/gpy/themes"
 set -l custom_theme_path "$home2/.config/gpy/themes/my-custom-theme.toml"
@@ -170,10 +162,8 @@ end
 
 rm -rf "$home2"
 
-# ===========================================================================
-# Test 4: first-ever install (no existing config.toml) still creates
-# config.toml with the shipped default, and does not create a spurious .new.
-# ===========================================================================
+# --- Test 4: first-ever install (no existing config.toml) still creates
+# config.toml with the shipped default, and does not create a spurious .new. ---
 set -l home3 (mktemp -d)
 
 set -l out3 (__gpy_run_install_dev "$home3" "$safe_path" "")
@@ -196,11 +186,9 @@ end
 
 rm -rf "$home3"
 
-# ===========================================================================
-# Test 5: a custom regular-file prompt is backed up under the name both
+# --- Test 5: a custom regular-file prompt is backed up under the name both
 # uninstallers restore, `fish_prompt.fish.backup.<8>_<6>`, and a foreign
-# symlink prompt is moved aside still a symlink (#744).
-# ===========================================================================
+# symlink prompt is moved aside still a symlink. ---
 set -l home5 (mktemp -d)
 mkdir -p "$home5/.config/fish/functions" "$home5/dotfiles"
 printf '%s\n' 'function fish_prompt; echo mine; end' >"$home5/.config/fish/functions/fish_prompt.fish"

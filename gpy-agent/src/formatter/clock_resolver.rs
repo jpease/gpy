@@ -199,9 +199,8 @@ mod tests {
 
     #[test]
     fn twelve_hour_no_leading_zero_is_the_default() {
-        // The regression this whole path exists for: zsh used to hardcode
-        // %H:%M:%S regardless of configuration, so a 12-hour theme rendered
-        // as 17:21:42 next to Fish's 5:21 PM.
+        // zsh must honor the configured clock format, so a 12-hour theme
+        // renders as 5:21 PM like Fish, not 17:21:42.
         let thr = theme_with("12", LeadingZero::No, Seconds::No);
         let res = ClockResolver::new(Shell::Zsh, &thr, mid());
         assert_eq!(res.resolve("time").unwrap(), "%D{%-I:%M %p}");

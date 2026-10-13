@@ -448,26 +448,22 @@ mod tests {
     }
 
     #[test]
-    fn nesting_at_127_brackets_ok() {
-        // 127 brackets reach check_depth at depths 0..126 — all < MAX_DEPTH 128.
-        let template = format!("{}x{}", "[".repeat(127_usize), "]".repeat(127_usize));
-        assert!(parse(&template).is_ok());
-    }
-
-    #[test]
-    fn nesting_at_128_brackets_exact_boundary_ok() {
-        // 128 brackets reach check_depth at depths 0..127 — the last check is
-        // depth 127 < 128, so this is still within the allowed limit.
-        let template = format!("{}x{}", "[".repeat(128_usize), "]".repeat(128_usize));
-        assert!(parse(&template).is_ok());
-    }
-
-    #[test]
-    fn nesting_at_129_brackets_too_deep() {
-        // 129 brackets trigger check_depth at depth 128 >= MAX_DEPTH 128 → TooDeep.
-        let template = "[".repeat(129_usize);
-        let err = parse(&template).unwrap_err();
-        assert_eq!(err, TemplateError::TooDeep { limit: 128_usize });
+    fn nesting_depth_boundary() {
+        // N brackets reach check_depth at depths 0..N-1; only depth 128
+        // (>= MAX_DEPTH) is rejected, so 128 brackets is the last accepted.
+        for (depth, ok) in [(127_usize, true), (128, true), (129, false)] {
+            let template = format!("{}x{}", "[".repeat(depth), "]".repeat(depth));
+            let result = parse(&template);
+            if ok {
+                assert!(result.is_ok(), "{depth} brackets should parse");
+            } else {
+                assert_eq!(
+                    result.unwrap_err(),
+                    TemplateError::TooDeep { limit: 128_usize },
+                    "{depth} brackets should be too deep"
+                );
+            }
+        }
     }
 
     #[test]

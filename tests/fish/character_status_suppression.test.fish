@@ -1,8 +1,8 @@
 #!/usr/bin/env fish
-# Verify the legacy status indicator is suppressed when the character segment is
-# agent-rendered (the exit-colored `❯` conveys success/failure), and still shown
-# when the agent returns nothing (legacy/fallback symbol). Post-#199 the behavior
-# is driven by whether the agent actually renders the character, not by a static
+# Verify the separate status indicator is suppressed when the character segment
+# is agent-rendered (the exit-colored `❯` conveys success/failure), and still
+# shown when the agent returns nothing (plain fallback symbol). The behavior is
+# driven by whether the agent actually renders the character, not by a static
 # `__gpy_character_format` toggle.
 
 source (dirname (status --current-filename))/../support/setup_test_env.fish
@@ -22,7 +22,7 @@ function test_status_indicator_gated_by_agent_render
     set -g GPY_SHOW_STATUS 1
 
     # Fallback path: the agent renders nothing → the separate status indicator is
-    # shown (legacy symbol can't convey success/failure on its own).
+    # shown (the fallback symbol can't convey success/failure on its own).
     function __gpy_request_character
     end
     set -l fallback (fish_prompt 2>/dev/null | string collect)

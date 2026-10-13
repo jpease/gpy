@@ -3,14 +3,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # No test (or test runner) builds a child shell's code string by interpolating
-# a variable into a double-quoted `-c` argument (#822).
+# a variable into a double-quoted `-c` argument.
 #
 # A `fish -c` whose double-quoted code string embeds the repo root re-parses
 # that path as code. A checkout path with a space splits the word, and one with
-# an apostrophe or `$` breaks the quoting (or runs something). The zsh/fish/bash
-# e2e suites all did this, so none could run from a checkout like `/My Disk/gpy`.
-# The fix is to pass paths as data -- `fish -c 'source $argv[1]' -- "$path"`,
-# `bash -c 'source "$1"' bash "$path"` -- and the code string stays a constant.
+# an apostrophe or `$` breaks the quoting (or runs something), so no suite
+# could run from a checkout like `/My Disk/gpy`. Paths travel as data instead
+# -- `fish -c 'source $argv[1]' -- "$path"`, `bash -c 'source "$1"' bash
+# "$path"` -- and the code string stays a constant.
 #
 # Rule enforced over tests/ and scripts/ (.bash .zsh .fish .sh .md): a
 # double-quoted argument to `-c` (or fish's `-C` init command) of
@@ -32,15 +32,10 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
-if ! command -v python3 >/dev/null 2>&1; then
-    # shellcheck source=tests/lib/shell_e2e.sh
-    . "$ROOT/tests/lib/shell_e2e.sh"
-    test_skip "python3 not installed"
-fi
+test_require_command python3
 
 SCANNER="$(mktemp "${TMPDIR:-/tmp}/gpy-shell-c-scan.XXXXXX")"
 FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/gpy-shell-c-fixture.XXXXXX")"
@@ -65,7 +60,6 @@ START = re.compile(
 LONE_VARIABLE = re.compile(r"\$(?:\w+|\{\w+\})")
 INTERPOLATION = re.compile(r"(?<!\\)(?:\$[A-Za-z_{(0-9@*#?!$-]|`)")
 
-
 def code_string(text, start):
     """Body of the double-quoted string opening at `start` (just past the quote)."""
     out = []
@@ -81,7 +75,6 @@ def code_string(text, start):
         out.append(ch)
         i += 1
     return "".join(out)
-
 
 files = 0
 for root_dir in sys.argv[1:]:
@@ -162,8 +155,4 @@ else
     printf '%s\n' "$repo_findings" | sed 's/^/    /'
 fi
 
-if [ "$failures" -gt 0 ]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: no -c code string interpolates a variable"
+test_finish "no -c code string interpolates a variable"

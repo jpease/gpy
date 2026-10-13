@@ -55,11 +55,8 @@ end
 # omits the segment. A stale entry with the agent down is replaced by a
 # foreground `gpy-agent oneshot` render.
 function segment_git_render --argument-names is_last is_first
-    # A caller that passes fewer than 2 args (some tests call this with none,
-    # to simulate a middle-of-prompt render) leaves the corresponding
-    # --argument-names binding an EMPTY LIST, not an empty string -- normalize
-    # so every unquoted use below always expands to exactly one word instead
-    # of silently collapsing and shifting a later positional argument (#629-class).
+    # Seed missing args as "" (see fish_prompt.fish's dispatch loop); some
+    # tests call this with none to simulate a middle-of-prompt render.
     set -q is_last[1]; or set is_last ""
     set -q is_first[1]; or set is_first ""
 
@@ -67,8 +64,6 @@ function segment_git_render --argument-names is_last is_first
     set -l root $PWD
 
     # Select the cache variant matching the delimiters (last/first vs not).
-    # is_last/is_first arrive already as "true"/"" (#613: fish_prompt.fish's
-    # dispatch-loop convention), so no per-segment conversion is needed here.
     set -l cache_suffix (__gpy_cache_variant_suffix git $is_last $is_first)
 
     # Snapshot prev_bg at render time so background jobs get the correct value.
@@ -98,8 +93,8 @@ function segment_git_render --argument-names is_last is_first
         #    attempt a BOUNDED synchronous IPC query so the FIRST prompt shows
         #    correct git instead of omitting until an async repaint. Gated on
         #    `test -S` so a DOWN agent is an instant omit (no IPC attempt, no
-        #    hang); when up, __gpy_ipc_send is bounded by GPY_IPC_TIMEOUT_MS
-        #    (~150ms), so a slow agent can't hang the prompt beyond budget.
+        #    hang); when up, __gpy_ipc_send is bounded by GPY_IPC_TIMEOUT_MS,
+        #    so a slow agent can't hang the prompt beyond budget.
         #    This is deliberately IPC-only: routing through the oneshot
         #    fallback (a full foreground `gpy-agent oneshot git`) is unbounded
         #    and would violate the "graceful omit within budget" contract. On

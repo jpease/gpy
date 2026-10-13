@@ -1,10 +1,10 @@
 //! Bounded eviction for path-keyed caches.
 //!
 //! GPY's path-keyed caches (git status, language detection, language versions)
-//! are keyed by directory and were previously evicted only by TTL or explicit
-//! invalidation. A long-lived agent in a shell that navigates many directories
-//! would accumulate one entry per distinct path indefinitely, working against
-//! the documented <50MB RSS budget for long-running sessions.
+//! are keyed by directory; without a size bound, a long-lived agent in a shell
+//! that navigates many directories would accumulate one entry per distinct
+//! path indefinitely, working against the documented <50MB RSS budget for
+//! long-running sessions.
 //!
 //! Two complementary bounds are enforced:
 //!

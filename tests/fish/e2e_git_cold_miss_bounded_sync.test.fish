@@ -1,22 +1,19 @@
 #!/usr/bin/env fish
 # SPDX-License-Identifier: GPL-3.0-or-later
-# ============================================================================
-# E2E Test: Git Segment Cold-Miss Bounded Synchronous IPC (#434)
-# ============================================================================
+# E2E Test: Git Segment Cold-Miss Bounded Synchronous IPC
 #
-# Before this fix, the FIRST prompt rendered after `cd`-ing into a repo whose
-# instant-cache is cold (new repo, evicted entry, fresh shell) showed NO git
-# segment at all -- segment_git_render's cold-miss branch only omitted the
-# segment and kicked off a throttled background refresh, relying on the
-# agent's SIGURG repaint to fill it in on a LATER prompt (and only while the
-# agent stays up).
+# The FIRST prompt rendered after `cd`-ing into a repo whose instant-cache is
+# cold (new repo, evicted entry, fresh shell) must show the git segment.
+# Omitting it and kicking off a background refresh would rely on the agent's
+# SIGURG repaint to fill it in on a LATER prompt (and only while the agent
+# stays up).
 #
 # AC1: with the agent UP and the instant cache genuinely cold for a repo, the
 # very first segment_git_render call must return non-empty, correct output --
-# a bounded synchronous IPC round-trip (<= GPY_IPC_TIMEOUT_MS) instead of the
-# old omit-and-wait-for-async-repaint behavior.
+# a bounded synchronous IPC round-trip (<= GPY_IPC_TIMEOUT_MS) rather than
+# omitting and waiting for an async repaint.
 #
-# AC2 (regression guard, already true pre-fix): with the agent DOWN, a
+# AC2: with the agent DOWN, a
 # cold-miss render must still omit gracefully. The `test -S` liveness gate
 # must skip the IPC attempt entirely -- no connect, no timeout wait -- so the
 # agent-down case is structurally instant rather than merely "usually fast".
@@ -80,9 +77,8 @@ function test_cold_miss_agent_up_renders_synchronously
     end
 
     # cd into the never-queried repo and render immediately -- no warm-up
-    # client, no prior registration, no prior IPC call for this repo. Pre-fix
-    # this is exactly the cold-miss omit path (returns empty). Post-fix the
-    # bounded synchronous IPC query inside the cold-miss branch should
+    # client, no prior registration, no prior IPC call for this repo. The
+    # bounded synchronous IPC query inside the cold-miss branch must
     # populate correct output on THIS very render.
     cd $repo
     set -e __gpy_oneshot_used

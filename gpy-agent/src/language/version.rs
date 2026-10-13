@@ -207,9 +207,7 @@ const VERSION_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 /// `Error::language`, with `label` naming the command in the message (e.g.
 /// "node", "mise", "venv python") -- the shared
 /// [`crate::process::wait_with_timeout`] primitive is domain-agnostic, so
-/// per-caller labeling happens here rather than there (#590). Preserves the
-/// exact error wording each of this file's call sites depended on before the
-/// consolidation.
+/// per-caller labeling happens here rather than there.
 ///
 /// # Errors
 ///

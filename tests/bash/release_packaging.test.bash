@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # tests/bash/release_packaging.test.bash
 #
-# Regression test for #492: the release workflow packaged root-level fish
-# paths (core/, segments/, themes/) that moved into fish/ long ago, and wrapped
-# every copy in `2>/dev/null || echo "... may be missing"`. A release could
-# therefore publish an archive with no shell files in it and still go green,
-# and nothing but a tag push would ever have revealed it.
+# The release archive must contain the shell files the installers reach for,
+# and a missing file must fail the release: a copy wrapped in
+# `2>/dev/null || echo "... may be missing"` lets a release publish an archive
+# with no shell files in it and still go green.
 #
 # This exercises scripts/package-release.sh and scripts/release-notes.sh with
 # stub build artifacts, so packaging is verified on every quality-check run
@@ -14,12 +13,12 @@
 #   (b) binaries are renamed to their release asset names, which is what
 #       install.sh resolves under bin/
 #   (c) packaging fails closed when a build artifact is missing
-#   (d) release notes come from the CHANGELOG and no longer reference the
-#       deleted CROSS_PLATFORM_TESTING.md / config.example.fish / REFACTOR.md
+#   (d) release notes come from the CHANGELOG and do not link the deleted
+#       CROSS_PLATFORM_TESTING.md / config.example.fish / REFACTOR.md
 #   (e) release notes fail closed when the CHANGELOG has no section for the tag
 #   (f) every published file gets a correct SHA-256 sidecar, the aggregate
 #       SHA256SUMS manifest covers them all, and the sidecars ride inside the
-#       archive where install.sh looks for them (#494)
+#       archive where install.sh looks for them
 #   (g) packaging fails closed when neither --sbom nor --no-sbom is given
 
 # shellcheck disable=SC2016
@@ -38,11 +37,8 @@ WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
 
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 # Asset names must stay in step with the build matrix in release.yml;
 # package-release.sh fails closed on any that are absent, which is what
@@ -135,8 +131,8 @@ for entry in fisher.json conf.d/gpy_init.fish core/init.fish functions/fish_prom
     expect_entry "$fisher_listing" "fisher-gpy.tar.gz" "fisher-gpy/$entry"
 done
 
-# The Fisher manifest must carry the released version, not the hardcoded
-# "1.0.0" the workflow used to generate, and must keep the project license.
+# The Fisher manifest must carry the released version, not a hardcoded
+# "1.0.0", and must keep the project license.
 tar -xzf "$OUT/fisher-gpy.tar.gz" -C "$WORKDIR"
 grep -q '"version": "9.9.9"' "$WORKDIR/fisher-gpy/fisher.json" ||
     fail "fisher.json was not stamped with the release version"
@@ -243,7 +239,7 @@ if [[ -f "$NOTES" ]]; then
     done
     # Deleted docs must not be LINKED. The notes body is the CHANGELOG section,
     # and a CHANGELOG entry may legitimately name a deleted file while
-    # describing the bug that removed it -- #492's own entry names all three.
+    # describing the change that removed it.
     # Match the markdown link form so a bare mention in prose is allowed.
     for stale in CROSS_PLATFORM_TESTING.md config.example.fish REFACTOR.md; do
         grep -qE "\]\([^)]*$stale" "$NOTES" && fail "release notes still link removed file '$stale'"
@@ -267,8 +263,8 @@ else
     for asset in "${ASSETS[@]}"; do
         grep -qF "\`$asset\`" "$ASSET_NOTES" || fail "release notes asset table is missing $asset"
     done
-    # bin/ also holds a .sha256 per binary now; those belong in the
-    # verification section, not the platform table (#494).
+    # bin/ also holds a .sha256 per binary; those belong in the
+    # verification section, not the platform table.
     grep -qE '^\| `[^`]+\.sha256`' "$ASSET_NOTES" &&
         fail "release notes asset table lists checksum sidecars as platform binaries"
     grep -qF 'gh attestation verify' "$ASSET_NOTES" ||
@@ -283,9 +279,4 @@ if "$ROOT/scripts/release-notes.sh" --version v9.9.9 >/dev/null 2>&1; then
     fail "release-notes.sh succeeded for a version with no CHANGELOG section"
 fi
 
-if [[ $failures -ne 0 ]]; then
-    echo "$failures assertion(s) failed"
-    exit 1
-fi
-
-echo "PASS"
+test_finish

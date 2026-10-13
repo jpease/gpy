@@ -4,7 +4,7 @@
 #
 # At most one Fish agent supervisor runs per runtime root, and supervisor.pid
 # names it. A stale pidfile naming a live non-supervisor PID does not block a
-# new supervisor (#703).
+# new supervisor.
 
 set -l repo_root (path resolve (status dirname)/../..)
 source $repo_root/tests/lib/test_helpers.fish
@@ -21,7 +21,7 @@ set -g pidfile $XDG_RUNTIME_DIR/gpy/supervisor.pid
 set -g sleep_pid
 
 # Supervisors are matched by this sandbox's pidfile path (an argv of the
-# child), never by process name (#484).
+# child), never by process name.
 function supervisors
     pgrep -f $pidfile
 end
@@ -66,7 +66,8 @@ start_supervisor &
 start_supervisor &
 wait
 poll_until 3 pidfile_written; or fail "no supervisor wrote $pidfile"
-sleep 1
+# Wait for the losing concurrent starts to exit.
+poll_until 3 supervisor_running
 
 set -l running (supervisors)
 test (count $running) -eq 1; or fail "expected 1 supervisor, found "(count $running)": $running"
@@ -77,6 +78,7 @@ for pid in $running
 end
 
 # Case 2: a pidfile naming a live non-supervisor PID does not block a start.
+# A live placeholder process whose PID the stale pidfile names.
 sleep 30 &
 set sleep_pid $last_pid
 mkdir -p (path dirname $pidfile)

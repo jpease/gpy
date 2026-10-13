@@ -1,12 +1,11 @@
 #!/usr/bin/env fish
 # Test: hostname segment (fish/segments/hostname.fish) — SSH-only visibility,
 # pure-fish trim/render, and the dual-path branch to agent-resolved rendering.
-# Part of #257 (hostname/SSH segment); this task is #262.
 #
 # The segment is opt-in (never added to a theme's default __enabled_segments —
-# see fish/segments/hostname.fish, and #257 for the rationale), so
-# these tests source the segment file directly and drive its functions with
-# stubbed globals rather than exercising it through fish_prompt.
+# see fish/segments/hostname.fish), so these tests source the segment file
+# directly and drive its functions with stubbed globals rather than
+# exercising it through fish_prompt.
 
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
@@ -121,7 +120,7 @@ else
     check "pure-fish render: tracks __gpy_last_segment_bg for the next segment's chevron (got: '$__gpy_last_segment_bg')" fail
 end
 
-# #826: the icon is Starship's ssh_symbol — drawn only in SSH sessions.
+# The icon is Starship's ssh_symbol — drawn only in SSH sessions.
 set -g __icon_hostname ICON
 set -g __gpy_is_ssh 1
 set -g __gpy_last_segment_bg black
@@ -137,9 +136,9 @@ set -g __gpy_is_ssh 0
 segment_hostname_render true
 
 if test "$__test_hostname_content" = "$real_hostname"
-    check "pure-fish render: omits the icon in a local session (#826)" pass
+    check "pure-fish render: omits the icon in a local session" pass
 else
-    check "pure-fish render: omits the icon in a local session (#826) (got: '$__test_hostname_content')" fail
+    check "pure-fish render: omits the icon in a local session (got: '$__test_hostname_content')" fail
 end
 set -g __gpy_is_ssh 1
 
@@ -160,9 +159,9 @@ end
 # non-empty, regardless of what garbage it contains.
 
 # The stub records the exact positional args it received so we can verify the
-# render function forwards is_last and prev_bg in the correct slots (regression
-# guard for the "not last" bug where an empty is_last collapses on unquoted
-# expansion and shifts prev_bg out of position).
+# render function forwards is_last and prev_bg in the correct slots (an empty
+# is_last collapses on unquoted expansion and would shift prev_bg out of
+# position).
 function __gpy_request_hostname --argument-names host is_last prev_bg is_ssh
     set -g __test_hostname_arg_host "$host"
     set -g __test_hostname_arg_is_last "$is_last"
@@ -194,12 +193,12 @@ else
     check "agent path: still tracks __gpy_last_segment_bg for the next segment (got: '$__gpy_last_segment_bg')" fail
 end
 
-# Regression: when the hostname segment is NOT the last rendered segment,
-# fish_prompt.fish calls segment_hostname_render with NO argument (is_last is
-# empty/unset). The agent branch must still forward prev_bg into
-# __gpy_request_hostname's 3rd slot and pass "" (not the bg) as is_last.
-# Before the fix, an unquoted empty $is_last collapsed on expansion, shifting
-# $__gpy_last_segment_bg into the is_last param and leaving prev_bg unset.
+# When the hostname segment is NOT the last rendered segment, fish_prompt.fish
+# calls segment_hostname_render with NO argument (is_last is empty/unset). The
+# agent branch must still forward prev_bg into __gpy_request_hostname's 3rd
+# slot and pass "" (not the bg) as is_last: an unquoted empty $is_last would
+# collapse on expansion, shifting $__gpy_last_segment_bg into the is_last
+# param and leaving prev_bg unset.
 set -g __hostname_format some-opaque-agent-side-value
 set -g __gpy_last_segment_bg green
 set -e __test_hostname_arg_is_last
@@ -218,7 +217,7 @@ else
     check "agent path (not last): is_last is forwarded as empty, not shifted (got: '$__test_hostname_arg_is_last')" fail
 end
 
-# #826: the 4th arg carries $__gpy_is_ssh, for both states, and stays in the
+# The 4th arg carries $__gpy_is_ssh, for both states, and stays in the
 # 4th slot even when prev_bg is unset (an empty list would otherwise collapse
 # on unquoted expansion and shift is_ssh into the prev_bg slot).
 for ssh_state in 0 1
@@ -251,9 +250,8 @@ set -e __hostname_format
 # --- __gpy_request_hostname (edge, IPC payload construction) ---
 #
 # Source the real IPC helpers and stub __gpy_ipc_send to capture the payload,
-# so the JSON-escaping and is_last "true"/"" convention are verified directly
-# (#613: hostname now shares the exact same "true"/"" contract as character,
-# username, and every other segment -- there is no more distinct convention).
+# so the JSON-escaping and is_last "true"/"" convention (shared by every
+# segment) are verified directly.
 #
 # Note: __gpy_request_hostname's first parameter is named `host`, not
 # `hostname` — `--argument-names hostname` is a hard error in fish because

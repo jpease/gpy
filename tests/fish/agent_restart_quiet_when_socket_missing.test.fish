@@ -19,14 +19,14 @@ printf '%s\n' \
     'case "$1" in' \
     "  stop) echo stop-called; : > \"$stop_marker\" ;;" \
     "  start) : > \"$start_marker\" ;;" \
-    'esac' >"$fake_agent"
+    esac >"$fake_agent"
 chmod +x "$fake_agent"
 
 set -gx XDG_RUNTIME_DIR "$temp_dir/runtime"
 mkdir -p "$XDG_RUNTIME_DIR/gpy"
 
 # Isolate the theme-export cache dir so init.fish's fast path can't read a
-# real, live dogfooding daemon's cache (#402).
+# real, live dogfooding daemon's cache.
 set -gx XDG_CACHE_HOME "$temp_dir/cache"
 
 source fish/core/init.fish

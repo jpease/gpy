@@ -2,7 +2,7 @@
 # tests/zsh/xdg_absoluteness_vectors.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #774: Zsh's resolvers honour an XDG_* value iff it is absolute (starts with
+# Zsh's resolvers honour an XDG_* value iff it is absolute (starts with
 # `/`) for every row of tests/fixtures/xdg_absoluteness_vectors.tsv (also read
 # by the Rust, Bash and Fish tests). See the fixture's header for the format.
 

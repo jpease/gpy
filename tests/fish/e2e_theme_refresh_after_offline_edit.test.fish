@@ -1,8 +1,6 @@
 #!/usr/bin/env fish
 # SPDX-License-Identifier: GPL-3.0-or-later
-# ============================================================================
-# E2E Test: Theme Refresh After an Offline Config Edit (#701)
-# ============================================================================
+# E2E Test: Theme Refresh After an Offline Config Edit
 #
 # A config.toml change made while the agent is down is never seen by the
 # agent's file watcher, so no `.reload` is produced for it. When the agent
@@ -53,7 +51,7 @@ function __warm_default_cache
 end
 
 function test_new_shell_after_offline_edit
-    print_test_header "E2E Test: New Shell Picks Up an Offline Config Edit (#701)"
+    print_test_header "E2E Test: New Shell Picks Up an Offline Config Edit"
     __setup_offline_edit_env
 
     if not __warm_default_cache
@@ -215,12 +213,12 @@ function __run_existing_shell_scenario --argument-names label agent_only
 end
 
 function test_existing_shell_after_offline_edit
-    print_test_header "E2E Test: Existing Shell Picks Up an Offline Config Edit (#701)"
+    print_test_header "E2E Test: Existing Shell Picks Up an Offline Config Edit"
     __run_existing_shell_scenario "Existing shell shows the new theme after restart" 0
 end
 
 function test_existing_shell_reload_doorbell_after_offline_edit
-    print_test_header "E2E Test: Agent Rings .reload For an Offline Config Edit (#701)"
+    print_test_header "E2E Test: Agent Rings .reload For an Offline Config Edit"
     __run_existing_shell_scenario "Shell reloads via the agent's .reload doorbell alone" 1
 end
 

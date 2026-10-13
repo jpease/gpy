@@ -7,10 +7,8 @@
 //! [`Response`] variant. `DirectoryRequest` additionally checks whether the
 //! path is writable via a `stat` call.
 //!
-//! These previously lived inline in [`super::HandlerRegistry::route`], sitting
-//! directly on the routing hot path alongside the `Arc<dyn RequestHandler>`
-//! dispatch for git/language/theme/client. Giving them their own handler keeps
-//! `route` a pure variant-to-handler dispatch table.
+//! Giving them their own handler keeps [`super::HandlerRegistry::route`] a
+//! pure variant-to-handler dispatch table.
 
 use super::{HandlerError, RequestHandler};
 use crate::ipc::{Message, Response};
@@ -119,8 +117,8 @@ mod tests {
     #[test]
     fn handles_directory_request() {
         // A `tempfile::TempDir` rather than a hardcoded "/tmp": that literal
-        // canonicalizes to `\\?\D:\tmp` on Windows (#482). The response
-        // `cwd` is the requested path, not its canonical form (#697).
+        // canonicalizes to `\\?\D:\tmp` on Windows. The response
+        // `cwd` is the requested path, not its canonical form.
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let requested = temp_dir
             .path()

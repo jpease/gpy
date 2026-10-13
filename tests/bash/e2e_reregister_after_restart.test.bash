@@ -2,17 +2,16 @@
 # tests/bash/e2e_reregister_after_restart.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# A Bash shell re-registers after the agent restarts, at its next prompt
-# (#647 row 2, pins #638).
+# A Bash shell re-registers after the agent restarts, at its next prompt.
 #
 # When the agent (re)starts it writes a `<pid>.reregister` flag for, and rings
 # the SIGURG doorbell of, every PID recorded under <runtime root>/shells/, and
-# keeps nudging tracked shells that stay unregistered. Bash never recorded
-# its PID, so an open shell that stayed in one directory stopped receiving
-# agent notifications for the rest of its life after any restart. Bash
-# installs no URG trap (#678; readline cannot repaint an idle prompt anyway),
-# so the prompt drawn after the next Enter consumes the flag and
-# re-registers, like Bash's live updates (docs/user/bash-limitations.md).
+# keeps nudging tracked shells that stay unregistered. A shell that does not
+# record its PID there and stays in one directory would stop receiving agent
+# notifications for the rest of its life after any restart. Bash installs no
+# URG trap (readline cannot repaint an idle prompt anyway), so the prompt
+# drawn after the next Enter consumes the flag and re-registers, like Bash's
+# live updates (docs/user/bash-limitations.md).
 # With a client registered:
 #   (a) `gpy-agent stop` then `gpy-agent start` on the same socket leaves a
 #       `<pid>.reregister` flag for the shell; one Enter then re-registers
@@ -27,12 +26,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT/tests/lib/shell_e2e.sh"
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' \
-    >"$XDG_CONFIG_HOME/gpy/config.toml"
+shell_e2e_text_config '"directory", "git"'
 shell_e2e_start_agent || exit 1
 export GPY_AGENT_ENABLED=1
 export GPY_AGENT_SUPERVISOR_ENABLED=1
@@ -103,7 +98,8 @@ shell_e2e_poll 5 scanned || fail "the restarted agent never scanned the repo aft
 # The agent refreshes the context-free `.none` files on every change; a
 # `{token}` file exists only for a prev_bg the restarted agent was asked about
 # (the shell's bounded query), and a restarted agent removes the stale ones at
-# startup, so which file `ls | head -1` finds is a race.
+# startup, so digesting only the `.none` files avoids racing over which file
+# exists.
 git_digest() { find "$XDG_CACHE_HOME/gpy/instant-prompts" -name '*.git*.none.bash' -exec cat {} + 2>/dev/null | cksum; }
 digest_before="$(git_digest)"
 echo dirty >>"$SHELL_E2E_REPO/tracked.txt"
@@ -132,7 +128,5 @@ fi
 
 if [ "$failures" -gt 0 ]; then
     shell_e2e_dump_transcript
-    echo "FAILED: $failures assertion(s)"
-    exit 1
 fi
-echo "PASS: bash re-registers after an agent restart"
+test_finish "bash re-registers after an agent restart"

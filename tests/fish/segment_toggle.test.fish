@@ -4,7 +4,7 @@
 echo "Testing segment override toggles..."
 
 # Isolate the theme-export cache dir so init.fish's fast path can't read a
-# real, live dogfooding daemon's cache (#402).
+# real, live dogfooding daemon's cache.
 set -gx XDG_CACHE_HOME (mktemp -d)
 
 # Source modules needed
@@ -19,7 +19,7 @@ function test_minimal_segments_loads_only_directory
     set -e GPY_SHOW_LANGUAGES
 
     # Set GPY_MINIMAL_SEGMENTS to enable minimal mode BEFORE sourcing
-    set -gx GPY_MINIMAL_SEGMENTS "1"
+    set -gx GPY_MINIMAL_SEGMENTS 1
 
     # Source core/ipc.fish and core/util.fish to get dependencies
     # but mock the side-effect functions before sourcing init.fish
@@ -48,7 +48,7 @@ function test_minimal_segments_loads_only_directory
         return 1
     end
 
-    if test "$__enabled_segments[1]" = "directory"
+    if test "$__enabled_segments[1]" = directory
         echo "✅ First segment is directory"
     else
         echo "❌ Expected directory, got $__enabled_segments[1]"
@@ -95,14 +95,14 @@ function test_gpy_test_segments_splits_correctly
         return 1
     end
 
-    if test "$__enabled_segments[1]" = "clock"
+    if test "$__enabled_segments[1]" = clock
         echo "✅ First segment is clock"
     else
         echo "❌ Expected clock, got $__enabled_segments[1]"
         return 1
     end
 
-    if test "$__enabled_segments[2]" = "git"
+    if test "$__enabled_segments[2]" = git
         echo "✅ Second segment is git"
     else
         echo "❌ Expected git, got $__enabled_segments[2]"
@@ -123,7 +123,7 @@ function test_gpy_show_languages_zero_removes_language
     set -e GPY_TEST_SEGMENTS
 
     # Set GPY_SHOW_LANGUAGES to 0 BEFORE sourcing
-    set -gx GPY_SHOW_LANGUAGES "0"
+    set -gx GPY_SHOW_LANGUAGES 0
 
     # Mock functions
     function __gpy_load_theme
@@ -169,8 +169,8 @@ function test_minimal_overrides_show_languages
     set -e GPY_TEST_SEGMENTS
 
     # Set both GPY_SHOW_LANGUAGES and GPY_MINIMAL_SEGMENTS BEFORE sourcing
-    set -gx GPY_SHOW_LANGUAGES "0"
-    set -gx GPY_MINIMAL_SEGMENTS "1"
+    set -gx GPY_SHOW_LANGUAGES 0
+    set -gx GPY_MINIMAL_SEGMENTS 1
 
     # Mock functions
     function __gpy_load_theme
@@ -196,7 +196,7 @@ function test_minimal_overrides_show_languages
         return 1
     end
 
-    if test "$__enabled_segments[1]" = "directory"
+    if test "$__enabled_segments[1]" = directory
         echo "✅ Only directory segment present"
     else
         echo "❌ Expected directory, got $__enabled_segments[1]"

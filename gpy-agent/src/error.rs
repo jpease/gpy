@@ -182,7 +182,7 @@ impl Error {
     }
 }
 
-/// Exit status a CLI binary should use after a command fails (#641).
+/// Exit status a CLI binary should use after a command fails.
 ///
 /// `0` is success, `1` is any error this crate reports, and `2` is reserved
 /// for clap usage errors (which never reach this code). Documented in
@@ -195,7 +195,7 @@ pub const CLI_FAILURE_EXIT_CODE: u8 = 1;
 /// `Display` alone hides the cause for wrapper variants such as
 /// [`Error::Io`] ("I/O operation failed"), and the `Debug` form that
 /// `std::process::Termination` prints (`Config { message: ... }`) is not a
-/// message for a person, so both binaries route through this (#641).
+/// message for a person, so both binaries route through this.
 #[must_use]
 pub fn user_message(err: &(dyn std::error::Error + 'static)) -> String {
     let mut rendered = err.to_string();
@@ -214,7 +214,7 @@ pub fn user_message(err: &(dyn std::error::Error + 'static)) -> String {
 
 /// Whether an error is a broken stdout pipe (the reader went away, e.g.
 /// `gpy segments | head -1`), which a CLI should treat as a quiet, successful
-/// end rather than an error (#641).
+/// end rather than an error.
 #[must_use]
 pub fn is_broken_pipe(err: &Error) -> bool {
     matches!(err, Error::Io(io_err) if io_err.kind() == std::io::ErrorKind::BrokenPipe)

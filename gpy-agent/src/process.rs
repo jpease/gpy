@@ -1,4 +1,4 @@
-//! Shared subprocess wait-with-timeout primitive (#590).
+//! Shared subprocess wait-with-timeout primitive.
 //!
 //! `git::native` and `language::version` each grew a byte-for-byte identical
 //! ~100-line implementation of "spawn a child in its own process group, wait
@@ -19,7 +19,7 @@ const TIMEOUT_KILL_GRACE: Duration = Duration::from_millis(250);
 
 /// Why a timed-waited child process didn't produce output.
 ///
-/// Domain-agnostic on purpose (#590): callers (git subprocess execution,
+/// Domain-agnostic on purpose: callers (git subprocess execution,
 /// language version detection, `fc-list`) each map this to their own error
 /// type (`Error::git`, `Error::language`, ...) with whatever label/context is
 /// meaningful to them.
@@ -183,7 +183,7 @@ mod tests {
         );
     }
 
-    /// Regression for #151/#177: a `SIGTERM`-ignoring child must not wedge the
+    /// A `SIGTERM`-ignoring child must not wedge the
     /// wait.
     ///
     /// The shell traps `TERM` and leaves a `sleep` child inheriting

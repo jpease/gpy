@@ -2,9 +2,9 @@
 # tests/bash/e2e_git_live_content.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Live git content and an idle Bash prompt (#647 row 1; measured for #637).
+# Live git content and an idle Bash prompt.
 #
-# The agent rings Bash's SIGURG doorbell, which Bash ignores (no trap, #678):
+# The agent rings Bash's SIGURG doorbell, which Bash ignores (no trap):
 # readline has already expanded and drawn the previous prompt and has no
 # `reset-prompt`, so fresh data is only shown at the next prompt. This test
 # pins what a Bash user actually gets,
@@ -21,12 +21,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT/tests/lib/shell_e2e.sh"
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' \
-    >"$XDG_CONFIG_HOME/gpy/config.toml"
+shell_e2e_text_config '"directory", "git"'
 shell_e2e_start_agent || exit 1
 export GPY_AGENT_ENABLED=1
 export GPY_AGENT_SUPERVISOR_ENABLED=1
@@ -88,7 +84,5 @@ fi
 shell_e2e_send 'exit\r'
 if [ "$failures" -gt 0 ]; then
     shell_e2e_dump_transcript
-    echo "FAILED: $failures assertion(s)"
-    exit 1
 fi
-echo "PASS: bash live git content reaches the next prompt (no idle repaint, by design)"
+test_finish "bash live git content reaches the next prompt (no idle repaint, by design)"

@@ -31,12 +31,8 @@ fn validate_enabled_segments(segments: &[String]) -> Result<()> {
 /// Uses [`std::path::Path::is_absolute`], which is platform-aware: it
 /// recognizes drive-letter-prefixed paths (`C:\Users\...`) as absolute on a
 /// Windows-target build, and `/`-prefixed paths as absolute on Unix. The
-/// previous string-based check (`starts_with('/')`) only ever recognized
-/// Unix-style paths, so a Windows absolute path was unconditionally rejected
-/// even when the binary was actually running on Windows (#597) — Windows
-/// users could never successfully configure a `skip_paths` entry. The tilde
-/// convention is special-cased separately since `Path::is_absolute` does not
-/// expand `~` (it is just a literal path component to the OS).
+/// tilde convention is special-cased separately since `Path::is_absolute`
+/// does not expand `~` (it is just a literal path component to the OS).
 ///
 /// # Errors
 ///
@@ -62,11 +58,9 @@ fn validate_skip_paths(paths: &[String]) -> Result<()> {
 ///
 /// Returns an error if any configuration value is invalid.
 pub fn validate_config(config: &crate::config::Config) -> Result<()> {
-    // Note: supervisor check_interval_seconds/max_restart_attempts validate
+    // Supervisor check_interval_seconds/max_restart_attempts validate
     // themselves at deserialize time via `types::SupervisorCheckInterval`/
-    // `types::SupervisorMaxRestartAttempts` (#597), consistent with how every
-    // other bounded field (AgentTimeout, GitTimeout, etc.) is handled — none
-    // of those are re-validated here either.
+    // `types::SupervisorMaxRestartAttempts`, like every other bounded field.
     validate_skip_paths(&config.git.skip_paths)?;
 
     validate_enabled_segments(&config.ui.enabled_segments)?;
@@ -105,9 +99,7 @@ mod tests {
         assert!(validate_skip_paths(&["relative/path".to_owned()]).is_err());
     }
 
-    /// Unix absolute paths and the `~` convention must keep working (#597
-    /// switched the absolute-path check from a `starts_with('/')` string test
-    /// to the platform-aware `Path::is_absolute`).
+    /// Unix absolute paths and the `~` convention are accepted.
     #[cfg(unix)]
     #[test]
     fn test_validate_skip_paths_unix_absolute_and_tilde() {
@@ -116,11 +108,9 @@ mod tests {
         assert!(validate_skip_paths(&["relative/path".to_owned()]).is_err());
     }
 
-    /// Regression test for #597: a Windows drive-letter path like `C:\Users\foo`
-    /// starts with neither `/` nor `~`, so the old string-based check rejected
-    /// it unconditionally -- even when actually running on Windows, where such
-    /// a path genuinely is absolute. `Path::is_absolute()` is platform-aware,
-    /// so this can only be verified meaningfully in a Windows-target build.
+    /// A Windows drive-letter path like `C:\Users\foo` is absolute on
+    /// Windows even though it starts with neither `/` nor `~`; only
+    /// verifiable in a Windows-target build.
     #[cfg(windows)]
     #[test]
     fn test_validate_skip_paths_windows_drive_letter_path_is_absolute() {

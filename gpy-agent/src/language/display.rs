@@ -73,9 +73,8 @@ pub fn select_display_languages<'a>(
 
     // Narrow to displayable languages BEFORE the filter mode picks a subset.
     // `Primary`/`Top(n)` take from the front, so anything that would be
-    // discarded later has to be gone already or the selection comes back
-    // empty -- the allow-list check used to run *after* the take, so a
-    // `Primary` whose top language was not on the list rendered nothing.
+    // discarded later has to be gone already, or a `Primary` whose top
+    // detected language is not on the allow-list would render nothing.
     let threshold = cfg.confidence_threshold.get();
     let mut candidates: Vec<_> = detected
         .iter()
@@ -168,9 +167,8 @@ pub fn build_language_display_info_at(
     let displayed_languages: Vec<&DetectedLanguage> =
         select_display_languages(detected_languages, &theme.segments.language, language_cfg);
 
-    // Version probing is I/O (subprocess spawns) and pointless work when the
-    // config/theme says not to show versions at all -- previously this ran
-    // unconditionally regardless of `show_versions`.
+    // Version probing is I/O (subprocess spawns), so skip it entirely when
+    // the config/theme says not to show versions.
     let probed_versions: Vec<Option<String>> = if language_cfg.show_versions {
         let version_detectors: HashMap<_, _> = crate::language::version::get_version_detectors()
             .iter()
@@ -385,8 +383,8 @@ mod tests {
 
     #[test]
     fn primary_applies_the_allowlist_before_taking_one() {
-        // The allow-list used to be applied after the take, so a primary whose
-        // top language was not allowed selected nothing.
+        // A primary whose top language is not allowed must fall through to
+        // the next allowed language rather than select nothing.
         let detected = vec![
             DetectedLanguage {
                 name: "rust".to_owned(),

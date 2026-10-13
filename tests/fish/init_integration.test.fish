@@ -37,7 +37,7 @@ echo "Running from: $repo_root"
 echo ""
 
 # Isolate the theme-export cache dir so init.fish's fast path can't read a
-# real, live dogfooding daemon's cache (#402).
+# real, live dogfooding daemon's cache.
 set -gx XDG_CACHE_HOME (mktemp -d)
 
 # A developer's own installed GPY (loaded by their fish config) may already
@@ -56,8 +56,7 @@ else
 end
 # The prompt function is autoloaded from fish/functions/ on an installed
 # system; here it has to be sourced, or `fish_prompt` below is fish's own
-# default prompt and Test 6 measures the wrong program (which is exactly what
-# it did before #644).
+# default prompt and Test 6 measures the wrong program.
 source fish/functions/fish_prompt.fish
 
 # Test 2: Check that __enabled_segments is defined
@@ -113,7 +112,7 @@ if test -n "$prompt_output"
 else
     test_fail "fish_prompt returned empty output"
 end
-# Content, not presence (#644): the prompt character is shell-rendered and
+# Content, not presence: the prompt character is shell-rendered and
 # must always be there; agent-rendered segments are covered by
 # e2e_prompt_content.test.fish.
 if string match -q "*$__icon_prompt*" -- "$prompt_output"
@@ -142,8 +141,8 @@ end
 # Test 8: Verify icon variables are set
 echo ""
 echo "Test 8: Verify icon variables"
-# NOTE: the duration segment is agent-rendered (#199) and no longer reads an
-# `__icon_duration` constant, so it is intentionally not asserted here.
+# NOTE: the duration segment is agent-rendered and reads no `__icon_duration`
+# constant, so it is intentionally not asserted here.
 set -l required_icons \
     __icon_status_ok \
     __icon_status_fail \
@@ -198,7 +197,7 @@ echo ""
 echo "Test 11: Verify prompt segments appear"
 set -l prompt_output (fish_prompt 2>/dev/null)
 
-# Check that prompt is not just the icon (regression test for "only clock renders")
+# The prompt must be more than just the icon: every enabled segment renders
 set -l prompt_len (string length "$prompt_output")
 if test $prompt_len -gt 10
     test_pass "Prompt has substantial content (not just icon): $prompt_len chars"
@@ -222,8 +221,8 @@ for func in $required_functions
     end
 end
 
-# Test 13: every user-visible prompt-* command exists and runs (#768).
-# Wrappers around functions that were never defined exit 127.
+# Test 13: every user-visible prompt-* command exists and runs.
+# A wrapper around an undefined function exits 127.
 echo ""
 echo "Test 13: prompt-* commands do not exit 127"
 for cmd in (functions -n | string match 'prompt-*')

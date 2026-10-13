@@ -1,16 +1,9 @@
 # GPY Documentation
 
-## 📘 User Documentation
-*For installation, configuration, and troubleshooting.*
+## User Documentation
 
-[**Go to User Docs →**](user/README.md)
+Installation, configuration, and troubleshooting: [user/README.md](user/README.md).
 
-## 🛠️ Developer Documentation
-*For contributors, architecture, and internal design.*
+## Developer Documentation
 
-[**Go to Developer Docs →**](dev/README.md)
-
-## 📂 Archive
-*Old specs and historical reports.*
-
-- [Archive](archive/)
+Contributing, architecture, and internal design: [dev/README.md](dev/README.md).

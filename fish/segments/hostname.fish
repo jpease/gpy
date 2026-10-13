@@ -37,14 +37,8 @@ function segment_hostname_render --argument-names is_last
         # because the variable is non-empty; its literal content is never
         # read or interpreted here.
         #
-        # is_last arrives already as "true"/"" (#613: fish_prompt.fish's
-        # dispatch-loop convention, matching __gpy_request_hostname's own
-        # "true"/"" contract) -- no last/first-literal conversion needed, but
-        # still normalize into an always-one-token local before forwarding: a
-        # caller that passes zero arguments (or otherwise fails to supply
-        # is_last) leaves the --argument-names binding an EMPTY LIST, not an
-        # empty string, which would collapse on unquoted expansion, shifting
-        # $__gpy_last_segment_bg into the is_last slot and dropping prev_bg.
+        # is_last is re-seeded as a one-token local so an empty-list binding
+        # cannot shift prev_bg (see fish_prompt.fish's dispatch loop).
         set -l is_last_value ""
         test "$is_last" = true; and set is_last_value true
         set -l result (__gpy_request_hostname $hostname $is_last_value "$__gpy_last_segment_bg" "$__gpy_is_ssh")

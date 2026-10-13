@@ -1,11 +1,11 @@
 #!/usr/bin/env fish
 # Test that the `lang` IPC payload forwards $VIRTUAL_ENV (and only for `lang`), or a non-base
-# $CONDA_PREFIX when no VIRTUAL_ENV is set (#729).
+# $CONDA_PREFIX when no VIRTUAL_ENV is set.
 
 echo "Testing VIRTUAL_ENV forwarding in lang payload..."
 
 # Isolate the theme-export cache dir so init.fish's fast path can't read a
-# real, live dogfooding daemon's cache (#402).
+# real, live dogfooding daemon's cache.
 set -gx XDG_CACHE_HOME (mktemp -d)
 
 source fish/core/ipc.fish

@@ -90,7 +90,7 @@ impl Transport {
         Ok(())
     }
 
-    /// Bind and start listening (server mode) -- native Windows stub (#284).
+    /// Bind and start listening (server mode) -- native Windows stub.
     ///
     /// # Errors
     ///
@@ -119,7 +119,7 @@ impl Transport {
         Ok(())
     }
 
-    /// Connect to server (client mode) -- native Windows stub (#284).
+    /// Connect to server (client mode) -- native Windows stub.
     ///
     /// # Errors
     ///
@@ -148,7 +148,7 @@ impl Transport {
         }
     }
 
-    /// Send data -- native Windows stub (#284).
+    /// Send data -- native Windows stub.
     ///
     /// # Errors
     ///
@@ -178,7 +178,7 @@ impl Transport {
         }
     }
 
-    /// Receive data -- native Windows stub (#284).
+    /// Receive data -- native Windows stub.
     ///
     /// # Errors
     ///
@@ -207,7 +207,7 @@ impl Transport {
     fn get_default_path() -> Result<PathBuf> {
         // Follow XDG Base Directory specification
         // Use gpy-test.sock to distinguish from production gpy.sock
-        // Normalised like `paths::runtime_root_for` does (#626): an empty or
+        // Normalised like `paths::runtime_root_for` does: an empty or
         // relative `XDG_*` value does not count as set.
         let xdg_runtime_raw = crate::paths::root_var("XDG_RUNTIME_DIR");
         let xdg_cache_raw = crate::paths::root_var("XDG_CACHE_HOME");
@@ -224,8 +224,8 @@ impl Transport {
         }
 
         let runtime_path = crate::paths::runtime_root_for(xdg_runtime, xdg_cache, home.as_deref());
-        // Branch-specific error text, matching the pre-#477 per-branch
-        // resolvers this now replaces.
+        // Name the branch that resolved the path, so a failure says whether
+        // the runtime or the cache directory could not be created.
         let context = if xdg_runtime.is_some() {
             "runtime directory"
         } else {

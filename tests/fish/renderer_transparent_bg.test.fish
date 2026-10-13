@@ -2,7 +2,7 @@
 # Test: shell-side section renderers map a `transparent` content bg/fg to the
 # terminal default instead of passing the literal keyword to `set_color`.
 #
-# Regression guard: a flat theme (e.g. the Starship preset) gives the shell-side
+# A flat theme (e.g. the Starship preset) gives the shell-side
 # clock segment `bg_color = "transparent"`. If the renderer forwards that string
 # to `set_color -b transparent`, fish prints `set_color: Unknown color
 # 'transparent'` to stderr on every prompt render. The rendered bg must resolve
@@ -75,7 +75,7 @@ end
 # The powerline themes draw their caps in `match_bg`/`match_text`: the segment's
 # OWN colors, which for a flat clock/status are `transparent`. The keyword must
 # be mapped to the default before a delimiter borrows it, or set_color gets the
-# literal `transparent` (#844).
+# literal `transparent`.
 set -g __prompt_open_color match_bg
 set -g __prompt_close_color match_text
 set -g __segment_delimiter_color match_bg

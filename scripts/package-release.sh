@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 # Build the GPY release archives from downloaded build artifacts.
 #
-# Extracted from .github/workflows/release.yml (gpy#492) so the packaging
-# logic is testable locally (tests/bash/release_packaging.test.bash) instead
-# of only being exercised by a tag push. The workflow's inline version copied
-# root-level fish paths that moved into fish/ long ago, and every copy was
-# suffixed with `2>/dev/null || echo "... may be missing"`, so a release could
-# ship an archive with no shell files at all and still go green.
+# Lives outside .github/workflows/release.yml so the packaging logic is
+# testable locally (tests/bash/release_packaging.test.bash) instead of only
+# being exercised by a tag push.
 #
 # Everything here is fail-closed: a missing source file, a missing build
 # artifact, or an archive that does not contain the expected entries aborts
@@ -90,8 +87,7 @@ done
 
 # Checksums are the whole point of the verified-download contract (#494), so
 # resolve the hashing tool once and fail here rather than silently shipping a
-# release with no verification metadata -- which is exactly the state the
-# installers used to tolerate.
+# release with no verification metadata.
 if command -v sha256sum >/dev/null 2>&1; then
     sha256_of() { sha256sum "$1" | awk '{print $1}'; }
 elif command -v shasum >/dev/null 2>&1; then
@@ -136,7 +132,7 @@ FISHER_STAGE="$OUT_DIR/fisher-gpy"
 rm -rf "$STAGE" "$FISHER_STAGE"
 mkdir -p "$STAGE"/{bin,config,docs}
 
-# --- binaries ---------------------------------------------------------------
+# Binaries
 
 for asset in "${EXPECTED_ASSETS[@]}"; do
     src_dir="$ARTIFACTS_DIR/$asset"
@@ -165,7 +161,7 @@ for asset in "${EXPECTED_ASSETS[@]}"; do
     write_sidecar "$STAGE/bin/$asset"
 done
 
-# --- shell integrations -----------------------------------------------------
+# Shell integrations
 
 # Copied whole: install.sh expects the
 # fish/{core,segments,functions,conf.d,completions} tree intact, and the
@@ -175,7 +171,7 @@ for shell_dir in fish bash zsh; do
     cp -R "$REPO_ROOT/$shell_dir" "$STAGE/$shell_dir"
 done
 
-# --- configuration ----------------------------------------------------------
+# Configuration
 
 # Only the example config ships. The built-in themes and palettes under
 # config/{themes,palettes} are compiled into the agent via include_str!
@@ -183,7 +179,7 @@ done
 # edit files the binary never reads.
 cp "$REPO_ROOT/config/config.example.toml" "$STAGE/config/config.example.toml"
 
-# --- documentation ----------------------------------------------------------
+# Documentation
 
 for doc in README.md CHANGELOG.md LICENSE SECURITY.md CONTRIBUTING.md CODE_OF_CONDUCT.md; do
     [[ -f "$REPO_ROOT/$doc" ]] || die "missing documentation file: $doc"
@@ -194,7 +190,7 @@ cp "$REPO_ROOT/docs/INSTALL.md" "$STAGE/docs/INSTALL.md"
 [[ -d "$REPO_ROOT/docs/user" ]] || die "missing documentation directory: docs/user/"
 cp -R "$REPO_ROOT/docs/user" "$STAGE/docs/user"
 
-# --- SBOM --------------------------------------------------------------------
+# SBOM
 
 # Shipped both inside the archive and as a standalone release asset: an
 # archive user should be able to answer "what is in this build" from the files
@@ -203,7 +199,7 @@ if [[ -n "$SBOM_SRC" ]]; then
     cp "$SBOM_SRC" "$STAGE/sbom.cdx.json"
 fi
 
-# --- installer --------------------------------------------------------------
+# Installer
 
 # install.sh (not install-oneline.sh) is the archive installer: it installs
 # from the package's own bin/ and fish/ directories. install-oneline.sh is the
@@ -219,7 +215,7 @@ mkdir -p "$STAGE/scripts"
 cp "$REPO_ROOT/scripts/uninstall.fish" "$REPO_ROOT/scripts/uninstall.sh" "$STAGE/scripts/"
 chmod +x "$STAGE/scripts/uninstall.fish" "$STAGE/scripts/uninstall.sh"
 
-# --- Fisher plugin ----------------------------------------------------------
+# Fisher plugin
 
 # Fisher installs from the plugin tree itself (conf.d/, functions/,
 # completions/), so the package is fish/ hoisted to the top level rather than a
@@ -236,7 +232,7 @@ grep -q "\"version\": \"$BARE_VERSION\"" "$FISHER_STAGE/fisher.json" ||
 grep -q '"license": "GPL-3.0-or-later"' "$FISHER_STAGE/fisher.json" ||
     die "fisher.json does not declare GPL-3.0-or-later"
 
-# --- archives ---------------------------------------------------------------
+# Archives
 
 cd "$OUT_DIR"
 rm -f gpy-release.tar.gz gpy-release.zip fisher-gpy.tar.gz gpy-sbom.cdx.json SHA256SUMS
@@ -245,7 +241,7 @@ tar -czf gpy-release.tar.gz gpy-release/
 zip -qr gpy-release.zip gpy-release/
 tar -czf fisher-gpy.tar.gz fisher-gpy/
 
-# --- checksums ---------------------------------------------------------------
+# Checksums
 
 # Published files fall into two groups. The archives and the SBOM are checksummed
 # here, after they exist; the binaries were checksummed in place under
@@ -273,7 +269,7 @@ done
     done
 } >SHA256SUMS
 
-# --- verification -----------------------------------------------------------
+# Verification
 
 # Assert against the archives, not the staging directory: the point is that
 # what ships contains what the installers reach for.

@@ -1,16 +1,16 @@
 #!/usr/bin/env fish
-# __gpy_socket_ready must not need coreutils `timeout` (#850).
+# __gpy_socket_ready must not need coreutils `timeout`.
 #
-# Stock macOS has no `timeout`, and the check used to be gated on it: without
-# it the function skipped every probe and answered "ready" for any file that
-# merely existed, so __gpy_wait_for_socket returned at once for a stale socket
-# left behind by a crashed agent. Readiness is now a ping over the same client
-# every real request uses (socat, or nc with -U), bounded by that client's own
-# timeout flags.
+# Stock macOS has no `timeout`. A check gated on it would skip every probe
+# there and answer "ready" for any file that merely exists, so
+# __gpy_wait_for_socket would return at once for a stale socket left behind
+# by a crashed agent. Readiness is a ping over the same client every real
+# request uses (socat, or nc with -U), bounded by that client's own timeout
+# flags.
 #
 # Each client that exists here is exercised alone on a PATH with no `timeout`:
 #   - a listener that answers pings        -> ready;
-#   - a socket file nobody listens on      -> not ready (the old false positive);
+#   - a socket file nobody listens on      -> not ready;
 #   - a listener that never answers        -> not ready, and promptly;
 #   - no socket file at all                -> not ready;
 #   - no client on PATH at all             -> the file existing is all there is
@@ -23,7 +23,7 @@ source "$repo_root/fish/core/constants.fish"
 source "$repo_root/fish/core/util.fish"
 source "$repo_root/fish/core/ipc.fish"
 
-print_test_header "Socket readiness without timeout (#850)"
+print_test_header "Socket readiness without timeout"
 
 if not command -q python3
     test_skip "python3 not installed, cannot simulate an agent"
@@ -86,10 +86,7 @@ while True:
     c.close()
 ' $tmp/agent.sock $delay &
     set -g listener_pid $last_pid
-    for i in (seq 1 30)
-        test -S $tmp/agent.sock; and return 0
-        sleep 0.1
-    end
+    poll_until 3 test -S $tmp/agent.sock; and return 0
     finish
     test_skip "could not create test Unix socket listener"
 end

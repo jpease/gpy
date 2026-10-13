@@ -2,13 +2,12 @@
 # tests/bash/release_asset_contract.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #493: the release asset names exist in three independent
-# places -- the build matrix in .github/workflows/release.yml (producer),
-# EXPECTED_ASSETS in scripts/package-release.sh (packager), and the
-# platform/arch `case` blocks in install.sh and install-oneline.sh (consumers).
-# Before this test, each of those was checked against a fourth hardcoded list
-# copied into the test files, so all four could agree with the constant in the
-# test and still disagree with each other.
+# The release asset names exist in three independent places -- the build
+# matrix in .github/workflows/release.yml (producer), EXPECTED_ASSETS in
+# scripts/package-release.sh (packager), and the platform/arch `case` blocks
+# in install.sh and install-oneline.sh (consumers). Checking each against a
+# hardcoded list in the test would let all of them agree with the test and
+# still disagree with each other.
 #
 # Nothing here hardcodes an asset name. Every list is parsed out of the file
 # that owns it and diffed against the others, so renaming a target, adding a
@@ -16,8 +15,8 @@
 #
 #   1. Each matrix row's asset names are DERIVED from its Rust target triple,
 #      so a row cannot claim a name that misidentifies what it builds.
-#   2. All ten names are unique -- the original #493 bug was five agent builds
-#      flattening onto one `gpy-agent` basename.
+#   2. All ten names are unique -- five agent builds must never flatten onto
+#      one `gpy-agent` basename.
 #   3. package-release.sh's EXPECTED_ASSETS == the matrix set exactly.
 #   4. install.sh's resolved names == the matrix set exactly.
 #   5. install-oneline.sh's resolved names == the matrix set minus the Windows
@@ -25,8 +24,8 @@
 #   6. Every installer arm pairs an agent asset with the CLI asset for the same
 #      platform/arch, so a swapped or copy-pasted arm is caught even though the
 #      set as a whole would still balance.
-#   7. The release job publishes the verification metadata the installers now
-#      require -- checksums, SBOM and attestation (#494).
+#   7. The release job publishes the verification metadata the installers
+#      require -- checksums, SBOM and attestation.
 
 set -uo pipefail
 
@@ -41,11 +40,8 @@ WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
 
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 for required in "$WORKFLOW" "$PACKAGER" "$INSTALLER" "$ONELINE"; do
     [[ -f "$required" ]] || {
@@ -301,8 +297,8 @@ fi
 
 # --- 7. verification metadata reaches the release ----------------------------
 #
-# The installers refuse to install a binary without a published checksum
-# (#494), so a workflow edit that stops uploading the sidecars would not break
+# The installers refuse to install a binary without a published checksum,
+# so a workflow edit that stops uploading the sidecars would not break
 # the release job -- it would break every install from that release instead.
 # Assert the publication side of that contract here, where the workflow is
 # already parsed.
@@ -329,13 +325,13 @@ grep -q 'attest-build-provenance' "$WORKFLOW" ||
 grep -q 'attestations: write' "$WORKFLOW" ||
     fail "release.yml is missing the attestations: write permission the attestation step needs"
 
-# --- 8. local bundle tooling and `just install` (#810) -------------------------
+# --- 8. local bundle tooling and `just install` -------------------------
 #
 # `just build-all-platforms` is the only in-repo producer of bin/, and
 # install.sh is the only consumer. A checkout has no bin/, so the justfile
 # `install` recipe must not run install.sh, and the build script has to emit
 # the exact payload install.sh verifies: agent + CLI + a sidecar for each.
-echo "--- local bundle tooling (#810) ---"
+echo "--- local bundle tooling ---"
 
 BUILD_SCRIPT="$ROOT/scripts/build-release-binaries.sh"
 JUSTFILE="$ROOT/justfile"
@@ -351,18 +347,18 @@ done
 grep -q 'release-dist/gpy"' "$BUILD_SCRIPT" ||
     fail "build-release-binaries.sh never copies the gpy CLI (release-dist/gpy); install.sh refuses a bin/ without it"
 grep -q '\.sha256' "$BUILD_SCRIPT" ||
-    fail "build-release-binaries.sh writes no .sha256 sidecars; install.sh refuses unverified binaries (#494)"
+    fail "build-release-binaries.sh writes no .sha256 sidecars; install.sh refuses unverified binaries"
 
 # shellcheck disable=SC2016 # literal script text, not expansions
-# Linux binaries must be pinned to the workflow's glibc floor like #694 (#818).
+# Linux binaries must be pinned to the workflow's glibc floor, like release.yml's.
 grep -q 'cargo zigbuild .*"\$target\.\$GLIBC_FLOOR"' "$BUILD_SCRIPT" ||
-    fail "build-release-binaries.sh does not build Linux targets with cargo zigbuild --target <triple>.\$GLIBC_FLOOR (#818)"
+    fail "build-release-binaries.sh does not build Linux targets with cargo zigbuild --target <triple>.\$GLIBC_FLOOR"
 grep -q 'GPY_GLIBC_FLOOR' "$BUILD_SCRIPT" ||
-    fail "build-release-binaries.sh does not read GPY_GLIBC_FLOOR from release.yml (#818)"
+    fail "build-release-binaries.sh does not read GPY_GLIBC_FLOOR from release.yml"
 grep -q 'check-glibc-floor.sh' "$BUILD_SCRIPT" ||
-    fail "build-release-binaries.sh never runs scripts/check-glibc-floor.sh on what it builds (#818)"
+    fail "build-release-binaries.sh never runs scripts/check-glibc-floor.sh on what it builds"
 if grep -q 'gcc-aarch64-linux-gnu' "$BUILD_SCRIPT"; then
-    fail "build-release-binaries.sh still recommends gcc-aarch64-linux-gnu instead of zig (#818)"
+    fail "build-release-binaries.sh still recommends gcc-aarch64-linux-gnu instead of zig"
 fi
 
 # Every agent name the build script passes to build_target must be an agent
@@ -398,9 +394,4 @@ if grep -q -- '--bundle' "$INSTALL_DEV" && ! grep -q 'aarch64' "$INSTALL_DEV"; t
     fail "install-dev.fish keeps --bundle but never maps arm64 to aarch64 (install.sh expects gpy-agent-macos-aarch64)"
 fi
 
-if [[ $failures -ne 0 ]]; then
-    echo "$failures assertion(s) failed"
-    exit 1
-fi
-
-echo "PASS"
+test_finish

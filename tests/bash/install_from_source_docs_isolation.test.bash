@@ -2,13 +2,13 @@
 # tests/bash/install_from_source_docs_isolation.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# install_from_source_docs.test.bash must be sealed from its caller (#749).
+# install_from_source_docs.test.bash must be sealed from its caller.
 # This wrapper runs it as a child whose HOME/XDG_* belong to a "caller" with a
 # live decoy agent and whose exported fish_user_paths holds stub gpy and
 # gpy-agent binaries, then asserts after the child exits that:
-#   (a) the decoy agent is still the same live process (teardown used to stop
-#       the caller's agent through the caller's socket)
-#   (b) both stubs still exist (an unsealed PATH/fish_user_paths made
+#   (a) the decoy agent is still the same live process (teardown must not
+#       reach the caller's agent through the caller's socket)
+#   (b) both stubs still exist (an unsealed PATH/fish_user_paths lets
 #       install-dev delete them as "conflicting binaries")
 #   (c) no process holds a socket under the child's TMPDIR sandboxes
 #
@@ -39,13 +39,13 @@ real_rustup_home="${RUSTUP_HOME:-$HOME/.rustup}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/gpy-isolation.XXXXXX")"
 DECOY="$WORK/decoy"
 decoy_pid=""
+pid_gone() {
+    ! kill -0 "$1" 2>/dev/null
+}
 cleanup() {
     if [[ -n "$decoy_pid" ]]; then
         kill -TERM "$decoy_pid" 2>/dev/null || true
-        for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-            kill -0 "$decoy_pid" 2>/dev/null || break
-            sleep 0.1
-        done
+        shell_e2e_poll 2 pid_gone "$decoy_pid" || true
         kill -KILL "$decoy_pid" 2>/dev/null || true
     fi
     rm -rf "$WORK"
@@ -75,10 +75,7 @@ caller_env=(
 
 env -i "${caller_env[@]}" "$AGENT_BIN" start >/dev/null 2>&1 || true
 sock="$DECOY/run/gpy/gpy.sock"
-for _ in $(seq 1 50); do
-    [[ -S "$sock" ]] && break
-    sleep 0.1
-done
+shell_e2e_poll 5 test -S "$sock" || true
 decoy_pid="$(lsof -t "$sock" 2>/dev/null | head -n 1)"
 if [[ -z "$decoy_pid" ]]; then
     echo "FAIL: decoy agent did not start (no process holds $sock)"
@@ -91,9 +88,6 @@ env -i "${caller_env[@]}" "fish_user_paths=$DECOY/bin" GPY_GATE_RELEASE=1 \
     bash "$ROOT/tests/bash/install_from_source_docs.test.bash" >"$child_log" 2>&1
 child_rc=$?
 echo "child finished rc=$child_rc in $(($(date +%s) - start))s"
-
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
 
 [[ $child_rc -eq 0 ]] || {
     fail "child test failed (rc=$child_rc); last 40 lines:"
@@ -109,8 +103,4 @@ done
 orphans="$(lsof -U 2>/dev/null | grep -F "$WORK/tmp/gpy-from-source." || true)"
 [[ -z "$orphans" ]] || fail "a process still holds a from-source sandbox socket: $orphans"
 
-if [[ $failures -gt 0 ]]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: from-source install test is sealed from its caller"
+test_finish "from-source install test is sealed from its caller"

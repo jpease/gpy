@@ -46,52 +46,15 @@ build-from-source instructions.
 
 ## Usage
 
-The snippets below mirror the runnable programs in `examples/`
-(`cargo run --example basic_usage`). They document how the in-tree code is
-wired together; they are not an API you should build against — see the
-unsupported-library note above.
+The runnable programs in `examples/` show how the in-tree code is wired
+together. They are not an API to build against; see the unsupported-library
+note above.
 
-### Basic Agent Operation
-
-```rust
-use gpy_agent::{ipc, config};
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize configuration
-    let config = config::Config::default();
-
-    // Start IPC server
-    let server = ipc::Server::new(config).await?;
-    server.run().await?;
-
-    Ok(())
-}
-```
-
-### Git Status Detection
-
-```rust
-use gpy_agent::git_status::GitStatusDetector;
-
-// Detect Git status for current directory
-let detector = GitStatusDetector::new();
-let status = detector.detect(".")?;
-println!("Git status: {:?}", status);
-```
-
-### Language Detection
-
-```rust
-use gpy_agent::lang_detect::Detector;
-
-// Detect programming language
-let detector = Detector::new();
-let languages = detector.detect_all(".")?;
-for lang in languages {
-    println!("Detected: {} ({})", lang.name, lang.confidence);
-}
-```
+- `cargo run --example basic_usage`: in-process `Agent::handle_oneshot` with
+  `{"type":"git_status"|"language_detect","path":...,"format":"json"}`.
+- `cargo run --example ipc_client`: newline-delimited JSON to a running daemon
+  on the socket from `agent::lifecycle::get_socket_path()` (`{"op":"ping"}`,
+  `{"op":"git","cwd":...,"format":"json"}`, `{"op":"lang",...}`).
 
 ## Architecture
 
@@ -133,19 +96,10 @@ format = "json"
 
 ## Performance
 
-GPY consistently outperforms Starship across all repository sizes (n=1000):
-
-| Repository Size | GPY Performance | Starship | Advantage |
-|----------------|-----------------|----------|-----------|
-| Tiny (200 files) | **25.4ms ± 0.9ms** | 27.3ms ± 1.4ms | **6.96% faster** |
-| Small (1.4k files) | **25.6ms ± 0.8ms** | 27.6ms ± 1.3ms | **7.25% faster** |
-| Medium (28k files) | **33.1ms ± 1.4ms** | 35.0ms ± 1.1ms | **5.43% faster** |
-| Large (91k files) | **37.5ms ± 1.3ms** | 39.3ms ± 1.2ms | **4.58% faster** |
-
-**Additional Metrics:**
-- **IPC Latency**: <1ms roundtrip
-- **Memory Usage**: <15MB RSS
-- **CPU Usage**: Minimal when idle
+Budgets and recorded baselines live in `../tests/performance-baselines.json`
+and are enforced by `just bench-ci`. For example: IPC round trip 1 ms target
+(0.037 ms baseline), cached prompt render 20 ms target, agent memory 15 MB
+target (50 MB max). See `../docs/dev/performance/benchmarking.md`.
 
 ## Platform Support
 

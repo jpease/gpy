@@ -1,10 +1,10 @@
 #!/usr/bin/env zsh
 # tests/zsh/ipc_timeout_honors_budget.test.zsh
 #
-# Regression test for #757: the zsocket and socat transports capped the reply
-# wait at 100 ms regardless of GPY_IPC_TIMEOUT_MS, and a connected-but-slow
-# agent was treated like an unreachable one, so __gpy_request forked a
-# blocking `gpy-agent oneshot` while the agent computed the same segment.
+# The zsocket and socat transports must wait for a reply for the full
+# GPY_IPC_TIMEOUT_MS budget, and a connected-but-slow agent must not be
+# treated like an unreachable one: __gpy_request must not fork a blocking
+# `gpy-agent oneshot` while the agent computes the same segment.
 #
 # A python3 listener replies after a fixed delay; a stub `gpy-agent` on PATH
 # logs every oneshot call.
@@ -13,7 +13,7 @@
 #   3. no socket listening             -> oneshot runs (unreachable agent).
 
 ROOT=${0:a:h:h:h}
-# Shared skip contract (#650): exits 0 locally, fails under CI.
+# Shared skip contract: exits 0 locally, fails under CI.
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 cd "$ROOT"
 
@@ -40,7 +40,6 @@ echo "oneshot $*" >> "$GPY_TEST_ONESHOT_LOG"
 echo ONESHOT_OUTPUT' > "$tmp/bin/gpy-agent"
 chmod +x "$tmp/bin/gpy-agent"
 
-test_result=0
 sock="$tmp/slow.sock"
 
 # start_listener DELAY: replies GITSEGMENT after DELAY seconds, bounded life.
@@ -60,11 +59,7 @@ except OSError:
     pass
 ' "$sock" "$1" &
     listener_pid=$!
-    for _ in {1..30}; do
-        [[ -S "$sock" ]] && break
-        sleep 0.1
-    done
-    [[ -S "$sock" ]] || test_skip "could not create test Unix socket listener"
+    shell_e2e_poll 3 test -S "$sock" || test_skip "could not create test Unix socket listener"
 }
 
 stop_listener() {
@@ -89,10 +84,9 @@ run_case() {
     [[ -n "$delay" ]] && stop_listener
     [[ -s "$oneshot_log" ]] && oneshots=1
     if [[ "$out" == "$expect_out" && "$oneshots" == "$expect_oneshot" ]]; then
-        echo "PASS: $name"
+        pass "$name"
     else
-        echo "FAIL: $name: output '$out' (want '$expect_out'), oneshot forked=$oneshots (want $expect_oneshot)"
-        test_result=1
+        fail "$name: output '$out' (want '$expect_out'), oneshot forked=$oneshots (want $expect_oneshot)"
     fi
 }
 
@@ -100,4 +94,4 @@ run_case "reply at 120ms within a 1000ms budget is used, no oneshot" "$sock" 0.1
 run_case "reply at 400ms past a 150ms budget omits the segment, no oneshot" "$sock" 0.4 150 "" 0
 run_case "unreachable socket still falls back to oneshot" "$tmp/missing.sock" "" 150 ONESHOT_OUTPUT 1
 
-exit "$test_result"
+test_finish

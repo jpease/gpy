@@ -80,7 +80,7 @@ truncate_to_repo = false
 /// `#![forbid(unsafe_code)]` on edition 2024). [`get_config_paths`] is the
 /// thin wrapper that reads the ambient environment and calls this.
 ///
-/// Two normalisations, both #626, both shared with the Fish resolver
+/// Two normalisations, both shared with the Fish resolver
 /// (`__gpy_user_config_candidates`):
 ///
 /// - An **empty** `GPY_CONFIG_PATH` is dropped rather than kept as an empty
@@ -91,12 +91,11 @@ truncate_to_repo = false
 ///   or relative value falls through to `$HOME/.config` instead of building
 ///   `/gpy/config.toml` at the filesystem root.
 ///
-/// There is deliberately no `$HOME/.gpy.toml` candidate: Fish used to offer
-/// one that this list never had, so a user with that file got one config in
-/// the prompt and a different one from the CLI (#626). Nor is there a
+/// There is deliberately no `$HOME/.gpy.toml` candidate, so the prompt and the
+/// CLI always agree on which file is active (#626). Nor is there a
 /// project-local `.gpy.toml`: the agent is one long-lived daemon serving every
-/// directory, so it resolved that file against whichever directory first
-/// started it, never hot-reloaded it, and disagreed with the CLI (#733).
+/// directory, so it would resolve that file against whichever directory first
+/// started it, never hot-reload it, and disagree with the CLI (#733).
 #[must_use]
 pub fn config_candidates_for(
     custom_path: Option<&str>,
@@ -120,10 +119,10 @@ pub fn config_candidates_for(
 ///
 /// Ambient-environment wrapper over [`config_candidates_for`]; `HOME` comes
 /// from [`crate::paths::home_dir`], which falls back to the passwd database
-/// exactly as Fish and Zsh do (#626). A relative `GPY_CONFIG_PATH` is made
+/// exactly as Fish and Zsh do. A relative `GPY_CONFIG_PATH` is made
 /// absolute here against the directory `gpy-agent start` ran in (the current
 /// directory for every other command), so every caller, the daemon in `/`
-/// included, stores, reports, and watches the same absolute path (#733, #724).
+/// included, stores, reports, and watches the same absolute path.
 #[must_use]
 pub fn get_config_paths() -> Vec<String> {
     let custom_path = crate::paths::root_var_os("GPY_CONFIG_PATH").map(|value| {
@@ -154,7 +153,7 @@ pub fn get_config_paths() -> Vec<String> {
 ///
 /// The one rule behind the CLI's reads and writes
 /// (`commands::utils::active_config_path`), `gpy-agent status`, and every
-/// `ConfigManager` load and reload, so they cannot drift apart (#788, #179).
+/// `ConfigManager` load and reload, so they cannot drift apart.
 #[must_use]
 pub fn resolve_active_config<P: AsRef<std::path::Path>>(
     candidates: &[P],
@@ -220,8 +219,8 @@ mod config_path_tests {
             Some("/home/u"),
             &["/xdgcfg/gpy/config.toml", "/home/u/.config/gpy/config.toml"],
         ),
-        // Empty XDG_CONFIG_HOME is unset: it used to build
-        // "/gpy/config.toml" at the filesystem root.
+        // Empty XDG_CONFIG_HOME is unset, not a "/gpy/config.toml" at the
+        // filesystem root.
         (
             None,
             Some(""),
@@ -235,7 +234,7 @@ mod config_path_tests {
             Some("/home/u"),
             &["/home/u/.config/gpy/config.toml"],
         ),
-        // There is no project-local `.gpy.toml` candidate (#733): the agent
+        // There is no project-local `.gpy.toml` candidate: the agent
         // is one daemon for every directory, so it would resolve the file
         // against whatever directory first started it.
         (
@@ -247,8 +246,8 @@ mod config_path_tests {
         // No home at all (`paths::home_dir` found neither HOME nor a
         // passwd entry): no candidate remains.
         (None, None, None, &[]),
-        // There is no `$HOME/.gpy.toml` candidate, in any environment:
-        // Fish used to offer one this list never had (#626).
+        // There is no `$HOME/.gpy.toml` candidate, in any environment, so
+        // Fish and the CLI agree.
         (
             None,
             Some("/xdgcfg"),
@@ -257,7 +256,7 @@ mod config_path_tests {
         ),
     ];
 
-    /// The candidate list's precedence, including #626's two normalisations.
+    /// The candidate list's precedence, including both normalisations.
     ///
     /// Expressed against the pure resolver because the environment cannot be
     /// mutated in-process: `std::env::set_var` is unavailable under

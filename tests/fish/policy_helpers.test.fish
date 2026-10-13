@@ -2,7 +2,7 @@
 # tests/fish/policy_helpers.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Unit tests for the pure policy helpers extracted by #612:
+# Unit tests for the pure policy helpers:
 #   __gpy_breaker_gate, __gpy_breaker_record_failure (fish/core/util.fish)
 #   __gpy_cache_freshness, __gpy_throttle_elapsed (fish/core/util.fish)
 #   __gpy_cache_status_stale, __gpy_cache_status_variant (fish/core/util.fish)
@@ -10,8 +10,7 @@
 #
 # Each helper is a pure function of its arguments: no fork, no clock read, no
 # filesystem access, no globals. This file sources ONLY constants.fish and
-# util.fish -- no socket, no clock, no filesystem -- and must FAIL on a tree
-# without these functions defined.
+# util.fish -- no socket, no clock, no filesystem.
 
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)

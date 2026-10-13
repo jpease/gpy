@@ -1,4 +1,4 @@
-# Fixture theme for the cross-shell segment golden test (#844): the clock,
+# Fixture theme for the cross-shell segment golden test: the clock,
 # hostname and username carry `format` templates, so the agent renders them
 # (`$time` resolves to each shell's own live-time token); the status pill is
 # always drawn by the shell.

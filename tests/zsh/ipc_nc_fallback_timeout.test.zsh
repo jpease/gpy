@@ -2,8 +2,8 @@
 # tests/zsh/ipc_nc_fallback_timeout.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The `nc` transport is bounded against a wedged agent (#647 row 5; the
-# Zsh twin of tests/fish/ipc_nc_fallback_timeout.test.fish, #299).
+# The `nc` transport is bounded against a wedged agent (the Zsh twin of
+# tests/fish/ipc_nc_fallback_timeout.test.fish).
 #
 # `__gpy_send_json` prefers the zsh/net/socket builtin, then socat, then
 # `nc -U ... -w 1` (wrapped in `timeout` when that exists). Against a listener
@@ -67,32 +67,26 @@ PATH="$saved_path"
 end_ns="$(python3 -c 'import time; print(time.time_ns())')"
 elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
 
-failures=0
 deadline_ms=$(( listener_lifetime_secs * 1000 - 500 ))
 if [ "$elapsed_ms" -lt "$deadline_ms" ]; then
-    echo "PASS: nc fallback returns instead of hanging (${elapsed_ms}ms)"
+    pass "nc fallback returns instead of hanging (${elapsed_ms}ms)"
 else
-    echo "FAIL: nc fallback took ${elapsed_ms}ms, expected well under ${deadline_ms}ms"
-    failures=$((failures + 1))
+    fail "nc fallback took ${elapsed_ms}ms, expected well under ${deadline_ms}ms"
 fi
 if [ "$elapsed_ms" -lt 2000 ]; then
-    echo "PASS: bounded within 2 s (${elapsed_ms}ms)"
+    pass "bounded within 2 s (${elapsed_ms}ms)"
 else
-    echo "FAIL: nc fallback took ${elapsed_ms}ms, expected under 2000ms"
-    failures=$((failures + 1))
+    fail "nc fallback took ${elapsed_ms}ms, expected under 2000ms"
 fi
 if [ "$rc" -ne 0 ]; then
-    echo "PASS: the send reports failure (exit $rc)"
+    pass "the send reports failure (exit $rc)"
 else
-    echo "FAIL: the send reported success against a silent socket"
-    failures=$((failures + 1))
+    fail "the send reported success against a silent socket"
 fi
 if [ -z "$response" ]; then
-    echo "PASS: no output on a silent socket"
+    pass "no output on a silent socket"
 else
-    echo "FAIL: got output on a silent socket: '$response'"
-    failures=$((failures + 1))
+    fail "got output on a silent socket: '$response'"
 fi
 
-[ "$failures" -eq 0 ] || exit 1
-echo "PASS: zsh nc fallback is bounded against a wedged agent"
+test_finish "zsh nc fallback is bounded against a wedged agent"

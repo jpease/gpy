@@ -20,7 +20,7 @@ set -l workspace "$fixture_home/workspace/gpy-tour"
 
 for cmd in vhs tmux fish git
     command -q $cmd; or begin
-        echo "❌ $cmd not found; see demo/README.md for prerequisites." >&2
+        echo "Error: $cmd not found; see demo/README.md for prerequisites." >&2
         exit 1
     end
 end
@@ -41,11 +41,11 @@ if command -q mise
     end
 end
 
-echo "🎬 Preparing isolated demo fixture at $fixture_home"
+echo "Preparing isolated demo fixture at $fixture_home"
 rm -rf $fixture_home
 mkdir -p $fixture_home
 
-# --- Isolate the recording from the real environment ----------------------
+# Isolate the recording from the real environment
 set -gx HOME $fixture_home
 set -gx XDG_CONFIG_HOME "$fixture_home/.config"
 set -gx XDG_CACHE_HOME "$fixture_home/.cache"
@@ -66,19 +66,19 @@ set -gx MISE_FISH_AUTO_ACTIVATE 0
 # fish, tmux, git, and anything else still resolve.
 set -gx PATH "$fixture_home/.local/bin" $real_toolchain_dirs $PATH
 
-# --- Install the current build into the fixture ---------------------------
+# Install the current build into the fixture
 # install-dev.fish already honors HOME/XDG_* for every install path, so
 # reusing it here gets us a real, up-to-date install without duplicating its
 # logic -- it never touches the real ~/.config/gpy or ~/.local/bin.
 ./install-dev.fish $argv; or exit 1
 
-# --- Demo-only config tweaks ------------------------------------------------
+# Demo-only config tweaks
 # Show only the language judged primary for a repo. The default (`all`) puts up
 # to three language pills on every prompt, which crowds the frame and competes
 # with the beat headers for attention.
 gpy config set language.filter primary >/dev/null; or exit 1
 
-# --- Seed a small multi-language tour workspace -----------------------------
+# Seed a small multi-language tour workspace
 # node-app/python-app/rust-app are three INDEPENDENT git repos, not sub-dirs
 # of one shared repo: GPY's default language detection scans a whole project
 # (repo root down), so nesting them under one repo would show every
@@ -86,7 +86,7 @@ gpy config set language.filter primary >/dev/null; or exit 1
 # detection actually changing as you move around. Named after the language
 # each one demonstrates rather than a generic role (api/service/engine) so
 # what's being shown is obvious without narration.
-echo "🌱 Seeding tour workspace at $workspace"
+echo "Seeding tour workspace at $workspace"
 mkdir -p $workspace/node-app $workspace/python-app $workspace/rust-app/src
 
 printf '%s\n' \
@@ -124,7 +124,7 @@ for dir in node-app python-app rust-app
         commit -q -m "Initial $dir project"
 end
 
-# --- Reuse real importer fixtures from the test suite ----------------------
+# Reuse real importer fixtures from the test suite
 cp gpy-agent/tests/fixtures/starship/preset_gruvbox_rainbow.toml \
     $workspace/starship-preset.toml
 cp gpy-agent/tests/fixtures/base16/tokyo-night-dark.yaml \
@@ -143,6 +143,6 @@ git -C $workspace \
     -c user.name="GPY Tour" -c user.email="tour@example.invalid" \
     commit -q -m "Tour workspace root"
 
-echo "✅ Fixture ready"
-echo "🎥 Recording demo/demo.tape → assets/demo.gif"
+echo "Fixture ready"
+echo "Recording demo/demo.tape → assets/demo.gif"
 vhs demo/demo.tape

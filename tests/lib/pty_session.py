@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Drive an interactive shell in a pseudo-terminal from a shell test (#645).
+"""Drive an interactive shell in a pseudo-terminal from a shell test.
 
 Standard library only. A session lives in a directory:
 

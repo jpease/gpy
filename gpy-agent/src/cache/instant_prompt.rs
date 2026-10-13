@@ -30,7 +30,7 @@
 //! - `{ext}`: the output dialect ([`PromptDialect::cache_ext`]): `ansi` (Fish,
 //!   text verbatim), `bash` (escaped for `PS1`) or `zsh` (escaped for
 //!   `PROMPT`). Each shell reads only its own dialect, so a cache hit is
-//!   escaped exactly like a fresh render (#677).
+//!   escaped exactly like a fresh render.
 //!
 //! Example:
 //! ```text
@@ -73,7 +73,7 @@ use std::time::{Duration, SystemTime};
 /// jobs) racing to write the same cache key never share one temp path —
 /// sharing one would let a slower writer's rename clobber a faster one's
 /// still-being-written temp file, landing a partially-written or
-/// wrong-generation file at the final path (#323).
+/// wrong-generation file at the final path.
 ///
 /// `pub(super)` so the sibling `theme_export` module (same `cache` parent) can
 /// reuse it for its own atomic temp-file naming, without exposing it outside
@@ -96,7 +96,7 @@ pub(super) fn next_tmp_suffix() -> u64 {
 /// recognise orphans by prefix.
 ///
 /// `pub(super)` so the sibling `theme_export` module (same `cache` parent)
-/// shares this instead of carrying its own copy of the same sequence (#591).
+/// shares this instead of carrying its own copy of the same sequence.
 ///
 /// # Errors
 ///
@@ -106,7 +106,7 @@ pub(super) fn next_tmp_suffix() -> u64 {
 pub(super) fn write_atomic(dir: &Path, name: &str, content: &str) -> Result<()> {
     let target = dir.join(name);
     // Independent of `name`: a name derived from the target overflowed
-    // NAME_MAX for ~240+ byte cache names (#708).
+    // NAME_MAX for ~240+ byte cache names.
     let tmp_path = dir.join(format!(".tmp-{}-{}", std::process::id(), next_tmp_suffix()));
 
     if let Err(e) = std::fs::write(&tmp_path, content) {
@@ -124,7 +124,7 @@ pub(super) fn write_atomic(dir: &Path, name: &str, content: &str) -> Result<()> 
 ///
 /// A partial success counts as success (so the caller still rings for the
 /// variants that changed) and the first error is logged; only a total failure
-/// is returned (#708).
+/// is returned.
 ///
 /// # Errors
 ///
@@ -156,15 +156,15 @@ pub struct InstantPromptCache {
     /// In-memory record of the content last written for each `{cache_key}:{suffix}`,
     /// used to skip a redundant content write when nothing changed. The dedup
     /// path still bumps the file's mtime: shells read the mtime as "last write
-    /// or last verification" for their TTL check (#704).
+    /// or last verification" for their TTL check.
     ///
-    /// Invariant (#706): a recorded entry always equals the file's content.
+    /// Invariant: a recorded entry always equals the file's content.
     /// `write_cache_file` holds this mutex across the check, the touch, the
     /// atomic write and the record, so concurrent writers of the same file
     /// cannot leave the record saying X while disk holds Y. A missing entry
     /// means at most a redundant write.
     ///
-    /// Poison policy (#591): every access recovers via
+    /// Poison policy: every access recovers via
     /// `unwrap_or_else(PoisonError::into_inner)` rather than silently skipping
     /// the dedup check/record on a poisoned lock (the prior behavior). This
     /// matches `template::parse`'s convention elsewhere in this crate -- a
@@ -176,18 +176,18 @@ pub struct InstantPromptCache {
     /// background write (watcher/registration, which has no `prev_bg`) must refresh
     /// **every** known context — otherwise a live shell pinned to a specific
     /// context file would show stale git/language status until its TTL expires,
-    /// defeating the instant live-update path (#145/#160). Keyed by cache key; the
+    /// defeating the instant live-update path. Keyed by cache key; the
     /// `Vec` preserves insertion order so eviction drops the oldest context.
     seen_contexts: RwLock<SeenContexts>,
     /// Cache keys whose final filename cannot fit `NAME_MAX` even after
     /// chunking (a flat non-ASCII key of at most [`FLAT_CACHE_KEY_MAX_CHARS`]
     /// characters but over ~230 bytes). Their writes are skipped, and this set
-    /// keeps that to one `debug_log!` per root (#771).
+    /// keeps that to one `debug_log!` per root.
     unwritable_keys: Mutex<HashSet<String>>,
     /// Test-only count of [`Self::write_cache_file`] invocations, incremented
     /// regardless of whether the write actually changed content on disk. Lets
     /// tests assert exactly how many low-level writes one request triggers
-    /// (#570: the language instant cache was being written twice per request).
+    /// (guards against the language instant cache being written twice per request).
     #[cfg(test)]
     write_calls: AtomicU64,
 }
@@ -225,7 +225,7 @@ impl InstantPromptCache {
     /// real user cache directory from the environment, so a test using it
     /// writes into the developer's `~/.cache/gpy` and fails outright wherever
     /// neither `XDG_CACHE_HOME` nor `HOME` is set -- which is every Windows
-    /// runner, and was the entire cause of 36 failing lib tests there (#474).
+    /// runner.
     /// `std::env::temp_dir()` needs neither variable on any platform.
     ///
     /// Each call gets its own directory, keyed by pid and a counter, so tests
@@ -237,7 +237,7 @@ impl InstantPromptCache {
     /// Not `#[cfg(test)]`, and `pub`: `EndpointHandle::new_test_handle` is a
     /// `#[doc(hidden)]` helper compiled into the real lib, and integration
     /// tests in `tests/` link the crate normally and cannot see `cfg(test)` or
-    /// `pub(crate)` items; both need a hermetic cache too (#839).
+    /// `pub(crate)` items; both need a hermetic cache too.
     ///
     /// # Panics
     ///
@@ -283,7 +283,7 @@ impl InstantPromptCache {
     ///
     /// Counts every invocation regardless of whether the write changed
     /// content on disk, mirroring `ClientDirectory::notify_invocations`'s
-    /// idiom for exercising an internal counter from tests (#570).
+    /// idiom for exercising an internal counter from tests.
     #[cfg(all(test, unix))]
     pub(crate) fn write_call_count(&self) -> u64 {
         self.write_calls.load(Ordering::Relaxed)
@@ -298,7 +298,7 @@ impl InstantPromptCache {
     /// `git_first`, `git_first_last`) regardless of the requesting client's own
     /// position, mirroring the existing `is_last`-only behavior: the writer
     /// refreshes every variant a shell might read, and the *reading* shell picks
-    /// the file matching its own position (#401).
+    /// the file matching its own position.
     ///
     /// Returns `true` when any rendered variant was actually written (the
     /// content differs from the last write, or the file was missing), so callers
@@ -333,7 +333,7 @@ impl InstantPromptCache {
         // Refresh every known render context, not just the requested one: a
         // background writer (watcher/registration) passes `prev_bg = None` but must
         // keep context-specific cache files fresh too, or a live shell pinned to one
-        // would serve stale status (#145/#160).
+        // would serve stale status.
         let mut wrote_any = false;
         let mut first_err = None;
         for ctx_prev_bg in self.known_contexts(&key, prev_bg) {
@@ -438,7 +438,7 @@ impl InstantPromptCache {
     /// Returns `true` when any variant was written (content changed), so callers
     /// serving stale prompts can decide whether a repaint signal is warranted —
     /// mirroring the contract of [`write_git`](Self::write_git). Writes every
-    /// combination regardless of the requesting client's own position (#401),
+    /// combination regardless of the requesting client's own position,
     /// the same "refresh everything, let the reader pick" pattern `write_git`
     /// already uses for `is_last`.
     ///
@@ -529,15 +529,15 @@ impl InstantPromptCache {
     ///
     /// Best-effort, like [`prune_stale_entries`]: an unreadable directory or
     /// an entry that cannot be removed (including `NotFound` from another
-    /// agent clearing the same directory concurrently, #815) is logged and
-    /// skipped, never fatal to agent startup (#773). Chunked entries (#771)
+    /// agent clearing the same directory concurrently) is logged and
+    /// skipped, never fatal to agent startup. Chunked entries
     /// are cleared too, and chunk directories left empty are removed.
     pub fn clear_unrefreshable_files(&self) {
         let bases = SEGMENT_POSITIONS.map(|pos| variant_suffix("lang", pos.is_last, pos.is_first));
 
         clear_unrefreshable_files_in(&self.cache_dir, &bases);
 
-        // Poison policy (#591, see `last_written`'s doc comment): recover
+        // Poison policy (see `last_written`'s doc comment): recover
         // rather than silently skip.
         self.last_written
             .lock()
@@ -588,10 +588,10 @@ impl InstantPromptCache {
         }
         let cache_file = dir.join(&file_name);
 
-        // Poison policy (#591, see `last_written`'s doc comment): recover via
+        // Poison policy (see `last_written`'s doc comment): recover via
         // `into_inner` rather than silently skip the dedup check on a
         // poisoned lock. The guard is held across check, touch, write and
-        // record so the record always equals disk (#706).
+        // record so the record always equals disk.
         let mut cache = self
             .last_written
             .lock()
@@ -600,7 +600,7 @@ impl InstantPromptCache {
             && cached_content == content
         {
             // Verified unchanged: refresh the mtime, which shells read as
-            // "last write or last verification" (#704). A file that
+            // "last write or last verification". A file that
             // vanished falls through to a rewrite; other touch errors are
             // ignored (the content on disk is still correct).
             match std::fs::File::options()
@@ -614,10 +614,10 @@ impl InstantPromptCache {
         }
 
         // The directory is created at construction only, and a chunk
-        // directory (#771) on first write; if something removed it since
+        // directory on first write; if something removed it since
         // (cache cleaner, `rm -rf ~/.cache/gpy`, the sweep), recreate it and
         // retry exactly once, inside the same guard so the record is never
-        // ahead of disk (#707). Not done up front: it would cost a `stat` per
+        // ahead of disk. Not done up front: it would cost a `stat` per
         // write.
         match write_atomic(&dir, &file_name, content) {
             Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -647,7 +647,7 @@ impl InstantPromptCache {
     }
 
     /// Log, once per root, that `key`'s cache files cannot be named within
-    /// `NAME_MAX` and are therefore skipped (#771).
+    /// `NAME_MAX` and are therefore skipped.
     fn note_unwritable_key(&self, key: &str) {
         let mut seen = self
             .unwritable_keys
@@ -697,8 +697,7 @@ impl InstantPromptCache {
 /// All four segment positions, in one fixed order.
 ///
 /// Shared by every site that renders and caches all four variants of a
-/// segment (#586) -- each such site previously re-derived the combination
-/// with its own pair of nested loops.
+/// segment.
 const SEGMENT_POSITIONS: [SegmentPosition; 4] = [
     SegmentPosition::new(IsLast::No, IsFirst::No),
     SegmentPosition::new(IsLast::No, IsFirst::Yes),
@@ -710,7 +709,7 @@ const SEGMENT_POSITIONS: [SegmentPosition; 4] = [
 /// `variant_suffix("git", true, false)` -> `"git_last"`.
 ///
 /// `write_git`/`write_language_variants` write all four combinations
-/// unconditionally (mirroring the pre-#401 `is_last`-only behavior), and the
+/// unconditionally, and the
 /// reading shell (`__gpy_read_instant_cache` in Fish/Bash/Zsh) picks the file
 /// matching its own position. The Fish/Bash/Zsh implementations MUST derive
 /// the same four suffixes from the same rule.
@@ -811,7 +810,7 @@ fn render_language_prompts(
 }
 
 /// Get the GPY base cache directory (`~/.cache/gpy/` or XDG equivalent; on
-/// native Windows, `%LOCALAPPDATA%\gpy`, see #478).
+/// native Windows, `%LOCALAPPDATA%\gpy`).
 ///
 /// # Errors
 ///
@@ -826,7 +825,7 @@ fn render_language_prompts(
 /// target, never as a runtime probe: under WSL interop `LOCALAPPDATA` can be
 /// inherited holding a Windows-style path like `C:\Users\x\AppData\Local`,
 /// and this Unix binary would otherwise `create_dir_all` a literal relative
-/// directory of that name in its CWD (#478).
+/// directory of that name in its CWD.
 pub(super) fn get_gpy_cache_dir() -> Result<PathBuf> {
     #[cfg(windows)]
     let (os, home, local_app_data): (crate::paths::Os, Option<String>, Option<String>) = (
@@ -861,7 +860,7 @@ fn get_instant_cache_dir() -> Result<PathBuf> {
 /// How long an unused cache entry is kept before the startup sweep removes it.
 ///
 /// "Unused" is measured from the file's mtime, which means "last write or last
-/// verification" (an unchanged re-write refreshes it, #704).
+/// verification" (an unchanged re-write refreshes it).
 ///
 /// Entries are pure derived data — a miss costs one render, not correctness —
 /// so this only has to be long enough that a directory someone returns to
@@ -895,7 +894,7 @@ const ORPHAN_TMP_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 /// Returns `(entries_removed, orphans_removed)`. Errors reading the directory
 /// or any individual entry are swallowed: this is opportunistic tidying on the
 /// startup path, and a permission problem on one file must not abort the sweep
-/// or fail agent startup. Chunk directories (#771) are swept recursively and
+/// or fail agent startup. Chunk directories are swept recursively and
 /// removed once empty.
 ///
 /// `now` is injected rather than read here so tests can age files deterministically
@@ -955,7 +954,7 @@ fn prune_stale_entries_in(
     }
 }
 
-/// Whether `entry` is a chunk directory of a long cache key (#771).
+/// Whether `entry` is a chunk directory of a long cache key.
 ///
 /// Every chunk but the last is exactly [`CACHE_KEY_CHUNK_CHARS`] characters
 /// and becomes a directory; nothing else in the cache directory is a
@@ -969,7 +968,7 @@ fn is_chunk_dir(entry: &std::fs::DirEntry) -> bool {
 }
 
 /// Remove language and context-specific cache files from `dir` and its chunk
-/// directories (#771), removing chunk directories left empty. See
+/// directories, removing chunk directories left empty. See
 /// [`InstantPromptCache::clear_unrefreshable_files`].
 fn clear_unrefreshable_files_in(dir: &Path, bases: &[String]) {
     let entries = match std::fs::read_dir(dir) {
@@ -1086,14 +1085,13 @@ const WINDOWS_CACHE_KEY_MAX_LEN: usize = 200;
 /// introduced for the separators are not re-escaped. The Fish/Bash/Zsh
 /// implementations (`__gpy_path_to_cache_key`) MUST stay byte-for-byte
 /// identical so both sides resolve the same cache file without a subprocess --
-/// on native Windows, though, no shell integration ever runs in this issue's
-/// scoping (#478: Rust-only, no shell integration on native Windows), so that
+/// on native Windows, though, no shell integration ever runs, so that
 /// contract binds only the [`crate::paths::Os::Unix`] arm this function
 /// dispatches to; see [`path_to_cache_key_for`] for the Windows-specific
 /// hardening on top of the same escape scheme.
 ///
 /// The key is not yet the on-disk name: [`cache_key_path`] splits a key longer
-/// than [`FLAT_CACHE_KEY_MAX_CHARS`] into `/`-joined chunks (#771), and the
+/// than [`FLAT_CACHE_KEY_MAX_CHARS`] into `/`-joined chunks, and the
 /// shells mirror that too (`__gpy_chunk_cache_key`).
 ///
 /// Example: `/Users/foo/project` -> `_sUsers_sfoo_sproject`
@@ -1105,15 +1103,15 @@ fn path_to_cache_key(path: &Path) -> String {
     path_to_cache_key_for(&path.to_string_lossy(), os)
 }
 
-/// Longest Unix cache key, in characters, stored as one flat filename (#771).
+/// Longest Unix cache key, in characters, stored as one flat filename.
 ///
-/// Keys up to this length keep their pre-#771 flat name byte-for-byte, so
+/// Keys up to this length keep a flat name (no chunking), so
 /// existing caches stay warm. Longer keys are split into
 /// [`CACHE_KEY_CHUNK_CHARS`]-character chunks: the flat form plus the longest
 /// `.{suffix}.{token}.{ext}` tail (~30 bytes) would exceed `NAME_MAX`.
 const FLAT_CACHE_KEY_MAX_CHARS: usize = 200;
 
-/// Characters per chunk of a long cache key (#771): at most 200 bytes even at
+/// Characters per chunk of a long cache key: at most 200 bytes even at
 /// 4 bytes per character, leaving room for the tail on the last chunk.
 const CACHE_KEY_CHUNK_CHARS: usize = 50;
 
@@ -1130,7 +1128,7 @@ fn cache_key_path(key: &str) -> std::borrow::Cow<'_, str> {
     cache_key_path_for(key, os)
 }
 
-/// Relative on-disk stem for a cache key (#771).
+/// Relative on-disk stem for a cache key.
 ///
 /// | Key length (characters)          | Stem                                |
 /// |----------------------------------|-------------------------------------|
@@ -1147,7 +1145,7 @@ fn cache_key_path(key: &str) -> std::borrow::Cow<'_, str> {
 /// pinned by `tests/fixtures/cache_key_vectors.tsv`.
 ///
 /// The `Os::Windows` arm returns the key unchanged: its key is already capped
-/// by [`windows_harden_cache_key`] and no shell reads it (#478).
+/// by [`windows_harden_cache_key`] and no shell reads it.
 fn cache_key_path_for(key: &str, os: crate::paths::Os) -> std::borrow::Cow<'_, str> {
     if matches!(os, crate::paths::Os::Windows) || key.chars().count() <= FLAT_CACHE_KEY_MAX_CHARS {
         return std::borrow::Cow::Borrowed(key);
@@ -1165,7 +1163,7 @@ fn cache_key_path_for(key: &str, os: crate::paths::Os) -> std::borrow::Cow<'_, s
 }
 
 /// Directory and filename of the cache file `{stem}.{tail}` under
-/// `cache_dir`, where `stem` is [`cache_key_path`] of `key` (#771).
+/// `cache_dir`, where `stem` is [`cache_key_path`] of `key`.
 fn cache_file_parts(cache_dir: &Path, key: &str, tail: &str) -> (PathBuf, String) {
     let stem = cache_key_path(key);
     match stem.rsplit_once('/') {
@@ -1177,23 +1175,20 @@ fn cache_file_parts(cache_dir: &Path, key: &str, tail: &str) -> (PathBuf, String
 /// Pure core of [`path_to_cache_key`], parameterized by an explicit [`Os`].
 ///
 /// Rather than reading `cfg!(windows)` internally, so the `Os::Windows` arm can be
-/// table-tested from this Unix development machine (#478).
+/// table-tested from this Unix development machine.
 ///
-/// The `Os::Unix` arm MUST stay byte-for-byte identical to the pre-#478
-/// function for every input -- including inputs that would trigger the
-/// `Os::Windows` hardening below if they occurred on that arm instead. See
-/// `test_path_to_cache_key_unix_characterization`, captured against the
-/// unmodified function before this refactor. Nothing on native Windows runs
-/// a Fish/Bash/Zsh process in this issue's scoping (#478 is Rust-only, no
-/// shell integration on native Windows -- see the `paths` module docs), so
-/// the `Os::Windows` hardening below never has to match
-/// `fish/core/ipc.fish`'s `__gpy_path_to_cache_key`; only the `Os::Unix` arm
-/// carries that byte-for-byte contract.
+/// The `Os::Unix` arm MUST produce exactly the key the Fish/Bash/Zsh
+/// `__gpy_path_to_cache_key` implementations compute, byte-for-byte, for
+/// every input -- including inputs that would trigger the `Os::Windows`
+/// hardening below if they occurred on that arm instead (pinned by
+/// `test_path_to_cache_key_unix_characterization`). No Fish/Bash/Zsh process
+/// runs on native Windows (see the `paths` module docs), so the `Os::Windows`
+/// hardening never has to match the shells.
 ///
 /// [`Os`]: crate::paths::Os
 fn path_to_cache_key_for(path_str: &str, os: crate::paths::Os) -> String {
-    // The five documented escapes apply on both arms; the shells implement exactly these
-    // (#705). `_` MUST be first so later tokens are not re-escaped.
+    // The five documented escapes apply on both arms; the shells implement exactly
+    // these. `_` MUST be first so later tokens are not re-escaped.
     let escaped = path_str
         .replace('_', "__")
         .replace('/', "_s")
@@ -1281,8 +1276,6 @@ mod tests {
     use super::*;
     use crate::language::DetectedLanguage;
 
-    // ---- Startup sweep (unbounded-growth fix) --------------------------------
-
     /// Write `name` into `dir` and backdate its mtime by `age`.
     fn aged_file(dir: &Path, name: &str, age: Duration) -> PathBuf {
         let path = dir.join(name);
@@ -1330,8 +1323,7 @@ mod tests {
     fn sweep_removes_orphaned_temp_files_on_a_shorter_clock() {
         // write_atomic removes its own temp file on both failure paths, so one
         // that survives means the writer was killed between the write and the
-        // rename -- which is what left tens of thousands behind in a real
-        // cache directory.
+        // rename.
         let dir = tempfile::TempDir::new().expect("temp dir");
         let orphan = aged_file(
             dir.path(),
@@ -1435,7 +1427,7 @@ mod tests {
         assert_eq!(content, "hello world");
     }
 
-    /// Direct tests of [`write_atomic`] itself (#591).
+    /// Direct tests of [`write_atomic`] itself.
     ///
     /// Rather than only through `write_cache_file`/`write_theme_export_to_dir`
     /// -- both callers share this one implementation, so its own guarantees
@@ -1570,13 +1562,11 @@ mod tests {
         );
     }
 
-    // ---- INSTANT-CACHE TEST harness (#704) ------------------------------------
     //
     // Invariant: the instant-prompts dir equals what a fresh render of the
     // latest inputs would write (same file set, same bytes), every file touched
     // by the last operation has an mtime reflecting that write-or-verification,
-    // and no temp/orphan files remain. Later rows (concurrent writers #706,
-    // deleted dir #707, ~220-byte repo paths #708) extend `Op` and reuse `check`.
+    // and no temp/orphan files remain. Further rows extend `Op` and reuse `check`.
 
     /// One step applied to the cache under test.
     enum Op {
@@ -1586,25 +1576,25 @@ mod tests {
         /// in for the clock advancing.
         Age(u64),
         /// `threads` writers released together by a `Barrier`, thread `i`
-        /// writing `versions[i % versions.len()]` for `(key, suffix)` (#706).
+        /// writing `versions[i % versions.len()]` for `(key, suffix)`.
         Concurrent(&'static str, &'static str, &'static [&'static str], usize),
-        /// Remove the whole cache directory, as `rm -rf ~/.cache/gpy` would (#707).
+        /// Remove the whole cache directory, as `rm -rf ~/.cache/gpy` would.
         DeleteDir,
         /// Write all four git variants for a `key_len`-byte key, so the longest
-        /// final name is `key_len + 25` bytes (#708); above 200 the key is
-        /// stored chunked (#771).
+        /// final name is `key_len + 25` bytes; above 200 the key is
+        /// stored chunked.
         WriteVariants(usize, &'static str),
         /// Age every file past `CACHE_ENTRY_MAX_AGE` and run the startup
-        /// sweep, which must empty the directory, chunk dirs included (#771).
+        /// sweep, which must empty the directory, chunk dirs included.
         #[cfg(unix)]
         Sweep,
     }
 
-    /// Independent model of the on-disk name of `(key, suffix)` (#771).
+    /// Independent model of the on-disk name of `(key, suffix)`.
     ///
     /// Flat up to 200 characters, else 50-character chunks joined by `/`.
     /// Native Windows never chunks: its keys are capped by
-    /// `windows_harden_cache_key` instead (#478).
+    /// `windows_harden_cache_key` instead.
     fn expected_name(key: &str, suffix: &str) -> String {
         let chars: Vec<char> = key.chars().collect();
         let stem = if cfg!(windows) || chars.len() <= 200 {
@@ -1780,7 +1770,7 @@ mod tests {
     #[test]
     fn instant_cache_writes_every_variant_for_a_near_name_max_key() {
         let mut h = CacheHarness::new();
-        // 225-byte key -> 250-byte longest variant name; its old temp name overflowed.
+        // 225-byte key -> 250-byte longest variant name; its temp name must stay under NAME_MAX.
         h.apply(&Op::WriteVariants(225, "x"));
         h.apply(&Op::Age(60));
         h.apply(&Op::WriteVariants(225, "x"));
@@ -1788,13 +1778,13 @@ mod tests {
     }
 
     // Chunking is a Unix-only scheme: native Windows keys are capped by
-    // `windows_harden_cache_key` and a 300-byte key is simply skipped (#478).
+    // `windows_harden_cache_key` and a 300-byte key is simply skipped.
     #[cfg(unix)]
     #[test]
     fn instant_cache_writes_and_sweeps_a_chunked_300_byte_key() {
         let mut h = CacheHarness::new();
         // 300-byte key: flat it would be a 325-byte name; chunked it is
-        // 5 directories of 50 plus a 75-byte final name (#771).
+        // 5 directories of 50 plus a 75-byte final name.
         h.apply(&Op::WriteVariants(300, "x"));
         h.apply(&Op::Age(60));
         h.apply(&Op::WriteVariants(300, "x"));
@@ -1803,7 +1793,7 @@ mod tests {
         // The sweep removes chunked entries and their emptied directories.
         h.apply(&Op::Sweep);
         // Chunk directories are recreated inside the write's retry, both
-        // after the sweep and after the whole cache dir is deleted (#707).
+        // after the sweep and after the whole cache dir is deleted.
         h.apply(&Op::WriteVariants(300, "z"));
         h.apply(&Op::DeleteDir);
         h.apply(&Op::WriteVariants(300, "z"));
@@ -1944,8 +1934,8 @@ mod tests {
         );
     }
 
-    /// Distinct paths that previously collapsed to the same underscore-only key
-    /// must now produce distinct keys. Regression test for cache key collisions.
+    /// Paths differing only in separator/underscore placement must produce
+    /// distinct keys.
     #[test]
     fn test_path_to_cache_key_no_collision_for_separator_underscore_swaps() {
         let collision_pairs = [
@@ -1967,7 +1957,7 @@ mod tests {
     /// The escape scheme must be injective: the original path is recoverable
     /// from the key, which guarantees no two paths map to the same key.
     ///
-    /// Pins `Os::Unix` explicitly (#487) rather than calling the
+    /// Pins `Os::Unix` explicitly rather than calling the
     /// platform-dispatching `path_to_cache_key`: on an actual Windows build
     /// that wrapper correctly dispatches to `Os::Windows`, whose case-fold
     /// hardening is *intentionally* non-reversible (`C:\Foo` and `C:\foo`
@@ -2014,20 +2004,13 @@ mod tests {
         }
     }
 
-    /// Characterization test written BEFORE the #478 Windows-hardening refactor, against the
-    /// then-unmodified `path_to_cache_key`.
+    /// Pins the exact `Os::Unix` output for representative inputs (including a
+    /// long/deep path). The Fish `__gpy_path_to_cache_key` contract means the
+    /// Unix output must not move by a single byte.
     ///
-    /// Captures the exact current output for a handful of representative inputs (including a
-    /// long/deep path) so the post-refactor `Os::Unix` arm can be asserted byte-for-byte
-    /// identical -- the Fish `__gpy_path_to_cache_key` contract this function documents means
-    /// the Unix output must not move by a single byte.
-    ///
-    /// Pins `Os::Unix` explicitly (#487) rather than calling the
-    /// platform-dispatching `path_to_cache_key`: on an actual Windows build
-    /// that wrapper correctly dispatches to `Os::Windows` (case-folded), so
-    /// calling it here made this test assert Unix-shaped output only by
-    /// coincidence of running on a Unix CI runner -- confirmed failing when
-    /// this crate is actually compiled and run on Windows.
+    /// Pins `Os::Unix` explicitly rather than calling the
+    /// platform-dispatching `path_to_cache_key`, which dispatches to
+    /// `Os::Windows` (case-folded) on a Windows build.
     #[test]
     fn test_path_to_cache_key_unix_characterization() {
         let cases: [(&str, &str); 6] = [
@@ -2051,7 +2034,7 @@ mod tests {
     }
 
     /// Keys up to 200 characters keep their flat name; longer ones are split
-    /// into 50-character chunks, counted in characters (#771).
+    /// into 50-character chunks, counted in characters.
     #[test]
     fn test_cache_key_path_unix_characterization() {
         let unix = crate::paths::Os::Unix;
@@ -2081,7 +2064,7 @@ mod tests {
     }
 
     /// A flat key that fits 200 characters but not `NAME_MAX` bytes is
-    /// skipped without an error (#771 residual).
+    /// skipped without an error.
     #[test]
     fn write_cache_file_skips_a_flat_key_over_name_max() {
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
@@ -2117,7 +2100,7 @@ mod tests {
         );
     }
 
-    /// Shared vectors (`tests/fixtures/cache_key_vectors.tsv`, #705) also read by the
+    /// Shared vectors (`tests/fixtures/cache_key_vectors.tsv`) also read by the
     /// Bash/Zsh/Fish encoder tests: the Unix arm must match every row and round-trip.
     #[test]
     fn test_path_to_cache_key_shared_vectors() {
@@ -2183,7 +2166,7 @@ mod tests {
         assert!(count > 0, "no vectors read from {}", fixture.display());
     }
 
-    /// #771: the shared vector's `stem` is the relative cache-file path the
+    /// The shared vector's `stem` is the relative cache-file path the
     /// writer builds for `key`.
     fn assert_vector_stem(raw_input: &str, key: &str, stem: &str) {
         assert_eq!(
@@ -2207,7 +2190,7 @@ mod tests {
     /// Windows filesystems are case-insensitive-but-case-preserving, so `C:\Foo\Bar` and
     /// `C:\foo\bar` are the same directory on disk and MUST collide to the same cache key --
     /// restoring the injectivity the escape scheme's doc comment claims. Driven with
-    /// `Os::Windows` from this Unix runner per #478's table-testing requirement.
+    /// `Os::Windows` from this Unix runner.
     #[test]
     fn test_path_to_cache_key_windows_case_fold_collision() {
         let left = path_to_cache_key_for(r"C:\Foo\Bar", crate::paths::Os::Windows);
@@ -2232,7 +2215,7 @@ mod tests {
     ///
     /// Above [`WINDOWS_CACHE_KEY_MAX_LEN`] characters, the `Os::Windows` arm truncates and
     /// appends a hash-tail rather than returning an arbitrarily long filename component
-    /// (Windows' 255-char-per-component limit, #478).
+    /// (Windows' 255-char-per-component limit).
     #[test]
     fn test_path_to_cache_key_windows_length_cap() {
         let long_prefix = "a".repeat(WINDOWS_CACHE_KEY_MAX_LEN + 50);
@@ -2265,15 +2248,13 @@ mod tests {
     /// the environment it runs in.
     ///
     /// Asserting unconditional success made this test fail wherever no cache root resolves --
-    /// every Windows runner (#474) -- while asserting the contract works everywhere.
+    /// every Windows runner -- while asserting the contract works everywhere.
     ///
     /// The expectation comes from `get_gpy_cache_dir`, the same resolver
     /// `new()` uses, rather than from a hand-written list of variable names.
-    /// The old predicate read only `XDG_CACHE_HOME` and `HOME`, so when #473
-    /// taught `paths::cache_root_for` to resolve `%LOCALAPPDATA%\gpy` the two
-    /// drifted apart: on `windows-latest`, where neither of those is set,
-    /// `new()` succeeded and this test demanded that it fail (#527). Deriving
-    /// the expectation from the resolver means they cannot drift again.
+    /// A hand-written predicate drifts from the resolver (e.g. on Windows,
+    /// where `%LOCALAPPDATA%` resolves even with `XDG_CACHE_HOME` and `HOME`
+    /// unset); deriving the expectation from the resolver means they cannot.
     ///
     /// The environment is read rather than set: `std::env::set_var` is
     /// unavailable under `#![forbid(unsafe_code)]`.
@@ -2509,7 +2490,7 @@ mod tests {
             for name in ["lang_first.none", "lang_first_last.blue"] {
                 assert!(
                     !cache.cache_file_path("repo", name, dialect).exists(),
-                    "{name} must be cleared like lang/lang_last (#773)"
+                    "{name} must be cleared like lang/lang_last"
                 );
             }
         }
@@ -2522,7 +2503,7 @@ mod tests {
         let cache = InstantPromptCache::new_in_dir(cache_dir.clone()).expect("cache");
 
         // A directory whose name matches the language-cache pattern cannot be
-        // removed with `remove_file`; it must not abort the sweep (#773).
+        // removed with `remove_file`; it must not abort the sweep.
         let blocker = cache_dir.join("x.lang.none.ansi");
         std::fs::create_dir_all(&blocker).expect("create blocking dir");
         cache
@@ -2541,7 +2522,7 @@ mod tests {
     }
 
     /// `clear_unrefreshable_files` reaches chunked entries and removes the chunk
-    /// directories it empties, but keeps git caches and their dirs (#771).
+    /// directories it empties, but keeps git caches and their dirs.
     #[cfg(unix)]
     #[test]
     fn clear_unrefreshable_files_clears_chunked_entries() {
@@ -2633,7 +2614,7 @@ mod tests {
         );
     }
 
-    /// #401: `write_git` also writes `is_first`-aware variants (`git_first`,
+    /// `write_git` also writes `is_first`-aware variants (`git_first`,
     /// `git_first_last`), and the opening powerline cap (`$sep_open`) is
     /// suppressed only in those variants.
     #[test]
@@ -2701,7 +2682,7 @@ mod tests {
         );
     }
 
-    /// #401: `write_language_variants` writes all four `is_last`/`is_first`
+    /// `write_language_variants` writes all four `is_last`/`is_first`
     /// combinations, and the opening powerline cap is suppressed only in the
     /// `is_first` variants.
     #[test]
@@ -2772,8 +2753,8 @@ mod tests {
     /// Build a git repo under `root` with a near-`NAME_MAX` cache key.
     ///
     /// The longest variant name (`<key>.git_first_last.none.ansi`) is exactly
-    /// 250 bytes: a legal final name whose old `<name>.tmp-<pid>-<n>` temp
-    /// name exceeded `NAME_MAX` (#708).
+    /// 250 bytes: a legal final name whose naive `<name>.tmp-<pid>-<n>` temp
+    /// name would exceed `NAME_MAX`.
     fn near_name_max_repo(root: &Path) -> (PathBuf, String) {
         let parent = std::fs::canonicalize(root).expect("canonicalize root");
         let fixed = path_to_cache_key(&parent)
@@ -2868,7 +2849,7 @@ mod tests {
 
     /// A repo under three 80-character components has a ~300-byte key; every
     /// variant must still be written, at the path both the writer and
-    /// `cache_file_for_dir` resolve (#771).
+    /// `cache_file_for_dir` resolve.
     #[test]
     fn write_git_caches_repo_with_very_long_path() {
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
@@ -2882,7 +2863,7 @@ mod tests {
         let canonical = std::fs::canonicalize(&repo).expect("canonicalize");
         let key = path_to_cache_key(&canonical);
         // Unix chunks an over-long key into directories; native Windows caps
-        // it by hardening instead, so it never exceeds NAME_MAX there (#478).
+        // it by hardening instead, so it never exceeds NAME_MAX there.
         #[cfg(unix)]
         assert!(key.len() > 255, "the key alone must exceed NAME_MAX");
         #[cfg(windows)]
@@ -2959,7 +2940,7 @@ mod tests {
         }
     }
 
-    /// Part A: the instant-prompt cache must contain the branch name AND ANSI escapes,
+    /// The instant-prompt cache must contain the branch name AND ANSI escapes,
     /// confirming that the active palette flows through `render_git_prompts` and produces
     /// styled output.
     ///
@@ -3020,7 +3001,7 @@ mod tests {
         );
     }
 
-    /// Regression for #677: each dialect's cache file escapes the branch for
+    /// Each dialect's cache file escapes the branch for
     /// its own shell, so an instant-cache hit is as safe as a fresh render.
     #[test]
     fn write_git_writes_each_dialect_escaped_for_its_shell() {
@@ -3137,7 +3118,7 @@ mod tests {
         );
     }
 
-    /// Part B: remapping a color used by the default git format changes the ANSI bytes.
+    /// Remapping a color used by the default git format changes the ANSI bytes.
     ///
     /// The default theme's clean state uses `clean_bg_color = "green"`.  The template
     /// engine resolves `Color::Named("green")` through the active palette before encoding
@@ -3257,13 +3238,8 @@ mod tests {
         }
     }
 
-    /// #222: distinct `prev_bg` contexts still produce distinct cache files.
-    ///
-    /// The default theme's segment caps are now self-colored on a transparent
-    /// background rather than chained to `prev_bg`, so the rendered ANSI is
-    /// identical across contexts today — but each context must still resolve
-    /// to its own file (no cross-context clobbering) for themes that do key
-    /// rendering on `prev_bg`.
+    /// Each `prev_bg` context resolves to its own cache file, so themes that key
+    /// rendering on `prev_bg` never clobber another context's output.
     #[test]
     fn git_cache_writes_one_file_per_prev_bg_context() {
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
@@ -3310,27 +3286,12 @@ mod tests {
 
         let key = path_to_cache_key(&std::fs::canonicalize(&repo_root).expect("canon"));
         let path = |suffix: &str| cache.cache_file_path(&key, suffix, PromptDialect::Ansi);
-        let read = |suffix: &str| {
-            std::fs::read_to_string(path(suffix)).unwrap_or_else(|_| panic!("read {suffix}"))
-        };
-
-        // All three context files coexist.
         assert!(path("git.blue").exists());
         assert!(path("git.green").exists());
         assert!(path("git.none").exists());
-
-        let blue = read("git.blue");
-        let green = read("git.green");
-        let none = read("git.none");
-
-        // The default theme's segment caps no longer read `prev_bg`, so the
-        // rendered ANSI is identical across contexts — only the file-per-context
-        // bookkeeping (asserted above) matters today.
-        assert_eq!(blue, green);
-        assert_eq!(blue, none);
     }
 
-    /// #222 acceptance: a context-free (`None`) write goes to the `none` token file
+    /// A context-free (`None`) write goes to the `none` token file
     /// and must NOT overwrite a previously written context-specific file.
     #[test]
     fn git_none_write_does_not_clobber_context_file() {
@@ -3386,11 +3347,7 @@ mod tests {
         );
     }
 
-    /// #222: language cache writes must also be `prev_bg`-aware (parity with git).
-    ///
-    /// See `git_cache_writes_one_file_per_prev_bg_context` — the default theme's
-    /// segment caps no longer read `prev_bg`, so distinct contexts render
-    /// identical ANSI; only the file-per-context bookkeeping matters today.
+    /// Language cache writes resolve one file per `prev_bg` context, like git.
     #[test]
     fn language_cache_writes_one_file_per_prev_bg_context() {
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
@@ -3443,17 +3400,9 @@ mod tests {
                 .cache_file_path(&key, "lang.green", PromptDialect::Ansi)
                 .exists()
         );
-
-        let blue =
-            std::fs::read_to_string(cache.cache_file_path(&key, "lang.blue", PromptDialect::Ansi))
-                .expect("read blue");
-        let green =
-            std::fs::read_to_string(cache.cache_file_path(&key, "lang.green", PromptDialect::Ansi))
-                .expect("read green");
-        assert_eq!(blue, green);
     }
 
-    /// #145/#160 + #222: a context-free (`None`) write refreshes every context.
+    /// A context-free (`None`) write refreshes every context.
     ///
     /// The watcher and registration paths issue `None` writes; they must refresh
     /// EVERY render context the cache has served. Otherwise a live shell pinned to a

@@ -1,9 +1,9 @@
 #!/usr/bin/env fish
 # An empty or erased $HOME resolves the passwd home, exactly as the agent,
-# Bash and Zsh do (#845). Fish re-derives HOME at startup, but a session that
-# later blanks it (`set -gx HOME ''`, a wrapper, a test harness) used to get
-# `/.cache/gpy` from __gpy_runtime_root while the agent used the passwd home,
-# so the prompt watched a socket nobody had bound.
+# Bash and Zsh do. Fish re-derives HOME at startup, but a session can later
+# blank it (`set -gx HOME ''`, a wrapper, a test harness); resolving
+# `/.cache/gpy` from __gpy_runtime_root while the agent uses the passwd home
+# would leave the prompt watching a socket nobody has bound.
 #
 # The cross-shell path_parity matrix covers the other path keys with an empty
 # HOME; its XDG_RUNTIME_DIR is always set so it never creates the real
@@ -14,7 +14,7 @@ set -l script_dir (path dirname (status --current-filename))
 set -g repo_root (cd "$script_dir/../.." && pwd)
 source "$repo_root/tests/lib/test_helpers.fish"
 
-print_test_header "Fish empty-HOME fallback (#845)"
+print_test_header "Fish empty-HOME fallback"
 
 set -g failures 0
 function check --argument-names label ok detail

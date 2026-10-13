@@ -7,7 +7,6 @@
 
 #![allow(clippy::print_stdout)]
 #![allow(clippy::use_debug)]
-#![allow(clippy::str_to_string)]
 #![allow(clippy::unwrap_used)]
 
 use gpy_agent::{
@@ -20,7 +19,7 @@ fn main() -> Result<()> {
 
     // Example 1: Load configuration (tries user config, falls back to defaults)
     let config_manager = ConfigManager::new().or_else(|e| {
-        println!("⚠ Failed to load config file: {e}");
+        println!("Failed to load config file: {e}");
         println!("  Using default configuration instead\n");
         ConfigManager::with_defaults()
     })?;
@@ -61,8 +60,7 @@ fn main() -> Result<()> {
     custom_config.git.enabled = true;
     custom_config.language.enabled = true;
     custom_config.language.show_versions = false; // Hide version numbers
-    custom_config.ui.theme =
-        gpy_agent::config::types::ThemeName::new("custom".to_string()).unwrap();
+    custom_config.ui.theme = gpy_agent::config::types::ThemeName::new("custom".to_owned()).unwrap();
 
     println!("Custom config created:");
     println!("  Git enabled: {}", custom_config.git.enabled);
@@ -72,6 +70,6 @@ fn main() -> Result<()> {
     );
     println!("  Theme: {}", custom_config.ui.theme);
 
-    println!("\n✓ Configuration management example completed");
+    println!("\nConfiguration management example completed");
     Ok(())
 }

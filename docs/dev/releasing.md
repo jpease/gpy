@@ -14,19 +14,15 @@ Three files declare the version. The `validate` job in
 tag, so a release cannot ship binaries that report a different version than the
 tag they came from.
 
-<!-- version-bearing-files:start -->
 - `gpy-agent/Cargo.toml` — `version = "X.Y.Z"`; stamps both binaries.
 - `fish/fisher.json` — `"version": "X.Y.Z"`; `scripts/package-release.sh`
   re-stamps this in the packaged plugin archive, so a mismatch here means the
   committed tree and the published archive disagree.
 - `CHANGELOG.md` — a `## [X.Y.Z]` heading. `scripts/release-notes.sh` builds the
   GitHub release body from that section and fails if it is empty.
-<!-- version-bearing-files:end -->
 
-`tests/bash/release_version_claims.test.bash` derives this list from the
-workflow itself and diffs it against the block above, so adding a fourth
-version-bearing file to `release.yml` turns the gate red until this section
-names it too.
+`tests/bash/release_version_consistency.test.bash` checks that the three agree
+and that the newest CHANGELOG heading has its `[X.Y.Z]: ...` link reference.
 
 ## Cutting a release
 
@@ -133,7 +129,7 @@ Everything below runs on `main`, with a clean tree.
 | Build matrix agrees with both installers' asset names | `tests/bash/release_asset_contract.test.bash` |
 | Packaging and note generation still work | `tests/bash/release_packaging.test.bash` |
 | The Linux legs stay pinned to the glibc floor, the gate checks it, and `docs/INSTALL.md` states the same floor | `tests/bash/release_glibc_floor.test.bash` |
-| One version declared, no advertised dead channel | `tests/bash/release_version_claims.test.bash` |
+| Cargo.toml, fisher.json and the newest CHANGELOG heading declare the same version | `tests/bash/release_version_consistency.test.bash` |
 | The smoke run passes on the real debug binaries and fails on an agent that answers `--version` but nothing else | `tests/bash/release_smoke.test.bash` |
 | A stock `ubuntu:24.04` container with an empty `$HOME` installs from an archive built from the checkout and renders one prompt per shell | `scripts/test-fresh-install.sh` (`tests/docker/Dockerfile.fresh-install`; the `fresh-install` job in `pr-gate.yml`) |
 
@@ -161,15 +157,13 @@ project's fault to a first-time user.
   homebrew-core and is banned repo-wide by
   `tests/bash/crate_publish_boundary.test.bash`. homebrew-core itself needs 90
   forks, 90 watchers, 225 stars and a repo at least 30 days old; it is a
-  post-launch goal (#512).
+  post-launch goal.
 
 **Not operational — do not document as available:**
 
 - **Fisher.** `release.yml` publishes `fisher-gpy.tar.gz`, but the plugin tree
   ships no agent binary, so it is not a standalone install. It is not offered by
   the installers or by any doc page.
-- **crates.io.** `gpy-agent` sets `publish = false` and is never published
-  (#502). A registry install would place two binaries and none of the shell
+- **crates.io.** `gpy-agent` sets `publish = false` and is never published. A registry install would place two binaries and none of the shell
   files the prompt renders from.
-- **Debian and Arch.** No package is built. The release workflow used to
-  advertise both; #492 removed the claims rather than the other way round.
+- **Debian and Arch.** No package is built.

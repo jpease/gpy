@@ -27,7 +27,7 @@ function test_theme_prompt_render
     # Initialize prompt and render once. No agent runs here, so the
     # agent-rendered segments (directory, git) are omitted; what the shell
     # itself must still produce is the theme's prompt character, and never
-    # a JSON leak (#644). Directory/git content with a live agent is covered
+    # a JSON leak. Directory/git content with a live agent is covered
     # by tests/fish/e2e_prompt_content.test.fish.
     set -gx GPY_AGENT_SOCKET_PATH $tmp_dir/no-agent.sock
     set -gx GPY_AGENT_SUPERVISOR_ENABLED 0

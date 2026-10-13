@@ -29,8 +29,7 @@ check_field() {
 
 check_field "Cargo.toml" "gpy-agent/Cargo.toml" '^license = "[^"]*"'
 check_field "Fisher manifest" "fish/fisher.json" '"license": *"[^"]*"'
-# The release workflow no longer generates its own Fisher manifest (#492): it
-# ships the committed fish/fisher.json, and scripts/package-release.sh refuses
+# The release workflow ships the committed fish/fisher.json, and scripts/package-release.sh refuses
 # to build the Fisher archive unless that manifest still declares GPL.
 check_field "Release packaging license guard" "scripts/package-release.sh" '"license": *"[^"]*"'
 

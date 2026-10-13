@@ -19,8 +19,7 @@ impl Formatter for JsonFormatter {
         let json_value = match response {
             // `RepositoryStatus` derives `Serialize`, so delegate to it directly
             // rather than hand-mirroring its fields here: a hand-built `Map`
-            // silently drops any field this arm forgets to list (this used to
-            // miss `stash_count`, `detached`, and `rebase_progress`).
+            // silently drops any field this arm forgets to list.
             Response::RepositoryStatus(status) => serde_json::to_value(status).map_err(|e| {
                 crate::Error::ipc(format!("failed to serialize repository status: {e}"))
             })?,

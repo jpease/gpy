@@ -15,11 +15,10 @@ function __gpy_agent_enabled() {
 }
 
 # Escape JSON string. Order matters: backslashes first (so escapes introduced
-# by later steps aren't re-escaped), then quotes, then control characters --
-# mirrors fish/core/ipc.fish's __gpy_json_escape exactly (#614), which also
-# escapes \n/\r/\t: a branch name, commit message, or cwd containing a raw
-# newline/CR/tab would otherwise produce malformed JSON the agent rejects,
-# silently dropping the segment (same failure mode #302 fixed for backslash).
+# by later steps aren't re-escaped), then quotes, then control characters
+# (\n/\r/\t), as fish's __gpy_json_escape does. A raw newline/CR/tab in a
+# branch, commit message, or cwd would otherwise produce malformed JSON the
+# agent rejects, silently dropping the segment.
 function __gpy_escape_json() {
     local s=$1
     # Escape backslashes first
@@ -219,10 +218,8 @@ function __gpy_theme_export_cache_path() {
 
 # Convert a millisecond count to whole.fractional seconds (e.g. 150 ->
 # "0.150") for the `timeout` invocation below. Pure integer arithmetic
-# assigned into the *named* variable OUT_VAR via `printf -v` (mirrors
-# __gpy_ms_to_secs in bash/core/ipc.bash exactly) rather than an `awk` fork
-# (#614) -- safe to call on every send rather than needing a once-per-session
-# precompute, since the conversion itself is already fork-free.
+# assigned into the *named* variable OUT_VAR via `printf -v` rather than an
+# `awk` fork, so it is safe to call on every send.
 function __gpy_ms_to_secs() {
     local ms=$1 out_var=$2
     # Guard against a non-numeric override so `$(( ))` below can't error out
@@ -307,7 +304,7 @@ function __gpy_send_json() {
     local zsocket_connected=0 timeout_secs
     # One reply budget for every transport (#757); guarded against a
     # non-numeric GPY_IPC_TIMEOUT_MS by __gpy_ms_to_secs.
-    __gpy_ms_to_secs "${GPY_IPC_TIMEOUT_MS:-150}" timeout_secs
+    __gpy_ms_to_secs "${GPY_IPC_TIMEOUT_MS:-}" timeout_secs
 
     # Check if socket exists
     if [[ ! -S "$socket_path" ]]; then
@@ -359,7 +356,7 @@ function __gpy_send_json() {
 
     # 3. Try nc (BSD/macOS style with -U). nc's -w only accepts whole
     # seconds, so a hung-but-connected agent stalls the prompt for a full
-    # second rather than the ~150ms IPC target ($GPY_IPC_TIMEOUT_MS); wrap
+    # second rather than the IPC target ($GPY_IPC_TIMEOUT_MS); wrap
     # with `timeout` for a tighter bound when it's available (#324). Falls
     # back to the coarser -w 1 bound otherwise.
     elif __gpy_ipc_client_available; then
@@ -700,8 +697,7 @@ function __gpy_trigger_data_refresh() {
 # DOWN agent is an instant failure, no connect, no hang) and bounded by
 # GPY_IPC_TIMEOUT_MS. Prints the agent's rendered prompt text; non-zero on any miss.
 # The agent writes its own instant cache and notifies other shells while
-# handling the request, so a success needs no extra refresh. Mirrors the
-# inline `__gpy_ipc_send` block in fish/segments/git.fish.
+# handling the request, so a success needs no extra refresh.
 function __gpy_sync_data_request() {
     local op=$1 cwd=$2 is_last=${3:-} prev_bg=${4:-} is_first=${5:-}
     local response
@@ -820,9 +816,8 @@ function __gpy_request() {
 #
 # __gpy_render_prompt runs entirely inside the `$(...)` command substitution
 # __gpy_precmd uses to capture $PROMPT, and each segment is itself invoked
-# via a further `$(...)`, so no segment can write back to a parent scope --
-# this is no longer a predictable `${TMPDIR:-/tmp}/.gpy_oneshot_used_$$`
-# marker file (#342's rationale for a file, #614's reason to remove it):
+# via a further `$(...)`, so no segment can write back to a parent scope, and
+# a TMPDIR marker file would be a predictable path. Instead,
 # __gpy_render_prompt resets the plain variable __gpy_oneshot_used=0 at the
 # start of each render; a request wrapper that actually claims the budget and
 # forks oneshot returns GPY_SEG_STATUS_ONESHOT, which the render loop reads

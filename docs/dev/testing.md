@@ -24,7 +24,9 @@ summary ends with `Skipped: N (names)`.
 | Coverage | A line-coverage figure for `gpy-agent` | `cargo llvm-cov nextest` over the same suite as the Rust tier; non-gating; `lcov.info` uploaded by the ubuntu pr-gate | `just coverage` | workflow (non-gating) |
 
 The Fish, Bash and Zsh suite READMEs (`tests/fish/README.md`,
-`tests/bash/README.md`, `tests/zsh/README.md`) list every file in each suite;
+`tests/bash/README.md`, `tests/zsh/README.md`) explain how to run and write
+each suite; shared shell E2E helpers (`fail`, `pass`, `test_finish`) live in
+`tests/lib/shell_e2e.sh`;
 `gpy-agent/tests/README.md` covers the Rust harnesses.
 
 ## Rules every tier follows
@@ -45,8 +47,7 @@ The ubuntu pr-gate runs the same command as a non-gating step and uploads the
 file as the `coverage-lcov` artifact. There is no threshold yet.
 
 First recorded figure (2026-09-07, macOS, `cargo llvm-cov nextest
---features test-support` over the full Rust suite): see the table below,
-kept in step with the number in issue #654.
+--features test-support` over the full Rust suite): see the table below.
 
 | Date | Lines | Functions | Regions | Notes |
 |---|---|---|---|---|

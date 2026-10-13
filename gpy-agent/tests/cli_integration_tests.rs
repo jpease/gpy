@@ -238,7 +238,7 @@ fn test_cli_oneshot_git_current_repo() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_git_with_custom_path() {
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     // Initialize git repo
@@ -319,7 +319,7 @@ fn test_cli_oneshot_git_ignores_inherited_git_dir() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_git_non_git_directory() {
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     let (exit_code, stdout, _stderr) = run_gpy_agent(&[
@@ -755,7 +755,7 @@ fn test_cli_oneshot_git_error_renders_empty_prompt_segment() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn test_cli_with_complex_paths() {
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     // Create a directory with spaces and special characters

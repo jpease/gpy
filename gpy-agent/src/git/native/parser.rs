@@ -122,7 +122,7 @@ pub struct V2ParseState {
     /// Whether the behind count was capped due to `max_ahead_behind`.
     pub behind_capped: bool,
     /// Map of file paths to their status. The single source of truth for the
-    /// staged/unstaged/untracked/conflict counts (#686).
+    /// staged/unstaged/untracked/conflict counts.
     pub files: HashMap<PathBuf, FileStatus>,
 }
 
@@ -137,13 +137,13 @@ impl V2ParseState {
     ///
     /// Merges into any existing entry for the same path: `git rm --cached f`
     /// reports both a staged deletion (`1 D.`) and an untracked record for
-    /// `f`, and both must survive (#686).
+    /// `f`, and both must survive.
     pub(crate) fn process_untracked(&mut self, path: PathBuf) {
         self.files.entry(path).or_default().untracked = true;
     }
 
     /// Records changed file information (staged/unstaged/conflicted) in the
-    /// file map, merging into any existing entry for the same path (#686).
+    /// file map, merging into any existing entry for the same path.
     pub(crate) fn process_changed(&mut self, parsed: ParsedChangedFile) {
         let ParsedChangedFile { path, status } = parsed;
         let entry = self.files.entry(path).or_default();
@@ -157,7 +157,7 @@ impl V2ParseState {
     ///
     /// The counts are derived from the file map with the same
     /// [`StatusAggregate`] the cache uses for incremental updates, so a full
-    /// scan and an incremental recount cannot disagree (#686).
+    /// scan and an incremental recount cannot disagree.
     #[must_use]
     pub fn into_records(self) -> V2ParseRecords {
         let aggregate = StatusAggregate::from_file_statuses(self.files.values());
@@ -351,7 +351,7 @@ pub fn parse_v2_untracked_line(line: &str) -> Option<PathBuf> {
 /// separate NUL-delimited record (handled by the caller), so the record parsed
 /// here contains only the destination path, which is the correct file-map
 /// key. The path is taken verbatim; a TAB is a legal filename byte in `-z`
-/// mode (#775).
+/// mode.
 ///
 /// Returns: `Some(ParsedChangedFile)` if parsed successfully.
 #[must_use]
@@ -382,7 +382,7 @@ pub fn parse_v2_changed_line(line: &str) -> Option<ParsedChangedFile> {
 
     // A conflicted entry is only conflicted: its X/Y letters describe the
     // merge sides, not index/worktree changes, so it must not also count as
-    // staged or unstaged (#686).
+    // staged or unstaged.
     let status = if is_conflict {
         FileStatus {
             conflicted: true,
@@ -406,8 +406,6 @@ pub fn parse_v2_changed_line(line: &str) -> Option<ParsedChangedFile> {
 #[allow(clippy::missing_panics_doc)]
 mod tests {
     use super::*;
-
-    // --- #181: max_ahead_behind capping -------------------------------------
 
     #[test]
     fn ahead_behind_below_limit_is_uncapped() {
@@ -450,8 +448,6 @@ mod tests {
         assert!(!behind_capped);
     }
 
-    // --- #180: changed-record path extraction -------------------------------
-
     #[test]
     fn type1_record_extracts_path_and_status() {
         let record = "1 M. N... 100644 100644 100644 abc abc src/main.rs";
@@ -472,7 +468,7 @@ mod tests {
 
     #[test]
     fn type2_rename_uses_destination_path_only() {
-        // Regression for #180: the destination must be the file-map key, not the
+        // The destination must be the file-map key, not the
         // destination joined with the original path.
         let record = "2 R. N... 100644 100644 100644 abc abc R100 new name.txt";
         let parsed = parse_v2_changed_line(record).expect("type 2 record parses");
@@ -482,8 +478,7 @@ mod tests {
 
     #[test]
     fn changed_record_keeps_tab_in_path() {
-        // `-z` paths are unquoted; a TAB is filename content, not a separator
-        // (#775).
+        // `-z` paths are unquoted; a TAB is filename content, not a separator.
         let record = "1 A. N... 000000 100644 100644 abc abc tab\tname.txt";
         let parsed = parse_v2_changed_line(record).expect("type 1 record parses");
         assert_eq!(parsed.path, PathBuf::from("tab\tname.txt"));
@@ -499,7 +494,7 @@ mod tests {
         assert!(parsed.status.conflicted);
         assert!(
             !parsed.status.staged && !parsed.status.unstaged,
-            "a conflicted entry must not also count as staged or unstaged (#686)"
+            "a conflicted entry must not also count as staged or unstaged"
         );
     }
 
@@ -526,8 +521,6 @@ mod tests {
         assert!(parse_v2_untracked_line("not untracked").is_none());
     }
 
-    // --- #604: pure branch-head parsing (no subprocess, no repo) ------------
-
     #[test]
     fn parse_v2_records_named_header_yields_branch_head_named() {
         let output = "# branch.head main\0";
@@ -548,8 +541,6 @@ mod tests {
         let result = parse_v2_records(output, 0);
         assert_eq!(result.branch, BranchHead::Initial);
     }
-
-    // --- #686: counts derive from the file map ------------------------------
 
     #[test]
     fn aggregate_from_file_map_matches_record_counts() {

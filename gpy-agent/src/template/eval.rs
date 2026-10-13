@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn whitespace_between_two_empty_groups_collapses() {
-        // Issue #351 repro: the middle whitespace literal is a sibling of two
+        // The middle whitespace literal is a sibling of two
         // groups that both evaluate to zero spans, so it must collapse too.
         // The `(*)` all-literal conditional already collapses; only `branch`
         // is set, so the trailing cyan-styled space must not appear.

@@ -13,7 +13,7 @@ import? 'private.just'
 default:
     @just --list
 
-# --- Code Quality ---
+# Code Quality
 
 # Run comprehensive quality checks
 check:
@@ -95,7 +95,7 @@ format:
 fmt-check:
     cd {{agent_dir}} && cargo fmt --check
 
-# --- Testing ---
+# Testing
 
 # Run all tests (Rust agent + Shell integrations)
 test: test-rust test-fish
@@ -108,7 +108,7 @@ test-rust:
 test-fish:
     ./{{scripts_dir}}/test_fish.sh
 
-# --- Benchmarking ---
+# Benchmarking
 
 # Run end-to-end shell integration benchmarks (requires hyperfine)
 bench-shell *args:
@@ -146,7 +146,7 @@ bench-variance *args:
 bench-zsh:
     ./{{scripts_dir}}/bench-zsh.sh
 
-# --- Development ---
+# Development
 
 # Build the agent in debug mode
 build:
@@ -178,13 +178,13 @@ clean:
 clear-cache:
     fish {{scripts_dir}}/clear_cache.fish
 
-# --- Installation ---
+# Installation
 
 # Install GPY from this checkout (builds the agent; install.sh is archive-only)
 install:
     fish install-dev.fish
 
-# --- Rust Agent Specific (Proxies) ---
+# Rust Agent Specific (Proxies)
 
 # Run clippy for the agent
 clippy *args:
@@ -195,11 +195,10 @@ clippy-dev:
     just -f {{agent_dir}}/justfile clippy-dev
 
 # Run clippy (fast local check). The lint policy (deny warnings, deny
-# clippy::pedantic) lives in gpy-agent/Cargo.toml's [lints] table (#584) and
-# applies here exactly as it does in pre-push's `check-rust` / CI — there is
-# no longer a "less strict" local tier. The one real difference from
-# pre-push is scope, not strictness: this skips --features test-support, so
-# the #460 PTY test-support surface isn't compiled or linted here.
+# clippy::pedantic) lives in gpy-agent/Cargo.toml's [lints] table and applies
+# here exactly as it does in pre-push's `check-rust` / CI. The one difference
+# from pre-push is scope, not strictness: this skips --features test-support,
+# so the PTY test-support surface isn't compiled or linted here.
 clippy-strict:
     ./{{scripts_dir}}/check-active-toolchain.sh
     cd {{agent_dir}} && cargo clippy --all-targets
@@ -208,13 +207,13 @@ clippy-strict:
 bench-rust *args:
     just -f {{agent_dir}}/justfile bench {{args}}
 
-# --- Demo ---
+# Demo
 
 # Record the feature-walkthrough GIF into assets/demo.gif (isolated fixture $HOME; see demo/README.md)
 demo:
     ./demo/setup.fish
 
-# --- Maintenance ---
+# Maintenance
 
 # Install all development and quality tools
 setup: install-hooks

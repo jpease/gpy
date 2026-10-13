@@ -52,7 +52,7 @@ trap 'rm -rf "$SANDBOX"' EXIT
 [[ -x "$AGENT" ]] || { echo "wsl-smoke: no agent at $AGENT (build it first)" >&2; exit 2; }
 
 run_checks() {
-    # --- identity ---------------------------------------------------------------
+    # Identity
     release="$(cat /proc/sys/kernel/osrelease 2>/dev/null || true)"
     info "kernel: $release"
     info "WSL_DISTRO_NAME: ${WSL_DISTRO_NAME:-<unset>}"
@@ -66,7 +66,7 @@ run_checks() {
         fail "this does not look like WSL (kernel '$release'); run it inside a WSL distribution"
     fi
 
-    # --- fonts: the Linux font directories say nothing about a Windows terminal --
+    # Fonts: the Linux font directories say nothing about a Windows terminal
     font_home="$SANDBOX/font-home"
     mkdir -p "$font_home/.config"
     # A Nerd Font file in a Linux font directory must NOT make the agent claim glyphs
@@ -93,7 +93,7 @@ run_checks() {
         fail "GPY_NERD_FONT=nerd did not set show_icons = true: $override_out"
     fi
 
-    # --- git: the Linux filesystem and a Windows drive ---------------------------
+    # Git: the Linux filesystem and a Windows drive
     make_repo() {
         local dir="$1"
         mkdir -p "$dir" && git -C "$dir" init -q -b main \
@@ -138,7 +138,7 @@ run_checks() {
 
 (( RUN_CHECKS )) && run_checks
 
-# --- the cross-shell contract suite -------------------------------------------
+# The cross-shell contract suite
 if (( RUN_CONTRACT )); then
     if (( EUID == 0 )); then
         # As root the shells draw the prompt character themselves, so the

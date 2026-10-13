@@ -75,9 +75,9 @@ function scenario_supervisor_child_shape
     pgrep -f "$sandbox/missing.sock" >/dev/null 2>&1; and test_fail "agent process left running"; or test_pass "no agent started"
 end
 
-# #770: disabled-footprint mode never loads the oneshot budget; the per-prompt
+# Disabled-footprint mode never loads the oneshot budget; the per-prompt
 # budget reset must not fork `rm` (a stub rm first on PATH logs every external
-# call). A budget a previous render spent must still be reset (#845).
+# call). A budget a previous render spent must still be reset.
 function scenario_disabled_prompt_forks_no_rm
     set -l stub_dir $sandbox/stubbin
     set -l rm_log $sandbox/rm.log

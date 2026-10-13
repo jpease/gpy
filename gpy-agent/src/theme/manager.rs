@@ -29,15 +29,12 @@ pub(crate) const BUILTIN_THEMES: &[(&str, &str)] = &[
 ];
 
 /// A theme's name, the on-disk path it was loaded from, and its parsed
-/// content, updated together as one atomic unit (#588).
+/// content, updated together as one atomic unit.
 ///
-/// Previously these were three independent `RwLock`s: `switch_theme` wrote
-/// them in three separate critical sections, so a reader between any two of
-/// those writes (`export` is the concrete case this matters for) could
-/// observe a torn pairing — new theme content under the old name, or vice
-/// versa. Bundling them means every read sees a state that was true at some
-/// single instant, and `switch_theme` becomes one pointer swap instead of
-/// three sequential writes.
+/// Holding them behind one lock means a reader (`export` is the concrete case
+/// this matters for) can never observe a torn pairing — new theme content
+/// under the old name, or vice versa. Every read sees a state that was true at
+/// some single instant, and `switch_theme` is one pointer swap.
 ///
 /// `theme` is itself an `Arc` so [`ThemeManager::get`] hands out a
 /// reference-count bump rather than deep-cloning `ThemeConfig` on every
@@ -58,24 +55,23 @@ pub struct ThemeManager {
     /// Name, path, and content of the active theme, swapped as one unit.
     state: Arc<RwLock<Arc<ThemeState>>>,
     /// File watcher plus poll fallback for hot-reload, shared with the other
-    /// file-watching managers (#588).
+    /// file-watching managers.
     hot_reload: HotReloadSlot,
     /// Post-reload hook. When set it replaces the direct `notify_reload` so the
-    /// owner can refresh derived caches before ringing the doorbell (#710).
+    /// owner can refresh derived caches before ringing the doorbell.
     on_reload: ReloadHookSlot,
     client_registry: Arc<Mutex<Option<Arc<crate::ipc::ClientDirectory>>>>,
     watch_debounce: Arc<Mutex<Duration>>,
     /// The `WatchRegistry` the watcher was last armed with, so
     /// [`switch_theme`](Self::switch_theme) can re-arm on the same registry
-    /// instead of falling back to a private one (#663).
+    /// instead of falling back to a private one.
     watch_registry: Arc<Mutex<Option<Arc<WatchRegistry>>>>,
 }
 
 /// Source metadata for a discovered theme.
 ///
-/// Themes and palettes shared one enum shape and one precedence ordering, so
-/// both names now refer to the single [`crate::config::discovery::Source`]
-/// (#588).
+/// Themes and palettes share one enum shape and one precedence ordering, so
+/// both names refer to the single [`crate::config::discovery::Source`].
 pub type ThemeSource = Source;
 
 /// A theme entry exposed to CLI/runtime discovery.
@@ -154,7 +150,7 @@ impl ThemeManager {
     /// Every reader goes through here so it observes one state that was true
     /// at a single instant, rather than reading fields under separate locks
     /// that a concurrent [`switch_theme`](Self::switch_theme) could interleave
-    /// between (#588).
+    /// between.
     ///
     /// Recovers from a poisoned lock by using the last-written value rather
     /// than panicking the render path (a panicked writer should not also take
@@ -188,7 +184,7 @@ impl ThemeManager {
     /// Mirrors `ConfigManager::set_reload_callback`. When set, the hook runs
     /// after the new theme is swapped in and **replaces** the direct
     /// `notify_reload` doorbell: the hook owns ringing it, so it can write the
-    /// theme-export and instant caches first (#710). Name switches via
+    /// theme-export and instant caches first. Name switches via
     /// [`switch_theme`](Self::switch_theme) do not run it.
     pub fn set_reload_callback(&self, callback: ThemeReloadCallback) {
         if let Ok(mut slot) = self.on_reload.lock() {
@@ -227,7 +223,7 @@ impl ThemeManager {
     ///
     /// The new name, path, and content are assembled off-lock and installed in
     /// a single write, so a concurrent [`export`](Self::export) sees either the
-    /// whole old theme or the whole new one, never a mix (#588).
+    /// whole old theme or the whole new one, never a mix.
     ///
     /// # Errors
     ///
@@ -261,7 +257,7 @@ impl ThemeManager {
         // Re-arm on the registry the manager was started with, if any,
         // instead of `start_watching`'s private default — otherwise every
         // switch after the first drops the agent-wide registry the other
-        // coordinators share (#617, #663).
+        // coordinators share.
         let watch_registry = self
             .watch_registry
             .lock()
@@ -272,8 +268,7 @@ impl ThemeManager {
             self.start_watching_with(debounce_duration, client_registry, &watch_registry)
         {
             // Non-fatal: the theme itself switched successfully, but hot-reload
-            // for the new theme file is now off. Previously discarded with
-            // `let _ =`, leaving no signal at all (#588).
+            // for the new theme file is now off, so log it.
             debug_log!(
                 "theme",
                 "Failed to restart theme watching after switching to '{new_theme_name}': {error}"
@@ -304,7 +299,7 @@ impl ThemeManager {
     ///
     /// The agent passes the one registry it also gives its repo and config
     /// coordinators, so every coordinator classifies events against the same
-    /// registered config paths (#617).
+    /// registered config paths.
     ///
     /// # Errors
     ///
@@ -351,7 +346,7 @@ impl ThemeManager {
             // private registry its root set is empty and attribution uses the
             // ancestor `.git` stat-walk fallback, and with the agent's shared
             // registry it attributes against the repo watcher's roots (see
-            // `WatchCoordinator::new` docs, #344, #617).
+            // `WatchCoordinator::new` docs).
             let mut watcher = WatchCoordinator::new(
                 debounce_duration,
                 callback,
@@ -389,7 +384,7 @@ impl ThemeManager {
     ///
     /// Lets a test confirm [`switch_theme`](Self::switch_theme) re-armed on
     /// the registry the manager was started with instead of a private
-    /// default (#663).
+    /// default.
     #[cfg(feature = "test-support")]
     #[must_use]
     pub fn watch_registry_for_test(&self) -> Option<Arc<WatchRegistry>> {
@@ -408,7 +403,7 @@ impl ThemeManager {
     ///
     /// Name and content come from one [`state`](Self::state) snapshot, so a
     /// concurrent [`switch_theme`](Self::switch_theme) can never pair the new
-    /// theme's content with the old theme's name (#588).
+    /// theme's content with the old theme's name.
     #[must_use]
     pub fn export(&self, shell: Shell, config: &Config) -> String {
         let state = self.state();
@@ -533,8 +528,8 @@ impl ThemeManager {
     /// `user_themes_dir()/{theme_name}.toml`, materializing the themes
     /// directory if needed, and return the path written.
     ///
-    /// This is the config wizard's per-field theme-edit persistence primitive
-    /// (#407): the caller loads the currently-active theme, mutates only the
+    /// This is the config wizard's per-field theme-edit persistence primitive:
+    /// the caller loads the currently-active theme, mutates only the
     /// field(s) a picker edited, and hands the whole `ThemeConfig` here to be
     /// written back. Every unrelated field is carried through by value, so on
     /// reload nothing but the edited field(s) differs — the same guarantee
@@ -585,7 +580,7 @@ impl ThemeManager {
 
     /// Resolve `theme_name` to the theme file this crate would load for it, or
     /// `None` when the name matches no user theme, no plugin theme, and no
-    /// builtin (#572).
+    /// builtin.
     ///
     /// The single source of truth for theme-name resolution, used by both the
     /// daemon (`Self::theme_path`, below) and CLI oneshot rendering
@@ -621,10 +616,9 @@ impl ThemeManager {
     }
 
     fn theme_path(theme_name: &str) -> PathBuf {
-        // Preserve historical behavior for non-existent custom themes: always
-        // return a path (falling back to the nonexistent user path), leaving
-        // the actual "unresolvable" error to `load_theme_from_path` one layer
-        // down (#572).
+        // Always return a path for non-existent custom themes (falling back to
+        // the nonexistent user path), leaving the actual "unresolvable" error
+        // to `load_theme_from_path` one layer down.
         Self::resolve_path(theme_name).unwrap_or_else(|| Self::user_theme_path(theme_name))
     }
 
@@ -650,7 +644,7 @@ impl ThemeManager {
     /// The name and path are carried over from the state being replaced (a
     /// hot-reload only ever re-reads the theme's own current file), but the
     /// whole state is still rebuilt and swapped in one write so no reader can
-    /// observe a partially-updated theme (#588).
+    /// observe a partially-updated theme.
     fn reload_and_apply(
         state_lock: &Arc<RwLock<Arc<ThemeState>>>,
         client_registry: Option<&crate::ipc::ClientDirectory>,
@@ -662,9 +656,8 @@ impl ThemeManager {
         match Self::load_from_path(theme_path) {
             Ok(new_theme) => {
                 let Ok(mut guard) = state_lock.write() else {
-                    // Previously an `if let Ok(..)` with no `else`: a poisoned
-                    // lock silently discarded a freshly-loaded theme with no
-                    // diagnostic at all (#588).
+                    // Log rather than silently discard a freshly-loaded theme
+                    // when the lock is poisoned.
                     debug_log!(
                         "theme",
                         "Theme state lock poisoned; discarding theme reloaded from {path} ({context})"
@@ -778,13 +771,12 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    /// #572: an unresolvable theme name must error, naming the theme, instead
-    /// of silently constructing a blank `ThemeConfig::default()`.
+    /// An unresolvable theme name must error, naming the theme, instead of
+    /// silently constructing a blank `ThemeConfig::default()`.
     ///
-    /// This is the daemon-side half of the fix: `ThemeManager::new` already
-    /// propagates `load_from_path`'s (-> `config::loader::load_theme_from_path`)
-    /// result via `?`, so this test exercises that whole chain, not just the
-    /// resolver.
+    /// `ThemeManager::new` propagates `load_from_path`'s
+    /// (-> `config::loader::load_theme_from_path`) result via `?`, so this
+    /// test exercises that whole chain, not just the resolver.
     ///
     /// # Panics
     ///
@@ -803,12 +795,9 @@ mod tests {
         );
     }
 
-    /// #572: `resolve_path` is the single resolver both the daemon
-    /// (`theme_path`) and CLI oneshot (`config::loader::load_theme_uncached`)
-    /// now share.
-    ///
-    /// It replaces oneshot's old user-directory-only, non-plugin-aware
-    /// resolver.
+    /// `resolve_path` is the single resolver both the daemon (`theme_path`)
+    /// and CLI oneshot (`config::loader::load_theme_uncached`) share, and it
+    /// is plugin-aware.
     ///
     /// A real end-to-end proof would need a plugin discovered on disk via
     /// `discover_plugins()`, which is driven entirely by environment
@@ -1103,10 +1092,8 @@ mod tests {
     #[test]
     #[allow(clippy::missing_panics_doc)]
     fn poll_fallback_detects_a_toctou_same_length_rewrite() {
-        // Covers both acceptance-criteria bullets for #567 in one test: the
-        // immediate post-spawn write models the TOCTOU race (#385's fix
-        // ported here), and using same-byte-length content models #529's
-        // timestamp-granularity blind spot.
+        // The immediate post-spawn write models the TOCTOU race, and using
+        // same-byte-length content models the mtime-granularity blind spot.
         //
         // `[segments.clock]` in the default theme's `text_color` ("white",
         // 5 bytes) is swapped for "black" (also 5 bytes): total file length

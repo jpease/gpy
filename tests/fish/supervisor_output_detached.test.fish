@@ -4,7 +4,7 @@
 #
 # The Fish agent supervisor must not keep the spawning shell's stdout/stderr:
 # with GPY_VERBOSE=1 and an unhealthy agent, nothing it logs may reach the
-# spawning shell's output (#767).
+# spawning shell's output.
 
 set -l repo_root (path resolve (status dirname)/../..)
 source $repo_root/tests/lib/test_helpers.fish
@@ -38,6 +38,8 @@ if not poll_until 3 test -s $pidfile
     cleanup
     exit 1
 end
+# Let the supervisor run through at least one check interval (1s) of logging
+# before asserting none of it reached the spawning shell.
 sleep 2
 
 if test -s $tmp/out

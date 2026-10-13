@@ -2,14 +2,13 @@
 
 # Troubleshooting Guide
 
-Shell-aware troubleshooting for GPY: quick diagnosis, a Fish/Zsh/Bash comparison at a glance, and the watcher/environment-variable behavior that governs live prompt updates.
-
-**Last Updated:** 2026-07-07
+Shell-aware troubleshooting for GPY: quick diagnosis and the watcher/environment-variable behavior that governs live prompt updates.
 
 This guide focuses on what isn't documented elsewhere. For exhaustive detail it links out rather than repeating:
 
 - Install/PATH/binary problems → [Installation Guide](../INSTALL.md#troubleshooting)
-- The full Bash feature/version matrix → [Bash Limitations](bash-limitations.md)
+- What each shell supports → [Shell feature matrix](../INSTALL.md#shell-feature-matrix)
+- Bash version caveats → [Bash Limitations](bash-limitations.md)
 - Full `gpy` command syntax → [CLI Reference](cli-reference.md)
 - Config file layout, socket priority, security settings → [Advanced Configuration](advanced-configuration.md)
 
@@ -29,22 +28,9 @@ GPY_DEBUG_LOG=/tmp/gpy-debug.log gpy restart   # Restart with debug logging, the
 
 ---
 
-## Shell Comparison at a Glance
+## Shell Comparison
 
-Condensed from the full [Bash Limitations](bash-limitations.md) matrix, with Fish and Zsh added for context. Use this to decide "is this symptom expected for my shell?" before filing a bug.
-
-| Feature | Fish | Zsh | Bash 5.x | Bash 3.x (macOS default) |
-|---|---|---|---|---|
-| Live updates | Full: idle prompt repaints in place | Full: idle prompt repaints in place (re-rendered in `TRAPURG`, #637) | Shown at the next prompt: readline cannot repaint an idle prompt (measured, see [Bash Limitations](bash-limitations.md#2-live-updates)) | Same as Bash 5.x |
-| Config/theme hot-reload | Full | Full | Full | Full |
-| Transient prompt | No | No | No | No |
-| Duration segment precision | Millisecond | Millisecond (`EPOCHREALTIME`) | Millisecond (`EPOCHREALTIME`) | Not available — segment disabled |
-| Relative performance | Fastest (A+) | A | B+ | B- (slowest) |
-| Signal mechanism | One `--on-signal SIGURG` handler | Native `TRAPURG` function | No trap: SIGURG ignored, flags read at the next prompt (#678) | Same as Bash 5.x |
-| Re-registers after an agent restart | Yes | Yes (#638) | At the next prompt (#638) | At the next prompt |
-| Minimum version | 3.6+ | 5.8+ | 3.2+ (5.0+ recommended) | N/A (upgrade recommended) |
-
-See [Bash Limitations](bash-limitations.md) for the exhaustive version-by-version breakdown (duration precision by Bash version, benchmark numbers, `PS1` escape-sequence differences, known issues list) — that document is authoritative for Bash; this table exists only to compare shells side by side.
+Before filing a bug, check whether the symptom is expected for your shell in the [Shell feature matrix](../INSTALL.md#shell-feature-matrix). In particular, Bash shows live updates at the next prompt rather than repainting an idle one.
 
 ---
 
@@ -61,7 +47,7 @@ The agent watches your repo, `config.toml`, and active theme file for changes us
 OS-level filesystem notifications are not 100% reliable in every environment. Confirmed failure modes:
 
 - **Network-mounted or some Docker/VM-mounted filesystems** don't reliably propagate `inotify`/`FSEvents` events.
-- **FSEvents outages on macOS**: in at least one confirmed case, `FSEventsd` delivered zero notifications to the watcher in a sandboxed session even though the daemon was running — a poll-based fallback exists specifically to route around this (issue #354).
+- **FSEvents outages on macOS**: in at least one confirmed case, `FSEventsd` delivered zero notifications to the watcher in a sandboxed session even though the daemon was running. The poll-based fallbacks below route around this.
 
 When this happens, git status, language versions, and theme edits stop refreshing automatically. The prompt still updates on every new command (Fish/Zsh/Bash all re-invoke prompt rendering per-command regardless of the watcher), but *within* a long-idle session at a single prompt, nothing changes until you press Enter.
 
@@ -87,7 +73,7 @@ All of these are off/default unless explicitly set — setting none of them pres
 1. `gpy status` — confirm the agent is actually running.
 2. `GPY_DISABLE_WATCHER=1 gpy restart` briefly, to confirm the watcher (vs. something else) is implicated — if the prompt still doesn't update per-command after a `cd` or new shell, the problem isn't the watcher.
 3. Re-enable the watcher and try the poll fallbacks: `GPY_THEME_WATCH_POLL_MS=2000`, `GPY_CONFIG_WATCH_POLL_MS=2000`, and/or a tighter `GPY_RECONCILE_INTERVAL_SECS=10`, then `gpy restart`.
-4. If polling fixes it, your filesystem/OS notification channel is unreliable in this environment (common on network mounts, some container/VM setups, and — per issue #354 — even some plain local macOS sessions). Keep the poll var(s) set permanently in your shell config.
+4. If polling fixes it, your filesystem/OS notification channel is unreliable in this environment (common on network mounts, some container/VM setups, and even some plain local macOS sessions). Keep the poll var(s) set permanently in your shell config.
 
 ### WSL
 
@@ -107,14 +93,14 @@ Under Windows Subsystem for Linux, a repository on a Windows drive (`/mnt/c`, `/
 
 ## Fish-Specific Issues
 
-- **Signal handling**: Fish uses one native `--on-signal SIGURG` handler, which checks the reload/re-register flag files and then repaints; it is the most reliable of the three shells — see the comparison table above. If Fish's prompt isn't repainting on signal, the watcher section above is the more likely cause than Fish's signal handling itself.
+- **Signal handling**: Fish uses one native `--on-signal SIGURG` handler, which checks the reload/re-register flag files and then repaints. If Fish's prompt isn't repainting on signal, the watcher section above is the more likely cause than Fish's signal handling itself.
 - **Agent won't start / crash loop**: Fish runs a background supervisor loop (`__gpy_agent_supervisor_loop` in `fish/core/ipc.fish`) that health-checks the agent and restarts it. Relevant `config.toml` keys, in increasing order of aggressiveness:
   - `[agent.supervisor] enabled = false` — disable only the background restart loop (useful while debugging a crash so it doesn't keep respawning under you). Each shell still tries a bounded per-prompt autostart and registers with a running agent, so live updates keep working.
   - `[agent.supervisor] check_interval_seconds` (default 30) — health-check cadence.
   - `[agent.supervisor] max_restart_attempts` (default 5) — restarts attempted before the supervisor gives up.
   - `[agent] enabled = false` — disable the agent entirely (falls back to oneshot mode; slower per-prompt but no background process). No supervisor is started either.
 
-  The theme export (`gpy-agent theme export --format fish`) re-exports these as `GPY_AGENT_ENABLED`, `GPY_AGENT_SUPERVISOR_ENABLED`, `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` and `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` at shell start and on every config reload, so `config.toml` wins over a `set -gx` in your shell config (#657). If GPY seems completely disabled, check both `GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` in the environment fish starts with — `gpy_init.fish` skips loading entirely when *both* are `0` there.
+  The theme export (`gpy-agent theme export --format fish`) re-exports these as `GPY_AGENT_ENABLED`, `GPY_AGENT_SUPERVISOR_ENABLED`, `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` and `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS` at shell start and on every config reload, so `config.toml` wins over a `set -gx` in your shell config. If GPY seems completely disabled, check both `GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` in the environment fish starts with — `gpy_init.fish` skips loading entirely when *both* are `0` there.
 - **Reproducing registration issues**: `tests/fish/e2e_interactive_session.test.fish` drives a real `fish -i` on a pseudo-terminal against a real agent (two shells, one agent, repaint with no keystroke); run it, or borrow its sandbox setup, to reproduce a registration problem outside your own session. Prompt content itself is asserted by the gating `tests/fish/e2e_prompt_content.test.fish`.
 - **Abbreviations/completions**: shell completions are installed and regenerated automatically by the standard installers ([CLI Reference § Shell Completion](cli-reference.md#shell-completion)). If `gpy <TAB>` doesn't complete, confirm the `gpy` CLI binary itself is on `PATH` — completions require it.
 
@@ -122,7 +108,7 @@ Under Windows Subsystem for Linux, a repository on a Windows drive (`/mnt/c`, `/
 
 ## Zsh-Specific Issues
 
-Zsh uses a native `TRAPURG` function and `precmd`/`preexec` hooks rather than Fish's `--on-signal`/`--on-event`, but the underlying contract (agent-rendered `directory`/`duration`/`git`/`language` segments, shell-rendered `clock`/`status`) is identical across Fish, Zsh, and Bash — see `docs/archive/fish-integration-contract.md` for the full shared contract if you're debugging segment rendering specifically.
+Zsh uses a native `TRAPURG` function and `precmd`/`preexec` hooks rather than Fish's `--on-signal`/`--on-event`, but the underlying contract (agent-rendered `directory`/`duration`/`git`/`language` segments, shell-rendered `clock`/`status`) is identical across Fish, Zsh, and Bash.
 
 Zsh is at parity with Fish for live updates: `TRAPURG` re-renders `PROMPT` and calls `zle reset-prompt`, so an idle prompt shows a git change with no keystroke (asserted on a real pty by `tests/zsh/e2e_git_live_content.test.zsh`), a restarted agent's re-register nudge re-registers the shell (`tests/zsh/e2e_reregister_after_restart.test.zsh`), and a dead agent is restarted from the next prompt by the periodic supervisor check. If you hit a Zsh-only issue, it's worth filing as a gap in this doc.
 
@@ -130,7 +116,7 @@ Zsh is at parity with Fish for live updates: `TRAPURG` re-renders `PROMPT` and c
 
 ## Bash-Specific Issues
 
-Bash support is functionally complete but has real, well-documented caveats: duration-segment precision varies by Bash version (disabled entirely on Bash 3.x, macOS's default), live updates are shown at the next prompt rather than repainting an idle one, and overall performance is 20-30% slower than Zsh. macOS ships Bash 3.2 by default — most Bash-related reports trace back to that. See [Bash Limitations](bash-limitations.md) for the full version matrix, benchmarks, migration paths, and known-issues list; that document is authoritative and this guide won't restate it.
+Bash has real caveats: duration-segment precision varies by Bash version (disabled entirely on Bash 3.x, macOS's default), and live updates are shown at the next prompt rather than repainting an idle one. macOS ships Bash 3.2 by default — most Bash-related reports trace back to that. See [Bash Limitations](bash-limitations.md) for the version details, migration paths, and known-issues list.
 
 ---
 
@@ -151,7 +137,7 @@ Binary-not-found errors, agent-won't-start, macOS Gatekeeper quarantine (`xattr 
 
 `GPY_CONFIG_PATH` overrides the config file location if you need to point GPY at a non-standard config for debugging (verified at `gpy-agent/src/config/schema.rs`, `gpy-agent/src/config/mod.rs`, `gpy-agent/src/commands/utils.rs`); it's checked before the XDG/`HOME` fallback chain.
 
-**Every new shell prints `No such file or directory` for a path ending at a space** (for example `/Users/alice`): installs made before #746 wrote the rc `source` line without quotes, so a `HOME` or `XDG_CONFIG_HOME` containing a space split the path. Re-running the installer does not rewrite an existing `# >>> gpy-init >>>` block, so edit that block by hand and wrap the path in double quotes (`source "/Users/alice smith/.config/gpy/zsh/gpy.zsh"`), or remove the block and re-run the installer. Current installers quote the path, and refuse (before writing anything) a config directory containing `"`, `$`, a backtick, a backslash or a newline.
+**Every new shell prints `No such file or directory` for a path ending at a space** (for example `/Users/alice`): the `source` line in the `# >>> gpy-init >>>` block holds an unquoted path, so a `HOME` or `XDG_CONFIG_HOME` containing a space splits it. Re-running the installer does not rewrite an existing block, so edit it by hand and wrap the path in double quotes (`source "/Users/alice smith/.config/gpy/zsh/gpy.zsh"`), or remove the block and re-run the installer. The installers quote the path, and refuse (before writing anything) a config directory containing `"`, `$`, a backtick, a backslash or a newline.
 
 ---
 

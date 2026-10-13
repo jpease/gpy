@@ -2,12 +2,11 @@
 # tests/bash/release_glibc_floor.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #694: the Linux release binaries were built with a plain
-# `cargo build` on ubuntu-latest (glibc 2.39), so they required GLIBC_2.39 and
-# did not start on Ubuntu 20.04/22.04 or Debian 11/12, which docs/INSTALL.md
-# claimed. Nothing in the release ran them on an older glibc.
+# The Linux release binaries must start on every distro docs/INSTALL.md
+# claims. A plain `cargo build` on ubuntu-latest links against that runner's
+# glibc (e.g. 2.39), which Ubuntu 20.04/22.04 and Debian 11/12 lack.
 #
-# One floor, GPY_GLIBC_FLOOR in .github/workflows/release.yml, now drives
+# One floor, GPY_GLIBC_FLOOR in .github/workflows/release.yml, drives
 # everything. Asserts:
 #   (a) the workflow declares GPY_GLIBC_FLOOR as MAJOR.MINOR
 #   (b) every *-unknown-linux-gnu matrix target builds with
@@ -21,7 +20,7 @@
 #   (e) the smoke job runs both packaged x86_64 binaries' --version inside
 #       GPY_GLIBC_FLOOR_IMAGE, and that image's glibc is the floor
 #   (f) docs/INSTALL.md states the same floor in the platform table and in the
-#       Linux notes, and no longer claims a distro below it
+#       Linux notes, and claims no distro below it
 
 # Single-quoted `${{ … }}` and `$var` below are literal workflow/script text.
 # shellcheck disable=SC2016
@@ -37,14 +36,8 @@ WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
 
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
-pass() {
-    echo "PASS: $*"
-}
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 for required in "$WORKFLOW" "$INSTALL_DOC"; do
     [[ -f "$required" ]] || {
@@ -225,8 +218,4 @@ if grep -q 'Tested on Ubuntu 20.04+' <<<"$linux_notes"; then
     fail "the INSTALL.md Linux notes still claim untested distros as tested"
 fi
 
-if [[ $failures -gt 0 ]]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: the Linux release legs are pinned to and gated on glibc $floor"
+test_finish "the Linux release legs are pinned to and gated on glibc $floor"

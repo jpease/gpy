@@ -87,7 +87,7 @@ struct WatchedRepo {
     git_dir: PathBuf,
     /// Identity of `git_dir` at watch time, used to detect same-path recreation
     /// (delete + recreate yields a new inode) so a stale OS watch is re-armed on
-    /// the next re-register instead of silently missing events (issue #267).
+    /// the next re-register instead of silently missing events.
     git_dir_id: DirIdentity,
     /// Requested vs. actually-effective worktree-watch state. See
     /// [`WorktreeWatch`].
@@ -98,7 +98,7 @@ struct WatchedRepo {
     /// Teardown (`unregister_client_locked`, `rearm_repo_watch`) unwatches
     /// exactly these paths, never more and never less — so a degraded repo,
     /// whose `git_root` was never armed, cannot have it handed to
-    /// `unwatch_directory` alongside `git_dir` (#616).
+    /// `unwatch_directory` alongside `git_dir`.
     armed: Vec<PathBuf>,
     clients: HashSet<u32>,
 }
@@ -106,13 +106,10 @@ struct WatchedRepo {
 /// Requested vs. actually-effective worktree-watching state for one
 /// repository's watches.
 ///
-/// Replaces the former pair of `watch_worktree`/`requested_worktree` bools
-/// on `WatchedRepo` (#616): the two were never independent (`Armed`/`Disabled`
-/// only ever occur together with `requested == effective`; only a failed
-/// recursive watch peels them apart into `Degraded`), so representing the
-/// three actually-reachable combinations as an enum makes the fourth,
-/// meaningless one (`effective == true, requested == false`) unrepresentable
-/// instead of merely absent from every code path.
+/// Only three combinations are reachable (`Armed`/`Disabled` always have
+/// `requested == effective`; only a failed recursive watch splits them into
+/// `Degraded`), so the meaningless `effective && !requested` state is
+/// unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WorktreeWatch {
     /// Worktree watching was not requested, so only `git_dir` is watched.
@@ -120,20 +117,17 @@ enum WorktreeWatch {
     /// Worktree watching was requested and the recursive watch is installed.
     Armed,
     /// Worktree watching was requested, but the recursive watch failed, so
-    /// this repository degraded to `.git`-only watching (issue #158). Kept
-    /// distinct from `Disabled` so a config comparison re-arms exactly when
-    /// the *requested* setting changes, never on every re-register of an
-    /// already-degraded repo (#444) — see [`WorktreeWatch::requested`].
+    /// this repository degraded to `.git`-only watching. Kept distinct from
+    /// `Disabled` so a config comparison re-arms exactly when the *requested*
+    /// setting changes, never on every re-register of an already-degraded
+    /// repo — see [`WorktreeWatch::requested`].
     Degraded,
 }
 
 impl WorktreeWatch {
     /// Whether the recursive worktree watch actually took effect.
     ///
-    /// Teardown no longer needs this: it unwatches [`WatchedRepo::armed`]
-    /// directly, which already reflects exactly what got installed. Kept as
-    /// a query for tests (and any future caller) that want to assert on the
-    /// effective state without reasoning about `armed`'s contents.
+    /// Test-only query; teardown uses [`WatchedRepo::armed`] directly.
     #[cfg(test)]
     const fn effective(self) -> bool {
         matches!(self, Self::Armed)
@@ -145,8 +139,7 @@ impl WorktreeWatch {
     /// distinguished from a degraded watch: comparing the config against the
     /// degraded effective state would re-arm a permanently failing repo on
     /// every single registration (watch thrash), whereas comparing against
-    /// the requested state re-arms exactly when the setting really changed
-    /// (#444).
+    /// the requested state re-arms exactly when the setting really changed.
     const fn requested(self) -> bool {
         matches!(self, Self::Armed | Self::Degraded)
     }
@@ -154,7 +147,7 @@ impl WorktreeWatch {
 
 /// What [`MultiRepoWatcher::start_repo_watches`] (or its
 /// [`MultiRepoWatcher::fall_back_to_gitdir_only`] fallback) actually armed
-/// for one repository (#616).
+/// for one repository.
 struct RepoWatches {
     /// Paths armed for this repository. Teardown
     /// (`unregister_client_locked`, `rearm_repo_watch`) unwatches exactly
@@ -165,7 +158,7 @@ struct RepoWatches {
 }
 
 /// Bookkeeping for one shared common git directory watched on behalf of the
-/// linked worktrees that depend on it (#468).
+/// linked worktrees that depend on it.
 ///
 /// Instance-local, like the attribution mapping in
 /// [`super::WatchRegistry::register_common_gitdir`], because watches belong to
@@ -179,14 +172,14 @@ struct CommonDirWatch {
     dependents: HashSet<PathBuf>,
     /// Paths this watcher actually armed for the common directory, each with
     /// the mode it was armed in so teardown releases exactly that
-    /// registration (#687). Empty when an already-watched ancestor covered
+    /// registration. Empty when an already-watched ancestor covered
     /// them (e.g. the main checkout's own recursive worktree watch), so
     /// teardown never unwatches a path it did not watch.
     armed: ArmedWatches,
 }
 
 /// Paths armed on behalf of a common directory, each with the mode it was
-/// armed in (#687).
+/// armed in.
 type ArmedWatches = Vec<(PathBuf, WatchMode)>;
 
 /// Opaque `(dev, ino)` identity of a watched directory. `None` on platforms
@@ -222,13 +215,8 @@ const COMMONDIR_POINTER_READ_CAP: usize = 4_096;
 /// Keyed by the path a real OS watch call would receive. Returning
 /// `Some(err)` for a path makes [`MultiRepoWatcher::arm_watch`] fail exactly
 /// as a real watch-budget exhaustion would, without a real resource limit;
-/// returning `None` lets the real `watch_directory` call proceed (#616).
-///
-/// Replaces the former pair of `TEST_FAIL_GIT_WATCH`/`TEST_FAIL_WORKTREE_WATCH`
-/// process-wide `AtomicBool`s, which forced every test that flipped one to be
-/// `#[serial]` with every other such test in the process. A per-instance
-/// closure needs no such serialization: each test's watcher carries its own
-/// fault, so two of these tests can now run concurrently.
+/// returning `None` lets the real `watch_directory` call proceed. Being
+/// per-instance, tests using it need no `#[serial]`.
 #[cfg(test)]
 type WatchFault = Arc<dyn Fn(&Path) -> Option<Error> + Send + Sync>;
 
@@ -252,10 +240,10 @@ pub struct MultiRepoWatcher {
     /// worktree-watch flag and the ignore caches (see [`WatchRegistry`]).
     registry: Arc<WatchRegistry>,
     /// Shared common git directories watched for linked worktrees, keyed by
-    /// canonical common directory (#468).
+    /// canonical common directory.
     common_watches: Mutex<HashMap<PathBuf, CommonDirWatch>>,
     ops_lock: Mutex<()>,
-    /// Test-only fault injection consulted by [`Self::arm_watch`] (#616).
+    /// Test-only fault injection consulted by [`Self::arm_watch`].
     #[cfg(test)]
     watch_fault: Option<WatchFault>,
 }
@@ -442,12 +430,13 @@ impl MultiRepoWatcher {
         self.registry
             .remove_roots(repos_to_remove.iter().map(|repo| repo.git_root.as_path()));
 
-        // Mirror the removal into the external-gitdir map (#428). Harmless for
-        // ordinary repos, whose gitdirs were never inserted.
+        // Drop the external-gitdir attribution entry so events under a
+        // since-unwatched submodule/worktree gitdir stop resolving to this
+        // root. Harmless for ordinary repos, whose gitdirs were never inserted.
         for repo in repos_to_remove {
             self.registry.unregister_external_gitdir(&repo.git_dir);
             // Reference-counted: only the last dependent worktree actually
-            // drops the shared common-dir watch (#468).
+            // drops the shared common-dir watch.
             self.release_common_dir_watches(&repo.git_root);
         }
 
@@ -479,7 +468,7 @@ impl MultiRepoWatcher {
         }
         if let Ok(mut repos) = self.watched_repos.lock() {
             // Drop this instance's external-gitdir mappings from the shared
-            // registry before clearing the local map (#428).
+            // registry before clearing the local map.
             for repo in repos.values() {
                 self.registry.unregister_external_gitdir(&repo.git_dir);
             }
@@ -488,7 +477,7 @@ impl MultiRepoWatcher {
         self.registry.clear_roots();
         // The coordinator above already tore every OS watch down, so this only
         // has to drop the bookkeeping and this instance's entries in the shared
-        // common-gitdir attribution registry (#468).
+        // common-gitdir attribution registry.
         if let Ok(mut common) = self.common_watches.lock() {
             for (common_dir, entry) in common.drain() {
                 for root in &entry.dependents {
@@ -509,12 +498,12 @@ impl MultiRepoWatcher {
     /// OS watch. But if the watched `.git` directory was deleted and recreated at
     /// the same path (new inode) — or the gitdir pointer moved — the original
     /// watch is dead, so re-arm it now rather than waiting for the ~45s reconcile
-    /// to recover the missed events (issue #267, finding #4).
+    /// to recover the missed events.
     ///
     /// The same applies when `git.watch_worktree` changed since these watches
     /// were armed: false → true means no worktree watch was ever installed even
     /// though event filtering now expects worktree events, and true → false
-    /// leaves a needless recursive watch behind (#444). The comparison is
+    /// leaves a needless recursive watch behind. The comparison is
     /// against the repo's *requested* state, never its (possibly degraded)
     /// effective state — see [`WorktreeWatch::requested`].
     ///
@@ -586,7 +575,7 @@ impl MultiRepoWatcher {
     ///
     /// `pid` is `Some` when a client triggered the re-arm (it is added to the
     /// repo's client set) and `None` for a config-driven bulk re-arm, which must
-    /// leave the reference count exactly as it found it (#444).
+    /// leave the reference count exactly as it found it.
     ///
     /// # Errors
     ///
@@ -629,16 +618,16 @@ impl MultiRepoWatcher {
         }
 
         // The gitdir pointer may have relocated, which can move the common
-        // directory with it. Release the old dependency (unwatching only if this
-        // was the last dependent) so `start_repo_watches` re-acquires against
-        // whatever `git_dir` now points at (#468).
+        // directory with it. Release the current dependency (unwatching only if
+        // this was the last dependent) so `start_repo_watches` re-acquires
+        // against whatever `git_dir` now points at.
         self.release_common_dir_watches(git_root);
 
         let repo_watches = self.start_repo_watches(git_root, git_dir, watch_worktree)?;
 
         // The gitdir pointer may have relocated (e.g. gitdir file rewritten):
         // drop the stale external-gitdir mapping and re-register the current one
-        // so attribution keeps resolving to this working root (#428). Both are
+        // so attribution keeps resolving to this working root. Both are
         // no-ops for ordinary in-tree gitdirs.
         if let Some((stale_git_dir, _)) = &stale {
             self.registry.unregister_external_gitdir(stale_git_dir);
@@ -670,9 +659,7 @@ impl MultiRepoWatcher {
     ///
     /// Under `#[cfg(test)]` this consults `self.watch_fault` first, so a test
     /// can deterministically simulate a watch failure (e.g. OS watch-budget
-    /// exhaustion) for a specific path without a real resource limit and
-    /// without a process-wide flag other tests would have to serialize
-    /// around (#616).
+    /// exhaustion) for a specific path without a real resource limit.
     ///
     /// # Errors
     ///
@@ -704,7 +691,7 @@ impl MultiRepoWatcher {
     /// Teardown must never leave a stale OS watch unaccounted for, but a
     /// failure here is not actionable by the caller — the watch is going
     /// away regardless — so this logs and moves on rather than propagating
-    /// an error (#616).
+    /// an error.
     fn unwatch_logged(w: &mut WatchCoordinator, path: &Path, mode: WatchMode) {
         let released = match mode {
             WatchMode::Recursive => w.unwatch_directory(path),
@@ -732,7 +719,7 @@ impl MultiRepoWatcher {
     /// directory cannot be watched. A missing/poisoned coordinator must be an
     /// error here rather than a silent no-op: falling through would let the
     /// caller record the repository as watched even though no OS watch was
-    /// ever established (#323).
+    /// ever established.
     #[expect(
         clippy::significant_drop_tightening,
         reason = "the guard is held for the whole function body on purpose -- `w` is reused across several sequential watch_directory calls in different branches below, and they must run against one consistent coordinator reference rather than re-locking (and potentially observing a coordinator swapped out by stop()) between calls"
@@ -753,7 +740,7 @@ impl MultiRepoWatcher {
             ));
         };
 
-        // #388: on macOS, notify's FSEvents backend cannot incrementally add a
+        // On macOS, notify's FSEvents backend cannot incrementally add a
         // path to an already-running FSEventStream -- it tears the stream down
         // and rebuilds it. Two sequential `watch_directory` calls on the same
         // coordinator (one for `git_dir`, one for `git_root`) rebuild the
@@ -790,8 +777,8 @@ impl MultiRepoWatcher {
         let mut armed = vec![git_dir.to_path_buf()];
 
         // Only linked worktrees reach here with a `commondir` pointer, so this
-        // is a no-op for submodules and (via the branch above) ordinary repos
-        // (#468). Best-effort like the worktree watch below: shared-metadata
+        // is a no-op for submodules and (via the branch above) ordinary repos.
+        // Best-effort like the worktree watch below: shared-metadata
         // fan-out is an enhancement over the per-worktree admin dir watch just
         // armed, never a precondition for registering the repository. Its own
         // watches are tracked separately in `common_watches`, not in this
@@ -827,7 +814,7 @@ impl MultiRepoWatcher {
     /// Returns `None` for anything that is not a linked worktree — an ordinary
     /// repository and a submodule's own checkout both have a git directory that
     /// *is* the common directory, and neither carries a `commondir` pointer — so
-    /// their watch behavior is untouched (#468).
+    /// their watch behavior is untouched.
     fn resolve_common_dir(git_dir: &Path) -> Option<PathBuf> {
         let common =
             crate::fs_util::read_small_file(&git_dir.join("commondir"), COMMONDIR_POINTER_READ_CAP)
@@ -875,7 +862,7 @@ impl MultiRepoWatcher {
     }
 
     /// Register `git_root` as a dependent of its common git directory and, if it
-    /// is the first dependent, arm the watches covering that directory (#468).
+    /// is the first dependent, arm the watches covering that directory.
     fn acquire_common_dir_watches(
         &self,
         w: &mut WatchCoordinator,
@@ -913,12 +900,11 @@ impl MultiRepoWatcher {
     ///
     /// A recursive watch on `<common>` is what both of these avoid: under the
     /// poll backend it would expand into `objects/**` for a stat walk every poll
-    /// interval (#463), over churn `filter_ignored` discards anyway.
+    /// interval, over churn `filter_ignored` discards anyway.
     ///
     /// Each path is skipped when an existing watch already covers it — when the
     /// main checkout is registered, its single recursive worktree watch already
-    /// covers `<common>` — so nothing rebuilds the `FSEventStream` for no gain
-    /// (#388).
+    /// covers `<common>` — so nothing rebuilds the `FSEventStream` for no gain.
     fn arm_common_dir(w: &mut WatchCoordinator, common_dir: &Path) -> ArmedWatches {
         let mut armed = Vec::new();
 
@@ -959,7 +945,7 @@ impl MultiRepoWatcher {
     /// Drop `git_root` as a dependent of every common git directory it was
     /// registered against, unwatching the shared watches only once the last
     /// dependent worktree is gone, and re-arm any surviving common directory
-    /// whose covering ancestor watch has just been dropped (#468).
+    /// whose covering ancestor watch has just been dropped.
     fn release_common_dir_watches(&self, git_root: &Path) {
         let mut to_unwatch: ArmedWatches = Vec::new();
         let mut to_rearm: Vec<PathBuf> = Vec::new();
@@ -1080,8 +1066,8 @@ impl MultiRepoWatcher {
 
         // Only submodules/linked worktrees have an *external* gitdir (one not
         // under the working root); register those so the filesystem layer can
-        // attribute their gitdir-internal events back to this working root
-        // (#428). Ordinary repos (gitdir under the root) never enter the map.
+        // attribute their gitdir-internal events back to this working root.
+        // Ordinary repos (gitdir under the root) never enter the map.
         // Done before the move into `WatchedRepo` so the paths are still owned.
         self.register_external_gitdir_if_needed(&git_dir, &git_root);
 
@@ -1182,14 +1168,14 @@ impl MultiRepoWatcher {
     /// `GPY_WATCH_WORKTREE` env var overrides it. Newly registered repositories
     /// pick up the new value; already-active ones are brought into line by
     /// [`Self::resync_watch_worktree`], which the config-reload path calls right
-    /// after this (#444).
+    /// after this.
     pub fn set_watch_worktree(&self, config_enabled: bool) {
         self.registry.set_worktree_enabled(config_enabled);
     }
 
     /// Bring every already-watched repository into line with the current
     /// effective `watch_worktree` setting, re-arming the ones whose watches were
-    /// armed under the previous value (#444).
+    /// armed under a different value.
     ///
     /// Without this, a `false → true` change only updates the registry flag: event
     /// filtering starts expecting worktree events while active repositories
@@ -1255,7 +1241,7 @@ impl MultiRepoWatcher {
     /// Every client PID the watcher currently tracks: the union of the client
     /// sets of all watched repositories (sorted, deduplicated).
     ///
-    /// Lets the agent reconcile the watcher against the client registry (#782).
+    /// Lets the agent reconcile the watcher against the client registry.
     #[must_use]
     pub fn client_pids(&self) -> Vec<u32> {
         let mut pids: Vec<u32> = self.watched_repos.lock().map_or_else(
@@ -1388,23 +1374,20 @@ impl MultiRepoWatcherBuilder {
     ///
     /// The agent passes the one registry it also hands to its config and theme
     /// coordinators, so a config path registered by one is visible to the
-    /// event path of all three — the process-global behavior the five
-    /// `OnceLock` registries used to provide (#617). If not set, the watcher
-    /// gets a private registry and shares nothing with any other watcher.
+    /// event path of all three. If not set, the watcher gets a private
+    /// registry and shares nothing with any other watcher.
     #[must_use]
     pub fn registry(mut self, registry: Arc<WatchRegistry>) -> Self {
         self.registry = Some(registry);
         self
     }
 
-    /// Inject a test-only fault into the watches this watcher arms (#616).
+    /// Inject a test-only fault into the watches this watcher arms.
     ///
     /// `fault` is consulted by [`MultiRepoWatcher::arm_watch`] for every path
     /// a real `watch_directory` call would receive; returning `Some(err)` for
     /// a path makes that watch fail exactly as a real watch-budget
-    /// exhaustion would, without a real resource limit and without the
-    /// process-wide `AtomicBool` flags (and the `#[serial]` they demanded of
-    /// every test using them) this replaces.
+    /// exhaustion would, without a real resource limit.
     #[cfg(test)]
     #[must_use]
     fn watch_fault(mut self, fault: WatchFault) -> Self {
@@ -1635,8 +1618,7 @@ mod tests {
         // Ensure background thread is running and ready to acquire lock
         barrier.wait();
 
-        // Give the background thread a moment to try acquiring the lock
-        // This is not for timing assertions, but to ensure the scheduler schedules the thread
+        // Negative proof: give the thread a chance to (wrongly) get past the lock.
         std::thread::sleep(Duration::from_millis(10));
 
         // It should NOT have finished yet because we hold the lock
@@ -1659,13 +1641,10 @@ mod tests {
 
     /// A worktree-level file creation must be delivered through a REAL
     /// `notify::RecommendedWatcher` (not a hand-constructed synthetic event).
-    /// Regression test for issue #388: `start_repo_watches` used to always
-    /// issue two sequential `watch_directory` calls (`.git`, then the
-    /// worktree root) on the same coordinator; on macOS this tears down and
-    /// rebuilds the underlying `FSEventStream`, which could silently drop the
-    /// worktree watch's first event. `find_git_root`/`register_client` route
-    /// through the real filesystem watcher (not a fake), so this test would
-    /// have failed against the pre-fix code path.
+    /// When `git_dir` is nested under `git_root`, `start_repo_watches` must arm
+    /// a single recursive watch: on macOS a second `watch_directory` call
+    /// rebuilds the `FSEventStream`, which can silently drop the worktree
+    /// watch's first event.
     #[test]
     #[serial_test::file_serial(watcher_fsevents_bootstrap)]
     fn worktree_level_file_creation_is_delivered() {
@@ -1700,6 +1679,7 @@ mod tests {
 
         let canonical_root = std::fs::canonicalize(repo_root).expect("canonicalize repo root");
 
+        // Let the recursive worktree watch arm before writing.
         std::thread::sleep(Duration::from_millis(100));
         std::fs::write(repo_root.join("untracked.txt"), b"content")
             .expect("write worktree-level file");
@@ -1720,18 +1700,15 @@ mod tests {
         );
     }
 
-    /// Acceptance scenario for #416: `mkdir subdir && write subdir/file` must
-    /// surface a git event for the repo within ~1s through a REAL notify
-    /// watcher, without waiting for the periodic reconcile.
+    /// `mkdir subdir && write subdir/file` must surface a git event for the
+    /// repo within ~1s through a REAL notify watcher, without waiting for the
+    /// periodic reconcile.
     ///
-    /// This is a best-effort realistic test. It reliably PASSES with the fix
-    /// because a directory-create always schedules a follow-up rescan of the
-    /// repo regardless of whether the file-create event itself was dropped.
-    /// It does NOT reliably fail without the fix: the underlying watch-arming
-    /// race is nondeterministic, and the mkdir's own directory-create event is
-    /// usually delivered anyway. The deterministic proof that the follow-up is
-    /// scheduled lives in `filesystem.rs`'s `process_event` unit tests; this
-    /// test guards the end-to-end wiring against regressions/hangs.
+    /// Best-effort end-to-end check: the watch-arming race is
+    /// nondeterministic, so this cannot reliably fail on its own. The
+    /// deterministic proof that a directory-create schedules a rescan lives
+    /// in `filesystem.rs`'s `process_event` unit tests; this guards the
+    /// end-to-end wiring against hangs.
     #[test]
     #[serial_test::file_serial(watcher_fsevents_bootstrap)]
     fn mkdir_then_immediate_write_is_delivered() {
@@ -1792,21 +1769,15 @@ mod tests {
         );
     }
 
-    /// #616: unregistering the last client must unwatch exactly the paths
+    /// Unregistering the last client must unwatch exactly the paths
     /// actually armed.
     ///
     /// For a repository whose `git_dir` sits under `git_root` (the ordinary
     /// in-tree layout) with worktree watching on, that is `git_root` alone
     /// (a single recursive watch already covers `.git` internally, see
     /// `start_repo_watches`) -- and never `git_dir`, which was never armed as
-    /// its own OS watch in this case.
-    ///
-    /// Before `armed` existed, `unregister_client_locked` unconditionally
-    /// unwatched `git_dir` (armed or not) and additionally unwatched
-    /// `git_root` only when `watch_worktree` was set, which happened to
-    /// unwatch the right *set* of paths here only because the two policies
-    /// coincided; the coordinator's own record of what was actually asked to
-    /// be unwatched is the more direct proof (#616's TDD requirement (a)).
+    /// its own OS watch in this case. Asserted against the coordinator's own
+    /// record of unwatch calls.
     ///
     /// # Panics
     ///
@@ -1865,11 +1836,8 @@ mod tests {
     ///
     /// The repository stays tracked (so the periodic reconcile still
     /// recovers missed events) with `watch_worktree` recorded as `false`.
-    /// Regression test for issue #158.
-    ///
-    /// Not `#[serial]` (#616): the fault is scoped to this watcher's own
-    /// `watch_fault` closure, not a process-wide flag other tests must avoid
-    /// tripping over.
+    /// Not `#[serial]`: the fault is scoped to this watcher's own
+    /// `watch_fault` closure.
     #[test]
     fn worktree_watch_failure_degrades_to_gitdir_only() {
         let temp_dir = TempDir::new().unwrap();
@@ -1926,10 +1894,9 @@ mod tests {
     /// Failure to watch the essential `.git` directory must roll back cleanly.
     ///
     /// Registration surfaces the error and no repository is left tracked, so
-    /// the registry and watcher cannot disagree. Regression test for issue
-    /// #158.
+    /// the registry and watcher cannot disagree.
     ///
-    /// Not `#[serial]` (#616): scoped to this watcher's own `watch_fault`.
+    /// Not `#[serial]`: scoped to this watcher's own `watch_fault`.
     #[test]
     fn gitdir_watch_failure_rolls_back_without_tracking() {
         let temp_dir = TempDir::new().unwrap();
@@ -1939,8 +1906,7 @@ mod tests {
         // "Git watch fails" = fault every path: with the default worktree
         // watching (git_dir under git_root) this fails the recursive
         // git_root attempt, falls back, then fails the .git-only attempt too
-        // -- the same `Err` the old process-wide `TEST_FAIL_GIT_WATCH` produced
-        // by returning `Err` before any watch was tried.
+        // -- so registration fails before any watch is established.
         let watcher = MultiRepoWatcher::builder()
             .callback(Box::new(|_event: DebouncedEvent| {}))
             .watch_fault(Arc::new(|_path: &Path| {
@@ -1964,11 +1930,9 @@ mod tests {
 
     /// Registering a client with no coordinator must fail loudly.
     ///
-    /// Regression test for #323: once the watch coordinator is gone (e.g.
-    /// after `stop()`), registering a client must fail loudly instead of
-    /// silently recording the repository as watched with no OS watch behind
-    /// it.
-    ///
+    /// Once the watch coordinator is gone (e.g. after `stop()`),
+    /// registering a client must fail loudly instead of silently recording
+    /// the repository as watched with no OS watch behind it.
     #[test]
     fn register_client_errors_when_coordinator_is_gone() {
         let temp_dir = TempDir::new().unwrap();
@@ -1996,23 +1960,16 @@ mod tests {
 
     /// A re-register after the gitdir was recreated must re-arm the watch.
     ///
-    /// Finding #4 (#267): a heartbeat re-register after the watched `.git` dir was
-    /// deleted and recreated at the same path must re-arm the watch — a
-    /// directory with a different inode than the tracked one means the
-    /// original OS watch is dead. Before the fix the registry short-circuited
-    /// on the stale entry, leaving the repo unwatched until the ~45s
-    /// reconcile. Identity is inode-based, so this is a Unix-only guarantee.
+    /// A heartbeat re-register after the watched `.git` dir was deleted and
+    /// recreated at the same path must re-arm the watch — a directory with a
+    /// different inode than the tracked one means the original OS watch is
+    /// dead. Identity is inode-based, so this is a Unix-only guarantee.
     ///
-    /// The replacement directory is created and swapped in via `rename`
-    /// rather than deleted-then-recreated at the same path: immediate
-    /// `rmdir`+`mkdir` reuse of the just-freed inode number is common on
-    /// Linux (not a bug — see `dir_identity`'s doc comment: identity is a
-    /// best-effort optimization with periodic reconcile as the backstop for
-    /// exactly this case), which made this test itself flaky on
-    /// `ubuntu-latest` (#292). Two directories that exist simultaneously on
-    /// the same device are guaranteed distinct inodes, so renaming a
-    /// pre-created directory over the old one deterministically exercises
-    /// the "identity changed" code path this test is meant to cover.
+    /// The replacement directory is swapped in via `rename` rather than
+    /// `rmdir`+`mkdir`: Linux commonly reuses the just-freed inode number
+    /// (see `dir_identity`), while two directories existing simultaneously on
+    /// one device are guaranteed distinct inodes, so the "identity changed"
+    /// path is exercised deterministically.
     #[cfg(unix)]
     #[test]
     fn recreated_gitdir_rearms_watch_on_reregister() {
@@ -2097,8 +2054,8 @@ mod tests {
 
     /// A private registry with `worktree_enabled` already applied.
     ///
-    /// The per-watcher replacement for the process-global `WATCH_WORKTREE`
-    /// flag #617 retired.
+    /// Gives each test its own worktree-watch flag instead of sharing
+    /// process-wide state.
     fn test_registry(worktree_enabled: bool) -> Arc<WatchRegistry> {
         let registry = Arc::new(WatchRegistry::new());
         registry.set_worktree_enabled(worktree_enabled);
@@ -2113,7 +2070,7 @@ mod tests {
     }
 
     /// Like [`watcher_over_temp_repo`], but also installs a [`WatchFault`]
-    /// built from the repo's canonical root (#616).
+    /// built from the repo's canonical root.
     ///
     /// `fault_for_root` is a factory rather than a plain [`WatchFault`]
     /// because most fault closures need to compare against the tracked
@@ -2136,12 +2093,9 @@ mod tests {
 
     /// A re-register after `git.watch_worktree` flipped on must re-arm the repo.
     ///
-    /// #444: a re-register after `git.watch_worktree` flipped false → true must
-    /// re-arm the already-tracked repo. Before the fix
-    /// `attach_or_rearm_existing_repo` compared only gitdir path/identity, so the
-    /// repo kept its `.git`-only watch while event filtering already expected
-    /// worktree events — pure edits stayed invisible until the ~45s reconcile.
-    ///
+    /// Otherwise the repo keeps its `.git`-only watch while event filtering
+    /// already expects worktree events, so pure edits stay invisible until
+    /// the ~45s reconcile.
     #[test]
     fn reregister_after_worktree_enabled_rearms_repo() {
         let (temp_dir, watcher) = watcher_over_temp_repo(false);
@@ -2163,7 +2117,7 @@ mod tests {
         );
     }
 
-    /// #444: the reverse transition (true → false) must drop the recursive
+    /// The reverse transition (true → false) must drop the recursive
     /// worktree watch while keeping the essential `.git` coverage.
     #[test]
     fn reregister_after_worktree_disabled_rearms_repo() {
@@ -2191,7 +2145,7 @@ mod tests {
         );
     }
 
-    /// #444 watch-thrash guard: a degraded repo must not re-arm on an
+    /// Watch-thrash guard: a degraded repo must not re-arm on an
     /// unchanged-config re-register.
     ///
     /// A repo whose worktree watch FAILED and degraded to `.git`-only
@@ -2200,7 +2154,7 @@ mod tests {
     /// heartbeat re-register forever, so the comparison must be against the
     /// *requested* state, not the degraded effective one.
     ///
-    /// Not `#[serial]` (#616): the fault is scoped to this watcher's own
+    /// Not `#[serial]`: the fault is scoped to this watcher's own
     /// `watch_fault` closure.
     #[test]
     fn degraded_worktree_repo_does_not_rearm_on_reregister() {
@@ -2232,11 +2186,10 @@ mod tests {
 
     /// A resync must re-arm every ACTIVE repo when the flag flips on.
     ///
-    /// #444 config-reload path: flipping the effective flag false → true must
+    /// Config-reload path: flipping the effective flag false → true must
     /// re-arm every ACTIVE repository without waiting for a client to
     /// re-register (a shell that never leaves its directory would otherwise stay
     /// on a `.git`-only watch indefinitely).
-    ///
     #[test]
     fn resync_installs_worktree_watch_on_active_repos() {
         let (temp_dir, watcher) = watcher_over_temp_repo(false);
@@ -2255,7 +2208,7 @@ mod tests {
         );
     }
 
-    /// #444 config-reload path, reverse transition: the recursive worktree watch
+    /// Config-reload path, reverse transition: the recursive worktree watch
     /// is dropped while the repo stays tracked with gitdir coverage.
     #[test]
     fn resync_removes_worktree_watch_on_active_repos() {
@@ -2280,7 +2233,7 @@ mod tests {
         );
     }
 
-    /// #444: a repository shared by several shells must keep every client
+    /// A repository shared by several shells must keep every client
     /// registered across a reconfiguration — the re-arm must not drop the
     /// reference count and orphan the watch.
     #[test]
@@ -2307,13 +2260,13 @@ mod tests {
         assert_eq!(watcher.watched_repo_count(), 1);
     }
 
-    /// #444: a resync whose recursive worktree watch fails must degrade to
+    /// A resync whose recursive worktree watch fails must degrade to
     /// `.git`-only watching.
     ///
     /// The repo must never end up untracked or unwatched, and the degraded
     /// repo must not be re-armed again on the next resync.
     ///
-    /// Not `#[serial]` (#616): the fault is scoped to this watcher's own
+    /// Not `#[serial]`: the fault is scoped to this watcher's own
     /// `watch_fault` closure. It is safe to leave armed for the whole test:
     /// the initial `register_client` call never arms `git_root` at all
     /// (worktree watching starts disabled), so the fault only ever fires on
@@ -2353,11 +2306,11 @@ mod tests {
         );
     }
 
-    /// #444: when the effective flag is unchanged, a resync must not touch a
+    /// When the effective flag is unchanged, a resync must not touch a
     /// single watch. Proven by arming a `.git`-watch failure injection that
     /// would corrupt the tracked entry if any re-arm ran.
     ///
-    /// Not `#[serial]` (#616): the fault is gated by an `AtomicBool` owned by
+    /// Not `#[serial]`: the fault is gated by an `AtomicBool` owned by
     /// this test alone, not a process-wide flag -- it must start disarmed
     /// (the initial `register_client` below must succeed) and is armed only
     /// around the resync under test.
@@ -2442,15 +2395,11 @@ mod tests {
         );
     }
 
-    /// #617: two `MultiRepoWatcher`s in one process must not share attribution
+    /// Two `MultiRepoWatcher`s in one process must not share attribution
     /// or worktree-watch state.
     ///
-    /// Deliberately NOT `#[serial]`: the whole point of the registry is that
-    /// this test is independent of anything else running concurrently. Before
-    /// the five process-global `OnceLock` registries became `WatchRegistry`
-    /// fields, this could not even be written — `set_watch_worktree` was a
-    /// static that wrote one process-wide `AtomicBool`, and the external-gitdir
-    /// map was a module-private `OnceLock` with no per-instance handle.
+    /// Deliberately NOT `#[serial]`: per-instance registries must make this
+    /// test independent of anything else running concurrently.
     #[test]
     fn two_watchers_do_not_share_registry_state() {
         let first = MultiRepoWatcher::builder()
@@ -2558,7 +2507,7 @@ mod tests {
             .unwrap()
     }
 
-    /// #718: a `cd` inside the repository the pid is already attached to must
+    /// A `cd` inside the repository the pid is already attached to must
     /// not touch the OS watches or the tracked entry.
     #[test]
     fn update_client_within_same_repo_does_not_rearm() {
@@ -2593,8 +2542,8 @@ mod tests {
         assert_eq!(tracked_clients(&watcher, &repo), HashSet::from([1]));
     }
 
-    /// #718: `register` for a pid already attached elsewhere detaches it from
-    /// the old repository, tearing it down when it was the last client.
+    /// `register` for a pid already attached elsewhere detaches it from
+    /// its current repository, tearing it down when it was the last client.
     #[test]
     fn register_client_detaches_pid_from_previous_repo() {
         let (_temp, a, b) = two_plain_repos();
@@ -2613,13 +2562,13 @@ mod tests {
 
         assert!(
             !watcher.watched_repos.lock().unwrap().contains_key(&a),
-            "the old repository must be released"
+            "the previous repository must be released"
         );
         assert_eq!(unwatch_log(&watcher), a_armed);
         assert_eq!(tracked_clients(&watcher, &b), HashSet::from([1]));
     }
 
-    /// #718: moving one pid away from a repository other pids still use must
+    /// Moving one pid away from a repository other pids still use must
     /// leave that repository, and its watches, alone.
     #[test]
     fn update_client_to_other_repo_keeps_shared_repo() {
@@ -2639,7 +2588,7 @@ mod tests {
         );
     }
 
-    /// #718 error semantics: a failed arm of the target still detaches the pid
+    /// Error semantics: a failed arm of the target still detaches the pid
     /// from the repository it was attached to, leaving it attached nowhere.
     #[test]
     fn update_client_failed_arm_still_detaches_from_previous_repo() {
@@ -2662,11 +2611,10 @@ mod tests {
         assert_eq!(unwatch_log(&watcher), vec![a]);
     }
 
-    // ---- Watch-set class test (#718, #687) --------------------------------
-    //
-    // Randomized register/unregister/update sequences over a fixture with
-    // overlapping repositories, checked after every step against a model that
-    // is computed from the fixture alone (never from the watcher's own state).
+    // Watch-set class test: randomized register/unregister/update sequences
+    // over a fixture with overlapping repositories, checked after every step
+    // against a model computed from the fixture alone (never from the
+    // watcher's own state).
 
     /// One repository of the fixture.
     struct FixtureRepo {
@@ -2932,7 +2880,7 @@ mod tests {
 
         /// Random sequences of register / update / unregister for a few pids
         /// leave the watcher tracking, and watching, exactly what the
-        /// remaining clients need (#718, #687), and an attach to the repo a
+        /// remaining clients need, and an attach to the repo a
         /// pid already belongs to performs no backend watch operation.
         #[test]
         fn watch_set_matches_client_model(

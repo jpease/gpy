@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-# Test Fish segment parsing of the new Fish-friendly format
+# Test Fish segment parsing of the Fish-friendly argparse flag format
 
 # Shared test helpers (test_now_ns: a portable nanosecond clock)
 source tests/lib/test_helpers.fish
@@ -14,15 +14,15 @@ source fish/segments/language.fish
 
 # Mock the __gpy_request function to return Fish format data (override after sourcing)
 function __gpy_request
-    # Parse arguments - handle both old format (__gpy_request op cwd) and new format (__gpy_request op --cwd cwd)
+    # Accept both call shapes: positional (__gpy_request op cwd) and flag (__gpy_request op --cwd cwd)
     set -l op $argv[1]
     set -l cwd
 
     if test (count $argv) -eq 2
-        # Old format: __gpy_request op cwd
+        # Positional: __gpy_request op cwd
         set cwd $argv[2]
     else if test (count $argv) -eq 3; and test "$argv[2]" = --cwd
-        # New format: __gpy_request op --cwd cwd
+        # Flag: __gpy_request op --cwd cwd
         set cwd $argv[3]
     end
 
@@ -158,7 +158,7 @@ end
 function test_no_regex_dependency
     echo "Testing that new format eliminates regex parsing..."
 
-    # The old __gpy_from_json function should be gone
+    # The regex-based __gpy_from_json parser must not exist
     if functions -q __gpy_from_json
         echo "✗ Old __gpy_from_json function still exists"
         return 1
@@ -166,7 +166,7 @@ function test_no_regex_dependency
         echo "✓ Old regex-based JSON parsing function removed"
     end
 
-    # The new parsing should use argparse instead of regex
+    # Parsing uses argparse instead of regex
     set -l sample_data "--branch main --ahead 2 --behind 1"
     set -l parsed_args (string split -- ' ' "$sample_data")
 

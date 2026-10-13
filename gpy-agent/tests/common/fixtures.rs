@@ -1,32 +1,11 @@
-//! Test fixtures for GPY agent testing
-//!
-//! This module provides comprehensive test fixtures to eliminate duplicate test setup code
-//! and accelerate test development.
+//! Shared test fixtures for GPY agent integration tests.
 //!
 //! # Available Fixtures
 //!
-//! - [`TempGitRepo`] - Creates temporary git repositories with configurable state
-//! - [`MockConfig`] - Creates test configurations with sensible defaults
-//! - [`TempSocket`] - Creates temporary Unix socket paths with auto-cleanup
-//! - [`ServerGuard`] - Wraps tokio `JoinHandle` with automatic abort on drop
-//!
-//! # Example Usage
-//!
-//! ```rust,no_run
-//! use gpy_agent::tests::common::fixtures::TempGitRepo;
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Create a git repo with specific state
-//! let repo = TempGitRepo::new()?
-//!     .with_branch("feature")?
-//!     .with_commits(3)?
-//!     .with_staged("file.txt")?
-//!     .build()?;
-//!
-//! // Cleanup happens automatically on drop
-//! # Ok(())
-//! # }
-//! ```
+//! - [`MockConfig`] - Builds in-memory test configurations
+//! - [`TempSocket`] - Temporary Unix socket paths under [`gpy_test_root`]
+//! - [`ServerGuard`] - Wraps a tokio `JoinHandle` and aborts it on drop
+//! - [`wait_for_agent_ready`] - Blocking poll for a socket path to appear
 
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
@@ -57,8 +36,8 @@ use std::time::Duration;
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// use gpy_agent::tests::common::fixtures::MockConfig;
+/// ```ignore
+/// use common::fixtures::MockConfig;
 ///
 /// let config = MockConfig::default()
 ///     .with_git_enabled(true)
@@ -121,8 +100,8 @@ impl MockConfig {
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// use gpy_agent::tests::common::fixtures::TempSocket;
+/// ```ignore
+/// use common::fixtures::TempSocket;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let socket = TempSocket::new()?;
@@ -169,7 +148,7 @@ impl Drop for TempSocket {
 /// scattering them across the bare system temp directory) lets cleanup
 /// tooling (`scripts/cleanup-test-agents.sh`) delete leaked sockets by
 /// location instead of by name alone, so it can never remove a same-named
-/// socket it did not create (#619).
+/// socket it did not create.
 ///
 /// Honors `TMPDIR`/`TMP`/`TEMP` the same way [`std::env::temp_dir`] does, and
 /// namespaces by `USER`/`LOGNAME` so concurrent users on a shared machine
@@ -235,9 +214,8 @@ pub fn wait_for_agent_ready(socket_path: &Path, timeout: Duration) -> std::io::R
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// use tokio;
-/// use gpy_agent::tests::common::fixtures::ServerGuard;
+/// ```ignore
+/// use common::fixtures::ServerGuard;
 ///
 /// # #[tokio::test]
 /// # async fn test_example() -> Result<(), Box<dyn std::error::Error>> {
@@ -272,20 +250,6 @@ pub struct ServerGuard<T> {
 
 impl<T> ServerGuard<T> {
     /// Create a new server guard wrapping a tokio `JoinHandle`
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use tokio;
-    /// use gpy_agent::tests::common::fixtures::ServerGuard;
-    ///
-    /// # #[tokio::test]
-    /// # async fn example() {
-    /// let handle = tokio::spawn(async { /* server code */ });
-    /// let guard = ServerGuard::new(handle);
-    /// // Server will be aborted when guard is dropped
-    /// # }
-    /// ```
     #[must_use]
     pub fn new(handle: tokio::task::JoinHandle<T>) -> Self {
         Self { handle }
@@ -294,20 +258,6 @@ impl<T> ServerGuard<T> {
     /// Consume the guard and return the inner `JoinHandle`
     ///
     /// Use this if you need to manually control the task lifecycle.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use gpy_agent::tests::common::fixtures::ServerGuard;
-    /// # #[tokio::test]
-    /// # async fn example() {
-    /// # let handle = tokio::spawn(async {});
-    /// let guard = ServerGuard::new(handle);
-    /// let handle = guard.into_inner();
-    /// // Now you must manually abort/await the handle
-    /// handle.abort();
-    /// # }
-    /// ```
     #[must_use]
     pub fn into_inner(self) -> tokio::task::JoinHandle<T> {
         // Skip Drop by consuming self
@@ -317,20 +267,6 @@ impl<T> ServerGuard<T> {
     }
 
     /// Check if the task has finished
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use gpy_agent::tests::common::fixtures::ServerGuard;
-    /// # #[tokio::test]
-    /// # async fn example() {
-    /// # let handle = tokio::spawn(async {});
-    /// let guard = ServerGuard::new(handle);
-    /// if guard.is_finished() {
-    ///     println!("Task completed");
-    /// }
-    /// # }
-    /// ```
     #[must_use]
     pub fn is_finished(&self) -> bool {
         self.handle.is_finished()
@@ -339,8 +275,7 @@ impl<T> ServerGuard<T> {
 
 impl<T> Drop for ServerGuard<T> {
     fn drop(&mut self) {
-        // Abort the task when guard is dropped
-        // This happens automatically on test failure, panic, or normal completion
+        // Runs on normal completion and while unwinding from a failed test.
         self.handle.abort();
     }
 }

@@ -32,7 +32,7 @@ set -e __enabled_segments
 set -gx GPY_MINIMAL_SEGMENTS 1
 
 # Isolate the theme-export cache dir so init.fish's fast path can't read a
-# real, live dogfooding daemon's cache (#402). init.fish redefines
+# real, live dogfooding daemon's cache. init.fish redefines
 # __gpy_load_theme itself when sourced, so the no-op stub below only
 # protects the call site if this isolation is ever removed.
 set -gx XDG_CACHE_HOME (mktemp -d)
@@ -44,9 +44,8 @@ end
 source "$repo_root/fish/core/init.fish"
 # fish_prompt lives in an autoloaded function file, not init.fish. Source it
 # explicitly (as the other prompt-rendering tests do) instead of relying on the
-# developer's installed copy — without this the assertion below silently
-# measured Fish's *default* prompt on a clean machine, so it passed locally and
-# failed in CI (#270).
+# developer's installed copy — otherwise the assertion below measures Fish's
+# *default* prompt on a clean machine.
 source "$repo_root/fish/functions/fish_prompt.fish"
 set -e GPY_MINIMAL_SEGMENTS
 

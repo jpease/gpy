@@ -84,7 +84,7 @@ virtualenv names, hostnames, usernames and theme literals are untrusted text —
 a cloned repository or an unpacked archive chooses them — so the agent escapes
 every character the shell would expand in them (`\`, `$` and backticks for
 Bash; those plus `%` for Zsh) through the `bash-prompt` and `zsh-prompt` output
-formats (`gpy-agent/src/formatter/style_encoder.rs`, #677). The instant-prompt
+formats (`gpy-agent/src/formatter/style_encoder.rs`). The instant-prompt
 cache keeps a separate file per format. The integrations pin the prompt options
 that escaping relies on: `shopt -s promptvars` in Bash, and `prompt_subst`,
 `prompt_percent` and `no_prompt_bang` in Zsh. The clock's live-time token
@@ -187,7 +187,7 @@ For the per-advisory assessment and audit history, see [Security Audit Notes](do
   GitHub Actions update PRs; Cargo version-update PRs are deliberately not
   enabled, since `cargo audit` and `cargo deny` already gate every push.
 - **Secret scanning:** GitHub secret scanning with push protection is enabled
-  on the repository (#507) and is the authoritative control. Contributors who
+  on the repository and is the authoritative control. Contributors who
   have `gitleaks` installed also get it run on staged changes by the
   repository's pre-commit hook (`.raven/git-hooks/pre-commit` and
   `.pre-commit-config.yaml`). A separate Gitleaks CI job is deliberately not

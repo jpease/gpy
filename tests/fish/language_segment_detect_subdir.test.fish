@@ -6,14 +6,13 @@ set -l repo_root (cd "$script_dir/../.." && pwd)
 source "$repo_root/fish/core/constants.fish"
 source "$repo_root/fish/core/util.fish"
 # segment_language_detect calls __gpy_memoized_git_root / __gpy_find_git_root
-# (core/ipc.fish, #342). The real init sequence (core/init.fish) always
-# sources ipc.fish before any segment, so segment_language_detect has never
-# had to declare this dependency itself -- this test only worked previously
-# because a developer's own config.fish happened to source the full fish/
-# tree first, making the function available by accident (#630).
+# (core/ipc.fish). The real init sequence (core/init.fish) always sources
+# ipc.fish before any segment, so segment_language_detect does not declare
+# this dependency itself; source it explicitly rather than relying on a
+# developer's own config.fish having loaded the full fish/ tree.
 source "$repo_root/fish/core/ipc.fish"
 source "$repo_root/fish/segments/language.fish"
-# The pre-filter iterates the agent-exported marker list (#785); this test
+# The pre-filter iterates the agent-exported marker list; this test
 # covers the ancestor walk, so a one-entry list suffices. The full export is
 # covered by language_marker_prefilter.test.fish.
 set -g __gpy_lang_marker_files Cargo.toml

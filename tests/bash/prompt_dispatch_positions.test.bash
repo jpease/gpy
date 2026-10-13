@@ -2,21 +2,20 @@
 # tests/bash/prompt_dispatch_positions.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression/contract test for #613 (mirrors tests/fish/prompt_dispatch_positions.test.fish).
+# Mirrors tests/fish/prompt_dispatch_positions.test.fish.
 #
 # Drives the real __gpy_render_prompt dispatch loop (bash/core/init.bash) with
 # three stub segments and asserts each receives is_last/is_first as "true"/""
 # in the correct position -- "true" for the segment at that edge, "" for
-# everywhere else. Before #613 the existing "Last Segment Context" coverage in
-# integration.test.bash only exercised is_last (via the "last" literal); this
-# adds is_first coverage against the actual dispatch loop, not just a direct
-# segment call.
+# everywhere else. The "Last Segment Context" coverage in
+# integration.test.bash only exercises is_last; this covers is_first against
+# the actual dispatch loop, not just a direct segment call.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
 # The theme export re-sets the supervisor flag from config.toml, so disable
-# it in a sandbox config; the missing socket stays there too (#836).
+# it in a sandbox config; the missing socket stays there too.
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-dispatch-positions.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
 source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"

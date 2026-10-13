@@ -3,7 +3,7 @@
 # tests/bash/local_segment_renderer.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #844: the segments Bash draws itself (status pill, local clock, hostname and
+# The segments Bash draws itself (status pill, local clock, hostname and
 # username fallback) and the root prompt go through the shared renderer
 # (bash/core/renderer.bash), the twin of fish's gpy_section_standalone. The
 # byte-for-byte comparison with Fish lives in
@@ -16,7 +16,7 @@
 #     the agent for a character; the fallback draws the exit-status indicator
 #     unless GPY_SHOW_STATUS=0, as fish_prompt does;
 #   - data the renderer prints (hostname, username, icons) shows literally,
-#     whatever `$(...)`, backticks, backslashes or `!` it holds (#677);
+#     whatever `$(...)`, backticks, backslashes or `!` it holds;
 #   - the color table maps names, bright names, `#RRGGBB` and 0-255.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

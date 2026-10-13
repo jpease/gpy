@@ -1,6 +1,6 @@
 #!/usr/bin/env fish
 # Fish probes `nc -h` for `-U` before using nc as the IPC client, and Bash and
-# Zsh now probe the same way (#850; tests/bash and tests/zsh carry the twins).
+# Zsh probe the same way (tests/bash and tests/zsh carry the twins).
 # netcat-traditional (the `nc` on some minimal Debian and Ubuntu images) has no
 # Unix-socket support, so it must read as "no client" instead of a client that
 # fails every request.
@@ -19,7 +19,7 @@ source "$repo_root/fish/core/constants.fish"
 source "$repo_root/fish/core/util.fish"
 source "$repo_root/fish/core/ipc.fish"
 
-print_test_header "IPC nc capability probe (#850)"
+print_test_header "IPC nc capability probe"
 
 if not command -q python3
     test_skip "python3 not installed, cannot create a Unix socket node"

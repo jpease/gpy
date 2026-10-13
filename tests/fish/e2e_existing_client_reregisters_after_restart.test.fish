@@ -7,23 +7,21 @@
 #![allow(clippy::doc_markdown)]
 
 # SPDX-License-Identifier: GPL-3.0-or-later
-# ============================================================================
 # E2E Test: Existing Client Re-registers After Agent Restart
-# ============================================================================
 #
 # This test covers the failure scenario where an already-open shell remains
 # idle while the agent is stopped and restarted. The shell should recover and
 # resume receiving SIGURG live-update signals without requiring a brand-new
 # terminal window or an extra prompt render from the user.
 #
-# gpy#419 extends this file with a second scenario covering the sibling
+# A second scenario covers the sibling
 # registration-resilience gap: a shell whose per-prompt autostart attempts
 # were exhausted while the agent was unavailable (which deletes the
 # self-repeating `__gpy_start_supervisor_on_prompt` hook) must still recover
 # once the agent becomes available again, via the git segment's cold-miss/
 # stale registration retry rather than the agent's .reregister doorbell.
 #
-# Note on "no cd / manual prompt render needed" (acceptance criterion 1):
+# Note on "no cd / manual prompt render needed":
 # `test_existing_client_reregisters` below already proves this for the
 # doorbell path -- the persistent client (`register_test_client`)
 # registers once, then only sleeps waiting for signals; it never calls `cd`
@@ -112,9 +110,8 @@ function test_existing_client_reregisters
     end
 
     # Wait for the restarted agent to nudge (.reregister + SIGURG) and for the
-    # already-open client to re-register (was: fixed `sleep 2`). Polling the
-    # agent's client count means we trigger the change only once the client is
-    # actually reattached, which is both faster and less racy.
+    # already-open client to re-register. Polling the agent's client count
+    # means we trigger the change only once the client is actually reattached.
     poll_until 4 __gpy_agent_has_registered_client
 
     # The restart nudge itself rings SIGURG, so count from the post-reattach
@@ -155,7 +152,7 @@ function test_autostart_exhausted_client_recovers_via_git_segment
 
     # Deliberately do NOT start the real agent yet: this client must exhaust
     # its per-prompt autostart attempts against a genuinely unavailable agent
-    # first -- exactly #419's failure scenario -- before the agent is ever
+    # first -- the failure scenario under test -- before the agent is ever
     # brought up. The event handlers are simulated by calling them directly
     # (same technique as tests/fish/prompt_autostart_backoff.test.fish),
     # since `fish -c` scripts never emit a real interactive `fish_prompt`
@@ -211,13 +208,12 @@ function test_autostart_exhausted_client_recovers_via_git_segment
         echo OK > $exhausted_marker
 
         # The exhaustion loop above hammers __gpy_agent_available and will
-        # have opened its circuit breaker (util.fish, a real pre-existing
-        # protection that is not touched here and is out of scope to change).
-        # Reset it here to simulate the normal backoff window of that breaker
-        # having already elapsed by the time the agent comes back -- without
-        # this the test would need a real 60s sleep to exercise the
-        # registration-retry path #419 actually adds, rather than just
-        # re-observing the pre-existing, orthogonal circuit breaker.
+        # have opened its circuit breaker (util.fish, an orthogonal protection
+        # covered by agent_circuit_breaker_expiry.test.fish). Reset it here to
+        # simulate the backoff window of that breaker having already elapsed
+        # by the time the agent comes back -- without this the test would need
+        # a real 60s sleep to exercise the registration-retry path of the git
+        # segment rather than just re-observing the circuit breaker.
         set -g __gpy_agent_backoff_until 0
         set -g __gpy_agent_failure_count 0
 
@@ -235,8 +231,8 @@ function test_autostart_exhausted_client_recovers_via_git_segment
             set waited (math "$waited + 1")
         end
 
-        # A single cold-miss git-segment render -- the exact codepath #419
-        # adds registration retry to -- must be enough to recover.
+        # A single cold-miss git-segment render -- the codepath that retries
+        # registration -- must be enough to recover.
         segment_git_render >/dev/null 2>&1
 
         if set -q __gpy_registered

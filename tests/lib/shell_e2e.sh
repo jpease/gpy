@@ -2,7 +2,7 @@
 # tests/lib/shell_e2e.sh
 #
 # Shared helpers for the Bash and Zsh test suites (sourced, never executed).
-# The Bash/Zsh twin of tests/lib/test_helpers.fish (#646).
+# The Bash/Zsh twin of tests/lib/test_helpers.fish.
 #
 # Written in the POSIX-sh subset both shells run identically: every expansion
 # is quoted, there are no arrays, no `[[ =~ ]]`, and no bash-only builtins.
@@ -15,21 +15,36 @@
 #     . "$ROOT/tests/lib/shell_e2e.sh"
 # (Zsh: ROOT=${0:a:h:h:h}; emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"' --
 # single-quoted so the path expands as one word and is never re-parsed as code.)
-#
-# ---------------------------------------------------------------------------
-# Skip contract (#650)
-# ---------------------------------------------------------------------------
-# A test that cannot run because a prerequisite is missing calls
-# `test_skip "reason"`. Locally that prints `SKIP: reason` and exits 0, so a
-# developer without, say, python3 is not blocked; under `CI` the same call
-# exits 1, so the gate can never go green on a test that did not actually
-# execute. Never `exit 0` on a missing prerequisite directly.
 
-# Print `SKIP: <reason>` and exit: 0 locally, 1 when CI is set.
+# Assertions. `fail` prints and counts into $failures; `pass` only prints.
+# `test_finish SUMMARY` ends the test: exit 1 with the failure count when any
+# assertion failed, otherwise print `PASS: SUMMARY`. printf, not echo: zsh's
+# echo would interpret backslashes in the message.
+failures=0
+fail() {
+    printf 'FAIL: %s\n' "$*"
+    failures=$((failures + 1))
+}
+pass() {
+    printf 'PASS: %s\n' "$*"
+}
+test_finish() {
+    if [ "$failures" -gt 0 ]; then
+        printf 'FAILED: %s assertion(s)\n' "$failures"
+        exit 1
+    fi
+    printf 'PASS: %s\n' "${1:-all assertions}"
+}
+
+# Skip contract: a test that cannot run because a prerequisite is missing
+# calls `test_skip "reason"`. Locally that prints `SKIP: reason` and exits 0,
+# so a developer without, say, python3 is not blocked; under `CI` the same
+# call exits 1, so the gate can never go green on a test that did not
+# actually execute. Never `exit 0` on a missing prerequisite directly.
 test_skip() {
     printf 'SKIP: %s\n' "$*"
     if [ -n "${CI:-}" ]; then
-        printf 'FAIL: a skipped test is a failure under CI (#650)\n'
+        printf 'FAIL: a skipped test is a failure under CI\n'
         exit 1
     fi
     exit 0
@@ -53,12 +68,15 @@ test_require_command() {
 #                           source the integration without a daemon starting
 #                           under it, then put PATH back. The theme export
 #                           re-sets GPY_AGENT_ENABLED from config.toml, so an
-#                           env value alone cannot keep the startup start away
-#                           (#841, #842); with no gpy-agent on PATH there is
-#                           neither an export nor an agent to start. Run
+#                           env value alone cannot keep the startup start
+#                           away; with no gpy-agent on PATH there is neither
+#                           an export nor an agent to start. Run
 #                           `GPY_AGENT_ENABLED=0 source ...` between the two
 #                           calls, then export GPY_AGENT_ENABLED=1 for the
 #                           call-time reads.
+# shell_e2e_text_config SEGS [ICONS] [supervisor-off]
+#                           write the text-theme config.toml with
+#                           `enabled_segments = [SEGS]`
 # shell_e2e_start_agent     start the agent, wait <= 3 s until it answers
 # shell_e2e_stop_agent      stop it (socket-scoped force kill as a fallback)
 # shell_e2e_spawn_client SH spawn an interactive bash or zsh on a pty through
@@ -83,6 +101,8 @@ test_require_command() {
 # shell_e2e_stop_client     end the client session
 # shell_e2e_timeout_scale   1-minute load average per core, rounded up and
 #                           capped at 5; SHELL_E2E_TIMEOUT_SCALE overrides it
+# shell_e2e_poll T CMD...   run CMD every 100 ms until it succeeds or T
+#                           (scaled) seconds pass
 #
 # All waits are bounded polls; nothing sleeps for synchronisation. Every
 # wait's budget is scaled by shell_e2e_timeout_scale (shell_e2e_poll and
@@ -97,7 +117,7 @@ SHELL_E2E_CLIENT_PID=""
 
 # The single GPY-owned root every test-harness socket lives under; mirrors
 # gpy_test_root() in gpy-agent/tests/common/fixtures.rs and the root
-# scripts/cleanup-test-agents.sh reaps (#619).
+# scripts/cleanup-test-agents.sh reaps.
 shell_e2e_test_root() {
     _base="${TMPDIR:-/tmp}"
     _base="${_base%/}"
@@ -182,9 +202,7 @@ shell_e2e_timeout_scale() {
     _load1="$( { sysctl -n vm.loadavg 2>/dev/null || cat /proc/loadavg 2>/dev/null; } | tr -d '{}' | awk '{print $1}')"
     [ -n "$_load1" ] || _load1=0
     # The awk variable is `loadavg`, not `load`: gawk reserves `load` (the
-    # @load directive) and aborts with "cannot use gawk builtin `load' as
-    # variable name", which left every poll budget empty on a runner whose
-    # awk is gawk (#848).
+    # @load directive) and aborts on it as a variable name.
     awk -v loadavg="$_load1" -v cores="$_cores" 'BEGIN {
         if (cores < 1) cores = 1
         ratio = loadavg / cores
@@ -223,6 +241,18 @@ shell_e2e_agent_free_end() {
     PATH="$SHELL_E2E_SAVED_PATH"
 }
 
+# Write the text-theme config.toml: `enabled_segments = [$1]` (the TOML array
+# body, e.g. '"directory", "git"'), `show_icons = ${2:-false}`, and with a
+# third argument `supervisor-off` an `[agent.supervisor] enabled = false`.
+shell_e2e_text_config() {
+    {
+        printf '[ui]\nshow_icons = %s\ntheme = "text"\nenabled_segments = [%s]\n' "${2:-false}" "$1"
+        if [ "${3:-}" = supervisor-off ]; then
+            printf '\n[agent.supervisor]\nenabled = false\n'
+        fi
+    } >"$XDG_CONFIG_HOME/gpy/config.toml"
+}
+
 shell_e2e_start_agent() {
     "$SHELL_E2E_AGENT_BIN" start >"$SHELL_E2E_ROOT/agent-start.log" 2>&1 || {
         echo "FAIL: gpy-agent start failed:"
@@ -241,8 +271,8 @@ shell_e2e_socket_gone() {
 }
 
 # Stop the agent through its own socket, then TERM, and as a last resort
-# KILL, whatever still holds that socket open (never a name-based kill; see
-# #484).
+# KILL, whatever still holds that socket open (never a name-based kill: a
+# contributor's own daemon must survive the suite).
 shell_e2e_stop_agent() {
     [ -S "$GPY_AGENT_SOCKET_PATH" ] || return 0
     "$SHELL_E2E_AGENT_BIN" stop >/dev/null 2>&1 || true
@@ -268,13 +298,13 @@ shell_e2e_term_then_kill_holders() {
 
 # Stop whatever agent a test left bound under a hermetic XDG pair ($1 =
 # XDG_CACHE_HOME, $2 = XDG_CONFIG_HOME). For the plain bash/zsh suites that
-# source the entry point and let the supervisor start a daemon (#750): the
+# source the entry point and let the supervisor start a daemon: the
 # supervisor backgrounds `gpy-agent start`, so the socket can still be
 # missing at exit and is awaited (bounded) first. Stops through the agent's
 # own socket using the PATH `gpy-agent` (the binary that started it), then
 # TERMs, and as a last resort KILLs, whatever still holds that socket (never
-# a name-based kill; see #484, #615). The socket sits under $1 because these
-# tests run without XDG_RUNTIME_DIR, so the runtime root falls back to cache.
+# a name-based kill). The socket sits under $1 because these tests run
+# without XDG_RUNTIME_DIR, so the runtime root falls back to cache.
 shell_e2e_stop_agent_under() {
     _sock="$1/gpy/gpy.sock"
     shell_e2e_poll 3 test -S "$_sock" || return 0

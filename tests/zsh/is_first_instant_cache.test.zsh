@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 # tests/zsh/is_first_instant_cache.test.zsh
 #
-# Regression test for #401: the instant-prompt cache writer
+# The instant-prompt cache writer
 # (gpy-agent/src/cache/instant_prompt.rs) writes all four is_last/is_first
 # combinations unconditionally (git/git_last/git_first/git_first_last,
 # lang/.../lang_first_last). This verifies the Zsh reader side
@@ -61,9 +61,7 @@ printf 'LANG-LAST' >"$CACHE_DIR/$CACHE_KEY.lang_last.none.zsh"
 printf 'LANG-FIRST' >"$CACHE_DIR/$CACHE_KEY.lang_first.none.zsh"
 printf 'LANG-FIRST-LAST' >"$CACHE_DIR/$CACHE_KEY.lang_first_last.none.zsh"
 
-# #613: segment functions now receive is_last/is_first as "true"/"" (not the
-# old "last"/"first" literals) -- call arguments updated, assertions about
-# which cache file gets selected are unchanged.
+# Segment functions receive is_last/is_first as "true"/"".
 check "git segment: not first, not last" "$(__gpy_segment_git "" "")" "GIT-NORMAL"
 check "git segment: last, not first" "$(__gpy_segment_git true "")" "GIT-LAST"
 check "git segment: first, not last" "$(__gpy_segment_git "" "" true)" "GIT-FIRST"

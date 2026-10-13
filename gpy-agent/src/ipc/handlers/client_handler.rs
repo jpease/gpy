@@ -295,7 +295,7 @@ impl ClientHandler {
 
         // Honor `git.enabled` / `git.skip_paths` exactly like the IPC git
         // request: a skipped repo must not get a status computed or an
-        // instant-prompt cache written for it (#696).
+        // instant-prompt cache written for it.
         let skipped = {
             let current = self.render.config_manager.get();
             !current.git.enabled || current.git.is_path_skipped(&git_root)
@@ -326,10 +326,8 @@ impl ClientHandler {
 
                     // Write the instant-prompt cache and repaint live shells if
                     // the render changed, exactly as the git handler's request
-                    // and background paths do (#587) -- this path used to write
-                    // the cache and then silently skip the repaint, stranding a
-                    // freshly-scanned status in shells already showing an older
-                    // prompt for this repo.
+                    // and background paths do, so shells already showing an
+                    // older prompt for this repo pick up the fresh status.
                     //
                     // Registration path: no per-request color context, so prev_bg is None.
                     publish_and_repaint(&render, &git_root, &status, None);
@@ -450,7 +448,7 @@ mod tests {
             .expect("register");
     }
 
-    /// #696: registering inside a skipped repo (entry written through a
+    /// Registering inside a skipped repo (entry written through a
     /// symlink) must write no git instant-prompt cache files.
     #[cfg(unix)]
     #[test]
@@ -465,6 +463,9 @@ mod tests {
         let handler = handler_with(vec![link.to_string_lossy().into_owned()], &cache_dir);
         register(&handler, &repo);
 
+        // Negative proof: a skipped repo spawns no scan job, so there is no
+        // completion to wait on. Allow a real scan's typical latency to elapse
+        // so a regression that does spawn one would have written by now.
         std::thread::sleep(Duration::from_millis(1500));
         assert_eq!(git_cache_files(&cache_dir), Vec::<String>::new());
     }

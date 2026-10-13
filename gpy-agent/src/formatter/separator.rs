@@ -1,11 +1,8 @@
 //! The one powerline-separator implementation shared by every segment
 //! resolver (#586).
 //!
-//! Before this module each of the seven resolvers carried its own copy of the
-//! `sep_gap`/`sep_open`/`sep_close` logic. Two of those copies were genuinely
-//! different from each other, so collapsing them into one *identical* body
-//! would have been a behavior change; [`SeparatorStyle`] names the difference
-//! instead, and [`resolve_separator`] is the single place the glyphs live.
+//! Segments differ in one real way, named by [`SeparatorStyle`];
+//! [`resolve_separator`] is the single place the glyphs live.
 //!
 //! The caps are Powerline-Extra private-use codepoints that only Nerd/Powerline
 //! patched fonts carry. [`Glyphs`] says whether the terminal is assumed to have

@@ -3,13 +3,13 @@
 # tests/bash/e2e_lang_variant_fallback_bounded_refresh.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Language segment variant fallback: bounded BACKGROUND refresh (#843; the Bash
-# twin of tests/fish/e2e_lang_variant_fallback_bounded_refresh.test.fish, #454).
+# Language segment variant fallback: bounded BACKGROUND refresh (the Bash
+# twin of tests/fish/e2e_lang_variant_fallback_bounded_refresh.test.fish).
 #
 # The read serves the context-free `.none` entry (status bit 4) when no
-# token-specific file exists for the render's real prev_bg. Bash used to treat
-# that as an ordinary warm hit and never cause the token file to be written, so
-# the wrong-context chevron could persist indefinitely. Like Fish, language
+# token-specific file exists for the render's real prev_bg. Treating that as an
+# ordinary warm hit would never cause the token file to be written, so the
+# wrong-context chevron could persist indefinitely. Like Fish, language
 # stays non-blocking: the FIRST render at a new context still shows the `.none`
 # chevron and fires a throttled background refresh with the real prev_bg; the
 # SECOND render hits the token file and shows the right colour. Two tokens (A,
@@ -24,9 +24,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT/tests/lib/shell_e2e.sh"
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 TOKEN_A=231
 TOKEN_B=213
@@ -109,8 +106,4 @@ for token in "$TOKEN_A" "$TOKEN_B"; do
     esac
 done
 
-if [ "$failures" -gt 0 ]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: bash language segment corrects the variant fallback via a bounded background refresh"
+test_finish "bash language segment corrects the variant fallback via a bounded background refresh"

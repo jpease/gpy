@@ -2,9 +2,9 @@
 # tests/zsh/agent_disabled_prompt.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #841: with GPY_AGENT_ENABLED=0 the Zsh integration must render PROMPT
+# With GPY_AGENT_ENABLED=0 the Zsh integration must render PROMPT
 # through `gpy-agent oneshot` and start/register nothing: no agent start, no
-# supervisor, no registration. (Zsh used to register unconditionally.)
+# supervisor, no registration.
 
 ROOT=${0:a:h:h:h}
 cd "$ROOT"

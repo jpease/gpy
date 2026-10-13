@@ -2,7 +2,7 @@
 # tests/fish/disabled_footprint_prompt.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# Regression test (#452): when GPY is fully disabled
+# When GPY is fully disabled
 # (GPY_AGENT_ENABLED=0 and GPY_AGENT_SUPERVISOR_ENABLED=0), the installed,
 # autoloaded fish_prompt still runs on every render — Fish's autoloader finds
 # it in functions/ regardless of whether GPY's own init sourced anything.
@@ -12,13 +12,12 @@
 #
 #   A) fish/conf.d/gpy_init.fish's own disabled early-return (what actually
 #      runs at shell startup for an installed user)
-#   B) fish/core/init.fish's own disabled early-return (the documented
-#      "disabled-footprint" test mode, tests/fish/README.md:122)
+#   B) fish/core/init.fish's own disabled early-return (taken when both
+#      GPY_AGENT_ENABLED and GPY_AGENT_SUPERVISOR_ENABLED are 0)
 #
-# #457 extends this to the two *unintentional* routes into the same state,
-# where GPY is enabled but the install is broken. Both were out of scope for
-# #452 and reach end-of-init with the agent flags forced to 0 and no safe
-# prompt defaults set:
+# The same holds for the two *unintentional* routes into that state, where
+# GPY is enabled but the install is broken. Both reach end-of-init with the
+# agent flags forced to 0 and no safe prompt defaults set:
 #
 #   D) fish/conf.d/gpy_init.fish's install-not-found branch ($gpy_install_dir/
 #      core/init.fish missing)
@@ -98,7 +97,7 @@ else
     test_fail "conf.d/gpy_init.fish disabled path rendered an empty prompt"
 end
 
-# #770: the per-prompt marker reset must not fork `rm` with no operands.
+# The per-prompt marker reset must not fork `rm` with no operands.
 set -l scenario_a_trace (mktemp)
 env HOME=$scenario_a_home XDG_CONFIG_HOME=$scenario_a_home/.config \
     GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
@@ -106,7 +105,7 @@ env HOME=$scenario_a_home XDG_CONFIG_HOME=$scenario_a_home/.config \
 if grep -Eq -- '^-+> rm' $scenario_a_trace
     test_fail "disabled-footprint fish_prompt forked rm: "(grep -E -- '^-+> rm' $scenario_a_trace | string collect)
 else
-    test_pass "disabled-footprint fish_prompt forked no rm (#770)"
+    test_pass "disabled-footprint fish_prompt forked no rm"
 end
 rm -f $scenario_a_trace
 rm -f $scenario_a_err
@@ -162,7 +161,7 @@ for line in (string split \n -- $scenario_c_vars)
     end
 end
 
-# --- Scenario D: conf.d/gpy_init.fish install-not-found branch (#457) ---
+# --- Scenario D: conf.d/gpy_init.fish install-not-found branch ---
 echo ""
 echo "Scenario D: conf.d/gpy_init.fish install-not-found branch"
 
@@ -208,14 +207,14 @@ end
 rm -f $scenario_d_err
 rm -rf $scenario_d_home
 
-# --- Scenario E: conf.d/gpy_init.fish fallback-mode branch (#457) ---
+# --- Scenario E: conf.d/gpy_init.fish fallback-mode branch ---
 echo ""
 echo "Scenario E: conf.d/gpy_init.fish fallback-mode branch"
 
 # core/init.fish exists but fails to source, so gpy_init.fish takes the
 # "using fallback mode" branch and falls through to end-of-file. This is the
-# realistic #452 repeat: fish_prompt.fish is definitely installed here (only
-# the source failed), so the autoloaded prompt runs uninitialized.
+# realistic broken-install case: fish_prompt.fish is definitely installed here
+# (only the source failed), so the autoloaded prompt runs uninitialized.
 set -l scenario_e_home (mktemp -d)
 mkdir -p "$scenario_e_home/.config/fish/gpy/core"
 echo 'return 1' >"$scenario_e_home/.config/fish/gpy/core/init.fish"

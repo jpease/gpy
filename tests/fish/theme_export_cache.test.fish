@@ -28,7 +28,7 @@ mkdir -p "$XDG_CACHE_HOME/gpy"
 set -l cache_file "$XDG_CACHE_HOME/gpy/theme-export.fish"
 
 # Write a fake theme export
-printf 'set -g GPY_TEST_THEME_LOADED yes\n' > "$cache_file"
+printf 'set -g GPY_TEST_THEME_LOADED yes\n' >"$cache_file"
 
 # __gpy_theme_export_cache_path must return the correct path
 set -l got_path (__gpy_theme_export_cache_path)
@@ -49,7 +49,7 @@ else
 end
 
 # When the cache exists again, verify re-sourcing picks up updated content
-printf 'set -g GPY_TEST_THEME_V2 updated\n' > "$cache_file"
+printf 'set -g GPY_TEST_THEME_V2 updated\n' >"$cache_file"
 set -e GPY_TEST_THEME_V2
 
 __gpy_load_theme >/dev/null 2>/dev/null

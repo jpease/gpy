@@ -35,7 +35,7 @@ fn agent_disabled() -> bool {
     crate::config::loader::load_config().is_ok_and(|config| !config.agent.enabled)
 }
 
-/// Longest a start waits for another start on the same socket (#723).
+/// Longest a start waits for another start on the same socket.
 #[cfg(unix)]
 const START_LOCK_WAIT_MAX: Duration = Duration::from_secs(10);
 
@@ -140,7 +140,7 @@ impl ShellRenudger {
     ///
     /// `is_alive` receives the tracking file's mtime (`None` for flag files
     /// and when it cannot be read), so it can also reject a PID recycled to a
-    /// process that started after the file was written (#781); such a PID's
+    /// process that started after the file was written; such a PID's
     /// tracking file and flags are removed by name in the same pass.
     pub(crate) fn pids_to_nudge<R, A>(
         &mut self,
@@ -293,7 +293,7 @@ fn raise_shell_flag(shell_dir: &std::path::Path, pid: u32, flag: ShellFlag) {
     let _ = ring_doorbell(pid);
 }
 
-/// How long `gpy-agent start` waits for its daemon to answer (#741).
+/// How long `gpy-agent start` waits for its daemon to answer.
 #[cfg(unix)]
 const READY_WAIT_MAX: Duration = Duration::from_secs(5);
 
@@ -351,7 +351,7 @@ pub(crate) fn notify_existing_shells_of_restart() {
 }
 
 /// Warm the theme-export cache for a freshly started agent and, if that
-/// rewrote it, ask every alive tracked shell to reload (#701).
+/// rewrote it, ask every alive tracked shell to reload.
 ///
 /// A config change made while no agent ran is never seen by the file
 /// watcher, so this write is the only sign of it. Shells still hold the
@@ -422,7 +422,7 @@ fn nudge_all_tracked_shells_in(shell_dir: &std::path::Path) {
 ///
 /// Liveness comes from [`tracked_shell_liveness`]: `is_client_alive` (which
 /// treats `EPERM` as alive, so a live shell we merely lack permission to
-/// signal keeps its tracking file) plus the recycled-PID check (#781).
+/// signal keeps its tracking file) plus the recycled-PID check.
 #[cfg(unix)]
 fn flag_all_tracked_shells_in(shell_dir: &std::path::Path, flag: ShellFlag) {
     let mut renudger = ShellRenudger::default();
@@ -438,7 +438,7 @@ fn flag_all_tracked_shells_in(shell_dir: &std::path::Path, flag: ShellFlag) {
     }
 }
 
-/// Fork the agent daemon and return once it answers on `socket_path` (#741).
+/// Fork the agent daemon and return once it answers on `socket_path`.
 ///
 /// An explicit double fork instead of `fork::daemon()`, whose original and
 /// intermediate processes `_exit(0)` before anything can be awaited:
@@ -449,7 +449,7 @@ fn flag_all_tracked_shells_in(shell_dir: &std::path::Path, flag: ShellFlag) {
 ///    the daemon, writes its PID into the pipe and exits.
 /// 3. The daemon `chdir`s to `/` (#724), so it never keeps the launch
 ///    directory's mount busy, binds its socket and only then drops the start
-///    lock it inherited (#723).
+///    lock it inherited.
 ///
 /// The restart nudge stays in the daemon (`Agent::start_background`), so
 /// shells are nudged once per start.
@@ -525,14 +525,17 @@ fn fork_daemon_from_intermediate(mut pid_writer: std::io::PipeWriter) {
 ///
 /// # Errors
 ///
-/// Returns an error if the tokio runtime cannot be built or the agent fails.
+/// Returns an error if the daemon cannot leave the launch directory, the
+/// tokio runtime cannot be built, or the agent fails.
 #[cfg(unix)]
 fn run_daemon(start_lock: Flock<std::fs::File>) -> Result<()> {
     use super::write_agent_version;
 
-    // Every relative input was made absolute before the fork (#724).
+    // Every relative input was made absolute before the fork, so the daemon
+    // must not keep the launch directory alive (or busy) for its lifetime.
     if let Err(e) = fork::chdir() {
-        debug_log!("agent", "Failed to chdir to /: {e}");
+        crate::warn_log!("agent", "Failed to chdir to /: {e}");
+        return Err(Error::process("chdir".to_owned(), e.to_string()));
     }
 
     // Write version file so we can detect upgrades
@@ -557,12 +560,10 @@ fn run_daemon(start_lock: Flock<std::fs::File>) -> Result<()> {
         }
     });
     // Bound runtime teardown instead of letting `rt`'s Drop block until
-    // every spawn_blocking task finishes. Without this, an in-flight
-    // scan with no cancellation hook (e.g. a slow language-detection
-    // walk, #391) can hang process exit indefinitely after a clean
-    // shutdown signal. Anything still running past the deadline is
-    // detached, not joined; the process exiting when this function
-    // returns forcibly terminates it regardless.
+    // every spawn_blocking task finishes: an in-flight scan with no
+    // cancellation hook (e.g. a slow language-detection walk) could hang
+    // process exit after a clean shutdown signal. Anything still running
+    // past the deadline is detached and dies with the process.
     rt.shutdown_timeout(std::time::Duration::from_secs(5));
     result
 }
@@ -580,10 +581,16 @@ pub fn start_background_agent() -> Result<()> {
             return Ok(()); // Successful no-op
         }
 
-        // The daemon runs in `/` (#724): anchor every relative input to the
+        // The daemon runs in `/`: anchor every relative input to the
         // launch directory now, before the fork, so it inherits the result.
-        if let Ok(cwd) = std::env::current_dir() {
-            let _ = crate::paths::LAUNCH_DIR.set(cwd);
+        if let Ok(cwd) = std::env::current_dir()
+            && let Err(rejected) = crate::paths::LAUNCH_DIR.set(cwd)
+        {
+            debug_assert!(
+                crate::paths::LAUNCH_DIR.get() == Some(&rejected),
+                "launch dir set twice with a different value: new={}",
+                rejected.display()
+            );
         }
         crate::debug::init_path();
         let socket_path = crate::paths::absolutize(&super::get_socket_path()?);
@@ -595,7 +602,7 @@ pub fn start_background_agent() -> Result<()> {
             let _ = super::SOCKET_OVERRIDE.set(socket_path.clone());
         }
 
-        // Serialize check → evict → fork → bind per socket (#723). The forked
+        // Serialize check → evict → fork → bind per socket. The forked
         // daemon inherits the lock and releases it once its socket is bound.
         let start_lock = acquire_start_lock(&socket_path)?;
 
@@ -607,7 +614,7 @@ pub fn start_background_agent() -> Result<()> {
 
         eprintln!("Starting GPY Agent in background...");
         // Exits non-zero (via `main`'s `Error:` line) unless the daemon
-        // answers on its socket (#741).
+        // answers on its socket.
         fork_agent(&socket_path, start_lock)
     }
 
@@ -672,7 +679,7 @@ mod tests {
         );
     }
 
-    /// #611: the restart nudge shares `pids_to_nudge`'s directory scan.
+    /// The restart nudge shares `pids_to_nudge`'s directory scan.
     ///
     /// It must keep that scan's dead-shell cleanup (tracking file and both
     /// flag kinds, including orphan flags) while still targeting *every*
@@ -703,20 +710,14 @@ mod tests {
         );
     }
 
-    /// #611: covers the half of `nudge_all_tracked_shells_in`'s scan that
-    /// `restart_nudge_cleans_up_tracking_files_for_dead_shells` doesn't.
+    /// The restart nudge targets an alive tracked shell and keeps its
+    /// tracking file, the half of the scan the dead-shell cleanup test above
+    /// does not cover.
     ///
-    /// That test covers the dead-PID cleanup half; this covers the half the
-    /// function actually exists for -- an alive, tracked shell must be
-    /// targeted for a nudge, and (unlike a dead shell's) its tracking file
-    /// must survive.
-    ///
-    /// Uses the current test process's own PID as the "alive" shell,
-    /// mirroring `is_client_alive_current_process` in `ipc::registry`, and
-    /// drives the exact scan `nudge_all_tracked_shells_in` runs --
-    /// `pids_to_nudge` with `is_registered` hardwired to `false` and the real
-    /// `is_client_alive` -- without the flag write and doorbell, which are
-    /// covered by `restart_nudge_writes_reregister_flag_and_spares_unhandled_shell`.
+    /// Uses the current test process's own PID as the "alive" shell and drives
+    /// the exact scan `nudge_all_tracked_shells_in` runs, without the flag
+    /// write and doorbell (covered by
+    /// `restart_nudge_writes_reregister_flag_and_spares_unhandled_shell`).
     #[cfg(unix)]
     #[test]
     fn nudge_all_tracked_shells_targets_and_preserves_an_alive_tracked_shell() {
@@ -742,7 +743,7 @@ mod tests {
         );
     }
 
-    /// #781: a tracking file written long before its PID's current process
+    /// A tracking file written long before its PID's current process
     /// started belongs to a recycled PID. It is removed and never nudged.
     #[cfg(unix)]
     #[test]
@@ -770,7 +771,7 @@ mod tests {
         );
     }
 
-    /// #781: an unknown start time or mtime never makes a PID look recycled.
+    /// An unknown start time or mtime never makes a PID look recycled.
     #[cfg(unix)]
     #[test]
     fn started_after_tracking_needs_more_than_a_second() {
@@ -911,7 +912,7 @@ mod tests {
         }
     }
 
-    /// #674 regression: the restart nudge writes `.reregister` and rings the
+    /// The restart nudge writes `.reregister` and rings the
     /// doorbell, and a tracked process with NO handler (a shell mid-`exec`)
     /// survives it.
     #[cfg(unix)]
@@ -926,6 +927,7 @@ mod tests {
         track_shells(dir.path(), &[pid]);
 
         super::nudge_all_tracked_shells_in(dir.path());
+        // Give an unhandled SIGURG time to kill the child, if it would.
         std::thread::sleep(std::time::Duration::from_millis(200));
 
         assert!(
@@ -940,7 +942,7 @@ mod tests {
         let _ = child.wait();
     }
 
-    /// #701: the startup warm-up raises `.reload` only when the export changed.
+    /// The startup warm-up raises `.reload` only when the export changed.
     ///
     /// A plain restart (same config as the export on disk) must raise no
     /// `.reload`; a config edited while no agent ran must.
@@ -998,15 +1000,12 @@ mod tests {
         );
     }
 
-    /// #391: `fork_agent` bounds runtime teardown with `shutdown_timeout`.
-    ///
-    /// Instead of relying on `Runtime`'s Drop (which blocks until every
-    /// `spawn_blocking` task finishes, with no deadline). This test isolates
-    /// that mechanism -- not `fork_agent` itself, which forks/daemonizes and
-    /// isn't practical to exercise in a unit test -- and proves
     /// `shutdown_timeout` returns promptly even while a `spawn_blocking` job
-    /// with no cancellation hook is still running, mirroring an in-flight
-    /// language-detection scan that outlives a shutdown signal.
+    /// with no cancellation hook is still running, as an in-flight
+    /// language-detection scan can at shutdown.
+    ///
+    /// Isolates the mechanism `fork_agent`'s daemon relies on; the daemon
+    /// itself forks and is not practical to exercise in a unit test.
     #[test]
     fn shutdown_timeout_returns_promptly_despite_stuck_blocking_task() {
         let rt = tokio::runtime::Runtime::new().expect("create runtime");

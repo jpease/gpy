@@ -5,7 +5,7 @@
 # With the supervisor disabled ([agent.supervisor] enabled = false, exported
 # as GPY_AGENT_SUPERVISOR_ENABLED=0) and the agent running, the first prompt
 # in a plain directory still registers the shell with the agent; only the
-# background restart loop is skipped (#700).
+# background restart loop is skipped.
 
 set -l repo_root (path resolve (status dirname)/../..)
 source $repo_root/tests/lib/test_helpers.fish

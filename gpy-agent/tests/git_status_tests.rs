@@ -1,22 +1,6 @@
-//! Comprehensive tests for git status functionality
-//!
-//! # Test Navigation Map
-//!
-//! ## Test Categories
-//!
-//! ### Basic Operations
-//! - `test_git_status_not_a_repo` - Non-git directory handling
-//! - `test_git_status_current_directory` - Status in current repo
-//! - `test_git_status_created_repo` - Freshly initialized repo
-//! - `test_git_status_absolute_path` - Absolute path handling
-//! - `test_git_status_relative_path` - Relative path handling
-//!
-//! ### File State Detection
-//! - `test_git_status_with_untracked_files` - Untracked file counting
-//! - `test_git_status_with_staged_files` - Staged changes detection
-//! - `test_git_status_staged_deletion` - Deleted file handling
-//! - `test_git_status_ignores_gitignored_files` - .gitignore respect
-//! - `test_git_status_counts_non_ignored_files_with_ignored_present` - Mixed files
+//! Integration tests for `load_repository_state` against real git repositories:
+//! repo discovery, file-state counts, ignore handling, repository state, and
+//! ahead/behind divergence.
 
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
@@ -30,70 +14,66 @@ use gpy_agent::git::{
 };
 use serial_test::serial;
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 use tempfile::TempDir;
 
-fn git_assert(repo: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(repo)
-        .output()
-        .expect("git command should execute");
+#[path = "common/git.rs"]
+mod git;
 
-    assert!(
-        output.status.success(),
-        "git {:?} failed in {}: stdout: {}, stderr: {}",
-        args,
-        repo.display(),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-#[cfg(unix)]
 #[cfg(all(unix, not(target_os = "macos")))]
 use std::os::unix::ffi::OsStrExt;
 
 #[test]
-#[serial(git_status)] // Run serially within git_status_tests
+#[serial(git_status)]
 fn test_git_status_not_a_repo() {
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let result = load_repository_state(temp_dir.path().to_string_lossy().as_ref(), None, 0, true);
 
-    // Should return Ok(None) when not in a git repo
-    assert!(result.is_ok());
-    assert!(matches!(result, Ok(None)));
+    assert!(
+        matches!(result, Ok(None)),
+        "non-repo directory must yield Ok(None)"
+    );
 }
 
 #[test]
-#[serial(git_status)] // Run serially within git_status_tests
-fn test_git_status_current_directory() {
-    // Test with current directory (should be a git repo)
-    let result = load_repository_state(".", None, 0, true);
+#[serial(git_status)]
+fn test_git_status_from_subdirectory() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+    let repo = temp_dir.path();
+    git::git_init(repo);
+    fs::write(repo.join("README.md"), "# test\n").expect("write README");
+    git::git(repo, &["add", "README.md"]);
+    git::git(repo, &["commit", "-q", "-m", "init"]);
+    let nested = repo.join("src").join("nested");
+    fs::create_dir_all(&nested).expect("create nested dir");
 
-    // Should return git status for the current repo
-    assert!(result.is_ok());
-    let Ok(git_status) = result else { return };
-    assert!(git_status.is_some());
-    let Some(status) = git_status else { return };
-    assert_ne!(status.status.branch, "");
+    let status = load_repository_state(&nested, None, 0, true)
+        .expect("load_repository_state should succeed")
+        .expect("subdirectory should resolve to the enclosing repository");
+    assert_eq!(status.status.branch, "main");
+    assert_eq!(status.status.state, RepositoryState::Clean);
 }
 
 #[test]
-#[serial(git_status)] // Run serially within git_status_tests
+#[serial(git_status)]
 fn test_git_status_invalid_path() {
-    let result = load_repository_state("/nonexistent/path", None, 0, true);
+    let temp_dir = TempDir::new().expect("create temp dir");
+    let missing = temp_dir.path().join("does").join("not").join("exist");
 
-    // Should either return Ok(None) for invalid paths or an error - both are acceptable
-    assert!(matches!(result, Ok(None) | Err(_)));
+    // A nonexistent path has no enclosing `.git`, so it resolves to "not a repo".
+    let result = load_repository_state(&missing, None, 0, true);
+    assert!(
+        matches!(result, Ok(None)),
+        "nonexistent path must yield Ok(None)"
+    );
 }
 
 #[test]
-#[serial(git_status)] // Run serially within git_status_tests
+#[serial(git_status)]
 fn test_git_status_created_repo() {
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     // Initialize a git repository
@@ -121,12 +101,9 @@ fn test_git_status_created_repo() {
         .output();
 
     let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
-    assert!(result.is_ok());
-
-    let Ok(git_status) = result else { return };
-    assert!(git_status.is_some());
-
-    let Some(status) = git_status else { return };
+    let status = result
+        .expect("load_repository_state should succeed")
+        .expect("path should resolve to a git repository");
     // New repo should be on main or master branch
     assert!(status.status.branch == "main" || status.status.branch == "master");
     assert_eq!(status.status.ahead, 0);
@@ -137,9 +114,9 @@ fn test_git_status_created_repo() {
 }
 
 #[test]
-#[serial(git_status)] // Run serially within git_status_tests
+#[serial(git_status)]
 fn test_git_status_with_untracked_files() {
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     // Initialize a git repository
@@ -186,20 +163,18 @@ fn test_git_status_with_untracked_files() {
     let _ = fs::write(temp_path.join("untracked2.txt"), "content");
 
     let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
-    assert!(result.is_ok());
-
-    let Ok(git_status) = result else { return };
-    assert!(git_status.is_some());
-    let Some(status) = git_status else { return };
+    let status = result
+        .expect("load_repository_state should succeed")
+        .expect("path should resolve to a git repository");
     assert_eq!(status.status.untracked, 2);
     assert_eq!(status.status.staged, 0);
     assert_eq!(status.status.unstaged, 0);
 }
 
 #[test]
-#[serial(git_status)] // Run serially within git_status_tests
+#[serial(git_status)]
 fn test_git_status_with_staged_files() {
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     // Initialize git repository
@@ -233,47 +208,40 @@ fn test_git_status_with_staged_files() {
         .output();
 
     let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
-    assert!(result.is_ok());
-
-    let Ok(git_status) = result else { return };
-    assert!(git_status.is_some());
-
-    let Some(status) = git_status else { return };
+    let status = result
+        .expect("load_repository_state should succeed")
+        .expect("path should resolve to a git repository");
     assert_eq!(status.status.staged, 1);
     assert_eq!(status.status.unstaged, 0);
     assert_eq!(status.status.untracked, 0);
 }
 
 #[test]
-#[serial(git_status)] // Run serially within git_status_tests
-fn test_git_status_absolute_path() {
-    // Test with absolute path to current directory
-    let current_dir =
-        std::env::current_dir().expect("should be able to get current directory for test");
-    let result = load_repository_state(current_dir.to_string_lossy().as_ref(), None, 0, true);
-
-    assert!(result.is_ok());
-    let Ok(git_status) = result else { return };
-    assert!(git_status.is_some());
-    let Some(status) = git_status else { return };
-    assert_ne!(status.status.branch, "");
-}
-
-#[test]
-#[serial(git_status)] // Run serially within git_status_tests
+#[serial(git_status)]
 fn test_git_status_relative_path() {
-    // Test with relative path
-    let result = load_repository_state("./", None, 0, true);
+    let temp_dir = TempDir::new().expect("create temp dir");
+    let repo = fs::canonicalize(temp_dir.path()).expect("canonicalize temp dir");
+    git::git_init(&repo);
 
-    assert!(result.is_ok());
-    let Ok(git_status) = result else { return };
-    assert!(git_status.is_some());
-    let Some(status) = git_status else { return };
-    assert_ne!(status.status.branch, "");
+    // Climb from the working directory to the filesystem root, then descend
+    // into the repo, so the queried path is relative but cwd-independent.
+    let cwd = std::env::current_dir().expect("current dir");
+    let relative: PathBuf = cwd
+        .components()
+        .skip(1)
+        .map(|_| Component::ParentDir)
+        .chain(repo.components().skip(1))
+        .collect();
+    assert!(relative.is_relative());
+
+    let status = load_repository_state(&relative, None, 0, true)
+        .expect("load_repository_state should succeed")
+        .expect("relative path should resolve to the repository");
+    assert_eq!(status.status.branch, "main");
 }
 
 #[test]
-#[serial(git_status)] // Run serially within git_status_tests
+#[serial(git_status)]
 fn test_git_status_empty_path() {
     let result = load_repository_state("", None, 0, true);
 
@@ -282,7 +250,7 @@ fn test_git_status_empty_path() {
 }
 
 #[test]
-#[serial(git_status)] // Run serially within git_status_tests
+#[serial(git_status)]
 fn test_git_status_struct_default_values() {
     // Test creating RepositoryStatus with default/known values
     let status = RepositoryStatus {
@@ -311,12 +279,11 @@ fn test_git_status_struct_default_values() {
     assert_eq!(status.state, RepositoryState::Clean);
 }
 
-#[cfg(unix)]
 #[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 #[serial(git_status)]
 fn test_non_utf8_staged_paths_are_counted() {
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     assert!(
@@ -368,8 +335,6 @@ fn test_non_utf8_staged_paths_are_counted() {
             .success()
     );
 
-    // Migrated from the retired porcelain-v1 `get_status_counts` chain onto the
-    // live `get_complete_status` entry point (#621).
     let complete = NativeGitBackend::get_complete_status(
         temp_path,
         None,
@@ -385,7 +350,7 @@ fn test_non_utf8_staged_paths_are_counted() {
 #[test]
 #[serial(git_status)]
 fn test_merge_conflicts_are_counted() {
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let repo_path = temp_dir.path();
 
     let run = |args: &[&str]| {
@@ -417,8 +382,6 @@ fn test_merge_conflicts_are_counted() {
     // Merge will result in conflict; ignore non-success outcome.
     let _ = run(&["merge", "feature"]);
 
-    // Migrated from the retired porcelain-v1 `get_status_counts` chain onto the
-    // live `get_complete_status` entry point (#621).
     let complete = NativeGitBackend::get_complete_status(
         repo_path,
         None,
@@ -435,10 +398,10 @@ fn test_merge_conflicts_are_counted() {
 }
 
 #[test]
-#[serial(git_status)] // Run serially within git_status_tests
+#[serial(git_status)]
 fn test_git_status_ignores_gitignored_files() {
     // This test ensures that repos with ONLY ignored files show clean status
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     // Initialize a git repository
@@ -489,11 +452,9 @@ fn test_git_status_ignores_gitignored_files() {
     let _ = fs::write(temp_path.join(".DS_Store"), "macOS metadata");
 
     let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
-    assert!(result.is_ok());
-
-    let Ok(git_status) = result else { return };
-    assert!(git_status.is_some());
-    let Some(status) = git_status else { return };
+    let status = result
+        .expect("load_repository_state should succeed")
+        .expect("path should resolve to a git repository");
 
     // Should have NO untracked files since .DS_Store is ignored
     assert_eq!(
@@ -508,10 +469,10 @@ fn test_git_status_ignores_gitignored_files() {
 }
 
 #[test]
-#[serial(git_status)] // Run serially within git_status_tests
+#[serial(git_status)]
 fn test_git_status_counts_non_ignored_files_with_ignored_present() {
     // This test ensures that non-ignored files are counted even when ignored files are present
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     // Initialize a git repository
@@ -565,11 +526,9 @@ fn test_git_status_counts_non_ignored_files_with_ignored_present() {
     let _ = fs::write(temp_path.join("foo.txt"), "real content");
 
     let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
-    assert!(result.is_ok());
-
-    let Ok(git_status) = result else { return };
-    assert!(git_status.is_some());
-    let Some(status) = git_status else { return };
+    let status = result
+        .expect("load_repository_state should succeed")
+        .expect("path should resolve to a git repository");
 
     // Should only count foo.txt as untracked, not .DS_Store
     assert_eq!(
@@ -584,7 +543,7 @@ fn test_git_status_counts_non_ignored_files_with_ignored_present() {
 #[test]
 #[serial(git_status)]
 fn test_git_status_staged_deletion() {
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     // Initialize git repo
@@ -612,11 +571,9 @@ fn test_git_status_staged_deletion() {
 
     // Check status
     let result = load_repository_state(temp_path, None, 0, true);
-    assert!(result.is_ok());
-
-    let Ok(git_status) = result else { return };
-    assert!(git_status.is_some());
-    let Some(status) = git_status else { return };
+    let status = result
+        .expect("load_repository_state should succeed")
+        .expect("path should resolve to a git repository");
 
     // Should have 1 staged deletion
     assert_eq!(status.status.staged, 1, "Should count staged deletion");
@@ -630,7 +587,7 @@ fn test_git_status_staged_deletion() {
 #[test]
 #[serial(git_status)]
 fn test_git_status_rebase_state_precedence() {
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     // Initialize git repo
@@ -674,11 +631,9 @@ fn test_git_status_rebase_state_precedence() {
 
     // Check status - should show rebasing state, NOT dirty
     let result = load_repository_state(temp_path, None, 0, true);
-    assert!(result.is_ok());
-
-    let Ok(git_status) = result else { return };
-    assert!(git_status.is_some());
-    let Some(status) = git_status else { return };
+    let status = result
+        .expect("load_repository_state should succeed")
+        .expect("path should resolve to a git repository");
 
     // State should be Rebasing, not Dirty, even though we have staged changes
     assert_eq!(
@@ -689,15 +644,11 @@ fn test_git_status_rebase_state_precedence() {
     assert!(status.status.staged > 0, "Should have staged changes");
 }
 
-// ============================================================================
-// AHEAD/BEHIND TESTS - Fix for regression where ahead/behind were always zero
-// ============================================================================
-
 #[test]
 #[serial(git_status)]
 fn test_ahead_only_commits() {
     // Test ahead-only divergence (3 commits ahead of origin/main)
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     // Initialize bare repo to act as "remote"
@@ -725,15 +676,15 @@ fn test_ahead_only_commits() {
     let repo_path = Path::new(temp_path);
 
     // Configure git
-    git_assert(repo_path, &["config", "user.email", "test@example.com"]);
-    git_assert(repo_path, &["config", "user.name", "Test User"]);
-    git_assert(repo_path, &["config", "commit.gpgsign", "false"]);
+    git::git(repo_path, &["config", "user.email", "test@example.com"]);
+    git::git(repo_path, &["config", "user.name", "Test User"]);
+    git::git(repo_path, &["config", "commit.gpgsign", "false"]);
 
     // Create initial commit on main
     fs::write(repo_path.join("file1.txt"), "initial").unwrap();
-    git_assert(repo_path, &["add", "file1.txt"]);
-    git_assert(repo_path, &["commit", "-m", "Initial commit"]);
-    git_assert(repo_path, &["push", "-u", "origin", "main"]);
+    git::git(repo_path, &["add", "file1.txt"]);
+    git::git(repo_path, &["commit", "-m", "Initial commit"]);
+    git::git(repo_path, &["push", "-u", "origin", "main"]);
 
     // Create 3 local commits (ahead of origin)
     for i in 1..=3 {
@@ -742,18 +693,15 @@ fn test_ahead_only_commits() {
             format!("content {i}"),
         )
         .unwrap();
-        git_assert(repo_path, &["add", "."]);
-        git_assert(repo_path, &["commit", "-m", &format!("Commit {i}")]);
+        git::git(repo_path, &["add", "."]);
+        git::git(repo_path, &["commit", "-m", &format!("Commit {i}")]);
     }
 
     // Check status - should show ahead=3, behind=0
     let result = load_repository_state(temp_path, None, 0, true);
-    assert!(result.is_ok(), "load_repository_state should succeed");
-
-    let git_status = result.unwrap();
-    assert!(git_status.is_some(), "Should return git status");
-
-    let Some(status) = git_status else { return };
+    let status = result
+        .expect("load_repository_state should succeed")
+        .expect("path should resolve to a git repository");
     assert_eq!(status.status.branch, "main", "Should be on main branch");
     assert_eq!(status.status.ahead, 3, "Should be 3 commits ahead");
     assert_eq!(status.status.behind, 0, "Should be 0 commits behind");
@@ -762,44 +710,41 @@ fn test_ahead_only_commits() {
 #[test]
 #[serial(git_status)]
 fn test_ahead_with_non_origin_remote() {
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let bare_repo = temp_dir.path().join("bare.git");
     fs::create_dir_all(&bare_repo).unwrap();
-    git_assert(&bare_repo, &["init", "--bare", "--initial-branch=main"]);
+    git::git(&bare_repo, &["init", "--bare", "--initial-branch=main"]);
 
     let work_repo = temp_dir.path().join("work");
     let bare_repo_str = bare_repo.to_str().unwrap().to_owned();
     let work_repo_str = work_repo.to_str().unwrap().to_owned();
     let clone_args = ["clone", bare_repo_str.as_str(), work_repo_str.as_str()];
-    git_assert(temp_dir.path(), &clone_args);
+    git::git(temp_dir.path(), &clone_args);
 
     let repo_path = work_repo.as_path();
-    git_assert(repo_path, &["config", "user.email", "test@example.com"]);
-    git_assert(repo_path, &["config", "user.name", "Test User"]);
-    git_assert(repo_path, &["config", "commit.gpgsign", "false"]);
+    git::git(repo_path, &["config", "user.email", "test@example.com"]);
+    git::git(repo_path, &["config", "user.name", "Test User"]);
+    git::git(repo_path, &["config", "commit.gpgsign", "false"]);
 
     // Rename the default remote so the branch tracks a non-origin remote.
-    git_assert(repo_path, &["remote", "rename", "origin", "upstream"]);
+    git::git(repo_path, &["remote", "rename", "origin", "upstream"]);
 
     // Create base commit and push to upstream remote.
     fs::write(repo_path.join("file1.txt"), "initial").unwrap();
-    git_assert(repo_path, &["add", "file1.txt"]);
-    git_assert(repo_path, &["commit", "-m", "Initial commit"]);
-    git_assert(repo_path, &["push", "-u", "upstream", "main"]);
-    git_assert(repo_path, &["fetch", "upstream"]);
+    git::git(repo_path, &["add", "file1.txt"]);
+    git::git(repo_path, &["commit", "-m", "Initial commit"]);
+    git::git(repo_path, &["push", "-u", "upstream", "main"]);
+    git::git(repo_path, &["fetch", "upstream"]);
 
     // Create a local commit that hasn't been pushed.
     fs::write(repo_path.join("local.txt"), "ahead change").unwrap();
-    git_assert(repo_path, &["add", "."]);
-    git_assert(repo_path, &["commit", "-m", "Local ahead commit"]);
+    git::git(repo_path, &["add", "."]);
+    git::git(repo_path, &["commit", "-m", "Local ahead commit"]);
 
     let result = load_repository_state(repo_path.to_string_lossy().as_ref(), None, 0, true);
-    assert!(result.is_ok(), "load_repository_state should succeed");
-
-    let git_status = result.unwrap();
-    assert!(git_status.is_some(), "Should return git status");
-
-    let Some(status) = git_status else { return };
+    let status = result
+        .expect("load_repository_state should succeed")
+        .expect("path should resolve to a git repository");
     assert_eq!(status.status.branch, "main", "Should be on main branch");
     assert_eq!(
         status.status.ahead, 1,
@@ -811,31 +756,31 @@ fn test_ahead_with_non_origin_remote() {
 #[test]
 #[serial(git_status)]
 fn test_ahead_with_packed_refs_only() {
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let bare_repo = temp_dir.path().join("bare.git");
     fs::create_dir_all(&bare_repo).unwrap();
-    git_assert(&bare_repo, &["init", "--bare", "--initial-branch=main"]);
+    git::git(&bare_repo, &["init", "--bare", "--initial-branch=main"]);
 
     let work_repo = temp_dir.path().join("work");
     let bare_repo_str = bare_repo.to_str().unwrap().to_owned();
     let work_repo_str = work_repo.to_str().unwrap().to_owned();
     let clone_args = ["clone", bare_repo_str.as_str(), work_repo_str.as_str()];
-    git_assert(temp_dir.path(), &clone_args);
+    git::git(temp_dir.path(), &clone_args);
 
     let repo_path = work_repo.as_path();
-    git_assert(repo_path, &["config", "user.email", "test@example.com"]);
-    git_assert(repo_path, &["config", "user.name", "Test User"]);
-    git_assert(repo_path, &["config", "commit.gpgsign", "false"]);
+    git::git(repo_path, &["config", "user.email", "test@example.com"]);
+    git::git(repo_path, &["config", "user.name", "Test User"]);
+    git::git(repo_path, &["config", "commit.gpgsign", "false"]);
 
     // Create base commit and push to origin.
     fs::write(repo_path.join("file1.txt"), "initial").unwrap();
-    git_assert(repo_path, &["add", "file1.txt"]);
-    git_assert(repo_path, &["commit", "-m", "Initial commit"]);
-    git_assert(repo_path, &["push", "-u", "origin", "main"]);
-    git_assert(repo_path, &["fetch", "origin"]);
+    git::git(repo_path, &["add", "file1.txt"]);
+    git::git(repo_path, &["commit", "-m", "Initial commit"]);
+    git::git(repo_path, &["push", "-u", "origin", "main"]);
+    git::git(repo_path, &["fetch", "origin"]);
 
     // Pack refs so the tracking branch only exists in packed-refs.
-    git_assert(repo_path, &["pack-refs", "--all", "--prune"]);
+    git::git(repo_path, &["pack-refs", "--all", "--prune"]);
     let tracking_ref = repo_path.join(".git/refs/remotes/origin/main");
     if tracking_ref.exists() {
         let _ = fs::remove_file(&tracking_ref);
@@ -843,16 +788,13 @@ fn test_ahead_with_packed_refs_only() {
 
     // Create a local commit that hasn't been pushed.
     fs::write(repo_path.join("local.txt"), "ahead change").unwrap();
-    git_assert(repo_path, &["add", "."]);
-    git_assert(repo_path, &["commit", "-m", "Local ahead commit"]);
+    git::git(repo_path, &["add", "."]);
+    git::git(repo_path, &["commit", "-m", "Local ahead commit"]);
 
     let result = load_repository_state(repo_path.to_string_lossy().as_ref(), None, 0, true);
-    assert!(result.is_ok(), "load_repository_state should succeed");
-
-    let git_status = result.unwrap();
-    assert!(git_status.is_some(), "Should return git status");
-
-    let Some(status) = git_status else { return };
+    let status = result
+        .expect("load_repository_state should succeed")
+        .expect("path should resolve to a git repository");
     assert_eq!(status.status.branch, "main", "Should be on main branch");
     assert_eq!(status.status.ahead, 1, "Should be 1 commit ahead");
     assert_eq!(status.status.behind, 0, "Should be 0 commits behind");
@@ -862,7 +804,7 @@ fn test_ahead_with_packed_refs_only() {
 #[serial(git_status)]
 fn test_behind_only_commits() {
     // Test behind-only divergence (remote has commits we don't have)
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     // Initialize bare repo to act as "remote"
@@ -890,15 +832,15 @@ fn test_behind_only_commits() {
     let repo_path = Path::new(temp_path);
 
     // Configure git
-    git_assert(repo_path, &["config", "user.email", "test@example.com"]);
-    git_assert(repo_path, &["config", "user.name", "Test User"]);
-    git_assert(repo_path, &["config", "commit.gpgsign", "false"]);
+    git::git(repo_path, &["config", "user.email", "test@example.com"]);
+    git::git(repo_path, &["config", "user.name", "Test User"]);
+    git::git(repo_path, &["config", "commit.gpgsign", "false"]);
 
     // Create initial commit and push
     fs::write(repo_path.join("file1.txt"), "initial").unwrap();
-    git_assert(repo_path, &["add", "file1.txt"]);
-    git_assert(repo_path, &["commit", "-m", "Initial commit"]);
-    git_assert(repo_path, &["push", "-u", "origin", "main"]);
+    git::git(repo_path, &["add", "file1.txt"]);
+    git::git(repo_path, &["commit", "-m", "Initial commit"]);
+    git::git(repo_path, &["push", "-u", "origin", "main"]);
 
     // Simulate remote having new commits by cloning again and pushing
     let other_repo = temp_dir.path().join("other");
@@ -914,12 +856,12 @@ fn test_behind_only_commits() {
 
     let other_repo_path = other_repo.as_path();
 
-    git_assert(
+    git::git(
         other_repo_path,
         &["config", "user.email", "test@example.com"],
     );
-    git_assert(other_repo_path, &["config", "user.name", "Test User"]);
-    git_assert(other_repo_path, &["config", "commit.gpgsign", "false"]);
+    git::git(other_repo_path, &["config", "user.name", "Test User"]);
+    git::git(other_repo_path, &["config", "commit.gpgsign", "false"]);
 
     // Create 2 commits in other repo and push
     for i in 1..=2 {
@@ -928,25 +870,22 @@ fn test_behind_only_commits() {
             format!("remote {i}"),
         )
         .unwrap();
-        git_assert(other_repo_path, &["add", "."]);
-        git_assert(
+        git::git(other_repo_path, &["add", "."]);
+        git::git(
             other_repo_path,
             &["commit", "-m", &format!("Remote commit {i}")],
         );
     }
-    git_assert(other_repo_path, &["push"]);
+    git::git(other_repo_path, &["push"]);
 
     // Fetch in our work repo (but don't merge)
-    git_assert(repo_path, &["fetch"]);
+    git::git(repo_path, &["fetch"]);
 
     // Check status - should show ahead=0, behind=2
     let result = load_repository_state(temp_path, None, 0, true);
-    assert!(result.is_ok(), "load_repository_state should succeed");
-
-    let git_status = result.unwrap();
-    assert!(git_status.is_some(), "Should return git status");
-
-    let Some(status) = git_status else { return };
+    let status = result
+        .expect("load_repository_state should succeed")
+        .expect("path should resolve to a git repository");
     assert_eq!(status.status.branch, "main", "Should be on main branch");
     assert_eq!(status.status.ahead, 0, "Should be 0 commits ahead");
     assert_eq!(status.status.behind, 2, "Should be 2 commits behind");
@@ -956,7 +895,7 @@ fn test_behind_only_commits() {
 #[serial(git_status)]
 fn test_ahead_and_behind_commits() {
     // Test divergent history (both ahead and behind)
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     // Initialize bare repo
@@ -984,15 +923,15 @@ fn test_ahead_and_behind_commits() {
     let repo_path = Path::new(temp_path);
 
     // Configure git
-    git_assert(repo_path, &["config", "user.email", "test@example.com"]);
-    git_assert(repo_path, &["config", "user.name", "Test User"]);
-    git_assert(repo_path, &["config", "commit.gpgsign", "false"]);
+    git::git(repo_path, &["config", "user.email", "test@example.com"]);
+    git::git(repo_path, &["config", "user.name", "Test User"]);
+    git::git(repo_path, &["config", "commit.gpgsign", "false"]);
 
     // Create initial commit and push
     fs::write(repo_path.join("base.txt"), "base").unwrap();
-    git_assert(repo_path, &["add", "base.txt"]);
-    git_assert(repo_path, &["commit", "-m", "Base commit"]);
-    git_assert(repo_path, &["push", "-u", "origin", "main"]);
+    git::git(repo_path, &["add", "base.txt"]);
+    git::git(repo_path, &["commit", "-m", "Base commit"]);
+    git::git(repo_path, &["push", "-u", "origin", "main"]);
 
     // Create 2 local commits (ahead)
     for i in 1..=2 {
@@ -1001,8 +940,8 @@ fn test_ahead_and_behind_commits() {
             format!("local {i}"),
         )
         .unwrap();
-        git_assert(repo_path, &["add", "."]);
-        git_assert(repo_path, &["commit", "-m", &format!("Local commit {i}")]);
+        git::git(repo_path, &["add", "."]);
+        git::git(repo_path, &["commit", "-m", &format!("Local commit {i}")]);
     }
 
     // Clone again and create commits on "remote"
@@ -1019,12 +958,12 @@ fn test_ahead_and_behind_commits() {
 
     let other_repo_path = other_repo.as_path();
 
-    git_assert(
+    git::git(
         other_repo_path,
         &["config", "user.email", "test@example.com"],
     );
-    git_assert(other_repo_path, &["config", "user.name", "Test User"]);
-    git_assert(other_repo_path, &["config", "commit.gpgsign", "false"]);
+    git::git(other_repo_path, &["config", "user.name", "Test User"]);
+    git::git(other_repo_path, &["config", "commit.gpgsign", "false"]);
 
     // Create 3 commits in other repo and push (behind)
     for i in 1..=3 {
@@ -1033,25 +972,22 @@ fn test_ahead_and_behind_commits() {
             format!("remote {i}"),
         )
         .unwrap();
-        git_assert(other_repo_path, &["add", "."]);
-        git_assert(
+        git::git(other_repo_path, &["add", "."]);
+        git::git(
             other_repo_path,
             &["commit", "-m", &format!("Remote commit {i}")],
         );
     }
-    git_assert(other_repo_path, &["push"]);
+    git::git(other_repo_path, &["push"]);
 
     // Fetch in our work repo
-    git_assert(repo_path, &["fetch"]);
+    git::git(repo_path, &["fetch"]);
 
     // Check status - should show ahead=2, behind=3
     let result = load_repository_state(temp_path, None, 0, true);
-    assert!(result.is_ok(), "load_repository_state should succeed");
-
-    let git_status = result.unwrap();
-    assert!(git_status.is_some(), "Should return git status");
-
-    let Some(status) = git_status else { return };
+    let status = result
+        .expect("load_repository_state should succeed")
+        .expect("path should resolve to a git repository");
     assert_eq!(status.status.branch, "main", "Should be on main branch");
     assert_eq!(status.status.ahead, 2, "Should be 2 commits ahead");
     assert_eq!(status.status.behind, 3, "Should be 3 commits behind");
@@ -1061,7 +997,7 @@ fn test_ahead_and_behind_commits() {
 #[serial(git_status)]
 fn test_no_upstream_configured() {
     // Test repository without upstream (should return 0, 0)
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     let run = |args: &[&str]| {
@@ -1085,12 +1021,9 @@ fn test_no_upstream_configured() {
 
     // Check status - should show ahead=0, behind=0 (no upstream)
     let result = load_repository_state(temp_path.to_str().unwrap(), None, 0, true);
-    assert!(result.is_ok(), "load_repository_state should succeed");
-
-    let git_status = result.unwrap();
-    assert!(git_status.is_some(), "Should return git status");
-
-    let Some(status) = git_status else { return };
+    let status = result
+        .expect("load_repository_state should succeed")
+        .expect("path should resolve to a git repository");
     assert_eq!(status.status.ahead, 0, "Should be 0 ahead (no upstream)");
     assert_eq!(status.status.behind, 0, "Should be 0 behind (no upstream)");
 }
@@ -1099,24 +1032,24 @@ fn test_no_upstream_configured() {
 #[serial(git_status)]
 fn test_git_status_respects_gitignore() {
     // Test that files listed in .gitignore are not counted as untracked
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
     // Initialize repo
-    git_assert(temp_path, &["init"]);
-    git_assert(temp_path, &["config", "user.email", "test@example.com"]);
-    git_assert(temp_path, &["config", "user.name", "Test User"]);
-    git_assert(temp_path, &["config", "commit.gpgsign", "false"]);
+    git::git(temp_path, &["init"]);
+    git::git(temp_path, &["config", "user.email", "test@example.com"]);
+    git::git(temp_path, &["config", "user.name", "Test User"]);
+    git::git(temp_path, &["config", "commit.gpgsign", "false"]);
 
     // Create initial commit
     fs::write(temp_path.join("README.md"), "# Test Repo").unwrap();
-    git_assert(temp_path, &["add", "README.md"]);
-    git_assert(temp_path, &["commit", "-m", "Initial commit"]);
+    git::git(temp_path, &["add", "README.md"]);
+    git::git(temp_path, &["commit", "-m", "Initial commit"]);
 
     // Create .gitignore
     fs::write(temp_path.join(".gitignore"), "*.log\n*.tmp\nbuild/\n").unwrap();
-    git_assert(temp_path, &["add", ".gitignore"]);
-    git_assert(temp_path, &["commit", "-m", "Add gitignore"]);
+    git::git(temp_path, &["add", ".gitignore"]);
+    git::git(temp_path, &["commit", "-m", "Add gitignore"]);
 
     // Create ignored files
     fs::write(temp_path.join("debug.log"), "log content").unwrap();
@@ -1137,8 +1070,6 @@ fn test_git_status_respects_gitignore() {
     );
 
     // Check our status - should also report clean (no untracked files)
-    // Migrated from the retired porcelain-v1 `get_status_counts` chain onto the
-    // live `get_complete_status` entry point (#621).
     let complete = NativeGitBackend::get_complete_status(
         temp_path,
         None,
@@ -1171,12 +1102,9 @@ fn test_git_status_respects_gitignore() {
 
     // Verify overall state is clean
     let result = load_repository_state(temp_path.to_str().unwrap(), None, 0, true);
-    assert!(result.is_ok(), "load_repository_state should succeed");
-
-    let git_status = result.unwrap();
-    assert!(git_status.is_some(), "Should return git status");
-
-    let Some(status) = git_status else { return };
+    let status = result
+        .expect("load_repository_state should succeed")
+        .expect("path should resolve to a git repository");
     assert_eq!(
         status.status.state,
         RepositoryState::Clean,
@@ -1185,27 +1113,27 @@ fn test_git_status_respects_gitignore() {
     assert_eq!(status.status.untracked, 0, "Should have 0 untracked files");
 }
 
-/// Regression for #180: a staged rename whose source and destination both
+/// A staged rename whose source and destination both
 /// contain spaces must be keyed in the per-file map by the destination path
 /// alone, so incremental watcher updates can find the changed file instead of
 /// corrupting the cache with a concatenated key.
 #[test]
 #[serial(git_status)]
 fn test_git_status_staged_rename_with_spaces_keys_by_destination() {
-    let Ok(temp_dir) = TempDir::new() else { return };
+    let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
-    git_assert(temp_path, &["init"]);
-    git_assert(temp_path, &["config", "user.email", "test@example.com"]);
-    git_assert(temp_path, &["config", "user.name", "Test User"]);
-    git_assert(temp_path, &["config", "commit.gpgsign", "false"]);
+    git::git(temp_path, &["init"]);
+    git::git(temp_path, &["config", "user.email", "test@example.com"]);
+    git::git(temp_path, &["config", "user.name", "Test User"]);
+    git::git(temp_path, &["config", "commit.gpgsign", "false"]);
 
     fs::write(temp_path.join("old name.txt"), "content").expect("write source file");
-    git_assert(temp_path, &["add", "old name.txt"]);
-    git_assert(temp_path, &["commit", "-m", "add file"]);
+    git::git(temp_path, &["add", "old name.txt"]);
+    git::git(temp_path, &["commit", "-m", "add file"]);
 
     // Stage a rename to a destination that also contains a space.
-    git_assert(temp_path, &["mv", "old name.txt", "new name.txt"]);
+    git::git(temp_path, &["mv", "old name.txt", "new name.txt"]);
 
     let result = load_repository_state(temp_path.to_string_lossy().as_ref(), None, 0, true);
     let status = result

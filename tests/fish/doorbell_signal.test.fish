@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-# Test for the SIGURG doorbell (#674)
+# Test for the SIGURG doorbell
 #
 # The agent notifies shells with SIGURG only; the meaning travels in flag
 # files next to this shell's registry file (<dir>/<pid>.reregister,
@@ -8,7 +8,7 @@
 # The real signal is delivered to this process with `kill -URG`.
 #
 # The visual repaint itself needs a terminal; see
-# tests/fish/e2e_interactive_session.test.fish (a real pty session, #645).
+# tests/fish/e2e_interactive_session.test.fish (a real pty session).
 #
 # Run with: fish tests/fish/doorbell_signal.test.fish
 

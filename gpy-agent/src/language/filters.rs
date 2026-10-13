@@ -10,10 +10,10 @@
 //!
 //! # Why the lists exist
 //!
-//! GPY replaced `hyperpolyglot` with `gengo-language` in #523, and with it the
-//! walk that `hyperpolyglot::get_language_breakdown` used to own. That walk was
-//! never a bare [`ignore::WalkBuilder`]: it layered these exclusions through an
-//! [`OverrideBuilder`] first. Keeping them is parity, not tidiness. Without
+//! GPY owns the detection walk that `hyperpolyglot::get_language_breakdown`
+//! performs, and that walk was never a bare [`ignore::WalkBuilder`]: it layers
+//! these exclusions through an [`OverrideBuilder`] first. Keeping them is
+//! parity, not tidiness. Without
 //! them the walk visits a strictly larger file set, and
 //! `confidence_for`'s denominator is the total across *every* detected
 //! language -- `normalize_language_name` passes unrecognized names through

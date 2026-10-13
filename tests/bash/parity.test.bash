@@ -9,7 +9,7 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
-# Hermetic when run directly (#820): the developer's theme export
+# Hermetic when run directly: the developer's theme export
 # ($XDG_CACHE_HOME/gpy/theme-export.bash) and exported GPY_* settings (e.g.
 # GPY_LANGUAGE_ENABLED=0) would otherwise override the built-in defaults
 # these checks assert on. quality-check.sh sets its own XDG dirs; this makes
@@ -21,7 +21,7 @@ unset gpy_var
 # shellcheck source=tests/lib/shell_e2e.sh
 . "$ROOT/tests/lib/shell_e2e.sh"
 parity_xdg_root="$(mktemp -d "${TMPDIR:-/tmp}/gpy-parity-xdg.XXXXXX")"
-# Sourcing the entry point starts a supervised gpy-agent (#750): stop it before
+# Sourcing the entry point starts a supervised gpy-agent: stop it before
 # its socket directory is removed.
 trap 'shell_e2e_stop_agent_under "$parity_xdg_root/cache" "$parity_xdg_root/config"; rm -rf "$parity_xdg_root"' EXIT
 mkdir -p "$parity_xdg_root/cache" "$parity_xdg_root/config"
@@ -50,9 +50,9 @@ for seg in "${required_segments[@]}"; do
     echo "✓ $seg"
 done
 
-# Check signal handling. Bash must NOT trap SIGURG (#678): the doorbell's
-# flags are consumed at the next prompt, and a trap only re-rendered a PS1
-# readline cannot show, nested renders on bash 5 and aborted `wait`. Read
+# Check signal handling. Bash must NOT trap SIGURG: the doorbell's
+# flags are consumed at the next prompt, and a trap would re-render a PS1
+# readline cannot show, nest renders on bash 5 and abort `wait`. Read
 # the trap via command substitution, NOT a pipe: `trap -p | grep` runs
 # `trap -p` on the left of a pipe (a subshell), and bash 3.2 (macOS's system
 # bash) resets non-ignored traps in subshells. `$(...)` preserves them on
@@ -83,10 +83,8 @@ echo "✓ Duration method: $__gpy_duration_method (Bash ${BASH_VERSINFO[0]}.${BA
 echo "✓ Exit cleanup: EXIT trap unregisters the client"
 
 # --- Cache key parity ---
-# The hand-copied "reference values computed from the Rust implementation"
-# that used to live here could drift from the encoder unnoticed. The key
-# encoding is now pinned against a file the agent itself writes, in
-# tests/bash/path_parity.test.bash (#647).
+# The key encoding is pinned against a file the agent itself writes, in
+# tests/bash/path_parity.test.bash, so no hand-copied reference values live here.
 
 # --- Warm cache hit: no IPC roundtrip ---
 echo "=== Warm Cache Hit Tests ==="
@@ -148,8 +146,8 @@ if [[ ! -f "$cache_file" ]]; then
 fi
 echo "✓ stale cache file preserved after serve"
 
-# Staleness is now carried entirely by the exit code (#614: bit 2 set --
-# status 2 or 6 -- signals staleness); no more `__gpy_git_stale_$$` temp file.
+# Staleness is carried entirely by the exit code (bit 2 set -- status 2 or
+# 6 -- signals staleness); there is no `__gpy_git_stale_$$` temp file.
 if (( (stale_status & 2) != 0 )); then
     echo "✓ stale status bit set to signal background refresh needed"
 else
@@ -163,11 +161,11 @@ fi
 rm -rf "$tmpdir"
 rm -f "$cache_file"
 
-# --- Language segment detection walks ancestors (#174) ---
+# --- Language segment detection walks ancestors ---
 echo "=== Language Subdir Detection Tests ==="
 
 source bash/segments/language.bash
-# The pre-filter iterates the agent-exported marker list (#785); this block
+# The pre-filter iterates the agent-exported marker list; this block
 # tests the ancestor walk, so a one-entry list suffices. The full export is
 # covered by language_marker_prefilter.test.bash.
 __gpy_lang_marker_files=(Cargo.toml)
@@ -198,7 +196,7 @@ assert_detect "not detected in plain dir" 1 "$detect_empty"
 
 rm -rf "$detect_proj" "$detect_empty"
 
-# --- Non-Git language cache hit (#173) ---
+# --- Non-Git language cache hit ---
 echo "=== Non-Git Language Cache Tests ==="
 
 nongit=$(mktemp -d)
@@ -269,7 +267,7 @@ case "$two_line_prompt" in
         ;;
 esac
 
-# --- prev_bg powerline parity (#220, #222) ---
+# --- prev_bg powerline parity ---
 echo "=== prev_bg Powerline Parity Tests ==="
 
 # Token derivation must match the Rust prev_bg_token contract.
@@ -332,7 +330,7 @@ assert_payload_has_prev_bg "character request" "green"
 
 rm -f "$__gpy_capture_file"
 
-# #729: `lang` requests forward $VIRTUAL_ENV, else $CONDA_PREFIX for a non-base
+# `lang` requests forward $VIRTUAL_ENV, else $CONDA_PREFIX for a non-base
 # conda env; `git` requests never carry virtual_env. Both send paths are checked
 # through the stubbed __gpy_send_json above.
 echo "=== virtual_env Forwarding ==="
@@ -379,8 +377,8 @@ done
 rm -f "$__gpy_capture_file"
 echo "✓ virtual_env forwarding: conda env, precedence, base skip, git omits"
 
-# Render loop must advance prev_bg across segments (subshell-safe tracking). This
-# is the #220 regression: before the fix bash segments received no prev_bg at all.
+# Render loop must advance prev_bg across segments (subshell-safe tracking), so
+# every bash segment receives the previous segment's background.
 # Segments run inside command substitution, so the stubs record what they receive
 # to a file (an in-memory var would not survive the subshell — the very reason the
 # render loop, not the segment, owns the tracker).

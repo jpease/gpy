@@ -13,7 +13,7 @@ source fish/segments/directory.fish
 source fish/segments/clock.fish
 
 # Drop inherited repo-scoping git env so the worktree fixture below targets its
-# own throwaway repo, not this one, when run from a git hook (#275).
+# own throwaway repo, not this one, when run from a git hook.
 set -e GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_NAMESPACE
 
 # Isolate environment from user configuration
@@ -136,7 +136,7 @@ cd -
 rm -rf $temp_cargo
 
 # Test 6: Language segment returns nothing without project files
-# The pre-filter iterates the agent-exported marker list (#785); a one-entry
+# The pre-filter iterates the agent-exported marker list; a one-entry
 # list suffices for this empty-directory check.
 set -g __gpy_lang_marker_files Cargo.toml
 echo "Test 6: Language detection in empty directory"
@@ -187,7 +187,7 @@ end
 
 # Directory display modes and truncation are rendered by the agent, not by
 # the shell, and are asserted end to end (real agent, real repo) in
-# tests/fish/e2e_prompt_content.test.fish (#644).
+# tests/fish/e2e_prompt_content.test.fish.
 
 # Restore environment and cleanup
 rm -rf $temp_home

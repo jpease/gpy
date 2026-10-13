@@ -44,9 +44,8 @@ function test_stale_language_cache_is_returned
     test -f "$cache_file"; and set still_exists 1
     rm -rf "$repo"
 
-    # #612: status now carries the freshness bit itself (2 = stale exact
-    # hit) instead of a side-effect global; a plain "found" check would no
-    # longer distinguish this from the fresh case.
+    # The exit status carries the freshness bit (2 = stale exact hit); a
+    # plain "found" check would not distinguish this from the fresh case.
     if not __gpy_cache_status_stale $read_status
         echo "Expected stale language cache read to report a stale status"
         return 1
@@ -63,7 +62,7 @@ function test_stale_language_cache_is_returned
     end
 end
 
-# Git serve-stale (issue #160): a stale git entry must be SERVED and FLAGGED,
+# Git serve-stale: a stale git entry must be SERVED and FLAGGED,
 # never deleted. The fresh case must not set the staleness flag.
 function test_fresh_git_cache_is_returned_not_stale
     set -l repo (make_test_repo)
@@ -102,10 +101,9 @@ function test_stale_git_cache_is_served_flagged_and_preserved
     test -f "$cache_file"; and set still_exists 1
     rm -rf "$repo"
 
-    # #612: "found" and "flagged stale" used to be two separate checks (a
-    # `read_status -ne 0` fail plus a staleness-global flag check); the stale
-    # predicate alone now proves both, since only a found entry can report
-    # stale (a miss is status 1, never 2 or 6).
+    # The stale predicate alone proves both "found" and "flagged stale",
+    # since only a found entry can report stale (a miss is status 1, never
+    # 2 or 6).
     if not __gpy_cache_status_stale $read_status
         echo "Stale git cache must be returned (serve-stale) and report a stale status for background refresh"
         return 1
@@ -114,7 +112,7 @@ function test_stale_git_cache_is_served_flagged_and_preserved
         echo "Expected stale git cache content, got '$result'"
         return 1
     end
-    # Regression guard for the old behavior: stale git cache used to be deleted.
+    # A stale git cache file must survive the read.
     if test $still_exists -ne 1
         echo "Stale git cache file must be preserved, not deleted"
         return 1

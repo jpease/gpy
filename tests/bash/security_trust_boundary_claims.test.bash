@@ -1,32 +1,20 @@
 #!/usr/bin/env bash
 # tests/bash/security_trust_boundary_claims.test.bash
 #
-# Locks in the security-documentation decisions from #497.
-#
-# SECURITY.md described a program that does not exist. It called ordinary
-# user-context execution "Sandboxed execution", claimed "No eval - No dynamic
-# code execution in Fish shell" while all three shell integrations evaluate the
-# agent's output, credited PID validation with preventing unauthorized socket
-# access when `validate_pid` only proves a PID is live, and asserted blanket
-# "Read-only operations" for a binary that writes caches, config, themes and a
-# debug log. It also published an email address and promised acknowledgment
-# "within 48 hours" for a personal project with no such capacity.
-#
-# The recorded decision on #497: vulnerability reports go through GitHub
-# private vulnerability reporting, and no response-time commitment is given.
+# SECURITY.md describes the trust boundary GPY actually has: user-context
+# execution with no sandbox, shells that evaluate agent output, an
+# owner-only socket as the access control (PID validation only proves a PID
+# is live), and caches, config, themes and a debug log written to disk.
+# Vulnerability reports go through GitHub private vulnerability reporting,
+# and no response-time commitment is given.
 #
 # Every assertion here is bound to the CLAIM, not to the sentence that
-# happened to carry it. Deleting the exact historical wording and writing a
-# fresh paraphrase of the same false claim must still turn this test red.
+# happened to carry it: a fresh paraphrase of a false claim must still turn
+# this test red.
 #
-# Deliberately NOT asserted:
-#   * `## Supported Versions` -- owned by
-#     tests/bash/release_version_claims.test.bash, which derives the table from
-#     CHANGELOG.md. This test only checks the heading still exists.
-#   * The dependency-audit rationale in gpy-agent/src/lib.rs -- owned by #503.
-#   * Release-integrity wording -- owned by #494 and already asserted by
-#     tests/bash/install_checksum_verification.test.bash and
-#     tests/bash/install_oneline_verification.test.bash.
+# Release-integrity behaviour is covered by
+# tests/bash/install_checksum_verification.test.bash and
+# tests/bash/install_oneline_verification.test.bash, not here.
 #
 # Asserts:
 #   (a) no claim that the agent runs sandboxed/isolated/confined, and the
@@ -53,22 +41,18 @@ ZSH_INIT="zsh/core/init.zsh"
 FISH_INIT="fish/core/init.fish"
 IPC_HANDLE="gpy-agent/src/ipc/server/handle.rs"
 
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 if [[ ! -f "$SECURITY" ]]; then
     fail "$SECURITY not found"
-    echo "$failures assertion(s) failed"
-    exit 1
+    test_finish
 fi
 
 # Body of a `##`/`###` heading block, by heading text. `^###? ` rather than
 # `^#{2,3} `: the runner's awk is mawk, which mis-handles the interval
-# expression (it matches `## A` but not `### B`) and silently ended every
-# section at the first `###` heading (#848).
+# expression (it matches `## A` but not `### B`) and would silently end every
+# section at the first `###` heading.
 section_body() {
     awk -v want="$1" '
         /^###? / {
@@ -95,40 +79,40 @@ echo "--- user-context execution is not described as sandboxed ---"
 sandbox_negation='\b(no|not|never|neither|nothing|without|does not|doesn.t|cannot|can.t|is not|are not|un)\b|\bno\b'
 if grep -nEi '(sandbox|jail(ed|s)?\b|isolat[a-z]*|confin[a-z]*|seccomp|namespace[a-z]*|entitlement[a-z]*)' "$SECURITY" |
     grep -vEi "$sandbox_negation"; then
-    fail "$SECURITY asserts sandboxing/isolation for the agent; it runs with the full authority of the invoking user (#497)"
+    fail "$SECURITY asserts sandboxing/isolation for the agent; it runs with the full authority of the invoking user"
 fi
 # A rephrased reintroduction that keeps a negation elsewhere on the line still
 # has to be caught, so ban the positive construction outright.
 if grep -nEi '(sandbox|jail|isolat[a-z]*|confin[a-z]*)[^.]{0,60}(execution|environment|context|process|agent)' "$SECURITY" |
     grep -vEi "$sandbox_negation"; then
-    fail "$SECURITY still frames agent execution as sandboxed/isolated (#497)"
+    fail "$SECURITY still frames agent execution as sandboxed/isolated"
 fi
 if grep -nEi '(runs|executes|operates|lives)[^.]{0,60}(sandbox|jail|isolat[a-z]*|confin[a-z]*)' "$SECURITY" |
     grep -vEi "$sandbox_negation"; then
-    fail "$SECURITY still says the agent runs sandboxed (#497)"
+    fail "$SECURITY still says the agent runs sandboxed"
 fi
 # Deleting the false claim is not enough: a reader scanning for weaknesses has
 # to be able to find that there is no sandbox, and to find it stated concretely
-# enough to be checkable. A bare "no sandbox" bullet with the mechanisms
-# stripped out is the shape this used to fail in.
+# enough to be checkable: a bare "no sandbox" bullet with the mechanisms
+# stripped out does not pass.
 grep -qEi '(no|not|never|without)[^.]{0,80}sandbox' "$SECURITY" ||
-    fail "$SECURITY does not state anywhere that the agent is NOT sandboxed; removing the claim without stating the limitation hides it (#497)"
+    fail "$SECURITY does not state anywhere that the agent is NOT sandboxed; removing the claim without stating the limitation hides it"
 grep -qEi '(no|not|never|without)[^.]{0,80}(seccomp|namespace|entitlement|privilege separation|chroot)' "$SECURITY" ||
-    fail "$SECURITY says nothing about WHICH confinement mechanism is absent (seccomp, namespaces, entitlements); an unqualified 'no sandbox' is not checkable (#497)"
+    fail "$SECURITY says nothing about WHICH confinement mechanism is absent (seccomp, namespaces, entitlements); an unqualified 'no sandbox' is not checkable"
 
 # --- (b) no "no eval" claim in any wording ----------------------------------
 echo "--- no 'no eval' / 'no dynamic code execution' claim ---"
 if grep -nEi '(\bno\b|\bzero\b|\bwithout\b)[[:space:][:punct:]]*([a-z*`_-]+[[:space:]]+){0,3}(eval\b|dynamic[[:space:]]+code[[:space:]]+execution|dynamic[[:space:]]+execution)' "$SECURITY"; then
-    fail "$SECURITY claims there is no eval / no dynamic code execution; all three shell integrations evaluate agent output (#497)"
+    fail "$SECURITY claims there is no eval / no dynamic code execution; all three shell integrations evaluate agent output"
 fi
 if grep -nEi '(does not|doesn.t|never|avoids?|refuses to|neither|free of|rather than)[^.]{0,60}\beval' "$SECURITY"; then
-    fail "$SECURITY denies evaluating agent output; bash/zsh use eval and fish uses source (#497)"
+    fail "$SECURITY denies evaluating agent output; bash/zsh use eval and fish uses source"
 fi
 # The denial does not have to say "eval" to be the same false claim -- "never
 # executes code the agent produced" asserts exactly what bash/core/init.bash
 # line `eval "$(gpy-agent theme export ...)"` disproves. Match the claim.
 if grep -nEi '(does not|doesn.t|never|avoids?|refuses to|neither)[^.]{0,60}(execute|run|interpret|source)s?[^.]{0,50}\b(code|output|shell)' "$SECURITY"; then
-    fail "$SECURITY denies executing agent-produced code; all three integrations do (#497)"
+    fail "$SECURITY denies executing agent-produced code; all three integrations do"
 fi
 
 # --- (c) shell evaluation is scoped to every shell that does it -------------
@@ -165,7 +149,7 @@ security_flat="$(tr '\n' ' ' <"$SECURITY" | tr -s ' ')"
 for shell_name in "${evaluating_shells[@]}"; do
     if ! printf '%s' "$security_flat" |
         grep -qEi "${shell_name}[^.]{0,200}(\beval\b|\bsource\b)|(\beval\b|\bsource\b)[^.]{0,200}$shell_name"; then
-        fail "$SECURITY never names $shell_name in the same sentence as an eval/source claim; $shell_name evaluates agent output (#497)"
+        fail "$SECURITY never names $shell_name in the same sentence as an eval/source claim; $shell_name evaluates agent output"
     fi
 done
 
@@ -177,12 +161,12 @@ while IFS= read -r heading; do
     eval_sections=$((eval_sections + 1))
     for shell in "${evaluating_shells[@]}"; do
         if ! grep -qiF "$shell" <<<"$body"; then
-            fail "$SECURITY's '$heading' section describes shell evaluation but does not name $shell, which evaluates agent output (#497)"
+            fail "$SECURITY's '$heading' section describes shell evaluation but does not name $shell, which evaluates agent output"
         fi
     done
 done < <(all_headings)
 if [[ "$eval_sections" -eq 0 ]]; then
-    fail "$SECURITY has no section describing shell evaluation of agent output at all (#497)"
+    fail "$SECURITY has no section describing shell evaluation of agent output at all"
 fi
 
 # --- (d) the real socket access control is documented -----------------------
@@ -196,27 +180,27 @@ else
     fail "$IPC_HANDLE not found"
 fi
 grep -qEi '0600|0o600|owner[- ]only|only the owning user|owner of the socket' "$SECURITY" ||
-    fail "$SECURITY does not document the socket's owner-only permission, which is the actual access control (#497)"
+    fail "$SECURITY does not document the socket's owner-only permission, which is the actual access control"
 grep -qEi '(group|world|other)[- ]?writ' "$SECURITY" ||
-    fail "$SECURITY does not document the refusal to bind in a group/world-writable runtime directory (#497)"
+    fail "$SECURITY does not document the refusal to bind in a group/world-writable runtime directory"
 # PID validation proves a PID is live. It authenticates nothing.
 if grep -nEi 'PID[^.]{0,80}(prevent|prevents|block(s|ing)?|stop(s)?)[^.]{0,60}(unauthori[sz]ed|unauthenticated|access)' "$SECURITY"; then
-    fail "$SECURITY credits PID validation with preventing unauthorized access; validate_pid only checks the PID is well-formed and live (#497)"
+    fail "$SECURITY credits PID validation with preventing unauthorized access; validate_pid only checks the PID is well-formed and live"
 fi
 if grep -nEi 'PID[^.]{0,60}(authenticat[a-z]*|access control|identif(y|ies) the (peer|caller|client))' "$SECURITY" |
     grep -vEi '\b(no|not|never|does not|doesn.t|cannot|can.t|rather than|instead of|is not)\b'; then
-    fail "$SECURITY presents PID validation as peer authentication; any local process may claim any live PID (#497)"
+    fail "$SECURITY presents PID validation as peer authentication; any local process may claim any live PID"
 fi
 
 # --- (e) filesystem claims are scoped ---------------------------------------
 echo "--- filesystem write claims are scoped to what GPY actually does ---"
 if grep -nEi '(read[- ]only|read only)[^.]{0,40}(operation|access only|by design|throughout|everywhere)' "$SECURITY"; then
-    fail "$SECURITY claims blanket read-only operation; GPY writes caches, config, themes and a debug log (#497)"
+    fail "$SECURITY claims blanket read-only operation; GPY writes caches, config, themes and a debug log"
 fi
 # A "never writes" claim is only true when it is scoped to repositories.
 if grep -nEi '(never|does not|doesn.t|\bno\b)[^.]{0,30}\bwrit' "$SECURITY" |
     grep -vEi 'repositor|working tree|working copy|checkout|your code|watched (tree|repo)'; then
-    fail "$SECURITY makes an unqualified 'does not write' claim; only the repository working tree is never written (#497)"
+    fail "$SECURITY makes an unqualified 'does not write' claim; only the repository working tree is never written"
 fi
 # And the paths it does write have to be named, or the scoping is invisible.
 write_targets=0
@@ -224,47 +208,47 @@ grep -qEi 'cache' "$SECURITY" && write_targets=$((write_targets + 1))
 grep -qEi 'config(uration)?' "$SECURITY" && write_targets=$((write_targets + 1))
 grep -qEi 'theme' "$SECURITY" && write_targets=$((write_targets + 1))
 if [[ "$write_targets" -lt 3 ]]; then
-    fail "$SECURITY does not name the cache/config/theme paths GPY writes; scoping the repository claim requires saying where writes DO go (#497)"
+    fail "$SECURITY does not name the cache/config/theme paths GPY writes; scoping the repository claim requires saying where writes DO go"
 fi
 
 # --- (f) the trust boundary is documented in one place ----------------------
 echo "--- trust boundary covers shell, socket, agent output and downloads ---"
 trust_heading="$(grep -m1 -oE '^#{2,3} .*[Tt]rust.*' "$SECURITY" | sed -E 's/^#+ //')"
 if [[ -z "$trust_heading" ]]; then
-    fail "$SECURITY has no trust-boundary section (#497 criterion 3)"
+    fail "$SECURITY has no trust-boundary section"
 else
     trust_body="$(section_body "$trust_heading")"
     for term in 'shell' 'socket' 'binar'; do
         grep -qi "$term" <<<"$trust_body" ||
-            fail "$SECURITY's '$trust_heading' section does not cover '$term'; the shell client, the local socket, the agent's output and the downloaded binaries all belong in one trust statement (#497)"
+            fail "$SECURITY's '$trust_heading' section does not cover '$term'; the shell client, the local socket, the agent's output and the downloaded binaries all belong in one trust statement"
     done
     # The consequence a reader deserves: a spoofed gpy-agent on PATH runs
     # arbitrary code in every new shell.
     grep -qiE 'PATH|spoof|replac|tamper|compromis' <<<"$trust_body" ||
-        fail "$SECURITY's '$trust_heading' section does not say what a compromised or spoofed gpy-agent on PATH would get (#497)"
+        fail "$SECURITY's '$trust_heading' section does not say what a compromised or spoofed gpy-agent on PATH would get"
     # And the mitigations that actually exist, not more than exist.
     grep -qiE 'checksum|verif' <<<"$trust_body" ||
-        fail "$SECURITY's '$trust_heading' section names no install-time verification as a mitigation (#497)"
+        fail "$SECURITY's '$trust_heading' section names no install-time verification as a mitigation"
 fi
 
 # --- (g) reporting channel and response commitments -------------------------
 echo "--- reporting goes through GitHub private reporting, with no SLA ---"
 if grep -nE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$SECURITY"; then
-    fail "$SECURITY publishes an email address; reports go through GitHub private vulnerability reporting (#497)"
+    fail "$SECURITY publishes an email address; reports go through GitHub private vulnerability reporting"
 fi
 grep -qiE 'private vulnerability report|privately report a vulnerability|report a vulnerability privately' "$SECURITY" ||
-    fail "$SECURITY does not name GitHub private vulnerability reporting as the channel (#497)"
+    fail "$SECURITY does not name GitHub private vulnerability reporting as the channel"
 grep -qF '/security/advisories' "$SECURITY" ||
-    fail "$SECURITY does not link the repository's security advisories page, so a reporter has no route to follow (#497)"
+    fail "$SECURITY does not link the repository's security advisories page, so a reporter has no route to follow"
 # The route has to be in the section a reporter reads, not only in a footer.
 report_heading="$(grep -m1 -oE '^#{2,3} .*How to Report.*' "$SECURITY" | sed -E 's/^#+ //')"
 [[ -n "$report_heading" ]] ||
     report_heading="$(grep -m1 -oE '^#{2,3} .*Reporting a Vulnerability.*' "$SECURITY" | sed -E 's/^#+ //')"
 if [[ -z "$report_heading" ]]; then
-    fail "$SECURITY has no 'How to Report' / 'Reporting a Vulnerability' section (#497)"
+    fail "$SECURITY has no 'How to Report' / 'Reporting a Vulnerability' section"
 else
     section_body "$report_heading" | grep -qF '/security/advisories/new' ||
-        fail "$SECURITY's '$report_heading' section does not carry the private-reporting URL a reporter has to open (#497)"
+        fail "$SECURITY's '$report_heading' section does not carry the private-reporting URL a reporter has to open"
 fi
 
 # No response-time commitment, in any wording.
@@ -278,17 +262,8 @@ if grep -nEi '(we will|i will|you can expect|expect a|guarantee[a-z]*|commit(men
 fi
 # The absence of a commitment has to be stated, not merely implied by deletion.
 grep -qEi '(no|not|cannot|can.t|without)[^.]{0,90}(guarantee[a-z]*|commit[a-z]*|promise[a-z]*|assur[a-z]*)' "$SECURITY" ||
-    fail "$SECURITY does not state plainly that no response window is guaranteed (#497)"
+    fail "$SECURITY does not state plainly that no response window is guaranteed"
 grep -qEi 'personal project|solo|single maintainer|one maintainer|spare[- ]time|hobby' "$SECURITY" ||
-    fail "$SECURITY does not say this is a personal project, which is the reason no window is promised (#497)"
+    fail "$SECURITY does not say this is a personal project, which is the reason no window is promised"
 
-# --- guard: the section another test owns is still present ------------------
-grep -qE '^## Supported Versions' "$SECURITY" ||
-    fail "$SECURITY lost its '## Supported Versions' heading, which tests/bash/release_version_claims.test.bash derives from CHANGELOG.md"
-
-if [[ $failures -ne 0 ]]; then
-    echo "$failures assertion(s) failed"
-    exit 1
-fi
-
-echo "PASS"
+test_finish

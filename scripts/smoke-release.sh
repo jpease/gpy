@@ -84,7 +84,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --- Windows: CLI-only ---------------------------------------------------------------
+# Windows: CLI-only
 if [[ "${RUNNER_OS:-$(uname -s)}" == Windows* || "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]]; then
     echo "--- Windows: the packaged CLI binaries run ---"
     bin_dir="$PACKAGE_DIR/gpy-release/bin"
@@ -107,7 +107,7 @@ if [[ "${RUNNER_OS:-$(uname -s)}" == Windows* || "$(uname -s)" == MINGW* || "$(u
     exit 0
 fi
 
-# --- Unix: install from the archive and render a prompt in every shell ---------------
+# Unix: install from the archive and render a prompt in every shell
 echo "--- the documented IPC transport is present ---"
 if command -v socat >/dev/null 2>&1 || command -v nc >/dev/null 2>&1; then
     pass "socat or nc is installed (docs/INSTALL.md, IPC transport dependencies)"

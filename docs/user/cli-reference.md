@@ -144,7 +144,7 @@ Restarting GPY...
 
 #### `gpy status`
 
-Display comprehensive agent status and diagnostics.
+Display agent status and diagnostics.
 
 Shows:
 - Socket path and configuration file location
@@ -250,7 +250,7 @@ Every command that edits `config.toml` (`theme use`, `palette use`,
 `enable`, `disable`, `lang versions`, `config set`) ends the same way: silent
 on a confirmed reload, that one notice otherwise. Switching *themes* currently
 prints the notice even with a live agent on macOS, because the switch re-arms
-its theme-file watcher for longer than the CLI waits (#661); the reload still
+its theme-file watcher for longer than the CLI waits; the reload still
 happens a few seconds later.
 
 ---
@@ -831,7 +831,7 @@ gpy config wizard
 
 #### `gpy doctor`
 
-Run comprehensive health checks and diagnostics.
+Run health checks and diagnostics.
 
 Verifies:
 - Agent is running and responsive

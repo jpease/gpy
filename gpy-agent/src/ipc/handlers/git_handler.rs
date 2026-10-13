@@ -23,11 +23,10 @@ use std::time::Duration;
 /// *and* the earlier `get_canonical` (TTL-respecting) lookup already missed
 /// -- i.e. the entry is already past the 30s `CachePolicy::git_status` TTL --
 /// so the bound must be strictly greater than that TTL. A small multiple
-/// (2x = 60s) keeps today's "prefer stale over blocking" behavior for
+/// (2x = 60s) keeps the "prefer stale over blocking" behavior for
 /// entries that are only a little past TTL (the common case: a background
 /// recompute is already in flight and will land shortly), while refusing to
-/// hand back arbitrarily old data immediately on a persistently slow repo
-/// (#433).
+/// hand back arbitrarily old data immediately on a persistently slow repo.
 const MAX_IMMEDIATE_STALE_AGE: Duration = Duration::from_secs(60);
 
 /// Handler for Git repository status queries
@@ -50,14 +49,14 @@ struct GitStatusJob {
     /// Completes the shared job and frees the single-flight slot. Guarantees
     /// cleanup even if `load_repository_state` panics on the blocking thread
     /// below, degrading to an error result instead of poisoning the slot
-    /// for this repo (#318).
+    /// for this repo.
     guard: JobGuard<PathBuf, SharedGitStatusResult>,
 }
 
 /// Write the instant-prompt cache for `status` and repaint live shells (forced
 /// doorbell) only when the rendered output actually changed.
 ///
-/// The single publish-and-repaint implementation for git status (#587): the
+/// The single publish-and-repaint implementation for git status: the
 /// synchronous IPC request path, the background single-flight job, and the
 /// client-registration initial scan all call this instead of each carrying
 /// their own copy of the read-config/theme/palette → write → notify-or-log
@@ -127,7 +126,7 @@ impl GitHandler {
         // Find git root for cache key. `git::find_repo_root` tries the cheap
         // `.git`-only walk first, falling back to bare-repo detection (root
         // directly contains HEAD/objects/refs/config, no `.git` subentry) so
-        // this IPC path stays at parity with the oneshot path (#321). This only
+        // this IPC path stays at parity with the oneshot path. This only
         // affects status detection -- bare repos still aren't registered for
         // live file watching, since `MultiRepoWatcher`'s registration path is
         // unchanged.
@@ -189,7 +188,7 @@ impl GitHandler {
     /// to trust without first giving the already-in-flight recompute a
     /// chance to land, so this waits up to the configured hard timeout for
     /// it, falling back to the very-stale value (better than nothing) only if
-    /// that recompute also times out or errors (#433).
+    /// that recompute also times out or errors.
     ///
     /// # Errors
     ///
@@ -281,7 +280,7 @@ impl GitHandler {
         let render = self.render.clone();
         let git_root_owned = git_root.to_path_buf();
         // On a panic mid-job, the guard's Drop completes the shared job with
-        // this error instead of leaving the slot permanently poisoned (#318).
+        // this error instead of leaving the slot permanently poisoned.
         let fallback: SharedGitStatusResult = Err("git status job panicked".to_owned());
         self.in_flight
             .get_or_start(git_root_owned.clone(), fallback, move |guard| {
@@ -321,7 +320,7 @@ impl GitHandler {
                         .cache
                         .set(&job_spec.git_root, status.clone(), files);
                     // The synchronous handler path may have already returned a
-                    // stale prompt to a backgrounded refresh (serve-stale, #160).
+                    // stale prompt to a backgrounded refresh (serve-stale).
                     // Refresh the instant cache here so the freshly computed
                     // status reaches disk, and repaint live shells when the
                     // rendered output actually changed.
@@ -425,11 +424,10 @@ mod tests {
     /// cooldown window, making the cooldown-gated `revalidate_stale_hit` path
     /// deterministically fire without any sleeps.
     fn zero_cooldown_cache() -> Arc<GitStatusCache> {
-        let policy = CachePolicy::builder()
-            .ttl(Duration::from_secs(30))
-            .cooldown(Duration::from_millis(0))
-            .build()
-            .expect("cache policy");
+        let policy = CachePolicy {
+            ttl: Duration::from_secs(30),
+            cooldown: Duration::ZERO,
+        };
         Arc::new(GitStatusCache::with_policy(policy))
     }
 
@@ -482,11 +480,10 @@ mod tests {
         }
     }
 
-    /// The serve-stale repaint contract (#160).
+    /// The serve-stale repaint contract.
     ///
     /// Writing the instant cache rings a forced repaint doorbell only when the rendered
-    /// output actually changed, so no-op refreshes never wake terminals
-    /// (preserving #145/#146 clock gating).
+    /// output actually changed, so no-op refreshes never wake terminals (clock gating).
     #[test]
     fn publish_and_repaint_notifies_only_on_content_change() {
         let (handler, registry) = make_handler();
@@ -524,22 +521,20 @@ mod tests {
         );
     }
 
-    /// #321: a bare repository has no `.git` subentry.
+    /// A bare repository has no `.git` subentry.
     ///
     /// Its root directly contains HEAD/objects/refs/config, so
-    /// `MultiRepoWatcher::find_git_root`'s `.git`-only walk misses it and
-    /// `get_git_status` used to short-circuit with "Not in a git repository"
-    /// before ever resolving a root.
+    /// `MultiRepoWatcher::find_git_root`'s `.git`-only walk misses it.
+    /// `get_git_status` resolves roots with `crate::git::find_repo_root`,
+    /// whose bare-repo fallback the oneshot path reaches too
+    /// (`agent/oneshot.rs` -> `load_repository_state` -> `get_complete_status`
+    /// -> `find_repo_root`).
     ///
     /// `git status` itself refuses to run without a worktree ("fatal: this
     /// operation must be run in a work tree"), so a bare repo can never render
-    /// a full status on *either* path -- that's a `git` limitation, not a gpy
-    /// bug. The fix here is root-resolution parity: `get_git_status` now uses
-    /// `crate::git::find_repo_root`, whose bare-repo fallback the oneshot path
-    /// reaches too (`agent/oneshot.rs` -> `load_repository_state` ->
-    /// `get_complete_status` -> `find_repo_root`), so both paths reach the *same* git-subprocess
-    /// error instead of diverging on a premature "Not in a git repository"
-    /// from the agent IPC path alone.
+    /// a full status on *either* path -- a `git` limitation. What this pins is
+    /// parity: both paths reach the *same* git-subprocess error rather than the
+    /// agent IPC path failing early with "Not in a git repository".
     #[test]
     fn get_git_status_resolves_bare_repository_root_like_oneshot() {
         let (handler, _registry) = make_handler();
@@ -561,9 +556,9 @@ mod tests {
         let safe_path = crate::security::SafePath::new(bare_path.to_str().expect("utf8 path"))
             .expect("safe path");
 
-        // Same path, same failure the oneshot path already hits via
-        // `load_repository_state` -- proves the handler no longer bails out
-        // early on an unresolved root.
+        // Same path, same failure the oneshot path hits via
+        // `load_repository_state` -- the handler does not bail out early on
+        // an unresolved root.
         let handler_result = handler.get_git_status(&safe_path, None);
         let oneshot_result = load_repository_state(&bare_path, None, 0, false);
 
@@ -573,7 +568,7 @@ mod tests {
         let handler_err = handler_error.to_string();
         assert!(
             !handler_err.contains("Not in a git repository"),
-            "root resolution should no longer short-circuit before reaching git: {handler_err}"
+            "root resolution must not short-circuit before reaching git: {handler_err}"
         );
 
         let Err(oneshot_err) = oneshot_result else {
@@ -586,7 +581,7 @@ mod tests {
         );
     }
 
-    /// #696: a `skip_paths` entry that goes through a symlink must skip a repo
+    /// A `skip_paths` entry that goes through a symlink must skip a repo
     /// reached via its canonical (`SafePath`) location, and a sibling that merely
     /// shares a string prefix must not be skipped.
     #[cfg(unix)]
@@ -622,7 +617,7 @@ mod tests {
         );
     }
 
-    /// #429: a within-TTL cache hit whose entry is past its cooldown must both serve and
+    /// A within-TTL cache hit whose entry is past its cooldown must both serve and
     /// revalidate.
     ///
     /// (a) return the cached value immediately (no added hot-path latency) and (b) spawn a
@@ -724,7 +719,7 @@ mod tests {
         }
     }
 
-    /// #433: `handle_git_status_timeout` must only serve a stale cache entry immediately when
+    /// `handle_git_status_timeout` must only serve a stale cache entry immediately when
     /// it is within `MAX_IMMEDIATE_STALE_AGE`.
     ///
     /// Beyond that bound, the too-old value must not be trusted -- the handler must wait for
@@ -736,7 +731,7 @@ mod tests {
     /// response is the FRESH recomputed (Dirty) status, not the too-old
     /// stale one.
     #[test]
-    fn handle_git_status_timeout_ignores_too_old_stale_and_waits_for_fresh_job() {
+    fn handle_git_status_timeout_waits_when_stale_too_old() {
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let git_root = init_dirty_repo(&temp_dir);
 
@@ -766,8 +761,8 @@ mod tests {
         );
     }
 
-    /// Contrast case for #433: a stale entry that's still within
-    /// `MAX_IMMEDIATE_STALE_AGE` is served immediately (today's fast path),
+    /// Contrast case: a stale entry that's still within
+    /// `MAX_IMMEDIATE_STALE_AGE` is served immediately (the fast path),
     /// without waiting on the in-flight recompute.
     #[test]
     fn handle_git_status_timeout_serves_within_bound_stale_immediately() {
@@ -797,7 +792,7 @@ mod tests {
             served.state,
             RepositoryState::Clean,
             "a within-bound stale entry must be served immediately as-is \
-             (today's fast path), even though it's the wrong/stale value"
+             (the fast path), even though it's the wrong/stale value"
         );
 
         // Drain the job so it doesn't outlive the temp dir.

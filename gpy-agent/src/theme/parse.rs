@@ -1,7 +1,7 @@
 //! Theme TOML parsing and validation.
 //!
 //! Lives in `theme/` (not `config/loader.rs`) so theme parsing is owned by
-//! the module that owns the theme model (#608). `config::loader` still does
+//! the module that owns the theme model. `config::loader` still does
 //! the file/embedded-fallback I/O (`load_theme_from_path`), but hands the
 //! resulting content here to parse.
 
@@ -17,7 +17,7 @@ use crate::{Error, Result};
 /// conversion, not a second string re-parse); a second, string-based parse
 /// runs ONLY if the from-`Value` conversion fails, purely to recover a
 /// typed error with source line/column info that a from-`Value` conversion
-/// cannot provide (`toml::Value` carries no source spans) — see #608.
+/// cannot provide (`toml::Value` carries no source spans).
 ///
 /// # Errors
 ///

@@ -37,7 +37,7 @@ pub struct PreviewFacts {
     pub(crate) sample_character_success: bool,
     /// Representative sample: the preview always draws the hostname segment
     /// (it never hides it off-SSH the way the shells do), so it draws it as it
-    /// looks over SSH, including the theme icon that only renders there (#826).
+    /// looks over SSH, including the theme icon that only renders there.
     pub(crate) sample_is_ssh: bool,
 }
 

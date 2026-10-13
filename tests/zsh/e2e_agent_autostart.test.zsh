@@ -2,13 +2,12 @@
 # tests/zsh/e2e_agent_autostart.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# A real interactive Zsh, a real agent, a real repository (#646).
+# A real interactive Zsh, a real agent, a real repository.
 #
-# Nothing in tests/zsh/ started gpy-agent before this file: the integration
-# suite runs with the supervisor off and a socket that does not exist, so
-# autostart, registration, the real IPC transport (the zsh/net/socket
-# builtin), first-prompt rendering and __gpy_sync_workspace could all regress
-# without failing any gate. This drives `zsh -i` on a pseudo-terminal
+# The integration suite runs with the supervisor off and a socket that does
+# not exist, so it never exercises autostart, registration, the real IPC
+# transport (the zsh/net/socket builtin), first-prompt rendering or
+# __gpy_sync_workspace. This drives `zsh -i` on a pseudo-terminal
 # (tests/lib/pty_session.py) through tests/lib/shell_e2e.sh and asserts on
 # what the terminal shows:
 #
@@ -31,18 +30,8 @@ emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
 shell_e2e_init "$ROOT"
 
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
-pass() {
-    echo "PASS: $*"
-}
-
 # The text theme renders plain tokens the assertions can name (no glyphs).
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' \
-    >"$XDG_CONFIG_HOME/gpy/config.toml"
+shell_e2e_text_config '"directory", "git"'
 
 # --- 1. autostart, registration, first prompt --------------------------------
 echo "--- 1. autostart from an interactive zsh ---"
@@ -84,7 +73,7 @@ else
     fail "no SGR escape in the first prompt"
 fi
 # The shell starts in $HOME, so the directory segment contracts it to `~`
-# (the logical path the shell reports, #697).
+# (the logical path the shell reports).
 first="$(shell_e2e_transcript 0)"
 case "$first" in
     *'~'*) pass "the first prompt shows the home directory as ~" ;;
@@ -130,7 +119,7 @@ fi
 # --- 4. workspace sync ---------------------------------------------------------------
 echo "--- 4. workspace op ---"
 # A workspace op re-registers the PID's watch at its new cwd, which the
-# watcher logs as `attach_pid_to: pid=<pid>, cwd=<repo>` (#718); the first
+# watcher logs as `attach_pid_to: pid=<pid>, cwd=<repo>`; the first
 # registration logged the home directory, so a line naming the repo can only
 # come from the workspace update.
 if grep -q "attach_pid_to: pid=$client_pid, cwd=.*$(basename "$SHELL_E2E_REPO")" "$GPY_DEBUG_LOG" 2>/dev/null; then
@@ -165,7 +154,5 @@ fi
 
 if [ "$failures" -gt 0 ]; then
     shell_e2e_dump_transcript
-    echo "FAILED: $failures assertion(s)"
-    exit 1
 fi
-echo "PASS: zsh autostart to first prompt end to end"
+test_finish "zsh autostart to first prompt end to end"

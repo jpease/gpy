@@ -2,11 +2,10 @@
 //!
 //! This is the Rust half of the cross-shell path parity contract (#476). Path
 //! rules are implemented four times — here, in Fish, in Bash and in Zsh — for
-//! two roots (runtime and cache). They agree today only by convention. The
-//! parity harness (`tests/fish/path_parity.test.fish`) runs this command and
-//! each shell's `__gpy_debug_paths` under the same synthetic environments and
-//! diffs the full maps, so #477 can centralize resolution and prove it changed
-//! nothing on Unix.
+//! two roots (runtime and cache). The parity harness
+//! (`tests/fish/path_parity.test.fish`) runs this command and each shell's
+//! `__gpy_debug_paths` under the same synthetic environments and diffs the
+//! full maps, so any divergence between the implementations fails the test.
 //!
 //! Every value here comes from the resolver production actually calls. Nothing
 //! in this module re-derives a precedence rule: a reimplementation would agree

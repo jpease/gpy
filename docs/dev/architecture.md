@@ -68,7 +68,7 @@ User types command → Fish renders prompt → segment_git_render()
                         printf '%s' $response
 ```
 
-**Typical timing**: <0.1ms for cached response, ~15-20ms for fresh git query
+**Timing**: a cached response costs one IPC round trip (`ipc_ping` baseline 0.037 ms); a fresh git query on a 100-file repository baselines at 17.2 ms (`git_status_100_files`). Both figures are from `tests/performance-baselines.json`.
 
 ---
 
@@ -148,7 +148,7 @@ end
 **Shell-specific implementation**:
 - Fish: one `--on-signal SIGURG` function → increment `$__gpy_repaint_trigger`
 - Zsh: `TRAPURG()` → re-render `PROMPT`, `zle reset-prompt` when zle is active
-- Bash: no trap; SIGURG stays ignored (#678). `__gpy_precmd` handles flags 1 and 2 before rendering `PS1`, so changes show at the next prompt
+- Bash: no trap; SIGURG stays ignored. `__gpy_precmd` handles flags 1 and 2 before rendering `PS1`, so changes show at the next prompt
 
 #### Layer 3: Segment Rendering (`segments/*.{fish,zsh,bash}`)
 
@@ -181,9 +181,9 @@ The agent supports multiple output formats via the `format` field:
 ```
 
 **Current status**:
-- ✅ `json`: Fully supported (all shells use this)
-- ✅ `fish-ansi`: Legacy format (deprecated but supported)
-- ⏳ `*-rendered`: Planned for zero-latency instant prompts
+- `json`: supported; all shells use it
+- `fish-ansi`: legacy format, deprecated but supported
+- `*-rendered`: not implemented
 
 **Design decision**: Start with `json` format to keep shell integrations flexible. Future optimization: pre-rendered formats to eliminate shell-side formatting.
 
@@ -222,22 +222,20 @@ Theme data          ───→
 ### Shell-Specific Constraints
 
 #### Fish
-- ✅ Full feature support (reference implementation)
-- ✅ Fast string processing, native JSON parsing
-- ✅ Clean signal handling via `fish_prompt`
+- Reference implementation
+- Fast string processing, native JSON parsing
+- Signal handling through a variable-change repaint ([ADR-0006](adr/adr-0006-async-terminal-updates.md))
 
 #### Zsh
-- ✅ Full feature support
-- ✅ Async hooks (zle) for signal handling
-- ✅ `PROMPT` expansion for segments
+- `TRAPURG` plus `zle reset-prompt` repaints an idle prompt
+- `PROMPT` expansion for segments
 
 **Limitations**:
 - No native JSON parsing (uses the `zsh/net/socket` builtin, `socat`, or `nc -U` for IPC)
 - Prompt escaping requires `%%` for literal `%`
 
 #### Bash
-- ✅ Core features supported
-- ⚠️ Limited compared to Fish/Zsh
+- Same segments; live updates appear at the next prompt
 
 **Limitations**:
 - No native JSON parsing (uses `socat` or `nc -U`)
@@ -290,8 +288,8 @@ end
 ```
 
 **Performance impact**:
-- With agent: <0.1ms per prompt (cached IPC)
-- Without agent (oneshot): 50-200ms per prompt (spawns git processes)
+- With agent: one IPC round trip per segment on a cache hit
+- Without agent (oneshot): a `gpy-agent` process spawn plus the git and language work, on every prompt
 
 ### Live Updates Across Shells
 
@@ -320,27 +318,19 @@ zle reset-prompt  # Zsh-specific repaint primitive
 
 ### Testing Multi-Shell Compatibility
 
-**Test matrix**:
-```
-           Fish 3.6+  │  Zsh 5.8+  │  Bash 3.2+  │  Bash 5.0+
-─────────────────────┼────────────┼─────────────┼────────────
-IPC (json)       ✅  │     ✅     │      ✅     │     ✅
-Live updates     ✅  │     ✅     │      ⚠️     │     ✅
-Config reload    ✅  │     ✅     │      ✅     │     ✅
-Theme reload     ✅  │     ✅     │      ✅     │     ✅
-Oneshot mode     ✅  │     ✅     │      ✅     │     ✅
-```
+What each shell supports is the [Shell feature matrix](../INSTALL.md#shell-feature-matrix).
 
 **Test strategy**:
-1. **Unit tests**: Agent (shell-agnostic) - 600+ tests in Rust
+1. **Unit tests**: Agent (shell-agnostic), in Rust
 2. **Integration tests**: Each shell separately - IPC contract validation
-3. **E2E tests**: Docker containers for Fish/Zsh/Bash environments
+3. **E2E tests**: Each shell on a real pseudo-terminal against a real agent; a clean-container fresh install
 
 For reproducible shell-integration testing, see:
 - [`tests/fish/README.md`](../../tests/fish/README.md)
 - [`gpy-agent/tests/README.md`](../../gpy-agent/tests/README.md)
+- [Testing Tiers](testing.md)
 
-### Live Updates (The Magic)
+### Live Update Sequence
 
 When you run `git commit` in Terminal A:
 
@@ -359,9 +349,9 @@ Agent sends SIGURG to all registered shell PIDs in that repo
       ↓
 Terminal B: Receives SIGURG (no flag file → repaint)
       ↓
-Fish SIGURG handler bumps $__gpy_repaint_trigger → commandline -f repaint
+Fish SIGURG handler bumps $__gpy_repaint_trigger → commandline -f force-repaint
       ↓
-Prompt redraws with fresh git status (✨ magic!)
+Prompt redraws with fresh git status
 ```
 
 **Terminal A gets two updates**:
@@ -513,30 +503,30 @@ Arc<MultiRepoWatcher>     // Shared: agent + IPC server (for registration)
 
 All shared state uses interior mutability (`Mutex` or atomic types).
 
-### State Ownership Map (Critical for AI Agents)
+### State Ownership Map
 
 This table documents which modules own which pieces of state and how state is shared.
 **RULE**: Only the owning module should mutate state. Other modules access via shared references.
 
 | State | Owner Module | Type | Sharing Pattern | Access Rules | Examples |
 |-------|-------------|------|-----------------|--------------|----------|
-| **Git Status Cache** | `git::cache::GitStatusCache` | `HashMap<PathBuf, CacheEntry>` | `Arc<GitStatusCache>` | • Owner: Provides `get()`, `set()`, `invalidate()` methods<br>• Consumers: Read via `get()`, never direct mutation<br>• Thread-safe: Internal `Mutex` (all access serialized) | ✅ `cache.get(&repo)` in IPC handler<br>✅ `cache.set(&repo, status)` in agent<br>❌ Accessing internal HashMap directly |
-| **Client Registry** | `ipc::registry::ClientDirectory` | `HashMap<u32, ClientInfo>` | `Arc<ClientDirectory>` | • Owner: Provides `register()`, `unregister()`, `notify_*()` methods<br>• Consumers: Register clients, send signals<br>• Thread-safe: Internal `Mutex` (all access serialized) | ✅ `registry.register(pid, cwd)` in IPC<br>✅ `registry.notify_repaint()` in agent<br>❌ Direct PID manipulation |
-| **File Watcher** | `watcher::multi_repo::MultiRepoWatcher` | `notify::RecommendedWatcher` | `Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>` | • Owner: Agent module creates and destroys<br>• Consumers: IPC server registers repos via shared slot<br>• Lazy initialization pattern | ✅ `watcher.register(repo)` via agent<br>✅ Agent creates watcher in `Agent::new()`<br>❌ Creating watcher outside agent module |
-| **Configuration** | `config::manager::ConfigManager` | `Config` struct | `Arc<ConfigManager>` | • Owner: Provides `get_current()`, `reload()` methods<br>• Consumers: Read config, never cache locally<br>• Hot-reload: Config can change, always use fresh copy | ✅ `config_mgr.get_current()` in handlers<br>✅ `config_mgr.reload()` on file events<br>❌ Storing `Config` directly (stale data risk) |
-| **Theme State** | `theme::manager::ThemeManager` | `ThemeConfig` | `Arc<ThemeManager>` | • Owner: Loads themes, generates Fish exports<br>• Consumers: Call `export_fish()` for Fish vars, `get()` to clone config<br>• Hot-reload: Theme can change, always call methods | ✅ `theme_mgr.export_fish(&config)` in agent<br>✅ `let theme = theme_mgr.get()` to clone<br>❌ Caching theme colors locally |
-| **Language Version Cache** | `language::version` module | Global `VERSION_CACHE` at `gpy-agent/src/language/version.rs:316` | `OnceLock<Mutex<HashMap<String, CachedVersion>>>` - global static shared across all requests | • Owner: `language::version` module manages global cache<br>• Consumers: Version detectors use implicitly via `detect_language_release()`<br>• TTL: 24 hour expiration (configurable)<br>• Thread-safe: Global `Mutex` with `OnceLock` initialization | ✅ Call `detect_language_release()`, cache automatic<br>✅ Cache shared globally, TTL handles staleness<br>❌ Creating separate per-request version caches |
-| **IPC Server State** | `ipc::server::EndpointHandle` | Socket listener | Owned by `Agent` | • Owner: Agent creates and holds server<br>• Lifecycle: Lives until agent shutdown<br>• Thread-safe: Tokio runtime handles connections | ✅ Agent creates in `Agent::new()`<br>✅ Server runs in `Agent::start_background()`<br>❌ Multiple server instances |
+| **Git Status Cache** | `git::cache::GitStatusCache` | `HashMap<PathBuf, CacheEntry>` | `Arc<GitStatusCache>` | • Owner: Provides `get()`, `set()`, `invalidate()` methods<br>• Consumers: Read via `get()`, never direct mutation<br>• Thread-safe: Internal `Mutex` (all access serialized) | Allowed: `cache.get(&repo)` in IPC handler<br>Allowed: `cache.set(&repo, status)` in agent<br>Not allowed: Accessing internal HashMap directly |
+| **Client Registry** | `ipc::registry::ClientDirectory` | `HashMap<u32, ClientInfo>` | `Arc<ClientDirectory>` | • Owner: Provides `register()`, `unregister()`, `notify_*()` methods<br>• Consumers: Register clients, send signals<br>• Thread-safe: Internal `Mutex` (all access serialized) | Allowed: `registry.register(pid, cwd)` in IPC<br>Allowed: `registry.notify_repaint()` in agent<br>Not allowed: Direct PID manipulation |
+| **File Watcher** | `watcher::multi_repo::MultiRepoWatcher` | `notify::RecommendedWatcher` | `Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>` | • Owner: Agent module creates and destroys<br>• Consumers: IPC server registers repos via shared slot<br>• Lazy initialization pattern | Allowed: `watcher.register(repo)` via agent<br>Allowed: Agent creates watcher in `Agent::new()`<br>Not allowed: Creating watcher outside agent module |
+| **Configuration** | `config::manager::ConfigManager` | `Config` struct | `Arc<ConfigManager>` | • Owner: Provides `get_current()`, `reload()` methods<br>• Consumers: Read config, never cache locally<br>• Hot-reload: Config can change, always use fresh copy | Allowed: `config_mgr.get_current()` in handlers<br>Allowed: `config_mgr.reload()` on file events<br>Not allowed: Storing `Config` directly (stale data risk) |
+| **Theme State** | `theme::manager::ThemeManager` | `ThemeConfig` | `Arc<ThemeManager>` | • Owner: Loads themes, generates Fish exports<br>• Consumers: Call `export_fish()` for Fish vars, `get()` to clone config<br>• Hot-reload: Theme can change, always call methods | Allowed: `theme_mgr.export_fish(&config)` in agent<br>Allowed: `let theme = theme_mgr.get()` to clone<br>Not allowed: Caching theme colors locally |
+| **Language Version Cache** | `language::version` module | Global `VERSION_CACHE` at `gpy-agent/src/language/version.rs:316` | `OnceLock<Mutex<HashMap<String, CachedVersion>>>` - global static shared across all requests | • Owner: `language::version` module manages global cache<br>• Consumers: Version detectors use implicitly via `detect_language_release()`<br>• TTL: 24 hour expiration (configurable)<br>• Thread-safe: Global `Mutex` with `OnceLock` initialization | Allowed: Call `detect_language_release()`, cache automatic<br>Allowed: Cache shared globally, TTL handles staleness<br>Not allowed: Creating separate per-request version caches |
+| **IPC Server State** | `ipc::server::EndpointHandle` | Socket listener | Owned by `Agent` | • Owner: Agent creates and holds server<br>• Lifecycle: Lives until agent shutdown<br>• Thread-safe: Tokio runtime handles connections | Allowed: Agent creates in `Agent::new()`<br>Allowed: Server runs in `Agent::start_background()`<br>Not allowed: Multiple server instances |
 
 #### State Access Patterns
 
 **Correct Pattern**: Access state via owner's public API
 ```rust
-// ✅ CORRECT: Use owner's API
+// CORRECT: Use owner's API
 let status = git_cache.get(&repo_path);  // GitStatusCache::get()
 clients.notify_repaint(None);            // ClientDirectory::notify_repaint()
 
-// ✅ CORRECT: Agent coordinates state updates
+// CORRECT: Agent coordinates state updates
 impl Agent {
     fn handle_file_event(cache: &GitStatusCache, event: &Event) {
         cache.invalidate(&event.repo);    // Coordinate invalidation
@@ -548,15 +538,15 @@ impl Agent {
 
 **Incorrect Pattern**: Bypassing abstractions or duplicating state
 ```rust
-// ❌ WRONG: Accessing internal state directly
+// WRONG: Accessing internal state directly
 let internal_map = cache.inner.lock().unwrap();  // Breaks encapsulation
 
-// ❌ WRONG: Duplicating state in another module
+// WRONG: Duplicating state in another module
 pub struct MyModule {
     cached_config: Config,  // Stale data! Use Arc<ConfigManager> instead
 }
 
-// ❌ WRONG: Cross-module coordination outside agent
+// WRONG: Cross-module coordination outside agent
 impl GitCache {
     fn refresh(&self, repo: &Path, clients: &ClientDirectory) {
         // ...
@@ -565,7 +555,7 @@ impl GitCache {
 }
 ```
 
-#### Arc Sharing Guidelines for AI Agents
+#### Arc Sharing Guidelines
 
 When adding new shared state:
 
@@ -735,7 +725,7 @@ Prompt repaints with updated time
 
 ## Common Behaviors → Code Paths
 
-This section maps user-visible behaviors to their implementation paths, helping both humans and LLMs understand "what you see is what it does."
+This section maps user-visible behaviors to their implementation paths.
 
 **1. Git commit → prompt updates in ~200ms**
 ```
@@ -811,15 +801,7 @@ Tests: gpy-agent/tests/clock_timer_tests.rs:test_timer_alignment_to_minute_bound
 ```
 User presses Enter → Fish renders new prompt
   ↓
-Target: < 50ms total, typical: 10-20ms
-  ↓
-Breakdown (cached paths):
-  - segment_directory: ~2ms (pwd lookup)
-  - segment_git: ~0.1ms (IPC + cache hit)
-  - segment_language: ~0.1ms (IPC + cache hit)
-  - segment_duration: <1ms (Fish variable)
-  - segment_status: <1ms (Fish variable)
-  - ANSI rendering: ~3ms (color codes)
+Budget (cached paths): prompt_render 20 ms target, 50 ms max
   ↓
 Performance validation: time fish_prompt
 ```
@@ -1158,39 +1140,7 @@ __gpy_request() {
 
 ### Performance Characteristics
 
-**Latency breakdown** (cached git status):
-```
-Socket open:      ~0.005ms
-Request write:    ~0.005ms
-Agent processing: ~0.020ms  (cache lookup)
-Response read:    ~0.005ms
-Socket close:     ~0.005ms
-─────────────────────
-Total:            ~0.04ms
-```
-
-**Latency breakdown** (fresh git status):
-```
-Socket open:      ~0.005ms
-Request write:    ~0.005ms
-Agent processing: ~31-45ms (git status --porcelain=v2 subprocess; the
-                           per-repo-size figures live in the module docs at
-                           the top of gpy-agent/src/git/native/mod.rs)
-Response read:    ~0.005ms
-Socket close:     ~0.005ms
-─────────────────────
-Total:            ~31-45ms (cold; a fresh cache entry returns without
-                           spawning git at all)
-```
-
-**Throughput**:
-- Single connection: 1000+ requests/second (with caching)
-- Concurrent connections: Limited by OS (typically 128+ simultaneous)
-
-**Connection pooling benefits**:
-- Reusing connections saves 0.2ms per request (no open/close overhead)
-- Fish shells typically make 5-10 requests per prompt
-- Savings: 1-2ms per prompt
+A cached git status costs one IPC round trip (`tests/performance-baselines.json`: `ipc_latency` budget 1 ms target, 1.5 ms max; `ipc_ping` baseline 0.037 ms). A fresh query adds a `git status --porcelain=v2` subprocess; the per-repo-size figures live in the module docs at the top of `gpy-agent/src/git/native/mod.rs`. A fresh cache entry returns without spawning git at all.
 
 ### Security Considerations
 
@@ -1224,15 +1174,15 @@ Total:            ~31-45ms (cold; a fresh cache entry returns without
    - Prevents signal delivery to arbitrary processes
 
 **Attack scenarios prevented**:
-- ✅ Malicious IPC client sending crafted requests
-- ✅ PID spoofing to receive signals for other user's shells
-- ✅ Socket hijacking by other users
-- ✅ Path traversal to read arbitrary files
-- ✅ DoS via message flooding or large messages
+- Malicious IPC client sending crafted requests
+- PID spoofing to receive signals for other user's shells
+- Socket hijacking by other users
+- Path traversal to read arbitrary files
+- DoS via message flooding or large messages
 
 **Not protected against**:
-- ❌ User attacking their own agent (same UID = full trust)
-- ❌ Root user accessing any socket (by design)
+- User attacking their own agent (same UID = full trust)
+- Root user accessing any socket (by design)
 
 ---
 
@@ -1267,7 +1217,7 @@ subprocess. ADR-0003 records the original decision and its reversal;
 - One subprocess returns branch, ahead/behind and file status together
 - `--porcelain=v2` is machine-readable and has been stable since Git 2.11.0 (2016)
 - Spawn overhead is real but small against what the untracked cache saves:
-  ~31ms on a 200-file repo, ~45ms on a 91k-file repo
+  see `git_status_cold`/`git_status_warm` in `tests/performance-baselines.json`
 
 ### Why Separate Debouncing and Cache Cooldown?
 
@@ -1303,7 +1253,7 @@ subprocess. ADR-0003 records the original decision and its reversal;
 2. **PID spoofing**: OS enforces via kill() permissions (EPERM if not your PID)
 3. **Socket hijacking**: 0600 permissions, only owner can connect
 4. **Path traversal**: Security module validates all paths
-5. **DoS**: 64KB message limit, rate limiting (50ms per client)
+5. **DoS**: 64KB message limit, connection rate and concurrency limits
 
 ### Defense Layers
 
@@ -1331,12 +1281,12 @@ Process request
 
 ### Latency Targets
 
-| Operation | Target | Typical | Notes |
+| Operation | Target | Baseline | Notes |
 |-----------|--------|---------|-------|
-| IPC round-trip | < 1.5ms | ~0.04ms | Cached response |
-| Git status (fresh) | < 100ms | ~17ms | Depends on repo size |
-| Prompt render | < 50ms | 10-20ms | All segments |
-| Signal delivery | < 10ms | 2-5ms | SIGURG to all clients |
+| IPC round-trip | 1 ms (max 1.5 ms) | 0.037 ms (`ipc_ping`) | Cached response |
+| Git status (warm) | 50 ms (max 100 ms) | 17.2 ms (`git_status_100_files`) | Depends on repo size |
+| Git status (cold) | 500 ms (max 750 ms) | — | First query in a repository |
+| Prompt render (cached) | 20 ms (max 50 ms) | — | All segments |
 
 ### Memory Footprint
 
@@ -1426,7 +1376,7 @@ show_seconds = false  # false = 60s updates, true = 1s updates
 
 **Test Coverage**:
 
-Hot-reload functionality is now comprehensively tested to prevent regressions:
+Hot-reload tests:
 
 1. **Reload Notification Delivery** (`config_hot_reload_tests.rs`):
    - Reload notification sent when disabling git
@@ -1562,7 +1512,7 @@ time git status --porcelain
 
 ## Next Steps for New Contributors
 
-1. **Read this doc** (you're here! ✓)
+1. **Read this doc**
 2. **Read module docs**: `gpy-agent/src/agent.rs`, `gpy-agent/src/watcher/mod.rs`
 3. **Trace a request**: Follow git status request through entire stack
 4. **Run tests**: `cargo test`, `./scripts/test_fish.sh`
@@ -1590,13 +1540,10 @@ After you're comfortable with basics:
 
 ## Further Reading
 
-- [modules.md](../archive/modules.md) - Detailed module reference (archived)
 - [segment-development.md](segment-development.md) - How to add segments
-- [caching-strategy.md](../archive/caching-strategy.md) - Cache invalidation deep dive (archived)
 - [ADR-0004: SIGUSR1 Live Updates](adr/adr-0004-sigusr1-live-updates.md) - Why the watcher signals shells instead of polling
 - [ADR-0007: SIGURG Doorbell](adr/adr-0007-sigurg-doorbell-notifications.md) - The current single-signal protocol and flag files
 - [CONTRIBUTING.md § Quality Gates](../../CONTRIBUTING.md#quality-gates) - How to run every suite
-- [concepts/git_status.concept.toml](concepts/git_status.concept.toml) - Example formal concept specification (demonstrates LLM-optimized module specs; other modules intentionally omitted to avoid over-engineering)
 
 ---
 

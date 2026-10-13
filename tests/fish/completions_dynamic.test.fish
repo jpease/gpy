@@ -2,16 +2,15 @@
 # tests/fish/completions_dynamic.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression/smoke test for #329 (Epic #326, task 3/6): wiring up FISH
-# completions for the `gpy` CLI.
+# Smoke test for the FISH completions of the `gpy` CLI.
 #
 # `gpy completions fish` (clap_complete) generates the STRUCTURAL completion
 # surface (subcommand/flag names) at install time and is never checked in.
 # `fish/completions/gpy-dynamic.fish` is a small, hand-authored, checked-in
 # file that supplies the DYNAMIC value lists (installed theme/palette/segment
-# names) by shelling out to the hidden `gpy __complete <kind>` command
-# (#328). The installers concatenate the two into one autoloadable
-# `completions/gpy.fish` (#702); this test builds that file and proves it
+# names) by shelling out to the hidden `gpy __complete <kind>` command.
+# The installers concatenate the two into one autoloadable
+# `completions/gpy.fish`; this test builds that file and proves it
 # autoloads (no manual `source`) and that the dynamic glue
 # actually produces the live completions a user would see for:
 #   - `gpy theme use <TAB>` / `gpy theme validate <TAB>`
@@ -58,12 +57,10 @@ function __cd_test_names
     string replace -r '\t.*$' '' -- $argv
 end
 
-# ---------------------------------------------------------------------------
 # Ensure the debug `gpy` CLI binary exists (build it if not) and put its
 # directory on PATH so both `gpy completions fish` and the `gpy __complete
 # <kind>` calls made by gpy-dynamic.fish's predicates resolve deterministically
 # to THIS checkout.
-# ---------------------------------------------------------------------------
 set -g gpy_bin $repo_root/gpy-agent/target/debug/gpy
 
 if not test -x $gpy_bin
@@ -88,14 +85,12 @@ if not test -f $dynamic_completions
     end
 end
 
-# ---------------------------------------------------------------------------
-# Build the completions directory exactly as the installers do (#702): ONE
+# Build the completions directory exactly as the installers do: ONE
 # autoloadable `gpy.fish` = `gpy completions fish` followed by the dynamic
 # glue. Fish autoloads `completions/<command>.fish` only for the command of
 # that name, so a separate `gpy-dynamic.fish` would never be loaded. Nothing
 # is `source`d by hand below: the first `complete -C 'gpy ...'` autoloads
 # gpy.fish from $fish_complete_path, as a real interactive session does.
-# ---------------------------------------------------------------------------
 set -l tmp_dir (mktemp -d)
 set -l comp_dir $tmp_dir/comp
 mkdir -p $comp_dir
@@ -114,9 +109,7 @@ end
 
 set fish_complete_path $comp_dir $fish_complete_path
 
-# ---------------------------------------------------------------------------
 # Dynamic value completions: theme
-# ---------------------------------------------------------------------------
 set -l theme_use_names (__cd_test_names (complete -C 'gpy theme use '))
 if contains default $theme_use_names
     and contains starship $theme_use_names
@@ -133,9 +126,7 @@ else
     test_fail "'gpy theme validate <TAB>' did not complete installed theme names: $theme_validate_names"
 end
 
-# ---------------------------------------------------------------------------
 # Dynamic value completions: palette
-# ---------------------------------------------------------------------------
 set -l palette_use_names (__cd_test_names (complete -C 'gpy palette use '))
 if contains default $palette_use_names
     and contains nord $palette_use_names
@@ -151,9 +142,7 @@ else
     test_fail "'gpy palette validate <TAB>' did not complete installed palette names: $palette_validate_names"
 end
 
-# ---------------------------------------------------------------------------
 # Dynamic value completions: segment (enable/disable)
-# ---------------------------------------------------------------------------
 set -l enable_names (__cd_test_names (complete -C 'gpy enable '))
 if contains git $enable_names
     and contains status $enable_names
@@ -170,9 +159,7 @@ else
     test_fail "'gpy disable <TAB>' did not complete segment names: $disable_names"
 end
 
-# ---------------------------------------------------------------------------
 # Cleanup + verdict
-# ---------------------------------------------------------------------------
 rm -rf $tmp_dir
 
 if test $test_failures -gt 0

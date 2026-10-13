@@ -2,10 +2,9 @@
 # tests/bash/installer_rc_matrix.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# INSTALLER RC TEST -- the class test for every installer rc-file bug in epic
-# #675. It is also the named regression test for #746 (a space in HOME or
-# XDG_CONFIG_HOME broke the unquoted `source` line), so there is no separate
-# install_oneline_space_in_path file.
+# INSTALLER RC TEST -- the class test for installer rc-file handling,
+# including a space in HOME or XDG_CONFIG_HOME (an unquoted `source` line
+# breaks on it), so there is no separate install_oneline_space_in_path file.
 #
 # Invariant, asserted per row:
 #   after install, every shell the installer targets, started the way a user
@@ -29,8 +28,7 @@
 #                install.sh)
 #
 # Adding a row is one `row ...` line at the bottom; adding a hostile layout is
-# one `layout_<name>` function. Later issues add: #747 (no ~/.bashrc but
-# ~/.profile -> bash login/non-login), #748 (ZDOTDIR set).
+# one `layout_<name>` function.
 #
 # Paths are never interpolated into `-c` code: they travel as arguments or
 # environment. Every row's agent is stopped before the row ends.
@@ -69,10 +67,6 @@ case "$(uname -s | tr '[:upper:]' '[:lower:]')" in
         ;;
     *) test_skip "the installers do not support $(uname -s)" ;;
 esac
-
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 sha256_of() {
     if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi
@@ -139,7 +133,7 @@ layout_dollar() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/d\$ollar/config"; }
 layout_backtick() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/b\`tick/config"; }
 layout_backslash() { HOME="$SB/home"; XDG_CONFIG_HOME="$SB/b\\slash/config"; }
 
-# #747: bash startup-file shapes. SEED_BASH picks what seed_user_files makes
+# Bash startup-file shapes. SEED_BASH picks what seed_user_files makes
 # (default `chain`: ~/.bashrc plus a ~/.bash_profile that sources it).
 #   profile_only  no ~/.bashrc, ~/.profile exports FROM_PROFILE (Debian default
 #                 minus the skeleton .bashrc)
@@ -149,14 +143,14 @@ layout_bash_profile_only() { layout_plain; SEED_BASH=profile_only; }
 layout_bash_none() { layout_plain; SEED_BASH=none; }
 layout_bash_nochain() { layout_plain; SEED_BASH=nochain; }
 
-# #748: zsh reads ${ZDOTDIR:-$HOME}/.zshrc. ZDOTDIR is exported to the
+# Zsh reads ${ZDOTDIR:-$HOME}/.zshrc. ZDOTDIR is exported to the
 # installer and uninstaller; ~/.zshrc must stay absent throughout.
 #   zdotdir         $ZDOTDIR/.zshrc exists with user content
 #   zdotdir_absent  ZDOTDIR is set and its directory exists, but no .zshrc
 layout_zdotdir() { layout_plain; ZDOTDIR="$SB/zdot"; }
 layout_zdotdir_absent() { layout_plain; ZDOTDIR="$SB/zdot"; SEED_ZSH=absent; }
 
-# #744: ~/.config/fish/functions/fish_prompt.fish is a symlink into a dotfiles
+# ~/.config/fish/functions/fish_prompt.fish is a symlink into a dotfiles
 # directory (stow/yadm/chezmoi). Install must move it aside as a symlink and
 # uninstall must put it back; the link text and the target's bytes are part of
 # the byte-identical snapshot.
@@ -197,7 +191,7 @@ seed_user_files() {
     esac
 }
 
-# #747: the login startup file bash reads must keep running after install.
+# The login startup file bash reads must keep running after install.
 check_profile_survives() {
     [ "$SEED_BASH" = profile_only ] || [ "$SEED_BASH" = nochain ] || return 0
     got="$(bash -l -c 'echo "${FROM_PROFILE:-unset}"' </dev/null 2>/dev/null)"
@@ -205,7 +199,7 @@ check_profile_survives() {
 }
 
 # One line per candidate rc file: its checksum, or `absent`. The fish prompt
-# line records a symlink's text and its target's checksum (#744).
+# line records a symlink's text and its target's checksum.
 prompt_snapshot() {
     p="$XDG_CONFIG_HOME/fish/functions/fish_prompt.fish"
     if [ -L "$p" ]; then
@@ -353,29 +347,29 @@ row oneline fish plain ok
 row oneline zsh plain ok
 row oneline bash plain ok
 
-# #746: a space in HOME / XDG_CONFIG_HOME
+# A space in HOME / XDG_CONFIG_HOME
 row oneline fish space ok
 row oneline zsh space ok
 row oneline bash space ok
 row install.sh fish space ok
 
-# #747: bash without a ~/.bashrc must not shadow ~/.profile or skip non-login shells
+# Bash without a ~/.bashrc must not shadow ~/.profile or skip non-login shells
 row oneline bash bash_profile_only ok
 row oneline bash bash_none ok
 row oneline bash bash_nochain ok
 
-# #748: zsh reads $ZDOTDIR/.zshrc; install and both uninstallers must use it
+# Zsh reads $ZDOTDIR/.zshrc; install and both uninstallers must use it
 row oneline zsh zdotdir ok
 row oneline zsh zdotdir ok fish
 row oneline zsh zdotdir_absent ok
 row oneline zsh zdotdir_absent ok fish
 
-# #744: a symlinked fish_prompt.fish survives install + uninstall
+# A symlinked fish_prompt.fish survives install + uninstall
 row oneline fish fish_prompt_symlink ok
 row oneline fish fish_prompt_symlink ok fish
 row install.sh fish fish_prompt_symlink ok
 
-# #746: characters double quotes cannot protect are refused up front
+# Characters double quotes cannot protect are refused up front
 row oneline fish quote refuse
 row oneline zsh quote refuse
 row oneline bash quote refuse
@@ -385,8 +379,4 @@ row oneline bash backtick refuse
 row oneline fish backslash refuse
 row install.sh fish dollar refuse
 
-if [ "$failures" -gt 0 ]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: installer rc matrix"
+test_finish "installer rc matrix"

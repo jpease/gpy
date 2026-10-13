@@ -1,74 +1,22 @@
-//! Agent daemon lifecycle integration tests
-//!
-//! These tests cover the full Agent daemon implementation including fork behavior,
-//! oneshot commands, and the specific scenarios discovered during development.
-//!
-//! # Test Navigation Map
-//!
-//! **Total Tests**: 9
-//! **Last Updated**: 2025-11-17
-//!
-//! ## Test Categories
-//!
-//! ### ✅ Basic Operations (5 tests)
-//! Tests covering normal/happy path scenarios:
-//! - `test_oneshot_git_command` - Oneshot git status command execution and JSON response
-//! - `test_oneshot_language_command` - Oneshot language detection command execution and JSON response
-//! - `test_fish_format_output` - Fish format output for git and language commands
-//! - `test_agent_creation` - Agent instantiation and basic functionality
-//!
-//! ### ❌ Error Cases (2 tests)
-//! Tests covering error scenarios and failure modes:
-//! - `test_oneshot_error_handling` - Invalid JSON, malformed requests, empty requests
-//! - `test_unbindable_socket_fails_startup` - Unbindable socket propagates a startup error
-//!
-//! ### 🔀 Edge Cases (1 test)
-//! Tests covering boundary conditions:
-//! - `test_rapid_oneshot_execution` - Rapid concurrent oneshot command execution (5 commands)
-//!
-//! ### 🔗 Integration (2 tests)
-//! Tests covering cross-module interactions:
-//! - `test_git_status_repository_states` - Git status in valid and non-git directories
-//! - `test_language_detection_scenarios` - Language detection with multiple file types
-//!
-//! ## What's NOT Tested (TODO)
-//! Known gaps for this module (from the original planning notes, since removed):
-//! - Agent daemon fork and background process behavior
-//! - PID file creation and cleanup
-//! - Agent restart and recovery scenarios
-//! - Signal handling (SIGTERM, SIGHUP)
-//! - Resource cleanup on abnormal shutdown
-//! - Oneshot command timeout handling
-//! - Large response payload handling
-//! - Config reload during oneshot execution
-//! - Concurrent oneshot vs daemon requests
-//! - Memory usage under sustained oneshot load
-//!
-//! ## Related Code
-//! - **Production**: `src/agent.rs`, `src/config/loader.rs`, `src/config/manager.rs`
-//! - **Other Tests**: `integration_tests.rs`, `e2e_ipc_tests.rs`, `git_status_tests.rs`
-//! - **Fixtures**: None (uses tempfile and test env guard)
-//!
-//! ## Quick Reference
-//! ```bash
-//! cargo test --test agent_daemon_tests
-//! cargo test --test agent_daemon_tests -- --nocapture
-//! cargo test --test agent_daemon_tests test_oneshot_git_command
-//! ```
+//! `Agent` tests: oneshot git/language requests in JSON and Fish formats,
+//! oneshot error handling, agent construction, and startup failure on an
+//! unbindable socket. Each test runs against a temporary HOME/XDG config.
 
-#![allow(unsafe_code)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::panic)]
 #![allow(clippy::missing_panics_doc)] // Test functions don't need panic docs
 #![allow(clippy::missing_errors_doc)] // Test functions don't need error docs
 
+#[path = "common/env_guard.rs"]
+mod env_guard;
+
+use env_guard::EnvGuard;
 use gpy_agent::Result;
 use gpy_agent::agent::Agent;
 use gpy_agent::config::{Config, loader};
 use serial_test::serial;
-use std::ffi::OsString;
-use tempfile::tempdir;
+use tempfile::{TempDir, tempdir};
 
 /// Test oneshot git command functionality
 #[tokio::test]
@@ -289,40 +237,13 @@ async fn test_fish_format_output() -> Result<()> {
     Ok(())
 }
 
-/// RAII guard for the `GPY_AGENT_SOCKET_PATH` override.
-///
-/// Lets a test force the agent to bind a specific (here: unbindable) socket
-/// path and always restore the previous value, even on assertion failure —
-/// otherwise a leaked bad path would break every subsequent test that relies
-/// on the default socket.
-struct SocketPathGuard {
-    prev: Option<OsString>,
-}
-
-impl SocketPathGuard {
-    fn set(path: &std::path::Path) -> Self {
-        let prev = std::env::var_os("GPY_AGENT_SOCKET_PATH");
-        unsafe {
-            std::env::set_var("GPY_AGENT_SOCKET_PATH", path);
-        }
-        Self { prev }
-    }
-}
-
-impl Drop for SocketPathGuard {
-    fn drop(&mut self) {
-        restore_env("GPY_AGENT_SOCKET_PATH", self.prev.take());
-    }
-}
-
-/// An unbindable socket must still fail agent startup with a clear, propagated
+/// An unbindable socket must fail agent startup with a clear, propagated
 /// error — not hang and not silently continue.
 ///
-/// The redundant pre-bind check (`test_socket_binding`) was removed so the agent
-/// binds the socket exactly once, in `EndpointHandle::start` (driven from
-/// `start_background`'s event loop). This pins that failure mode: pointing the
-/// agent at a socket whose parent directory does not exist makes the single real
-/// bind fail, and that error must surface out of `start_background`.
+/// The agent binds its socket exactly once, in `EndpointHandle::start`
+/// (driven from `start_background`'s event loop). Pointing it at a socket
+/// whose parent directory does not exist makes that bind fail, and the error
+/// must surface out of `start_background`.
 #[tokio::test]
 #[serial]
 async fn test_unbindable_socket_fails_startup() -> Result<()> {
@@ -332,7 +253,8 @@ async fn test_unbindable_socket_fails_startup() -> Result<()> {
     // ENOENT, so the socket file can never be created.
     let temp_dir = tempdir()?;
     let unbindable = temp_dir.path().join("missing-parent").join("gpy.sock");
-    let _socket_guard = SocketPathGuard::set(&unbindable);
+    // Restored on drop so a leaked bad path cannot break later tests.
+    let _socket_env = EnvGuard::set_one("GPY_AGENT_SOCKET_PATH", &unbindable);
 
     // Agent::new only records the socket path; the bind happens in start_background.
     let mut agent = Agent::new()?;
@@ -351,102 +273,58 @@ async fn test_unbindable_socket_fails_startup() -> Result<()> {
     Ok(())
 }
 
-/// Test agent creation and basic functionality
+/// The agent constructs with the default configuration.
 #[tokio::test]
 #[serial]
 async fn test_agent_creation() -> Result<()> {
     let _env = set_test_env();
-    // Test that agent can be created without errors
-    let agent = Agent::new();
-    assert!(
-        agent.is_ok(),
-        "Agent creation should succeed with default configuration"
-    );
-
-    let _agent_instance = agent?;
-
-    // Test that agent has valid configuration
-    // We can't access private fields, but we can test that oneshot commands work
-    let test_request = r#"{"type":"git_status","path":".","format":"json"}"#;
-    let result = Agent::handle_oneshot(test_request);
-
-    // Should either succeed or fail gracefully (not panic)
-    if let Ok(response) = result {
-        assert!(
-            !response.is_empty(),
-            "Oneshot command response should not be empty"
-        );
-    } else {
-        // Error is acceptable if git is not available or other issues
-    }
-
+    let _agent = Agent::new()?;
     Ok(())
 }
 
-/// Test rapid oneshot command execution (simulates CLI usage)
+/// Several back-to-back oneshot requests all succeed with a non-empty reply.
 #[tokio::test]
-#[serial(git_operations)] // Serialize with other git-heavy tests: each spawns a real `git status` subprocess
+#[serial]
 async fn test_rapid_oneshot_execution() -> Result<()> {
     let _env = set_test_env();
-    let agent = Agent::new()?;
 
-    // Execute multiple oneshot commands rapidly
-    let mut handles = Vec::new();
-
-    for i in 0_i32..5_i32 {
-        let _agent_ref = &agent;
-        let handle = async move {
-            let request = if i % 2_i32 == 0_i32 {
-                r#"{"type":"git_status","path":".","format":"json"}"#
-            } else {
-                r#"{"type":"language_detect","path":".","format":"json"}"#
-            };
-
-            Agent::handle_oneshot(request)
+    let handles = (0_i32..5_i32).map(|i| async move {
+        let request = if i % 2_i32 == 0_i32 {
+            r#"{"type":"git_status","path":".","format":"json"}"#
+        } else {
+            r#"{"type":"language_detect","path":".","format":"json"}"#
         };
+        Agent::handle_oneshot(request)
+    });
 
-        handles.push(handle);
-    }
-
-    // Wait for all commands to complete
-    let results = futures::future::join_all(handles).await;
-
-    // All commands should complete (successfully or with errors, but not panic)
-    for (i, result) in results.into_iter().enumerate() {
-        match result {
-            Ok(response) => {
-                assert!(
-                    !response.is_empty(),
-                    "Rapid oneshot response {i} should contain data"
-                );
-            }
-            Err(e) => {
-                // Errors are acceptable, just ensure they're reasonable
-                let error_msg = e.to_string();
-                assert!(
-                    !error_msg.contains("panic") && !error_msg.contains("thread"),
-                    "Rapid oneshot error {i} should be graceful, not panic: {error_msg}"
-                );
-            }
-        }
+    for (i, result) in futures::future::join_all(handles)
+        .await
+        .into_iter()
+        .enumerate()
+    {
+        let response = result?;
+        assert!(
+            !response.is_empty(),
+            "Rapid oneshot response {i} should contain data"
+        );
     }
 
     Ok(())
 }
 
-struct TestEnvGuard {
-    prev_config_path: Option<OsString>,
-    prev_home: Option<OsString>,
-    prev_xdg_config: Option<OsString>,
-    prev_xdg_cache: Option<OsString>,
-    prev_xdg_runtime: Option<OsString>,
-    prev_disable_watcher: Option<OsString>,
-    _temp_dir: tempfile::TempDir,
+/// Temporary HOME/XDG directories holding a default config, with the matching
+/// environment overrides. Field order matters: the environment is restored
+/// before the directory is removed.
+struct TestEnv {
+    _env: EnvGuard,
+    _home: TempDir,
 }
 
-fn set_test_env() -> TestEnvGuard {
-    let temp_dir = tempfile::tempdir().expect("create temp test dir");
-    let home = temp_dir.path();
+/// Point every configuration lookup at a fresh temporary directory so the
+/// agent runs on the built-in defaults, never a developer's local config.
+fn set_test_env() -> TestEnv {
+    let home_dir = tempdir().expect("create temp test dir");
+    let home = home_dir.path();
     let config_root = home.join(".config");
     let cache_root = home.join(".cache");
     let runtime_root = home.join(".runtime");
@@ -468,53 +346,15 @@ fn set_test_env() -> TestEnvGuard {
     )
     .expect("write default config");
 
-    let prev_config_path = std::env::var_os("GPY_CONFIG_PATH");
-    let prev_home = std::env::var_os("HOME");
-    let prev_xdg_config = std::env::var_os("XDG_CONFIG_HOME");
-    let prev_xdg_cache = std::env::var_os("XDG_CACHE_HOME");
-    let prev_xdg_runtime = std::env::var_os("XDG_RUNTIME_DIR");
-    let prev_disable_watcher = std::env::var_os("GPY_DISABLE_WATCHER");
+    let mut env = EnvGuard::set_one("GPY_CONFIG_PATH", &config_path);
+    env.set("HOME", home);
+    env.set("XDG_CONFIG_HOME", &config_root);
+    env.set("XDG_CACHE_HOME", &cache_root);
+    env.set("XDG_RUNTIME_DIR", &runtime_root);
+    env.set("GPY_DISABLE_WATCHER", "1");
 
-    unsafe {
-        std::env::set_var("GPY_CONFIG_PATH", &config_path);
-        std::env::set_var("HOME", home);
-        std::env::set_var("XDG_CONFIG_HOME", &config_root);
-        std::env::set_var("XDG_CACHE_HOME", &cache_root);
-        std::env::set_var("XDG_RUNTIME_DIR", &runtime_root);
-        std::env::set_var("GPY_DISABLE_WATCHER", "1");
-    };
-
-    TestEnvGuard {
-        prev_config_path,
-        prev_home,
-        prev_xdg_config,
-        prev_xdg_cache,
-        prev_xdg_runtime,
-        prev_disable_watcher,
-        _temp_dir: temp_dir,
+    TestEnv {
+        _env: env,
+        _home: home_dir,
     }
 }
-
-impl Drop for TestEnvGuard {
-    fn drop(&mut self) {
-        restore_env("GPY_CONFIG_PATH", self.prev_config_path.take());
-        restore_env("HOME", self.prev_home.take());
-        restore_env("XDG_CONFIG_HOME", self.prev_xdg_config.take());
-        restore_env("XDG_CACHE_HOME", self.prev_xdg_cache.take());
-        restore_env("XDG_RUNTIME_DIR", self.prev_xdg_runtime.take());
-        restore_env("GPY_DISABLE_WATCHER", self.prev_disable_watcher.take());
-    }
-}
-
-fn restore_env(key: &str, value: Option<OsString>) {
-    unsafe {
-        if let Some(prev) = value {
-            std::env::set_var(key, prev);
-        } else {
-            std::env::remove_var(key);
-        }
-    }
-}
-// These tests rely on the default (built-in) configuration. `set_test_env`
-// points configuration lookups at a temporary directory so the agent does not
-// read a developer's local config.

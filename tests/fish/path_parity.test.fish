@@ -1,12 +1,11 @@
 #!/usr/bin/env fish
-# Differential cross-shell path parity harness (#476).
+# Differential cross-shell path parity harness.
 #
 # Path resolution is implemented four times -- in the Rust agent/CLI, in Fish,
-# in Bash and in Zsh -- for two roots (runtime and cache). They agree today only
-# by convention, and nothing enforced it. This harness runs
+# in Bash and in Zsh -- for two roots (runtime and cache). This harness runs
 # `gpy debug paths --format kv` and each shell's `__gpy_debug_paths` under a
-# matrix of synthetic environments and diffs the FULL maps, so #477 can
-# centralize resolution and prove it changed nothing on Unix.
+# matrix of synthetic environments and diffs the FULL maps, so any drift
+# between the implementations fails the gate.
 #
 # Three contracts are enforced here, all of them ratchets -- each fails when the
 # world gets BETTER as well as when it gets worse, so nothing rots into a
@@ -17,38 +16,23 @@
 #
 #   2. Ownership (GPY_PP_OWNERS). Each key names the implementations that
 #      resolve it. An owner emitting <unimplemented> fails, and so does a
-#      non-owner emitting a path. When #477 teaches Bash to read a theme
-#      export, this table must be updated in the same commit.
+#      non-owner emitting a path. A shell that starts resolving a key must
+#      update this table in the same commit.
 #
 #   3. Divergences (GPY_PP_DIVERGENCES). Every disagreement between the agent
 #      and a shell must be declared, with the value it currently produces and
-#      the issue that will fix it. An UNDECLARED disagreement fails. So does a
+#      the issue tracking it. An UNDECLARED disagreement fails. So does a
 #      declared one whose value changed shape. So does a declared one that has
 #      started AGREEING -- that is what makes this a ratchet rather than a wish
-#      list: fixing a divergence in #477 forces the entry (and its issue
-#      reference) to be deleted here, in the same commit, or the gate goes red.
-#      And an entry that never fires anywhere fails as obsolete.
-#
-# #476 recorded the contract rather than fixing it; #626 then decided every
-# recorded divergence and implemented one answer across the agent, Fish, Bash
-# and Zsh, which is why GPY_PP_DIVERGENCES below is now empty.
-#
-# The one path #476 left uncovered -- `gpy_config_runtime_dir` /
-# `gpy_config_path` in fish/core/util.fish, a THIRD runtime-root
-# implementation (fallback `/tmp/gpy-$USER`, not `/tmp/gpy`) pointing at a
-# `config.json` snapshot nothing in the agent ever writes -- was deleted by
-# #626 rather than diffed: it had no second side to compare against, its
-# readers (`gpy_setup` printed it, `gpy_config_validate` `test -f`'d it, never
-# true) now use `__gpy_runtime_root` and `__gpy_locate_config_path`, and a
-# fourth resolver was exactly the drift this harness exists to prevent.
+#      list: fixing a divergence forces the entry to be deleted here, in the
+#      same commit, or the gate goes red. And an entry that never fires
+#      anywhere fails as obsolete.
 
 set -l repo_root (path resolve (status dirname)/../..)
 
 echo "Testing cross-shell path parity..."
 
-# ============================================================================
-# CONTRACT
-# ============================================================================
+# --- CONTRACT ---
 
 # The key set, in emission order. Mirrors `commands::debug_paths::KEYS`.
 set -g GPY_PP_KEYS \
@@ -66,11 +50,11 @@ set -g GPY_PP_KEYS \
 # agent and the shells that own it; a non-owner must say <unimplemented> so the
 # gap is a declared property rather than an accident.
 #
-# Every shell talks to the agent, reads its pre-rendered cache, and (since
-# #638) records its PID under the runtime root's shells/ directory for the
-# agent's restart nudge. Fish additionally sources the theme export by path
-# and locates config.toml for its own prompt resolution. theme_dir is the
-# agent's alone -- no shell ever locates a theme file.
+# Every shell talks to the agent, reads its pre-rendered cache, and records
+# its PID under the runtime root's shells/ directory for the agent's restart
+# nudge. Fish additionally sources the theme export by path and locates
+# config.toml for its own prompt resolution. theme_dir is the agent's alone --
+# no shell ever locates a theme file.
 set -g GPY_PP_OWNERS \
     "runtime_root:rust,fish,bash,zsh" \
     "socket:rust,fish,bash,zsh" \
@@ -93,22 +77,20 @@ set -g GPY_PP_OWNERS \
 # an error. Either kind is held to its word: the moment a covered comparison
 # AGREES, the entry fails.
 #
-# BOTH sides are pinned. The shell glob alone would let #477 change the agent's
-# value while the shell still disagreed, and the entry would absorb it silently
-# — which is precisely the change this harness exists to catch. Globs match the
-# normalized values (%T% = scratch root, %PWHOME% = passwd home).
+# BOTH sides are pinned. The shell glob alone would let the agent's value
+# change while the shell still disagreed, and the entry would absorb it
+# silently — which is precisely the change this harness exists to catch. Globs
+# match the normalized values (%T% = scratch root, %PWHOME% = passwd home).
 #
-# Every entry below was produced by running this matrix, not by reading code.
+# An entry must be produced by running this matrix, not by reading code.
 #
-# The table is EMPTY, and that is the contract now: #626 decided each of the
-# 32 recorded disagreements (empty/relative `$XDG_*` values, an absent `HOME`,
-# Fish's extra `$HOME/.gpy.toml` config candidate, and empty
-# `GPY_CONFIG_PATH`/`GPY_AGENT_SOCKET_PATH` overrides) and implemented one
-# answer across the agent and all three shells, so every comparison in the
-# matrix agrees. Keep it empty: a new entry here is a new way for the prompt
-# and the agent to read and write different paths, and needs the same
-# treatment -- decide the correct behaviour and implement it everywhere --
-# rather than a note.
+# The table is EMPTY, and that is the contract: empty/relative `$XDG_*`
+# values, an absent `HOME`, and empty `GPY_CONFIG_PATH`/`GPY_AGENT_SOCKET_PATH`
+# overrides all resolve identically across the agent and all three shells, so
+# every comparison in the matrix agrees. Keep it empty: a new entry here is a
+# new way for the prompt and the agent to read and write different paths, and
+# needs the same treatment -- decide the correct behaviour and implement it
+# everywhere -- rather than a note.
 set -g GPY_PP_DIVERGENCES
 
 # Environment variables the matrix controls. Any variable named in a case is
@@ -116,9 +98,7 @@ set -g GPY_PP_DIVERGENCES
 # never inherits the developer's own environment.
 set -g GPY_PP_VARS XDG_RUNTIME_DIR XDG_CACHE_HOME XDG_CONFIG_HOME HOME GPY_AGENT_SOCKET_PATH GPY_CONFIG_PATH
 
-# ============================================================================
-# FIXTURE
-# ============================================================================
+# --- FIXTURE ---
 
 set -g GPY_PP_BIN $repo_root/gpy-agent/target/debug/gpy
 if not test -x "$GPY_PP_BIN"
@@ -137,19 +117,18 @@ set -g GPY_PP_ROOT $repo_root
 set -g GPY_PP_TMP (path resolve (mktemp -d))
 set -g GPY_PP_ERR $GPY_PP_TMP/stderr.log
 
-# Fish and Zsh re-derive $HOME from the passwd database when the environment
-# does not carry it; Bash and the agent do not. That is itself a path
-# divergence worth recording, but the derived path is machine-specific, so
-# normalize it to %PWHOME% and let the divergence table quote it portably.
+# A shell may re-derive $HOME from the passwd database when the environment
+# does not carry it. The derived path is machine-specific, so normalize it to
+# %PWHOME% and let values (and any divergence entry) compare portably.
 set -g GPY_PP_PWHOME (env -u HOME fish --no-config -c 'echo $HOME' 2>/dev/null)
 
 # `home` has both a `.config/gpy/config.toml` and a `~/.gpy.toml`; `home2` has
-# only the latter, which is the shape that exposes Fish's extra candidate.
-# `emptyconf` is an XDG_CONFIG_HOME directory holding no config at all -- the
-# shape reported live on #476. `home3` holds no config of any kind, which is
-# what isolates the empty-XDG_CONFIG_HOME divergence onto `config_path`: with
-# no candidate existing anywhere, each side falls back to its own first
-# candidate and the difference stops being hidden by an existence check.
+# only the latter, which must never be picked up as a config candidate.
+# `emptyconf` is an XDG_CONFIG_HOME directory holding no config at all.
+# `home3` holds no config of any kind: with no candidate existing anywhere,
+# each side falls back to its own first candidate, so an empty
+# XDG_CONFIG_HOME's effect on `config_path` is not hidden by an existence
+# check.
 mkdir -p \
     $GPY_PP_TMP/run \
     $GPY_PP_TMP/cache \
@@ -168,13 +147,11 @@ touch \
     $GPY_PP_TMP/home2/.gpy.toml \
     $GPY_PP_TMP/cfg/custom.toml
 
-# ============================================================================
-# MATRIX
-# ============================================================================
+# --- MATRIX ---
 #
 # `name;VAR=value;VAR=value...`. A variable absent from a case is unset; a
-# variable with an empty value is set-but-empty, which is the state the three
-# shells and the agent were each reported to handle differently.
+# variable with an empty value is set-but-empty, a distinct state every
+# implementation must handle identically.
 set -g GPY_PP_CASES \
     "xdg_all_set;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home" \
     "runtime_unset;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home" \
@@ -205,9 +182,7 @@ set -g GPY_PP_CASES \
     "config_override_relative;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home;GPY_CONFIG_PATH=rel/custom.toml" \
     "config_override_empty;XDG_RUNTIME_DIR=%T%/run;XDG_CACHE_HOME=%T%/cache;XDG_CONFIG_HOME=%T%/conf;HOME=%T%/home;GPY_CONFIG_PATH="
 
-# ============================================================================
-# HARNESS
-# ============================================================================
+# --- HARNESS ---
 
 set -g GPY_PP_FAILURES 0
 set -g GPY_PP_XFAILS 0
@@ -257,7 +232,7 @@ function __pp_dump --description 'Run one implementation and echo its key=value 
         case fish
             # Fish re-derives an unset or empty HOME at startup, so the
             # case's HOME has to be reinstated inside the child, before the
-            # resolvers run; otherwise the passwd fallback (#845) is never
+            # resolvers run; otherwise the passwd fallback is never
             # exercised and fish would trivially agree with the agent.
             set -l home_mode keep
             if contains -- HOME= $env_args
@@ -352,9 +327,7 @@ function __pp_divergence --description 'Echo the declared divergences matching c
     end
 end
 
-# ============================================================================
-# RUN
-# ============================================================================
+# --- RUN ---
 
 # A relative GPY_CONFIG_PATH resolves against the CWD, and the relative
 # runtime root an empty XDG_RUNTIME_DIR produces is CWD-sensitive too; the
@@ -453,10 +426,10 @@ for entry in $GPY_PP_DIVERGENCES
     end
 end
 
-# Contract 1, JSON half: `--format json` is the documented interface (#476), so
-# it must carry the same keys in the same order as the kv form the diff uses.
+# Contract 1, JSON half: `--format json` is the documented interface, so it
+# must carry the same keys in the same order as the kv form the diff uses.
 # Runs in the matrix's all-set sandbox: `debug paths` creates the runtime root,
-# which must not land under the caller's own XDG_RUNTIME_DIR (#665).
+# which must not land under the caller's own XDG_RUNTIME_DIR.
 set -l json_keys (env (__pp_env_args XDG_RUNTIME_DIR=%T%/run XDG_CACHE_HOME=%T%/cache XDG_CONFIG_HOME=%T%/conf HOME=%T%/home) $GPY_PP_BIN debug paths --format json | string match -r '^  "([a-z_]+)":' -g)
 if test "$json_keys" != "$GPY_PP_KEYS"
     __pp_fail "--format json key set/order differs from the contract
@@ -466,7 +439,7 @@ else
     echo "✅ --format json emits the contract key set in order"
 end
 
-# Cache key encoding, against a file the agent wrote (#705). A repo whose path holds
+# Cache key encoding, against a file the agent wrote. A repo whose path holds
 # the Windows-reserved characters ? and | must resolve to the file the agent wrote: the
 # agent escapes only the five documented tokens on Unix. Runs in a child fish with a
 # short-path sandbox (unix socket paths are length-limited) and a supervisor-less agent.
@@ -484,7 +457,7 @@ git -C $odd_repo config core.hooksPath /dev/null
 echo hello >$odd_repo/tracked.txt
 git -C $odd_repo add tracked.txt
 git -C $odd_repo commit -qm init
-# #771: a repo under a ~300-byte path has a key too long for one filename; the agent
+# A repo under a ~300-byte path has a key too long for one filename; the agent
 # stores it chunked and the reader must find it.
 set -l long_repo $e2e_root/long/(string repeat -n 80 a)/(string repeat -n 80 b)/(string repeat -n 80 c)
 mkdir -p $long_repo

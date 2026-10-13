@@ -5,9 +5,9 @@
 # GPY_AGENT_ENABLED and GPY_AGENT_SUPERVISOR_ENABLED after loading the theme
 # export, which sets them from config.toml, hence the sandbox config. The env
 # flags stay for tests whose export never sets them (a stub gpy-agent, or none
-# on PATH) and that would otherwise default to enabled (#657, #762, #835, #836,
-# #837). `[agent.supervisor] enabled = false` alone only stops restarts: the
-# startup start depends on `[agent] enabled` (#842), so the agent is disabled
+# on PATH) and that would otherwise default to enabled.
+# `[agent.supervisor] enabled = false` alone only stops restarts: the
+# startup start depends on `[agent] enabled`, so the agent is disabled
 # as well. A test that needs the IPC paths exports GPY_AGENT_ENABLED=1 after
 # sourcing gpy.bash.
 #

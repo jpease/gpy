@@ -1,9 +1,12 @@
-//! Regression tests for instant-prompt cache invalidation bugs
+//! Instant-prompt cache population through the IPC handlers.
 //!
-//! These tests ensure three specific bugs don't resurface:
-//! 1. GitHandler writes instant-prompt cache after IPC requests (not just watcher)
-//! 2. ClientHandler triggers initial scan on registration
-//! 3. Cache age validation (tested in Fish shell separately)
+//! Covers two invariants:
+//! 1. `GitHandler` writes the instant-prompt cache on every successful IPC
+//!    status request, not only on watcher events.
+//! 2. `ClientHandler` triggers an initial scan on registration, so a new
+//!    shell has a cache entry before the first file change.
+//!
+//! Cache age validation is covered by the Fish shell tests.
 
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::doc_markdown)]
@@ -22,52 +25,69 @@ use gpy_agent::security::SafePath;
 use gpy_agent::theme::ThemeManager;
 use serial_test::serial;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 use tempfile::TempDir;
 
-/// Point `XDG_CACHE_HOME` and `XDG_CONFIG_HOME` into a fresh temp dir and
-/// return its guard.
+#[path = "common/env_guard.rs"]
+mod env_guard;
+#[path = "common/git.rs"]
+mod git;
+#[path = "common/wait.rs"]
+mod wait;
+
+use env_guard::EnvGuard;
+
+/// Upper bound for handler side effects to land on disk.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+const POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Temp XDG cache/config roots that are restored when dropped.
+///
+/// Field order matters: the environment is restored before the directory is
+/// removed.
+struct UserDirs {
+    _env: EnvGuard,
+    _dir: TempDir,
+}
+
+/// Point `XDG_CACHE_HOME` and `XDG_CONFIG_HOME` into a fresh temp dir for the
+/// lifetime of the returned guard.
 ///
 /// These tests read the cache file back through the shell-facing
 /// `InstantPromptCache::cache_file_for_dir`, which resolves the cache root
 /// from the environment, so the cache must be built with `new()` on that same
-/// root rather than `new_for_test()`. Without the redirect they wrote into
-/// the developer's `~/.cache/gpy/instant-prompts` and rendered with their
-/// `~/.config/gpy` palette (#839). `#[serial]` keeps the env mutation from
-/// racing.
-fn isolate_user_dirs() -> TempDir {
+/// root rather than `new_for_test()`. The redirect keeps the tests from
+/// writing into the developer's `~/.cache/gpy/instant-prompts` or rendering
+/// with their `~/.config/gpy` palette. `#[serial]` keeps the env mutation
+/// from racing.
+fn isolate_user_dirs() -> UserDirs {
     let dir = TempDir::new().expect("create temp dir");
-    unsafe {
-        std::env::set_var("XDG_CACHE_HOME", dir.path().join("cache"));
-        std::env::set_var("XDG_CONFIG_HOME", dir.path().join("config"));
+    let mut env = EnvGuard::set_one("XDG_CACHE_HOME", dir.path().join("cache"));
+    env.set("XDG_CONFIG_HOME", dir.path().join("config"));
+    UserDirs {
+        _env: env,
+        _dir: dir,
     }
-    dir
 }
 
-/// Helper to create a test git repository
+/// Create a git repository with one commit.
 fn create_git_repo() -> TempDir {
     let temp_dir = TempDir::new().expect("create temp dir");
     let repo_path = temp_dir.path();
-
-    let run = |args: &[&str]| {
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(repo_path)
-            .status()
-            .expect("git command should execute")
-    };
-
-    assert!(run(&["init"]).success());
-    assert!(run(&["config", "user.email", "test@example.com"]).success());
-    assert!(run(&["config", "user.name", "Test User"]).success());
-    assert!(run(&["config", "commit.gpgsign", "false"]).success());
-
-    // Create initial commit so we have a valid repository
+    git::git_init(repo_path);
     std::fs::write(repo_path.join("README.md"), "# Test").expect("write file");
-    assert!(run(&["add", "."]).success());
-    assert!(run(&["commit", "-m", "Initial commit"]).success());
-
+    git::git(repo_path, &["add", "."]);
+    git::git(repo_path, &["commit", "-q", "-m", "Initial commit"]);
     temp_dir
+}
+
+/// Wait until `path` exists with non-empty content.
+fn wait_for_content(path: &Path) -> bool {
+    wait::wait_until(WRITE_TIMEOUT, POLL_INTERVAL, || {
+        std::fs::read_to_string(path).is_ok_and(|content| !content.is_empty())
+    })
 }
 
 /// Build a palette cache from the manager's active config, matching the wiring
@@ -78,7 +98,7 @@ fn palette_cache_for(config_manager: &Arc<ConfigManager>) -> Arc<gpy_agent::pale
     ))
 }
 
-/// Bundle the handles every publish-and-repaint site shares (#587).
+/// Bundle the handles every publish-and-repaint site shares.
 ///
 /// Uses the embedded builtin theme so the tests stay hermetic: a stale on-disk
 /// ~/.config/gpy/themes/default.toml (predating the format+palette migration)
@@ -97,17 +117,11 @@ fn render_deps(
     }
 }
 
-/// Regression test for Fix #2: GitHandler must write instant-prompt cache after IPC requests
+/// `GitHandler` writes the instant-prompt cache after an IPC status request.
 ///
-/// Bug: Originally, instant-prompt cache was only written by watcher events.
-/// If a client made an IPC request for git status, the cache would not be updated.
-/// This led to stale cache being read on subsequent prompts.
-///
-/// Fix: GitHandler now writes instant-prompt cache in all 4 success paths:
-/// - Cache hit (using stale git cache)
-/// - Fresh status (within 100ms timeout)
-/// - Stale status (after 100ms timeout, using stale git cache)
-/// - Delayed status (after 100ms timeout, no stale cache available)
+/// The write happens on every success path (cache hit, fresh status, stale
+/// status after the timeout, delayed status), so a subsequent prompt never
+/// reads a cache older than the last IPC answer.
 #[test]
 #[serial]
 fn test_git_handler_writes_instant_cache_on_ipc_request() {
@@ -158,44 +172,17 @@ fn test_git_handler_writes_instant_cache_on_ipc_request() {
     };
 
     let response = handler.handle(&message);
-    eprintln!("Handler response: {response:?}");
     assert!(response.is_ok(), "Git status request should succeed");
 
-    // Give a moment for async operations to complete
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    // Check what files exist in cache directory
-    if let Some(parent) = cache_file.parent() {
-        eprintln!("Cache directory contents:");
-        if let Ok(entries) = std::fs::read_dir(parent) {
-            for entry in entries.flatten() {
-                let entry_path = entry.path();
-                let entry_display = entry_path.display();
-                eprintln!("  - {entry_display}");
-            }
-        }
-    }
-
-    // After IPC request, instant-prompt cache file MUST exist
-    // This is the regression test - if GitHandler doesn't write the cache,
-    // this assertion will fail and the bug has resurfaced
     assert!(
-        cache_file.exists(),
-        "REGRESSION: GitHandler did not write instant-prompt cache after IPC request!\n\
-         This was Fix #2 - GitHandler must write cache, not just watcher.\n\
-         Expected cache file: {}",
+        wait_for_content(&cache_file),
+        "GitHandler did not write instant-prompt cache after IPC request: {}",
         cache_file.display()
     );
-
-    // Verify cache content is valid (not empty or corrupted)
-    let cache_content = std::fs::read_to_string(&cache_file).expect("read cache file");
-    assert!(!cache_content.is_empty(), "Cache file should have content");
 }
 
-/// Regression test for Fix #2: GitHandler writes cache even when using cached git status
-///
-/// Bug: Even if git_cache has stale data, instant-prompt cache should be updated.
-/// This test specifically covers the "cache hit" path in GitHandler.
+/// `GitHandler` writes the instant-prompt cache even when answering from a
+/// populated (stale) git status cache: the "cache hit" path.
 #[test]
 #[serial]
 fn test_git_handler_writes_instant_cache_even_with_stale_git_cache() {
@@ -261,26 +248,17 @@ fn test_git_handler_writes_instant_cache_even_with_stale_git_cache() {
     let response = handler.handle(&message);
     assert!(response.is_ok(), "Git status request should succeed");
 
-    // Give a moment for async operations
-    std::thread::sleep(std::time::Duration::from_millis(50));
-
-    // REGRESSION TEST: Even though GitHandler used cached (stale) git status,
-    // it MUST still write the instant-prompt cache
     assert!(
-        cache_file.exists(),
-        "REGRESSION: GitHandler did not write instant-prompt cache when using cached git status!\n\
-         This is the 'cache hit' path in Fix #2."
+        wait::wait_until(WRITE_TIMEOUT, POLL_INTERVAL, || cache_file.exists()),
+        "GitHandler did not write instant-prompt cache when answering from cached git status"
     );
 }
 
-/// Regression test for Fix #3: ClientHandler triggers initial scan on registration
+/// `ClientHandler` triggers an initial scan on registration.
 ///
-/// Bug: When a new client registered, watcher would start watching but wouldn't
-/// trigger an initial git scan. This meant the instant-prompt cache wouldn't exist
-/// until the first file change, causing stale prompts in new shells.
-///
-/// Fix: ClientHandler now calls trigger_initial_scan() after registering with watcher,
-/// which spawns a background thread to scan git status and write instant-prompt cache.
+/// `trigger_initial_scan()` runs on a background thread after the client is
+/// registered with the watcher and writes the instant-prompt cache, so a new
+/// shell gets a cached prompt before any file changes.
 #[test]
 #[serial]
 fn test_client_handler_triggers_initial_scan_on_registration() {
@@ -335,32 +313,17 @@ fn test_client_handler_triggers_initial_scan_on_registration() {
     let response = handler.handle(&message);
     assert!(response.is_ok(), "Client registration should succeed");
 
-    // Give background thread time to complete initial scan
-    // trigger_initial_scan() spawns a background thread, so we need to wait
-    std::thread::sleep(std::time::Duration::from_millis(500));
-
-    // REGRESSION TEST: After registration, instant-prompt cache MUST exist
-    // This ensures Fix #3 is working - initial scan was triggered
+    // The initial scan runs on a background thread; poll for its write.
     assert!(
-        cache_file.exists(),
-        "REGRESSION: ClientHandler did not trigger initial scan on registration!\n\
-         This was Fix #3 - trigger_initial_scan() should write cache immediately."
-    );
-
-    // Verify cache content is valid
-    let cache_content = std::fs::read_to_string(&cache_file).expect("read cache file");
-    assert!(
-        !cache_content.is_empty(),
-        "Cache file should have content from initial scan"
+        wait_for_content(&cache_file),
+        "ClientHandler did not trigger an initial scan on registration: {}",
+        cache_file.display()
     );
 }
 
-/// Regression test: Verify instant-prompt cache is updated when git status changes
-///
-/// This is an integration test that verifies the full pipeline:
-/// 1. Initial IPC request creates cache
-/// 2. Git status changes (new file)
-/// 3. Subsequent IPC request updates cache with new status
+/// The instant-prompt cache follows git status changes across IPC requests:
+/// a clean-repo render is replaced by a dirty-repo render after a new file
+/// appears and the git cache is cleared.
 #[test]
 #[serial]
 fn test_instant_cache_updates_on_status_change() {
@@ -402,8 +365,7 @@ fn test_instant_cache_updates_on_status_change() {
         prev_bg: None,
     };
     assert!(handler.handle(&message).is_ok());
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
+    assert!(wait_for_content(&cache_file), "initial cache not written");
     let initial_cache = std::fs::read_to_string(&cache_file).expect("read initial cache");
 
     // Modify repo - add untracked file
@@ -414,13 +376,12 @@ fn test_instant_cache_updates_on_status_change() {
 
     // Second request - dirty repo
     assert!(handler.handle(&message).is_ok());
-    std::thread::sleep(std::time::Duration::from_millis(100));
 
-    let updated_cache = std::fs::read_to_string(&cache_file).expect("read updated cache");
-
-    // Cache should be different (updated with new status)
-    assert_ne!(
-        initial_cache, updated_cache,
+    assert!(
+        wait::wait_until(WRITE_TIMEOUT, POLL_INTERVAL, || {
+            std::fs::read_to_string(&cache_file)
+                .is_ok_and(|content| !content.is_empty() && content != initial_cache)
+        }),
         "Cache should be updated when git status changes"
     );
 }

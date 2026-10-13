@@ -2,15 +2,14 @@
 # tests/zsh/e2e_reregister_after_restart.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# An idle Zsh shell re-registers after the agent restarts (#647 row 2, pins
-# #638).
+# An idle Zsh shell re-registers after the agent restarts.
 #
 # When the agent (re)starts it writes a `<pid>.reregister` flag for, and rings
 # the SIGURG doorbell of, every PID recorded under <runtime root>/shells/, and
-# keeps nudging tracked shells that stay unregistered. Zsh never recorded its
-# PID and had no handler, so an open shell that stayed in one directory
-# stopped receiving agent notifications for the rest of its life after any
-# restart. With a client registered and idle (no keystrokes from here on):
+# keeps nudging tracked shells that stay unregistered. Zsh must record its PID
+# and handle the doorbell, or an open shell that stays in one directory stops
+# receiving agent notifications for the rest of its life after any restart.
+# With a client registered and idle (no keystrokes from here on):
 #   (a) `gpy-agent stop` then `gpy-agent start` on the same socket leaves the
 #       client registered again within 5 s;
 #   (b) a tracked-file edit then repaints the idle prompt with no keystroke
@@ -22,12 +21,8 @@ ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' \
-    >"$XDG_CONFIG_HOME/gpy/config.toml"
+shell_e2e_text_config '"directory", "git"'
 shell_e2e_start_agent || exit 1
 export GPY_AGENT_ENABLED=1
 export GPY_AGENT_SUPERVISOR_ENABLED=1
@@ -118,7 +113,5 @@ fi
 
 if [ "$failures" -gt 0 ]; then
     shell_e2e_dump_transcript
-    echo "FAILED: $failures assertion(s)"
-    exit 1
 fi
-echo "PASS: zsh re-registers after an agent restart"
+test_finish "zsh re-registers after an agent restart"

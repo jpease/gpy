@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # tests/bash/nextest_retry_policy.test.bash
 #
-# gpy-agent#620: profile.default in gpy-agent/.config/nextest.toml used to
-# retry the ENTIRE suite up to twice (`retries = 2`), which hid first-attempt
-# regressions outside the small set of tests actually known to be flaky and
-# made a green run weaker evidence for outside contributors. Locks in the
-# fix so it can't silently regress back to a blanket retry:
+# profile.default in gpy-agent/.config/nextest.toml must not retry the
+# ENTIRE suite: a blanket retry hides first-attempt regressions outside the
+# small set of tests actually known to be flaky and makes a green run weaker
+# evidence for outside contributors. Asserted:
 #
 #   (a) profile.default carries no unscoped retry budget: either it has no
 #       `retries` key at all, or it is explicitly `retries = 0`.
@@ -22,25 +21,20 @@
 #       on this to grep for the FLAKY line it emits).
 #
 # Point `NEXTEST_TOML_PATH` at another file to check it instead of the repo's
-# real config -- used by this project's own TDD history for this test (see
-# the issue) to show it RED against the pre-#620 config without needing a
-# second copy of this script.
+# real config (e.g. to show this test RED against a blanket-retry config
+# without a second copy of this script).
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
 CONFIG="${NEXTEST_TOML_PATH:-gpy-agent/.config/nextest.toml}"
 
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 if [[ ! -f "$CONFIG" ]]; then
     fail "$CONFIG not found"
-    echo "$failures assertion(s) failed"
-    exit 1
+    test_finish
 fi
 
 mapfile -t LINES <"$CONFIG"
@@ -57,8 +51,7 @@ done
 
 if ((default_start < 0)); then
     fail "$CONFIG has no [profile.default] table"
-    echo "$failures assertion(s) failed"
-    exit 1
+    test_finish
 fi
 
 default_end=$((default_start + 1))
@@ -91,10 +84,10 @@ fi
 # (c) retry visibility is configured.
 echo "--- retry visibility is configured ---"
 if ((!has_status_level)); then
-    fail "[profile.default] does not set status-level -- a retried test's TRY 2+ attempt would not print (gpy-agent#620)"
+    fail "[profile.default] does not set status-level -- a retried test's TRY 2+ attempt would not print"
 fi
 if ((!has_final_status_level)); then
-    fail "[profile.default] does not set final-status-level -- a retried test would not be listed in the run's final summary (gpy-agent#620)"
+    fail "[profile.default] does not set final-status-level -- a retried test would not be listed in the run's final summary"
 fi
 
 # --- Locate every [[profile.default.overrides]] block ------------------
@@ -140,12 +133,12 @@ for ((i = 0; i < line_count; i++)); do
     done
 
     if [[ ! "$comment_block" =~ \#[0-9]+ ]]; then
-        fail "override at $CONFIG:$((start + 1)) sets retries = $override_retries but the comment block immediately above it names no issue (#NNN): a retained retry must link an open tracking issue (gpy-agent#620)"
+        fail "override at $CONFIG:$((start + 1)) sets retries = $override_retries but the comment block immediately above it names no issue (#NNN): a retained retry must link an open tracking issue"
     fi
 done
 echo "  ($override_count override block(s) checked)"
 
-# --- (d) the Fish runner's retry list follows the same rule (#650) ----------
+# --- (d) the Fish runner's retry list follows the same rule ----------
 # scripts/test_fish.sh retries only files named in KNOWN_FLAKY_E2E_TESTS, and
 # every entry must be `<file>.test.fish:#<issue>` naming a test that exists,
 # so a retry there is as traceable as a nextest override. An empty list is
@@ -173,9 +166,4 @@ else
     echo "  ($fish_entry_count Fish retry entr(y/ies) checked)"
 fi
 
-if [[ $failures -ne 0 ]]; then
-    echo "$failures assertion(s) failed"
-    exit 1
-fi
-
-echo "PASS"
+test_finish

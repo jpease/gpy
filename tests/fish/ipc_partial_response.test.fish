@@ -1,18 +1,17 @@
 #!/usr/bin/env fish
-# Regression test for #300: a truncated (partial-write) IPC response must
-# never reach the caller as if it were complete. All three shells previously
-# treated any non-empty read as a valid response, so an agent that wrote
-# `{"status":"o` and then stalled or died mid-write would have that exact
-# truncated string handed to __gpy_request_character/_duration (raw ANSI,
-# printf'd straight into the prompt) — corrupting terminal rendering.
+# A truncated (partial-write) IPC response must never reach the caller as if
+# it were complete. An agent that wrote `{"status":"o` and then stalled or
+# died mid-write must not have that truncated string handed to
+# __gpy_request_character/_duration (raw ANSI, printf'd straight into the
+# prompt) — it would corrupt terminal rendering.
 #
 # The "wedged-mid-write agent" is simulated with a tiny Python listener that
 # accept()s the connection, writes a partial (non-newline-terminated) frame,
 # then goes silent. The listener self-destructs after a few seconds so this
-# test has a hard, deterministic upper bound even if the fix regresses and
-# the client hangs waiting for more bytes.
+# test has a hard, deterministic upper bound even if the client hangs
+# waiting for more bytes.
 #
-# A second case guards against the fix being too strict: a normally-terminated
+# A second case guards against over-strict validation: a normally-terminated
 # complete response must still be returned intact.
 
 set -l script_dir (path dirname (status --current-filename))
@@ -22,7 +21,7 @@ source "$repo_root/fish/core/constants.fish"
 source "$repo_root/fish/core/util.fish"
 source "$repo_root/fish/core/ipc.fish"
 
-print_test_header "IPC partial-response validation (#300)"
+print_test_header "IPC partial-response validation"
 
 if not command -q python3
     test_skip "python3 not installed, cannot simulate a partial-write agent"
@@ -53,10 +52,7 @@ time.sleep(float(sys.argv[2]))
 ' $sock1 $listener_lifetime_secs &
 set -l listener1_pid $last_pid
 
-for i in (seq 1 20)
-    test -S $sock1; and break
-    sleep 0.1
-end
+poll_until 2 test -S $sock1
 
 if not test -S $sock1
     _ipc_partial_cleanup $listener1_pid
@@ -92,10 +88,7 @@ conn.close()
 ' $sock2 &
 set -l listener2_pid $last_pid
 
-for i in (seq 1 20)
-    test -S $sock2; and break
-    sleep 0.1
-end
+poll_until 2 test -S $sock2
 
 if not test -S $sock2
     _ipc_partial_cleanup $listener2_pid

@@ -10,23 +10,11 @@ authors = ["Justin Pease <536+jpease@users.noreply.github.com>"]
 license = "GPL-3.0-or-later"
 readme = "README.md"
 repository = "https://github.com/jpease/gpy"
-homepage = "https://github.com/jpease/gpy"
-documentation = "https://github.com/jpease/gpy#readme"
-keywords = [
-  "git",
-  "status",
-  "language-detection",
-  "agent",
-  "fish-shell",
-  "cross-platform",
-]
-categories = ["command-line-utilities", "development-tools"]
 
-# Never published to crates.io (#502). A registry install would place the two
-# binaries and nothing else -- not the fish/, bash/ and zsh/ trees the prompt
-# renders from -- so it could only ever produce a broken install. Distribution is GitHub Releases plus the
-# jpease/homebrew-tap Homebrew tap. This also means the library surface carries no semver guarantee; see the
-# crate root docs.
+# Never published to crates.io: a registry install would ship the two binaries
+# without the fish/, bash/ and zsh/ trees the prompt renders from. Distribution
+# is GitHub Releases plus the jpease/homebrew-tap Homebrew tap, so the library
+# surface carries no semver guarantee; see the crate root docs.
 publish = false
 
 # Keep the crate contents honest for `cargo package --list` and for anyone
@@ -41,11 +29,10 @@ exclude = [
 ]
 
 [lints.rust]
-# Promotes every warn-level lint -- rustc's own plus whatever clippy level
-# below adds -- to a hard error. Together with clippy.pedantic this is the
-# canonical gate policy (#584): a bare `cargo clippy --all-targets` now
-# matches scripts/quality-check.sh's `-D warnings -W clippy::pedantic`
-# without needing those flags spelled out at every call site.
+# Promotes every warn-level lint -- rustc's own plus the clippy groups below --
+# to a hard error, so a bare `cargo clippy --all-targets` enforces the same
+# baseline as scripts/quality-check.sh. `just lint` (moon.yml) adds the
+# stricter restriction-lint set on top.
 warnings = "deny"
 
 [lints.clippy]
@@ -82,12 +69,10 @@ toml = "1.1.2"
 toml_edit = "0.25.15"
 
 # Language detection: linguist-grade matcher tables (extensions, filenames,
-# path globs, interpreters, content heuristics). Only the language tables are
-# used -- GPY owns the directory walk itself in src/language/detector.rs, so
-# the `gengo` crate that wraps them is deliberately NOT a dependency: its
-# `Gengo::analyze` reads every file in the tree (546 ms at 20k files against a
-# 200 ms hard max, #519) and pulls gix back in, the git backend GPY retired in
-# 0efbaa24. Replaced hyperpolyglot in #523.
+# path globs, interpreters, content heuristics). Only the tables are used --
+# GPY owns the directory walk in src/language/detector.rs. The wrapping `gengo`
+# crate is deliberately NOT a dependency: `Gengo::analyze` reads every file in
+# the tree (too slow for the prompt's latency budget) and pulls in gix.
 gengo-language = "0.15.0"
 
 # File watching
@@ -107,18 +92,18 @@ fork = "0.10"
 nix = { version = "0.31", features = ["signal", "process", "fs", "user"] }
 # Process identity lookup (start time) for the client registry: verifies a
 # PID still belongs to the process we registered before signaling it, so a
-# PID recycled to an unrelated process is never signaled (#319). gpy-agent
-# forbids unsafe code crate-wide, and macOS has no /proc, so this wraps the
-# platform-specific (partly unsafe) lookups instead of us reimplementing them.
+# recycled PID is never signaled. gpy-agent forbids unsafe code crate-wide,
+# and macOS has no /proc, so this wraps the platform-specific (partly unsafe)
+# lookups instead of us reimplementing them.
 sysinfo = "0.39"
 
 # No Windows-specific dependencies: the crate builds natively on Windows as a CLI-only target. The IPC transport is Unix-socket only (see `ipc::native_windows_unsupported`), so the agent does not run there; Fish runs under WSL.
 
 [target."cfg(unix)".dev-dependencies]
-# PTY-backed integration test for wizard terminal restoration (#460): spawns
-# the real `gpy` binary against a pseudo-terminal so the test can assert on
-# actual termios state, which a `RecordingTerminalOps` unit-test double
-# cannot prove. Only reachable through the `test-support` feature.
+# PTY-backed integration test for wizard terminal restoration: spawns the real
+# `gpy` binary against a pseudo-terminal so the test can assert on actual
+# termios state, which a `RecordingTerminalOps` unit-test double cannot prove.
+# Only reachable through the `test-support` feature.
 portable-pty = "0.9"
 
 [features]
@@ -155,6 +140,7 @@ harness = false
 [[bench]]
 name = "formatter_bench"
 harness = false
+
 [[bench]]
 name = "ipc_bench"
 harness = false
@@ -179,49 +165,28 @@ harness = false
 name = "agent_startup_bench"
 harness = false
 
-# No clippy lints in Cargo.toml - all lints configured via the moon task and .clippy.toml
-# This keeps builds fast while allowing strict linting when needed
-#
-# Available lint commands (run from the repo root):
-#   just lint                                 - Strict pre-push gate (moon run gpy-agent:clippy)
-#   cargo clippy --all-targets -- -D warnings - Documented baseline gate
-#
-# Benefits:
-#   • Fast builds (no compilation overhead from lint flags) • Strict quality control via CI
-#   • Developer flexibility for local development
-
-[profile.dev]
-# Keep development fast
-opt-level = 0
-debug = true
-overflow-checks = true
-
+# Tuned for build speed, not runtime speed: every local `--release` build
+# (dev installs, scripts/quality-check.sh, shell e2e tests, benchmark scripts)
+# and `cargo bench` (the bench profile inherits it) use this. Shipped binaries
+# are built with `release-dist` below, so local benchmark numbers understate
+# shipped performance.
 [profile.release]
-# Production optimizations - optimized for build reliability
-# Disable LTO to prevent timeouts
 lto = false
-# Maximum parallel compilation units
 codegen-units = 256
-# Smaller binary, faster startup
+# Abort instead of unwinding; a panic terminates the process.
 panic = "abort"
-# Disable stripping to speed up compilation
 strip = false
-# Minimal optimization to speed up compilation
 opt-level = 1
 
-# Custom profile for fast building with some optimization
+# Lightly optimized dev build without debug info or overflow checks.
 [profile.fast]
 inherits = "dev"
 opt-level = 1
-lto = false
-codegen-units = 256
 debug = false
 overflow-checks = false
 
-# Optimized profile for shipping (release) binaries: full optimization + thin
-# LTO for maximum runtime performance. Distinct from `[profile.release]`
-# (which stays fast-to-build for local iteration and the pre-push gate) -- see
-# epic #334.
+# Profile for shipped binaries (scripts/build-release-binaries.sh and the
+# release workflow): full optimization + thin LTO.
 [profile.release-dist]
 inherits = "release"
 opt-level = 3

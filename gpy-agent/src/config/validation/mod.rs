@@ -6,21 +6,19 @@
 //! theme-specific checks live in [`crate::config::validation::theme`], and
 //! low-level color/icon checks live in [`crate::config::validation::colors`].
 //!
-//! ## `Error::config` site audit (#628)
+//! ## `Error::config` site classification
 //!
-//! #600 added [`ValidationError`] for `templates.rs`'s segment-template checks
-//! only, leaving ~45 other `Error::config(String)` sites across `config/`
-//! unaudited. This table is that audit's result: every remaining site,
-//! classified as validation (a field failed a structural/semantic check —
-//! worth a `field_path`/`kind`) or I/O-and-parse/plumbing (no single field is
-//! at fault, so a structured shape adds nothing).
+//! Every `Error::config` site across `config/`, classified as validation (a
+//! field failed a structural/semantic check — worth a `field_path`/`kind`)
+//! or I/O-and-parse/plumbing (no single field is at fault, so a structured
+//! shape adds nothing).
 //!
 //! | File | Sites | Classification |
 //! |---|---|---|
 //! | `metadata.rs` | 22 | Validation — `gpy config set` value parsing per key. 20 converted to [`ValidationError`] (see [`ValidationErrorKind::InvalidValue`], `UnknownKey`, `ReadOnlyKey`). `language.display` and `language.filter` are left as plain `Error::config` text — see the rationale comments at those two call sites in `metadata.rs`. |
 //! | `validation/config.rs` | 2 | Validation — enabled-segment-name and `skip_paths`-absoluteness checks. Converted to `InvalidSegmentName` / `RelativeSkipPath`. |
 //! | `validation/colors.rs` | 2 | Validation — theme color/icon shape checks. Converted to `InvalidColor` / `IconControlChars`. |
-//! | `validation/templates.rs` | 2 | Validation — segment `format` template render failure. Already structured before this issue (#600, `TemplateRenderFailed`); folded into this shared type by #628 so the family has one home. |
+//! | `validation/templates.rs` | 2 | Validation — segment `format` template render failure. Converted to `TemplateRenderFailed`. |
 //! | `loader.rs` | 8 | I/O / parse — reading, parsing, serializing, and writing config/theme files, directory creation, and theme name resolution. Not converted: each failure is a file-system or TOML-parse outcome, not "field X failed a check against a known dotted key". |
 //! | `manager.rs` | 9 | Plumbing — no config paths available, non-UTF-8 config path, poisoned in-memory lock, reload-callback rejection, one test-only stub error. Not converted: none of these are "a field failed a check"; they are process/IO-state errors that have no dotted key to report. |
 
@@ -177,14 +175,11 @@ mod tests {
     use super::{ValidationError, ValidationErrorKind};
     use crate::Error;
 
-    /// Table of every message shape converted by #628.
-    ///
-    /// Each row's `Display` text must match the literal string the
-    /// corresponding `Error::config` call produced before this issue,
-    /// byte-for-byte -- `gpy config set`, `gpy doctor`, and every existing
-    /// test that matches on text must see no change.
+    /// Every converted message shape renders its exact user-facing wording,
+    /// byte-for-byte -- `gpy config set`, `gpy doctor`, and every test that
+    /// matches on text depend on it.
     #[test]
-    fn display_text_matches_pre_628_wording_for_every_converted_shape() {
+    fn display_text_for_every_converted_shape() {
         let cases: &[(ValidationError, &str)] = &[
             (
                 ValidationError {
@@ -418,11 +413,7 @@ mod tests {
     ///
     /// An `Error::Config` built from a `ValidationError` must let callers
     /// downcast `source()` back to the structured error and read
-    /// `field_path`/`kind`, for at least one site per kind. Before #628
-    /// there was no structure to downcast to -- every `Error::config` site
-    /// built `Error::Config { source: None, .. }`, so this assertion fails
-    /// on the pre-#628 tree (nothing to downcast) and passes once
-    /// `From<ValidationError> for Error` is wired in.
+    /// `field_path`/`kind`, for at least one site per kind.
     #[test]
     fn error_config_source_downcasts_to_validation_error_for_every_kind() {
         let samples: Vec<ValidationError> = vec![
@@ -491,7 +482,7 @@ mod tests {
             };
             assert_eq!(*message, display, "message must equal Display text");
 
-            let source_ref = source.as_ref().expect("source must be Some after #628");
+            let source_ref = source.as_ref().expect("source must be Some");
             let downcast = source_ref
                 .downcast_ref::<ValidationError>()
                 .expect("source must downcast back to ValidationError");

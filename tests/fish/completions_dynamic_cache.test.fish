@@ -2,7 +2,7 @@
 # tests/fish/completions_dynamic_cache.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #346 (Epic #326 follow-up): per-session caching of
+# Per-session caching of
 # `gpy __complete <kind>` in fish/completions/gpy-dynamic.fish.
 #
 # `__gpy_complete_cached <kind>` is meant to fork `gpy __complete <kind>` at
@@ -16,7 +16,7 @@
 # calls `__gpy_complete_cached` directly against a stubbed `gpy` function
 # with a call counter -- a fish function shadows any real `gpy` binary on
 # PATH, mirroring the stub-with-counter pattern used in
-# tests/fish/character_directory_memoization.test.fish (#343).
+# tests/fish/character_directory_memoization.test.fish.
 
 set -l test_root (status dirname)/../..
 set -g repo_root (path resolve $test_root)
@@ -40,9 +40,7 @@ function reset_cache_state
     set -g gpy_call_count 0
 end
 
-# ---------------------------------------------------------------------------
 # 1. Warm cache: a second call for the same kind must not re-fork `gpy`.
-# ---------------------------------------------------------------------------
 reset_cache_state
 function gpy
     set -g gpy_call_count (math $gpy_call_count + 1)
@@ -63,9 +61,7 @@ set -l second (__gpy_complete_cached theme)
 check "second call returns the same candidates" "default starship text" "$second"
 check "second call does not fork gpy again (cache hit)" 1 $gpy_call_count
 
-# ---------------------------------------------------------------------------
 # 2. Different kinds are cached independently.
-# ---------------------------------------------------------------------------
 function gpy
     set -g gpy_call_count (math $gpy_call_count + 1)
     if test "$argv[1]" = __complete
@@ -88,9 +84,7 @@ set -l theme_again (__gpy_complete_cached theme)
 check "theme cache is untouched by a different kind's miss" 2 $gpy_call_count
 check "theme candidates still correct after segment lookup" "default starship text" "$theme_again"
 
-# ---------------------------------------------------------------------------
 # 3. Empty/failed result is never cached: every call retries.
-# ---------------------------------------------------------------------------
 reset_cache_state
 function gpy
     set -g gpy_call_count (math $gpy_call_count + 1)
@@ -105,9 +99,7 @@ set -l failed_second (__gpy_complete_cached theme)
 check "failed second call returns nothing" "" "$failed_second"
 check "empty/failed result is never cached (retries)" 2 $gpy_call_count
 
-# ---------------------------------------------------------------------------
 # 4. Once a retry succeeds, the cache then holds for subsequent calls.
-# ---------------------------------------------------------------------------
 function gpy
     set -g gpy_call_count (math $gpy_call_count + 1)
     printf 'nord\n'

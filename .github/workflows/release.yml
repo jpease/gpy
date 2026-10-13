@@ -1,14 +1,10 @@
 name: Release
 
-# Rebuilt in #492 for the current repository layout. The previous version
-# validated root-level `core/`, `segments/`, and `themes/` Fish paths that
-# moved under `fish/` long ago, apt-installed a nonexistent `timeout` package,
-# computed a Cargo version it never compared against the tag, packaged every
-# file with `2>/dev/null || echo "... may be missing"` so an empty archive
-# still went green, and published notes linking three deleted files plus four
-# install methods this project does not ship.
+# Validates the tagged tree against the current layout (Fish under `fish/`),
+# checks the Cargo version against the tag, and fails on any missing package
+# file rather than shipping an empty archive.
 #
-# The packaging and release-note logic now lives in scripts/package-release.sh
+# The packaging and release-note logic lives in scripts/package-release.sh
 # and scripts/release-notes.sh so both are exercised by
 # tests/bash/release_packaging.test.bash on every quality-check run, rather
 # than only when a tag is pushed.
@@ -107,7 +103,7 @@ jobs:
       - name: Install Rust toolchain
         # No `toolchain:` input: the action resolves the pin from
         # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
-        # See that file for why CI must not install @stable (#189, #518).
+        # See that file for why CI must not install @stable (#518).
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           rust-src-dir: gpy-agent
@@ -140,9 +136,8 @@ jobs:
         # instead of skipping. Includes hyperfine for the perf budgets below.
         uses: ./.github/actions/install-shells
 
-      # The same gate a PR runs (pr-gate.yml), so a tag cannot ship something
-      # that would not have merged. `just lint` was missing here until #651,
-      # so a tag could ship code the PR gate would have rejected.
+      # The same gate a PR runs (pr-gate.yml), including `just lint`, so a tag
+      # cannot ship something that would not have merged.
       - name: Rust toolchain gate
         run: just check-rust
 
@@ -225,7 +220,7 @@ jobs:
       - name: Install Rust toolchain
         # No `toolchain:` input: the action resolves the pin from
         # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
-        # See that file for why CI must not install @stable (#189, #518).
+        # See that file for why CI must not install @stable (#518).
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           rust-src-dir: gpy-agent
@@ -324,7 +319,7 @@ jobs:
       - name: Install Rust toolchain
         # No `toolchain:` input: the action resolves the pin from
         # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
-        # See that file for why CI must not install @stable (#189, #518).
+        # See that file for why CI must not install @stable (#518).
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           rust-src-dir: gpy-agent
@@ -374,8 +369,7 @@ jobs:
     # per shell on Linux and on macOS (the arm64 runner runs the aarch64
     # binaries; the x86_64 macOS binaries are built and checksummed but
     # not run); the two .exe `--version`s and `gpy --help` on Windows
-    # (CLI-only). The macOS leg used to be left out because that runner billed
-    # 10x on the private repository; hosted runners are free now (#556).
+    # (CLI-only).
     name: Smoke-run packaged binaries (${{ matrix.os }})
     needs: [validate, package]
     timeout-minutes: 30

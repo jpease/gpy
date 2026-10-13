@@ -27,7 +27,7 @@ pub fn read_small_file(path: &Path, cap: usize) -> std::io::Result<String> {
 /// On Unix this checks real access rights via `access(2)` (`W_OK`), not
 /// mode bits — `std::fs::Permissions::readonly()` is `mode & 0o222 == 0`,
 /// which ignores ownership and ACLs and so reports a root-owned 755
-/// directory as writable to any user (#566). A path that doesn't exist, or
+/// directory as writable to any user. A path that doesn't exist, or
 /// that `access` can't evaluate, is treated as read-only (fail closed —
 /// this only feeds a display glyph, so the safe default is "don't claim
 /// writable").
@@ -39,7 +39,7 @@ pub fn directory_is_read_only(path: &Path) -> bool {
 
 /// Non-Unix fallback: mode-bit check via `std::fs::Permissions::readonly()`.
 /// Native Windows has no POSIX `access(2)` equivalent wired through `nix`;
-/// ACL-aware evaluation there is explicitly out of scope for #566.
+/// ACL-aware evaluation there is out of scope.
 #[cfg(not(unix))]
 #[must_use]
 pub fn directory_is_read_only(path: &Path) -> bool {
@@ -84,16 +84,14 @@ mod tests {
         assert!(read_small_file(&path, 4_096).is_err());
     }
 
-    /// Regression test for #566: `std::fs::Permissions::readonly()` is mode
-    /// bits (`mode & 0o222 == 0`), which ignores ownership.
+    /// `std::fs::Permissions::readonly()` is mode bits (`mode & 0o222 == 0`),
+    /// which ignores ownership, so it must not decide read-only-ness.
     ///
     /// `/usr` is root-owned, mode 755 (world-readable/executable,
     /// owner-writable only) on every macOS/Linux box this runs on, so a normal
     /// user can never write there even though the mode bits alone (`0o755 &
     /// 0o222 != 0`, since the owner-write bit is set) would say "writable".
-    /// The old `metadata().permissions().readonly()` logic reports `false`
-    /// (writable) for exactly this path — this test would fail against that
-    /// implementation and only passes against the `access(2)`-based fix.
+    /// Only the `access(2)`-based check reports it read-only.
     ///
     /// Skipped when running as root: root can write anywhere `access(2)`
     /// or not, so the assertion wouldn't hold and isn't testing anything

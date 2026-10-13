@@ -82,7 +82,7 @@ pub struct AgentContext {
     /// The one [`crate::watcher::WatchRegistry`] the agent shares with its
     /// repo, config and theme watchers, so all three classify events against
     /// the same registered config paths and the same `git.watch_worktree`
-    /// setting (#617). Held here because `create_watcher` — the single
+    /// setting. Held here because `create_watcher` — the single
     /// production entry point that builds the repo watcher, on startup and
     /// again after a config reload — has no other handle to it.
     pub watch_registry: Arc<crate::watcher::WatchRegistry>,
@@ -90,10 +90,10 @@ pub struct AgentContext {
 
 /// Serializes [`refresh_and_notify_if_changed`] **per repository** so that a
 /// stale scan can never overwrite a fresher one, while different repositories
-/// stay fully concurrent (#418).
+/// stay fully concurrent.
 ///
 /// Every git watcher event is dispatched on its own thread and the periodic
-/// reconcile timer runs its own scan (#417); two of those can target the *same*
+/// reconcile timer runs its own scan; two of those can target the *same*
 /// repo at once. `refresh_and_notify_if_changed` is a compound
 /// read-`previous` → run-git-subprocess → write-cache → compare-and-signal
 /// sequence that is **not** atomic as a whole, so two concurrent scans of one
@@ -102,7 +102,7 @@ pub struct AgentContext {
 /// coordinator collapses concurrent same-repo work into "run once, then run
 /// exactly once more if something changed while the run was in flight."
 ///
-/// Cross-repo concurrency is preserved (regression guard for #306): the inner
+/// Cross-repo concurrency is preserved: the inner
 /// `Mutex` is held only for the brief map bookkeeping inside [`Self::try_start`]
 /// / [`Self::finish`], never across the expensive git-status scan, so a refresh
 /// for repo B never waits on an in-flight refresh for repo A.
@@ -255,78 +255,22 @@ pub fn handle_file_event(ctx: &AgentContext, event: &DebouncedEvent, config: &Co
 /// incremental status scan, returning the hint for [`refresh_repo_status`]
 /// (`None` = full scan).
 ///
-/// Escalation is per *event*, not per path: the hint becomes one git
-/// invocation, so a single path that needs a full scan forces one for the whole
-/// coalesced burst (#466). That is also what keeps a HEAD write from being
-/// swallowed by the worktree edits it arrived with — branch, ahead/behind,
-/// stash, detached, and operation state all come back from the full scan.
+/// Escalation is per *event*, not per path: one global path forces a full
+/// scan for the whole coalesced burst, so a HEAD write is never swallowed by
+/// the worktree edits it arrived with. A full scan is forced by:
 ///
-/// Three kinds of path force a full scan:
-///
-/// - **`.gitignore`**, wherever it sits in the worktree: it changes the status
-///   of *other* files (a previously untracked file becomes ignored, or stops
-///   being), so a path-limited scan would report stale results for paths the
-///   pathspec never names. It is a worktree file, never a `.git` internal, so
-///   it is matched by name rather than by location.
-/// - **Anything under `.git/`** — the repository-global files (`config`,
-///   `info/exclude`, `HEAD`, `packed-refs`; `git gc`/`git pack-refs` can move
-///   any ref into `packed-refs`, #415) and every other internal (`index`,
-///   `refs/…`, `ORIG_HEAD`, `logs/…`) alike. `git status` never reports on
-///   `.git` internals, so a scan limited to one comes back empty; the
-///   multi-path update reads "absent from the scan" as "clean now" — correct
-///   for a worktree file, but for a ref write it would silently drop the
-///   repository-wide refresh that write implies (#466). Before multi-path
-///   these fell through to a full scan anyway, via an empty result; escalating
-///   up front just skips the doomed subprocess.
-/// - **The repository root itself**: a `Git` event whose path *is* the
-///   watched root is a whole-repo signal; hinting it would strip down to the
-///   empty pathspec git rejects outright, wasting a doomed subprocess before
-///   falling back (#448). A rescan (#431 queue overflow, #442 native→poll
-///   backend swap) reaches the same "no hint" outcome via
-///   [`GitPaths::WholeRepo`] directly (#616) rather than by naming the root as
-///   a path — this root-path handling stays in place as defence for any other
-///   event that happens to carry the root as its path.
-///
-/// # Why the `.git` files are matched by location, not by filename (#611)
-///
-/// The four repository-global names (`config`, `exclude`, `HEAD`,
-/// `packed-refs`) used to be tested with `Path::ends_with` against the raw
-/// event path, *before* the repo-relative path was even computed.
-/// `Path::ends_with` matches whole components, so that fired for any worktree
-/// file or directory bare-named `config`, `HEAD`, `exclude` or `packed-refs` —
-/// e.g. this repository's own `gpy-agent/src/config/`, which some watcher
-/// backends report as a directory-level path on a rename or create batch —
-/// forcing a whole-repo scan for an ordinary edit.
-///
-/// Gating those four on `.git` membership loses nothing versus the old
-/// filename test — every case it could fire on already reaches `None` by
-/// another route: a path outside `git_root`, or `git_root` itself, returns
-/// `None` from `incremental_relative_path` (this is how a submodule's or
-/// linked worktree's external git dir escalates — see
-/// `external_git_dir_paths_yield_no_incremental_hint`), and a path *under*
-/// `.git/` is caught by the membership check itself — and it additionally
-/// catches a case the old test only caught by accident. The membership check
-/// tests every component of the relative path, not just the first, so a
-/// **nested** repository's own git-internal file (`nested-repo/.git/HEAD`,
-/// where `.git` is the *second* component of the path relative to the
-/// *parent* repo — e.g. because the watcher momentarily attributed the event
-/// to the parent while the nested repo's own `.git` directory was briefly
-/// absent, mid-move or mid-delete) still escalates: `git status` cannot
-/// report on it any more than it can a top-level `.git` internal, so a scan
-/// limited to it would come back empty and be misread as "clean now" (#466).
-/// The old by-name filename test happened to also catch this, purely because
-/// `Path::ends_with` matches a named component at any depth; that protection
-/// would have been lost by a first-component-only membership check, which is
-/// why this one walks every component instead. Only `.gitignore` is
-/// genuinely a worktree file that must escalate, so it keeps its by-name test.
-/// (A repository whose git directory is *not* named `.git`, via `GIT_DIR`,
-/// never reaches here at all: the watcher classifies git events on a `.git`
-/// path component, and `find_git_root` looks for `.git`.)
+/// - **`.gitignore`** anywhere in the worktree (matched by name): it changes
+///   the status of files the pathspec never names.
+/// - **Any path with a `.git` component** (matched by location, at any depth,
+///   so a nested repo's `nested/.git/HEAD` escalates too): `git status` never
+///   reports on `.git` internals, and an empty limited scan would be misread
+///   as "clean now". Matching by location rather than filename keeps worktree
+///   files named `config`/`HEAD` (e.g. `src/config/`) on the incremental path.
+/// - **The repo root itself or any path outside it**, rejected by
+///   `incremental_relative_path` (this is how external git dirs of submodules
+///   and linked worktrees escalate).
+/// - [`GitPaths::WholeRepo`] (debouncer bound exceeded, or a rescan).
 fn git_paths_hint(paths: &GitPaths, git_root: &Path) -> Option<Vec<PathBuf>> {
-    // GitPaths::WholeRepo -- whether from accumulation past the debouncer's
-    // bound or a rescan emitting it directly (#616) -- is already the
-    // full-scan signal; the root-path check below is defence for any other
-    // event that happens to carry the watched root as its path.
     let candidates = paths.as_slice()?;
     if candidates.is_empty() {
         return None;
@@ -335,10 +279,7 @@ fn git_paths_hint(paths: &GitPaths, git_root: &Path) -> Option<Vec<PathBuf>> {
     for path in candidates {
         // Also rejects the repo root itself and anything outside the repo.
         let relative = incremental_relative_path(path, git_root)?;
-        // Component-wise, not `starts_with(".git")`: a `.git` anywhere in the
-        // relative path — not just as its first component — is still a
-        // git-internal file `git status` cannot report on (see the doc
-        // comment above for the nested-repo case this catches).
+        // Component-wise, not `starts_with(".git")`: see the doc comment.
         if relative.components().any(|c| c.as_os_str() == ".git") {
             return None;
         }
@@ -357,7 +298,7 @@ fn git_paths_hint(paths: &GitPaths, git_root: &Path) -> Option<Vec<PathBuf>> {
 ///
 /// The root strips to the empty path, which git rejects as a pathspec
 /// (`fatal: empty string is not a valid pathspec`), so callers must fall back
-/// to a full scan rather than shell out (#448).
+/// to a full scan rather than shell out.
 fn incremental_relative_path<'a>(changed: &'a Path, git_root: &Path) -> Option<&'a Path> {
     let relative_path = changed.strip_prefix(git_root).ok()?;
     if relative_path.as_os_str().is_empty() {
@@ -526,7 +467,7 @@ fn detect_languages(ctx: &AgentContext, root: &Path) -> Vec<crate::language::Det
 }
 
 /// Outcome of writing the rendered instant-prompt cache for a repository
-/// refresh (#446).
+/// refresh.
 ///
 /// Mirrors [`InstantPromptCache::write_git`]'s three-way `Result<bool>`
 /// contract, plus a fourth state for when no write was even attempted:
@@ -565,7 +506,7 @@ enum CacheWriteOutcome {
 
 /// Result of [`refresh_repo_status`] / [`try_incremental_update_with`]: the new
 /// repository status (if available) alongside what happened when writing the
-/// rendered instant-prompt cache for it (#446). Kept as one struct (rather
+/// rendered instant-prompt cache for it. Kept as one struct (rather
 /// than a bare tuple) so the repaint decision in
 /// [`refresh_and_notify_if_changed`] reads its intent at the call site.
 struct RepoRefresh {
@@ -582,36 +523,11 @@ struct RepoRefresh {
 /// git cares about) never wake terminals. `paths_hint` of a single path
 /// enables an incremental single-file scan; `None` forces a full scan.
 ///
-/// ## Why a failed write suppresses the repaint (#446)
-///
-/// A repaint doorbell does not push fresh content to shells — it only asks the shell
-/// to re-render its *next* prompt from whatever is currently on disk in the
-/// instant-prompt cache file (see `fish/core/ipc.fish`'s repaint-trigger
-/// handler and `fish/segments/git.fish`'s serve-stale fast path, which reads
-/// the cache file directly, serving stale content plus a background refresh
-/// rather than a synchronous IPC query). So when `write_status_caches`
-/// reports [`CacheWriteOutcome::Failed`], forcing a repaint right now could
-/// only make the shell re-display the SAME stale file it would have shown
-/// anyway — pure noise, and per the shell's serve-stale contract, never
-/// corrupted or empty content, just old. This is suppressed even when
-/// `status_changed` is independently true: the change is not lost, because
-/// `ctx.cache`'s canonical status is updated unconditionally before this
-/// write is attempted (both scan paths do this), so the *next* refresh (next
-/// watcher event or the periodic reconcile tick) retries the write with the
-/// latest status and, once storage recovers, reports `Written` and triggers
-/// the repaint then (see [`CacheWriteOutcome::Written`] doc for why a
-/// recovery write reports `Ok(true)`). A status change is therefore delayed
-/// until content is actually ready to serve, never silently dropped forever.
-///
-/// One narrow case is deliberately traded away: on a *cold* miss (no cache
-/// file at all, e.g. the very first write for a repo failed), `git.fish`
-/// DOES fall back to a bounded synchronous IPC query, so today's
-/// unconditional repaint would have let an idle shell self-heal immediately.
-/// Suppressing it defers that self-heal to the shell's next prompt render,
-/// which cold-misses and runs the same IPC query anyway. That is the same
-/// "idle shell converges on next render, no periodic self-repaint tick"
-/// residual bound `git.fish` already documents, so it is bounded and
-/// consistent rather than a new failure mode.
+/// A [`CacheWriteOutcome::Failed`] write suppresses the repaint even when the
+/// status changed: a repaint only makes the shell re-read the on-disk cache,
+/// which would still be stale. The change is not lost — `ctx.cache` is
+/// updated before the write, so the next refresh retries the write and
+/// repaints once it reports `Written`.
 pub(super) fn refresh_and_notify_if_changed(
     ctx: &AgentContext,
     git_root: &Path,
@@ -626,8 +542,7 @@ pub(super) fn refresh_and_notify_if_changed(
 
     let should_notify = match refresh.cache_write {
         // A recovery (or first-ever) write just landed: the shell can now
-        // render something new, so notify regardless of whether the
-        // repository status itself moved (#446 acceptance criterion 3).
+        // render something new, so notify even if the status did not move.
         CacheWriteOutcome::Written => true,
         // The write failed: never notify solely on this pass, even if the
         // status changed — see the doc comment above for why, and how the
@@ -661,15 +576,13 @@ pub(super) fn refresh_and_notify_if_changed(
 /// Production callers (the file-watcher `FileEvent::Git` arm and the reconcile
 /// `scan_fn`) MUST route through this wrapper instead of calling
 /// `refresh_and_notify_if_changed` directly, so two scans for the *same* repo
-/// can never run concurrently (#418). The raw function stays public for the
-/// existing tests that exercise it in isolation.
+/// can never run concurrently.
 ///
 /// The first pass uses the caller's `paths_hint` (enabling the incremental
 /// single-file fast path in the common case). Any follow-up pass forces a full
 /// scan (`paths_hint = None`): a follow-up represents an *unknown* change that
 /// arrived while the first pass was in flight, so the original hint is stale and
-/// must not be reused (mirrors reconcile's #417 catch-up re-fetching fresh
-/// state rather than replaying a snapshot).
+/// must not be reused.
 pub(super) fn refresh_and_notify_coalesced(
     ctx: &AgentContext,
     git_root: &Path,
@@ -689,7 +602,7 @@ pub(super) fn refresh_and_notify_coalesced(
 /// defensive follow-up cap — is exercised by deterministic unit tests with a
 /// fake scan, without spinning up real git subprocesses.
 ///
-/// Drain-until-quiet (not a single bounded follow-up): unlike #417's reconcile
+/// Drain-until-quiet (not a single bounded follow-up): unlike the reconcile
 /// timer, nothing external re-drives this call, so a change arriving during the
 /// follow-up pass must be serviced here or it would be lost until the next
 /// filesystem event / reconcile tick. `finish` keeps returning `true` until the
@@ -714,9 +627,7 @@ fn run_coalesced<F: FnMut(bool)>(coordinator: &RepoRefreshCoordinator, repo: &Pa
             );
             // Cap hit, but finish() reported a real pending change: service it
             // once more so the final state is captured, then defer any
-            // *further* churn to the reconcile backstop. Without this the final
-            // pending state is dropped until an unrelated event / the ~45s
-            // reconcile (#433).
+            // *further* churn to the reconcile backstop.
             scan(true);
             coordinator.abandon(repo);
             break;
@@ -785,7 +696,7 @@ fn nested_worktree_root(relative: &Path, git_root: &Path) -> PathBuf {
 /// Returns [`RepoRefresh::status`] as `Some` on success, or `None` (so the
 /// caller falls back to a full scan, with `cache_write` left
 /// [`CacheWriteOutcome::NotAttempted`]) when any path is outside the repo or is
-/// the repo root itself (#448), the repository is unreadable, or the cache has
+/// the repo root itself, the repository is unreadable, or the cache has
 /// no entry with complete file details to update.
 ///
 /// A path the scan does not report back is **clean now**, not a reason to bail:
@@ -795,19 +706,11 @@ fn nested_worktree_root(relative: &Path, git_root: &Path) -> PathBuf {
 /// fallback signal instead would make a coalesced burst full-scan whenever one
 /// of its files went clean. Paths git status cannot report on at all — `.git`
 /// internals — never reach here: [`git_paths_hint`] escalates them to a full
-/// scan precisely so this rule stays sound (#466).
+/// scan precisely so this rule stays sound.
 ///
-/// Generic over the [`GitBackend`] used for the capture round so tests can
-/// exercise this orchestration with an instrumented backend instead of a
-/// real `git` subprocess (#470); [`refresh_repo_status_with`] calls this
-/// directly (rather than through a non-generic wrapper of its own) so that
-/// the same `backend` instance also covers its own full-scan call, letting a
-/// single instrumented backend count capture rounds across both paths. There
-/// is no separate non-generic `try_incremental_update`: unlike
-/// `crate::git::status::load_repository_state`/[`load_repository_state_with`]
-/// in `git::status`, this function has exactly one call site in production
-/// code, so a thin wrapper here would have no caller and fail the dead-code
-/// gate — [`refresh_repo_status`] is the production entry point instead.
+/// Generic over the [`GitBackend`] so tests can count capture rounds with an
+/// instrumented backend; [`refresh_repo_status_with`] calls it directly so
+/// one backend instance covers both the incremental and full-scan paths.
 fn try_incremental_update_with<B: GitBackend>(
     backend: &B,
     ctx: &AgentContext,
@@ -882,7 +785,7 @@ fn try_incremental_update_with<B: GitBackend>(
 
 /// Refresh a repository's git status and caches, returning the new status (or
 /// `None` when the repository is unavailable) alongside the instant-prompt
-/// cache write outcome (#446). Attempts a pathspec-limited incremental update
+/// cache write outcome. Attempts a pathspec-limited incremental update
 /// when `paths_hint` names paths under the repo, else a full scan.
 fn refresh_repo_status(
     ctx: &AgentContext,
@@ -895,13 +798,10 @@ fn refresh_repo_status(
 
 /// Generic form of [`refresh_repo_status`], parameterized over the
 /// [`GitBackend`] used for both the incremental and full-scan capture
-/// rounds, so tests can pin how many capture rounds a given event costs
-/// (#470). The same `backend` instance is threaded into
-/// [`try_incremental_update_with`] below, so an instrumented backend counts
-/// invocations from *both* call sites — not just the full scan here — which
-/// is what makes such a test able to catch a regression where an escalation
-/// check silently regresses and the incremental attempt burns a capture
-/// round before falling back to a full scan.
+/// rounds, so tests can count capture rounds per event. The same `backend`
+/// instance is threaded into [`try_incremental_update_with`], so an
+/// instrumented backend sees invocations from *both* call sites, including
+/// an incremental attempt that burns a round before a full-scan fallback.
 ///
 /// Production callers should use [`refresh_repo_status`], which delegates
 /// here with [`NativeGitBackend`].
@@ -972,7 +872,7 @@ fn refresh_repo_status_with<B: GitBackend>(
 }
 
 /// Write the instant-prompt cache and schedule a language refresh for a
-/// status, returning what happened to the cache write (#446).
+/// status, returning what happened to the cache write.
 fn write_status_caches(
     ctx: &AgentContext,
     git_root: &Path,
@@ -1069,42 +969,15 @@ pub(super) fn create_watcher(
         .registry(Arc::clone(&ctx.watch_registry))
         .config(watcher_config)
         .callback(Box::new(move |event: DebouncedEvent| {
-            // #480: gate `FileEvent::Git` on "would a refresh reach anybody",
-            // via `ClientDirectory::has_subscriber` -- the same targeting
-            // rule `notify_repaint*` itself applies, so this can never
-            // silently drift from what a refresh's own notification would
-            // deliver. A repo with no registered (or ancestor-registered)
-            // client would spend a full git capture round producing a cache
-            // write nobody reads and a doorbell with no recipient.
-            //
-            // This lives here -- the watcher callback, the single production
-            // entry point from the watcher into the refresh pipeline -- and
-            // deliberately NOT inside `handle_file_event`: that function has
-            // ~10 existing unit tests that call it directly against an empty
-            // registry and expect a refresh to run regardless (they are
-            // testing scan/cache logic, not subscription), and gating inside
-            // it would force a rewrite of every one of those fixtures for no
-            // behavioral gain, since this callback is the only production
-            // caller.
-            //
-            // Only `FileEvent::Git` is gated. `Config`/`Theme` events are
-            // agent-global (theme cache invalidation, config reload) rather
-            // than per-repo, so a subscriber check on them would be wrong,
-            // not just unnecessary. `Language` events are arguably also
-            // wasteful for an unsubscribed repo, but that is a distinct,
-            // smaller cost and is intentionally out of scope here (#480).
-            //
-            // This does NOT make #468's `is_unregistered_common_gitdir_wake`
-            // guard in `watcher/filesystem.rs` redundant: that guard
-            // suppresses *emission* at the watcher layer (and the debouncer
-            // work that would otherwise follow); this gate suppresses
-            // *refresh* at the agent layer, one step further downstream.
-            // Concretely, the #467/#468 wake-count tests in
-            // `multi_repo_integration_tests.rs` build their own watcher via
-            // `recording_watcher()`, with a callback that only records
-            // `event.repo` -- they never reach this closure or
-            // `handle_file_event` at all, so removing the watcher-layer guard
-            // would fail those tests even though this gate remains in place.
+            // Skip `FileEvent::Git` refreshes nobody would receive, using
+            // `ClientDirectory::has_subscriber` -- the same targeting rule
+            // `notify_repaint*` applies -- so an unsubscribed repo never pays
+            // for a git capture round and a cache write nobody reads. Gated
+            // here (the only production caller) rather than inside
+            // `handle_file_event`, whose unit tests call it with an empty
+            // registry. `Config`/`Theme` events are agent-global, so they are
+            // not gated. This complements, not replaces, the watcher-layer
+            // `is_unregistered_common_gitdir_wake` emission guard.
             if matches!(event.event, FileEvent::Git { .. })
                 && !ctx_for_callback.registry.has_subscriber(&event.repo)
             {
@@ -1164,10 +1037,8 @@ fn maybe_switch_theme(
 /// classification explicit and, more importantly, makes the crate FAIL TO
 /// COMPILE the moment `Config` (or any of its nested settings structs) gains
 /// a field that hasn't been assigned here to either a comparison or an
-/// explicit `_`-prefixed "excluded" binding (#608's third acceptance
-/// criterion: "a test fails if a new `Config` field is not classified for
-/// refresh" -- a compile error is strictly stronger than a runtime test,
-/// since it can't be forgotten to run).
+/// explicit `_`-prefixed "excluded" binding -- a compile error is strictly
+/// stronger than a runtime test, since it can't be forgotten to run.
 fn config_refresh_required(old_config: &Config, new_config: &Config) -> bool {
     let Config {
         agent: old_agent,
@@ -1214,9 +1085,7 @@ fn ui_refresh_required(old: &crate::config::UiSettings, new: &crate::config::UiS
 
 /// `timeout_seconds`, `skip_paths`, `watch_worktree` affect subprocess/watcher
 /// behavior, not the rendered segment -- excluded. Everything else affects
-/// what's drawn (branch length, ahead/behind cap, icons, stash indicator) --
-/// newly included; this was previously entirely unclassified (only `enabled`/
-/// `show_upstream` were checked).
+/// what's drawn (branch length, ahead/behind cap, icons, stash indicator).
 fn git_refresh_required(
     old: &crate::config::GitSettings,
     new: &crate::config::GitSettings,
@@ -1296,8 +1165,7 @@ fn language_refresh_required(
 }
 
 /// `timeout_seconds` (IPC socket timeout) and `supervisor` (auto-restart
-/// policy) are process-management, not rendering -- excluded, matching
-/// current (pre-#608) behavior exactly.
+/// policy) are process-management, not rendering -- excluded.
 fn agent_refresh_required(
     old: &crate::config::AgentSettings,
     new: &crate::config::AgentSettings,
@@ -1368,7 +1236,7 @@ fn sync_watcher_state(
         // active repositories keep the watches they were armed with. Bring them
         // in line with the (already-applied) `git.watch_worktree` value, so a
         // shell that never leaves its directory still gets live worktree updates
-        // — or stops paying for a recursive watch it no longer needs (#444).
+        // — or stops paying for a recursive watch it does not need.
         // A no-op when nothing changed. Safe to call while holding the watcher
         // slot: `MultiRepoWatcher`'s internal locks are only ever taken *after*
         // this slot (same order as `register_client` above), never before.
@@ -1418,7 +1286,7 @@ pub(super) fn handle_config_reload(
     crate::language::version::set_version_cache_ttl(new_config.language.cache_ttl_hours.get());
     // Applied to the shared registry before `sync_watcher_state` below, which
     // either builds a new watcher against this same registry or calls
-    // `resync_watch_worktree` on the existing one (#444).
+    // `resync_watch_worktree` on the existing one.
     ctx.watch_registry
         .set_worktree_enabled(new_config.git.watch_worktree);
 
@@ -1426,8 +1294,8 @@ pub(super) fn handle_config_reload(
 
     // Proactively regenerate instant-prompt caches with the new theme *before* any
     // reload doorbell so the repaint hits warm caches and recolors atomically — no
-    // disappear/reappear flicker for the async-rendered git/language segments
-    // (#223). Only re-renders already-cached data; never adds synchronous
+    // disappear/reappear flicker for the async-rendered git/language segments.
+    // Only re-renders already-cached data; never adds synchronous
     // detection to the reload path. Gated on `refresh_required` because that is
     // exactly when the shells will re-source the theme and repaint.
     if refresh_required {
@@ -1454,12 +1322,12 @@ pub(super) fn handle_config_reload(
 /// Re-render the instant-prompt caches for every registered repository using the
 /// **already-cached** git/language data and the now-active theme, so the repaint
 /// that follows a theme/config change recolors without the disappear/reappear
-/// flicker (#223).
+/// flicker.
 ///
 /// The slow part of git/language is gathering data (git subprocess, version
 /// detection); that data is unchanged by a theme switch, so re-applying the new
 /// theme template to it is cheap. Repositories with no warm data are skipped and
-/// keep today's graceful cold-miss behavior (#145/#160) — this only improves the
+/// keep the graceful cold-miss behavior — this only improves the
 /// warm case, which is the common theme-switch scenario.
 ///
 /// The shell sends the *previous* segment's background as `prev_bg`, baked into
@@ -1476,7 +1344,7 @@ pub(super) fn handle_config_reload(
 /// regenerated synchronously here. Language rendering performs version detection
 /// (subprocesses), which MUST NOT run on this event-loop path — a single hung or
 /// cold detector would block the reload handler, wedging live updates and
-/// `gpy-agent stop` (#223 guarantee: no synchronous detection on the render path).
+/// `gpy-agent stop` (no synchronous detection on the render path).
 /// Language is therefore deferred to a background job that repaints via the doorbell.
 pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, config: &Config) {
     let theme = ctx.theme_manager.get();
@@ -1666,7 +1534,7 @@ mod tests {
     /// Construct a `GitPaths::WholeRepo` event directly, exercising the same
     /// full-scan code path a MAX_PATHS-accumulation event would take, without
     /// needing to actually accumulate that many paths in a test. A real
-    /// rescan produces this exact shape too (#616, `PendingEvent::git_whole_repo`);
+    /// rescan produces this exact shape too (`PendingEvent::git_whole_repo`);
     /// `GitPaths::single(root)` plus `git_paths_hint`'s repo-root escalation
     /// remains reachable for other root-path events (see
     /// `rescan_event_at_repo_root_refreshes_cache` for that path).
@@ -1738,7 +1606,7 @@ mod tests {
         );
     }
 
-    /// #696: a watcher git event for a repo under `git.skip_paths` (written as
+    /// A watcher git event for a repo under `git.skip_paths` (written as
     /// a plain absolute entry covering the repo's parent) must refresh nothing.
     #[test]
     fn git_event_for_skipped_repo_writes_no_cache() {
@@ -1803,7 +1671,7 @@ mod tests {
     ///
     /// Panics if creating the temp repo or writing files fails.
     ///
-    /// Regression test for #415: `.git/packed-refs` must reach the same
+    /// `.git/packed-refs` must reach the same
     /// refresh path as `.git/HEAD` (a full, non-incremental status scan),
     /// since `git gc`/`git pack-refs` can move any ref into that single file.
     fn packed_refs_event_refreshes_cache_immediately() {
@@ -1827,9 +1695,8 @@ mod tests {
     }
 
     #[test]
-    /// Regression test for #448: a `Git` event carrying the repository root
-    /// itself as its path (defence-in-depth for a root-path event; a real
-    /// rescan emits `GitPaths::WholeRepo` directly, #616) is a whole-repo
+    /// A `Git` event carrying the repository root itself as its path is a
+    /// whole-repo
     /// signal, not a single-file hint — hinting it would strip down to the
     /// empty pathspec git rejects.
     fn repo_root_path_yields_no_incremental_hint() {
@@ -1859,20 +1726,10 @@ mod tests {
     }
 
     #[test]
-    /// #611: a worktree path whose final component is bare-named `config`,
+    /// A worktree path whose final component is bare-named `config`,
     /// `HEAD`, `exclude` or `packed-refs` is an ordinary file, not its `.git`
-    /// namesake, and must still get an incremental hint.
-    ///
-    /// `Path::ends_with` matches whole components, so the pre-#611 filename
-    /// test — run against the raw event path, before repo-relative membership
-    /// was even computed — fired for any of these anywhere in the watched
-    /// tree. This repository's own `gpy-agent/src/config/` is a live example:
-    /// a directory-level notification for it forced a whole-repo scan.
-    ///
-    /// Note the issue's literal wording (`worktree/config.toml`) would pass
-    /// without the fix: `config.toml` and `config` are different components,
-    /// so `ends_with("config")` was already false for it. The bare names below
-    /// are what actually reproduce the bug.
+    /// namesake, and must still get an incremental hint (e.g. this repo's own
+    /// `gpy-agent/src/config/` directory).
     fn bare_named_worktree_files_still_hint_incrementally() {
         let repo = PathBuf::from("/tmp/example-repo");
         for worktree_relative in [
@@ -1894,10 +1751,9 @@ mod tests {
     }
 
     #[test]
-    /// #611 regression guard in the other direction: narrowing the global-file
-    /// test to `.git` membership must not lose the real `.git` files, nor
-    /// `.gitignore`, which is a worktree file and so is still matched by name.
-    fn real_git_global_files_still_escalate_after_the_bare_name_fix() {
+    /// Real `.git` global files still escalate under location-based
+    /// matching, as does `.gitignore`, which is matched by name.
+    fn real_git_global_files_and_gitignore_escalate() {
         let repo = PathBuf::from("/tmp/example-repo");
         for global in [
             ".git/config",
@@ -1927,7 +1783,7 @@ mod tests {
     }
 
     #[test]
-    /// Regression test for #448: `try_incremental_update` must reject the
+    /// `try_incremental_update` must reject the
     /// repo root before shelling out, since the empty relative path becomes an
     /// empty pathspec that git rejects outright.
     fn incremental_relative_path_rejects_repo_root_and_outsiders() {
@@ -1955,11 +1811,9 @@ mod tests {
     ///
     /// Panics if creating the temp repo or writing files fails.
     ///
-    /// Regression test for #448: any `Git` event whose path is the repo root
-    /// (a real rescan now emits `GitPaths::WholeRepo` directly instead, see
-    /// #616; this covers the defence-in-depth root-path handling that stays
-    /// in place for any other event shaped this way) must still refresh the
-    /// cache, via the full scan rather than a doomed incremental attempt.
+    /// A `Git` event whose path is the repo root (rescans normally emit
+    /// `GitPaths::WholeRepo` instead) must still refresh the cache, via the
+    /// full scan rather than a doomed incremental attempt.
     fn rescan_event_at_repo_root_refreshes_cache() {
         let (_tmp, repo) = create_temp_repo();
         let ctx = make_agent_context();
@@ -1986,7 +1840,7 @@ mod tests {
     }
 
     #[test]
-    /// #466: every path coalesced into one event has to reach the scan, or the
+    /// Every path coalesced into one event has to reach the scan, or the
     /// published status is short by the files that were dropped.
     fn several_ordinary_files_yield_a_multi_path_hint() {
         let repo = PathBuf::from("/tmp/example-repo");
@@ -2001,7 +1855,7 @@ mod tests {
     }
 
     #[test]
-    /// #466: escalation is per-event, not per-path. One global file in the
+    /// Escalation is per-event, not per-path. One global file in the
     /// burst changes the status of files the pathspec would never name, so the
     /// whole event degrades to a full scan.
     fn one_global_path_escalates_the_whole_burst() {
@@ -2015,18 +1869,11 @@ mod tests {
     }
 
     #[test]
-    /// #466/#470: `git status` never reports on `.git` internals, so a
+    /// `git status` never reports on `.git` internals, so a
     /// pathspec-limited scan for one comes back empty — which the multi-path
     /// update would otherwise read as "these files are clean now". They are
     /// also repository-wide signals (a ref write moves ahead/behind), so the
     /// only sound answer is a full scan.
-    ///
-    /// Covers #470 acceptance criterion 2's full enumerated set. Every entry
-    /// here now escalates through the same `.git`-membership branch: #611
-    /// removed the filename tests that used to catch the `*HEAD` names one
-    /// step earlier, because matching on the filename alone also caught
-    /// worktree files that merely shared the name (see
-    /// `bare_named_worktree_files_still_hint_incrementally`).
     fn git_internal_paths_escalate_to_a_full_scan() {
         let repo = PathBuf::from("/tmp/example-repo");
         for internal in [
@@ -2051,14 +1898,10 @@ mod tests {
     }
 
     #[test]
-    /// #611: a NESTED repository's own git-internal file, reached via a path
-    /// that is relative to the *parent* repo, must still escalate even though
-    /// `.git` is not the FIRST component of that relative path (e.g. because
-    /// the watcher momentarily attributed the event to the parent while the
-    /// nested repo's own `.git` directory was briefly absent, mid-move or
-    /// mid-delete). `git status` cannot report on this path any more than it
-    /// can a top-level `.git` internal, so it must not be scoped down to a
-    /// path-limited scan the same way (#466's failure mode, one level deeper).
+    /// A NESTED repository's own git-internal file, reached via a path
+    /// relative to the *parent* repo (e.g. the event was attributed to the
+    /// parent while the nested `.git` was briefly absent), must still escalate
+    /// even though `.git` is not the FIRST component of that relative path.
     fn nested_git_internal_paths_still_escalate_to_a_full_scan() {
         let repo = PathBuf::from("/tmp/example-repo");
         for nested in [
@@ -2075,22 +1918,11 @@ mod tests {
     }
 
     #[test]
-    /// Regression test for #470 acceptance criterion 5: a submodule's or
-    /// linked worktree's git directory lives outside the *attributed*
-    /// working root entirely — `<super>/.git/modules/<name>/index` is not a
-    /// descendant of the submodule's own working tree, and
-    /// `<main>/.git/worktrees/<name>/index` is not a descendant of the
-    /// linked worktree's own working tree.
-    ///
-    /// `git_paths_hint` must still force a full scan of the attributed
-    /// working root for these paths, but it does so via the EARLIER
-    /// `incremental_relative_path` call: `strip_prefix` fails outright
-    /// because the path is not under `git_root` at all, so control returns
-    /// `None` via the `?` operator before ever reaching the `.git`-component
-    /// membership check below it. Making that check component-based (rather
-    /// than first-component-only, #611) didn't change which route this test
-    /// takes — the path is still rejected before the membership check ever
-    /// sees it — but this comment exists so that distinction isn't lost.
+    /// A submodule's or linked worktree's git directory lives outside the
+    /// *attributed* working root (`<super>/.git/modules/<name>/index`,
+    /// `<main>/.git/worktrees/<name>/index`), so `git_paths_hint` escalates
+    /// via `incremental_relative_path` rejecting it, before the `.git`
+    /// membership check.
     fn external_git_dir_paths_yield_no_incremental_hint() {
         // Submodule: `<super>/.git/modules/<name>/…` is watched but
         // attributed to the submodule's own working root, which is a
@@ -2114,24 +1946,17 @@ mod tests {
     }
 
     #[test]
-    /// #466: the debouncer degrades past its path bound; that has to arrive as
+    /// The debouncer degrades past its path bound; that has to arrive as
     /// a full scan rather than an empty pathspec.
     fn whole_repo_paths_yield_no_incremental_hint() {
         let repo = PathBuf::from("/tmp/example-repo");
         assert!(git_paths_hint(&GitPaths::WholeRepo, &repo).is_none());
     }
 
-    /// A [`GitBackend`] that counts invocations and records the `paths`
-    /// argument of each call, for pinning #470 acceptance criterion 6 (the
-    /// number of complete git capture rounds a given event costs).
-    ///
-    /// Delegates to [`NativeGitBackend`] for the actual answer rather than
-    /// returning a canned payload: the whole point of these tests is
-    /// asserting on real routing behavior (incremental vs. full scan) against
-    /// a real temporary repository, and a canned response would let the test
-    /// pass without the cache-update / capture-round logic under test ever
-    /// running for real. The subprocess cost is the same one every other
-    /// `create_temp_repo`-based test in this module already pays.
+    /// A [`GitBackend`] that records the `paths` argument of each call, for
+    /// counting the complete git capture rounds a given event costs.
+    /// Delegates to [`NativeGitBackend`] so routing (incremental vs. full
+    /// scan) is exercised against a real temporary repository.
     struct CountingGitBackend {
         /// One entry per `complete_status` call, in call order: the `paths`
         /// argument that call received (`None` = full scan, `Some` =
@@ -2185,18 +2010,10 @@ mod tests {
     ///
     /// Panics if creating the temp repo fails.
     ///
-    /// Regression test for #470 acceptance criterion 6 (first half): a
-    /// `.git/index` write must cost exactly one complete git capture round,
-    /// not two. Before the #466 fix (commit d8ff5ae6), `git_paths_hint`
-    /// hinted `.git/index` as an incremental target;
-    /// `try_incremental_update_with` would spend a capture round on a
-    /// pathspec `git status` can never
-    /// report on, come back with an empty file map, find no cache entry to
-    /// update, and the caller would burn a SECOND capture round on a full
+    /// A `.git/index` write must cost exactly one complete git capture round
+    /// (a full scan), not a doomed pathspec-limited round followed by a full
     /// scan. `refresh_repo_status_with` threads the same backend into both
-    /// call sites (see its doc comment), so this counter catches that
-    /// regression instead of only ever seeing the outer, always-present full
-    /// scan.
+    /// call sites, so the counter sees either.
     fn git_index_write_triggers_exactly_one_capture_round() {
         let (_tmp, repo) = create_temp_repo();
         let ctx = make_agent_context();
@@ -2229,12 +2046,9 @@ mod tests {
     ///
     /// Panics if creating the temp repo or writing files fails.
     ///
-    /// Regression test for #470 acceptance criterion 6 (second half): the
-    /// contrast case for the test above. An ordinary worktree file change
-    /// must still take the pathspec-limited incremental route, in exactly
-    /// one capture round — this is what proves the counter can actually tell
-    /// the two routes apart, so a pass on the `.git/index` test above is not
-    /// vacuous.
+    /// Contrast case for the test above: an ordinary worktree file change
+    /// takes the pathspec-limited incremental route in exactly one capture
+    /// round, proving the counter can tell the two routes apart.
     fn ordinary_file_write_takes_the_incremental_route_in_one_capture_round() {
         let (_tmp, repo) = create_temp_repo();
         let ctx = make_agent_context();
@@ -2279,24 +2093,12 @@ mod tests {
     ///
     /// Panics if creating the temp repo fails.
     ///
-    /// Pins the *harness* the two tests above rely on (#470): that
-    /// [`refresh_repo_status_with`] threads one backend instance through
-    /// both of its capture-round call sites.
-    ///
-    /// Neither test above can show this. Each asserts a count of one, which
-    /// the outer full scan alone would satisfy — so if a later refactor gave
-    /// the incremental attempt its own backend, both would still pass while
-    /// the counter had gone blind to half the code it is supposed to watch.
-    /// #467 and #468 assert on capture-round counts using this harness, so
-    /// that blindness would silently invalidate their tests, not just these.
-    ///
-    /// Forcing the hint `git_paths_hint` would never produce reconstructs
-    /// the pre-#466 route: the incremental attempt spends a round on a
-    /// pathspec `git status` cannot report on, returns an empty file map,
-    /// finds no cache entry to update, and the caller pays a second round on
-    /// the full scan it always needed. More than one call is the assertion
-    /// that matters; the exact total is pinned as documentation of the cost.
-    fn a_git_dir_hint_burns_a_doomed_capture_round_before_the_full_scan() {
+    /// [`refresh_repo_status_with`] threads one backend instance through both
+    /// of its capture-round call sites; otherwise the capture-round counts
+    /// asserted by the tests above (and elsewhere) would be blind to the
+    /// incremental attempt. A hint `git_paths_hint` never produces forces
+    /// both call sites to run.
+    fn incremental_and_full_scan_share_one_backend() {
         let (_tmp, repo) = create_temp_repo();
         let ctx = make_agent_context();
         let config = Config::default();
@@ -2318,7 +2120,7 @@ mod tests {
         assert_eq!(
             backend.call_paths(0),
             Some(vec![PathBuf::from(".git/index")]),
-            "the first round is the doomed pathspec-limited scan"
+            "the first round is the pathspec-limited attempt"
         );
         assert_eq!(
             backend.call_paths(backend.call_count() - 1),
@@ -2326,8 +2128,6 @@ mod tests {
             "the last round is the full scan the event always needed"
         );
     }
-
-    // --- #480: no-subscriber gate ---
 
     /// Mirrors the `FileEvent::Git` gate in `create_watcher`'s callback:
     /// `ClientDirectory::has_subscriber` decides whether a capture round runs
@@ -2353,7 +2153,7 @@ mod tests {
     ///
     /// Panics if creating the temp repo fails.
     ///
-    /// Regression test for #480 acceptance criterion 5: a `FileEvent::Git`
+    /// A `FileEvent::Git`
     /// for a repository with no registered client must not run a git
     /// capture round at all.
     fn unregistered_repo_git_event_costs_zero_capture_rounds() {
@@ -2511,7 +2311,7 @@ mod tests {
     /// Panics if creating the temp repo, disabling `core.fsmonitor`, or
     /// registering with the real watcher fails.
     ///
-    /// End-to-end regression test for #480: drives the REAL `create_watcher`
+    /// End-to-end test: drives the REAL `create_watcher`
     /// callback -- the actual production wiring -- rather than simulating
     /// the gate. This is the necessary complement to
     /// `simulate_gated_git_event`'s tests above: those pin `has_subscriber`'s
@@ -2556,17 +2356,11 @@ mod tests {
         // Let the watch fully arm before the first mutation.
         thread::sleep(Duration::from_millis(100));
 
-        // --- Unsubscribed case: no client registered in ctx.registry. ---
+        // Unsubscribed case: no client registered in ctx.registry.
         fs::write(repo.join("a.txt"), "one\n").expect("write a.txt");
 
-        // This is a negative assertion, so it needs a generous settle -- a
-        // short wait would pass for the wrong reason (the event simply
-        // hasn't arrived yet), not because the gate suppressed it. "Never
-        // happened" and "hasn't happened yet" are indistinguishable at any
-        // earlier point, so the full budget is still spent on the passing
-        // path. Polling across it instead of checking once at the end only
-        // changes the failing path: a leak is caught within ~100ms of
-        // happening, which says *when* the gate let the event through.
+        // Negative assertion: the full settle budget is spent on the passing
+        // path; polling only makes a leak fail fast.
         let settle_deadline = std::time::Instant::now() + Duration::from_secs(3);
         while std::time::Instant::now() < settle_deadline {
             assert!(
@@ -2575,17 +2369,14 @@ mod tests {
             );
             thread::sleep(Duration::from_millis(100));
         }
-        // The loop's own deadline check runs BEFORE each sleep, so its last
-        // in-loop assertion lands ~100ms short of the full 3s budget and the
-        // final window exits uncovered. Assert once more here so the full
-        // window -- including its very end -- is genuinely covered, matching
-        // the original single `sleep(3s)` + assert this loop replaced.
+        // The loop exits up to one interval before the deadline; cover the
+        // tail of the window too.
         assert!(
             ctx.cache.get(&repo).is_none(),
             "an unregistered repo must not gain a cache entry from a real watcher event"
         );
 
-        // --- Subscribed case: same repo, now with a registered client. ---
+        // Subscribed case: same repo, now with a registered client.
         // The load-bearing half: proves the gate isn't simply swallowing
         // everything, and fails if the condition were inverted.
         //
@@ -2618,10 +2409,8 @@ mod tests {
     ///
     /// Panics if creating the temp repo or writing files fails.
     ///
-    /// Regression test for #466 acceptance criterion 2: two files changed
-    /// inside one debounce window must publish the same aggregate as a full
-    /// scan. Before the fix the event carried only the last path and the
-    /// incremental scan reported one modified file instead of two.
+    /// Two files changed inside one debounce window must publish the same
+    /// aggregate as a full scan (both modified files counted).
     fn coalesced_multi_file_event_matches_a_full_scan() {
         let (_tmp, repo) = create_temp_repo();
         let ctx = make_agent_context();
@@ -2665,7 +2454,7 @@ mod tests {
     ///
     /// Panics if creating the temp repo or the rename fails.
     ///
-    /// Regression test for #466 acceptance criterion 3: a rename arrives as two
+    /// A rename arrives as two
     /// paths, and `git status` keys the result under the destination only. The
     /// source must be cleared from the cache or the deleted file stays counted.
     fn renamed_source_path_is_dropped_from_the_cache() {
@@ -2769,8 +2558,8 @@ mod tests {
     ///
     /// Panics if building the conflicted repository fails.
     ///
-    /// Regression test for #686: an incremental refresh during a merge
-    /// conflict counted every conflicted file as staged and unstaged too.
+    /// An incremental refresh during a merge conflict must not count
+    /// conflicted files as staged and unstaged too.
     fn incremental_refresh_matches_full_scan_during_merge_conflict() {
         let (_tmp, repo) = create_temp_repo();
         let ctx = make_agent_context();
@@ -2812,10 +2601,8 @@ mod tests {
     ///
     /// Panics if building the repository fails.
     ///
-    /// Regression test for #686: `git rm --cached f` reports a staged deletion
-    /// and an untracked record for the same path; the untracked record used
-    /// to overwrite the deletion in the file map, losing it on the next
-    /// incremental refresh.
+    /// `git rm --cached f` reports a staged deletion and an untracked record
+    /// for the same path; the incremental refresh must keep the deletion.
     fn incremental_refresh_keeps_staged_delete_with_untracked_same_path() {
         let (_tmp, repo) = create_temp_repo();
         let ctx = make_agent_context();
@@ -3050,7 +2837,7 @@ mod tests {
 
         // "text" (a real builtin, distinct from the default-config theme) --
         // not "minimal", a placeholder that isn't a builtin, user, or plugin
-        // theme name. #572 made an unresolvable theme name a hard error, so
+        // theme name. An unresolvable theme name is a hard error, so
         // this test's fixture needs a name `handle_config_reload` (via
         // `maybe_switch_theme`) can actually load; only the notify-on-change
         // behavior below is under test, not this specific theme's content.
@@ -3186,7 +2973,7 @@ mod tests {
         );
     }
 
-    // Regression locks for #608's exhaustive per-field classification below:
+    // Per-field classification locks:
     // one INCLUDED-field flip (asserts `true`) and one EXCLUDED-field flip
     // (asserts `false`, all else equal) per `*_refresh_required` helper.
     // `ui_refresh_required` has no excluded field (all 5 `UiSettings` fields
@@ -3219,21 +3006,52 @@ mod tests {
     }
 
     #[test]
-    fn git_timeout_seconds_change_does_not_trigger_refresh_required() {
-        let old = crate::config::GitSettings::default();
-        let new = crate::config::GitSettings {
-            timeout_seconds: crate::config::types::GitTimeout::new(old.timeout_seconds.get() + 1)
-                .expect("valid git timeout"),
-            ..crate::config::GitSettings::default()
-        };
-        assert_ne!(
-            old.timeout_seconds, new.timeout_seconds,
-            "the mutation must actually change the field for this test to mean anything"
-        );
-        assert!(
-            !git_refresh_required(&old, &new),
-            "git.timeout_seconds is subprocess-management, not rendering; must not require a refresh"
-        );
+    fn excluded_field_changes_do_not_trigger_refresh_required() {
+        type Case = (&'static str, fn() -> bool);
+        let cases: [Case; 3] = [
+            ("git.timeout_seconds", || {
+                let old = crate::config::GitSettings::default();
+                let new = crate::config::GitSettings {
+                    timeout_seconds: crate::config::types::GitTimeout::new(
+                        old.timeout_seconds.get() + 1,
+                    )
+                    .expect("valid git timeout"),
+                    ..crate::config::GitSettings::default()
+                };
+                assert_ne!(old.timeout_seconds, new.timeout_seconds);
+                git_refresh_required(&old, &new)
+            }),
+            ("language.cache_ttl_hours", || {
+                let old = crate::config::LanguageSettings::default();
+                let new = crate::config::LanguageSettings {
+                    cache_ttl_hours: crate::config::types::CacheTtlHours::new(
+                        old.cache_ttl_hours.get() + 1,
+                    )
+                    .expect("valid cache ttl"),
+                    ..crate::config::LanguageSettings::default()
+                };
+                assert_ne!(old.cache_ttl_hours, new.cache_ttl_hours);
+                language_refresh_required(&old, &new)
+            }),
+            ("agent.timeout_seconds", || {
+                let old = crate::config::AgentSettings::default();
+                let new = crate::config::AgentSettings {
+                    timeout_seconds: crate::config::types::AgentTimeout::new(
+                        old.timeout_seconds.get() + 1,
+                    )
+                    .expect("valid agent timeout"),
+                    ..crate::config::AgentSettings::default()
+                };
+                assert_ne!(old.timeout_seconds, new.timeout_seconds);
+                agent_refresh_required(&old, &new)
+            }),
+        ];
+        for (field, refresh_required) in cases {
+            assert!(
+                !refresh_required(),
+                "{field} does not affect rendering; must not require a refresh"
+            );
+        }
     }
 
     #[test]
@@ -3254,26 +3072,6 @@ mod tests {
     }
 
     #[test]
-    fn language_cache_ttl_hours_change_does_not_trigger_refresh_required() {
-        let old = crate::config::LanguageSettings::default();
-        let new = crate::config::LanguageSettings {
-            cache_ttl_hours: crate::config::types::CacheTtlHours::new(
-                old.cache_ttl_hours.get() + 1,
-            )
-            .expect("valid cache ttl"),
-            ..crate::config::LanguageSettings::default()
-        };
-        assert_ne!(
-            old.cache_ttl_hours, new.cache_ttl_hours,
-            "the mutation must actually change the field for this test to mean anything"
-        );
-        assert!(
-            !language_refresh_required(&old, &new),
-            "language.cache_ttl_hours affects the next detection pass, not current rendering; must not require a refresh"
-        );
-    }
-
-    #[test]
     fn agent_live_updates_change_triggers_refresh_required() {
         let old = crate::config::AgentSettings::default();
         let new = crate::config::AgentSettings {
@@ -3283,24 +3081,6 @@ mod tests {
         assert!(
             agent_refresh_required(&old, &new),
             "agent.live_updates gates whether renders are pushed at all; must require a refresh"
-        );
-    }
-
-    #[test]
-    fn agent_timeout_seconds_change_does_not_trigger_refresh_required() {
-        let old = crate::config::AgentSettings::default();
-        let new = crate::config::AgentSettings {
-            timeout_seconds: crate::config::types::AgentTimeout::new(old.timeout_seconds.get() + 1)
-                .expect("valid agent timeout"),
-            ..crate::config::AgentSettings::default()
-        };
-        assert_ne!(
-            old.timeout_seconds, new.timeout_seconds,
-            "the mutation must actually change the field for this test to mean anything"
-        );
-        assert!(
-            !agent_refresh_required(&old, &new),
-            "agent.timeout_seconds is IPC socket process-management, not rendering; must not require a refresh"
         );
     }
 
@@ -3332,7 +3112,7 @@ mod tests {
             .collect()
     }
 
-    /// #223: a theme change must proactively regenerate the instant-prompt caches
+    /// A theme change must proactively regenerate the instant-prompt caches
     /// for an active (registered, warm) path — using the already-cached git and
     /// language data and the new theme — so the reload repaint hits warm caches
     /// and recolors atomically instead of cold-missing (disappear/reappear flicker).
@@ -3400,7 +3180,7 @@ mod tests {
         );
     }
 
-    /// #695: toggling `ui.show_icons` off must re-render the git instant caches
+    /// Toggling `ui.show_icons` off must re-render the git instant caches
     /// without the Nerd Font powerline caps, overwriting the capped files a
     /// previous `show_icons = true` render left behind.
     #[test]
@@ -3452,7 +3232,7 @@ mod tests {
         );
     }
 
-    /// #223: the deferred language regeneration body re-renders the cached language
+    /// The deferred language regeneration body re-renders the cached language
     /// data into the instant caches (context-free fallback + the new theme's
     /// `prev_bg` token) and reports that a repaint is warranted.
     ///
@@ -3520,12 +3300,10 @@ mod tests {
         );
     }
 
-    /// #611: `refresh_language_for` is the single writer behind all three
-    /// language-cache refresh triggers, and each of them used to call
-    /// `notify_repaint_force` unconditionally; now they all go through the
-    /// `if wrote { notify }` gate this function applies. Pins that gate
-    /// directly: a render that actually changes cache-file content must
-    /// notify, and a repeat render of the exact same content must not.
+    /// `refresh_language_for` is the single writer behind all three
+    /// language-cache refresh triggers and applies the `if wrote { notify }`
+    /// gate: a render that actually changes cache-file content must notify,
+    /// and a repeat render of the exact same content must not.
     #[test]
     fn language_refresh_notifies_only_when_a_cache_write_actually_happens() {
         use crate::language::DetectedLanguage;
@@ -3590,7 +3368,7 @@ mod tests {
         );
     }
 
-    /// #223 cold-path guarantee (no regression to #145/#160): a registered repo
+    /// Cold-path guarantee: a registered repo
     /// with NO warm cached data is skipped entirely — regeneration writes nothing
     /// and never runs synchronous git/language detection on the reload path.
     #[test]
@@ -3611,7 +3389,7 @@ mod tests {
         );
     }
 
-    /// #446: when the instant-cache write fails transiently and a later refresh
+    /// When the instant-cache write fails transiently and a later refresh
     /// with the SAME `RepositoryStatus` recovers it, that recovery write must
     /// still trigger a repaint even though `status_changed` alone reports no
     /// change (see `write_cache_file`'s memo: a failed write never updates it,
@@ -3644,7 +3422,7 @@ mod tests {
         // that refresh's instant-cache write fails outright: no on-disk file
         // and no `write_cache_file` "last written" memo entry exist yet for
         // this repo, so there is no identical-content short-circuit to dodge
-        // the write attempt (simulates a transient storage failure, #446).
+        // the write attempt (simulates a transient storage failure).
         let cache_dir = cache_tmp.path();
         let writable_perms = fs::metadata(cache_dir)
             .expect("cache dir metadata")
@@ -3688,12 +3466,12 @@ mod tests {
     /// `git status --porcelain=v2 -z`: (staged, unstaged, untracked, conflicted).
     type OracleFlags = (bool, bool, bool, bool);
 
-    /// The differential oracle for the incremental git pipeline (#675 step 1):
-    /// the per-path status derived straight from git, sharing no code with
-    /// `git::native::parser`, so a parser bug (#775) cannot hide by appearing
+    /// The differential oracle for the incremental git pipeline: the per-path
+    /// status derived straight from git, sharing no code with
+    /// `git::native::parser`, so a parser bug cannot hide by appearing
     /// identically on both sides. Same merge rule as the agent's file map:
     /// one entry per path, flags OR-merged, a conflict recorded only as a
-    /// conflict (#686).
+    /// conflict.
     fn oracle_files(repo: &Path) -> HashMap<PathBuf, FileStatus> {
         let output = std::process::Command::new("git")
             .args(["status", "--porcelain=v2", "-z"])
@@ -3781,10 +3559,10 @@ mod tests {
     }
 
     /// Repo-relative names the generator draws from. They cover the spellings
-    /// that have broken the pipeline before: a TAB (#775), a leading `:`
-    /// (pathspec magic, #713), spaces, and files inside directories that do
-    /// not exist yet, which git collapses into one untracked `dir/` entry
-    /// (#711). Windows forbids TAB and `:` in a filename (os error 123), so
+    /// that are easy to mishandle: a TAB, a leading `:` (pathspec magic),
+    /// spaces, and files inside directories that do not exist yet, which git
+    /// collapses into one untracked `dir/` entry. Windows forbids TAB and `:`
+    /// in a filename (os error 123), so
     /// those two spellings exist only on Unix.
     #[cfg(not(windows))]
     const ORACLE_NAMES: [&str; 8] = [
@@ -3876,7 +3654,7 @@ mod tests {
     }
 
     #[test]
-    /// Differential test for the incremental git pipeline (#675 step 1):
+    /// Differential test for the incremental git pipeline:
     /// after every random mutation, the status the agent derives through
     /// `refresh_repo_status_with`, fed the paths a watcher would report, must
     /// equal an independent parse of a full `git status`. Fixed seeds keep it
@@ -3987,7 +3765,7 @@ mod tests {
     }
 
     #[test]
-    /// Regression test for #712: a path below a gitlink matches no pathspec in
+    /// A path below a gitlink matches no pathspec in
     /// the superproject, so an edit inside a submodule must be mapped to the
     /// gitlink itself.
     fn incremental_refresh_maps_submodule_child_paths_to_gitlink() {
@@ -4011,7 +3789,7 @@ mod tests {
     }
 
     #[test]
-    /// Regression test for #712: reverting the edit must clear the cached
+    /// Reverting a submodule edit must clear the cached
     /// gitlink entry instead of leaving the parent dirty.
     fn incremental_refresh_clears_gitlink_after_submodule_revert() {
         let (_source, _tmp, repo) = repo_with_submodule();
@@ -4037,7 +3815,7 @@ mod tests {
     }
 
     #[test]
-    /// Regression test for #712: a change inside a plain nested repository
+    /// A change inside a plain nested repository
     /// (no gitlink) yields the same counts as a full scan of the parent.
     fn incremental_refresh_maps_nested_repo_child_paths_to_nested_root() {
         let (_tmp, repo) = create_temp_repo();
@@ -4062,7 +3840,7 @@ mod tests {
     }
 
     #[test]
-    /// Differential scenario for #712: random edits, reverts, untracked files
+    /// Differential scenario for submodules: random edits, reverts, untracked files
     /// and commits inside a submodule, reported as the paths a watcher sees,
     /// must leave the parent's cached file map equal to a fresh `git status`.
     fn incremental_refresh_matches_git_status_for_submodule_edits() {
@@ -4152,7 +3930,7 @@ mod tests {
     }
 
     #[test]
-    /// Regression test for #713: git indexes `Readme.md` while the disk (and
+    /// Git indexes `Readme.md` while the disk (and
     /// so the watcher) spells it `README.md`. On a case-insensitive repository
     /// the edit must still be seen, and the revert must clear it.
     fn incremental_refresh_handles_index_case_mismatch() {
@@ -4248,7 +4026,7 @@ mod tests {
     }
 
     #[test]
-    /// Differential scenario for #713: random edits, reverts, case-only
+    /// Differential scenario for case-insensitive repos: random edits, reverts, case-only
     /// renames of files and of a directory, `git add -u` and commits, reported
     /// as the on-disk spellings a watcher sees, must leave the cached file map
     /// equal to a fresh `git status` on a case-insensitive repository.
@@ -4310,7 +4088,7 @@ mod tests {
     }
 }
 
-/// Deterministic (timing-free) tests for the #418 per-repo refresh
+/// Deterministic (timing-free) tests for the per-repo refresh
 /// serialization. These exercise [`RepoRefreshCoordinator`] and
 /// [`run_coalesced`] directly with fake scans, so the concurrency-safety logic
 /// is proven without racing real git subprocesses. Any real interleaving is
@@ -4351,8 +4129,8 @@ mod coordinator_tests {
         coordinator.abandon(&repo);
     }
 
-    /// Cross-repo concurrency at the state-machine level (regression guard for
-    /// #306): an in-flight refresh for repo A never blocks or refuses a refresh
+    /// Cross-repo concurrency at the state-machine level: an in-flight
+    /// refresh for repo A never blocks or refuses a refresh
     /// for a *different* repo B.
     #[test]
     fn different_repos_never_serialize_in_state_machine() {
@@ -4398,7 +4176,7 @@ mod coordinator_tests {
         coordinator.abandon(&repo);
     }
 
-    /// Core #418 guarantee, forced deterministically with channels: a
+    /// Core guarantee, forced deterministically with channels: a
     /// slower-finishing-but-OLDER scan can never leave its stale result in the
     /// cache. Only one scan runs at a time, and a change arriving mid-scan drives
     /// a fresh follow-up that re-reads the newest state.
@@ -4466,7 +4244,7 @@ mod coordinator_tests {
         );
     }
 
-    /// Cross-repo concurrency with real threads (regression guard for #306):
+    /// Cross-repo concurrency with real threads:
     /// while repo A's scan is blocked indefinitely, repo B's coalesced refresh
     /// still runs to completion promptly rather than serializing behind A.
     #[test]
@@ -4528,7 +4306,7 @@ mod coordinator_tests {
             MAX_COALESCED_FOLLOW_UPS + 2,
             "initial pass plus exactly MAX_COALESCED_FOLLOW_UPS follow-ups, plus the \
              final cap-triggered scan that captures the last pending state before \
-             abandoning (#433)"
+             abandoning"
         );
         // The cap path abandons the entry; the repo must be runnable again.
         assert!(
@@ -4538,7 +4316,7 @@ mod coordinator_tests {
         coordinator.abandon(&repo);
     }
 
-    /// #433 regression: when a churn burst is enough to trip the follow-up cap
+    /// When a churn burst is enough to trip the follow-up cap
     /// but then genuinely settles (no further changes arrive), the final
     /// pending state recorded right at the cap must still be captured by the
     /// extra cap-triggered scan, not silently dropped.
@@ -4548,8 +4326,8 @@ mod coordinator_tests {
     /// concurrently with / just after a scan) and re-arms pending so the
     /// coordinator schedules exactly one more pass. Churn stops after
     /// `churn_passes` bumps, so the last bumped value is the true settled
-    /// state. Without the fix, the scan that would have observed it never
-    /// runs, so `captured` would be stuck one bump behind.
+    /// state. If the cap dropped the final pass, `captured` would be stuck
+    /// one bump behind.
     #[test]
     fn run_coalesced_cap_scan_captures_settled_state_after_burst() {
         let coordinator = RepoRefreshCoordinator::default();

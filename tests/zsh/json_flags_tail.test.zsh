@@ -2,20 +2,15 @@
 # tests/zsh/json_flags_tail.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression/contract test for #613.
-#
-# Before this issue, is_last/is_first/prev_bg JSON tail-building was
-# hand-duplicated across several IPC request builders in zsh/core/ipc.zsh,
-# and each segment re-converted the dispatch loop's is_last/is_first into
-# whatever local convention it felt like using. This exercises
+# Contract test for __gpy_json_flags_tail, the single builder of the
+# is_last/is_first/prev_bg JSON tail shared by every IPC request builder in
+# zsh/core/ipc.zsh. This exercises
 # __gpy_json_flags_tail directly across every (is_last, is_first, prev_bg)
 # combination, plus a prev_bg that needs JSON escaping.
 #
 # NOTE: this table MUST stay identical to tests/fish/json_flags_tail.test.fish
 # and tests/bash/json_flags_tail.test.bash -- the three shells' JSON tail
 # output must be byte-for-byte the same for the same inputs.
-#
-# Must FAIL on a tree without __gpy_json_flags_tail (function undefined).
 
 ROOT=${0:a:h:h:h}
 cd "$ROOT" || exit 1

@@ -17,7 +17,7 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::OnceLock;
 
-/// `GPY_DEBUG_LOG`, made absolute against the launch directory (#724).
+/// `GPY_DEBUG_LOG`, made absolute against the launch directory.
 static DEBUG_PATH: OnceLock<Option<String>> = OnceLock::new();
 
 /// Check if debug logging is enabled
@@ -34,7 +34,7 @@ fn debug_log_path() -> Option<&'static str> {
 }
 
 /// Resolve `GPY_DEBUG_LOG` now, so a daemon forked afterwards inherits the
-/// path as it resolved in the launch directory, not against `/` (#724).
+/// path as it resolved in the launch directory, not against `/`.
 pub fn init_path() {
     let _ = debug_log_path();
 }
@@ -132,10 +132,9 @@ macro_rules! warn_log {
 /// the [`warn_log!`] macro at call sites; this function exists so [`warn_fallback`]
 /// (and any other formatting wrapper) can share the same destination pair.
 pub fn warn(category: &str, message: &str) {
-    // Deliberately not `eprintln!`: `logging_channel_guard` (tests/) asserts
-    // no raw `eprintln!` remains anywhere under this file so every warning,
-    // including this crate's own, is proven to funnel through this one
-    // function rather than a call site reaching around it.
+    // Deliberately not `eprintln!`: the lint gate denies `clippy::print_stderr`, so
+    // every warning funnels through this one function. A daemonized agent's
+    // stderr is /dev/null, which is why the debug-log mirror below exists.
     let _ = writeln!(std::io::stderr(), "Warning: [{category}] {message}");
 
     if let Some(log_path) = debug_log_path() {

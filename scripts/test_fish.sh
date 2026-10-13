@@ -25,14 +25,14 @@ echo
 "$(dirname "$0")/check-active-toolchain.sh" || exit 1
 echo "Building gpy debug binaries for Fish tests..."
 (cd gpy-agent && cargo build --quiet --bin gpy --bin gpy-agent) || {
-    echo "❌ cargo build failed; refusing to test a stale gpy-agent"
+    echo "Error: cargo build failed; refusing to test a stale gpy-agent"
     exit 1
 }
 
 # Honour CARGO_TARGET_DIR, as install-dev.fish and run_shell_tests do.
 AGENT_BIN="${CARGO_TARGET_DIR:-$PWD/gpy-agent/target}/debug/gpy-agent"
 if [ ! -x "$AGENT_BIN" ]; then
-    echo "❌ gpy-agent binary not found at $AGENT_BIN after build"
+    echo "Error: gpy-agent binary not found at $AGENT_BIN after build"
     exit 1
 fi
 
@@ -41,11 +41,10 @@ fi
 # installed in fish_user_paths (e.g. ~/.local/bin).
 AGENT_DIR="$(cd "$(dirname "$AGENT_BIN")" && pwd)"
 
-# Retry policy (#650, mirroring gpy-agent#620 for nextest): no blanket
+# Retry policy (#650, mirroring the nextest policy): no blanket
 # retries. A test may be retried only by a named entry here of the form
 # `<file>.test.fish:#<open issue>`, so a retry is always traceable to an
-# investigation rather than absorbing a regression silently. The list is
-# empty: the entries it used to carry cited #381, which is closed. Every
+# investigation rather than absorbing a regression silently. Every
 # retry that does happen is named in the `Retried:` tally at the end of the
 # run, and tests/bash/nextest_retry_policy.test.bash enforces the format.
 KNOWN_FLAKY_E2E_TESTS=""
@@ -107,7 +106,7 @@ for test_file in tests/fish/*.test.fish; do
                 break
             fi
             if [ "$attempt" -lt "$attempts" ]; then
-                echo "⚠️  $base failed on attempt $attempt/$attempts (named in the retry policy) — retrying..."
+                echo "Warning: $base failed on attempt $attempt/$attempts (named in the retry policy) — retrying..."
             fi
             attempt=$((attempt + 1))
         done
@@ -116,13 +115,13 @@ for test_file in tests/fish/*.test.fish; do
             echo
         else
             failed_tests+=("$base")
-            echo "❌ $base FAILED after $attempts attempt(s)"
+            echo "Error: $base FAILED after $attempts attempt(s)"
             echo
         fi
     fi
 done
 
-# Tallies (#650): what did not execute and what needed a second try.
+# Tallies: what did not execute and what needed a second try.
 join_names() {
     local joined
     joined="$(printf '%s, ' "$@")"
@@ -140,9 +139,9 @@ else
 fi
 
 if [ ${#failed_tests[@]} -ne 0 ]; then
-    echo "❌ ${#failed_tests[@]} Fish test file(s) failed:"
+    echo "Error: ${#failed_tests[@]} Fish test file(s) failed:"
     printf '   - %s\n' "${failed_tests[@]}"
     exit 1
 fi
 
-echo "✅ All Fish tests passed!"
+echo "All Fish tests passed!"

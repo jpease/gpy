@@ -1,57 +1,48 @@
-# GPY Agent Clippy Configuration
-# Aggressive lint configuration - only applied during `cargo clippy`
-# This keeps `cargo build` fast while maintaining strict code quality standards
+# Clippy configuration for gpy-agent.
+# Lint levels live in Cargo.toml [lints] and the moon.yml `clippy` task; this
+# file only tunes thresholds and options of lints those enable.
 
-# === COMPLEXITY THRESHOLDS ===
-cognitive-complexity-threshold = 15        # Lower = stricter
-too-many-lines-threshold = 60             # Encourage smaller functions
-too-many-arguments-threshold = 5          # Force better API design
-type-complexity-threshold = 150           # Limit complex type nesting
+# Complexity thresholds
+cognitive-complexity-threshold = 15
+too-many-lines-threshold = 60
+too-many-arguments-threshold = 5
+type-complexity-threshold = 150
 
-# === MEMORY AND PERFORMANCE ===
-trivial-copy-size-limit = 32              # Prefer Copy for small types
-array-size-threshold = 128000             # Warn on large stack arrays
-vec-box-size-threshold = 4096             # Warn on large boxed collections
-too-large-for-stack = 200                 # Prefer heap for large types
+# Size thresholds
+trivial-copy-size-limit = 32              # pass small Copy types by value
+array-size-threshold = 128000             # large_stack_arrays
+vec-box-size-threshold = 4096
+too-large-for-stack = 200
 
-# === BOOLEAN PARAMETERS ===
-max-struct-bools = 2                      # Use enums instead of many bools
-max-fn-params-bools = 1                   # Very strict - prefer config structs
+# Boolean parameters: prefer enums / config structs
+max-struct-bools = 2
+max-fn-params-bools = 1
 
-# === DOCUMENTATION ===
+# doc_markdown: identifiers that may appear in docs without backticks
 doc-valid-idents = [
-    "GPY", "IPC", "UUID", "JSON", "CLI", "API",
+    "GPY", "IPC", "JSON", "CLI", "API",
     "SIGURG", "SIGTERM", "macOS", "TOML", "UTF8",
-    "TLS", "TCP", "UDP", "HTTP", "URL", "URI"
 ]
-missing-docs-in-crate-items = true        # Require all pub items documented
 
-# === STRING AND NAMING ===
-single-char-binding-names-threshold = 2   # Very strict on single char names
-min-ident-chars-threshold = 3             # Minimum identifier length
-upper-case-acronyms-aggressive = true     # Enforce acronym casing
+# Naming
+single-char-binding-names-threshold = 2   # many_single_char_names
+upper-case-acronyms-aggressive = true
 
-# === ARITHMETIC SAFETY ===
-arithmetic-side-effects-allowed = []      # No arithmetic exceptions
-
-# === IMPORT CONTROL ===
-allowed-wildcard-imports = []             # No wildcard imports allowed
+# wildcard_imports: also flag `use super::*` and prelude-style imports
 warn-on-all-wildcard-imports = true
 
-# === ERROR HANDLING ===
-allow-expect-in-tests = true              # Tests can use expect
-allow-unwrap-in-tests = true              # Tests can use unwrap
-allow-panic-in-tests = true               # Tests can panic
-allow-dbg-in-tests = true                 # Tests can use dbg!
-allow-print-in-tests = true               # Tests can print
+# Restriction lints moon.yml denies, relaxed inside #[test] / #[cfg(test)] code
+allow-expect-in-tests = true
+allow-unwrap-in-tests = true
+allow-panic-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true
 
-# === MSRV COMPATIBILITY ===
-# Kept in step with rust-version in Cargo.toml and the channel in
-# rust-toolchain.toml. A stale value here silently disables every lint
-# gated on a newer MSRV -- this sat at 1.90 against a declared 1.98 and
-# suppressed clippy::duration_suboptimal_units at three sites (#516).
+# Keep in step with rust-version in Cargo.toml and rust-toolchain.toml: a
+# stale value silently disables every lint gated on a newer MSRV.
 msrv = "1.99"
 
-# === PERFORMANCE OPTIMIZATIONS ===
-avoid-breaking-exported-api = false      # Allow breaking changes for better APIs
-check-private-items = true               # Check private items too
+# Lint private items and allow lints to suggest signature changes on public
+# items (the library has no semver guarantee).
+avoid-breaking-exported-api = false
+check-private-items = true

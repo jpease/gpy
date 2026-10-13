@@ -20,10 +20,10 @@ pub use crate::formatter::Format;
 /// Every socket reply except `AgentStatus` is rendered by the requested
 /// formatter (JSON by default), and the JSON formatter writes `Ack` as
 /// `{"status":"ok"}` -- the shape the Fish, Bash and Zsh clients match on.
-/// It is *not* serde's external tagging of the unit variant (`"Ack"`), which
-/// is what the CLI expected after #573 and why a live agent's ping, stop and
-/// config-reload acknowledgements went unrecognised. `decode_wire_reply`
-/// accepts both; test fixtures that model a live agent must send this one.
+/// It is *not* serde's external tagging of the unit variant (`"Ack"`), so a
+/// client that expects only `"Ack"` will not recognise a live agent's ping,
+/// stop and config-reload acknowledgements. `decode_wire_reply` accepts both;
+/// test fixtures that model a live agent must send this one.
 pub const ACK_WIRE_JSON: &str = r#"{"status":"ok"}"#;
 
 /// Decode a socket reply into a [`Response`].
@@ -64,7 +64,7 @@ use serde::{Deserialize, Serialize};
 /// Standard error for IPC operations that require the Unix-socket transport.
 ///
 /// GPY's IPC transport is Unix-domain-socket based (see module docs); native
-/// Windows has no implementation yet (#284). Windows users are expected to run
+/// Windows has no implementation yet. Windows users are expected to run
 /// under WSL, which presents as a Unix environment and uses the real transport.
 #[cfg(not(unix))]
 pub(crate) fn native_windows_unsupported() -> crate::Error {
@@ -198,7 +198,7 @@ pub enum Message {
         /// The path exactly as the client sent it (the shell's logical
         /// `$PWD`), kept only after `path` validated it. Rendered as the
         /// response `cwd` so symlinked directories and `~` contraction match
-        /// oneshot output (#697). Internal: never on the wire.
+        /// oneshot output. Internal: never on the wire.
         #[serde(skip)]
         display_path: String,
         /// Desired response format.
@@ -309,10 +309,10 @@ pub enum Message {
 
     /// Request hostname segment render for a client-supplied hostname value.
     ///
-    /// Per #259, the client resolves and passes the hostname string (and gates
+    /// The client resolves and passes the hostname string (and gates
     /// SSH-only visibility) before ever sending this request; the agent does
     /// not derive the hostname itself. The client also reports whether the
-    /// session is over SSH (#826), so the theme icon (Starship's `ssh_symbol`)
+    /// session is over SSH, so the theme icon (Starship's `ssh_symbol`)
     /// renders only in SSH sessions.
     ///
     /// # Examples
@@ -332,7 +332,7 @@ pub enum Message {
         #[serde(default)]
         #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
-        /// Whether the client session is over SSH; absent means `false` (#826).
+        /// Whether the client session is over SSH; absent means `false`.
         #[serde(default)]
         #[serde(skip_serializing_if = "is_false")]
         is_ssh: bool,
@@ -565,10 +565,9 @@ impl Message {
     /// Returns the shared `format`/`is_last`/`is_first`/`prev_bg` metadata for
     /// message variants that carry it, or `None` for control messages that don't.
     ///
-    /// Collapses what used to be several byte-for-byte-identical match arms
-    /// in the IPC server's request router into a single accessor: adding a
-    /// new segment-render message only requires adding it to the pattern
-    /// below, rather than duplicating a whole routing arm.
+    /// The IPC server's request router uses this single accessor instead of a
+    /// match arm per variant: adding a new segment-render message only requires
+    /// adding it to the pattern below.
     ///
     /// Destructures to a tuple and builds the [`RequestMeta`] once at the end.
     /// The two variant groups differ only in whether they carry `is_first`, and
@@ -826,8 +825,7 @@ pub enum Response {
     /// Hostname segment data returned by the agent when format is set.
     ///
     /// The agent echoes back the hostname and SSH state the client supplied on
-    /// the request; it does not resolve or validate hostname semantics itself
-    /// (#259).
+    /// the request; it does not resolve or validate hostname semantics itself.
     ///
     /// # Example
     ///
@@ -837,7 +835,7 @@ pub enum Response {
     Hostname {
         /// The hostname string, as supplied by the requesting client.
         hostname: String,
-        /// Whether the requesting client's session is over SSH (#826).
+        /// Whether the requesting client's session is over SSH.
         #[serde(default)]
         is_ssh: bool,
     },

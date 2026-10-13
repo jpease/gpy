@@ -1,6 +1,6 @@
 #!/usr/bin/env fish
-# Test: __gpy_read_instant_cache emits cache bytes exactly (fork-free read path, #144)
-# Verifies the builtin read replacing `cat` reproduces output byte-for-byte for
+# Test: __gpy_read_instant_cache emits cache bytes exactly (fork-free read path)
+# Verifies the builtin `read` path (no `cat`) reproduces output byte-for-byte for
 # non-empty, no-trailing-newline, and empty cache files across git/lang suffixes.
 
 set -l script_dir (path dirname (status --current-filename))

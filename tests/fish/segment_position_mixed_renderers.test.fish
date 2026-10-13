@@ -2,13 +2,11 @@
 # tests/fish/segment_position_mixed_renderers.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #765.
-#
 # A shell-rendered segment (status, clock, ...) that follows an agent-rendered
-# one was drawn as the first segment: the shell-side renderer reads
-# `__gpy_segment_position`, which fish_prompt reset once per render and only
-# the shell-side helpers ever flipped. fish_prompt's dispatch loop must set the
-# global from the same index that produces `is_first`.
+# one must not be drawn as the first segment. The shell-side renderer reads
+# `__gpy_segment_position`, so fish_prompt's dispatch loop must set that
+# global from the same index that produces `is_first` for every segment, not
+# only the shell-side ones.
 #
 # Drives the real fish_prompt dispatch loop with a stub agent-rendered segment
 # (never touches `__gpy_segment_position`) and the real status segment, with

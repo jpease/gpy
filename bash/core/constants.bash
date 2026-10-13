@@ -15,9 +15,8 @@ __root_prompt_color="${__root_prompt_color:-red}"
 # Enabled segments (space-separated list)
 __enabled_segments="${__enabled_segments:-directory git}"
 
-# IPC round-trip bound in milliseconds (mirrors zsh/fish). Used to tighten the
-# nc fallback's blocking window closer to the target instead of nc's coarse
-# integer-second -w resolution (#324).
+# IPC round-trip bound in milliseconds; the single default for this shell.
+# Tightens the nc fallback's blocking window below nc's integer-second -w.
 GPY_IPC_TIMEOUT_MS="${GPY_IPC_TIMEOUT_MS:-150}"
 
 # Git instant-cache TTL (seconds). This is the pull-based self-heal bound when
@@ -80,8 +79,7 @@ __gpy_segment_bg() {
 # fallback this call (#614). __gpy_render_prompt reads this off `$?` after
 # every `segment_output=$($segment_fn ..)` and folds it into the per-render
 # __gpy_oneshot_used variable, so a dead daemon costs at most ONE oneshot fork
-# per prompt render -- replacing the old predictable `.gpy_oneshot_used_$$`
-# marker file under ${TMPDIR:-/tmp}.
+# per prompt render without a TMPDIR marker file.
 # Read by init.bash, ipc.bash and segments/*.bash.
 # shellcheck disable=SC2034
 GPY_SEG_STATUS_ONESHOT=3

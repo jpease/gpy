@@ -22,7 +22,7 @@ pub struct DebounceEngine {
     debounce_duration: Duration,
     /// Upper bound on how long a key may be held once first observed, even
     /// under continued churn. Prevents the trailing-edge quiet-gap check from
-    /// postponing a flush indefinitely (#322).
+    /// postponing a flush indefinitely.
     max_delay: Duration,
 }
 
@@ -35,7 +35,7 @@ struct PendingEntry {
     /// Most recent event data for this key.
     pending: PendingEvent,
     /// Earliest instant this entry may be drained, or `None` for the ordinary
-    /// quiet-gap/max-delay rule alone (#569). Set (and only ever raised, never
+    /// quiet-gap/max-delay rule alone. Set (and only ever raised, never
     /// lowered) by [`DebounceEngine::handle_event_due`] — used for the
     /// directory-create follow-up, so the flush thread `WatchCoordinator`
     /// already owns does the waiting instead of a dedicated timer thread per
@@ -69,8 +69,8 @@ impl FileEventKey {
 ///
 /// Git events accumulate their paths: the agent turns them into a
 /// pathspec-limited status scan, so dropping one path publishes a status short
-/// by that file until the cache TTL or the reconcile backstop catches up
-/// (#466). [`GitPaths::merge`] owns the dedup and the bound.
+/// by that file until the cache TTL or the reconcile backstop catches up.
+/// [`GitPaths::merge`] owns the dedup and the bound.
 ///
 /// Every other kind keeps last-writer-wins. Their handlers refresh a whole
 /// subsystem for the repository the key already pins — the language cache, the
@@ -107,7 +107,7 @@ impl DebounceEngine {
     /// timestamp for an existing key so the max-delay cap in
     /// `drain_expired_events` can be enforced regardless of continued churn,
     /// and folds the new event into the pending one via [`merge_pending`]
-    /// rather than overwriting it (#466).
+    /// rather than overwriting it.
     pub fn handle_event(&mut self, pending: PendingEvent) {
         let key = FileEventKey::from_pending(&pending);
         let now = Instant::now();
@@ -131,7 +131,7 @@ impl DebounceEngine {
     }
 
     /// Schedule `pending` for delivery no earlier than `due`, using the same
-    /// per-key coalescing as [`DebounceEngine::handle_event`] (#569).
+    /// per-key coalescing as [`DebounceEngine::handle_event`].
     ///
     /// If an entry already exists for this key — whether from a prior
     /// `handle_event` or `handle_event_due` call — this merges into it via the
@@ -139,12 +139,11 @@ impl DebounceEngine {
     /// and `due`, so the last event in a burst still gets its full delay window
     /// from the moment it was observed.
     ///
-    /// This is what replaced the per-directory timer thread the filesystem
-    /// layer used to spawn for the directory-create follow-up: a burst of N
-    /// created directories in one repository is N synchronous map updates
-    /// collapsing into one pending entry, waited on by the flush thread the
-    /// coordinator already owns, and cleared by `WatchCoordinator::stop`
-    /// along with everything else pending (#569).
+    /// Used for the directory-create follow-up scan: a burst of N created
+    /// directories in one repository is N synchronous map updates collapsing
+    /// into one pending entry, waited on by the coordinator's existing flush
+    /// thread (no per-directory timer thread), and cleared by
+    /// `WatchCoordinator::stop` along with everything else pending.
     pub fn handle_event_due(&mut self, pending: PendingEvent, due: Instant) {
         let key = FileEventKey::from_pending(&pending);
         let now = Instant::now();
@@ -172,7 +171,7 @@ impl DebounceEngine {
     /// window or the max-delay cap. Does **not** invoke any callback — the
     /// caller is responsible for delivering the returned events, and must do
     /// so without holding this engine's lock, since delivery may run
-    /// unbounded git/language work (#306).
+    /// unbounded git/language work.
     pub fn drain_expired_events(&mut self) -> Vec<DebouncedEvent> {
         let now = Instant::now();
         let debounce_duration = self.debounce_duration;
@@ -184,7 +183,7 @@ impl DebounceEngine {
                     || now.duration_since(entry.first_seen) >= max_delay;
                 // An AND-gate, and only ever for an entry that asked for one:
                 // an entry with no floor keeps the pure quiet-gap/max-delay
-                // rule, byte for byte (#569).
+                // rule.
                 let due_elapsed = entry.not_before.is_none_or(|due| now >= due);
                 debounce_elapsed && due_elapsed
             })
@@ -211,7 +210,7 @@ impl DebounceEngine {
     }
 
     /// Get the default max-delay cap: the longest a key may be held once
-    /// first observed, even under continued churn (#322).
+    /// first observed, even under continued churn.
     #[must_use]
     pub const fn default_max_delay() -> Duration {
         Duration::from_secs(1)
@@ -292,7 +291,7 @@ mod tests {
     #[test]
     fn drain_expired_events_never_invokes_a_callback() {
         // DebounceEngine has no callback storage at all — dispatch is the
-        // caller's responsibility, off this engine's lock (#306).
+        // caller's responsibility, off this engine's lock.
         let mut engine = DebounceEngine::new(Duration::from_millis(1));
         engine.handle_event(make_pending("/repo", "/repo/.git/HEAD"));
         thread::sleep(Duration::from_millis(5));
@@ -305,9 +304,8 @@ mod tests {
 
     #[test]
     fn sustained_churn_still_forces_a_flush_within_max_delay() {
-        // Regression test for #322: continuous events under the debounce
-        // quiet-gap window used to reset the expiry forever. The max-delay
-        // cap must force at least one flush despite unbroken churn.
+        // Continuous events under the quiet-gap window keep resetting
+        // `last_seen`; the max-delay cap must still force a flush.
         let mut engine = DebounceEngine::new(Duration::from_millis(20))
             .with_max_delay(Duration::from_millis(50));
 
@@ -339,12 +337,8 @@ mod tests {
     }
 
     #[test]
-    /// Regression test for #466: two changes to different files in one debounce window must
-    /// both survive.
-    ///
-    /// Used to keep only the last path, so the incremental scan that followed published a
-    /// status short by one file until the cache TTL or the reconcile backstop caught up.
-    ///
+    /// Two changes to different files in one debounce window must both
+    /// survive, so the incremental scan covers every changed path.
     fn same_repo_events_accumulate_every_path() {
         let mut engine = DebounceEngine::new(Duration::from_millis(10));
 
@@ -392,7 +386,7 @@ mod tests {
     /// Past the bound the pathspec stops being cheaper than a full scan, and unbounded
     /// accumulation would grow `PendingEntry` against the memory budget.
     ///
-    /// Degrade explicitly rather than truncating silently (#466).
+    /// Degrade explicitly rather than truncating silently.
     fn accumulation_past_the_bound_degrades_to_a_whole_repo_scan() {
         let mut engine = DebounceEngine::new(Duration::from_millis(10));
 
@@ -446,12 +440,8 @@ mod tests {
     }
 
     #[test]
-    /// #569: an entry scheduled through `handle_event_due` must not drain
-    /// merely because its quiet gap elapsed.
-    ///
-    /// The due-time floor is what the directory-create follow-up's delay now
-    /// rides on, so the flush thread does the waiting a per-directory timer
-    /// thread used to do.
+    /// An entry scheduled through `handle_event_due` must not drain merely
+    /// because its quiet gap elapsed; the flush thread waits out the floor.
     fn a_due_floor_holds_an_entry_past_its_quiet_gap() {
         let mut engine =
             DebounceEngine::new(Duration::from_millis(10)).with_max_delay(Duration::from_secs(5));
@@ -474,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    /// #569: the floor is a property of the entry, not of the call that set it.
+    /// The floor is a property of the entry, not of the call that set it.
     ///
     /// An ordinary event merging into a scheduled follow-up (and vice versa)
     /// keeps the floor, so the pair delivers once, after the delay — never as
@@ -516,7 +506,7 @@ mod tests {
     }
 
     #[test]
-    /// #569: two follow-ups for one repository keep the later floor, in either
+    /// Two follow-ups for one repository keep the later floor, in either
     /// arrival order.
     ///
     /// The last directory created in a burst still gets its full delay window
@@ -537,8 +527,8 @@ mod tests {
     }
 
     #[test]
-    /// An ordinary event carries no floor, so every pre-#569 caller keeps the
-    /// pure quiet-gap/max-delay rule.
+    /// An ordinary event carries no floor, so it keeps the pure
+    /// quiet-gap/max-delay rule.
     fn an_ordinary_event_records_no_due_floor() {
         let mut engine = DebounceEngine::new(Duration::from_millis(10));
         engine.handle_event(make_pending("/repo", "/repo/a.txt"));
@@ -546,14 +536,9 @@ mod tests {
     }
 
     #[test]
-    /// Acceptance criterion for #569: a burst of 500 created directories in one
-    /// repository spawns zero additional threads.
-    ///
-    /// The no-thread half is true by construction — `handle_event_due` is a
-    /// synchronous map update with no `thread::spawn` anywhere beneath it — so
-    /// what needs proving is the other half: 500 scheduling calls collapse into
-    /// a single pending entry, and so into a single follow-up scan, instead of
-    /// 500 of anything.
+    /// A burst of 500 created directories in one repository collapses into a
+    /// single pending entry (one follow-up scan). `handle_event_due` is a
+    /// synchronous map update, so no threads are spawned either.
     fn five_hundred_directory_followups_collapse_to_one_entry() {
         let mut engine = DebounceEngine::new(Duration::from_millis(10));
         let due = Instant::now() + Duration::from_millis(50);

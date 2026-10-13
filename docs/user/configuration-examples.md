@@ -4,8 +4,6 @@
 
 A task-oriented cookbook: pick the goal you want, copy the snippet, adapt the values. For what each key means, its type, default, and valid range, see [Configuration Reference](configuration-reference.md).
 
-**Last Updated:** 2026-07-07
-
 ---
 
 ## Goal: Switch to Nerd Font icons

@@ -12,9 +12,9 @@ benchmark workflow below.
 
 ## Worst-Case Policy
 
-When GPY uses `<10ms` language, it means `<10ms` for the user-visible
-cached/instant-response path, not `<10ms` for fresh full computation in all
-cases. Fresh git or language recomputation on large or noisy repositories may
+The cached prompt budget (`prompt_render` in `tests/performance-baselines.json`:
+20 ms target, 50 ms max) applies to the user-visible cached/instant-response
+path, not to fresh full computation in all cases. Fresh git or language recomputation on large or noisy repositories may
 take materially longer and must be communicated separately.
 
 ## Environment Requirements
@@ -201,19 +201,19 @@ Competitive or public-facing performance claims should cite the real-world suite
   - measured value vs budget
   - reproduction command and environment
 
-## Enabling Mechanisms for the `<10ms` Cached/Instant-Response Claim
+## Mechanisms Behind the Cached Prompt Budget
 
-The `<10ms` user-visible target is met by the following architectural mechanisms, not by raw computation speed:
+The `prompt_render` budget is met by the following architectural mechanisms, not by raw computation speed:
 
 1. **Instant cache** — On every prompt render, the agent first reads a stale filesystem-backed cache
-   entry. If valid, it returns the cached result in `<1ms` while scheduling a background refresh.
-   This is the primary path that makes `<10ms` achievable even for large repositories.
+   entry. If valid, it returns the cached result (`cache_read` budget: 1 ms target) while scheduling a background refresh.
+   This is the primary path that keeps large repositories inside the budget.
 
 2. **Background refresh** — After returning the cached result, the agent runs the real git/language
    computation asynchronously. The updated value is stored for the next prompt.
 
-3. **IPC hot path** — For prompts that hit the live in-memory cache, roundtrip IPC latency is
-   `<0.2ms` (validated by `just bench-ci`).
+3. **IPC hot path** — For prompts that hit the live in-memory cache, roundtrip IPC latency stays within the
+   `ipc_latency` budget (1 ms target, 1.5 ms max; `ipc_ping` baseline 0.037 ms).
 
 If any of these mechanisms are bypassed (e.g. cold agent start, cache miss with no stale entry,
 or `--no-cache` flag), the user-visible latency is bounded by fresh git/language computation time,

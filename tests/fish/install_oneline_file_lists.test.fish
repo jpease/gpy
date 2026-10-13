@@ -2,7 +2,7 @@
 # tests/fish/install_oneline_file_lists.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Guards against #308: install-oneline.sh downloads shell files from a
+# install-oneline.sh downloads shell files from a
 # hardcoded per-file list per shell. Those lists silently rot when a new
 # core/segment/function file is added to the repo but not to the installer,
 # so fresh one-line installs quietly ship an incomplete set of files.
@@ -15,10 +15,10 @@
 # snippets for plugin authors, not installable segments, and are
 # intentionally excluded from the comparison.
 #
-# It also guards the companion fix: the shell files are downloaded from
-# the same $VERSION as the binary, not a hardcoded "main" ref (the binary's
-# own development-build fallback URL, which intentionally still targets
-# "main", is left alone and is not checked here).
+# It also checks that the shell files are downloaded from the same $VERSION
+# as the binary, not a hardcoded "main" ref (the binary's own
+# development-build fallback URL, which intentionally still targets "main",
+# is left alone and is not checked here).
 
 set -l script_dir (dirname (status --filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
@@ -78,7 +78,7 @@ __install_oneline_test_compare "Bash segments" BASH_SEGMENT_FILES $installer bas
 
 # The shell-files base URL and the gpy_init.fish download must use
 # $VERSION, not a hardcoded "main" ref, so fresh installs pair shell files
-# with the same release as the binary (#308).
+# with the same release as the binary.
 if string match -q -- '*SHELL_FILES_BASE_URL=*/main/*' <$installer
     echo "❌ $installer: SHELL_FILES_BASE_URL still hardcodes /main/"
     set -g failed 1
@@ -93,12 +93,10 @@ else
     echo "✅ gpy_init.fish download is not hardcoded to /main/"
 end
 
-# Regression guard for #615: install-oneline.sh used to branch on
-# curl-vs-wget separately at every download call site (18 copies at last
-# count) instead of going through the single `fetch_to`/`fetch_stdout`
-# helpers defined once near the top of the file. The only legitimate
-# `command -v curl` left is the one-time $DOWNLOADER resolution those
-# helpers are built on.
+# Every download call site must go through the single `fetch_to`/
+# `fetch_stdout` helpers defined once near the top of the file rather than
+# branching on curl-vs-wget itself. The only legitimate `command -v curl` is
+# the one-time $DOWNLOADER resolution those helpers are built on.
 set -l curl_branch_count (grep -c 'command -v curl' $installer)
 if test "$curl_branch_count" = 1
     echo "✅ $installer has exactly one curl-vs-wget branch (the \$DOWNLOADER resolution)"

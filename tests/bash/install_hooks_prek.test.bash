@@ -1,29 +1,21 @@
 #!/usr/bin/env bash
 # tests/bash/install_hooks_prek.test.bash
 #
-# Regression test for #666: scripts/install-hooks.sh must leave a clone with
-# prek shims for pre-commit, pre-push and commit-msg, even when Raven already
-# symlinked its own hooks into .git/hooks (e.g. .git/hooks/pre-commit ->
-# .raven/git-hooks/pre-commit).
+# scripts/install-hooks.sh must leave a clone with prek shims for pre-commit,
+# pre-push and commit-msg, even when Raven already symlinked its own hooks
+# into .git/hooks (e.g. .git/hooks/pre-commit -> .raven/git-hooks/pre-commit).
 #
 # Real prek, given an existing hook, renames it to <hook>.legacy and keeps
 # running it (migration mode), and with --force writes its shim through the
 # symlink into the tracked .raven/git-hooks/pre-commit. The stub `prek` below reproduces the
 # rename so the test needs no prek install; the script must remove Raven's
 # symlinks first so neither outcome can happen.
-#
-# Without the fix: pre-commit/pre-push keep a .legacy Raven symlink and no
-# commit-msg shim is installed.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
 
-FAILED=0
-pass() { echo "PASS: $*"; }
-fail() {
-    echo "FAIL: $*"
-    FAILED=1
-}
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-install-hooks.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
@@ -85,8 +77,4 @@ else
     fail "tracked .raven/git-hooks/pre-commit was overwritten"
 fi
 
-if [ "$FAILED" -ne 0 ]; then
-    echo "FAILED"
-    exit 1
-fi
-echo "=== All install-hooks tests passed ==="
+test_finish "install-hooks.sh leaves prek shims and no Raven .legacy hooks"

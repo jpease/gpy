@@ -2,7 +2,7 @@
 # tests/bash/quality_check_fix_cwd.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #811: quality-check.sh --fix must cd to the repo root before running
+# quality-check.sh --fix must cd to the repo root before running
 # fish_indent and other commands. If invoked from a different directory,
 # it should not reformat .fish files under the caller's cwd.
 

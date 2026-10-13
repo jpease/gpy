@@ -4,7 +4,6 @@
 #
 # Test: `gpy theme import` render parity against a REAL, unmodified Starship
 # preset (Starship's official "Pure Preset")
-# ---------------------------------------------------------------------------
 # `tests/fish/starship_parity.test.fish` proves GPY's hand-written `starship`
 # theme (config/themes/starship.toml) matches Starship's own defaults. This
 # test instead proves the *import pipeline* end to end: `gpy theme import`
@@ -54,7 +53,7 @@
 #   depth against a future change to the runner (e.g. sourcing multiple test
 #   files in one process) or manual `source`-ing both files interactively.
 #
-# GATING (must hold; a regression fails the suite)
+# GATING (must hold; any drift fails the suite)
 #   Per-segment text+colour parity for username, hostname, directory, git,
 #   duration, language (python), and character, for every built-in fixture
 #   (plain non-git dir, clean git repo, dirty git repo) — EXCEPT the one
@@ -95,27 +94,14 @@
 #      (`conflicted`/`untracked`/.../`stashed` keys) at all. Confirmed
 #      empirically: on the dirty fixture, GPY renders visible aggregate icons
 #      (`✱1?1`-style) where Starship renders `*` + near-invisible
-#      zero-width-space glyphs. Investigated in #350 (fixed GPY showing NO
-#      dirty indicator at all) and #369 (root-caused the remaining glyph
-#      mismatch and accepted it as a permanent, documented limitation of the
-#      aggregate `$status` model — not pursuing a format-template engine for
-#      this). Branch name, directory, duration, language, and character
-#      segments on the SAME dirty fixture are still gated normally — only the
-#      "git" segment (which combines branch+status into one GPY-rendered
-#      string, see `translate_git`) is exempted, and only on this one
-#      fixture; the clean fixture's "git" segment (no status glyphs to show)
-#      gates as usual.
-#
-#   Previously documented here and now FIXED (both gate normally as of
-#   #355/#356):
-#     - directory text (plain non-git fixture): `translate_directory_layout`
-#       now always recommends `display = "truncated"` + `truncate_to_repo =
-#       true`, matching Starship's actual default behavior, regardless of
-#       whether the source `[directory]` table overrides truncation_length/
-#       truncation_symbol.
-#     - character segment colour (all fixtures): `translate_character` now
-#       derives the `bold` attribute from the source's actual
-#       `success_symbol`/`error_symbol` styles instead of hardcoding it.
+#      zero-width-space glyphs. The glyph mismatch is an accepted, permanent
+#      limitation of the aggregate `$status` model (#369); GPY does not
+#      implement a format-template engine for it. Branch name, directory,
+#      duration, language, and character segments on the SAME dirty fixture
+#      are still gated normally — only the "git" segment (which combines
+#      branch+status into one GPY-rendered string, see `translate_git`) is
+#      exempted, and only on this one fixture; the clean fixture's "git"
+#      segment (no status glyphs to show) gates as usual.
 #
 #   Additionally, `git_state` (rebase/merge progress) has no GPY equivalent
 #   and is dropped at import time with a warning (visible if you drop
@@ -126,7 +112,8 @@
 #   no gating — there's no fixture label to look up an exemption by):
 #       fish tests/fish/starship_preset_import_parity.test.fish ~/some/repo
 #
-# Skips cleanly (exit 0) when `starship` is not installed (e.g. CI).
+# Skips via test_skip when `starship` is not installed (exit 0 locally, a
+# failure under CI).
 
 # Resolve to an ABSOLUTE repo root: helpers below cd into fixture dirs before
 # using $spi_match_cfg / the binaries, so relative paths (status dirname is
@@ -134,10 +121,8 @@
 set -l test_root (status dirname)/../..
 set -g spi_repo_root (path resolve $test_root)
 
-# ---------------------------------------------------------------------------
-# Prerequisites
-# ---------------------------------------------------------------------------
-# Shared skip contract (#650): exits 0 locally, fails under CI.
+# --- Prerequisites ---
+# Shared skip contract: exits 0 locally, fails under CI.
 source (dirname (status filename))/../lib/test_helpers.fish
 if not command -q starship
     test_skip "starship not installed — parity comparison unavailable"
@@ -168,15 +153,13 @@ set -g SPI_DURATION 5000 # > Starship's 2s threshold so the duration module show
 set -g spi_hostname $hostname
 set -g spi_username (whoami)
 
-# ---------------------------------------------------------------------------
-# Isolated GPY config: run the real import pipeline end to end, exactly as a
-# user would after downloading a third-party preset. Never touches the real
-# user config.
-# ---------------------------------------------------------------------------
+# --- Isolated GPY config ---
+# Run the real import pipeline end to end, exactly as a user would after
+# downloading a third-party preset. Never touches the real user config.
 set -g SPI_ISO (mktemp -d)
 set -gx XDG_CONFIG_HOME $SPI_ISO
 set -gx HOME $SPI_ISO
-# Cache and runtime roots follow the sandboxed HOME, never the caller's (#665).
+# Cache and runtime roots follow the sandboxed HOME, never the caller's.
 set -e XDG_CACHE_HOME XDG_RUNTIME_DIR
 set -gx MISE_DISABLE 1
 
@@ -203,9 +186,7 @@ set -g spi_theme_file $SPI_ISO/gpy/themes/pure-preset.toml
 set -g spi_is_root 0
 test (id -u) -eq 0; and set spi_is_root 1
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# --- Helpers ---
 
 # Strip ANSI SGR escape sequences (\e[...m) from stdin/args.
 function __spi_strip
@@ -329,10 +310,9 @@ function __spi_sp_seg --argument-names seg dir
     end
 end
 
-# ---------------------------------------------------------------------------
-# Comparison + report for one (fixture, segment) pair. Prints the report and
-# sets globals SPI_TEXT_MATCH / SPI_COLOR_MATCH (1 = identical).
-# ---------------------------------------------------------------------------
+# --- Comparison + report for one (fixture, segment) pair ---
+# Prints the report and sets globals SPI_TEXT_MATCH / SPI_COLOR_MATCH
+# (1 = identical).
 function __spi_compare_segment --argument-names label seg dir
     set -l gpy_raw (__spi_gpy_seg $seg $dir)
     set -l sp_raw (__spi_sp_seg $seg $dir)
@@ -375,8 +355,8 @@ end
 # Documented, empirically-confirmed exemptions from gating (see KNOWN
 # REMAINING DIVERGENCE in the file header). Returns 0 (exempt) / 1 (gate it).
 function __spi_exempt_text --argument-names label seg
-    # #1: git_status format-template parity (literal text + per-flag glyphs)
-    # is accepted as a permanent limitation (#369); only the dirty fixture
+    # Divergence 1: git_status format-template parity (literal text +
+    # per-flag glyphs) is an accepted limitation; only the dirty fixture
     # actually shows any status glyphs to diverge on.
     test "$label" = "dirty git repo"; and test "$seg" = git; and return 0
     return 1
@@ -386,9 +366,7 @@ function __spi_exempt_color --argument-names label seg
     __spi_exempt_text $label $seg
 end
 
-# ---------------------------------------------------------------------------
-# Build deterministic fixtures (same three shapes as starship_parity.test.fish).
-# ---------------------------------------------------------------------------
+# --- Build deterministic fixtures (same three shapes as starship_parity.test.fish) ---
 function __spi_mkrepo --argument-names dir
     mkdir -p $dir
     git -C $dir init -q
@@ -419,9 +397,7 @@ git -C $fx_dirty commit -qm init
 echo modified >>$fx_dirty/a.txt
 echo new >$fx_dirty/untracked.txt
 
-# ---------------------------------------------------------------------------
-# Run.
-# ---------------------------------------------------------------------------
+# --- Run ---
 set -g SPI_FAILURES 0
 
 echo "=== Gating fixtures (starship "(starship --version | head -1)") ==="
@@ -460,9 +436,7 @@ if test (count $argv) -gt 0
     end
 end
 
-# ---------------------------------------------------------------------------
-# Cleanup + verdict
-# ---------------------------------------------------------------------------
+# --- Cleanup + verdict ---
 rm -rf $SPI_ISO $fixtures_root
 
 echo

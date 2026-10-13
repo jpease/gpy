@@ -1,4 +1,4 @@
-# Cross-shell contract scenarios (#844, #847). The ONE place a drift fix adds a
+# Cross-shell contract scenarios. The ONE place a cross-shell behaviour gets a
 # row: tests/bash/shell_contract.test.bash runs every row through the real Fish,
 # Bash and Zsh integrations (tests/lib/shell_scenarios/render.*), each in its own
 # sandbox, and requires the normalized prompt AND the observable side effects to
@@ -52,7 +52,7 @@
 # behavior rather than cold daemon worker/cache setup speed under host load.
 # Slow rows still impose their full 1.8 s delay on every observed data request.
 #
-# --- golden rows (#844): shell-drawn clock, status, hostname, username, root prompt
+# --- golden rows: shell-drawn clock, status, hostname, username, root prompt
 ascii-ok	golden-ascii	clock,status,hostname,username	0	SSH_CONNECTION=10.0.0.1	-
 ascii-fail	golden-ascii	clock,status,hostname,username	127	SSH_CONNECTION=10.0.0.1	-
 ascii-local-session	golden-ascii	clock,status,hostname,username	1	-	-
@@ -71,35 +71,35 @@ template-root	golden-template	clock,status,username	0	-	root
 starship-flat	starship	clock,status	0	-	-
 template-clock-12h-seconds	golden-template-12h	clock	0	-	mask_seconds
 
-# --- behaviour rows (#847): the drifts the cross-shell epic fixed
-# #841 agent disabled: the prompt still renders (oneshot), nothing is started or registered
+# --- behaviour rows: integration behaviour every shell must share
+# agent disabled: the prompt still renders (oneshot), nothing is started or registered
 disabled	default	directory	0	-	-	down	repo	[agent]\nenabled = false	-	starts=0 registers=0 ipc_total=0 oneshots=directory
-# #842 `[agent.supervisor] enabled=false` only gates restarts: the agent is still started
+# `[agent.supervisor] enabled=false` only gates restarts: the agent is still started
 supervisor-off-down	default	directory,git	0	-	-	down	repo	[agent.supervisor]\nenabled = false	-	starts=1 registers=0 oneshots=directory prompt!~=main
-# #843 cold git miss, agent down: the segment is omitted, no foreground `oneshot git`
+# cold git miss, agent down: the segment is omitted, no foreground `oneshot git`
 cold-miss-down	default	directory,git	0	-	-	down	repo	-	-	starts=1 registers=0 oneshots=directory prompt!~=main
-# #843 cold git miss, agent up: one bounded synchronous query
+# cold git miss, agent up: one bounded synchronous query
 cold-miss-up	default	directory,git	0	-	-	up	repo	-	-	starts=0 registers=1 oneshots=- ipc.git=1 prompt~=main
-# #843 variant fallback: a git entry for the wrong previous colour is corrected by one bounded sync query...
+# variant fallback: a git entry for the wrong previous colour is corrected by one bounded sync query...
 variant-up	variant-git	status,git	0	-	drop_variants	up	repo	-	git	starts=0 oneshots=- ipc.git=1 prompt~=main
 # ...or, with the agent gone, the context-free entry is served as is
 variant-down	variant-git	status,git	0	-	drop_variants,down_after_prime	up	repo	-	git	starts=1 oneshots=character ipc_total=0 prompt~=main
-# #845 slow reply (connected, late): omitted, no oneshot fork, no resend. Two git requests
+# slow reply (connected, late): omitted, no oneshot fork, no resend. Two git requests
 # are the sync query plus the one throttled background refresh a miss queues; a resend
 # of the sync query would make it three.
 slow-reply	default	directory,git	0	GPY_IPC_TIMEOUT_MS=150	-	slow	repo	-	-	starts=0 registers=1 oneshots=- ipc.git=2 prompt!~=main
-# #845 GPY_IPC_TIMEOUT_MS is honoured: a budget longer than the delay uses the late reply
+# GPY_IPC_TIMEOUT_MS is honoured: a budget longer than the delay uses the late reply
 ipc-timeout-long	default	directory,git	0	GPY_IPC_TIMEOUT_MS=5000	-	slow	repo	-	-	starts=0 oneshots=- ipc.git=1 prompt~=main
-# #845 GPY_GIT_INSTANT_CACHE_TTL_SECONDS is honoured: a fresh entry is served with no git request...
+# GPY_GIT_INSTANT_CACHE_TTL_SECONDS is honoured: a fresh entry is served with no git request...
 ttl-fresh	default	directory,git	0	GPY_GIT_INSTANT_CACHE_TTL_SECONDS=3600	-	up	repo	-	git	starts=0 oneshots=- ipc.git=0 prompt~=main
 # ...and an expired one is still drawn (stale) and the agent is asked to refresh it
 ttl-expired	default	directory,git	0	GPY_GIT_INSTANT_CACHE_TTL_SECONDS=1	aged_cache	up	repo	-	git	starts=0 oneshots=- ipc.git=1 prompt~=main
-# #845 empty HOME: the same prompt and requests with HOME= as with a home
+# empty HOME: the same prompt and requests with HOME= as with a home
 empty-home	default	directory,git	0	HOME=	-	up	repo	-	-	starts=0 registers=1 oneshots=- ipc.git=1 prompt~=main
-# #855 agent disabled, two data segments: git is not omitted in any shell (it renders through oneshot, or
+# agent disabled, two data segments: git is not omitted in any shell (it renders through oneshot, or
 # draws nothing once the directory has spent the one-fork budget), so the directory is never the last segment
 disabled-two-segments	default	directory,git	0	-	-	down	repo	[agent]\nenabled = false	-	starts=0 registers=0 ipc_total=0 oneshots=directory prompt!~=main
-# #855 agent disabled, git alone: the segment renders through oneshot
+# agent disabled, git alone: the segment renders through oneshot
 disabled-git-only	default	git	0	-	-	down	repo	[agent]\nenabled = false	-	starts=0 registers=0 ipc_total=0 oneshots=git prompt~=main
-# #856 a theme without two_line (built-in `text`) draws the character on the segments' line in every shell
+# a theme without two_line (built-in `text`) draws the character on the segments' line in every shell
 text-theme	text	directory,status	0	-	-	up	repo	-	-	starts=0 registers=1 ipc.character=1

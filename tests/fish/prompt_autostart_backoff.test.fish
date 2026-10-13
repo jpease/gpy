@@ -2,12 +2,12 @@
 # tests/fish/prompt_autostart_backoff.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #301: the fish_prompt autostart hook must rate-limit
-# and cap its restart attempts against a crash-looping agent binary instead
-# of re-forking and stalling on every single prompt.
+# The fish_prompt autostart hook must rate-limit and cap its restart
+# attempts against a crash-looping agent binary instead of re-forking and
+# stalling on every single prompt.
 
 # Isolate the theme-export cache dir so init.fish's fast path can't read a
-# real, live dogfooding daemon's cache (#402).
+# real, live dogfooding daemon's cache.
 set -gx XDG_CACHE_HOME (mktemp -d)
 
 source fish/core/init.fish

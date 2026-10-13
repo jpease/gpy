@@ -23,55 +23,29 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// How long the one-shot health probe waits for the native backend to deliver
-/// an event for its own sentinel file before declaring it silent (#442).
-///
-/// Two seconds is a deliberate compromise: long enough that a merely slow
-/// `FSEvents`/inotify delivery is not mistaken for a dead one (the observed
-/// healthy latency is well under 250ms), short enough that a genuinely silent
-/// backend is replaced roughly 20x sooner than the ~45s reconcile
-/// (`RECONCILE_INTERVAL_SECS`) would have papered over it.
+/// How long the health probe waits for the native backend to report its own
+/// sentinel write: well above healthy latency (<250ms), far below the ~45s reconcile.
 const DEFAULT_WATCH_PROBE_MS: u64 = 2_000;
 
-/// Interval used by the `notify::PollWatcher` fallback once it is armed
-/// (#442).
-///
-/// `PollWatcher` recursively stat-walks every watched root on each tick, so
-/// this is the one knob that decides how expensive a degraded machine is.
-/// Two seconds is chosen because:
-///
-/// - the debouncer already coalesces bursts (default 100ms window), so
-///   sub-second polling adds tree walks without adding user-visible
-///   responsiveness;
-/// - a repo with a large untracked `target/`/`node_modules` tree makes each
-///   walk cost real I/O, and this only ever runs on machines whose native
-///   backend is already broken; and
-/// - 2s is still ~20x better than the ~45s reconcile that was previously the
-///   only recovery.
-///
+/// `PollWatcher` fallback interval: each tick stat-walks every watched root, and
+/// the debouncer already coalesces bursts, so sub-second polling buys nothing.
 /// Override with `GPY_WATCH_POLL_MS` (milliseconds).
 const DEFAULT_WATCH_POLL_MS: u64 = 2_000;
 
-/// How long each probe iteration blocks waiting for an event before re-touching the sentinel
-/// file.
-///
-/// Re-touching (rather than writing once and waiting for the full timeout) guards against a
-/// write that lands before the watch is fully armed, which would otherwise look identical to a
-/// dead backend.
+/// Per-iteration wait before re-touching the probe sentinel, so a write that lands
+/// before the watch is armed is not mistaken for a dead backend.
 const PROBE_TOUCH_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Shared read-only context for a single `process_event` call, bundled so per-path helpers
-/// (e.g.
-///
-/// `FileSystemWatcher::emit_classified_event`) stay under clippy's `too_many_arguments` limit
-/// without duplicating the same three values as separate parameters (#443).
+/// (e.g. `FileSystemWatcher::emit_classified_event`) stay under clippy's
+/// `too_many_arguments` limit.
 struct WorktreeEventContext<'a> {
     event: &'a Event,
     registry: &'a Arc<WatchRegistry>,
     worktree_enabled: bool,
 }
 
-/// Which notify backend is currently armed behind a [`FileSystemWatcher`] (#442).
+/// Which notify backend is currently armed behind a [`FileSystemWatcher`].
 ///
 /// Reported in the debug log on construction and on every swap so a degraded machine is
 /// diagnosable from `GPY_DEBUG` output alone.
@@ -95,7 +69,7 @@ impl BackendKind {
     }
 
     /// Whether removing one watch on this backend can also remove watches on
-    /// other, overlapping paths (#687). See [`WatchSet`].
+    /// other, overlapping paths. See [`WatchSet`].
     const fn removal_cascades(self) -> bool {
         match self {
             Self::Native => NATIVE_REMOVAL_CASCADES,
@@ -106,7 +80,7 @@ impl BackendKind {
 
 /// Whether the platform's native `notify` backend shares OS watches between
 /// overlapping registrations, so that removing one path also removes watches
-/// another registration depends on (#687).
+/// another registration depends on.
 ///
 /// inotify keeps one descriptor per directory, shared by every registration
 /// whose walk reached it, and `notify` removes every descriptor under a
@@ -116,7 +90,7 @@ impl BackendKind {
 const NATIVE_REMOVAL_CASCADES: bool = !cfg!(any(target_os = "macos", target_os = "windows"));
 
 /// One logical watch registration: a `(path, mode)` pair as passed to
-/// `watch`/`watch_shallow`, held by `owners` callers (#687).
+/// `watch`/`watch_shallow`, held by `owners` callers.
 #[derive(Debug)]
 struct Registration {
     /// How many `watch` calls for this pair have not yet been matched by an
@@ -125,16 +99,16 @@ struct Registration {
     /// The OS-level `(path, mode)` pairs this registration holds in
     /// [`WatcherBackend::os`]: the path itself on the native backend, the
     /// `.gitignore`-pruned directory expansion of a recursive directory watch
-    /// on the poll backend (#463, see [`FileSystemWatcher::poll_watch_targets`]).
+    /// on the poll backend (see [`FileSystemWatcher::poll_watch_targets`]).
     /// A poll expansion follows the tree as directories are created and
-    /// removed under it (#721), so this is a set: ordered, so a removed
+    /// removed under it, so this is a set: ordered, so a removed
     /// directory's subtree is one contiguous range.
     targets: BTreeSet<(PathBuf, WatchMode)>,
 }
 
 /// The armed notify backend plus the set of paths it must be watching.
 ///
-/// These two live behind ONE mutex on purpose (#442): swapping the backend
+/// These two live behind ONE mutex on purpose: swapping the backend
 /// has to re-arm every path that was registered against the old one, and a
 /// concurrent `MultiRepoWatcher::register_client` calling `watch()` must
 /// either be fully before the swap (so the swap re-arms its path) or fully
@@ -144,13 +118,13 @@ struct Registration {
 /// Lock discipline: this is a LEAF lock. Nothing taken while it is held ever
 /// reaches back into `MultiRepoWatcher`'s `ops_lock` / `watched_repos` /
 /// `watcher` locks, so it cannot participate in a cycle with them. The event
-/// thread takes it only to keep the poll expansion in step with the tree
-/// (#721): never while walking it, never while invoking a callback.
+/// thread takes it only to keep the poll expansion in step with the tree:
+/// never while walking it, never while invoking a callback.
 struct WatcherBackend {
     /// `None` once [`FileSystemWatcher::stop`] has torn the backend down.
     watcher: Option<Box<dyn Watcher + Send>>,
     /// Every logical registration, keyed by `(path, mode)`. The single source
-    /// of truth for what callers asked to watch (#687): `covers`, unwatch
+    /// of truth for what callers asked to watch: `covers`, unwatch
     /// bookkeeping and the backend-swap re-arm all read it. A shallow and a
     /// recursive registration of one path are separate keys, each with its own
     /// owner count.
@@ -188,7 +162,7 @@ impl WatcherBackend {
         match (kind, mode, poll_targets) {
             // The descent already happened in `poll_watch_targets`, so each
             // directory is armed shallow: `PollWatcher` never walks deeper than
-            // one level per registered directory (#463).
+            // one level per registered directory.
             (BackendKind::Poll, WatchMode::Recursive, Some(targets)) => targets
                 .into_iter()
                 .map(|target| (target, WatchMode::Shallow))
@@ -276,9 +250,9 @@ impl WatcherBackend {
     }
 
     /// Apply `ops` to the backend as one batch -- one `FSEventStream` rebuild
-    /// on macOS however many paths change (#388) -- returning every path whose
+    /// on macOS however many paths change -- returning every path whose
     /// add failed. Those failures are recorded in [`WatcherBackend::os`],
-    /// which keeps a partially armed recursive tree removable (#722).
+    /// which keeps a partially armed recursive tree removable.
     /// Removal failures are only logged: the watch is gone either way.
     fn apply(&mut self, ops: Vec<OsOp>) -> Vec<(PathBuf, notify::Error)> {
         let mut failures = Vec::new();
@@ -329,10 +303,10 @@ impl WatcherBackend {
         })
     }
 
-    /// The recursive registrations whose poll expansion (#463) the directory
-    /// `dir`, created after they were armed, belongs in (#721): every one
+    /// The recursive registrations whose poll expansion the directory
+    /// `dir`, created after they were armed, belongs in: every one
     /// whose expansion holds `dir`'s parent but not yet `dir`. Overlapping
-    /// roots each take it, so the reference counts (#687) keep it armed until
+    /// roots each take it, so the reference counts keep it armed until
     /// the last of them releases it. Empty off the poll backend.
     fn poll_expansion_owners(&self, dir: &Path) -> Vec<PathBuf> {
         if self.kind != BackendKind::Poll || self.watcher.is_none() {
@@ -355,7 +329,7 @@ impl WatcherBackend {
     }
 
     /// Add each root's newly found directories to its poll expansion, arming
-    /// whichever no other registration already holds (#721). `expansions`
+    /// whichever no other registration already holds. `expansions`
     /// pairs a root from [`WatcherBackend::poll_expansion_owners`] with
     /// [`FileSystemWatcher::poll_watch_targets_within`]'s walk for it. A root
     /// released since then is skipped, and a directory a root already holds
@@ -391,7 +365,7 @@ impl WatcherBackend {
 
     /// Drop `removed` and everything under it from every recursive
     /// registration's poll expansion, unwatching whatever no other
-    /// registration still holds (#721), so the expansion does not grow across
+    /// registration still holds, so the expansion does not grow across
     /// mkdir/rmdir cycles. A registration's own root stays: `PollWatcher`
     /// watches by path, so it reports the root's entries again if the
     /// directory is recreated.
@@ -436,9 +410,8 @@ struct AttributedWorktreeEvent<'a> {
     registry: &'a Arc<WatchRegistry>,
 }
 
-/// The directory-create follow-up wiring (#416, #569).
-///
-/// How long to hold the follow-up back, and where to hand it off.
+/// Where the directory-create follow-up refresh is handed off, and how long
+/// it is held back.
 ///
 /// Bundled so [`FileSystemWatcher::spawn_event_thread`] stays under clippy's
 /// argument-count limit; the two always travel together.
@@ -450,7 +423,7 @@ struct FollowupHandoff {
 /// The watcher state the event thread shares beyond its channel and stop flag.
 ///
 /// The registry `process_event` attributes against, and the backend whose
-/// poll expansion it keeps in step with the tree (#721). Bundled so
+/// poll expansion it keeps in step with the tree. Bundled so
 /// [`FileSystemWatcher::spawn_event_thread`] stays under clippy's
 /// argument-count limit.
 struct EventThreadState {
@@ -461,7 +434,7 @@ struct EventThreadState {
 /// The two durations [`FallbackPolicy::ProbeThenFallback`] carries.
 ///
 /// Bundled so [`FileSystemWatcher::spawn_health_probe`] stays under clippy's
-/// argument-count limit now that it also takes the watcher's registry (#617).
+/// argument-count limit.
 #[derive(Clone, Copy, Debug)]
 struct ProbeTiming {
     probe_timeout: Duration,
@@ -479,28 +452,24 @@ struct ArmedPollWatcher {
 }
 
 /// How this watcher should react to a native backend that accepts watches and
-/// then delivers nothing (#442).
+/// then delivers nothing.
 ///
 /// Resolved once, at construction, by [`FallbackPolicy::from_env`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FallbackPolicy {
-    /// Use the native backend and never probe or swap — pre-#442 behavior,
-    /// reachable only by explicitly setting `GPY_WATCH_PROBE_MS=0`.
+    /// Use the native backend and never probe or swap; reachable only by
+    /// explicitly setting `GPY_WATCH_PROBE_MS=0`.
     NativeOnly,
     /// Run one bounded health probe in the background; if the native backend
     /// is silent, swap in `PollWatcher`. The default for EVERY watcher.
     ///
-    /// #442 originally scoped this to the repo watcher, on the reasoning that
-    /// the theme/config watchers each watch one small file and already ship
-    /// opt-in `GPY_THEME_WATCH_POLL_MS` / `GPY_CONFIG_WATCH_POLL_MS` pollers
-    /// from #354. #447 showed that reasoning was wrong: during an `FSEvents`
-    /// outage the config watcher silently stopped applying config edits until
-    /// the agent restarted, with no diagnostic. An opt-in remedy cannot help
-    /// there, because the failure it remedies is invisible — which is the
-    /// same argument that justified auto-detection for the repo watcher in
-    /// the first place. The probe is one-shot and exits as soon as the first
-    /// event lands, so a healthy machine pays a short-lived thread per
-    /// watcher and nothing else.
+    /// This covers the theme/config watchers too, despite their opt-in
+    /// `GPY_THEME_WATCH_POLL_MS` / `GPY_CONFIG_WATCH_POLL_MS` pollers: during
+    /// an `FSEvents` outage the config watcher would otherwise silently stop
+    /// applying edits with no diagnostic, and an opt-in remedy cannot help
+    /// against an invisible failure. The probe is one-shot and exits as soon
+    /// as the first event lands, so a healthy machine pays a short-lived
+    /// thread per watcher and nothing else.
     ProbeThenFallback {
         probe_timeout: Duration,
         poll_interval: Duration,
@@ -517,7 +486,7 @@ impl FallbackPolicy {
     /// - `GPY_WATCH_FORCE_POLL` (`1`/`true`/`yes`/`on`): start on
     ///   `PollWatcher`, no probe.
     /// - `GPY_WATCH_PROBE_MS`: probe timeout in milliseconds; `0` disables
-    ///   auto-detection entirely (back to pre-#442 behavior).
+    ///   auto-detection entirely ([`FallbackPolicy::NativeOnly`]).
     /// - `GPY_WATCH_POLL_MS`: interval for the `PollWatcher` fallback.
     fn from_env() -> Self {
         let force_raw = std::env::var("GPY_WATCH_FORCE_POLL").ok();
@@ -535,7 +504,7 @@ impl FallbackPolicy {
     /// mutating the real process environment (this crate forbids
     /// `unsafe_code`, and `std::env::set_var` requires it). Mirrors
     /// `ConfigManager::parse_poll_interval_ms` /
-    /// `parse_reconcile_interval_secs` (#354).
+    /// `parse_reconcile_interval_secs`.
     fn resolve(force_raw: Option<&str>, probe_raw: Option<&str>, poll_raw: Option<&str>) -> Self {
         let poll_interval = Duration::from_millis(
             parse_millis(poll_raw)
@@ -583,7 +552,7 @@ pub struct FileSystemWatcher {
     stop_flag: Arc<AtomicBool>,
     /// Shared with the owning [`super::WatchCoordinator`] and the event
     /// thread; also read by `watch`'s poll-backend branch, whose
-    /// `poll_watch_targets` descent consults the ignore caches (#617).
+    /// `poll_watch_targets` descent consults the ignore caches.
     registry: Arc<WatchRegistry>,
 }
 
@@ -592,20 +561,20 @@ impl FileSystemWatcher {
     ///
     /// `registry` is the [`WatchRegistry`] this watcher shares with its owning
     /// coordinator: the watched git roots `process_event` uses for
-    /// longest-prefix event attribution (#344), the gitdir attribution maps,
+    /// longest-prefix event attribution, the gitdir attribution maps,
     /// the registered config paths, the worktree-watch flag and the ignore
     /// caches. `None` allocates a private registry, whose empty watched-root
     /// set makes attribution fall back to the ancestor `.git` stat walk — what
     /// a standalone (theme/config) watcher gets.
     ///
     /// `followup_delay` is how long to wait before firing the single
-    /// coalesced follow-up refresh scheduled after a directory-create event
-    /// (#416). It is threaded down from the owning coordinator's debounce
+    /// coalesced follow-up refresh scheduled after a directory-create event.
+    /// It is threaded down from the owning coordinator's debounce
     /// window so `GPY_DEBOUNCE_MS` tuning applies uniformly.
     ///
     /// `schedule_delayed` is where that follow-up is handed off: it records the
     /// event with a due time and returns immediately, leaving the wait to the
-    /// owning coordinator's flush thread (#569). See [`DelayedEventScheduler`].
+    /// owning coordinator's flush thread. See [`DelayedEventScheduler`].
     ///
     /// # Errors
     ///
@@ -622,7 +591,7 @@ impl FileSystemWatcher {
 
     /// Construction with an explicit [`FallbackPolicy`], split out from
     /// [`FileSystemWatcher::new`] so tests can drive the fallback path
-    /// directly instead of mutating the process environment (#442).
+    /// directly instead of mutating the process environment.
     ///
     /// # Errors
     ///
@@ -698,8 +667,7 @@ impl FileSystemWatcher {
 
     /// Spawn the thread that drains the shared event channel into
     /// [`FileSystemWatcher::process_event`], first keeping the poll
-    /// expansion in step with any directory the event creates or removes
-    /// (#721).
+    /// expansion in step with any directory the event creates or removes.
     ///
     /// Split out of [`FileSystemWatcher::with_fallback_policy`] purely to keep
     /// that constructor under clippy's line limit; it owns nothing the
@@ -745,7 +713,7 @@ impl FileSystemWatcher {
     /// Every backend — the native one, the `PollWatcher` that may replace it,
     /// and any future addition — hands events to this same `Sender<Event>`
     /// clone, so a swap needs no change to the event-processing thread or to
-    /// callback ownership (#442).
+    /// callback ownership.
     fn forward_event(event_tx: &Sender<Event>, res: notify::Result<Event>) {
         match res {
             Ok(event) => {
@@ -778,11 +746,11 @@ impl FileSystemWatcher {
     /// mtimes (not size), so a rewrite landing in the same second as the
     /// previous write -- a branch ref moved to another commit, a `git config`
     /// edit, two saves in quick succession -- is otherwise never reported
-    /// (#817). With content comparison a same-second change is caught by its
+    /// With content comparison a same-second change is caught by its
     /// hash. The cost is one read of every watched file per tick, accepted
     /// because this backend only runs on a machine whose native watcher is
     /// already broken or forced off, the expansion excludes ignored trees
-    /// (#463/#617), and `GPY_WATCH_POLL_MS` raises the interval.
+    /// and `GPY_WATCH_POLL_MS` raises the interval.
     ///
     /// Remaining poll limitation: a rewrite that leaves both the content and
     /// the mtime second unchanged (a `HEAD` rewritten with the value it
@@ -811,7 +779,7 @@ impl FileSystemWatcher {
     }
 
     /// Enumerate the directories under `root` that a `BackendKind::Poll`
-    /// watch should register individually (#463).
+    /// watch should register individually.
     ///
     /// `notify::PollWatcher` re-stat-walks whatever directory it is told to
     /// watch on every tick, with no `.gitignore` awareness of its own (its
@@ -825,8 +793,8 @@ impl FileSystemWatcher {
     ///
     /// This does the recursive descent itself instead, pruning any directory
     /// `path_is_gitignored` reports as ignored (skipping it and everything
-    /// under it) — except inside `.git`, which #443/#447 already pin as never
-    /// subject to `.gitignore` filtering on the event path; `is_in_git_dir`
+    /// under it) — except inside `.git`, which is never subject to
+    /// `.gitignore` filtering on the event path either; `is_in_git_dir`
     /// short-circuits the same way here so a `.gitignore` rule that happens to
     /// match something under `.git` (e.g. a broad `*.pack` pattern) can never
     /// blind the watcher to real git-internal changes.
@@ -842,7 +810,7 @@ impl FileSystemWatcher {
     }
 
     /// What a directory `dir`, created under `root` after `root` was armed,
-    /// adds to `root`'s poll expansion (#721): `dir` and every directory
+    /// adds to `root`'s poll expansion: `dir` and every directory
     /// below it, pruned by `root`'s ignore rules exactly as
     /// [`FileSystemWatcher::poll_watch_targets`] would prune them. Empty when
     /// `dir` is pruned itself, or is not a real directory by now -- gone
@@ -895,8 +863,7 @@ impl FileSystemWatcher {
         !is_in_git_dir(path) && path_is_gitignored(root, path, registry)
     }
 
-    /// Keep the poll backend's directory expansion (#463) in step with the
-    /// tree (#721).
+    /// Keep the poll backend's directory expansion in step with the tree.
     ///
     /// `PollWatcher` scans each expanded directory one level deep, so a
     /// directory created after arming appears only as an entry in its
@@ -933,14 +900,14 @@ impl FileSystemWatcher {
     }
 
     /// Add the newly created directory `dir`, and whatever it already
-    /// contains, to the poll expansion of every root it belongs to (#721).
+    /// contains, to the poll expansion of every root it belongs to.
     ///
-    /// The walk runs with the backend lock released, as `watch` does (#618):
+    /// The walk runs with the backend lock released, as `watch` does:
     /// it can transitively run `git ls-files`, and the lock is shared by
     /// every repo this watcher serves. Anything written into `dir` before its
     /// watch takes its baseline is caught by the refresh `dir`'s own create
     /// event triggers once `process_event` handles it after this returns:
-    /// the directory-create follow-up for a worktree directory (#416), the
+    /// the directory-create follow-up for a worktree directory, the
     /// Git classification itself for a ref directory.
     fn expand_poll_into(
         dir: &Path,
@@ -969,7 +936,7 @@ impl FileSystemWatcher {
         backend_guard.extend_poll_expansion(expansions);
     }
 
-    /// Spawn the one-shot background health probe (#442).
+    /// Spawn the one-shot background health probe.
     ///
     /// Deliberately asynchronous: agent startup — and therefore the first
     /// prompt — must not wait on a multi-second filesystem probe, so
@@ -1019,7 +986,7 @@ impl FileSystemWatcher {
         })
     }
 
-    /// Phase 1 of [`FileSystemWatcher::engage_poll_fallback`] (#618): bail out
+    /// Phase 1 of [`FileSystemWatcher::engage_poll_fallback`]: bail out
     /// under a short lock if the swap is no longer needed or safe, otherwise
     /// return the paths of every recursive registration, whose poll-target
     /// expansion the caller computes with no lock held. Nothing is mutated
@@ -1054,7 +1021,7 @@ impl FileSystemWatcher {
         )
     }
 
-    /// Phase 3 of [`FileSystemWatcher::engage_poll_fallback`] (#618): re-lock,
+    /// Phase 3 of [`FileSystemWatcher::engage_poll_fallback`]: re-lock,
     /// re-check (a concurrent `stop()` may have torn the backend down while
     /// the poll-target expansion was being computed with no lock held, and
     /// re-arming watches after that would leak a live watcher past shutdown),
@@ -1101,7 +1068,7 @@ impl FileSystemWatcher {
     }
 
     /// Replace the silent native backend with a `PollWatcher` and re-arm every
-    /// path the old backend was watching (#442).
+    /// path the old backend was watching.
     ///
     /// The old backend is dropped before the new one is armed, so the two
     /// recursive mechanisms never run side by side. The swap and the re-arm
@@ -1111,7 +1078,7 @@ impl FileSystemWatcher {
     ///
     /// The expensive part -- computing each directory path's poll-target
     /// expansion, which transitively walks the tree and can run `git
-    /// ls-files` for a repo's first force-added lookup (#618) -- happens
+    /// ls-files` for a repo's first force-added lookup -- happens
     /// BEFORE that lock is taken, keyed by a snapshot of the recursive
     /// registrations read under a short separate lock
     /// ([`FileSystemWatcher::poll_swap_snapshot`]). `self.backend` is the one
@@ -1124,7 +1091,7 @@ impl FileSystemWatcher {
     /// be invisible until the ~45s reconcile. To close that, each re-armed
     /// root gets one synthetic `Flag::Rescan` event pushed through the same
     /// channel, which `process_event` already routes to `handle_rescan` and
-    /// hence to one debounced git refresh per root (#431).
+    /// hence to one debounced git refresh per root.
     fn engage_poll_fallback(
         backend: &Arc<Mutex<WatcherBackend>>,
         event_tx: &Sender<Event>,
@@ -1161,9 +1128,9 @@ impl FileSystemWatcher {
         };
 
         // No lock held: compute the poll-target expansion (and any
-        // transitive `git ls-files`, #618) for each recursive directory
-        // registration in the snapshot -- exactly the work `rearm_poll_paths`
-        // used to do while holding the lock.
+        // transitive `git ls-files`) for each recursive directory
+        // registration in the snapshot, so `rearm_poll_paths` need not
+        // do it under the lock.
         let mut precomputed = HashMap::with_capacity(recursive_paths.len());
         for path in recursive_paths {
             if path.is_dir() {
@@ -1190,8 +1157,8 @@ impl FileSystemWatcher {
     }
 
     /// Rebuild `state`'s OS-level watch set against the `PollWatcher` now
-    /// installed in it, from the logical registrations alone (#687): every
-    /// registration is re-expanded for the poll backend (#463) and its
+    /// installed in it, from the logical registrations alone: every
+    /// registration is re-expanded for the poll backend and its
     /// targets re-counted in a fresh [`WatchSet`], so targets shared by
     /// overlapping roots stay armed until the last root releases them.
     /// Returns each re-armed path once, for the caller's synthetic rescans.
@@ -1201,13 +1168,12 @@ impl FileSystemWatcher {
     /// `precomputed` holds the poll-target expansion
     /// [`FileSystemWatcher::engage_poll_fallback`] already computed, with
     /// `state`'s lock released, for every recursive directory registration in
-    /// its pre-swap snapshot (#618). A registration absent from `precomputed`
+    /// its pre-swap snapshot. A registration absent from `precomputed`
     /// was added by a concurrent `watch()` call after that snapshot was
     /// taken. Its expansion is computed here, still under `state`'s lock, only
     /// as a defensive fallback so a rearm can never silently skip a path --
-    /// the same rare case #618 otherwise leaves running transitively under
-    /// the lock, but bounded to at most the paths added in one narrow race
-    /// window rather than every path on every swap.
+    /// bounded to at most the paths added in one narrow race window rather
+    /// than every path on every swap.
     fn rearm_poll_paths(
         state: &mut WatcherBackend,
         registry: &Arc<WatchRegistry>,
@@ -1219,7 +1185,7 @@ impl FileSystemWatcher {
         for ((path, mode), registration) in &mut state.registrations {
             // A shallow registration is never expanded: re-arming it
             // recursively would expand it into `objects/**` for a 2s stat
-            // walk (#463) -- the exact reason it is shallow.
+            // walk -- the exact reason it is shallow.
             let poll_targets = (*mode == WatchMode::Recursive && path.is_dir()).then(|| {
                 precomputed
                     .get(path)
@@ -1257,7 +1223,7 @@ impl FileSystemWatcher {
             // Peek the armed backend kind under a short lock, then release it
             // before doing any poll-target discovery below: `poll_watch_targets`
             // walks the directory tree and can transitively run `git ls-files`
-            // for a repo's first force-added lookup (#618), and `self.backend`
+            // for a repo's first force-added lookup, and `self.backend`
             // is the one mutex shared by every repo this watcher serves --
             // holding it across that walk would let one repo's cold start
             // stall another repo's `watch`/`watch_shallow`/`unwatch` call.
@@ -1275,7 +1241,7 @@ impl FileSystemWatcher {
                 return Err(Error::watcher("Watcher backend lock poisoned".to_owned()));
             };
             // The health probe can swap native -> poll between the peek above
-            // and this re-lock (#442). That swap happens at most once per
+            // and this re-lock. That swap happens at most once per
             // process, so retrying here is bounded to a single extra
             // iteration: recompute against the now-current backend rather than
             // arming a stale expansion (or an unwanted recursive watch) onto
@@ -1290,12 +1256,12 @@ impl FileSystemWatcher {
 
     /// Start watching a directory *non-recursively* -- its direct entries only.
     ///
-    /// Used for a linked worktree's common git directory (#468), where the
+    /// Used for a linked worktree's common git directory, where the
     /// interesting leaves (`packed-refs`, `config`) sit directly inside but a
     /// recursive watch would drag in `objects/**`: under the poll backend
     /// [`FileSystemWatcher::poll_watch_targets`] never prunes inside `.git`, so
-    /// that would arm a pack directory for a stat walk every poll interval
-    /// (#463). Watching the containing directory rather than those two files
+    /// that would arm a pack directory for a stat walk every poll interval.
+    /// Watching the containing directory rather than those two files
     /// individually is also what survives git's write-lock-then-rename, which
     /// orphans an inode-based file watch.
     ///
@@ -1318,10 +1284,10 @@ impl FileSystemWatcher {
     /// callers skip a redundant `watch` call -- which matters beyond tidiness on
     /// macOS, where notify cannot add a path to a live `FSEventStream` and instead
     /// tears it down and rebuilds it, and the rebuilt stream can silently drop
-    /// its first event (#388).
+    /// its first event.
     ///
     /// Answered from the logical registrations, which the reference-counted
-    /// OS watch set keeps armed for as long as any of them holds (#687).
+    /// OS watch set keeps armed for as long as any of them holds.
     #[must_use]
     pub fn covers<P: AsRef<Path>>(&self, path: P) -> bool {
         self.backend
@@ -1329,7 +1295,7 @@ impl FileSystemWatcher {
             .is_ok_and(|guard| guard.covers(path.as_ref()))
     }
 
-    /// Snapshot of what this watcher holds, for tests (#718): every logical
+    /// Snapshot of what this watcher holds, for tests: every logical
     /// registration with its owner count, and the OS watches armed beneath
     /// them.
     #[cfg(test)]
@@ -1351,8 +1317,7 @@ impl FileSystemWatcher {
     ///
     /// Undoes only that one registration: OS watches another registration
     /// still needs -- the same path watched by another owner, a nested or
-    /// enclosing repository, a shared poll-expansion directory -- stay armed
-    /// (#687).
+    /// enclosing repository, a shared poll-expansion directory -- stay armed.
     ///
     /// # Errors
     ///
@@ -1388,11 +1353,10 @@ impl FileSystemWatcher {
         if event.need_rescan() {
             // Kernel event-queue overflow / MustScanSubDirs: the backend
             // dropped events, so force a full rescan of the affected watched
-            // root(s) rather than waiting for the ~45s reconcile (#431).
+            // root(s) rather than waiting for the ~45s reconcile.
             // Emitting one synthetic Git event per root routes through the
             // same debouncer/refresh_and_notify_coalesced path as a normal
-            // change, so it coalesces and can't race an in-flight scan
-            // (#418).
+            // change, so it coalesces and can't race an in-flight scan.
             Self::handle_rescan(event, callback_arc, registry);
             return;
         }
@@ -1413,17 +1377,17 @@ impl FileSystemWatcher {
         // watched file into an event shaped exactly like a real change, with
         // `need_rescan() == false` so the overflow branch above never catches it.
         //
-        // Two distinct bugs came from classifying those (#550, #551):
+        // Classifying those would cause two distinct failures:
         //
         // - Arming a recursive watch `WalkDir`-descends the tree, and that walk's
         //   own `readdir` on a directory it just armed reports `IN_OPEN` right
         //   back at the watcher. The fan-out arms below key on path alone, so a
         //   self-inflicted open of shared git metadata (`refs/heads` and friends)
         //   woke every dependent worktree exactly as a real write would.
-        // - A reload's own read of the file that triggered it re-triggers the
-        //   watch, so a single theme or config edit on Linux left the manager
-        //   reloading and re-signalling every registered shell roughly every
-        //   57ms, indefinitely.
+        // - A reload's own read of the file that triggered it would re-trigger
+        //   the watch, so a single theme or config edit on Linux would leave the
+        //   manager reloading and re-signalling every registered shell roughly
+        //   every 57ms, indefinitely.
         //
         // Dropping the event here loses no real change: inotify raises one
         // `Event` per mask bit (`inotify.rs` pushes each into its own `evs`
@@ -1435,7 +1399,7 @@ impl FileSystemWatcher {
         }
 
         for path in &event.paths {
-            // Shared git metadata for linked worktrees (#468). ADDITIVE and
+            // Shared git metadata for linked worktrees. ADDITIVE and
             // deliberately unconditional-on-classification: a linked worktree's
             // common directory is normally the main checkout's in-tree `.git`,
             // so `should_trigger_update` below classifies (and `break`s on)
@@ -1447,21 +1411,19 @@ impl FileSystemWatcher {
             // the bare-superproject layout (`/repos/foo.git/refs/...`, which
             // classifies as nothing) is reached the same way.
             //
-            // No "is a repo registry backing this watcher?" gate any more
-            // (#617): both fan-outs are keyed on `path` lying under a
-            // registered gitdir, and a theme/config path never does — the
-            // gitdir maps are populated only at repo registration, and the
-            // paths those watchers see live outside every repository's git
-            // directory. Each therefore returns without allocating, exactly
-            // as the old `watched_roots.is_some()` gate made it.
+            // No "is a repo registry backing this watcher?" gate: both
+            // fan-outs are keyed on `path` lying under a registered gitdir,
+            // and a theme/config path never does — the gitdir maps are
+            // populated only at repo registration, and the paths those
+            // watchers see live outside every repository's git directory.
+            // Each therefore returns without allocating.
             //
             // Both fan-outs forward straight through to
             // `attribute_common_gitdir`/`attribute_submodule_parents`, which take
             // only `path`, never `event.kind`; the pure-`Access` early return
-            // above is what keeps a self-inflicted watch-bootstrap open off them
-            // (#550).
+            // above is what keeps a self-inflicted watch-bootstrap open off them.
             Self::emit_common_gitdir_fanout(path, registry, callback_arc);
-            // Superproject gitlink fan-out (#467). Additive for the same
+            // Superproject gitlink fan-out. Additive for the same
             // reason: in the child-registered case the external-gitdir arm
             // below classifies and `break`s, so a fallback arm would never
             // run, and in the parent-only case no arm fires at all. The two
@@ -1486,7 +1448,7 @@ impl FileSystemWatcher {
                 // same cookie, so both paths reach the debouncer anyway.
                 // Classifying every path of a large batch would instead charge
                 // a `find_git_root` ancestor walk and an ignore-chain check per
-                // path. Coalescing across events is the debouncer's job (#466).
+                // path. Coalescing across events is the debouncer's job.
                 break;
             }
 
@@ -1495,7 +1457,7 @@ impl FileSystemWatcher {
             // `should_trigger_update` can neither classify (parent isn't
             // `.git`) nor attribute (the gitdir isn't a descendant of the
             // working root). Recover the correct working root from the
-            // registration-time gitdir→root map instead (#428). Only the repo
+            // registration-time gitdir→root map instead. Only the repo
             // watcher populates that map; a theme/config watcher's registry is
             // empty here, so this arm cannot fire for one. Not gated on
             // `worktree_enabled` — a branch switch must refresh the prompt
@@ -1511,7 +1473,7 @@ impl FileSystemWatcher {
             // fallback is existing, pinned behavior (see
             // `event_outside_watched_roots_falls_back_to_ancestor_walk`) and
             // must not change here; only the additional Language/Config
-            // emission above gets the stricter gate (#443).
+            // emission above gets the stricter gate.
             if let Some(repo) = worktree_git_repo(
                 event,
                 path,
@@ -1560,18 +1522,16 @@ impl FileSystemWatcher {
         // events can be dropped entirely (never delivered). Schedule
         // one delayed, coalesced follow-up refresh of the owning repo
         // so those contents are picked up without waiting for the
-        // periodic reconcile (#416). Only directory-creates pay this
-        // cost; plain file events take exactly the path they do today.
+        // periodic reconcile. Only directory-creates pay this cost.
         //
         // Watches themselves need no re-arming here: native watches are
         // recursive, and on the poll backend the event thread has already
-        // added the directory to the expansion before this runs (#721), so
+        // added the directory to the expansion before this runs, so
         // the follow-up covers only what landed before that watch's
         // baseline. Residual gap: this does not fully close the FSEvents
         // stream-rebuild first-event drop (#388) — a single follow-up scan
         // handles the common mkdir-then-write race, and the periodic
-        // reconcile owns anything that still slips through. See #388, kept
-        // separate.
+        // reconcile owns anything that still slips through.
         if is_directory_create(event.kind, path) {
             Self::schedule_directory_followup(
                 schedule_delayed,
@@ -1585,8 +1545,7 @@ impl FileSystemWatcher {
 
     /// Whether the classified/attributed emission of `path` for `repo` is a
     /// *cross-repository* wake introduced by the common-git-directory watch, and
-    /// must be dropped (#468, epic #465's "no spurious cross-repository
-    /// refresh").
+    /// must be dropped: no spurious cross-repository refresh.
     ///
     /// The shallow watch armed on a linked worktree's common git directory is
     /// armed *exactly* when the main checkout is not registered — the
@@ -1605,22 +1564,18 @@ impl FileSystemWatcher {
     /// permissive ancestor-walk and parent-guess fallbacks for every other path
     /// are untouched (`event_outside_watched_roots_falls_back_to_ancestor_walk`,
     /// `RepoEvidence::AnyAttribution`). When the main checkout IS registered the
-    /// second condition is false and delivery proceeds exactly as before.
+    /// second condition is false and delivery proceeds unfiltered.
     ///
     /// Checked at the first arm, where the in-tree layout (`<main>/.git/…`)
     /// lands, and at the third, which `is_in_git_dir` makes unreachable for that
     /// layout but which a bare superproject's common directory
     /// (`/repos/foo.git/…`, no `.git` path component) can still reach.
     ///
-    /// Not redundant with #480's `ClientDirectory::has_subscriber` gate in
-    /// `agent/events.rs`'s `create_watcher` callback, even though both exist
-    /// to stop the same "cache write nobody reads" waste described above.
-    /// That gate suppresses *refresh*, one layer downstream of *emission*
-    /// here — it never suppresses this function's own layer, since the
-    /// #467/#468 wake-count tests in `multi_repo_integration_tests.rs`
-    /// build their own watcher with a callback that only records
-    /// `event.repo`, never reaching `agent/events.rs` at all. Deleting this
-    /// guard would still fail those tests even with #480's gate in place.
+    /// Not redundant with `ClientDirectory::has_subscriber` in
+    /// `agent/events.rs`'s `create_watcher` callback: that gate suppresses
+    /// *refresh*, one layer downstream of *emission* here, and the wake-count
+    /// tests in `multi_repo_integration_tests.rs` build their own watcher whose
+    /// callback never reaches `agent/events.rs`.
     fn is_unregistered_common_gitdir_wake(
         repo: &Path,
         path: &Path,
@@ -1639,7 +1594,7 @@ impl FileSystemWatcher {
     }
 
     /// Emit one synthetic Git event per linked-worktree working root that reads
-    /// the shared metadata `path` changed (#468).
+    /// the shared metadata `path` changed.
     ///
     /// Each emitted root is canonical (stored canonical at registration), as
     /// downstream path validation requires, and each coalesces on its own
@@ -1658,24 +1613,23 @@ impl FileSystemWatcher {
 
     /// Emit one synthetic Git event per REGISTERED parent repository whose
     /// gitlink status can change because submodule git metadata at `path`
-    /// changed (#467).
+    /// changed.
     ///
     /// A submodule mutation changes two visible states — the submodule's own
-    /// branch and status, and every ancestor superproject's gitlink — but only
-    /// the first is delivered today. `<super>/.git/modules/<name>/HEAD` reaches
-    /// no arm of [`FileSystemWatcher::process_event`]: `classify_event` does not
-    /// treat `modules/<name>/HEAD` as significant, `attribute_external_gitdir`
-    /// maps that gitdir only when the *submodule* is registered (and then to the
-    /// submodule, ending the loop), and `worktree_git_repo` rejects anything
-    /// inside a `.git` directory.
+    /// branch and status, and every ancestor superproject's gitlink. Only this
+    /// fan-out delivers the second: `<super>/.git/modules/<name>/HEAD` reaches
+    /// no other arm of [`FileSystemWatcher::process_event`]: `classify_event`
+    /// does not treat `modules/<name>/HEAD` as significant,
+    /// `attribute_external_gitdir` maps that gitdir only when the *submodule*
+    /// is registered (and then to the submodule, ending the loop), and
+    /// `worktree_git_repo` rejects anything inside a `.git` directory.
     ///
-    /// No new watch is needed for any of this: an ordinary superproject's own
-    /// registration already takes `start_repo_watches`' single-recursive-watch
-    /// branch over `<super>`, which covers `<super>/.git/modules/**`. The events
-    /// are already being delivered and are dropped at classification.
+    /// No extra watch is needed: an ordinary superproject's own registration
+    /// already takes `start_repo_watches`' single-recursive-watch branch over
+    /// `<super>`, which covers `<super>/.git/modules/**`.
     ///
     /// Filtered against the registry's watched roots before emitting: a parent no shell is
-    /// subscribed to must never buy a capture round (gpy#480). Fails *closed* on
+    /// subscribed to must never buy a capture round. Fails *closed* on
     /// a poisoned registry lock — unlike
     /// [`FileSystemWatcher::is_unregistered_common_gitdir_wake`], which fails
     /// open — because the failure this gate exists to prevent is waking the
@@ -1708,7 +1662,7 @@ impl FileSystemWatcher {
     /// subsystem and changes `git status`). `should_trigger_update` only
     /// ever returns one `FileEvent`, so without this the git instant cache
     /// goes stale until another Git event, a stale-cache pull, or the ~45s
-    /// reconcile catches up (#443).
+    /// reconcile catches up.
     ///
     /// Reuses every existing worktree eligibility filter via
     /// `worktree_git_repo` so this added emission can't drift from the plain
@@ -1718,11 +1672,11 @@ impl FileSystemWatcher {
     /// since that's what the downstream git-refresh machinery and its path
     /// validation expect.
     ///
-    /// `Theme` also gets the added refresh (#777): a tracked theme file in a
+    /// `Theme` also gets the added refresh: a tracked theme file in a
     /// dotfiles repo (`.config/gpy/themes/...`) must refresh that repo's git
     /// segment. This is safe because of the `RepoEvidence::GenuineRepoOnly`
     /// gate below — a theme path outside any genuine repository (the usual
-    /// `~/.config/gpy/themes/...`) never reaches a git scan (#443). `Git` is
+    /// `~/.config/gpy/themes/...`) never reaches a git scan. `Git` is
     /// excluded: it is already the specialized event, so there is nothing to
     /// add.
     ///
@@ -1759,7 +1713,7 @@ impl FileSystemWatcher {
         callback_arc(pending);
     }
 
-    /// Handle a backend-reported overflow/rescan event (#431): emit one
+    /// Handle a backend-reported overflow/rescan event: emit one
     /// synthetic `FileEvent::Git` `PendingEvent` per affected watched root so
     /// each rescans through the normal debounced refresh path.
     fn handle_rescan(event: &Event, callback_arc: &Arc<PendingCallback>, registry: &WatchRegistry) {
@@ -1779,14 +1733,11 @@ impl FileSystemWatcher {
     ///   all of them.
     /// - With an empty watched-root set there is nothing to rescan.
     ///
-    /// The one place #617's shared registry is not byte-identical to the old
-    /// per-coordinator `Option<&WatchedRoots>`: a standalone theme/config
-    /// coordinator still sees an empty set, but the agent's theme/config
-    /// coordinators share its registry, so a *paths-less* overflow on one of
-    /// them now rescans the process's watched repos instead of nothing. That
-    /// is extra work in a rare degraded case, never a dropped refresh, and it
-    /// coalesces on the debouncer and is suppressed downstream when the scan
-    /// finds no change.
+    /// The agent's theme/config coordinators share its registry, so a
+    /// *paths-less* overflow on one of them rescans the process's watched
+    /// repos (a standalone coordinator sees an empty set). That is extra work
+    /// in a rare degraded case, never a dropped refresh, and it coalesces on
+    /// the debouncer and is suppressed downstream when the scan finds no change.
     fn affected_rescan_roots(event: &Event, registry: &WatchRegistry) -> Vec<PathBuf> {
         if event.paths.is_empty() {
             return registry.root_snapshot();
@@ -1817,7 +1768,7 @@ impl FileSystemWatcher {
     /// debouncer's in-memory entry and returns. The waiting is done by the one
     /// flush thread `WatchCoordinator` already owns, so a checkout that creates
     /// hundreds of directories costs hundreds of map updates rather than
-    /// hundreds of sleeping threads, and nothing survives `stop` (#569).
+    /// hundreds of sleeping threads, and nothing survives `stop`.
     fn schedule_directory_followup(
         schedule_delayed: &DelayedEventScheduler,
         repo: PathBuf,
@@ -1833,7 +1784,7 @@ impl FileSystemWatcher {
         schedule_delayed(PendingEvent::git(repo, dir_path), due);
     }
 
-    /// The backend currently armed. Test-only observability for the #442
+    /// The backend currently armed. Test-only observability for the backend
     /// swap; production code learns the same thing from the debug log.
     #[cfg(test)]
     fn backend_kind(&self) -> Option<BackendKind> {
@@ -1841,7 +1792,7 @@ impl FileSystemWatcher {
     }
 
     /// Swap to the polling backend on demand, bypassing the health probe.
-    /// Test-only entry point onto the exact production swap path (#442).
+    /// Test-only entry point onto the exact production swap path.
     #[cfg(test)]
     fn force_poll_fallback(&self, poll_interval: Duration) {
         if let Some(event_tx) = self.event_tx.as_ref() {
@@ -1862,7 +1813,7 @@ impl FileSystemWatcher {
         // Drop the watcher first to stop sending events. Scoped so the lock is
         // released before the joins below: the probe thread may be blocked on
         // this very mutex mid-swap, and joining it while holding the guard
-        // would deadlock (#442).
+        // would deadlock.
         if let Ok(mut backend_guard) = self.backend.lock() {
             backend_guard.watcher = None;
         }
@@ -1883,7 +1834,7 @@ impl FileSystemWatcher {
 }
 
 /// Actively determine whether the OS-native notify backend actually delivers
-/// events on this machine (#442).
+/// events on this machine.
 ///
 /// The check is ACTIVE rather than passive because "no events arrived" is
 /// otherwise indistinguishable from "nothing changed": passive observation
@@ -1957,7 +1908,7 @@ fn probe_sentinel_event(probe_dir: &Path, timeout: Duration, stop_flag: &AtomicB
             return true;
         }
         // `Ok` means the backend is alive; `Disconnected` means the probe
-        // watcher died and can no longer answer the question — both report
+        // watcher died and cannot answer the question — both report
         // "healthy" so a broken probe never demotes a working backend.
         if !matches!(
             probe_rx.recv_timeout(PROBE_TOUCH_INTERVAL),
@@ -1984,7 +1935,7 @@ fn is_in_git_dir(path: &Path) -> bool {
 
 /// Whether `worktree_git_repo` may accept `RepoAttribution::ParentGuess` — a
 /// bare "assume the parent directory is a repo" guess with no `.git`
-/// evidence — or must require a genuine repo match (#443).
+/// evidence — or must require a genuine repo match.
 ///
 /// A newtype enum rather than a second `bool` parameter on
 /// `worktree_git_repo`: clippy's `fn_params_excessive_bools` flags more than
@@ -1993,9 +1944,8 @@ fn is_in_git_dir(path: &Path) -> bool {
 /// one enum would only obscure the call sites.
 #[derive(Clone, Copy)]
 enum RepoEvidence {
-    /// Accept any attribution, including `ParentGuess`. This is the
-    /// pre-#443 behavior for the plain worktree-Git arm — preserved exactly,
-    /// including the bare parent-directory guess
+    /// Accept any attribution, including `ParentGuess`: the behavior of the
+    /// plain worktree-Git arm, including the bare parent-directory guess
     /// `event_outside_watched_roots_falls_back_to_ancestor_walk` pins.
     AnyAttribution,
     /// Require `RepoAttribution::is_genuine_repo` (`WatchedRoot` or
@@ -2018,7 +1968,7 @@ enum RepoEvidence {
 ///
 /// Returns the attributed repo root on success.
 ///
-/// Extracted (#443) so the plain worktree-Git arm in `process_event` and the
+/// Shared so the plain worktree-Git arm in `process_event` and the
 /// additional Git emission for a path independently classified as
 /// Language/Config share one implementation and cannot drift — a gitignored
 /// `Cargo.toml`, for instance, must not trigger a git refresh via either
@@ -2034,13 +1984,12 @@ fn worktree_git_repo(
     if !worktree_enabled {
         return None;
     }
-    // Metadata changes must be accepted here, not just Name/Data/Any (#447).
-    // `PollWatcher` — the #442 fallback backend — compares mtime/size rather
+    // Metadata changes must be accepted here, not just Name/Data/Any.
+    // `PollWatcher` — the fallback backend — compares mtime/size rather
     // than observing syscalls, so the ONLY thing it can report for an edit to
     // an existing file is `Modify(Metadata(WriteTime))`. With metadata
-    // excluded, the fallback silently dropped every worktree edit and
-    // rescued only file creations (`Create`), which defeats the purpose it
-    // was added for. `.git` writes masked the gap in testing because those
+    // excluded, the fallback would drop every worktree edit and rescue only
+    // file creations. `.git` writes do not exercise this path because they
     // reach `should_trigger_update` before this allowlist ever runs.
     //
     // `AccessTime` is deliberately carved out rather than accepting
@@ -2071,7 +2020,7 @@ fn worktree_git_repo(
     if is_in_git_dir(path) {
         return None;
     }
-    // Attribution must run *before* the ignore check (#445): the high-churn
+    // Attribution must run *before* the ignore check: the high-churn
     // tokens (`build`, `target`, `node_modules`, ...) are only meaningful
     // relative to a repo root, and that root isn't known until attribution
     // runs. See `path_matches_ignored_patterns` for how the scoping root is
@@ -2080,7 +2029,7 @@ fn worktree_git_repo(
     if matches!(repo_evidence, RepoEvidence::GenuineRepoOnly) && !attribution.is_genuine_repo() {
         return None;
     }
-    // A directory-name token is only a hint (#719): committed files live
+    // A directory-name token is only a hint: committed files live
     // under `vendor/`, `dist/`, `build/`, ... so inside a trusted repo root it
     // defers to the gitignore check below. Without a trusted root there is no
     // repo boundary to consult, so the token stays a verdict.
@@ -2101,7 +2050,7 @@ fn worktree_git_repo(
 }
 
 /// Decide whether a `Create` event denotes a *directory* being created, which
-/// is the only case that schedules a follow-up rescan (#416).
+/// is the only case that schedules a follow-up rescan.
 ///
 /// - `CreateKind::Folder` is authoritative (inotify with `IN_ISDIR`), trusted
 ///   without a stat.
@@ -2122,7 +2071,7 @@ fn is_directory_create(kind: EventKind, path: &Path) -> bool {
 }
 
 /// Whether `event` is the poll backend's report that a directory's own mtime
-/// moved (#817).
+/// moved.
 ///
 /// `PollWatcher` stats directories as well as files, so every create or remove
 /// inside one also surfaces as `Modify(Metadata(WriteTime))` on the directory
@@ -2146,9 +2095,9 @@ fn is_poll_directory_mtime_noise(event: &Event) -> bool {
 /// fallback, and — within that fallback — a genuine `.git` hit from a bare "assume the parent
 /// directory is a repo" guess.
 ///
-/// `path_matches_ignored_patterns` (#445) only cares about the first distinction: only a
+/// `path_matches_ignored_patterns` only cares about the first distinction: only a
 /// genuine watched-root match carries a repo boundary worth scoping the high-churn ignore
-/// check to. The second distinction (#443) matters to `worktree_git_repo`'s optional stricter
+/// check to. The second distinction matters to `worktree_git_repo`'s optional stricter
 /// mode: emitting an *additional* Git refresh for a path that was already classified as
 /// something else (Language/Config) must not fire off `ParentGuess`, since that variant
 /// doesn't mean `path` is even inside a repository — see the `ParentGuess` doc comment below.
@@ -2185,9 +2134,8 @@ impl RepoAttribution {
 
     /// The repo root to scope `path_matches_ignored_patterns` against, or
     /// `None` when attribution isn't trustworthy enough to scope by (see the
-    /// `AncestorGitDir`/`ParentGuess` doc comments above). Unchanged from
-    /// pre-#443 behavior: only `WatchedRoot` was ever scoped by, and that
-    /// stays true now that the old `Fallback` variant is split in two.
+    /// `AncestorGitDir`/`ParentGuess` doc comments above). Only `WatchedRoot`
+    /// is trusted.
     fn trusted_root(&self) -> Option<&Path> {
         match self {
             Self::WatchedRoot(root) => Some(root.as_path()),
@@ -2197,7 +2145,7 @@ impl RepoAttribution {
 
     /// Whether `path` is genuinely inside a repository — a `WatchedRoot` or
     /// `AncestorGitDir` hit — as opposed to the `ParentGuess` case, which is
-    /// evidence-free (#443).
+    /// evidence-free.
     const fn is_genuine_repo(&self) -> bool {
         !matches!(self, Self::ParentGuess(_))
     }
@@ -2276,7 +2224,7 @@ fn ignored_tokens() -> &'static [String] {
 /// Check whether `path` matches one of the built-in high-churn ignore
 /// tokens (`node_modules`, `build`, `target`, ...).
 ///
-/// `repo_root` scopes the check (#445): the tokens are meant to describe
+/// `repo_root` scopes the check: the tokens are meant to describe
 /// directories *inside* a repository, not the path an ancestor directory
 /// happens to be checked out under (e.g. a repo cloned to
 /// `/work/build/my-repo` must not have every worktree event suppressed just
@@ -2284,15 +2232,14 @@ fn ignored_tokens() -> &'static [String] {
 /// only the portion of `path` relative to that root is tested.
 ///
 /// `repo_root` is deliberately `None` — and the *whole* absolute path is
-/// tested, matching pre-#445 behavior — whenever attribution didn't resolve
+/// tested — whenever attribution didn't resolve
 /// to a genuine registered watched root (see `RepoAttribution::AncestorGitDir`
 /// / `RepoAttribution::ParentGuess`):
 ///
 /// - The theme/config watchers never populate `watched_roots` at all, so
 ///   every path they see attributes via the ancestor-walk/parent fallback.
 ///   There is no repo concept there to scope against, so component matching
-///   over the full path is the only sensible behavior, and is what they've
-///   always relied on.
+///   over the full path is the only sensible behavior.
 /// - When a repo watcher sees a path outside every registered root, the
 ///   fallback-derived "root" (an ancestor `.git`, or just the parent
 ///   directory) isn't a boundary the registry vouches for — it could easily
@@ -2300,7 +2247,7 @@ fn ignored_tokens() -> &'static [String] {
 ///   would be trading one kind of misattribution for another, so the
 ///   whole-path check is kept as the safe default.
 ///
-/// Directory-name tokens are a hint, not a verdict (#719): the result says
+/// Directory-name tokens are a hint, not a verdict: the result says
 /// *which* kind of token hit so `worktree_git_repo` can defer directory hits
 /// to the repo's own ignore rules (committed `vendor/`/`dist/` files must
 /// still refresh the prompt) when `repo_root` is trusted.
@@ -2335,7 +2282,7 @@ fn path_matches_ignored_patterns(path: &Path, repo_root: Option<&Path>) -> Optio
     directory_hit.then_some(IgnoreTokenHit::Directory)
 }
 
-/// Which kind of built-in token `path_matches_ignored_patterns` hit (#719).
+/// Which kind of built-in token `path_matches_ignored_patterns` hit.
 enum IgnoreTokenHit {
     /// A directory-name token (`vendor`, `dist`, `build`, ...). Only a hint:
     /// committed files legitimately live under these names, so a hit inside a
@@ -2383,13 +2330,11 @@ struct CachedIgnore {
 ///
 type RepoIgnoreCache = Mutex<HashMap<PathBuf, CachedIgnore>>;
 
-/// The two ignore-related caches, owned by a [`WatchRegistry`] rather than by
-/// the process (#617).
+/// The two ignore-related caches, owned by a [`WatchRegistry`].
 ///
-/// Both are pure memoization of filesystem state keyed by path, so sharing
-/// them process-wide was never a correctness requirement — only a convenience
-/// that forced every test touching them to be `#[serial]`. A watcher's own
-/// caches are warmed by its own events.
+/// Both are pure memoization of filesystem state keyed by path; per-registry
+/// ownership keeps tests independent. A watcher's own caches are warmed by
+/// its own events.
 #[derive(Default)]
 pub(crate) struct IgnoreCaches {
     /// Per-directory cache of compiled `.gitignore` matchers.
@@ -2409,7 +2354,7 @@ struct CachedForceAdded {
     populated: bool,
     /// `true` while a run is in flight for this repo. Without it every
     /// ignored-path event arriving after an index write would start its own
-    /// `git ls-files` (#568).
+    /// `git ls-files`.
     refreshing: bool,
 }
 
@@ -2434,7 +2379,7 @@ enum ForceAddedRefresh {
     /// to serve — run now, on this thread, with no lock held.
     Blocking,
     /// The index changed under a populated entry: serve the stale set and
-    /// refresh off-thread (#568).
+    /// refresh off-thread.
     Background,
 }
 
@@ -2540,7 +2485,7 @@ fn evict_cache_overflow<V>(cache: &mut HashMap<PathBuf, V>, keep: &Path) {
 ///
 /// The cache mutex is shared by every repo this watcher tracks, so it is held
 /// only long enough to read and update the entry's bookkeeping — never across
-/// the subprocess (#568). When the index
+/// the subprocess. When the index
 /// has moved under an already-populated entry, the stale set is served straight
 /// back and one background thread refreshes it; every other event for that repo
 /// meanwhile sees `refreshing` and neither waits nor starts a second run. Only
@@ -2584,8 +2529,7 @@ fn force_added_set(repo_root: &Path, registry: &Arc<WatchRegistry>) -> Arc<HashS
         ForceAddedRefresh::Background => {
             let repo_root_owned = repo_root.to_path_buf();
             // An owned registry handle, not a borrow: this thread outlives the
-            // call, and the caches now belong to the registry rather than to
-            // the process (#617).
+            // call.
             let registry_for_refresh = Arc::clone(registry);
             thread::spawn(move || {
                 drop(refresh_force_added(
@@ -2602,7 +2546,7 @@ fn force_added_set(repo_root: &Path, registry: &Arc<WatchRegistry>) -> Arc<HashS
 ///
 /// The caller must have claimed the entry by setting `refreshing`; this clears
 /// it. **No lock is held while the subprocess runs** — the mutex is taken only
-/// afterwards, to store the result (#568). Returns `None` if the cache mutex is
+/// afterwards, to store the result. Returns `None` if the cache mutex is
 /// poisoned, leaving the caller to serve whatever it already had.
 ///
 /// The fingerprint is taken *before* the run, so an index write that races the
@@ -2636,7 +2580,7 @@ fn refresh_force_added(
 ///
 /// Tests can override this per-repo via `set_tracked_ignored_hook_for_test` to
 /// stand in a slow or instrumented backend without spawning a real `git`
-/// process (#568). The hook table is keyed by repo root rather than a single
+/// process. The hook table is keyed by repo root rather than a single
 /// global slot so tests using distinct temp-repo roots stay independent.
 fn compute_tracked_ignored_files(repo_root: &Path) -> Vec<PathBuf> {
     #[cfg(test)]
@@ -2708,7 +2652,7 @@ fn is_force_added(repo_root: &Path, path: &Path, registry: &Arc<WatchRegistry>) 
 /// The matcher is nested-aware: it is compiled from the ancestor `.gitignore`
 /// chain (root `.gitignore` + `.git/info/exclude` + each nested directory's
 /// `.gitignore` from `repo_root` down to the path's directory), so nested rules
-/// — including negations that re-include a path — are honored (issue #435).
+/// — including negations that re-include a path — are honored.
 ///
 /// Matching uses [`Gitignore::matched_path_or_any_parents`] so a file whose
 /// *parent directory* is ignored (git's real behavior: `build/` ignores
@@ -2719,8 +2663,8 @@ fn is_force_added(repo_root: &Path, path: &Path, registry: &Arc<WatchRegistry>) 
 /// Caching keeps the per-event cost at ~µs on the common path:
 /// - The matcher is cached keyed by the path's *directory* and rebuilt only when
 ///   the ancestor-chain fingerprint (mtime+len per `.gitignore`) changes, so a
-///   nested `.gitignore` edit is picked up without an agent restart (issue #152,
-///   #435) while an unchanged chain costs one `fs::metadata` stat per ancestor
+///   nested `.gitignore` edit is picked up without an agent restart,
+///   while an unchanged chain costs one `fs::metadata` stat per ancestor
 ///   plus a cheap in-memory `matched_path_or_any_parents` lookup — never a
 ///   rebuild.
 /// - Only after the matcher reports "ignored" is the force-added set consulted;
@@ -2755,14 +2699,14 @@ fn path_is_gitignored(repo_root: &Path, path: &Path, registry: &Arc<WatchRegistr
         return false;
     }
     // A `git add -f`'d file matches an ignore glob but is tracked, so its edits
-    // still change `git status` and must refresh the prompt (issue #435).
+    // still change `git status` and must refresh the prompt.
     !is_force_added(repo_root, path, registry)
 }
 
 /// Built-in high-churn hints for build/dependency directories and OS noise.
 ///
 /// In a trusted repo a directory-name hit only defers to the `.gitignore`
-/// matcher (#719); `.DS_Store`, `Thumbs.db` and the `.git/{objects,logs}`
+/// matcher; `.DS_Store`, `Thumbs.db` and the `.git/{objects,logs}`
 /// entries are suppressed outright.
 ///
 /// These are matched as exact path components, so only well-known build-output
@@ -2818,12 +2762,9 @@ mod tests {
     /// A private [`WatchRegistry`] for one test, with `worktree_enabled`
     /// applied and `roots` as its watched-root set.
     ///
-    /// The per-test replacement for the five process-global registries #617
-    /// retired: the old `Option<&WatchedRoots>` handle plus the process-wide
-    /// worktree flag, gitdir maps and ignore caches. An empty set is what the
-    /// old `None` handle meant — no repo registry backs this watcher — and
-    /// leaves every registry-consulting arm of `process_event` a no-op, so
-    /// attribution falls through to the same ancestor `.git` walk.
+    /// An empty root set means no repo registry backs this watcher: every
+    /// registry-consulting arm of `process_event` is a no-op, so attribution
+    /// falls through to the ancestor `.git` walk.
     fn test_registry(worktree_enabled: bool, roots: HashSet<PathBuf>) -> Arc<WatchRegistry> {
         let registry = Arc::new(WatchRegistry::new());
         registry.set_worktree_enabled(worktree_enabled);
@@ -2844,13 +2785,12 @@ mod tests {
         Arc::try_unwrap(captured).unwrap().into_inner().unwrap()
     }
 
-    /// Reading a watched file must not look like writing it (#551).
+    /// Reading a watched file must not look like writing it.
     ///
     /// inotify arms every watch with `WatchMask::OPEN`, so a reload's own read of
-    /// the file that triggered it comes straight back as `Access(Open)`. Before
-    /// the gate in `process_event`, that classified as a change and reloaded
-    /// again, so one theme or config edit on Linux left the manager reloading —
-    /// and signalling every registered shell — about every 57ms, forever.
+    /// the file that triggered it comes straight back as `Access(Open)`; were it
+    /// classified as a change, one theme or config edit on Linux would reload —
+    /// and signal every registered shell — about every 57ms, forever.
     ///
     /// # Panics
     ///
@@ -2893,7 +2833,7 @@ mod tests {
 
     /// The gate above drops reads only: inotify raises one event per mask bit, so
     /// the write that accompanies a `Close(Write)` still arrives as its own
-    /// `Modify(Data)` and must still classify (#551).
+    /// `Modify(Data)` and must still classify.
     ///
     /// # Panics
     ///
@@ -3032,7 +2972,7 @@ mod tests {
         ));
     }
 
-    /// Regression test for #443: a worktree file with BOTH language/config significance AND
+    /// A worktree file with BOTH language/config significance AND
     /// git-status significance must emit a Git refresh in ADDITION to the specialized event,
     /// not instead of it.
     ///
@@ -3129,7 +3069,7 @@ mod tests {
     }
 
     /// A tracked gpy theme inside a dotfiles repository (`.config/gpy/themes/a.toml`)
-    /// emits a Git refresh as well as the `Theme` signal (#777).
+    /// emits a Git refresh as well as the `Theme` signal.
     ///
     /// # Panics
     ///
@@ -3143,10 +3083,9 @@ mod tests {
 
     /// A `.gitignore`d language manifest must not gain the additional Git refresh.
     ///
-    /// Regression guard for #443: a `.gitignore`d language manifest must NOT
-    /// gain the additional Git refresh — the added emission reuses the exact
-    /// same `path_is_gitignored` filter as the plain worktree-Git arm, so an
-    /// ignored file must stay silent on the git side exactly as it always has.
+    /// The added emission reuses the exact same `path_is_gitignored` filter as
+    /// the plain worktree-Git arm, so an ignored file stays silent on the git
+    /// side.
     ///
     /// The specialized (Language) event still fires: gitignore status is a
     /// git-status concept, not a language-detection one.
@@ -3203,11 +3142,11 @@ mod tests {
 
     /// A nested event must attribute to its watched root by longest prefix.
     ///
-    /// Regression test for #344: a raw event in a nested subdirectory of a
+    /// A raw event in a nested subdirectory of a
     /// watched repo root must attribute to that root via the longest-prefix
     /// match, not an ancestor `.git` stat walk. No `.git` directory exists
     /// anywhere in this tree, so a correct result here is only reachable via
-    /// the prefix match against `watched_roots`: the old ancestor-walk
+    /// the prefix match against `watched_roots`: the ancestor-walk
     /// fallback would find no `.git`, and would misattribute to the file's
     /// immediate parent directory instead of the watched root.
     ///
@@ -3262,10 +3201,8 @@ mod tests {
 
     /// An event outside every watched root keeps the ancestor-walk fallback.
     ///
-    /// Regression test for #344: an event outside any watched root must fall
-    /// back to exactly today's ancestor-walk behavior (`find_git_root`, then
-    /// its immediate parent), pinning current behavior for the defensive
-    /// no-match path.
+    /// Falls back to `find_git_root`, then the immediate parent, pinning the
+    /// defensive no-match path.
     ///
     /// # Panics
     ///
@@ -3318,7 +3255,7 @@ mod tests {
 
     /// A high-churn token in an ANCESTOR of the repo root must not suppress events.
     ///
-    /// Regression test for #445: a repo checked out under an ancestor
+    /// A repo checked out under an ancestor
     /// directory that happens to share a name with a high-churn ignore token
     /// (e.g. a repo at `/work/build/my-repo`) must not have its worktree
     /// events suppressed just because `build` appears above the repo root.
@@ -3382,7 +3319,7 @@ mod tests {
 
     /// A high-churn token INSIDE the repo must still suppress events.
     ///
-    /// Regression test for #445: the built-in high-churn ignore tokens must
+    /// The built-in high-churn ignore tokens must
     /// still suppress a matching directory that lives *inside* a genuinely
     /// attributed repo (as opposed to an ancestor of it). Companion to
     /// `ignored_ancestor_directory_does_not_suppress_worktree_events` above,
@@ -3399,8 +3336,8 @@ mod tests {
         std::fs::create_dir_all(&node_modules_dir).expect("nested dirs");
         let file = node_modules_dir.join("index.js");
         std::fs::write(&file, "module.exports = {};").expect("write file");
-        // Real repositories ignore `node_modules/`; the token is only a hint
-        // (#719), so the repo's own ignore rule is what suppresses the event.
+        // Real repositories ignore `node_modules/`; the token is only a hint,
+        // so the repo's own ignore rule is what suppresses the event.
         std::fs::write(watched_root.join(".gitignore"), "node_modules/\n").expect("gitignore");
 
         let registry = test_registry(true, HashSet::from([watched_root]));
@@ -3487,7 +3424,7 @@ mod tests {
         );
     }
 
-    /// Regression for #152: editing `.gitignore` so a path stops being ignored
+    /// Editing `.gitignore` so a path stops being ignored
     /// must invalidate the cached matcher, so live updates resume without an
     /// agent restart.
     ///
@@ -3561,7 +3498,7 @@ mod tests {
         );
     }
 
-    /// Regression for #435 (FIX #1): a `git add -f`'d file matches an ignore glob but is
+    /// A `git add -f`'d file matches an ignore glob but is
     /// TRACKED, so its edits still change `git status` and must not be suppressed.
     ///
     /// A non-force-added file matching the same glob must still be reported as ignored.
@@ -3620,12 +3557,12 @@ mod tests {
         })
     }
 
-    /// Regression for #719: directory-name tokens are a hint, not a verdict.
+    /// Directory-name tokens are a hint, not a verdict.
     ///
     /// A committed, non-ignored file under `vendor/`, `dist/`, `build/` or
     /// `target/` changes `git status` and must refresh the prompt; churn in an
     /// ignored `node_modules/` must not, and a tracked file inside an ignored
-    /// `dist/` must (#435).
+    /// `dist/` must.
     ///
     /// # Panics
     ///
@@ -3755,7 +3692,7 @@ mod tests {
         repo
     }
 
-    /// #568: `force_added_set` must never hold the force-added cache mutex
+    /// `force_added_set` must never hold the force-added cache mutex
     /// while `git ls-files` runs.
     ///
     /// The stand-in backend parks inside the "subprocess" and the test then
@@ -3798,11 +3735,11 @@ mod tests {
 
         assert!(
             cache_free_during_git,
-            "the force-added cache mutex must be free while `git ls-files` runs (#568)"
+            "the force-added cache mutex must be free while `git ls-files` runs"
         );
     }
 
-    /// #568: one repo's slow `git ls-files` must not stall another repo's
+    /// One repo's slow `git ls-files` must not stall another repo's
     /// lookup through the shared force-added cache mutex.
     ///
     /// # Panics
@@ -3846,11 +3783,11 @@ mod tests {
         assert!(
             elapsed < FAST_LOOKUP_BUDGET,
             "a lookup for an unrelated repo took {elapsed:?}, so it queued behind \
-             the slow repo's `git ls-files` (#568)"
+             the slow repo's `git ls-files`"
         );
     }
 
-    /// #618: one repo's cold-start walk must never block another repo's `watch()`.
+    /// One repo's cold-start walk must never block another repo's `watch()`.
     ///
     /// `FileSystemWatcher::watch()`'s `BackendKind::Poll` branch calls
     /// `poll_watch_targets`, which walks the directory tree and can
@@ -3863,9 +3800,9 @@ mod tests {
     ///
     /// Repo A is given a real `.gitignore`-matched subdirectory so the
     /// `poll_watch_targets` descent reaches `path_is_gitignored` for it, and a
-    /// stand-in `git ls-files` backend that parks on a gate -- exactly the
-    /// #568 gate pattern, applied one level up (through `watch()` rather than
-    /// `force_added_set` directly).
+    /// stand-in `git ls-files` backend that parks on a gate -- the force-added
+    /// cache tests' gate pattern, applied one level up (through `watch()`
+    /// rather than `force_added_set` directly).
     ///
     /// # Panics
     ///
@@ -3929,14 +3866,14 @@ mod tests {
                 elapsed < FAST_LOOKUP_BUDGET,
                 "watch() for an unrelated repo took {elapsed:?} while repo A's cold \
                  start was still running, so it queued behind the shared backend \
-                 mutex (#618)"
+                 mutex"
             );
         });
 
         clear_tracked_ignored_hook_for_test(&repo_a);
     }
 
-    /// #618 / #442: `watch()` racing the health probe's native -> poll swap
+    /// `watch()` racing the health probe's native -> poll swap
     /// must still end up armed correctly, whichever side of the swap it
     /// lands on.
     ///
@@ -3950,7 +3887,7 @@ mod tests {
     /// `watch()` for repo B is guaranteed to observe `kind == Native` and arm
     /// natively; repo B is then a registration that was never part of the
     /// swap's pre-swap snapshot, so ending up correctly re-armed on the poll
-    /// backend exercises `rearm_poll_paths`'s defensive fallback (#618) for a
+    /// backend exercises `rearm_poll_paths`'s defensive fallback for a
     /// path added between the snapshot and the final lock.
     ///
     /// # Panics
@@ -4008,7 +3945,7 @@ mod tests {
                 watcher.backend_kind(),
                 Some(BackendKind::Native),
                 "the swap must not have applied yet -- it is parked before its own \
-                 final lock (#618)"
+                 final lock"
             );
 
             watcher
@@ -4035,15 +3972,14 @@ mod tests {
             registration.targets.contains(&(repo_b, WatchMode::Shallow)),
             "repo B, added while the swap was mid-flight and so absent from its \
              pre-swap snapshot, must still end up re-armed on the poll backend \
-             with its expansion (#618), got: {:?}",
+             with its expansion, got: {:?}",
             registration.targets
         );
         drop(guard);
     }
 
-    /// #568: once the off-thread refresh lands, force-added behaviour is
-    /// unchanged — a file force-added after the set was cached is picked up,
-    /// and the previously force-added one is still exempt.
+    /// Once the off-thread refresh lands, a file force-added after the set
+    /// was cached is picked up, and the earlier force-added one stays exempt.
     ///
     /// # Panics
     ///
@@ -4102,7 +4038,7 @@ mod tests {
         );
     }
 
-    /// Regression for #435 (FIX #2): a nested `.gitignore` un-ignoring a root-ignored path
+    /// A nested `.gitignore` un-ignoring a root-ignored path
     /// must be honored and stay live.
     ///
     /// Editing that nested `.gitignore` must invalidate the cached matcher so the result flips
@@ -4181,9 +4117,9 @@ mod tests {
     /// that assert on `schedule_directory_followup`'s decision directly rather
     /// than waiting on a delivery.
     ///
-    /// Since #569 the waiting belongs to `DebounceEngine` (and is covered by
-    /// `debouncer.rs`'s own tests), so what is left to pin here is which events
-    /// get a follow-up scheduled at all, and with what repo, path and due time.
+    /// The waiting belongs to `DebounceEngine` (covered by `debouncer.rs`'s
+    /// own tests), so what is left to pin here is which events get a
+    /// follow-up scheduled at all, and with what repo, path and due time.
     fn recording_scheduler() -> (DelayedEventScheduler, CapturedSchedules) {
         let captured: CapturedSchedules = Arc::new(Mutex::new(Vec::new()));
         let captured_for_hook = Arc::clone(&captured);
@@ -4195,7 +4131,7 @@ mod tests {
 
     /// Like [`recording_callback`], but yields the bare [`PendingCallback`]
     /// that [`FileSystemWatcher::new`] consumes, for the real-filesystem
-    /// backend tests (#442).
+    /// backend tests.
     fn recording_callback_boxed() -> (PendingCallback, CapturedEvents) {
         let captured: Arc<Mutex<Vec<PendingEvent>>> = Arc::new(Mutex::new(Vec::new()));
         let captured_for_cb = Arc::clone(&captured);
@@ -4207,13 +4143,13 @@ mod tests {
 
     /// A directory create emits its own git event and schedules exactly one follow-up.
     ///
-    /// Core of #416: a directory-`Create` event must (a) emit the immediate git
+    /// A directory-`Create` event must (a) emit the immediate git
     /// event for the mkdir itself, then (b) schedule exactly one delayed
     /// follow-up git event for the same repo — the mechanism that rescans a
     /// brand-new directory whose file-create events raced (and were dropped by)
     /// the not-yet-armed recursive watch.
     ///
-    /// Since #569 the follow-up is scheduled on the debouncer rather than on a
+    /// The follow-up is scheduled on the debouncer rather than on a
     /// thread of its own, so this asserts on the scheduling call — the decision
     /// `process_event` actually makes. That the scheduled event is then held
     /// until its due time and delivered once is `DebounceEngine`'s contract,
@@ -4328,9 +4264,8 @@ mod tests {
             1,
             "a file create should emit exactly one git event"
         );
-        // Nothing is deferred to a later thread any more (#569), so the
-        // absence of a follow-up is decided by the time `process_event`
-        // returns — no waiting needed to observe it.
+        // Scheduling is synchronous, so the absence of a follow-up is
+        // decided by the time `process_event` returns — no waiting needed.
         assert!(
             captured_schedules.lock().unwrap().is_empty(),
             "a plain file create must not schedule a follow-up rescan"
@@ -4422,7 +4357,7 @@ mod tests {
         );
     }
 
-    /// Regression for #431: a no-paths backend overflow must rescan every watched root.
+    /// A no-paths backend overflow must rescan every watched root.
     ///
     /// An inotify `IN_Q_OVERFLOW` (or any backend overflow that names no paths) must force a
     /// rescan of every currently watched root rather than being silently dropped until the
@@ -4472,7 +4407,7 @@ mod tests {
         }
     }
 
-    /// Regression for #431: a path-naming overflow must attribute to only its owning root.
+    /// A path-naming overflow must attribute to only its owning root.
     ///
     /// A `MustScanSubDirs`-style overflow that DOES name an affected path must attribute it to
     /// the owning watched root via the same longest-prefix match as a normal event, and must
@@ -4522,8 +4457,8 @@ mod tests {
         assert!(first_is_git_event);
     }
 
-    /// Regression for #431: a normal (non-rescan) event must be entirely
-    /// unaffected by the new overflow branch — the early `need_rescan()`
+    /// A normal (non-rescan) event must be entirely
+    /// unaffected by the overflow branch — the early `need_rescan()`
     /// check must not change behavior for the overwhelming common case.
     ///
     /// # Panics
@@ -4567,7 +4502,7 @@ mod tests {
         ));
     }
 
-    /// Regression for #431: several overflow-affected paths under the SAME
+    /// Several overflow-affected paths under the SAME
     /// watched root must collapse to exactly one rescan event for that root,
     /// not one per path.
     ///
@@ -4604,7 +4539,7 @@ mod tests {
         assert_eq!(recorded.first().map(|p| &p.repo), Some(&root));
     }
 
-    /// #616: a rescan must emit `GitPaths::WholeRepo`, not `GitPaths::single(root)`.
+    /// A rescan must emit `GitPaths::WholeRepo`, not `GitPaths::single(root)`.
     ///
     /// A rescan can't identify which paths changed (that's exactly why it
     /// forces a full scan), so naming the watched root as if it were a
@@ -4653,10 +4588,10 @@ mod tests {
         }
     }
 
-    /// Shared by the Config and Language "outside any repo" regression tests
+    /// Shared by the Config and Language "outside any repo" tests
     /// below so they can't drift from one another.
     ///
-    /// Regression test for #443: a path classified Language/Config that has
+    /// A path classified Language/Config that has
     /// no `.git` anywhere above it (and no watched-root match either) must
     /// NOT gain the additional Git refresh. `attribute_repo_detailed` falls
     /// all the way through to `RepoAttribution::ParentGuess` in this case — a
@@ -4739,7 +4674,7 @@ mod tests {
     }
 
     /// A `~/.config/gpy/themes/x.toml`-shaped path with no enclosing repository
-    /// still emits no Git refresh (#777 keeps the #443 behaviour).
+    /// still emits no Git refresh.
     ///
     /// # Panics
     ///
@@ -4763,7 +4698,7 @@ mod tests {
 
     /// A real worktree write must be delivered whatever the native backend's health.
     ///
-    /// Acceptance test for #442, over a REAL filesystem and a REAL notify
+    /// Over a REAL filesystem and a REAL notify
     /// backend (no synthetic `Event` values): a worktree write inside a
     /// watched repo must reach the callback well before the ~45s reconcile,
     /// *whatever* the health of the platform's native backend.
@@ -4821,7 +4756,7 @@ mod tests {
     /// explicit [`FallbackPolicy`], returning the watcher, the canonical repo root, and the
     /// shared capture buffer.
     ///
-    /// Shared by the real-filesystem backend tests (#442).
+    /// Shared by the real-filesystem backend tests.
     ///
     /// # Panics
     ///
@@ -4835,7 +4770,7 @@ mod tests {
 
         let registry = test_registry(true, HashSet::from([repo.clone()]));
         // Every caller exercises worktree-level delivery, so the flag is on
-        // for this watcher's own registry (#617).
+        // for this watcher's own registry.
         let (callback, events) = recording_callback_boxed();
         let watcher = FileSystemWatcher::with_fallback_policy(
             callback,
@@ -4864,8 +4799,8 @@ mod tests {
 
     /// The `PollWatcher` fallback must observe real worktree changes.
     ///
-    /// #442: the `PollWatcher` fallback must observe real worktree changes on
-    /// a real filesystem — this is the backend a machine with a dead
+    /// Real changes on a real filesystem — this is the backend a machine
+    /// with a dead
     /// `FSEvents` daemon ends up on, so if it cannot see a plain file write
     /// the whole fallback is worthless. No synthetic `Event` values here.
     ///
@@ -4898,18 +4833,16 @@ mod tests {
         );
     }
 
-    /// Regression test for #447: the poll fallback must deliver edits to an
+    /// The poll fallback must deliver edits to an
     /// EXISTING tracked file, not just newly-created ones.
     ///
     /// `PollWatcher` reports a plain append as
     /// `Modify(Metadata(MetadataKind::WriteTime))` — it compares mtime/size
     /// rather than watching syscalls, so it cannot report `Data`. The
-    /// worktree event-kind allowlist originally accepted only
-    /// `Create`/`Remove`/`Modify(Name|Data|Any)`, so every edit to an
-    /// existing file was silently dropped whenever the fallback was active —
-    /// precisely the case #442 exists to rescue. `.git` writes masked it,
-    /// because those reach `should_trigger_update` before the allowlist ever
-    /// runs.
+    /// worktree event-kind allowlist must therefore admit metadata changes,
+    /// or every edit to an existing file is dropped whenever the fallback is
+    /// active. `.git` writes cannot catch this, because they reach
+    /// `should_trigger_update` before the allowlist ever runs.
     ///
     /// This creates the file BEFORE arming the watch, so the only event that
     /// can satisfy it is the modification.
@@ -4962,7 +4895,7 @@ mod tests {
         );
     }
 
-    /// Regression test for #817: the poll fallback must report a same-size
+    /// The poll fallback must report a same-size
     /// rewrite that lands in the same whole second as the previous write.
     ///
     /// notify's poll compares mtimes truncated to seconds and ignores size, so
@@ -5019,7 +4952,7 @@ mod tests {
         );
     }
 
-    /// Regression test for #817: the poll backend's directory-mtime report is
+    /// The poll backend's directory-mtime report is
     /// noise, while a file's mtime report and every other kind are not.
     ///
     /// The end-to-end case is `rebase_high_churn_file_wakes_zero_times` in
@@ -5047,11 +4980,11 @@ mod tests {
         ));
     }
 
-    /// Regression test for #687: unwatching an outer poll root keeps a nested root armed.
+    /// Unwatching an outer poll root keeps a nested root armed.
     ///
     /// Under the poll backend the outer root's expansion includes every
-    /// directory of the nested root. Unwatching the outer root used to unwatch
-    /// all of them, leaving the still-watched inner root blind.
+    /// directory of the nested root. Unwatching the outer root must not
+    /// unwatch them, or the still-watched inner root goes blind.
     ///
     /// # Panics
     ///
@@ -5151,7 +5084,7 @@ mod tests {
     }
 
     /// The union of every registration's targets: exactly what must be armed
-    /// while the reference counts are right (#687, #721).
+    /// while the reference counts are right.
     fn all_targets(watcher: &FileSystemWatcher) -> BTreeSet<PathBuf> {
         let guard = watcher.backend.lock().expect("backend lock");
         guard
@@ -5176,13 +5109,13 @@ mod tests {
         false
     }
 
-    /// Regression test for #721: under the poll backend, an edit inside a
+    /// Under the poll backend, an edit inside a
     /// directory created after the watch was armed is delivered.
     ///
-    /// The poll expansion (#463) arms one shallow `PollWatcher` entry per
-    /// directory that existed at arm time, so a later directory showed up only
-    /// as an entry in its parent's one-level scan and nothing inside it was
-    /// ever scanned.
+    /// The poll expansion arms one shallow `PollWatcher` entry per
+    /// directory, so a directory created later must join the expansion, or
+    /// it shows up only as an entry in its parent's one-level scan and
+    /// nothing inside it is ever scanned.
     ///
     /// # Panics
     ///
@@ -5235,7 +5168,7 @@ mod tests {
         );
     }
 
-    /// #721: a commit on a branch whose `refs/heads/<prefix>/` directory was
+    /// A commit on a branch whose `refs/heads/<prefix>/` directory was
     /// created after arming is detected under the poll backend.
     ///
     /// # Panics
@@ -5285,7 +5218,7 @@ mod tests {
         );
     }
 
-    /// #721: removing a directory drops it, and everything under it, from the
+    /// Removing a directory drops it, and everything under it, from the
     /// poll expansion, so repeated mkdir/rmdir cycles return the expansion to
     /// its baseline instead of growing it.
     ///
@@ -5348,8 +5281,8 @@ mod tests {
         );
     }
 
-    /// #721: a gitignored directory created after arming is not armed, by the
-    /// same pruning `poll_watch_targets` applies at arm time (#463).
+    /// A gitignored directory created after arming is not armed, by the
+    /// same pruning `poll_watch_targets` applies at arm time.
     ///
     /// # Panics
     ///
@@ -5384,7 +5317,7 @@ mod tests {
         );
     }
 
-    /// #721 on #687's reference counts: a directory created under two
+    /// Under the reference counts, a directory created under two
     /// overlapping roots joins both expansions, so unwatching either root
     /// keeps it armed for the other, and releasing both unarms it.
     ///
@@ -5434,7 +5367,7 @@ mod tests {
         );
     }
 
-    /// Companion to the test above at the classification level (#447): a
+    /// Companion to the test above at the classification level: a
     /// metadata-only event for a worktree file must reach the Git path.
     ///
     /// # Panics
@@ -5479,8 +5412,7 @@ mod tests {
 
     /// A pure access-time event must not trigger a scan.
     ///
-    /// The counterpart exclusion (#447): a pure *access-time* event must NOT
-    /// trigger a scan. Reading a file cannot change `git status`, so waking
+    /// Reading a file cannot change `git status`, so waking
     /// the whole refresh pipeline for it would be pure cost — this is why the
     /// allowlist admits metadata changes generally but carves `AccessTime`
     /// out rather than accepting `Metadata(_)` wholesale.
@@ -5526,7 +5458,7 @@ mod tests {
 
     /// A backend swap must re-arm every already-registered directory.
     ///
-    /// #442's biggest correctness trap: swapping the backend must re-arm every
+    /// The swap's biggest correctness trap: swapping the backend must re-arm every
     /// directory that was ALREADY registered against the old one. A swap that
     /// forgot the existing registrations would leave live repos silently unwatched — the
     /// exact failure the fallback exists to fix, just moved.
@@ -5571,7 +5503,7 @@ mod tests {
 
     /// A backend swap must emit one rescan per re-armed root.
     ///
-    /// #442: because `PollWatcher` snapshots each path when it is armed, any
+    /// Because `PollWatcher` snapshots each path when it is armed, any
     /// change made between agent startup and the swap is invisible to it. The
     /// swap therefore emits one `Flag::Rescan` event per re-armed root, which
     /// `handle_rescan` turns into a debounced git refresh — otherwise those
@@ -5623,8 +5555,8 @@ mod tests {
         watcher.force_poll_fallback(Duration::from_secs(1));
         let after_first = wait_for_any_event(&events, Duration::from_secs(2));
         // Let the first swap's whole rescan burst land before clearing: on a
-        // slow runner (macOS) later events of that burst arrive after the
-        // first one and were counted as the second swap's.
+        // slow runner (macOS) its stragglers would otherwise count as the
+        // second swap's.
         std::thread::sleep(Duration::from_millis(400));
         events.lock().unwrap().clear();
         watcher.force_poll_fallback(Duration::from_secs(1));
@@ -5641,7 +5573,7 @@ mod tests {
         );
     }
 
-    /// #463: the `PollWatcher` fallback must not watch a `.gitignore`-excluded directory.
+    /// The `PollWatcher` fallback must not watch a `.gitignore`-excluded directory.
     ///
     /// Must not register a watch on (and so must not pay the recursive stat-walk cost of) a
     /// directory the repo's own `.gitignore` excludes — a large vendored/bundled subtree is
@@ -5674,8 +5606,8 @@ mod tests {
         );
     }
 
-    /// #463: a `.gitignore` rule must never prune anything under `.git`, mirroring the
-    /// existing `is_in_git_dir` short-circuit on the event path (#443/#447).
+    /// A `.gitignore` rule must never prune anything under `.git`, mirroring the
+    /// `is_in_git_dir` short-circuit on the event path.
     ///
     /// A generically-named rule like `pack/` is a realistic pattern that would otherwise
     /// incidentally blind the poll fallback to real changes under `.git/objects/pack`.
@@ -5700,7 +5632,7 @@ mod tests {
         );
     }
 
-    /// #442: the health probe must be a real, self-contained round trip through a native
+    /// The health probe must be a real, self-contained round trip through a native
     /// watcher — it manufactures its own change, so its verdict never depends on unrelated
     /// filesystem activity.
     ///
@@ -5744,14 +5676,10 @@ mod tests {
         );
     }
 
-    /// Regression test for #447: the theme/config watchers must get the same
-    /// probe-and-swap as the repo watcher.
+    /// Theme/config watchers get the same probe-and-swap as the repo watcher.
     ///
-    /// #442 deliberately exempted them (they pass `watched_roots: None`) on
-    /// the grounds that they already ship opt-in pollers from #354. #447
-    /// disproved that: during an `FSEvents` outage the config watcher silently
-    /// stopped applying config edits until restart, and an opt-in remedy is
-    /// no help against a failure the user cannot observe.
+    /// During an `FSEvents` outage a config watcher would otherwise silently
+    /// stop applying edits until restart, a failure the user cannot observe.
     #[test]
     fn fallback_policy_probes_for_watchers_without_a_repo_registry() {
         assert_eq!(
@@ -5760,7 +5688,7 @@ mod tests {
                 probe_timeout: Duration::from_millis(DEFAULT_WATCH_PROBE_MS),
                 poll_interval: Duration::from_millis(DEFAULT_WATCH_POLL_MS),
             },
-            "config/theme watchers must auto-detect a silent backend too (#447)"
+            "config/theme watchers must auto-detect a silent backend too"
         );
     }
 

@@ -103,9 +103,7 @@ fn find_repo_root_bare_and_relative_aware(path: &Path) -> Option<PathBuf> {
 /// recognizes bare repositories (root directly contains
 /// `HEAD`/`objects`/`refs`/`config`, no `.git` subentry) and absolutizes a
 /// relative `path` against the current directory, only when the cheap walk
-/// finds nothing — so the common case pays no extra cost. This generalizes
-/// the fallback `ipc/handlers/git_handler.rs` previously applied ad hoc at one
-/// call site (#321) into one shared implementation.
+/// finds nothing — so the common case pays no extra cost.
 ///
 /// Not used by every repo-root-finding call site in this crate: some
 /// deliberately want the cheap walk's narrower behavior (e.g. the watcher's
@@ -301,8 +299,7 @@ pub struct RepositoryStatus {
 /// rebases (`.git/rebase-apply`) have no equivalent progress counter in v1.
 /// `step` tracks `.git/rebase-merge/msgnum`; `total` is `step` plus the
 /// remaining step count in the current `git-rebase-todo` rather than the
-/// `end` file, which git never rewrites when `--edit-todo` changes the plan
-/// (#481).
+/// `end` file, which git never rewrites when `--edit-todo` changes the plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RebaseProgress {
     /// Current step in the rebase sequence (1-indexed)
@@ -356,7 +353,7 @@ impl RepositoryStatus {
     ///
     /// Used when `config.git.show_upstream` is disabled: the upstream comparison
     /// still runs (it's cheap and other status fields depend on the same git
-    /// call), but its result must not reach the rendered prompt (#592).
+    /// call), but its result must not reach the rendered prompt.
     #[must_use]
     pub const fn without_upstream(mut self) -> Self {
         self.ahead = 0;
@@ -437,8 +434,6 @@ mod tests {
         assert!(status.rebase_progress.is_none());
     }
 
-    // ===== `gitdir:` pointer parsing (pure, no filesystem) =====
-
     #[test]
     fn gitdir_pointer_target_extracts_path_after_colon() {
         assert_eq!(
@@ -507,8 +502,6 @@ mod tests {
             None
         );
     }
-
-    // ===== repo-root discovery =====
 
     /// The composed [`find_repo_root`] must reach its bare-repo fallback.
     ///

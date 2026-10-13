@@ -1,4 +1,4 @@
-# Fixture theme for the cross-shell segment golden test (#844): powerline
+# Fixture theme for the cross-shell segment golden test: powerline
 # delimiters with `match_bg` / `transparent` colors, bright (`br*`) and hex colors, no
 # segment templates, so every segment is drawn by the shell itself.
 

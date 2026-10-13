@@ -2,14 +2,13 @@
 # tests/bash/e2e_agent_down_stale_git.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# A stale git segment is never served forever when the agent is down (#647
-# row 4, pins #639).
+# A stale git segment is never served forever when the agent is down.
 #
-# #430 gave the Fish git segment a bounded oneshot recovery: on a stale
-# instant-cache hit with no socket, run `gpy-agent oneshot git` in the
-# foreground so the prompt shows the current state. Bash kept serving the
-# cached segment and fired a background refresh at a socket nobody listened
-# on, so a user whose agent died saw the last cached state indefinitely.
+# Like Fish, on a stale instant-cache hit with no socket Bash runs
+# `gpy-agent oneshot git` in the foreground so the prompt shows the current
+# state. Serving the cached segment and firing a background refresh at a
+# socket nobody listens on would leave a user whose agent died looking at the
+# last cached state indefinitely.
 #
 # No pty needed. With the real gpy-agent on PATH and a dead socket:
 #   (a) a STALE cache entry holding a sentinel plus a dirty tree renders the
@@ -18,24 +17,20 @@
 #       so a render can never fork more than one oneshot;
 #   (c) a FRESH cache entry is still served as-is (no fork);
 #   (d) with the socket present (agent up), a stale entry is served as-is and
-#       refreshed in the background, exactly as before.
+#       refreshed in the background.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tests/lib/shell_e2e.sh
 . "$ROOT/tests/lib/shell_e2e.sh"
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 # The supervisor stays off at startup (env) and on every later prompt, where
-# the theme export has re-set the flag from config.toml (#836): this test
+# the theme export has re-set the flag from config.toml: this test
 # needs the agent down.
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n\n[agent.supervisor]\nenabled = false\n' \
-    >"$XDG_CONFIG_HOME/gpy/config.toml"
+shell_e2e_text_config '"directory", "git"' false supervisor-off
 # Source with the agent disabled and off PATH so sourcing cannot autostart one
-# (the supervisor flag only gates restarts, #842, and the theme export would
+# (the supervisor flag only gates restarts, and the theme export would
 # re-set GPY_AGENT_ENABLED from config.toml); enable it afterwards for the segment
 # under test.
 export GPY_AGENT_SUPERVISOR_ENABLED=0
@@ -131,8 +126,4 @@ else
     fail "the stale entry was not refreshed within 10 s with the agent up"
 fi
 
-if [ "$failures" -gt 0 ]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: bash git segment recovers from a stale cache when the agent is down"
+test_finish "bash git segment recovers from a stale cache when the agent is down"

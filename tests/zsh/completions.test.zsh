@@ -2,14 +2,14 @@
 
 # tests/zsh/completions.test.zsh
 #
-# Task 5/6 of Epic #326: ZSH completions for the `gpy` CLI.
+# ZSH completions for the `gpy` CLI.
 #
 # `gpy completions zsh` (clap_complete) generates the STRUCTURAL surface
 # (subcommand/flag names) into a function named `_gpy`. It has no way to
 # know the live set of themes, palettes, or segments installed on this
 # machine -- value positions for those args fall back to `_default` (plain
 # file completion). The hidden `gpy __complete <kind>` command supplies the
-# live names (#328).
+# live names.
 #
 # zsh/completions/_gpy-dynamic is the checked-in, hand-authored glue that
 # fills in the six dynamic value positions (theme/palette use+validate,
@@ -71,9 +71,9 @@ contains() {
     [[ "$2" == *"$1"* ]]
 }
 
-# Drain whatever the pty has produced so far, polling briefly rather than
-# sleeping a fixed amount -- the pty is fast (local process, no network) but
-# completion rendering + zle redraw is not perfectly synchronous.
+# Collect whatever the pty produces within a bounded window (60 non-blocking
+# reads, 50 ms apart while idle): completion rendering + zle redraw is not
+# synchronous with the write, and there is no end-of-output marker to poll for.
 drain() {
     local out="" line
     local i=0
@@ -113,7 +113,7 @@ drain >/dev/null
 # dir plus the freshly generated structural completions dir to fpath,
 # autoload both, and register the dynamic wrapper as gpy's completer.
 # Paths are typed into the nested shell as code, so quote them with (q): a
-# checkout path with a space must stay one word (#822).
+# checkout path with a space must stay one word.
 send "fpath=(${(q)ROOT}/zsh/completions ${(q)GENERATED_DIR} \$fpath)"
 drain >/dev/null
 send "autoload -Uz _gpy-dynamic; autoload -Uz _gpy; compdef _gpy-dynamic gpy"
@@ -170,8 +170,7 @@ check_candidates "gpy disable" "gpy disable " git status
 echo "Checking top-level completion delegates to structural _gpy..."
 check_candidates "gpy (top-level)" "gpy " theme enable palette
 
-# ---------------------------------------------------------------------------
-# Per-session caching (#346): __gpy_complete_cached must fork `gpy` at most
+# Per-session caching: __gpy_complete_cached must fork `gpy` at most
 # once per kind per session, and must never cache an empty/failed result.
 #
 # The checks above already drove `_gpy-dynamic` through a real TAB press, so
@@ -190,7 +189,6 @@ check_candidates "gpy (top-level)" "gpy " theme enable palette
 # than embedding `printf '...\n...'` escapes in text typed through the pty --
 # both counter and candidates are real filesystem state, which (unlike a
 # shell variable) survives the subshell.
-# ---------------------------------------------------------------------------
 echo "Checking per-session caching (#346): gpy __complete forks at most once per kind..."
 
 CALLS_FILE=$(mktemp -t gpy-zsh-cache-calls.XXXXXX)

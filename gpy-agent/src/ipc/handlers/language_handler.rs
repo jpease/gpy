@@ -45,7 +45,7 @@ impl LanguageHandler {
     /// # Errors
     ///
     /// Returns an error if a cold cache miss does not complete within the agent
-    /// timeout budget (#154); the detection keeps running on the blocking pool and
+    /// timeout budget; the detection keeps running on the blocking pool and
     /// its result is served from cache on a subsequent request.
     fn handle_language_detection(
         &self,
@@ -63,7 +63,7 @@ impl LanguageHandler {
         let theme = self.render.theme_manager.get();
         let request_path = path.as_path();
         // Detect at the project root: the git root, else the nearest marker
-        // ancestor (#727). The instant cache stays keyed by the request path
+        // ancestor. The instant cache stays keyed by the request path
         // outside git, because the shells look it up by `realpath $PWD` there;
         // inside git both are the repo root.
         let project_root = crate::language::project_root(request_path);
@@ -80,7 +80,7 @@ impl LanguageHandler {
         // preventing a flip-flop between the synchronous reply and later refreshes.
         // The stash mirrors the most recent request: shells omit `virtual_env`
         // once the venv is deactivated, so a request without a usable one clears
-        // it (#726). Known limitation: the instant-cache files are keyed by repo,
+        // it. Known limitation: the instant-cache files are keyed by repo,
         // not venv, so two shells in one repo with different venv states share one
         // rendered result and the most recent request wins.
         let forwarded_venv = virtual_env
@@ -98,13 +98,13 @@ impl LanguageHandler {
 
         // Check the in-memory cache first. On a cold miss, wait on the single-flight
         // detection job only up to a bounded budget so a slow scan never blocks the
-        // request indefinitely (#154). The wait runs on the blocking pool (the IPC
+        // request indefinitely. The wait runs on the blocking pool (the IPC
         // server routes requests via `spawn_blocking`), so it never ties up a Tokio
         // worker thread.
         let detected_languages =
             if let Some((cached, age)) = self.language_cache.get_with_age(&repo_root) {
                 // Never wait here: the stale value is served now and the job's
-                // result reaches the shell through the repaint doorbell (#709).
+                // result reaches the shell through the repaint doorbell.
                 drop(self.revalidate_stale_hit(&repo_root, in_git_repo, age));
                 cached
             } else {
@@ -127,7 +127,7 @@ impl LanguageHandler {
         // actually changed (the requesting shell already gets the fresh reply
         // directly via the response below). Mirrors the background path's
         // `publish_language_status` and `git_handler`'s synchronous
-        // `publish_and_repaint` (#624).
+        // `publish_and_repaint`.
         let palette = self.render.palette_cache.get();
         let result = self.render.instant_cache.write_language_variants(
             cache_path,
@@ -160,7 +160,7 @@ impl LanguageHandler {
     ///
     /// Git repos are refreshed by the watcher and the signature-throttled
     /// git-status path; non-git directories are not watched, so without this a
-    /// cached result would be served for the agent's lifetime (#709). Returns
+    /// cached result would be served for the agent's lifetime. Returns
     /// the job handle (for tests), or `None` when no revalidation is due. NEVER
     /// awaited on the request path; the job is single-flight per root.
     #[must_use]
@@ -182,7 +182,7 @@ impl LanguageHandler {
         let repo_root_owned = repo_root.to_path_buf();
         // On a panic mid-job, the guard's Drop completes the shared job with
         // an empty result (matching this type's "no languages detected"
-        // semantics) instead of leaving the slot permanently poisoned (#318).
+        // semantics) instead of leaving the slot permanently poisoned.
         self.in_flight
             .get_or_start(repo_root_owned.clone(), Vec::new(), move |guard| {
                 Self::spawn_language_detection_job(repo_root_owned, language_cache, render, guard);
@@ -205,7 +205,7 @@ impl LanguageHandler {
             guard.finish(detected.clone());
             // Mirror the git handler's publish_and_repaint: write the
             // instant-prompt cache and ring a content-gated repaint doorbell so live
-            // prompts repaint without waiting for the next render (#166).
+            // prompts repaint without waiting for the next render.
             Self::publish_language_status(&render, &repo_root, &detected);
         };
 
@@ -332,7 +332,7 @@ mod tests {
         }
     }
 
-    /// #726: the stash mirrors the most recent request, so a request that
+    /// The stash mirrors the most recent request, so a request that
     /// carries no usable `virtual_env` (shell ran `deactivate`, or the value is
     /// not a venv dir) must clear it for background refreshes.
     #[test]
@@ -384,14 +384,14 @@ mod tests {
         }
     }
 
-    /// #624: a synchronous language request must repaint other live shells.
+    /// A synchronous language request must repaint other live shells.
     ///
     /// Exactly like `git_handler`'s equivalent synchronous path
     /// (`publish_and_repaint_notifies_only_on_content_change`). The requesting
     /// shell already receives the fresh detection in its reply; every *other*
     /// registered shell in the repo is still showing the instant-cache content
     /// the write just replaced. The change gate in `notify_if_changed` keeps a
-    /// no-op refresh silent (#145/#146), so a second identical request must not
+    /// no-op refresh silent, so a second identical request must not
     /// add another notification.
     #[test]
     fn handle_language_detection_notifies_only_on_content_change() {
@@ -454,7 +454,7 @@ mod tests {
         std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").expect("main.rs");
     }
 
-    /// #709: a stale non-git cache hit re-detects in the background.
+    /// A stale non-git cache hit re-detects in the background.
     ///
     /// Nothing watches a non-git directory, so the hit must still be answered
     /// from the cache without waiting, or new marker files are never noticed.
@@ -491,7 +491,7 @@ mod tests {
         );
     }
 
-    /// #709: a stale git-root hit starts no detection job.
+    /// A stale git-root hit starts no detection job.
     ///
     /// Git roots are covered by the watcher and the signature-throttled refresh.
     #[test]
@@ -524,7 +524,7 @@ mod tests {
         );
     }
 
-    /// #727: a non-git subdirectory reports its project's languages.
+    /// A non-git subdirectory reports its project's languages.
     ///
     /// Detection (and its cache) runs at the nearest marker ancestor, while the
     /// instant cache stays keyed by the request path the shells read.

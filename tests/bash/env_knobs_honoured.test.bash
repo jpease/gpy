@@ -4,14 +4,13 @@
 #
 # GPY_IPC_TIMEOUT_MS and the two instant-cache TTL knobs are honoured when set
 # in the environment before the shell integration loads, identically in all
-# three shells (#845; tests/fish/env_knobs_honoured.test.fish and
-# tests/zsh/env_knobs_honoured.test.zsh are the twins). Zsh used to overwrite
-# GPY_IPC_TIMEOUT_MS with 150 at source time; Fish overwrote all three.
+# three shells (tests/fish/env_knobs_honoured.test.fish and
+# tests/zsh/env_knobs_honoured.test.zsh are the twins): sourcing the
+# integration must never overwrite a value the user already set.
 #
-# Bash already honoured them; this pins it, together with the guard that keeps
-# a non-numeric value from breaking arithmetic: the IPC budget falls back to
-# 150 ms inside __gpy_ms_to_secs, and a bad TTL falls back to its default when
-# the cache entry's age is compared.
+# Also pinned: the guard that keeps a non-numeric value from breaking
+# arithmetic: the IPC budget falls back to 150 ms inside __gpy_ms_to_secs, and
+# a bad TTL falls back to its default when the cache entry's age is compared.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1

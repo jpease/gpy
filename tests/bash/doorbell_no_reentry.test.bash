@@ -2,14 +2,14 @@
 # tests/bash/doorbell_no_reentry.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #678: Bash's SIGURG doorbell trap ran a full
-# __gpy_render_prompt with no re-entrancy guard. On bash 5 a doorbell that
-# arrived during a render started a nested one, so a stream of doorbells (a
-# live agent answering each render's background refresh) nested renders
-# without bound and the shell never read another line; bash 3.2 rendered
-# continuously at an idle prompt; and any doorbell made a running `wait`
-# return 144. Bash now installs no URG trap and consumes the doorbell's flag
-# files in __gpy_precmd before it renders.
+# Bash's SIGURG doorbell must never re-enter a render. A URG trap that runs a
+# full __gpy_render_prompt with no re-entrancy guard lets a doorbell that
+# arrives during a render start a nested one on bash 5, so a stream of
+# doorbells (a live agent answering each render's background refresh) nests
+# renders without bound and the shell never reads another line; bash 3.2
+# renders continuously at an idle prompt; and any doorbell makes a running
+# `wait` return 144. Bash therefore installs no URG trap and consumes the
+# doorbell's flag files in __gpy_precmd before it renders.
 #
 # Drives a real interactive bash (the interpreter running this file, so the
 # gate's $GPY_BASH and a plain `bash` both get covered) on a pty with gpy
@@ -40,18 +40,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
-
-# Scrub every GPY_* variable inherited from the developer's shell (#270),
+# Scrub every GPY_* variable inherited from the developer's shell,
 # then sandbox everything the integration touches.
 while IFS='=' read -r __gpy_env_name _; do
     case "$__gpy_env_name" in
         GPY_*) unset "$__gpy_env_name" ;;
     esac
 done < <(env)
-# Supervisor off in a sandbox config: the theme export re-sets the flag (#836).
+# Supervisor off in a sandbox config: the theme export re-sets the flag.
 source "$ROOT/tests/lib/supervisor_off.bash" "$T"
 export GPY_AGENT_SOCKET_PATH="$T/missing.sock"
 export HOME="$T/home" XDG_RUNTIME_DIR="$T/run"
@@ -105,6 +101,8 @@ last_report() {
 
 echo "=== (a) a doorbell burst never nests renders or blocks the shell ==="
 shell_e2e_send 'sleep 0.5\r'
+# Pace the burst 50 ms apart so it spans the whole `sleep 0.5` and the
+# renders after it.
 for _ in $(seq 60); do
     kill -URG "$pid" 2>/dev/null || break
     sleep 0.05
@@ -164,9 +162,8 @@ else
     pass "the next prompt consumed the reload flag"
 fi
 
-if ((failures > 0)); then
+if [ "$failures" -gt 0 ]; then
     echo "--- transcript tail ---"
     shell_e2e_transcript 0 | tail -n 20
-    exit 1
 fi
-echo "=== All Tests Passed ==="
+test_finish

@@ -2,7 +2,7 @@
 set -e
 # Extracted from scripts/competitive-bench.sh to set up benchmark repos
 
-# --- Configuration ---
+# Configuration
 BENCH_DIR="/tmp/gpy-bench-repos"
 REPOS_DIR="$BENCH_DIR"
 NORMAL_DIR="$REPOS_DIR/normal-dir"
@@ -10,7 +10,7 @@ SMALL_REPO="$REPOS_DIR/small-repo"
 LARGE_REPO="$REPOS_DIR/large-repo"
 LARGE_REPO_URL="https://github.com/torvalds/linux.git"
 
-# --- Helper Functions ---
+# Helper Functions
 step() {
   echo "==> $1"
 }
@@ -22,7 +22,7 @@ cleanup_repos() {
   fi
 }
 
-# --- Main Setup ---
+# Main Setup
 setup_repos() {
   if [ -d "$BENCH_DIR" ]; then
     step "Benchmark directory already exists. Skipping setup."

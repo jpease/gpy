@@ -3,126 +3,13 @@
 Every `*.test.bash` in this directory is auto-discovered and run by
 `scripts/quality-check.sh` (`just check-shell`), each in a hermetic
 `XDG_CACHE_HOME`/`XDG_CONFIG_HOME`. A file must exit non-zero on failure and
-print `PASS`/`FAIL` lines a reader can follow.
+print `PASS`/`FAIL` lines a reader can follow; the file name says what it
+covers.
 
-Two kinds of file live here, and the split matters when you add one:
-
-## Shell-integration tests
-
-Exercise `bash/gpy.bash` and its segments.
-
-| Tier | Files | Agent? |
-|---|---|---|
-| Live daemon, real terminal | `e2e_agent_autostart`, `e2e_git_live_content`, `e2e_reregister_after_restart`, `e2e_config_reload`, `e2e_exec_survives_doorbell` | real `gpy-agent`, real `bash -i` on a pty |
-| Live daemon, no terminal | `e2e_agent_down_stale_git` (agent down, then up), `e2e_git_cold_miss_bounded_sync`, `e2e_git_variant_fallback_bounded_sync`, `e2e_lang_variant_fallback_bounded_refresh`, `maybe_refresh_nonblocking`, `path_parity` (`gpy debug paths` vs `__gpy_debug_paths`, cache key against a file the agent wrote), `prompt_text_literal` (directory and branch names with `$(…)`, backticks, `\` and `!` show literally in the expanded PS1: fresh render, oneshot fallback, instant cache), `prompt_nonprinting` (every agent SGR escape in PS1 sits inside `\[ \]`: fresh render, instant cache) | real `gpy-agent`, functions called directly |
-| Interactive, no agent | `debug_trap_preserves_last_arg` (`$_` survives the DEBUG trap: `mkdir -p d && cd $_`), `doorbell_no_reentry` (on a pty: a SIGURG burst never nests renders or blocks the shell, `wait` is not interrupted, a reload flag is applied by the next prompt), `duration_measures_command_line` (`__gpy_cmd_duration` spans the whole command line: other `PROMPT_COMMAND` entries, lists, loops, a SIGURG, idle time, string and array `PROMPT_COMMAND`) | none: a real `bash -i` fed on stdin or on a pty, supervisor off, socket that does not exist |
-| Function-level | `basic`, `integration`, `debug_trap`, `duration_math`, `cache_key_vectors` (`__gpy_path_to_cache_key` matches the agent encoder on every row of `tests/fixtures/cache_key_vectors.tsv`, #705), `xdg_absoluteness_vectors` (XDG_* values are honoured iff absolute, per `tests/fixtures/xdg_absoluteness_vectors.tsv`, #774), `venv_forwarding_vectors` (`lang` requests forward `$VIRTUAL_ENV`, else a non-base `$CONDA_PREFIX`, per `tests/fixtures/venv_forwarding_vectors.tsv`, #729), `json_escape_vectors`, `json_flags_tail`, `load_theme_cache`, `instant_cache_status`, `is_first_instant_cache`, `language_marker_prefilter` (the pre-filter accepts every marker in the agent-exported `__gpy_lang_marker_files`, rejects an empty dir, defers when unset, #785), `oneshot_budget`, `agent_disabled_prompt`, `supervisor_flag_contract` (the same config through bash, zsh and fish), `parity`, `prompt_dispatch_positions`, `omitted_segment_positions` (a language cold miss is dropped before positions are assigned, so its neighbour keeps the first/last form), `segment_bg_export`, `missing_core_file_disables_cleanly`, `completions` | none (`integration` runs with the supervisor off and a socket that does not exist) |
-| Shell-drawn segments | `local_segment_renderer` (the status pill, local clock, hostname/username fallback and root prompt go through `bash/core/renderer.bash`: the render loop hands the next segment the pill's ok/fail background as `prev_bg`, root draws `__icon_root_prompt` in `__root_prompt_color` and never asks the agent for a character, hostile hostnames/usernames/icons show literally, the color table maps names, bright names, hex and 0-255; #844) | none: stubbed character request, supervisor off, socket that does not exist |
-| Cross-shell contract | `shell_contract` (#844, #847: the harness that checks the three shells BEHAVE the same; see "The cross-shell contract harness" below. Every row of `tests/fixtures/shell_scenarios/scenarios.tsv` is run through the real Fish, Bash and Zsh integrations (`tests/lib/shell_scenarios/render.{fish,bash,zsh}`), each in its own sandbox, and the prompts, normalized to the style and text of each visible run by `tests/lib/normalize_prompt.py`, AND the side effects (agent starts, `gpy-agent oneshot` forks, IPC requests, registrations) must be identical across shells and equal the row's `expect` values; Bash's PS1 and Zsh's PROMPT sources must keep every escape inside `\[ \]` / `%{ %}`) | real `gpy-agent` behind a recording IPC proxy, a recording `gpy-agent` wrapper on `PATH`; needs `fish` and `zsh` |
-| Hostile environment | `hostile_env` (fresh child bash whose rc builds traps and `PROMPT_COMMAND` before sourcing `gpy.bash`; asserts the user's environment survives), `prompt_command_preserves_status` (user `PROMPT_COMMAND` hooks that run after `__gpy_precmd` still see the command's `$?`; system bash 3.2 and the running bash) | none: supervisor off, socket that does not exist |
-| Supervisor config | `startup_respects_config` (the startup `gpy-agent start` honours `[agent] enabled` from the theme export, and not `[agent.supervisor] enabled`, #837, #842) | a stub `gpy-agent` on `PATH` |
-| IPC edge cases | `ipc_no_epipe_noise` (a complete reply leaves stderr clean when SIGPIPE is ignored, #848), `ipc_partial_response`, `ipc_no_double_send_on_slow_reply` (every available transport sends a slow request once and reports "connected, late" without forking oneshot, #845), `ipc_nc_requires_unix_support` (an `nc` whose help lacks `-U` is no client, #850), `env_knobs_honoured` (`GPY_IPC_TIMEOUT_MS` and the TTL variables, #845), `duration_date_probe` (Bash 4 falls back to whole seconds when `date` has no `%N`, #850), `protocol_version_mismatch`, `ipc_nc_fallback_timeout`, `ipc_timeout_honors_budget` (the socat transport honours `GPY_IPC_TIMEOUT_MS`: a reply at 120 ms is used, no oneshot forked), `register_rejects_error_reply` (an `{"error":…}` reply to register does not count as registered), `workspace_error_keeps_registration` (a workspace error other than "not registered" keeps the registration) | a python3 fake listener |
-| Installers, real binaries | `install_e2e_real_binary` (`install.sh`: install, first `fish -i` prompt through config.fish, upgrade with an old `agent.version`, `scripts/uninstall.fish`), `install_oneline_e2e_real_binary` (`install-oneline.sh` for fish, zsh and bash behind a fake `curl`, first prompt on a pty, `scripts/uninstall.*`), `installer_backup_retention` (`install-oneline.sh` and `install.sh` run three times over stub binaries: exactly one `gpy-agent.backup.*` and one `gpy.backup.*` survive and hold the previous run's binary (#807)), `install_oneline_failed_upgrade` (`install-oneline.sh` over a working install with a checksum-valid but non-runnable agent or CLI: the old binaries stay byte-identical, no `.gpy*.new.*` staging file is left, a broken agent fails the install, a broken CLI only warns (#806); a good upgrade still replaces both) | the debug `gpy-agent` and `gpy` (stub binaries for the failed-upgrade test), installed into a sandboxed `~/.local/bin` |
-| Installer required files | `install_oneline_required_fish_files` (`install-oneline.sh` for fish behind a fake `curl` that fails one URL: a missing `conf.d/gpy_init.fish` or `functions/fish_prompt.fish` aborts the install with no `gpy-init` block in `config.fish` and no `fish_prompt.fish` symlink, while a missing segment only warns (#808)) | stub `gpy-agent` and `gpy`, installed into a sandboxed `~/.local/bin` |
-| Installer rc files | `installer_rc_matrix` (rows of installer x shell x hostile `HOME`/`XDG_CONFIG_HOME` layout, including a space in the path and a symlinked `fish_prompt.fish` that must survive install + uninstall (#744): after install every targeted shell, interactive login and non-login, sources gpy exactly once with empty stderr, and after uninstall every rc file is byte-identical to before; `refuse` rows must touch nothing) | the debug `gpy-agent` and `gpy`, installed into sandboxed homes; each row stops its agent |
-| Release payload | `release_smoke` (packages the debug binaries with `scripts/package-release.sh`, runs `scripts/smoke-release.sh`, then proves a broken agent fails it) | the packaged debug `gpy-agent`, installed into a sandboxed `~/.local/bin` |
-| Source shape | `ipc_read_preserves_whitespace` (every IPC response read in `zsh/core/ipc.zsh` and `bash/core/ipc.bash` uses `IFS= read -r`, so a bare `read` cannot strip the significant trailing space the character template emits after `❯`, nor mangle the backslashes in the clock's `\D{…}` token), `shell_c_no_interpolation` (no double-quoted `-c` code string for fish/bash/zsh/sh in `tests/` or `scripts/` interpolates a variable, so a checkout path with a space or quote cannot break a suite; pass paths as `$argv`/`$1`, #822) | none |
-| Doc tripwire | `bash_limitations_claims` (pins the shell-support matrix rows the E2E tests measure), `ci_gate_shape` (pins the pr-gate/release workflow shape), `workflow_hardening` (every `uses:` is a SHA with a version comment, every workflow declares read-only top-level `permissions`, write grants only in the release publish job, checkout drops credentials, no `github.event.*` in `run:`, dependabot covers github-actions weekly and not cargo), `cli_reference_claims` (every shipped subcommand is in `docs/user/cli-reference.md`, walked from `--help`), `segment_registry_parity` (the builtin segments, the fish/bash/zsh segment files and the `gpy enable` segment list in `docs/user/cli-reference.md` are the same set, both directions), `test_readme_claims` (the test READMEs name exactly the files that exist) | none |
-| Gate and scripts | `toolchain_pin_hooks` (each Rust entry point: `just clippy-strict`, `just lint`, `quality-check.sh --rust-only`/`--fast`/`--fix` fails fast naming the `RUSTUP_TOOLCHAIN` override when the active rustc is not the `rust-toolchain.toml` pin, before any cargo/moon command runs) | none |
-| Gate and scripts | `shell_tests_no_agent_leak` (the plain Bash and Zsh `basic`/`parity` suites, run as `run_shell_tests` runs them, leave no `gpy-agent` holding a socket under the scratch root; leaked agents are found with `lsof -U` and stopped by PID) | the debug `gpy-agent`, started by the sourced entry point |
-| Gate and scripts | `shell_e2e_stop_agent_term` (`shell_e2e_stop_agent` TERMs a socket holder that `gpy-agent stop` did not release, waits, and only then KILLs: a stub that exits cleanly on TERM must record TERM, one that ignores TERM is still killed, #825) | python3 stub holding an AF_UNIX socket |
-| Gate and scripts | `shell_suites_build_agent` (`scripts/test_fish.sh` and `run_shell_tests` build the debug `gpy`/`gpy-agent` unconditionally, not behind an existence check, and honour `CARGO_TARGET_DIR`) | the two scripts, read as text |
-| Gate and scripts | `quality_check_fix_cwd` (`quality-check.sh --fix` run from another directory cds to the repo root and does not reformat `.fish` files under the caller's cwd) | none |
-| Gate and scripts | `install_hooks_prek` (`scripts/install-hooks.sh` over hook symlinks into `.raven/git-hooks/`: leaves prek shims for `pre-commit`, `pre-push` and `commit-msg`, no `.legacy` hook, and the tracked script untouched; #666) | a stub `prek` on `PATH` |
-
-### The cross-shell contract harness: `shell_contract`
-
-One table, `tests/fixtures/shell_scenarios/scenarios.tsv`, is the single place a
-cross-shell drift fix adds a test. A row is a scenario (theme, segments, exit
-status, env, config, cwd, agent state, an optional priming render); the harness
-runs it through Fish, Bash and Zsh, each in a fresh sandbox, and fails when
-
-- the normalized prompts differ between shells,
-- the side effects differ between shells, or
-- a shell misses an absolute value in the row's `expect` column (so three shells
-  that regress together still fail).
-
-Side effects are seen from outside the shells, never through their own logging:
-a recording `gpy-agent` wrapper first on `PATH` (agent `start`/`restart` calls
-are recorded and not performed; `oneshot` forks and everything else are passed
-to the real binary), and a recording IPC proxy
-(`tests/lib/shell_scenarios/ipc_proxy.py`) between the shells and the real
-agent, which can hold data requests to play a late agent.
-`tests/lib/shell_scenarios/effects.py` turns both logs into `starts`,
-`oneshots`, `registers`, `ipc_total` and `ipc.<op>`; readiness probes
-(`ping`, `status`) and shell-exit `unregister` are not counted.
-
-Unprimed live-agent git rows prepare the daemon's git backend outside the
-observation log, then remove and verify the absence of its shell-visible
-instant-cache entries before the proxy becomes ready. The shell still takes
-the real cold-cache path with its normal IPC budget; first-use daemon work is
-not part of the cross-shell timing comparison.
-
-**To add a row for a drift fix:** append a line to `scenarios.tsv` (the file's
-header documents every column and flag), name it after the drift, put the
-issue number in a comment above it, and run just that row:
-
-```bash
-SCN_FILTER='^my-row$' SCN_VERBOSE=1 bash tests/bash/shell_contract.test.bash
-```
-
-`SCN_VERBOSE=1` prints each shell's side effects, `gpy-agent` calls, IPC
-requests and normalized prompt, which is how to pick the `expect` values. Pin
-the behaviour the fix established (`starts=0 oneshots=- ipc.git=1 ...`), not the
-whole log. The row must fail on the pre-fix code of the shell that drifted. A
-new kind of agent state or observation belongs in the harness, not in a
-one-off per-shell test. The per-shell tests (`e2e_git_cold_miss_bounded_sync`,
-`ipc_no_double_send_on_slow_reply`, `agent_disabled_prompt`, ...) stay for
-function-level detail; the table is where equivalence is asserted. The Fish and
-Zsh suites run no copy of this file: `scripts/quality-check.sh` runs it once
-with the Bash suites.
-
-### The live-daemon harness: `tests/lib/shell_e2e.sh`
-
-Shared by the Bash and Zsh suites (POSIX sh; Zsh sources it under
-`emulate sh`). It provides:
-
-- `shell_e2e_init ROOT` – sandbox `HOME`, `XDG_*`, a socket under the GPY
-  test root (the one `scripts/cleanup-test-agents.sh` reaps), the debug agent
-  on `PATH` (built if missing), a scratch git repo in `$SHELL_E2E_REPO` with
-  one commit and hermetic git config, and an `EXIT` trap that tears it down;
-- `shell_e2e_start_agent` / `shell_e2e_stop_agent`;
-- `shell_e2e_agent_free_begin` / `shell_e2e_agent_free_end` – put every
-  `gpy-agent` off `PATH` around `GPY_AGENT_ENABLED=0 source gpy.{bash,zsh}`,
-  so sourcing starts no daemon (the theme export would re-set the flag from
-  `config.toml`; a startup start depends on `[agent] enabled` alone, #842).
-  Export `GPY_AGENT_ENABLED=1` afterwards for the call-time reads;
-- `shell_e2e_spawn_client bash|zsh` – an interactive shell on a pty through
-  `tests/lib/pty_session.py`, sourcing this checkout's integration; then
-  `shell_e2e_send`, `shell_e2e_wait_for REGEX TIMEOUT [OFFSET]`,
-  `shell_e2e_size`, `shell_e2e_transcript [OFFSET]` (escapes stripped),
-  `shell_e2e_client_pid`, `shell_e2e_assert_registered PID`,
-  `shell_e2e_stop_client`, `shell_e2e_dump_transcript`;
-- `test_skip "reason"` / `test_require_command NAME` – the skip contract:
-  `SKIP:` and exit 0 locally, exit 1 under `CI` (#650). Never `exit 0` on a
-  missing prerequisite yourself.
-
-All waits are bounded polls (`shell_e2e_poll SECONDS CMD...`); do not add
-fixed sleeps for synchronisation.
-
-## Repository-policy checks
-
-These use bash as a convenient scripting language and assert on the repo
-itself (docs, workflows, packaging, dependency claims), not on the shell
-integration: `agent_tooling_privacy_claims`, `cleanup_test_agents`,
-`contributing_workflow_docs`, `crate_publish_boundary`,
-`dependency_advisory_claims`, `doc_links`, `gengo_gix_free`,
-`install_checksum_verification`, `install_docs_env_placement`, `install_from_source_docs`,
-`install_from_source_docs_isolation`, `install_oneline_verification`, `msrv_consistency`, `nextest_retry_policy`,
-`privacy_patterns`, `release_asset_contract`, `release_glibc_floor`,
-`release_packaging`, `release_sbom`, `release_version_claims`,
-`security_trust_boundary_claims`, `toolchain_pin_scope`,
-`windows_shell_support_claims`.
+Two kinds of file live here: shell-integration tests of `bash/gpy.bash`, and
+repository-policy checks that use bash as a scripting language to assert on
+the repo itself (doc links, privacy, workflow hardening, the CI gate shape,
+the release asset contract, installer checksum verification).
 
 ## Running
 
@@ -131,3 +18,59 @@ just check-shell                                  # everything, as the gate runs
 bash tests/bash/e2e_agent_autostart.test.bash     # one file
 GPY_GATE_RELEASE=1 bash tests/bash/install_from_source_docs.test.bash   # builds a release binary
 ```
+
+## Writing a test
+
+Source the shared library first; it provides the assertion helpers and the
+skip contract:
+
+```bash
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
+
+if [[ "$got" == "$want" ]]; then pass "label"; else fail "label: got '$got'"; fi
+test_finish "one-line summary"   # exit 1 if any fail, else PASS: summary
+```
+
+- `test_skip "reason"` / `test_require_command NAME`: `SKIP:` and exit 0
+  locally, exit 1 under `CI`. Never `exit 0` on a missing prerequisite.
+- All waits are bounded polls (`shell_e2e_poll SECONDS CMD...`); do not add
+  fixed sleeps for synchronisation.
+- Tests that must not start an agent source `tests/lib/supervisor_off.bash`,
+  write `[agent] enabled = false` into their own sandbox `config.toml`, or
+  source with no `gpy-agent` on `PATH` (`shell_e2e_agent_free_begin` /
+  `shell_e2e_agent_free_end`). Exporting `GPY_AGENT_ENABLED=0` alone is not
+  enough: the theme export re-sets it from `config.toml`.
+
+### The live-daemon harness
+
+`tests/lib/shell_e2e.sh` (POSIX sh, shared with the Zsh suite) documents its
+functions in its header: `shell_e2e_init` builds the sandbox, debug agent and
+a scratch git repo; `shell_e2e_start_agent` / `shell_e2e_stop_agent`;
+`shell_e2e_text_config` writes a text-theme `config.toml`;
+`shell_e2e_spawn_client bash|zsh` drives an interactive shell on a pty
+through `tests/lib/pty_session.py` (`shell_e2e_send`, `shell_e2e_wait_for`,
+`shell_e2e_transcript`).
+
+### The cross-shell contract harness: `shell_contract`
+
+Behaviour that must be identical in Fish, Bash and Zsh is a row of
+`tests/fixtures/shell_scenarios/scenarios.tsv`, not a per-shell file.
+`shell_contract.test.bash` runs every row through the real integrations
+(`tests/lib/shell_scenarios/render.{fish,bash,zsh}`), each in its own sandbox,
+and fails when the normalized prompts or the side effects (agent starts,
+`gpy-agent oneshot` forks, IPC requests, registrations) differ between shells
+or miss the row's `expect` values. Side effects are observed from outside the
+shells: a recording `gpy-agent` wrapper first on `PATH` and a recording IPC
+proxy (`tests/lib/shell_scenarios/ipc_proxy.py`) in front of the real agent.
+
+To add a row, append it to `scenarios.tsv` (its header documents every column
+and flag) and run just that row:
+
+```bash
+SCN_FILTER='^my-row$' SCN_VERBOSE=1 bash tests/bash/shell_contract.test.bash
+```
+
+`SCN_VERBOSE=1` prints each shell's side effects and normalized prompt, which
+is how to pick the `expect` values. Pin the behaviour, not the whole log.

@@ -7,9 +7,7 @@
 #![allow(clippy::doc_markdown)]
 
 # SPDX-License-Identifier: GPL-3.0-or-later
-# ============================================================================
 # E2E Test: Live Update Signal Flow & Agent Restart Handling
-# ============================================================================
 #
 # This test exercises the full git → watcher → agent → Fish shell pipeline.
 # It verifies that:
@@ -23,7 +21,7 @@
 #
 # Limitations:
 #   - The visible repaint itself is asserted on a real pseudo-terminal by
-#     e2e_interactive_session.test.fish (#645)
+#     e2e_interactive_session.test.fish
 #   - This test runs inside the current repository; it assumes `git add` works.
 
 source (dirname (status -f))/../lib/test_helpers.fish
@@ -64,20 +62,20 @@ function test_signal_flow
     init_test_env
 
     if start_test_agent
-        print_test_result "Agent Start (initial)" "PASS"
+        print_test_result "Agent Start (initial)" PASS
     else
-        print_test_result "Agent Start (initial)" "FAIL" "gpy-agent failed to start"
+        print_test_result "Agent Start (initial)" FAIL "gpy-agent failed to start"
         cleanup_test_files
         return 1
     end
 
     set -l client1 (register_test_client 12)
     if test -z "$client1"
-        print_test_result "Register client (phase 1)" "FAIL" "Failed to spawn test client"
+        print_test_result "Register client (phase 1)" FAIL "Failed to spawn test client"
         cleanup_test_files
         return 1
     end
-    print_test_result "Register client (phase 1)" "PASS"
+    print_test_result "Register client (phase 1)" PASS
 
     # Let registration-time signals settle, then capture a baseline. We assert an
     # INCREMENT caused specifically by the git change — a plain "≥1" check would be
@@ -88,10 +86,10 @@ function test_signal_flow
 
     trigger_git_change (pwd) >/dev/null
     if wait_for_signal $client1 (math $baseline1 + 1) 6
-        print_test_result "Watcher rings SIGURG on change" "PASS"
+        print_test_result "Watcher rings SIGURG on change" PASS
     else
         set -l observed (count_signals $client1)
-        print_test_result "Watcher rings SIGURG on change" "FAIL" "Expected > $baseline1 signals, saw $observed"
+        print_test_result "Watcher rings SIGURG on change" FAIL "Expected > $baseline1 signals, saw $observed"
         cleanup_test_files
         return 1
     end
@@ -102,30 +100,31 @@ function test_signal_flow
 
     stop_test_agent >/dev/null
     if start_test_agent
-        print_test_result "Agent Restart" "PASS"
+        print_test_result "Agent Restart" PASS
     else
-        print_test_result "Agent Restart" "FAIL" "Unable to restart gpy-agent"
+        print_test_result "Agent Restart" FAIL "Unable to restart gpy-agent"
         cleanup_test_files
         return 1
     end
 
     set -l client2 (register_test_client 12)
     if test -z "$client2"
-        print_test_result "Register client (phase 2)" "FAIL" "Failed to spawn test client after restart"
+        print_test_result "Register client (phase 2)" FAIL "Failed to spawn test client after restart"
         cleanup_test_files
         return 1
     end
-    print_test_result "Register client (phase 2)" "PASS"
+    print_test_result "Register client (phase 2)" PASS
 
+    # Same settle window as phase 1 before taking the baseline.
     sleep 2
     set -l baseline2 (count_signals $client2)
 
     trigger_git_change (pwd) >/dev/null
     if wait_for_signal $client2 (math $baseline2 + 1) 6
-        print_test_result "Watcher recovers after restart" "PASS"
+        print_test_result "Watcher recovers after restart" PASS
     else
         set -l observed2 (count_signals $client2)
-        print_test_result "Watcher recovers after restart" "FAIL" "Expected > $baseline2 signals after restart, saw $observed2"
+        print_test_result "Watcher recovers after restart" FAIL "Expected > $baseline2 signals after restart, saw $observed2"
         cleanup_test_files
         return 1
     end

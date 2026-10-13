@@ -1,10 +1,10 @@
 #!/usr/bin/env zsh
 # tests/zsh/duration_integer_ms.test.zsh
 #
-# Regression test for #681: zsh computed the command duration in floating
-# point from $EPOCHREALTIME and sent it as `"duration_ms":1205.82...`. The
-# agent's `duration_ms` is a u64, so it rejected every duration request and
-# the oneshot fallback's `--duration-ms` parser rejected the float too.
+# The command duration must be an integer number of milliseconds: the
+# agent's `duration_ms` is a u64, so a floating-point value computed from
+# $EPOCHREALTIME (`"duration_ms":1205.82...`) is rejected by every duration
+# request and by the oneshot fallback's `--duration-ms` parser.
 #
 # Asserts that __gpy_cmd_duration is an integer number of milliseconds after
 # a real preexec/precmd cycle, and that the duration request carries

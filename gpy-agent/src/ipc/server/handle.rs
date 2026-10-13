@@ -36,8 +36,7 @@ use tokio::sync::{Semaphore, broadcast};
 use tokio::time::timeout;
 
 /// Multiplier applied to the live per-read timeout (`request_timeout()`) to
-/// derive the whole-connection deadline enforced in `spawn_client_handler`
-/// (#316).
+/// derive the whole-connection deadline enforced in `spawn_client_handler`.
 ///
 /// Every legitimate client in this codebase (Fish shell requests,
 /// `RegisterClient`, etc.) opens a fresh connection, sends exactly one line,
@@ -60,12 +59,11 @@ const CONNECTION_DEADLINE_MULTIPLIER: u32 = 4;
 pub type WatcherRef = Arc<Mutex<Option<Arc<crate::watcher::multi_repo::MultiRepoWatcher>>>>;
 
 /// Shared subsystem handles the IPC endpoint needs for the whole of its
-/// lifetime (#587).
+/// lifetime.
 ///
-/// Threaded as one value everywhere the same bundle used to be re-derived from
-/// an eight-to-eleven-name parameter list: [`EndpointHandle::with_path_and_state`],
-/// the handler wiring it used to delegate to, and
-/// [`EndpointHandleBuilder::build`]. Five of these are also exactly what every
+/// Threaded as one value through [`EndpointHandle::with_path_and_state`] and
+/// [`EndpointHandleBuilder::build`] instead of a long parameter list. Five of
+/// these are also exactly what every
 /// publish-and-repaint site needs, which [`ServerDeps::render`] hands out as a
 /// [`RenderDeps`].
 ///
@@ -143,14 +141,14 @@ fn accept_error_is_fd_exhaustion(err: &std::io::Error) -> bool {
 use crate::ipc::socket_identity::SocketIdentity;
 
 /// How often the accept loop checks that its socket path still holds the
-/// socket it bound (#779).
+/// socket it bound.
 ///
 /// Long enough that a briefly missing socket during a normal restart never
 /// races a healthy agent into exiting.
 #[cfg(unix)]
 pub(crate) const SOCKET_OWNERSHIP_CHECK: Duration = Duration::from_secs(30);
 
-/// Outcome of one ownership check (#779). Only `Lost` acts.
+/// Outcome of one ownership check. Only `Lost` acts.
 #[cfg(unix)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum SocketOwnership {
@@ -169,7 +167,7 @@ enum SocketOwnership {
     not(unix),
     expect(
         dead_code,
-        reason = "Unix-only (the transport is a Unix domain socket); native Windows can still build and hold a handle -- the builder is cross-platform, and the lib tests construct one -- it simply never serves a connection, so every field is written and never read there (#540); cfg-gating ten fields would fork the struct's shape, its builder and its tests per platform for no behavioural gain, so the disuse is stated instead of engineered away"
+        reason = "Unix-only (the transport is a Unix domain socket); native Windows can still build and hold a handle -- the builder is cross-platform, and the lib tests construct one -- it simply never serves a connection, so every field is written and never read there; cfg-gating ten fields would fork the struct's shape, its builder and its tests per platform for no behavioural gain, so the disuse is stated instead of engineered away"
     )
 )]
 pub struct EndpointHandle {
@@ -177,11 +175,11 @@ pub struct EndpointHandle {
     #[cfg(unix)]
     listener: Option<UnixListener>,
     /// Identity of the socket file this handle bound in [`Self::bind_socket`],
-    /// used to verify ownership before unlinking (#317). `None` for handles that
+    /// used to verify ownership before unlinking. `None` for handles that
     /// never bind (per-client handles), which therefore never unlink anything.
     #[cfg(unix)]
     bound_socket: Option<SocketIdentity>,
-    /// Per-socket start lock (`<socket>.lock`, #723) inherited from the
+    /// Per-socket start lock (`<socket>.lock`) inherited from the
     /// `gpy-agent start` process that forked this daemon. Held until
     /// [`Self::bind_socket`] returns, so a concurrent start cannot check,
     /// evict or fork between our fork and our bind; released on bind success
@@ -209,13 +207,15 @@ pub struct EndpointHandle {
     palette_cache: Arc<PaletteCache>,
     connection_semaphore: Arc<Semaphore>,
     shutdown_tx: broadcast::Sender<()>, // Used to signal shutdown to all listeners
-    // Kept alive so shutdown_tx.send(()) always has at least one receiver and never errors; each connection subscribes its own receiver via shutdown_tx.subscribe() instead of using this one.
+    // Kept alive so `shutdown_tx.send(())` always has at least one receiver
+    // and never errors; each connection subscribes its own receiver via
+    // `shutdown_tx.subscribe()` instead of using this one.
     _shutdown_rx: broadcast::Receiver<()>,
     pub(crate) handler_registry: Arc<HandlerRegistry>,
 }
 
 /// Content fingerprint of a live-update response, used by the per-repo signal
-/// throttle to distinguish a genuinely different push from a duplicate (#438).
+/// throttle to distinguish a genuinely different push from a duplicate.
 ///
 /// Returns a stable-within-process hash of the serialized response, or `None`
 /// if serialization fails (in which case the throttle falls back to its
@@ -260,7 +260,7 @@ pub(super) fn notify_clients_for_response(
         match notify_path {
             // Carry a content token so the per-repo throttle can coalesce a
             // duplicate push yet still deliver a genuinely distinct one inside
-            // the window (#438). A token derives only from the response
+            // the window. A token derives only from the response
             // content, never a timestamp, so unchanged state keeps coalescing.
             Some(path) => {
                 let target = std::path::Path::new(path);
@@ -281,7 +281,7 @@ impl EndpointHandle {
         Duration::from_secs(config.agent.timeout_seconds.get())
     }
 
-    /// Hard cap on total connection lifetime (#316).
+    /// Hard cap on total connection lifetime.
     ///
     /// See [`CONNECTION_DEADLINE_MULTIPLIER`] for the rationale behind the
     /// multiplier. Derived from the live `request_timeout()` so it can never
@@ -309,7 +309,7 @@ impl EndpointHandle {
         // wrapped in a single `Arc` for cheap cloning into each connection's
         // `ConnectionHandler`. Every handler takes its dependencies off `deps`,
         // so wiring them is a handful of clones rather than a nine-parameter
-        // hand-off (#587).
+        // hand-off.
         let render = deps.render();
         let git_handler = Arc::new(GitHandler::new(render.clone(), Arc::clone(&deps.git_cache)));
         let language_handler = Arc::new(LanguageHandler::new(
@@ -404,7 +404,7 @@ impl EndpointHandle {
     /// Returns an error if determining or preparing the runtime directory fails.
     pub(crate) fn default_socket_path() -> Result<PathBuf> {
         // Check for custom socket path in environment (matches Fish shell logic).
-        // Empty means unset, exactly as every shell reads it (#626).
+        // Empty means unset, exactly as every shell reads it.
         if let Some(custom_path) = crate::agent::lifecycle::socket_path_override() {
             return Ok(custom_path);
         }
@@ -423,7 +423,7 @@ impl EndpointHandle {
     fn get_runtime_root() -> Result<PathBuf> {
         // Follow same precedence as Fish shell
         // Normalised the same way `paths::runtime_root_for` normalises them
-        // (#626): an empty or relative `XDG_*` value is "unset" per the XDG
+        //: an empty or relative `XDG_*` value is "unset" per the XDG
         // spec, so the branch selection below and the resolver below it must
         // agree about which variables actually count.
         let xdg_runtime_raw = crate::paths::root_var("XDG_RUNTIME_DIR");
@@ -437,14 +437,13 @@ impl EndpointHandle {
         // branches, which land in a per-user tree — another local user can
         // pre-create or symlink the runtime directory. Validate before trusting
         // it. Reached only when XDG_RUNTIME_DIR, XDG_CACHE_HOME, and HOME are
-        // all unset (some daemon/CI contexts). See #426.
+        // all unset (some daemon/CI contexts).
         if xdg_runtime.is_none() && xdg_cache.is_none() && home.is_none() {
             return Self::prepare_tmp_runtime_root();
         }
 
         let path = crate::paths::runtime_root_for(xdg_runtime, xdg_cache, home.as_deref());
-        // Branch-specific error text, matching the pre-#477 per-branch
-        // resolver this now replaces.
+        // Name the branch that resolved the path in the error text.
         let context = if xdg_runtime.is_some() {
             "XDG runtime dir"
         } else if xdg_cache.is_some() {
@@ -466,7 +465,7 @@ impl EndpointHandle {
     /// cross-user contention and then fail closed unless the directory is a
     /// real directory (not a symlink), owned by the current uid, and not
     /// group/other-writable — mirroring the trust guarantees the XDG/HOME
-    /// branches inherit from their per-user parents. See #426.
+    /// branches inherit from their per-user parents.
     ///
     /// # Errors
     ///
@@ -490,7 +489,7 @@ impl EndpointHandle {
     ///
     /// Split out from [`Self::prepare_tmp_runtime_root`] so the trust checks can
     /// be exercised against a temp directory without touching the shared
-    /// `/tmp/gpy-<uid>` a live agent may be using. See #426.
+    /// `/tmp/gpy-<uid>` a live agent may be using.
     ///
     /// # Errors
     ///
@@ -576,7 +575,7 @@ impl EndpointHandle {
     /// Bind the Unix socket, record its inode for ownership checks, and set
     /// user-only (0600) permissions.
     ///
-    /// The inode captured here (#317) lets [`Self::unlink_socket_if_owned`]
+    /// The inode captured here lets [`Self::unlink_socket_if_owned`]
     /// refuse to remove a socket a *different* agent process has since bound at
     /// the same path. Split out of [`Self::start`] so tests can exercise the
     /// bind/cleanup lifecycle without running the accept loop.
@@ -592,7 +591,7 @@ impl EndpointHandle {
 
         // The daemon can be started directly with a socket the CLI never
         // resolved; fail with the length and the fix, not the kernel's bare
-        // "path must be shorter than SUN_LEN" (#850).
+        // "path must be shorter than SUN_LEN".
         crate::paths::check_socket_path_len(&self.socket_path)?;
 
         debug_log!("server", "Attempting to bind socket...");
@@ -654,7 +653,7 @@ impl EndpointHandle {
         // Subscribe to shutdown signals
         let mut shutdown_rx = self.shutdown_tx.subscribe();
 
-        // Ownership tick (#779): an agent whose socket was removed or
+        // Ownership tick: an agent whose socket was removed or
         // rebound by another process is unreachable, so it exits the same way
         // an IPC `Shutdown` does. No tick at t=0.
         let mut ownership_timer = tokio::time::interval(self.socket_ownership_check);
@@ -729,13 +728,13 @@ impl EndpointHandle {
     /// Called from every `accept_loop` exit path (graceful shutdown and fatal
     /// accept errors) so a stale socket never blocks the next `gpy-agent start`.
     /// Routes through [`Self::unlink_socket_if_owned`] so it can never remove a
-    /// socket a different agent has since bound at the same path (#317).
+    /// socket a different agent has since bound at the same path.
     #[cfg(unix)]
     fn cleanup_socket_file(&self) {
         self.unlink_socket_if_owned();
     }
 
-    /// Whether the path still holds the socket this handle bound (#779).
+    /// Whether the path still holds the socket this handle bound.
     ///
     /// Uses the same strict dev+ino+ctime comparison as
     /// [`Self::unlink_socket_if_owned`]. A handle that never bound owns
@@ -755,7 +754,7 @@ impl EndpointHandle {
 
     /// Remove the socket file only if it is still the inode this handle bound.
     ///
-    /// After a restart race (#317) the file at `socket_path` may belong to a
+    /// After a restart race the file at `socket_path` may belong to a
     /// *new* agent process that rebound it. Comparing the current
     /// [`SocketIdentity`] against the one captured in [`Self::bind_socket`]
     /// ensures a handle only ever unlinks its own socket, never the
@@ -798,7 +797,7 @@ impl EndpointHandle {
     #[cfg(unix)]
     fn spawn_client_handler(&self, stream: UnixStream) {
         // Computed from `self` before the fields below are cloned into the
-        // spawned task; see `connection_deadline()` for the rationale (#316).
+        // spawned task; see `connection_deadline()` for the rationale.
         let connection_deadline = self.connection_deadline();
         let client_registry = Arc::clone(&self.client_registry);
         let semaphore = Arc::clone(&self.connection_semaphore);
@@ -808,7 +807,7 @@ impl EndpointHandle {
         // (listener, bound inode, rate limiter, the semaphore itself,
         // git_cache/watcher/language_cache which are only needed to
         // *construct* the handlers already captured in `handler_registry`)
-        // stays on the server and is never cloned per connection (#359).
+        // stays on the server and is never cloned per connection.
         let connection_handler = ConnectionHandler {
             security_config: self.security_config.clone(),
             config_manager: Arc::clone(&self.config_manager),
@@ -821,7 +820,7 @@ impl EndpointHandle {
 
         tokio::spawn(async move {
             // Fail fast rather than queueing when already at the concurrent
-            // connection limit (#316): a blocking `acquire().await` here
+            // connection limit: a blocking `acquire().await` here
             // would let a saturated semaphore queue legitimate requests
             // forever behind slow-loris connections that never release
             // their permit. `try_acquire()` rejects immediately instead.
@@ -830,7 +829,7 @@ impl EndpointHandle {
                 return;
             };
 
-            // Whole-connection deadline (#316): each individual read()
+            // Whole-connection deadline: each individual read()
             // already has a per-request timeout (`request_timeout()`), but
             // nothing capped total connection lifetime, so a client that
             // trickles bytes just under that per-read timeout (never
@@ -857,11 +856,11 @@ impl EndpointHandle {
     }
 
     /// Close the connection without replying because the concurrent-connection
-    /// semaphore is saturated (#316).
+    /// semaphore is saturated.
     ///
     /// The request is never read, so its response format is unknown, and any
     /// reply line would be printed verbatim into a prompt that asked for a
-    /// rendered segment (#680). Closing instead is the fast-fail signal: the
+    /// rendered segment. Closing instead is the fast-fail signal: the
     /// shells treat a missing reply exactly like an unreachable agent and
     /// fall back, and `gpy-agent` CLI clients report that the agent closed
     /// the connection without replying.
@@ -884,10 +883,9 @@ impl EndpointHandle {
     /// [`notify_clients_for_response`], the same logic `ConnectionHandler`
     /// uses for its own per-connection copy.
     ///
-    /// Production code no longer calls this directly (that path now runs
-    /// through `ConnectionHandler::notify_clients`, see `spawn_client_handler`);
-    /// it is kept `#[cfg(test)]` because `ipc::server::tests` still exercises
-    /// it directly on an `EndpointHandle`.
+    /// `#[cfg(test)]`: production routes through
+    /// `ConnectionHandler::notify_clients` (see `spawn_client_handler`); this
+    /// exists for `ipc::server::tests`, which call it on an `EndpointHandle`.
     #[cfg(all(test, unix))]
     pub(crate) fn notify_clients(
         &self,
@@ -901,7 +899,7 @@ impl EndpointHandle {
     /// Stop the server and close all connections
     ///
     /// On Unix the socket file is only removed when this handle still owns the
-    /// bound inode (#317): declining to unlink a socket a different agent has
+    /// bound inode: declining to unlink a socket a different agent has
     /// since rebound is a successful no-op, not a failure of `stop`.
     ///
     /// # Errors
@@ -958,7 +956,7 @@ impl EndpointHandle {
         watcher: WatcherRef,
     ) -> Self {
         // The embedded theme and built-in config defaults, never the
-        // developer's ~/.config/gpy (#664).
+        // developer's ~/.config/gpy.
         let theme_manager =
             Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
         let config_manager = Arc::new(
@@ -998,10 +996,10 @@ impl EndpointHandle {
 }
 
 /// Native Windows stub: the IPC server is Unix-socket based and not yet
-/// implemented on this platform (#284). Run under WSL instead.
+/// implemented on this platform. Run under WSL instead.
 #[cfg(not(unix))]
 impl EndpointHandle {
-    /// Start accepting client connections -- native Windows stub (#284).
+    /// Start accepting client connections -- native Windows stub.
     ///
     /// # Errors
     ///
@@ -1064,7 +1062,7 @@ mod content_token_tests {
     }
 }
 
-// Exercises `ConnectionHandler`, which only exists on Unix (#540).
+// Exercises `ConnectionHandler`, which only exists on Unix.
 #[cfg(all(test, unix))]
 mod route_prev_bg_tests {
     #![allow(clippy::unwrap_used)]
@@ -1138,7 +1136,7 @@ mod route_prev_bg_tests {
         match response {
             crate::ipc::Response::Hostname { hostname, is_ssh } => {
                 assert_eq!(hostname, "h");
-                assert!(is_ssh, "the handler must echo the request's is_ssh (#826)");
+                assert!(is_ssh, "the handler must echo the request's is_ssh");
             }
             other => panic!("expected Response::Hostname, got {other:?}"),
         }
@@ -1289,7 +1287,7 @@ mod socket_ownership_tests {
         drop(foreign);
     }
 
-    // No regression: stop() still removes the handle's own current socket.
+    // stop() removes the handle's own current socket.
     #[tokio::test]
     async fn stop_unlinks_own_socket() {
         let tmp = tempfile::tempdir().expect("temp dir");
@@ -1367,7 +1365,7 @@ mod socket_ownership_tests {
         (task, shutdown)
     }
 
-    // #779: an agent whose socket was rebound by someone else exits, and
+    // An agent whose socket was rebound by someone else exits, and
     // leaves the newcomer's socket alone.
     #[tokio::test]
     async fn accept_loop_exits_when_socket_is_rebound() {
@@ -1387,14 +1385,16 @@ mod socket_ownership_tests {
         drop(foreign);
     }
 
-    // #779: an untouched socket never makes the agent exit.
+    // An untouched socket never makes the agent exit.
     #[tokio::test]
     async fn accept_loop_keeps_running_while_socket_is_owned() {
         let tmp = tempfile::tempdir().expect("temp dir");
         let socket_path = tmp.path().join("gpy.sock");
         let (task, shutdown) = spawn_started_handle(&socket_path).await;
 
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        // Negative proof: no event marks "still running", so let several
+        // 50ms ownership checks elapse before asserting the loop survived.
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         assert!(
             !task.is_finished(),
             "an owned socket must keep the loop running"

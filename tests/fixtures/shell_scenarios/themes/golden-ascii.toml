@@ -1,4 +1,4 @@
-# Fixture theme for the cross-shell segment golden test (#844): ASCII
+# Fixture theme for the cross-shell segment golden test: ASCII
 # delimiters, no segment templates, so the clock, status, hostname and
 # username are all drawn by the shell itself. Named colors only: every shell
 # maps them to the same SGR codes.

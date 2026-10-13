@@ -10,17 +10,20 @@ pushed commit; in CI the pull request's base, in the `perf` job of
 `pr-gate.yml`) so regressions are easier to catch early, while still tolerating
 ordinary machine noise. Treat it as a relative signal, not an absolute truth.
 
-The project’s current `<10ms` target is for user-visible cached/instant
-response behavior. It is not a claim that fresh full git or language
-computation completes within `<10ms` in every repository or host condition.
+The cached prompt render budget (`prompt_render`: 20 ms target, 50 ms max) is
+for user-visible cached/instant response behavior. It is not a claim that
+fresh full git or language computation fits that budget in every repository
+or host condition; those have their own, larger budgets (`prompt_render_cold`,
+`git_status_cold`).
 
 ## Overview
 
-GPY's performance is critical to user experience since it runs on every prompt render. We maintain baselines for:
+The agent and shell integration run on every prompt render. Budgets live in
+`tests/performance-baselines.json`; baselines cover:
 
-1. **Formatter hot paths** - Git status and language formatting (<5ms target)
-2. **IPC roundtrip** - Agent communication latency (<1.5ms max budget)
-3. **Git operations** - Repository status detection (<50ms target for cached, <500ms for cold)
+1. **Formatter hot paths** - Git status and language formatting
+2. **IPC roundtrip** - Agent communication latency (`ipc_latency`: 1 ms target, 1.5 ms max)
+3. **Git operations** - Repository status (`git_status_warm`: 50 ms target; `git_status_cold`: 500 ms target)
 
 ## Running Benchmarks
 
@@ -70,8 +73,7 @@ binds a Unix socket, which makes benchmarking the full constructor
 impractical and non-hermetic in a Criterion harness. `agent_startup_bench.rs`
 instead benches its dominant sub-steps individually, plus the
 version-detection subprocess spawn path that also runs on the first prompt
-render (via language detection) but is not itself part of `Agent::new`
-(issue #335, first task of the perf-pass epic #334):
+render (via language detection) but is not itself part of `Agent::new`:
 
 ```bash
 cd gpy-agent
@@ -269,10 +271,10 @@ The `scripts/bench.sh --ci` mode enforces these budgets (with 15% tolerance):
 | Formatter (git short) | 1ms | Fast path for common case |
 | Formatter (git long) | 2ms | With truncation overhead |
 | Memory Usage | 50MB | Agent resident memory |
-| Config Load | 100ms | `config_load_from_file` (issue #335) |
-| Theme Manager Load | 20ms | `theme_manager_load` (issue #335) |
-| Theme Export Write | 30ms | `theme_export_write` (issue #335) |
-| Version Command Spawn | 50ms | `version_command_spawn`, stub command (issue #335) |
+| Config Load | 100ms | `config_load_from_file` |
+| Theme Manager Load | 20ms | `theme_manager_load` |
+| Theme Export Write | 30ms | `theme_export_write` |
+| Version Command Spawn | 50ms | `version_command_spawn`, stub command |
 
 ## Detecting Regressions
 
@@ -386,10 +388,10 @@ Add this step to `.github/workflows/ci.yml` in the `benchmark` job (after "Gener
 
     BASELINE_CHECK_EXIT=$?
     if [ $BASELINE_CHECK_EXIT -eq 0 ]; then
-      echo "✅ All performance metrics within budgets"
+      echo "All performance metrics within budgets"
       echo "PERF_BASELINE_STATUS=PASS" >> $GITHUB_ENV
     else
-      echo "⚠️ Some performance metrics exceed budgets"
+      echo "Some performance metrics exceed budgets"
       echo "PERF_BASELINE_STATUS=WARN" >> $GITHUB_ENV
     fi
 ```

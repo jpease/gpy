@@ -3,8 +3,10 @@
 //! Tests the clock timer feature that rings the SIGURG doorbell on registered clients
 //! at minute boundaries (or every second when `show_seconds=true`).
 //!
-//! These tests use deterministic signaling primitives (see `test_harness` module)
-//! instead of brittle `sleep()`-based timing waits.
+//! Signal-delivery tests wait on `test_harness::SignalCounter` rather than
+//! fixed sleeps; the absence check bounds its wait at 100ms.
+//! `test_clock_timer_ticks` measures a real 1-second `tokio::time::interval`
+//! against the wall clock and takes about two seconds.
 
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]

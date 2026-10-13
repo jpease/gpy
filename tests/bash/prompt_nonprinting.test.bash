@@ -2,10 +2,10 @@
 # tests/bash/prompt_nonprinting.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #679: agent-rendered SGR escapes reached PS1 without
-# bash's `\[ \]` non-printing markers, so readline counted every escape byte
-# as a printed column. Typed input wrapped early and Ctrl-A, history recall
-# and completion put the cursor on the wrong row and column.
+# Agent-rendered SGR escapes must reach PS1 inside bash's `\[ \]`
+# non-printing markers; otherwise readline counts every escape byte as a
+# printed column, typed input wraps early, and Ctrl-A, history recall and
+# completion put the cursor on the wrong row and column.
 #
 # With a live sandboxed agent and the default theme, render the real prompt
 # (agent directory, git and character segments) and assert that once every
@@ -17,9 +17,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT/tests/lib/shell_e2e.sh"
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 printf '[ui]\ntheme = "default"\nenabled_segments = ["directory", "git"]\n\n[agent.supervisor]\nenabled = false\n' \
     >"$XDG_CONFIG_HOME/gpy/config.toml"
@@ -72,8 +69,4 @@ fi
 
 shell_e2e_stop_agent
 
-if [ "$failures" -ne 0 ]; then
-    echo "=== $failures FAILED ==="
-    exit 1
-fi
-echo "=== All Tests Passed ==="
+test_finish

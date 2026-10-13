@@ -38,7 +38,7 @@ impl<'a> LanguageResolver<'a> {
     }
 
     /// Style string for `($style)` indirection: the language's own color as bg,
-    /// the theme's text color for that language as fg (mirrors the legacy path).
+    /// the theme's text color for that language as fg.
     fn style(&self) -> String {
         let bg = self.lang.color.as_str();
         let fg = self.theme.segments.language.get_text_color(&self.lang.name);
@@ -50,8 +50,7 @@ impl VariableResolver for LanguageResolver<'_> {
     fn resolve(&self, name: &str) -> Option<String> {
         let glyphs = Glyphs::from(&self.config.ui);
         match name {
-            // The displayed glyph (icon) or the language name when icons are off —
-            // the same text the legacy renderer emits before the version.
+            // The displayed glyph (icon) or the language name when icons are off.
             // Prefer a theme-declared symbol (e.g. `rust_symbol = "🦀"`) when icons
             // are enabled; fall back to the config-icon / language-name path.
             "symbol" => {

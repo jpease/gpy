@@ -7,7 +7,7 @@
 echo "Testing GPY core functionality..."
 
 # Isolate the theme-export cache dir so init.fish's fast path can't read a
-# real, live dogfooding daemon's cache (#402).
+# real, live dogfooding daemon's cache.
 set -gx XDG_CACHE_HOME (mktemp -d)
 
 # Test 1: Init script loads
@@ -21,10 +21,8 @@ end
 
 # Test 2: the config-path resolver returns a valid path structure.
 #
-# Was `gpy_config_path`, which named a `config.json` runtime snapshot nothing
-# in the agent ever wrote; #626 deleted it. `__gpy_locate_config_path` is the
-# resolver the prompt actually uses, and its candidate list mirrors
-# `config::schema::get_config_paths` exactly.
+# `__gpy_locate_config_path` is the resolver the prompt actually uses, and its
+# candidate list mirrors `config::schema::get_config_paths` exactly.
 set config_path (__gpy_locate_config_path)
 if test -n "$config_path"
     echo "✅ __gpy_locate_config_path returns non-empty path: $config_path"
@@ -33,7 +31,7 @@ else
     exit 1
 end
 
-# Every candidate is absolute: there is no project-local `.gpy.toml` (#733),
+# Every candidate is absolute: there is no project-local `.gpy.toml`,
 # and a relative GPY_CONFIG_PATH is resolved against the current directory.
 if string match -q "/*" -- $config_path
     echo "✅ __gpy_locate_config_path returns an absolute path"

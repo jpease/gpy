@@ -1,6 +1,6 @@
 #!/usr/bin/env fish
 # Verifies that switching themes in an open shell does not leak the previous
-# theme's optional variables (#791): __time_format and the status icons.
+# theme's optional variables: __time_format and the status icons.
 
 set -l temp_root (mktemp -d)
 set -l config_dir "$temp_root/gpy"

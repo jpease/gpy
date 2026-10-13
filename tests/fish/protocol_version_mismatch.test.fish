@@ -1,12 +1,11 @@
 #!/usr/bin/env fish
-# Regression test for #307: an agent that responds to IPC but speaks a
-# different wire protocol (e.g. an old daemon left running across an
-# upgrade) must be detected shell-side, not silently treated as usable.
+# An agent that responds to IPC but speaks a different wire protocol (e.g. an
+# old daemon left running across an upgrade) must be detected shell-side, not
+# silently treated as usable.
 #
-# __gpy_check_protocol_version existed but was never called anywhere before
-# this fix. This exercises it directly against a mock agent that returns a
-# canned {"op":"status"} response, covering both the mismatch and match
-# cases.
+# This exercises __gpy_check_protocol_version directly against a mock agent
+# that returns a canned {"op":"status"} response, covering both the mismatch
+# and match cases.
 
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
@@ -15,7 +14,7 @@ source "$repo_root/fish/core/constants.fish"
 source "$repo_root/fish/core/util.fish"
 source "$repo_root/fish/core/ipc.fish"
 
-print_test_header "Protocol version mismatch detection (#307)"
+print_test_header "Protocol version mismatch detection"
 
 if not command -q python3
     test_skip "python3 not installed, cannot simulate a mock agent"
@@ -46,10 +45,7 @@ conn.close()
 ' $sock1 &
 set -l listener1_pid $last_pid
 
-for i in (seq 1 20)
-    test -S $sock1; and break
-    sleep 0.1
-end
+poll_until 2 test -S $sock1
 
 if not test -S $sock1
     _protocol_mismatch_cleanup $listener1_pid
@@ -84,10 +80,7 @@ conn.close()
 ' $sock2 &
 set -l listener2_pid $last_pid
 
-for i in (seq 1 20)
-    test -S $sock2; and break
-    sleep 0.1
-end
+poll_until 2 test -S $sock2
 
 if not test -S $sock2
     _protocol_mismatch_cleanup $listener2_pid

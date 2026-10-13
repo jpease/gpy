@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
 # tests/bash/is_first_instant_cache.test.bash
 #
-# Regression test for #401: the instant-prompt cache writer
-# (gpy-agent/src/cache/instant_prompt.rs) writes all four is_last/is_first
-# combinations unconditionally (git/git_last/git_first/git_first_last,
-# lang/.../lang_first_last). This verifies the Bash reader side
-# (__gpy_cache_variant_suffix, __gpy_segment_git, __gpy_segment_language)
-# picks the correct file for each position instead of always serving the
-# not-first variant.
+# The instant-prompt cache writer (gpy-agent/src/cache/instant_prompt.rs)
+# writes all four is_last/is_first combinations unconditionally
+# (git/git_last/git_first/git_first_last, lang/.../lang_first_last). This
+# verifies the Bash reader side (__gpy_cache_variant_suffix,
+# __gpy_segment_git, __gpy_segment_language) picks the correct file for each
+# position rather than always serving the not-first variant.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
 # The theme export re-sets the supervisor flag from config.toml, so disable
-# it in a sandbox config; the missing socket stays there too (#836).
+# it in a sandbox config; the missing socket stays there too.
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-is-first.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
 source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"
@@ -65,9 +64,7 @@ printf 'LANG-LAST' >"$CACHE_DIR/$CACHE_KEY.lang_last.none.bash"
 printf 'LANG-FIRST' >"$CACHE_DIR/$CACHE_KEY.lang_first.none.bash"
 printf 'LANG-FIRST-LAST' >"$CACHE_DIR/$CACHE_KEY.lang_first_last.none.bash"
 
-# #613: segment functions now receive is_last/is_first as "true"/"" (not the
-# old "last"/"first" literals) -- call arguments updated, assertions about
-# which cache file gets selected are unchanged.
+# Segment functions receive is_last/is_first as "true"/"".
 check "git segment: not first, not last" "$(__gpy_segment_git "" "")" "GIT-NORMAL"
 check "git segment: last, not first" "$(__gpy_segment_git true "")" "GIT-LAST"
 check "git segment: first, not last" "$(__gpy_segment_git "" "" true)" "GIT-FIRST"

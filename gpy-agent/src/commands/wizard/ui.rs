@@ -7,7 +7,7 @@
 //! but none is currently justified; the interactive behavior worth testing
 //! lives in `keys.rs`/`state.rs`/`detail.rs` and is already covered there.
 //! `body_layout`'s width-based split *is* unit-tested below since it's pure
-//! geometry (issue #400's narrow-terminal degradation).
+//! geometry.
 
 use super::keys::InputMode;
 use super::preview::to_ratatui_color;
@@ -72,14 +72,10 @@ fn border_style(focused: bool, accent: Option<RatatuiColor>) -> Style {
 
 /// Body width below which the detail panel moves below the option lists
 /// instead of beside them — side-by-side below this width would crush both
-/// panes to unreadable widths (issue #400).
+/// panes to unreadable widths.
 const NARROW_WIDTH_THRESHOLD: u16 = 80;
 
-/// Bundles `draw`'s non-frame parameters.
-///
-/// `clippy.toml` caps functions at 5
-/// arguments (`too-many-arguments-threshold`), and `draw` needs more inputs
-/// than that once the detail panel (issue #400) joined `preview`.
+/// Bundles `draw`'s non-frame parameters (keeps `draw` under clippy's argument limit).
 pub struct DrawArgs<'a> {
     pub state: &'a WizardState,
     pub mode: InputMode,
@@ -273,7 +269,7 @@ fn narrow_to_filtered(
 }
 
 /// The detail panel: a bordered paragraph describing whichever item
-/// currently has the cursor in the focused master list (issue #400).
+/// currently has the cursor in the focused master list.
 fn render_detail_panel(frame: &mut Frame, area: Rect, detail: &[Line<'static>]) {
     frame.render_widget(
         Paragraph::new(Text::from(detail.to_vec()))
@@ -355,7 +351,7 @@ fn render_footer(frame: &mut Frame, area: Rect, args: &FooterArgs) {
 ///
 /// Side-by-side when `area` is wide enough for both to stay readable;
 /// stacked (detail panel below the lists, full width) in narrow terminals so
-/// neither pane gets crushed to unreadable widths (issue #400).
+/// neither pane gets crushed to unreadable widths.
 fn body_layout(area: Rect) -> (Rect, Rect) {
     if area.width < NARROW_WIDTH_THRESHOLD {
         let rows = Layout::default()
@@ -428,10 +424,9 @@ fn section_title(title: &str, filter_query: &str) -> String {
 /// since, for the multi-select Segments section, the cursor can sit on an
 /// item that isn't (yet) selected. Tinted with `spec.accent` (reverse video
 /// swaps it to the highlight row's background) when the selected palette
-/// resolved one. Using `ratatui`'s `List`/`ListState`
-/// (rather than a hand-rolled wrapped `Paragraph`, the pre-#400 approach)
-/// gives each item a stable line and automatic keep-cursor-visible
-/// scrolling for lists longer than the visible area.
+/// resolved one. `ratatui`'s `List`/`ListState` gives each item a stable
+/// line and automatic keep-cursor-visible scrolling for lists longer than
+/// the visible area.
 fn render_section(frame: &mut Frame, area: Rect, spec: &SectionSpec) {
     let title = section_title(spec.title, spec.filter_query);
     let block = section_block(&title, spec.focused, spec.accent);
@@ -505,8 +500,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect, focus: Section, colors: Wi
 
 /// Key bindings scoped to the currently focused section.
 ///
-/// This is the
-/// "contextual" part of the help overlay (issue #393): Segments is a
+/// This is the "contextual" part of the help overlay: Segments is a
 /// multi-select toggle while Theme/Palette are single-select, so the
 /// activate-key description differs per section.
 fn section_help_lines(focus: Section) -> Vec<Line<'static>> {
@@ -626,8 +620,8 @@ mod tests {
         config.ui.palette = PaletteName::new("default".to_owned()).expect("valid palette name");
         // Fixed, deterministic stand-ins for the real discovery lists
         // `WizardState::new` gathers from disk — see `state.rs`'s own
-        // `FIXED_THEMES`/`FIXED_PALETTES`/`FIXED_SEGMENTS` for the rationale
-        // (#607). Kept in sync with those exact values.
+        // `FIXED_THEMES`/`FIXED_PALETTES`/`FIXED_SEGMENTS` for the rationale.
+        // Kept in sync with those exact values.
         WizardState::from_parts(
             config,
             vec![

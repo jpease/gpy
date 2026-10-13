@@ -1,8 +1,6 @@
 #!/usr/bin/env fish
 # SPDX-License-Identifier: GPL-3.0-or-later
-# ============================================================================
-# E2E Test: real interactive Fish sessions repaint by themselves (#645)
-# ============================================================================
+# E2E Test: real interactive Fish sessions repaint by themselves
 #
 # The product's defining behaviour is that the prompt updates with no
 # keystroke when the repository changes: watcher -> SIGURG ->
@@ -21,13 +19,13 @@
 #   3. config reload on a Fish client: a config.toml edit (theme switch, a new
 #      segment, icons off) repaints with the new theme and segments with no
 #      keypress (.reload flag + SIGURG doorbell);
-#   4. `exec fish` survives agent notifications (#674): the exec'd shell keeps
+#   4. `exec fish` survives agent notifications: the exec'd shell keeps
 #      the registered PID and receives the agent's ring before it has
 #      installed any handler; it must stay alive and answer a command.
 #
 # All waits are bounded polls on the transcript; the transcript tail is
 # printed on failure. Skips (via test_skip) when python3 is missing: exit 0
-# locally, exit 1 under CI (#650).
+# locally, exit 1 under CI.
 #
 # Expected runtime: ~20 seconds
 
@@ -69,7 +67,7 @@ end
 function session_start --argument-names name cwd
     set -l dir $__gpy_test_tmp_dir/session-$name
     # The init command is constant code; the paths reach it through the
-    # environment (a checkout path may contain spaces or quotes, #822).
+    # environment (a checkout path may contain spaces or quotes).
     env GPY_E2E_ROOT=$__gpy_root GPY_E2E_CWD=$cwd GPY_E2E_GATE=$__gpy_test_tmp_dir/exec-gate \
         python3 $__pty start $dir -- fish --no-config -i -C '
         source $GPY_E2E_ROOT/fish/core/init.fish
@@ -166,8 +164,6 @@ function setup_repo
     git -C $repo commit -qm init
     echo $repo
 end
-
-# ---------------------------------------------------------------------------
 
 function scenario_idle_repaint --argument-names repo
     print_test_header "Scenario 1: idle repaint on a working-tree edit"
@@ -361,7 +357,7 @@ function scenario_config_reload --argument-names repo
     return 0
 end
 
-# #674: `exec fish` keeps the PID, and fish_exit does not fire on exec, so the
+# `exec fish` keeps the PID, and fish_exit does not fire on exec, so the
 # agent still counts the new process as a registered client and rings it
 # while it starts up, before any gpy handler exists. The exec'd shell waits on
 # a gate file before sourcing gpy, so the agent's reload (and the watcher's
@@ -388,13 +384,16 @@ function scenario_exec_survives_notifications --argument-names repo
     set -l gate $__gpy_test_tmp_dir/exec-gate
     rm -f $gate
     session_send $a "exec fish --no-config -i -C 'while not test -e \$GPY_E2E_GATE; sleep 0.1; end; source \$GPY_E2E_ROOT/fish/core/init.fish; source \$GPY_E2E_ROOT/fish/functions/fish_prompt.fish'\r"
-    # The exec'd shell is now spinning on the gate with no gpy handlers.
+    # Give the exec'd shell time to start spinning on the gate with no gpy
+    # handlers; it prints nothing there, so there is nothing to poll for.
     sleep 0.5
 
     # Notifications while handler-less: a config reload rings every
     # registered client, and a working-tree edit makes the watcher ring too.
     write_config 'show_icons = true' 'theme = "text"' 'enabled_segments = ["directory", "git"]'
     echo exec-dirty >>$repo/tracked.txt
+    # Wait out the window in which the reload and watcher rings land on the
+    # handler-less shell; a dead pane leaves no event to poll for.
     sleep 1.5
 
     set -l off2 (session_size $a)
@@ -415,8 +414,6 @@ function scenario_exec_survives_notifications --argument-names repo
     session_stop_all
     return 0
 end
-
-# ---------------------------------------------------------------------------
 
 if not command -q python3
     test_skip "python3 is required to drive a pseudo-terminal"

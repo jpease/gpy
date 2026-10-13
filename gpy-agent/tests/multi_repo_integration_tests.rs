@@ -13,6 +13,12 @@
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::create_dir)]
 
+#[path = "common/git.rs"]
+mod git_helpers;
+#[path = "common/wait.rs"]
+mod wait;
+
+use git_helpers::{git, git_init};
 use gpy_agent::ipc::ClientDirectory;
 use gpy_agent::watcher::multi_repo::MultiRepoWatcher;
 use gpy_agent::watcher::{DebouncedEvent, FileEvent, WatcherConfig};
@@ -22,83 +28,32 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tempfile::tempdir;
+use wait::wait_until;
 
-// ============================================================================
-// Test Helpers
-// ============================================================================
-
-/// Helper to create a git repository in a temp directory
+/// Create `<parent>/<name>` as a git repository on `main` with one commit.
+///
+/// Commits go through [`git`], whose `-c` identity and `commit.gpgsign=false`
+/// keep the fixture independent of the developer's global git config (a CI
+/// runner has no identity; a signing developer's GPG fails intermittently
+/// under a parallel run) without writing `.git/config` entries that would
+/// perturb the FSEvents-timing tests in this file. Every step is asserted: a
+/// silently failed commit leaves a repo with zero commits, which surfaces much
+/// later as `git submodule add` dying on "branch yet to be born".
 fn create_git_repo(parent: &Path, name: &str) -> PathBuf {
     let repo_path = parent.join(name);
     fs::create_dir_all(&repo_path).expect("create repo dir");
+    git_init(&repo_path);
 
-    // Pin the initial branch rather than inheriting `init.defaultBranch`, so
-    // the fixture is the same repo on every machine.
-    let status = std::process::Command::new("git")
-        .args(["-c", "init.defaultBranch=main", "init"])
-        .current_dir(&repo_path)
-        .status()
-        .expect("git init");
+    // On a machine with `core.fsmonitor` enabled globally (a common perf
+    // setting; `benchmarks/README.md` disables it in benchmark fixtures for the
+    // same reason), git spawns a per-repo fsmonitor daemon that subscribes to
+    // FSEvents for the same path gpy watches and starves gpy's own
+    // FSEventStream of its first event under load.
+    git(&repo_path, &["config", "core.fsmonitor", "false"]);
 
-    assert!(status.success(), "git init should succeed");
-
-    // gpy-agent#386: git's own fsmonitor spawns a background daemon per repo
-    // that independently subscribes to FSEvents for the same path gpy's own
-    // watcher is watching, on a machine where `core.fsmonitor` is enabled
-    // globally (a common perf setting -- see `benchmarks/README.md`'s
-    // existing precedent for disabling it in benchmark fixtures for the same
-    // reason). That competing daemon measurably starves gpy's own
-    // FSEventStream of its first event under load -- confirmed empirically:
-    // this test hard-failed 10/10 runs before this fix (every attempt hitting
-    // the full 10s budget), and reliably passed after.
-    std::process::Command::new("git")
-        .args(["config", "core.fsmonitor", "false"])
-        .current_dir(&repo_path)
-        .status()
-        .expect("disable fsmonitor");
-
-    // Create initial commit to establish main branch
     fs::write(repo_path.join("README.md"), b"# Test repo").expect("write README");
-
-    let add_status = std::process::Command::new("git")
-        .args(["add", "README.md"])
-        .current_dir(&repo_path)
-        .status()
-        .expect("git add");
-    assert!(add_status.success(), "git add should succeed");
-
-    // Commit hermetically: whether this repo gets its one commit must not
-    // depend on the developer's global git config.
-    //
-    // - identity via env vars, because a machine without a global one (any CI
-    //   runner) cannot commit at all;
-    // - `commit.gpgsign=false`, because a developer who signs by default has
-    //   every fixture commit go through GPG, which fails intermittently under
-    //   a parallel test run;
-    // - `-c` flags and env vars rather than `git config` calls, so the fixture
-    //   adds no extra subprocesses or `.git/config` writes to perturb the
-    //   FSEvents-timing tests in this file (#386, #388).
-    //
-    // Both statuses are asserted rather than ignored. A silently failed commit
-    // leaves a repo with zero commits, and that only surfaces much later and
-    // somewhere else -- as `git submodule add` cloning an "empty repository"
-    // and dying on "branch yet to be born".
-    let commit_status = std::process::Command::new("git")
-        .args([
-            "-c",
-            "commit.gpgsign=false",
-            "commit",
-            "-m",
-            "Initial commit",
-        ])
-        .env("GIT_AUTHOR_NAME", "Test User")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test User")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .current_dir(&repo_path)
-        .status()
-        .expect("git commit");
-    assert!(commit_status.success(), "initial commit should succeed");
+    git(&repo_path, &["add", "README.md"]);
+    git(&repo_path, &["commit", "-q", "-m", "Initial commit"]);
 
     repo_path
 }
@@ -106,26 +61,7 @@ fn create_git_repo(parent: &Path, name: &str) -> PathBuf {
 /// Helper to create a file in a git repo and stage it
 fn create_and_stage_file(repo_path: &Path, filename: &str, content: &str) {
     fs::write(repo_path.join(filename), content).expect("write file");
-
-    std::process::Command::new("git")
-        .args(["add", filename])
-        .current_dir(repo_path)
-        .status()
-        .expect("git add");
-}
-
-/// Run a git command in `dir`, asserting success.
-fn git(dir: &Path, args: &[&str]) {
-    let status = std::process::Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .status()
-        .expect("git command");
-    assert!(
-        status.success(),
-        "git {args:?} should succeed in {}",
-        dir.display()
-    );
+    git(repo_path, &["add", filename]);
 }
 
 /// Shared buffer of the `repo` roots of every debounced event delivered.
@@ -133,7 +69,7 @@ type RepoEvents = Arc<Mutex<Vec<PathBuf>>>;
 
 /// Assert that `working_dir`'s `.git` is an external-gitdir *pointer file* (`gitdir:` line).
 ///
-/// I.e. the submodule/worktree layout the #428 fix targets. If the local git lays it out
+/// I.e. the submodule/worktree layout external-gitdir attribution targets. If the local git lays it out
 /// differently, the fixture is wrong and the test should fail loudly rather than silently
 /// pass.
 fn assert_external_gitdir(working_dir: &Path) {
@@ -153,16 +89,9 @@ fn assert_external_gitdir(working_dir: &Path) {
 
 /// Poll `events` until it contains `expected` or the deadline passes.
 fn wait_for_repo(events: &RepoEvents, expected: &Path, budget: Duration) -> bool {
-    let deadline = std::time::Instant::now()
-        .checked_add(budget)
-        .unwrap_or_else(std::time::Instant::now);
-    while std::time::Instant::now() < deadline {
-        if events.lock().unwrap().iter().any(|repo| repo == expected) {
-            return true;
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-    false
+    wait_until(budget, Duration::from_millis(100), || {
+        events.lock().unwrap().iter().any(|repo| repo == expected)
+    })
 }
 
 /// Build a watcher that records the `repo` of every debounced event.
@@ -178,13 +107,6 @@ fn recording_watcher() -> (MultiRepoWatcher, RepoEvents) {
         .expect("create watcher");
     (watcher, events)
 }
-
-// Note: simulate_branch_change removed - not used in current tests
-// Can be re-added when needed for branch switching tests
-
-// ============================================================================
-// Multi-Repo Watcher Tests
-// ============================================================================
 
 #[test]
 fn test_multi_repo_concurrent_registration() {
@@ -262,11 +184,15 @@ fn test_multi_repo_event_isolation() {
     thread::sleep(Duration::from_millis(300));
     events.lock().unwrap().clear();
 
-    // Modify repo1 only
+    // Modify repo1 only, and wait for its event so the isolation check below
+    // inspects a real delivery rather than an empty list.
     create_and_stage_file(&repo1, "file_in_repo1.txt", "content");
-
-    // Wait for events
-    thread::sleep(Duration::from_millis(500));
+    assert!(
+        wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
+            !events.lock().unwrap().is_empty()
+        }),
+        "staging a file in repo1 should produce an event"
+    );
 
     let captured_events = events.lock().unwrap();
 
@@ -310,6 +236,7 @@ fn test_multi_repo_same_relative_path() {
     let src1 = repo1.join("src");
     let src2 = repo2.join("src");
     fs::create_dir_all(&src1).expect("create src1");
+    fs::create_dir_all(&src2).expect("create src2");
     let watcher = MultiRepoWatcher::builder()
         .config(WatcherConfig::default())
         .callback(Box::new(|_event: DebouncedEvent| {}))
@@ -340,25 +267,20 @@ fn test_multi_repo_unregistration() {
     watcher
         .register_client(4001, &repo1)
         .expect("register repo1");
-    // Re-register client in repo2
     watcher
         .register_client(4002, &repo2)
         .expect("register repo2");
 
     assert_eq!(watcher.watched_repo_count(), 2);
 
-    // Unregister client from repo1
-    let _ = watcher.unregister_client(4001);
-
-    // If repo1 has no more clients, it should be unwatched
-    // (Implementation detail: watch may persist until next cleanup)
-    // For now, we just verify unregister doesn't panic
-    assert!(watcher.watched_repo_count() <= 2);
+    // repo1's only client leaving stops its watch; repo2's stays.
+    watcher
+        .unregister_client(4001)
+        .expect("unregister repo1 client");
+    assert_eq!(watcher.watched_repo_count(), 1);
 }
 
-// ============================================================================
 // Multi-Repo Client Directory Tests
-// ============================================================================
 
 #[test]
 fn test_client_directory_multi_repo_tracking() {
@@ -409,9 +331,7 @@ fn test_client_directory_repo_boundary() {
     // If we reach here without panic, the targeting worked successfully
 }
 
-// ============================================================================
 // Performance Tests
-// ============================================================================
 
 #[test]
 fn test_multi_repo_scalability() {
@@ -479,9 +399,7 @@ fn test_multi_repo_rapid_registration() {
     assert_eq!(watcher.watched_repo_count(), 1);
 }
 
-// ============================================================================
 // Edge Case Tests
-// ============================================================================
 
 #[test]
 fn test_multi_repo_nested_repos() {
@@ -495,11 +413,7 @@ fn test_multi_repo_nested_repos() {
     let nested_repo = outer_repo.join("nested");
     fs::create_dir_all(&nested_repo).expect("create nested dir");
 
-    std::process::Command::new("git")
-        .arg("init")
-        .current_dir(&nested_repo)
-        .status()
-        .expect("git init nested");
+    git_init(&nested_repo);
 
     let watcher = MultiRepoWatcher::builder()
         .config(WatcherConfig::default())
@@ -552,19 +466,17 @@ fn test_multi_repo_symlink_handling() {
     }
 }
 
-// gpy-agent#386: `MultiRepoWatcher` shares ONE `WatchCoordinator` (and thus one
+// `MultiRepoWatcher` shares ONE `WatchCoordinator` (and thus one
 // `notify` `RecommendedWatcher`) across every registered repository. On macOS,
 // notify's FSEvents backend cannot add a path to an already-running
 // `FSEventStream` -- it tears the stream down and recreates it. So the second
 // `register_client` call below (for repo2) silently restarts the very
 // FSEventStream that was just armed for repo1, and the two writer threads then
-// race that freshly-(re)started stream. Per gpy-agent#384's own measurements,
-// a just-(re)started FSEventStream can go an entire wait budget without
-// delivering its first event under load -- "never", not "late" -- which is the
-// same failure class here, just triggered by a same-process stream restart
-// rather than two literally-concurrent cross-process bootstraps. Reusing
-// #384/#385's `watcher_fsevents_bootstrap` file_serial group keeps this test's
-// bootstrap from overlapping with theirs across nextest's per-test processes.
+// race that freshly-(re)started stream. A just-(re)started FSEventStream can go
+// an entire wait budget without delivering its first event under load --
+// "never", not "late". Joining the `watcher_fsevents_bootstrap` file_serial
+// group keeps this test's bootstrap from overlapping with the other
+// real-watcher tests across nextest's per-test processes.
 #[test]
 #[serial_test::file_serial(watcher_fsevents_bootstrap)]
 fn test_multi_repo_concurrent_events() {
@@ -613,45 +525,31 @@ fn test_multi_repo_concurrent_events() {
     handle1.join().expect("thread1 complete");
     handle2.join().expect("thread2 complete");
 
-    // Poll for events attributed to BOTH repos (matching this test's own
-    // panic message) instead of a single fixed sleep that only checked the
-    // events list was non-empty at all. A generous total budget absorbs the
-    // FSEventStream-restart risk described above; 100ms was never adaptive to
-    // machine load in the first place.
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    let mut saw_repo1 = false;
-    let mut saw_repo2 = false;
-    while std::time::Instant::now() < deadline {
-        {
-            let seen = events.lock().unwrap();
-            saw_repo1 = seen.contains(&repo1_canonical);
-            saw_repo2 = seen.contains(&repo2_canonical);
-        }
-        if saw_repo1 && saw_repo2 {
-            break;
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
+    // A generous budget absorbs the FSEventStream-restart risk described above.
+    let saw_both = wait_until(Duration::from_secs(10), Duration::from_millis(100), || {
+        let seen = events.lock().unwrap();
+        seen.contains(&repo1_canonical) && seen.contains(&repo2_canonical)
+    });
 
-    assert!(saw_repo1, "Should receive an event from repo1");
-    assert!(saw_repo2, "Should receive an event from repo2");
+    assert!(
+        saw_both,
+        "Should receive events from both repos, got: {:?}",
+        events.lock().unwrap()
+    );
 }
 
-// ============================================================================
-// Submodule / linked-worktree external-gitdir attribution (#428)
+// Submodule / linked-worktree external-gitdir attribution
 //
 // Git metadata for a submodule lives at `<super>/.git/modules/<name>/...` and
 // for a linked worktree at `<super>/.git/worktrees/<name>/...` — outside the
 // working tree. A branch switch there writes HEAD/refs under that external
-// gitdir, which is NOT a descendant of the working root. Before the fix,
-// `classify_event` didn't recognize those paths (parent isn't `.git`, and the
-// ref substrings didn't match `/.git/modules|worktrees/.../refs/...`), so zero
-// watcher events fired and the prompt stayed stale until the ~45s reconcile.
+// gitdir, which is NOT a descendant of the working root, so `classify_event`
+// must recognize those paths itself (their parent isn't `.git`); otherwise no
+// watcher event fires and the prompt stays stale until the ~45s reconcile.
 //
 // These use a REAL notify watcher end-to-end (not a synthetic event) and share
 // the `watcher_fsevents_bootstrap` file_serial group so their FSEvents
 // bootstraps don't race the other real-watcher tests on macOS.
-// ============================================================================
 
 /// A submodule branch switch must surface a git event attributed to the
 /// submodule's *working root* (not the superproject).
@@ -749,10 +647,8 @@ fn linked_worktree_branch_change_attributes_to_worktree_working_root() {
     );
 }
 
-/// Regression guard: an ORDINARY (non-submodule, non-worktree) repo's `.git`
-/// metadata change must still trigger a refresh attributed to its own root,
-/// exactly as before — proving the classification refactor didn't change the
-/// common case.
+/// An ORDINARY (non-submodule, non-worktree) repo's `.git` metadata change
+/// triggers a refresh attributed to its own root.
 #[test]
 #[serial_test::file_serial(watcher_fsevents_bootstrap)]
 fn ordinary_repo_head_change_still_triggers() {
@@ -780,9 +676,7 @@ fn ordinary_repo_head_change_still_triggers() {
     );
 }
 
-// ============================================================================
-// Shared common-git-directory fan-out for linked worktrees (#468)
-// ============================================================================
+// Shared common-git-directory fan-out for linked worktrees
 
 /// Run `git rev-parse <rev>` in `dir` and return the resolved object id.
 fn rev_parse(dir: &Path, rev: &str) -> String {
@@ -802,23 +696,9 @@ fn rev_parse(dir: &Path, rev: &str) -> String {
         .to_owned()
 }
 
-/// Commit the staged index in `dir` with the same hermetic identity/signing
-/// settings `create_git_repo` uses for the initial commit.
+/// Commit the staged index in `dir`.
 fn git_commit(dir: &Path, message: &str) {
-    let status = std::process::Command::new("git")
-        .args(["-c", "commit.gpgsign=false", "commit", "-m", message])
-        .env("GIT_AUTHOR_NAME", "Test User")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test User")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .current_dir(dir)
-        .status()
-        .expect("git commit");
-    assert!(
-        status.success(),
-        "commit should succeed in {}",
-        dir.display()
-    );
+    git(dir, &["commit", "-q", "-m", message]);
 }
 
 /// A main checkout plus one or more linked worktrees sharing its common git
@@ -843,7 +723,7 @@ struct WorktreeFixture {
 /// `refs/remotes/origin/main` is seeded *before* any client registers so the
 /// tests measure fan-out, not watch-arming: under the poll backend a
 /// `refs/remotes/origin` created afterwards is watched only once a poll scan
-/// has reported it and the expansion has grown to include it (#721), which
+/// has reported it and the expansion has grown to include it, which
 /// adds up to a poll interval before the ref's own changes are seen.
 fn create_worktree_fixture(parent: &Path, name: &str, branches: &[&str]) -> WorktreeFixture {
     let main = create_git_repo(parent, name);
@@ -895,7 +775,7 @@ fn wake_count(events: &RepoEvents, root: &Path) -> usize {
         .count()
 }
 
-/// AC 6: a remote-tracking ref rewritten in the MAIN checkout's shared common
+/// A remote-tracking ref rewritten in the MAIN checkout's shared common
 /// directory must refresh the linked worktree, whose ahead/behind output reads
 /// that ref.
 #[test]
@@ -930,7 +810,7 @@ fn common_remote_ref_change_outside_worktree_refreshes_linked_worktree() {
     );
 }
 
-/// AC 6: an upstream-tracking config change made in the MAIN checkout writes
+/// An upstream-tracking config change made in the MAIN checkout writes
 /// the shared `<common>/config` and must refresh the linked worktree.
 #[test]
 #[serial_test::file_serial(watcher_fsevents_bootstrap)]
@@ -963,7 +843,7 @@ fn common_config_upstream_change_outside_worktree_refreshes_linked_worktree() {
     );
 }
 
-/// AC 7 (required negative test): an `index` write in the main checkout is
+/// An `index` write in the main checkout is
 /// per-checkout state, not shared state, and must wake **zero** linked
 /// worktrees.
 ///
@@ -995,7 +875,7 @@ fn main_checkout_index_write_wakes_zero_linked_worktrees() {
     create_and_stage_file(&fixture.main, "staged.txt", "staged");
 
     // Budget well past the 100ms debounce window, the 2s poll interval, and the
-    // native->poll fallback swap, so a real regression would certainly have
+    // native->poll fallback swap, so a spurious wake would certainly have
     // fired inside it.
     assert!(
         !wait_for_repo(&events, &linked, Duration::from_secs(8)),
@@ -1006,7 +886,7 @@ fn main_checkout_index_write_wakes_zero_linked_worktrees() {
         0,
         "a main-checkout index write must cost zero capture rounds in the linked worktree"
     );
-    // Epic #465: no task may introduce a spurious cross-repository refresh. The
+    // A spurious cross-repository refresh is a bug. The
     // shallow watch on `<main>/.git` makes the watcher see paths it otherwise
     // never would when only the worktree is registered, and
     // `should_trigger_update` classifies `<common>/index` straight to `<main>`.
@@ -1064,7 +944,7 @@ fn per_worktree_head_write_wakes_zero_sibling_worktrees() {
     // Write the first worktree's own HEAD directly, so no shared ref under
     // `<common>/refs/heads` is touched alongside it. Detach it at its current
     // commit: rewriting the ref it already holds is byte-identical and so
-    // invisible to the poll backend (#817).
+    // invisible to the poll backend.
     let admin_dir = fixture.common.join("worktrees").join("wt_sib_sibone");
     assert!(
         admin_dir.is_dir(),
@@ -1085,7 +965,7 @@ fn per_worktree_head_write_wakes_zero_sibling_worktrees() {
     );
 }
 
-/// AC 4: the shared common-directory watch is reference-counted — unregistering
+/// The shared common-directory watch is reference-counted — unregistering
 /// one dependent worktree must leave the remaining one still receiving shared
 /// metadata events.
 #[test]
@@ -1140,9 +1020,9 @@ fn common_dir_watch_survives_until_last_dependent_worktree_unregisters() {
     );
 }
 
-/// AC 4, coverage-by-ancestor: when the main checkout is registered its single
+/// When the main checkout is registered its single
 /// recursive worktree watch already covers the common directory, so the linked
-/// worktree arms nothing extra (#388 — re-watching a covered path rebuilds the
+/// worktree arms nothing extra (re-watching a covered path rebuilds the
 /// `FSEventStream` for no gain). Unregistering the main checkout drops that
 /// ancestor watch, and the linked worktree must not silently lose shared
 /// metadata coverage with it.
@@ -1188,6 +1068,8 @@ fn linked_worktree_keeps_common_coverage_after_main_checkout_unregisters() {
 }
 
 /// Let freshly armed (or just released) watches settle before the next step.
+/// There is no observable signal that an OS watch has armed or been released,
+/// so this is a fixed pause.
 fn settle() {
     thread::sleep(Duration::from_millis(500));
 }
@@ -1198,7 +1080,7 @@ fn settle() {
 /// typically the fixture's own `<common>/config` write -- after it armed. That
 /// is a genuine common-config fan-out to every registered worktree, so a
 /// zero-wake assertion that counted it would fail for a reason unrelated to
-/// its stimulus (#834).
+/// its stimulus.
 fn drain_fixture_events(events: &RepoEvents) {
     settle();
     events.lock().unwrap().clear();
@@ -1211,9 +1093,9 @@ fn nested_repos(parent: &Path) -> (PathBuf, PathBuf) {
     (outer, inner)
 }
 
-/// #687: unregistering the outer repository used to remove the nested
-/// repository's OS watches with it (inotify drops every descriptor under a
-/// removed recursive watch; the poll backend drops every expanded directory).
+/// Unregistering the outer repository must leave the nested repository's OS
+/// watches in place (inotify drops every descriptor under a removed recursive
+/// watch; the poll backend drops every expanded directory).
 #[test]
 #[serial_test::file_serial(watcher_fsevents_bootstrap)]
 fn nested_repo_keeps_events_after_outer_unregisters() {
@@ -1246,8 +1128,8 @@ fn nested_repo_keeps_events_after_outer_unregisters() {
     );
 }
 
-/// #687: unregistering the nested repository used to remove the descriptors
-/// the outer repository's recursive watch shares for that subtree (inotify).
+/// Unregistering the nested repository must leave the descriptors the outer
+/// repository's recursive watch shares for that subtree (inotify).
 #[test]
 #[serial_test::file_serial(watcher_fsevents_bootstrap)]
 fn nested_repo_outer_keeps_inner_subtree_after_inner_unregisters() {
@@ -1280,7 +1162,7 @@ fn nested_repo_outer_keeps_inner_subtree_after_inner_unregisters() {
     );
 }
 
-/// #687: a linked worktree registered before its main checkout. The main
+/// A linked worktree registered before its main checkout. The main
 /// checkout's recursive watch overlaps the worktree's admin-dir watch
 /// (`<main>/.git/worktrees/<name>`), and unregistering the main checkout used
 /// to remove it (inotify, poll).
@@ -1323,11 +1205,11 @@ fn linked_worktree_registered_first_keeps_admin_events_after_main_unregisters() 
     );
 }
 
-/// #687: with `watch_worktree = false` the linked worktree arms `<common>`
+/// With `watch_worktree = false` the linked worktree arms `<common>`
 /// shallow and the main checkout arms the same path (its gitdir)
-/// recursively. Unregistering the main checkout used to remove both
-/// (`FSEvents` removes every stream entry equal to the path), while the
-/// worktree's common-dir bookkeeping still listed its shallow watch as armed.
+/// recursively. Unregistering the main checkout must not remove the
+/// worktree's shallow watch with it (`FSEvents` removes every stream entry
+/// equal to the path) while its common-dir bookkeeping still lists it armed.
 #[test]
 #[serial_test::file_serial(watcher_fsevents_bootstrap)]
 fn gitdir_only_main_unregister_keeps_worktree_common_config_fanout() {
@@ -1366,6 +1248,8 @@ fn gitdir_only_main_unregister_keeps_worktree_common_config_fanout() {
     watcher
         .unregister_client(main_pid)
         .expect("unregister main checkout");
+    // Releasing the main checkout's watch rebuilds the FSEvents stream; give it
+    // longer than `settle()` before clearing, as there is nothing to poll.
     thread::sleep(Duration::from_millis(1500));
     events.lock().unwrap().clear();
 
@@ -1383,7 +1267,7 @@ fn gitdir_only_main_unregister_keeps_worktree_common_config_fanout() {
     );
 }
 
-/// Epic #465, the higher-frequency route: a commit made *inside* the linked
+/// The higher-frequency route: a commit made *inside* the linked
 /// worktree writes the SHARED `<common>/refs/heads/<branch>`, which
 /// `should_trigger_update` classifies and attributes to the main checkout. With
 /// no shell registered there, delivering that is a full capture round whose only
@@ -1467,7 +1351,7 @@ fn registered_main_checkout_still_wakes_on_its_own_gitdir_write() {
     );
 }
 
-/// #468: a linked worktree of a BARE superproject. Its common directory is the
+/// A linked worktree of a BARE superproject. Its common directory is the
 /// bare repository itself (`/repos/foo.git`), which — unlike the usual
 /// `<main>/.git` — has no `.git` path component, so `classify_event` ignores it
 /// and events reach `process_event`'s third arm instead of its first.
@@ -1515,6 +1399,8 @@ fn bare_superproject_common_dir_fans_out_without_waking_the_bare_repo() {
     // Per-checkout state in the bare common dir: must wake nobody. The bare
     // repository has no registered client, so a refresh of it is pure waste.
     fs::write(canonical_bare.join("ORIG_HEAD"), format!("{seed_sha}\n")).expect("write ORIG_HEAD");
+    // Proves absence: wait past the debounce window and a poll cycle, so a
+    // spurious bare-repo wake would have landed by now.
     thread::sleep(Duration::from_secs(3));
     assert_eq!(
         wake_count(&events, &canonical_bare),
@@ -1534,9 +1420,7 @@ fn bare_superproject_common_dir_fans_out_without_waking_the_bare_repo() {
     );
 }
 
-// ============================================================================
-// Parent-repository fan-out for submodule state changes (#467)
-// ============================================================================
+// Parent-repository fan-out for submodule state changes
 
 /// A superproject with one submodule checked out at `sub`.
 struct SubmoduleFixture {
@@ -1554,7 +1438,7 @@ struct SubmoduleFixture {
 /// Build `<parent>/<name>` with a submodule at `sub`, plus a submodule commit
 /// whose tree is identical to the tip's.
 ///
-/// The identical tree is what makes AC 4 provable: a checkout between the two
+/// The identical tree is what makes a ref-only parent refresh provable: a checkout between the two
 /// writes only `<super>/.git/modules/sub/…` and touches no file in the
 /// superproject's working tree, so a parent refresh cannot have come from a
 /// worktree event. The fixture asserts the two trees really are the same object
@@ -1603,7 +1487,7 @@ fn create_submodule_fixture(parent: &Path, name: &str) -> SubmoduleFixture {
     }
 }
 
-/// AC 2 + AC 4: a ref-only submodule checkout between two identical trees must
+/// A ref-only submodule checkout between two identical trees must
 /// refresh the superproject even though the submodule has no registered shell.
 ///
 /// Nothing in the superproject's working tree changes, so every existing
@@ -1636,7 +1520,7 @@ fn ref_only_submodule_checkout_refreshes_unregistered_parent() {
     );
 }
 
-/// AC 3 + AC 6: with both the superproject and the submodule registered, one
+/// With both the superproject and the submodule registered, one
 /// submodule branch switch must refresh both — the child through the existing
 /// external-gitdir attribution, the parent through the new fan-out.
 #[test]
@@ -1670,11 +1554,11 @@ fn submodule_branch_switch_refreshes_both_registered_parent_and_child() {
     );
 }
 
-/// AC 6: with only the submodule registered, the submodule refreshes and the
+/// With only the submodule registered, the submodule refreshes and the
 /// superproject — which no shell is subscribed to — must wake zero times.
 ///
 /// The registration gate is the point: a parent fan-out that skipped it would
-/// buy a full capture round on a repository nothing reads (gpy#480).
+/// buy a full capture round on a repository nothing reads.
 #[test]
 #[serial_test::file_serial(watcher_fsevents_bootstrap)]
 fn submodule_branch_switch_wakes_zero_unregistered_parents() {
@@ -1704,7 +1588,7 @@ fn submodule_branch_switch_wakes_zero_unregistered_parents() {
     );
 }
 
-/// AC 5: an ordinary nested repository is not a submodule — its gitdir is
+/// An ordinary nested repository is not a submodule — its gitdir is
 /// in-tree, so nothing it writes can look like `<super>/.git/modules/…`, and the
 /// enclosing repository has no gitlink to it. A `.git`-only change inside it
 /// must wake the enclosing registered repository zero times.
@@ -1792,7 +1676,7 @@ fn linked_worktree_admin_write_wakes_zero_parent_repos() {
         admin_dir.display()
     );
     // Detach rather than rewrite the ref HEAD already holds: a byte-identical
-    // write is invisible to the poll backend (#817).
+    // write is invisible to the poll backend.
     let detached_head = format!("{}\n", rev_parse(&linked, "HEAD"));
     fs::write(admin_dir.join("HEAD"), detached_head).expect("rewrite worktree HEAD");
 
@@ -1807,9 +1691,7 @@ fn linked_worktree_admin_write_wakes_zero_parent_repos() {
     );
 }
 
-// ============================================================================
-// #469: interactive-rebase / am-style-rebase metadata
-// ============================================================================
+// Interactive-rebase / am-style-rebase metadata
 
 /// Write an executable `GIT_SEQUENCE_EDITOR` script into `dir` that prepends
 /// two `break` lines to whatever todo git hands it, so an interactive rebase
@@ -1817,11 +1699,10 @@ fn linked_worktree_admin_write_wakes_zero_parent_repos() {
 ///
 /// Continuing from the first stop to the second is a genuinely metadata-only
 /// step: a `break` action applies no commit, so only `rebase-merge/msgnum`
-/// advances between the two stops -- `HEAD` does not move again. Verified
-/// empirically while implementing #469 (a fresh `git rebase -i --root` DOES
-/// write `HEAD` once, for the initial detached checkout, which is why the
-/// test built on this helper asserts the *second* stop is HEAD-free rather
-/// than asserting no HEAD write at all).
+/// advances between the two stops -- `HEAD` does not move again. A fresh
+/// `git rebase -i --root` does write `HEAD` once, for the initial detached
+/// checkout, which is why the test built on this helper asserts the *second*
+/// stop is HEAD-free rather than asserting no HEAD write at all.
 #[cfg(unix)]
 fn double_break_sequence_editor(dir: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
@@ -1838,17 +1719,14 @@ fn double_break_sequence_editor(dir: &Path) -> PathBuf {
     script
 }
 
-/// AC 1 + AC 4 + AC 5 (metadata-only case): a real interactive rebase's
-/// step advance writes only `rebase-merge/msgnum`, never `HEAD` or any
-/// working-tree file, once past the initial detached checkout. Regression
-/// test for #469: before the fix, `rebase-merge/msgnum` failed
-/// `is_git_significant_relative`'s top-level check and every such advance was
-/// silently dropped.
+/// A real interactive rebase's step advance writes only
+/// `rebase-merge/msgnum`, never `HEAD` or any working-tree file, once past the
+/// initial detached checkout, and `is_git_significant_relative` must treat that
+/// advance as significant.
 ///
 /// Driven through a real `git rebase -i --root`/`--continue` pair rather than
 /// writing `msgnum` by hand, specifically so the test cannot be satisfied by
-/// an incidental `HEAD` write -- the trap the issue's validation comment
-/// calls out.
+/// an incidental `HEAD` write.
 #[test]
 #[cfg(unix)]
 #[serial_test::file_serial(watcher_fsevents_bootstrap)]
@@ -1882,7 +1760,7 @@ fn rebase_msgnum_progress_is_metadata_only_and_refreshes_repository() {
     );
 
     // Setup wake, not the assertion under test: the initial detached checkout
-    // writes HEAD, which was already classified before #469.
+    // writes HEAD.
     assert!(
         wait_for_repo(&events, &canonical_repo, Duration::from_secs(20)),
         "setup: starting the rebase must refresh the repository"
@@ -1891,21 +1769,9 @@ fn rebase_msgnum_progress_is_metadata_only_and_refreshes_repository() {
 
     let head_before = fs::read_to_string(repo.join(".git").join("HEAD")).expect("read HEAD");
 
-    // The actual regression: continuing past the first `break` to the second
+    // The step under test: continuing past the first `break` to the second
     // advances `rebase-merge/msgnum` and nothing else.
-    let rebase_continue_status = std::process::Command::new("git")
-        .args(["-c", "commit.gpgsign=false", "rebase", "--continue"])
-        .env("GIT_AUTHOR_NAME", "Test User")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test User")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .current_dir(&repo)
-        .status()
-        .expect("continue past the first break");
-    assert!(
-        rebase_continue_status.success(),
-        "rebase --continue to the second break should succeed"
-    );
+    git(&repo, &["rebase", "--continue"]);
 
     let head_after = fs::read_to_string(repo.join(".git").join("HEAD")).expect("read HEAD");
     assert_eq!(
@@ -1919,11 +1785,11 @@ fn rebase_msgnum_progress_is_metadata_only_and_refreshes_repository() {
     );
 }
 
-/// AC 2: creation of the `rebase-apply/applying` marker (an `am`-style
+/// Creation of the `rebase-apply/applying` marker (an `am`-style
 /// operation starting) and removal of the whole `rebase-apply` directory (the
 /// operation finishing) must each refresh the repository on their own --
 /// exercised as direct metadata writes rather than a full `git am` run, since
-/// AC 2 is about the create/remove signal itself, not about driving `am`.
+/// the point is the create/remove signal itself, not driving `am`.
 #[test]
 #[serial_test::file_serial(watcher_fsevents_bootstrap)]
 fn rebase_operation_state_transitions_refresh_repository() {
@@ -1961,7 +1827,7 @@ fn rebase_operation_state_transitions_refresh_repository() {
     );
 }
 
-/// AC 3: `rebase-merge/patch`, rewritten on every interactive-rebase step,
+/// `rebase-merge/patch`, rewritten on every interactive-rebase step,
 /// must not itself buy a refresh -- the distinction between the two files
 /// this segment actually reads (`msgnum`/`end`) and the high-churn internals
 /// that admitting the whole `rebase-merge` subtree would sweep in.
@@ -1982,7 +1848,7 @@ fn rebase_high_churn_file_wakes_zero_times() {
 
     let rebase_merge = repo.join(".git").join("rebase-merge");
     fs::create_dir(&rebase_merge).expect("create rebase-merge dir");
-    // Setup wake: the directory entry itself is significant (AC 2).
+    // Setup wake: the directory entry itself is significant.
     assert!(
         wait_for_repo(&events, &canonical_repo, Duration::from_secs(20)),
         "setup: creating rebase-merge must refresh the repository"
@@ -2011,11 +1877,11 @@ fn rebase_high_churn_file_wakes_zero_times() {
     );
 }
 
-/// Consumer 3 (#467's `owning_submodule_gitdir`, reused by
-/// `attribute_submodule_parents`): a rebase started inside a *registered*
-/// submodule must refresh both the submodule itself (through the existing
-/// external-gitdir attribution) and the registered superproject (through the
-/// #467 fan-out), since the submodule's gitlink is what the superproject's
+/// A rebase started inside a *registered* submodule must refresh both the
+/// submodule itself (through external-gitdir attribution) and the registered
+/// superproject (through the `owning_submodule_gitdir` parent fan-out reused
+/// by `attribute_submodule_parents`), since the submodule's gitlink is what
+/// the superproject's
 /// status renders. Uses the same metadata-only `break`-to-`break` advance as
 /// the plain-repository test above, for the same reason: an incidental HEAD
 /// write would pass against unchanged code.
@@ -2027,7 +1893,7 @@ fn submodule_rebase_msgnum_progress_refreshes_both_registered_parent_and_child()
     let fixture = create_submodule_fixture(temp.path(), "sm_rebase");
     let editor = double_break_sequence_editor(temp.path());
     let submodule_gitdir = fixture.super_root.join(".git").join("modules").join("sub");
-    // Epic #465: no task may introduce a spurious cross-repository refresh.
+    // A spurious cross-repository refresh is a bug.
     // An unrelated, registered, third repository must never wake from a
     // submodule rebase in a sibling fixture.
     let unrelated_root = fs::canonicalize(create_git_repo(temp.path(), "sm_rebase_unrelated"))
@@ -2075,19 +1941,7 @@ fn submodule_rebase_msgnum_progress_refreshes_both_registered_parent_and_child()
 
     let head_before = fs::read_to_string(submodule_gitdir.join("HEAD")).expect("read HEAD");
 
-    let rebase_continue_status = std::process::Command::new("git")
-        .args(["-c", "commit.gpgsign=false", "rebase", "--continue"])
-        .env("GIT_AUTHOR_NAME", "Test User")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test User")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .current_dir(&fixture.sub_dir)
-        .status()
-        .expect("continue past the first break");
-    assert!(
-        rebase_continue_status.success(),
-        "rebase --continue to the second break should succeed"
-    );
+    git(&fixture.sub_dir, &["rebase", "--continue"]);
 
     let head_after = fs::read_to_string(submodule_gitdir.join("HEAD")).expect("read HEAD");
     assert_eq!(
@@ -2111,14 +1965,12 @@ whose gitlink is about to move"
     );
 }
 
-// ============================================================================
-// Partially armed recursive watches (#722)
-// ============================================================================
+// Partially armed recursive watches
 
 /// An unreadable directory, made readable again on drop.
 ///
 /// inotify needs read permission on a directory to watch it, so a recursive
-/// watch over its parent fails part-way through the walk (#722). Restoring
+/// watch over its parent fails part-way through the walk. Restoring
 /// the mode on drop lets the `TempDir` above it be removed even when an
 /// assertion fails first.
 #[cfg(target_os = "linux")]
@@ -2145,12 +1997,11 @@ impl Drop for UnreadableDir {
     }
 }
 
-/// #722: inotify arms a recursive watch one directory at a time and stops at
+/// inotify arms a recursive watch one directory at a time and stops at
 /// the first one it cannot read, without undoing the directories it already
 /// armed. The failed worktree watch degrades the repository to `.git`-only
-/// watching (#158), and the partial tree it left behind used to stay live
-/// for the life of the agent, delivering events for a repository no client
-/// was registered for any more.
+/// watching, and the partial tree it left behind must not stay live
+/// delivering events for a repository no client is registered for.
 #[cfg(target_os = "linux")]
 #[test]
 #[serial_test::file_serial(watcher_fsevents_bootstrap)]
@@ -2176,7 +2027,7 @@ fn failed_recursive_watch_leaves_no_live_watches_after_unregister() {
     git(&repo, &["checkout", "-q", "-b", "feature"]);
     assert!(
         wait_for_repo(&events, &repo, Duration::from_secs(10)),
-        "the degraded repository must still hear its .git while registered (#158)"
+        "the degraded repository must still hear its .git while registered"
     );
 
     watcher.unregister_client(pid).expect("unregister");
@@ -2185,6 +2036,7 @@ fn failed_recursive_watch_leaves_no_live_watches_after_unregister() {
 
     fs::write(repo.join("README.md"), b"after unregister\n").expect("edit root file");
     fs::write(repo.join("dir0").join("x.txt"), b"x\n").expect("create nested file");
+    // Proves absence: give any leftover watch time to deliver.
     thread::sleep(Duration::from_secs(3));
 
     let delivered = events.lock().unwrap().clone();
@@ -2195,7 +2047,7 @@ fn failed_recursive_watch_leaves_no_live_watches_after_unregister() {
     );
 }
 
-/// #722: rolling back a partially armed recursive watch removes every inotify
+/// Rolling back a partially armed recursive watch removes every inotify
 /// descriptor under its root, including the ones a nested repository
 /// registered earlier relies on. Those must be re-armed, and the outer
 /// repository's partial tree must still be gone once it unregisters.
@@ -2230,6 +2082,8 @@ fn failed_recursive_watch_rollback_keeps_nested_repo_events() {
     fs::write(outer.join("README.md"), b"after unregister\n").expect("edit outer file");
     fs::write(inner.join("README.md"), b"changed content here\n").expect("edit inner file");
     let inner_heard = wait_for_repo(&events, &inner, Duration::from_secs(20));
+    // Proves absence for the outer repository: give any leftover watch time
+    // to deliver.
     thread::sleep(Duration::from_secs(3));
 
     let delivered = events.lock().unwrap().clone();

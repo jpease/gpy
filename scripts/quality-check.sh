@@ -50,7 +50,7 @@ print_success() {
 }
 
 print_warning() {
-    echo -e "${YELLOW}⚠ $1${NC}"
+    echo -e "${YELLOW}WARN: $1${NC}"
 }
 
 print_error() {
@@ -92,7 +92,7 @@ run_check() {
     fi
 }
 
-# `Skipped: N (names)` for the summaries below (#650).
+# `Skipped: N (names)` line for the summaries below.
 print_skip_tally() {
     local count=0
     if [[ -n "$CHECKS_SKIPPED_NAMES" ]]; then
@@ -103,16 +103,13 @@ print_skip_tally() {
     fi
 }
 
-# gpy-agent#620: profile.default no longer retries the whole suite, so a
-# retry now only happens for a named, issue-linked override (see
-# gpy-agent/.config/nextest.toml) -- but nextest's default terminal output
-# doesn't surface that on its own. `status-level = "retry"` and
-# `final-status-level = "flaky"` in that config make nextest print a
-# "TRY 2 ..." line for each retried attempt and a "FLAKY N/M ..." line per
-# retried test in the final summary; this greps a captured nextest run's
-# output for those and prints one non-failing warning line so a retry is
-# visible in the gate's own output rather than silently green. Takes the
-# path to a file already holding that run's captured stdout/stderr.
+# profile.default does not retry the whole suite: retries happen only for
+# named, issue-linked overrides in gpy-agent/.config/nextest.toml, which
+# nextest's default terminal output does not surface. That config's
+# `final-status-level = "flaky"` prints a "FLAKY N/M ..." line per retried
+# test; this greps a captured nextest run's output (file path in $1) for
+# those and prints one non-failing warning so a retry is visible in the
+# gate's output rather than silently green.
 report_nextest_retries() {
     local log_file="$1" retry_count
 
@@ -155,8 +152,7 @@ check_fish_syntax() {
 
     print_step "Checking Fish syntax"
 
-    # Every .fish file must parse. (A `tests/fish/render/` exemption for a
-    # fishtape-era framework used to live here; those files are gone, #655.)
+    # Every .fish file must parse.
     while IFS= read -r -d '' file; do
 
         if fish -n "$file" 2>/dev/null; then
@@ -184,7 +180,7 @@ check_fish_syntax() {
 check_fish_formatting() {
     if ! command -v fish_indent >/dev/null 2>&1; then
         echo "SKIP: fish_indent not available, skipping formatting check"
-        # A skipped check is a failure under CI (#650 skip contract, #813).
+        # A skipped check is a failure under CI (#650 skip contract).
         [[ -n "${CI:-}" ]] && return 1
         return 0
     fi
@@ -224,14 +220,8 @@ check_fish_formatting() {
 
 # Shellcheck every shell script in the repository.
 #
-# #494 introduced this scoped to the installers -- the scripts that run on a
-# stranger's machine as `curl | sh` -- because the rest of the tree carried a
-# backlog of findings. #510 cleared that backlog (78 findings across 21 files),
-# so the scope is now everything.
-#
-# Discovered by glob rather than listed. A hand-maintained list drifts: a new
-# script is simply never checked, and nothing says so. The same reasoning gave
-# tests/{bash,zsh} their glob-plus-meta-check in #483.
+# Discovered by glob rather than listed: a hand-maintained list drifts, and a
+# new script would silently never be checked.
 #
 # install-oneline.sh is the one exception to shebang-based detection: it is
 # POSIX sh, because it runs under whatever /bin/sh the user has.
@@ -246,8 +236,7 @@ shellcheck_targets() {
     printf '%s\n' install.sh install-oneline.sh
     # Nullglob is not assumed: the -f guard in the loop skips a stale match.
     printf '%s\n' scripts/*.sh tests/bash/*.test.bash
-    # The shipped Bash integration is sourced into every interactive shell
-    # (#819).
+    # The shipped Bash integration is sourced into every interactive shell.
     printf '%s\n' bash/*.bash bash/*/*.bash
 }
 
@@ -257,7 +246,7 @@ shellcheck_targets() {
 check_shellcheck() {
     if ! command -v shellcheck >/dev/null 2>&1; then
         echo "SKIP: shellcheck not available, skipping shell lint (brew install shellcheck)"
-        # A skipped check is a failure under CI (#650 skip contract, #813).
+        # A skipped check is a failure under CI (#650 skip contract).
         [[ -n "${CI:-}" ]] && return 1
         return 0
     fi
@@ -270,8 +259,8 @@ check_shellcheck() {
         [[ -f "$target" ]] || continue
         checked=$((checked + 1))
 
-        # -x follows `source`d files instead of reporting SC1091 for each one,
-        # which both silences 13 false positives and checks more (#510).
+        # -x follows `source`d files so they are checked too, instead of
+        # reporting SC1091 for each one.
         local shellcheck_ok=0
         if [[ "$target" == "install-oneline.sh" ]]; then
             shellcheck -s sh "$target" || shellcheck_ok=1
@@ -303,12 +292,13 @@ check_shellcheck() {
 }
 
 # Stop any gpy-agent still bound under the hermetic XDG root $1, using the
-# gpy-agent in $2, before the root is deleted (#750): the plain bash/zsh suites
-# source the entry point and the supervisor starts a daemon on the socket under
-# $1/run (run_shell_tests pins XDG_RUNTIME_DIR there so the socket lands under
-# the root on Linux too, #824). Asks the agent to stop through its own socket,
-# then falls back to TERM -> bounded wait -> KILL of whatever holds that
-# socket. Never a name-based kill (#484, #615).
+# gpy-agent in $2, before the root is deleted: the plain bash/zsh suites
+# source the entry point and the supervisor starts a daemon on the socket
+# under $1/run (run_shell_tests pins XDG_RUNTIME_DIR there so the socket
+# lands under the root on Linux too). Asks the agent to stop through its own
+# socket, then falls back to TERM -> bounded wait -> KILL of whatever holds
+# that socket. Never a name-based kill: it would hit the developer's own
+# agents (#750).
 stop_shell_test_agents() {
     local xdg_root="$1" agent_dir="$2"
     local sock="$xdg_root/run/gpy/gpy.sock" pid tries
@@ -345,10 +335,10 @@ run_shell_tests() {
     repo_head_before="$(git rev-parse HEAD 2>/dev/null || echo none)"
     repo_worktrees_before="$(git worktree list 2>/dev/null | wc -l | tr -d ' ')"
 
-    # Build the debug binaries the suites exercise, every time (#812): an
-    # existence check let a stale target/debug/gpy-agent validate old code. A
-    # build failure aborts the suites rather than testing the previous binary.
-    # No-op when up to date.
+    # Build the debug binaries the suites exercise, unconditionally: cargo is
+    # a no-op when they are up to date, and an existence check would let a
+    # stale target/debug/gpy-agent validate old code. A build failure aborts
+    # the suites rather than testing the previous binary.
     if ! run_check "Build debug binaries" "(cd gpy-agent && cargo build --quiet --bin gpy --bin gpy-agent)"; then
         return 0
     fi
@@ -363,10 +353,10 @@ run_shell_tests() {
     # bash >= 4, only the child test processes are routed through $GPY_BASH).
     local shell_tests_invoked=""
 
-    # Hermetic XDG dirs for every Bash/Zsh test (#632): __gpy_load_theme sources
-    # $XDG_CACHE_HOME/gpy/theme-export.<shell> when it exists (#614), so without
+    # Hermetic XDG dirs for every Bash/Zsh test: __gpy_load_theme sources
+    # $XDG_CACHE_HOME/gpy/theme-export.<shell> when it exists, so without
     # this a developer's own theme cache leaks into tests that assert on the
-    # built-in defaults. Mirrors the Fish runner's `fish --no-config` (#630).
+    # built-in defaults. Mirrors the Fish runner's `fish --no-config` (#632).
     local shell_xdg_root
     shell_xdg_root="$(mktemp -d "${TMPDIR:-/tmp}/gpy-qc-xdg.XXXXXX")"
     mkdir -p "$shell_xdg_root/cache" "$shell_xdg_root/config" "$shell_xdg_root/run"
@@ -472,12 +462,98 @@ require_pinned_toolchain() {
     fi
 }
 
+# Repository-wide checks, shared by every mode except --fish-only.
+run_repo_checks() {
+    # License metadata (Cargo, Fisher, Homebrew, release workflow must agree)
+    run_check "License metadata" "./scripts/check-license-metadata.sh" || true
+
+    # Privacy patterns (no workstation paths, private identifiers, or hardcoded sockets)
+    run_check "Privacy patterns" "./scripts/check-privacy-patterns.sh" || true
+
+    # Documentation links (every repository-relative Markdown link resolves)
+    run_check "Documentation links" "./scripts/check-doc-links.sh" || true
+}
+
+run_fish_lint() {
+    run_check "Fish syntax" "check_fish_syntax" || true
+    run_check "Fish formatting" "check_fish_formatting" || true
+}
+
+# Fish lint, shellcheck, and the Fish/Bash/Zsh integration suites.
+run_shell_checks() {
+    run_fish_lint
+    run_check "Shellcheck (installers)" "check_shellcheck" || true
+    run_shell_tests
+}
+
+# rustfmt, clippy and the nextest suite; run from gpy-agent/. $1 is an extra
+# nextest flag, or empty. The full gate and --rust-only pass --no-fail-fast so
+# one run reports every failing test rather than only the first, instead of
+# costing a full gate round trip per failure (#544); --fast keeps fail-fast for
+# local iteration.
+#
+# --features test-support compiles the PTY-backed wizard terminal-restoration
+# regression test (#460) so clippy lints it too; the feature gates no
+# dependencies, only code visibility. The lint policy (deny warnings, deny
+# clippy::pedantic) lives in gpy-agent/Cargo.toml's [lints] table, not on this
+# command line, so every mode is equally strict and a bare
+# `cargo clippy --all-targets --features test-support` matches this check.
+run_rust_lint_and_tests() {
+    local nextest_flags="${1:-}" nextest_log
+    run_check "Rust format check" "cargo fmt -- --check" || true
+    run_check "Clippy" "cargo clippy --all-targets --features test-support" || true
+    nextest_log="$(mktemp)"
+    run_check "Rust tests" "cargo nextest run --features test-support${nextest_flags:+ $nextest_flags} 2>&1 | tee \"$nextest_log\"" || true
+    report_nextest_retries "$nextest_log"
+    rm -f "$nextest_log"
+}
+
+# Doc tests and the supply-chain checks; run from gpy-agent/. A missing
+# cargo-audit or cargo-deny is a warned skip here; the full gate verifies both
+# up front and refuses to run without them.
+run_rust_deep_checks() {
+    run_check "Doc tests" "cargo test --doc" || true
+
+    if command -v cargo-audit >/dev/null 2>&1; then
+        run_check "Security audit" "cargo audit" || true
+    else
+        print_warning "Skipping security audit (cargo-audit not installed)"
+    fi
+    if command -v cargo-deny >/dev/null 2>&1; then
+        run_check "Dependency check" "cargo deny check" || true
+    else
+        print_warning "Skipping dependency check (cargo-deny not installed)"
+    fi
+}
+
+# Print the "$1 Check Summary" and exit 0 when every check passed, 1 otherwise.
+# $2 names the checks in the verdict line; $3 is an optional line printed on
+# success.
+finish_report() {
+    local title="$1" noun="$2" success_note="${3:-}"
+
+    echo
+    echo -e "${BLUE}${title} Check Summary${NC}"
+    echo -e "Checks passed: ${GREEN}$CHECKS_PASSED${NC}"
+    echo -e "Checks failed: ${RED}$CHECKS_FAILED${NC}"
+    print_skip_tally
+
+    if [ "$CHECKS_FAILED" -eq 0 ]; then
+        echo -e "${GREEN}All $noun checks passed!${NC}"
+        if [[ -n "$success_note" ]]; then
+            echo -e "$success_note"
+        fi
+        exit 0
+    fi
+    echo -e "${RED}Some $noun checks failed${NC}"
+    exit 1
+}
+
 # Main quality checks
 main() {
     require_pinned_toolchain
 
-    echo -e "${BLUE}🐟 GPY Code Quality Check${NC}"
-    echo "=========================="
+    echo -e "${BLUE}GPY Code Quality Check${NC}"
     echo
 
     # Move to project root
@@ -554,73 +630,18 @@ main() {
 
     echo
 
-    # License metadata (Cargo, Fisher, Homebrew, release workflow must agree)
-    run_check "License metadata" "./scripts/check-license-metadata.sh" || true
+    run_repo_checks
+    run_shell_checks
 
-    # Privacy patterns (no workstation paths, private identifiers, or hardcoded sockets)
-    run_check "Privacy patterns" "./scripts/check-privacy-patterns.sh" || true
-
-    # Documentation links (every repository-relative Markdown link resolves)
-    run_check "Documentation links" "./scripts/check-doc-links.sh" || true
-
-    # Fish checks
-    run_check "Fish syntax" "check_fish_syntax" || true
-    run_check "Fish formatting" "check_fish_formatting" || true
-
-    # Installer/release script lint (#494)
-    run_check "Shellcheck (installers)" "check_shellcheck" || true
-
-    # Shell integration suites (Fish + Bash + Zsh)
-    run_shell_tests
-
-    # Rust checks - run in gpy-agent directory
     pushd gpy-agent >/dev/null
+    run_rust_lint_and_tests --no-fail-fast
+    run_rust_deep_checks
 
-    # Run format check
-    run_check "Rust format check" "cargo fmt -- --check" || true
-
-    # Run clippy (--features test-support so the #460 PTY test-support code,
-    # otherwise invisible under default features, is linted too — see the
-    # matching "Rust tests" note below). The lint policy itself (deny
-    # warnings, deny clippy::pedantic) lives in gpy-agent/Cargo.toml's
-    # [lints] table (#584), not on this command line — a bare `cargo clippy
-    # --all-targets --features test-support` run by hand matches this check
-    # exactly, no extra flags needed.
-    run_check "Clippy" "cargo clippy --all-targets --features test-support" || true
-
-    # Run tests (--features test-support additionally compiles the
-    # PTY-backed wizard-terminal-restoration regression test, #460; the
-    # feature gates no dependencies, only code visibility, so it's a no-op
-    # on any platform other than the unix ones this script targets)
-    # --no-fail-fast: report every failure, not just the first (#544).
-    # nextest stops the run at the first failing test by default, which on
-    # ubuntu meant the gate reported one failure while carrying nine -- the
-    # run aborted around test 326 of 1901 and the eight after it were
-    # invisible for as long as anyone cares to look back. Each fix then
-    # bought one more 7-minute round trip to reveal the next "first"
-    # failure. Seeing the whole board costs ~80s, and only when something is
-    # already broken. `--fast` mode keeps fail-fast, which is the right
-    # trade for local iteration.
-    nextest_log="$(mktemp)"
-    run_check "Rust tests" "cargo nextest run --features test-support --no-fail-fast 2>&1 | tee \"$nextest_log\"" || true
-    report_nextest_retries "$nextest_log"
-    rm -f "$nextest_log"
-
-    # Run doc tests
-    run_check "Doc tests" "cargo test --doc" || true
-
-    # Security audit (mandatory — tools verified above)
-    run_check "Security audit" "cargo audit" || true
-
-    # Dependency/license check (mandatory — tools verified above)
-    run_check "Dependency check" "cargo deny check" || true
-
-    # Check for unused dependencies (if cargo-machete is available).
-    # --with-metadata resolves bench, example and dev targets through cargo
-    # metadata rather than guessing from src/ alone. It is strictly the better
-    # check: plain `cargo machete` missed an unused tokio-test dev-dependency
-    # that this mode caught (#532). It does not rewrite Cargo.lock despite the
-    # tool's general warning -- verified against a checksum before and after.
+    # Unused dependencies (if cargo-machete is available). --with-metadata
+    # resolves bench, example and dev targets through cargo metadata rather
+    # than guessing from src/ alone, so it catches unused dev-dependencies
+    # that plain `cargo machete` misses. It does not rewrite Cargo.lock despite
+    # the tool's general warning.
     if command -v cargo-machete >/dev/null 2>&1; then
         run_check "Unused dependencies" "cargo machete --with-metadata" || true
     else
@@ -655,23 +676,8 @@ main() {
         fi
     fi
 
-    # Summary
-    echo
-    echo "=========================="
-    echo -e "${BLUE}Quality Check Summary${NC}"
-    echo "=========================="
-    echo -e "Checks passed: ${GREEN}$CHECKS_PASSED${NC}"
-    echo -e "Checks failed: ${RED}$CHECKS_FAILED${NC}"
-    print_skip_tally
-
-    if [ $CHECKS_FAILED -eq 0 ]; then
-        echo -e "${GREEN}🎉 All quality checks passed!${NC}"
-        echo -e "${BLUE}Tip:${NC} for fast iteration use 'just check-fast' (skips the full shell suites, doc tests, audits, and release build)."
-        exit 0
-    else
-        echo -e "${RED}❌ Some quality checks failed${NC}"
-        exit 1
-    fi
+    finish_report "Quality" "quality" \
+        "${BLUE}Tip:${NC} for fast iteration use 'just check-fast' (skips the full shell suites, doc tests, audits, and release build)."
 }
 
 # Show help
@@ -756,17 +762,8 @@ case "${1:-}" in
         print_step "Running fast checks only"
         cd "$(dirname "$0")/.."
 
-        run_check "License metadata" "./scripts/check-license-metadata.sh" || true
-
-        # Privacy patterns (no workstation paths, private identifiers, or hardcoded sockets)
-        run_check "Privacy patterns" "./scripts/check-privacy-patterns.sh" || true
-
-        # Documentation links (every repository-relative Markdown link resolves)
-        run_check "Documentation links" "./scripts/check-doc-links.sh" || true
-
-        # Fish checks
+        run_repo_checks
         run_check "Fish syntax" "check_fish_syntax" || true
-
         run_check "Shellcheck (installers)" "check_shellcheck" || true
 
         # Bash/Zsh parity tests
@@ -777,156 +774,43 @@ case "${1:-}" in
             run_check "Zsh parity tests" "zsh tests/zsh/parity.test.zsh" || true
         fi
 
-        # Rust checks. Clippy's lint policy lives in gpy-agent/Cargo.toml's
-        # [lints] table (#584) and applies regardless of CLI flags, so
-        # --fast is no less strict here than the full run -- the speed
-        # difference in this mode comes from skipping the slower non-Rust
-        # checks and audits above/below, not from a relaxed clippy pass.
         pushd gpy-agent >/dev/null
-        run_check "Rust format check" "cargo fmt -- --check" || true
-        run_check "Clippy" "cargo clippy --all-targets --features test-support" || true
-        nextest_log="$(mktemp)"
-        run_check "Rust tests" "cargo nextest run --features test-support 2>&1 | tee \"$nextest_log\"" || true
-        report_nextest_retries "$nextest_log"
-        rm -f "$nextest_log"
+        run_rust_lint_and_tests ""
         popd >/dev/null
 
-        echo
-        echo "=========================="
-        echo -e "${BLUE}Fast Check Summary${NC}"
-        echo "=========================="
-        echo -e "Checks passed: ${GREEN}$CHECKS_PASSED${NC}"
-        echo -e "Checks failed: ${RED}$CHECKS_FAILED${NC}"
-        print_skip_tally
-
-        if [ $CHECKS_FAILED -eq 0 ]; then
-            echo -e "${GREEN}🎉 All fast checks passed!${NC}"
-            exit 0
-        else
-            echo -e "${RED}❌ Some fast checks failed${NC}"
-            exit 1
-        fi
+        finish_report "Fast" "fast"
         ;;
     --rust-only)
         require_pinned_toolchain
         print_step "Running Rust checks only"
         cd "$(dirname "$0")/.."
 
-        run_check "License metadata" "./scripts/check-license-metadata.sh" || true
-
-        # Privacy patterns (no workstation paths, private identifiers, or hardcoded sockets)
-        run_check "Privacy patterns" "./scripts/check-privacy-patterns.sh" || true
-
-        # Documentation links (every repository-relative Markdown link resolves)
-        run_check "Documentation links" "./scripts/check-doc-links.sh" || true
+        run_repo_checks
 
         pushd gpy-agent >/dev/null
-
-        run_check "Rust format check" "cargo fmt -- --check" || true
-        run_check "Clippy" "cargo clippy --all-targets --features test-support" || true
-        # --no-fail-fast: report every failure, not just the first (#544).
-        # nextest stops the run at the first failing test by default, which on
-        # ubuntu meant the gate reported one failure while carrying nine -- the
-        # run aborted around test 326 of 1901 and the eight after it were
-        # invisible for as long as anyone cares to look back. Each fix then
-        # bought one more 7-minute round trip to reveal the next "first"
-        # failure. Seeing the whole board costs ~80s, and only when something is
-        # already broken. `--fast` mode keeps fail-fast, which is the right
-        # trade for local iteration.
-        nextest_log="$(mktemp)"
-        run_check "Rust tests" "cargo nextest run --features test-support --no-fail-fast 2>&1 | tee \"$nextest_log\"" || true
-        report_nextest_retries "$nextest_log"
-        rm -f "$nextest_log"
-        run_check "Doc tests" "cargo test --doc" || true
-
-        # Supply-chain checks (match the full gate). Warn-skip if the tool is
-        # absent rather than failing the whole gate.
-        if command -v cargo-audit >/dev/null 2>&1; then
-            run_check "Security audit" "cargo audit" || true
-        else
-            print_warning "Skipping security audit (cargo-audit not installed)"
-        fi
-        if command -v cargo-deny >/dev/null 2>&1; then
-            run_check "Dependency check" "cargo deny check" || true
-        else
-            print_warning "Skipping dependency check (cargo-deny not installed)"
-        fi
-
+        run_rust_lint_and_tests --no-fail-fast
+        run_rust_deep_checks
         run_check "Release build" "cargo build --release" || true
-
         popd >/dev/null
 
-        echo
-        echo "=========================="
-        echo -e "${BLUE}Rust Check Summary${NC}"
-        echo "=========================="
-        echo -e "Checks passed: ${GREEN}$CHECKS_PASSED${NC}"
-        echo -e "Checks failed: ${RED}$CHECKS_FAILED${NC}"
-        print_skip_tally
-
-        if [ $CHECKS_FAILED -eq 0 ]; then
-            echo -e "${GREEN}🎉 All Rust checks passed!${NC}"
-            exit 0
-        else
-            echo -e "${RED}❌ Some Rust checks failed${NC}"
-            exit 1
-        fi
+        finish_report "Rust" "Rust"
         ;;
     --shell-only)
         print_step "Running shell checks (Fish + Bash + Zsh, no Rust toolchain)"
         cd "$(dirname "$0")/.."
 
-        run_check "License metadata" "./scripts/check-license-metadata.sh" || true
+        run_repo_checks
+        run_shell_checks
 
-        # Privacy patterns (no workstation paths, private identifiers, or hardcoded sockets)
-        run_check "Privacy patterns" "./scripts/check-privacy-patterns.sh" || true
-
-        # Documentation links (every repository-relative Markdown link resolves)
-        run_check "Documentation links" "./scripts/check-doc-links.sh" || true
-
-        run_check "Fish syntax" "check_fish_syntax" || true
-        run_check "Fish formatting" "check_fish_formatting" || true
-        run_check "Shellcheck (installers)" "check_shellcheck" || true
-        run_shell_tests
-
-        echo
-        echo "=========================="
-        echo -e "${BLUE}Shell Check Summary${NC}"
-        echo "=========================="
-        echo -e "Checks passed: ${GREEN}$CHECKS_PASSED${NC}"
-        echo -e "Checks failed: ${RED}$CHECKS_FAILED${NC}"
-        print_skip_tally
-
-        if [ $CHECKS_FAILED -eq 0 ]; then
-            echo -e "${GREEN}🎉 All shell checks passed!${NC}"
-            exit 0
-        else
-            echo -e "${RED}❌ Some shell checks failed${NC}"
-            exit 1
-        fi
+        finish_report "Shell" "shell"
         ;;
     --fish-only)
         print_step "Running Fish lint only (syntax + formatting)"
         cd "$(dirname "$0")/.."
 
-        run_check "Fish syntax" "check_fish_syntax" || true
-        run_check "Fish formatting" "check_fish_formatting" || true
+        run_fish_lint
 
-        echo
-        echo "=========================="
-        echo -e "${BLUE}Fish Check Summary${NC}"
-        echo "=========================="
-        echo -e "Checks passed: ${GREEN}$CHECKS_PASSED${NC}"
-        echo -e "Checks failed: ${RED}$CHECKS_FAILED${NC}"
-        print_skip_tally
-
-        if [ $CHECKS_FAILED -eq 0 ]; then
-            echo -e "${GREEN}🎉 All Fish checks passed!${NC}"
-            exit 0
-        else
-            echo -e "${RED}❌ Some Fish checks failed${NC}"
-            exit 1
-        fi
+        finish_report "Fish" "Fish"
         ;;
     --with-perf)
         export RUN_PERF_CHECKS=true

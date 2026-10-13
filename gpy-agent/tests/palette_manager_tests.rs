@@ -1,4 +1,4 @@
-//! Palette resolution against the builtins (#664).
+//! Palette resolution against the builtins.
 //!
 //! # Test Isolation
 //!
@@ -11,6 +11,10 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
+#[path = "common/env_guard.rs"]
+mod env_guard;
+
+use env_guard::EnvGuard;
 use gpy_agent::config::Config;
 use gpy_agent::config::types::PaletteName;
 use gpy_agent::palette::resolve::palette_by_name;
@@ -23,18 +27,8 @@ use tempfile::TempDir;
 /// builtin.
 fn with_empty_config_home<T>(check: impl FnOnce() -> T) -> T {
     let temp_dir = TempDir::new().unwrap();
-
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
-    }
-
-    let result = check();
-
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
-
-    result
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
+    check()
 }
 
 /// The builtin palette names: one per file in `config/palettes`, the

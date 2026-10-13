@@ -1,23 +1,26 @@
-// Integration tests for `check_and_cleanup_socket` ping-retry behaviour (#317).
-//
-// A single missed 500ms ping must not cause a live agent's socket to be
-// unlinked and a duplicate agent forked (acceptance criterion 1), while a
-// genuinely dead socket must still be cleaned up (no regression).
-//
-// These live in an integration binary (not lib unit tests) because they
-// redirect the runtime dir via `std::env::set_var`, which is `unsafe` under
-// edition 2024 and disallowed inside the `unsafe_code`-denying lib crate.
+//! Integration tests for `check_and_cleanup_socket` ping-retry behaviour.
+//!
+//! A single missed 500ms ping must not cause a live agent's socket to be
+//! unlinked and a duplicate agent forked, while a genuinely dead socket must
+//! still be cleaned up.
+//!
+//! These live in an integration binary (not lib unit tests) because they
+//! redirect the runtime dir through the environment, which is `unsafe` under
+//! edition 2024 and disallowed inside the `unsafe_code`-denying lib crate.
 #![cfg(unix)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
 #![allow(clippy::missing_panics_doc)]
 
+#[path = "common/env_guard.rs"]
+mod env_guard;
+
+use env_guard::EnvGuard;
 use gpy_agent::VERSION;
 use gpy_agent::agent::lifecycle::{
     check_and_cleanup_socket, get_socket_path, get_version_file_path,
 };
-use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -29,12 +32,9 @@ use std::time::{Duration, Instant};
 /// `handle_ping` answers `Response::Ack`, which the connection renders
 /// through the JSON formatter as `{"status":"ok"}` (`ipc::ACK_WIRE_JSON`).
 ///
-/// This fixture used to reply `{"op":"pong"}`, a shape the daemon has never
-/// sent; it passed only because the ping's acknowledgement check was a
-/// `contains("pong")` substring match on the raw bytes. Since #573 the check
-/// decodes the reply as a `Response`, so the fixture has to send the real
-/// thing -- otherwise a "live agent" here would model something no live agent
-/// does. (#573's own fixture, serde's `"Ack"`, was that mistake.)
+/// The ping's acknowledgement check decodes the reply as a `Response`, so the
+/// fixture must send the real wire form -- otherwise a "live agent" here would
+/// model something no live agent does.
 const ACK_WIRE_FORM: &[u8] = b"{\"status\":\"ok\"}\n";
 
 #[test]
@@ -50,39 +50,14 @@ fn fixture_ack_matches_the_daemon_wire_form() {
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 /// Redirects the runtime dir (and thus the agent.version path) to an isolated
-/// temp dir for the duration of a test, restoring prior env on drop.
-struct EnvGuard {
-    saved: Vec<(&'static str, Option<OsString>)>,
+/// temp dir until the returned guard drops.
+fn redirect_runtime_dir(dir: &Path) -> EnvGuard {
+    let mut env = EnvGuard::cleared(&["XDG_RUNTIME_DIR", "XDG_CACHE_HOME", "HOME"]);
+    // XDG_RUNTIME_DIR wins in get_runtime_dir(), isolating the version file.
+    env.set("XDG_RUNTIME_DIR", dir);
+    env
 }
 
-impl EnvGuard {
-    fn redirect_runtime_dir(dir: &Path) -> Self {
-        let keys = ["XDG_RUNTIME_DIR", "XDG_CACHE_HOME", "HOME"];
-        let saved = keys
-            .iter()
-            .map(|&k| (k, std::env::var_os(k)))
-            .collect::<Vec<_>>();
-        for &k in &keys {
-            unsafe { std::env::remove_var(k) };
-        }
-        // XDG_RUNTIME_DIR wins in get_runtime_dir(), isolating the version file.
-        unsafe { std::env::set_var("XDG_RUNTIME_DIR", dir) };
-        Self { saved }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        for (k, v) in &self.saved {
-            match v {
-                Some(val) => unsafe { std::env::set_var(k, val) },
-                None => unsafe { std::env::remove_var(k) },
-            }
-        }
-    }
-}
-
-/// A minimal Unix-socket responder used to model the agent for ping tests.
 /// How a fake agent behaves on each accepted connection.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Behaviour {
@@ -94,12 +69,13 @@ enum Behaviour {
     AliveUntilShutdown,
 }
 
+/// A minimal Unix-socket responder used to model the agent for ping tests.
 struct Responder {
     stop: Arc<AtomicBool>,
     handle: Option<std::thread::JoinHandle<()>>,
     /// Count of accepted connections whose request body contained the
     /// `"shutdown"` op, so a test can prove `send_shutdown_command()` was
-    /// actually attempted against this fixture (#548), not just inferred from
+    /// actually attempted against this fixture, not just inferred from
     /// timing.
     shutdown_requests: Arc<AtomicUsize>,
 }
@@ -112,9 +88,9 @@ impl Responder {
     /// FIRST connection by `first_delay` (modelling a momentarily busy but live
     /// agent that misses one ping). When `alive` is false it accepts and
     /// immediately closes each connection without ever replying -- to a ping
-    /// OR to a shutdown request -- modelling a wedged-but-listening agent
-    /// (#548): the connection is genuinely accepted, so it is strong evidence
-    /// of life, just never answered.
+    /// OR to a shutdown request -- modelling a wedged-but-listening agent:
+    /// the connection is genuinely accepted, so it is strong evidence of
+    /// life, just never answered.
     fn spawn(socket_path: &Path, alive: bool, first_delay: Duration) -> Self {
         let behaviour = if alive {
             Behaviour::Alive
@@ -228,7 +204,7 @@ fn slow_but_alive_agent_is_not_declared_stale() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let tmp = tempfile::tempdir().unwrap();
-    let _env = EnvGuard::redirect_runtime_dir(tmp.path());
+    let _env = redirect_runtime_dir(tmp.path());
 
     let socket_path = tmp.path().join("agent.sock");
     // 650ms > one ping's 500ms read timeout, so the first ping attempt misses;
@@ -255,17 +231,15 @@ fn slow_but_alive_agent_is_not_declared_stale() {
     );
 }
 
-// Regression guard: a socket held by something that never answers our protocol
-// is still genuinely stale and must be reported as not running.
+// A socket held by something that never answers our protocol is genuinely
+// stale and must be reported as not running.
 //
-// Under #548 this specific fixture (accepts every connection, replies to
-// nothing) is exactly the "wedged-but-listening" shape: the connection really
-// is accepted, so it now routes through the AcceptedNoReply eviction path
-// (send_shutdown_command -> bounded wait_for_agent_shutdown -> unlink) rather
-// than the immediate stale-socket cleanup a plain connect-refused would get.
-// The end result -- not running, socket gone -- is unchanged; only the route
-// (and, since it now waits out SHUTDOWN_WAIT_MAX, the wall time) is different.
-// `wedged_agent_that_never_replies_is_evicted` below asserts the new route
+// This fixture (accepts every connection, replies to nothing) is the
+// "wedged-but-listening" shape: the connection really is accepted, so it
+// routes through the AcceptedNoReply eviction path (send_shutdown_command ->
+// bounded wait_for_agent_shutdown -> unlink, waiting out SHUTDOWN_WAIT_MAX)
+// rather than the immediate stale-socket cleanup a plain connect-refused
+// would get. `wedged_agent_that_never_replies_is_evicted` asserts that route
 // directly.
 #[test]
 fn unresponsive_listener_is_cleaned_up() {
@@ -273,7 +247,7 @@ fn unresponsive_listener_is_cleaned_up() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let tmp = tempfile::tempdir().unwrap();
-    let _env = EnvGuard::redirect_runtime_dir(tmp.path());
+    let _env = redirect_runtime_dir(tmp.path());
 
     let socket_path = tmp.path().join("agent.sock");
     let _responder = Responder::spawn(&socket_path, false, Duration::ZERO);
@@ -286,7 +260,7 @@ fn unresponsive_listener_is_cleaned_up() {
     );
 }
 
-// #548: a wedged-but-listening agent -- one that accepts every connection but
+// A wedged-but-listening agent -- one that accepts every connection but
 // never replies to anything, including the shutdown request itself -- must
 // not be silently left alone the way `AgentLiveness::Indeterminate` is (that
 // verdict is reserved for rounds this process could not even complete). It
@@ -300,7 +274,7 @@ fn wedged_agent_that_never_replies_is_evicted() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let tmp = tempfile::tempdir().unwrap();
-    let _env = EnvGuard::redirect_runtime_dir(tmp.path());
+    let _env = redirect_runtime_dir(tmp.path());
 
     // `send_shutdown_command()` (invoked inside the eviction path this test
     // exercises) resolves its own target via `get_socket_path()` rather than
@@ -338,7 +312,7 @@ fn dead_socket_file_is_removed() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let tmp = tempfile::tempdir().unwrap();
-    let _env = EnvGuard::redirect_runtime_dir(tmp.path());
+    let _env = redirect_runtime_dir(tmp.path());
 
     let socket_path = tmp.path().join("agent.sock");
     std::fs::write(&socket_path, b"stale").unwrap();
@@ -352,18 +326,17 @@ fn dead_socket_file_is_removed() {
     assert!(!socket_path.exists(), "a dead socket file must be removed");
 }
 
-// Upgrade contract (#649): `gpy-agent start` on a new binary must evict a
-// running agent whose recorded version differs, and must leave a matching
-// one alone. This is the path both installers rely on when they re-run
-// `start` after replacing the binary (#307); until now only the wedged and
-// dead-socket branches of `check_and_cleanup_socket` had tests.
+// Upgrade contract: `gpy-agent start` on a new binary must evict a running
+// agent whose recorded version differs, and must leave a matching one alone.
+// This is the path both installers rely on when they re-run `start` after
+// replacing the binary.
 #[test]
 fn version_mismatched_agent_is_evicted() {
     let _lock = ENV_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let tmp = tempfile::tempdir().unwrap();
-    let _env = EnvGuard::redirect_runtime_dir(tmp.path());
+    let _env = redirect_runtime_dir(tmp.path());
 
     // The eviction sends its shutdown to `get_socket_path()`, so the fixture
     // must listen there (see wedged_agent_that_never_replies_is_evicted).
@@ -395,7 +368,7 @@ fn version_mismatched_agent_is_evicted() {
     );
 }
 
-// #723: a replacement that binds the path while an eviction is waiting must be
+// A replacement that binds the path while an eviction is waiting must be
 // recognised as the replacement, never read as the old agent still alive, and
 // never unlinked.
 #[test]
@@ -406,7 +379,7 @@ fn eviction_does_not_unlink_a_replacement_agents_socket() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let tmp = tempfile::tempdir().unwrap();
-    let _env = EnvGuard::redirect_runtime_dir(tmp.path());
+    let _env = redirect_runtime_dir(tmp.path());
 
     let socket_path = get_socket_path().expect("compute redirected socket path");
     let version_path = get_version_file_path().expect("compute redirected version path");
@@ -474,7 +447,7 @@ fn version_matched_agent_is_left_running() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let tmp = tempfile::tempdir().unwrap();
-    let _env = EnvGuard::redirect_runtime_dir(tmp.path());
+    let _env = redirect_runtime_dir(tmp.path());
 
     let socket_path = get_socket_path().expect("compute redirected socket path");
     let version_path = get_version_file_path().expect("compute redirected version path");
@@ -499,7 +472,7 @@ fn version_matched_agent_is_left_running() {
     );
 }
 
-/// #780: an older binary must not evict a newer running agent. Two installs
+/// An older binary must not evict a newer running agent. Two installs
 /// resolving different binaries would otherwise flip the daemon back and
 /// forth on every `start`.
 #[test]
@@ -508,7 +481,7 @@ fn newer_running_agent_is_left_running() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let tmp = tempfile::tempdir().unwrap();
-    let _env = EnvGuard::redirect_runtime_dir(tmp.path());
+    let _env = redirect_runtime_dir(tmp.path());
 
     let socket_path = get_socket_path().expect("compute redirected socket path");
     let version_path = get_version_file_path().expect("compute redirected version path");

@@ -1,4 +1,4 @@
-# Fixture theme for the cross-shell segment golden test (#844): the same
+# Fixture theme for the cross-shell segment golden test: the same
 # ASCII delimiters as golden-ascii, with a 24-hour, zero-padded clock that
 # shows seconds, so the clock spec exercises every branch.
 

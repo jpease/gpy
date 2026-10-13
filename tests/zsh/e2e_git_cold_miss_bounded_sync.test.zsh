@@ -3,12 +3,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Git segment cold miss: bounded synchronous IPC, never a foreground oneshot
-# (#843; the Zsh twin of tests/fish/e2e_git_cold_miss_bounded_sync.test.fish,
-# #434).
+# (the Zsh twin of tests/fish/e2e_git_cold_miss_bounded_sync.test.fish).
 #
-# Before this fix a cold instant-cache miss fell through to __gpy_request,
-# which runs a foreground `gpy-agent oneshot git` when the agent is down --
-# unbounded, and unlike Fish, which omits the segment.
+# A cold instant-cache miss must not fall through to __gpy_request, which runs
+# an unbounded foreground `gpy-agent oneshot git` when the agent is down;
+# like Fish, the segment is omitted instead.
 #   (a) agent DOWN: the render omits the segment (empty, status 0), instantly,
 #       and never forks `gpy-agent oneshot` (a recording stub proves it);
 #   (b) agent UP: the very first render of a never-queried repo returns real,
@@ -18,12 +17,8 @@ ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' \
-    >"$XDG_CONFIG_HOME/gpy/config.toml"
+shell_e2e_text_config '"directory", "git"'
 cd "$SHELL_E2E_REPO" || exit 1
 # Source with the agent disabled and off PATH (the theme export would re-set the
 # flag from config.toml) so sourcing starts no daemon, then enable it: the
@@ -71,8 +66,4 @@ case "$text" in
     *) fail "the first render on a cold cache was '$text' (status $rc)" ;;
 esac
 
-if [ "$failures" -gt 0 ]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: zsh git segment cold miss is a bounded sync query, never a foreground oneshot"
+test_finish "zsh git segment cold miss is a bounded sync query, never a foreground oneshot"

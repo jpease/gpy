@@ -159,49 +159,24 @@ Note: on case-insensitive filesystems, some repositories may still report dirty 
 
 ## Historical Results
 
-The table below is a historical benchmark snapshot, not a guaranteed current result. Re-run the suite on your benchmark host before citing these numbers publicly.
-This snapshot predates the `large-tensorflow` swap and still used the old `large-linux` fixture.
+Historical snapshot only: it was taken on one benchmark host and predates the
+swap from the `large-linux` fixture to `large-tensorflow`. Re-run the suite on
+your own host before citing any of these numbers.
 
-**Historical Snapshot:** 2025-12-02 (1000 runs per test, native git v2 format, benchmark-mode scope)
+Snapshot: 2025-12-02, 1000 runs per test, `benchmark-mode` scope, mean ± stddev.
 
-| Repository | GPY | Starship | Difference | Status |
-|------------|-----|----------|------------|--------|
-| tiny-express | **25.4ms ± 0.9ms** | 27.3ms ± 1.4ms | **-6.96%** | 🟢 **Faster** |
-| small-redis | **25.6ms ± 0.8ms** | 27.6ms ± 1.3ms | **-7.25%** | 🟢 **Faster** |
-| medium-kubernetes | **33.1ms ± 1.4ms** | 35.0ms ± 1.1ms | **-5.43%** | 🟢 **Faster** |
-| large-linux (historical) | **37.5ms ± 1.3ms** | 39.3ms ± 1.2ms | **-4.58%** | 🟢 **Faster** |
+| Repository | GPY | Starship | Difference |
+|------------|-----|----------|------------|
+| tiny-express | 25.4ms ± 0.9ms | 27.3ms ± 1.4ms | -6.96% |
+| small-redis | 25.6ms ± 0.8ms | 27.6ms ± 1.3ms | -7.25% |
+| medium-kubernetes | 33.1ms ± 1.4ms | 35.0ms ± 1.1ms | -5.43% |
+| large-linux | 37.5ms ± 1.3ms | 39.3ms ± 1.2ms | -4.58% |
 
-**CPU Time Breakdown:**
-- User time: 6.8-16.7ms (scales with repo size)
-- System time: 5.4-8.0ms (consistent overhead)
+CPU time in that run: user 6.8-16.7ms (scaling with repo size), system 5.4-8.0ms.
 
-### Performance Characteristics
+## What Is Measured
 
-Treat the following as historical observations from a specific controlled benchmark host, not universal user-facing guarantees.
-
-✅ **Strengths:**
-- **Beats Starship**: 4.58-7.25% faster across all repo sizes (average: 6.06%, n=1000)
-- **Highly scalable**: Sub-38ms performance even on 91k file repos
-- **Predictable**: Consistent performance with tight variance (<5% CV)
-- **Leverages native optimizations**: fsmonitor, untracked cache, sparse-checkout
-- **Single subprocess**: Uses `git status --porcelain=v2 --branch`
-- **Statistically significant**: All results p<0.001 with 1000 iterations
-
-🎯 **Performance Leadership:**
-- GPY now outperforms Starship despite using subprocess approach
-- Native git optimizations provide better scalability than libgit2
-- Efficient v2 format parsing minimizes post-subprocess overhead
-- Average 6.06% performance advantage across all repository sizes (n=1000)
-
-### Implementation Details
-
-**Current architecture (Native Git):**
-- Single `git status --porcelain=v2 --branch` call (combines branch + ahead/behind + file status)
-- Parallel repo state checking (filesystem-based)
-- Auto-enables untracked cache for repeat performance
-- Functional parsing with structured result types
-
-**Trade-offs:**
-- ✅ Superior performance vs Starship (4-8% faster across all repo sizes)
-- ✅ Leverages git's built-in features (fsmonitor, sparse-checkout, untracked cache)
-- ✅ Native git optimizations outweigh subprocess overhead
+The git segment runs a single `git status --porcelain=v2 --branch` subprocess
+(branch, ahead/behind and file status in one call), so git's own fsmonitor,
+untracked-cache and sparse-checkout support apply. GPY enables the untracked
+cache for a repository unless the user has set `core.untrackedCache`.

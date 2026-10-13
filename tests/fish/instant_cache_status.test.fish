@@ -2,8 +2,8 @@
 # tests/fish/instant_cache_status.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Exit-code contract for __gpy_read_instant_cache (#612): status is now
-# carried ENTIRELY by the exit code instead of four side-effect globals.
+# Exit-code contract for __gpy_read_instant_cache: status is carried
+# ENTIRELY by the exit code, with no side-effect globals.
 #   0 = fresh, exact-token hit
 #   1 = miss
 #   2 = stale, exact-token hit

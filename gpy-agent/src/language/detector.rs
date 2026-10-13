@@ -15,8 +15,8 @@ use std::path::Path;
 /// Upper bound on how much of a file the fallback read pulls in.
 ///
 /// This is `hyperpolyglot`'s `MAX_CONTENT_SIZE_BYTES`, matched deliberately:
-/// #523 swapped the detector out from under an existing corpus of behavioural
-/// tests, and a different read window would change which heuristics fire.
+/// the behavioural test corpus is calibrated against it, and a different read
+/// window would change which heuristics fire.
 const READ_LIMIT: usize = 51_200;
 
 /// Suffixes appended *after* a file's real extension, stripped before any
@@ -49,10 +49,10 @@ impl Detector {
     /// Empirically, sampled Criterion runs show a meaningful amount of time in
     /// file-metadata lookups during directory detection. This variant keeps the
     /// walk, matching and normalization work identical while isolating the cost
-    /// of stat-ing every detected file. Since #523 the size comes from the
-    /// walk's own [`ignore::DirEntry`] rather than a second `std::fs::metadata`
-    /// pass, so the saving is smaller than it was — but the call is still made
-    /// per detected file, so the flag still measures something real.
+    /// of stat-ing every detected file. The size comes from the walk's own
+    /// [`ignore::DirEntry`] rather than a second `std::fs::metadata` pass, but
+    /// the call is still made per detected file, so the flag measures
+    /// something real.
     #[must_use]
     #[doc(hidden)]
     pub fn detect_directory_without_metadata<P: AsRef<Path>>(path: P) -> Vec<DetectedLanguage> {
@@ -133,14 +133,13 @@ impl Detector {
     /// non-ignored file under `path` with no repo-boundary or size cap of its
     /// own. When `path` isn't inside a git repo — a shell sitting at `$HOME`
     /// or another large, non-project directory — that scan can run for minutes
-    /// across gigabytes of data (#390). A legitimately huge monorepo can still
+    /// across gigabytes of data. A legitimately huge monorepo can still
     /// trigger the same failure mode from inside a real repo, so the file count
     /// is checked *before* the scan starts rather than bounded mid-walk. GPY
-    /// owns that walk outright since #523 and could in principle cancel it
-    /// through [`ignore::WalkState::Quit`], but converting this pre-check into
-    /// mid-walk cancellation changes the `Content`→`Markers` fallback semantics
-    /// the tests below assert, so it stays a pre-check and the conversion is
-    /// tracked separately on #391. `Hybrid` starts from the same content scan
+    /// owns that walk and could in principle cancel it through
+    /// [`ignore::WalkState::Quit`], but mid-walk cancellation would change the
+    /// `Content`→`Markers` fallback semantics the tests below assert (#391).
+    /// `Hybrid` starts from the same content scan
     /// ([`Self::detect_directory_hybrid`]) so it falls back to `Markers` under
     /// the identical conditions. Callers handling a real, externally supplied path
     /// MUST use this instead of calling [`Self::detect_directory_for_mode`]
@@ -329,8 +328,8 @@ fn walk_threads() -> usize {
 /// Walks `path` in parallel and yields one `(language, bytes)` pair per file
 /// that resolves to a language.
 ///
-/// The walk mirrors the one `hyperpolyglot::get_language_breakdown` owned
-/// before #523: `ignore`'s parallel walker, thread count from the host's
+/// The walk mirrors `hyperpolyglot::get_language_breakdown`'s:
+/// `ignore`'s parallel walker, thread count from the host's
 /// parallelism, linguist's vendor and documentation exclusions layered on top
 /// (see [`filters`](super::filters)), directories skipped, and results
 /// funnelled through an `mpsc` channel. `ignore`'s own defaults — hidden files
@@ -380,8 +379,7 @@ fn walk_directory(path: &Path, include_file_sizes: bool) -> Vec<(Language, u64)>
 /// cannot decide.
 ///
 /// The order replicates `gengo_language`'s private `find_simple` minus its
-/// shebang step, which is what keeps the answer identical to the
-/// `hyperpolyglot` detector this replaced (#523):
+/// shebang step, which keeps the answer identical to `hyperpolyglot`'s:
 ///
 /// 1. Strip [`STRIPPED_SUFFIX_EXTENSIONS`] from the file name, repeatedly.
 /// 2. Filename match; else path-glob match; else extension match.

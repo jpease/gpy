@@ -1,25 +1,19 @@
 #!/usr/bin/env bash
 # tests/bash/cleanup_test_agents.test.bash
 #
-# Regression test for #619: scripts/cleanup-test-agents.sh used to delete
-# any socket file named gpy-test.sock/gpy-test-*.sock anywhere under /tmp
-# or /var/folders, and to kill any gpy-agent process by --socket name alone
-# -- both name-only, location-unbounded checks that could remove or kill
-# something the GPY test harness did not create, and that traversed the
-# entire system temp tree (observed to take over a minute on the
-# 2026-09-03 audit run).
+# scripts/cleanup-test-agents.sh must only touch sockets and processes under
+# the GPY test root. Matching gpy-test.sock/gpy-test-*.sock by name anywhere
+# under /tmp or /var/folders, or killing any gpy-agent by --socket name alone,
+# could remove or kill something the GPY test harness did not create, and
+# traversing the entire system temp tree can take over a minute.
 #
 # This test drives the real cleanup script against a hermetic sandbox: a
 # GPY test root created under a throwaway TMPDIR (so it can never collide
 # with a real leftover socket on the machine running the suite), plus a
 # same-named decoy socket deliberately created OUTSIDE that root. It
 # asserts the decoy survives, the in-root socket is removed, the script
-# finishes in well under five seconds, and the script's source no longer
-# contains a whole-/tmp or whole-/var/folders traversal.
-#
-# Without the fix this test fails on the "decoy survives" assertion (the
-# old script matched by socket basename alone, regardless of location) and
-# on the "no whole-tmp traversal" source check.
+# finishes in well under five seconds, and the script's source contains no
+# whole-/tmp or whole-/var/folders traversal.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1

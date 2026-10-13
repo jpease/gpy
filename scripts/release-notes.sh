@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
 # Generate GitHub release notes for a GPY tag.
 #
-# Extracted from .github/workflows/release.yml (gpy#492). The workflow used to
-# emit a hardcoded body: a fixed "Total: 153 comprehensive tests" count, links
-# to CROSS_PLATFORM_TESTING.md / config.example.fish / REFACTOR.md (none of
-# which exist), and install instructions for a .deb, a PKGBUILD, a Homebrew
-# tap, and `cargo install gpy-agent` that this project does not publish.
-#
 # Everything below is derived from files in the repository at the released
 # commit: the body text comes from the CHANGELOG section for the version, and
 # the asset table is built from the artifacts actually downloaded for the

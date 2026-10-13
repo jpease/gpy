@@ -2,11 +2,11 @@
 # tests/bash/shell_e2e_stop_agent_term.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #825: shell_e2e_stop_agent force-killed (SIGKILL)
-# whatever held the socket once `gpy-agent stop` had not released it, so an
-# agent that would have exited cleanly on TERM never got to remove its
-# socket or finish a cache write. It must follow the same TERM -> bounded
-# wait -> KILL sequence as shell_e2e_stop_agent_under.
+# When `gpy-agent stop` has not released the socket, shell_e2e_stop_agent must
+# not go straight to SIGKILL on whatever holds it: an agent that would exit
+# cleanly on TERM must get to remove its socket and finish a cache write. It
+# follows the same TERM -> bounded wait -> KILL sequence as
+# shell_e2e_stop_agent_under.
 #
 # A python3 stub holds an AF_UNIX socket, ignores the `stop` request (the
 # stub "binary" does nothing) and records TERM in a file from its handler
@@ -59,32 +59,27 @@ PY
     shell_e2e_poll 5 test -e "$scratch/ready"
 }
 
-failures=0
 
 if start_holder term; then
     shell_e2e_stop_agent
     if [ "$(cat "$scratch/record" 2>/dev/null)" = "TERM" ]; then
-        echo "PASS: a holder that exits cleanly on TERM receives TERM"
+        pass "a holder that exits cleanly on TERM receives TERM"
     else
-        echo "FAIL: the holder was killed without a TERM step"
-        failures=$((failures + 1))
+        fail "the holder was killed without a TERM step"
     fi
 else
-    echo "FAIL: stub holder did not start"
-    failures=$((failures + 1))
+    fail "stub holder did not start"
 fi
 
 if start_holder ignore; then
     shell_e2e_stop_agent
     if shell_e2e_path_unbound "$GPY_AGENT_SOCKET_PATH" && ! kill -0 "$stub_pid" 2>/dev/null; then
-        echo "PASS: a holder that ignores TERM is still killed"
+        pass "a holder that ignores TERM is still killed"
     else
-        echo "FAIL: a holder that ignores TERM survived shell_e2e_stop_agent"
-        failures=$((failures + 1))
+        fail "a holder that ignores TERM survived shell_e2e_stop_agent"
     fi
 else
-    echo "FAIL: stub holder did not start"
-    failures=$((failures + 1))
+    fail "stub holder did not start"
 fi
 
-[ "$failures" -eq 0 ]
+test_finish "shell_e2e_stop_agent escalates TERM then KILL"

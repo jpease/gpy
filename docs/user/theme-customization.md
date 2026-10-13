@@ -4,8 +4,6 @@
 
 How to change the way your GPY prompt looks, from the zero-effort wizard up to hand-editing a theme file.
 
-**Last Updated:** 2026-07-07
-
 ---
 
 ## Overview
@@ -187,7 +185,7 @@ gpy config set ui.show_icons false
 
 `show_icons` lives in `config.toml`, not the theme file — it's a display toggle that applies across whichever theme is active, so you don't need to touch the theme file for it.
 
-> A related trap: `config.toml` has no `ui.delimiter_style`/`ui.delimiters` keys (a dead, never-rendered config surface was removed in #377). Segment separators are theme-only — edit the theme file's `[ui.segment_open]` / `[ui.segment_close]` tables or a segment's own `format` string instead — see [Configuration Examples: Build a powerline-style prompt](configuration-examples.md#goal-build-a-powerline-style-prompt) for a worked example.
+> A related trap: `config.toml` has no `ui.delimiter_style`/`ui.delimiters` keys. Segment separators are theme-only — edit the theme file's `[ui.segment_open]` / `[ui.segment_close]` tables or a segment's own `format` string instead — see [Configuration Examples: Build a powerline-style prompt](configuration-examples.md#goal-build-a-powerline-style-prompt) for a worked example.
 
 After editing, validate before activating:
 

@@ -2,10 +2,10 @@
 # tests/bash/agent_disabled_prompt.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #841: with GPY_AGENT_ENABLED=0 the Bash integration must still install its
+# With GPY_AGENT_ENABLED=0 the Bash integration must still install its
 # prompt hook and render PS1 through `gpy-agent oneshot`, while starting no
-# agent, no supervisor, and no registration. Before the fix __gpy_init
-# returned before __gpy_setup_hooks, so PS1 was never set at all.
+# agent, no supervisor, and no registration: __gpy_init must reach
+# __gpy_setup_hooks even when the agent is disabled.
 #
 # A stub `gpy-agent` on PATH records every invocation; a live-looking socket
 # file proves nothing talks to a daemon even when one could be reached.

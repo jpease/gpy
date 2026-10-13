@@ -108,7 +108,7 @@ if let Some(ref callback) = *reload_callback.lock().unwrap() {
    - Old config kept on error
    - Clear error messages in logs
 
-3. **Powerful**: Can trigger complex updates
+3. **Extensible**: Can trigger dependent updates
    - Config callback can switch themes
    - Can restart watchers with new settings
    - Can invalidate caches

@@ -77,7 +77,7 @@ impl EndpointHandleBuilder {
         self
     }
 
-    /// Shorten the accept loop's socket-ownership check period (#779), so
+    /// Shorten the accept loop's socket-ownership check period, so
     /// tests need not wait the production 30 s.
     #[cfg(all(unix, test))]
     #[must_use]

@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # config.toml edit -> theme export rewritten -> `<pid>.reload` flag + SIGURG
-# doorbell -> Zsh repaints (#647 row 3).
+# doorbell -> Zsh repaints.
 #
-# `integration.test.zsh` covers the reload doorbell with `__gpy_load_theme` stubbed;
-# nothing drove a real Zsh client through a real config change. With a real
+# `integration.test.zsh` covers the reload doorbell with `__gpy_load_theme`
+# stubbed; this drives a real Zsh client through a real config change. With a real
 # agent and a `zsh -i` on a pty, flipping `show_icons` in config.toml must:
 #   (a) rewrite $XDG_CACHE_HOME/gpy/theme-export.zsh (mtime and content),
 #   (b) repaint the idle prompt with no keystroke -- the branch glyph the
@@ -17,12 +17,9 @@ ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 config="$XDG_CONFIG_HOME/gpy/config.toml"
-printf '[ui]\nshow_icons = true\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' >"$config"
+shell_e2e_text_config '"directory", "git"' true
 shell_e2e_start_agent || exit 1
 export GPY_AGENT_ENABLED=1
 export GPY_AGENT_SUPERVISOR_ENABLED=1
@@ -49,11 +46,11 @@ export_file="$XDG_CACHE_HOME/gpy/theme-export.zsh"
 [ -f "$export_file" ] || fail "no theme export at $export_file"
 # The export carries show_icons=1 now (asserted next); a rewrite is the only
 # way it can come to carry show_icons=0, so the content is the evidence. No
-# mtime comparison: `stat` takes different flags on GNU and BSD (#848).
+# mtime comparison: `stat` takes different flags on GNU and BSD.
 grep -q 'GPY_UI_SHOW_ICONS="1"' "$export_file" || fail "export does not carry show_icons=1 before the edit"
 
 # --- the edit ----------------------------------------------------------------------
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' >"$config"
+shell_e2e_text_config '"directory", "git"'
 
 export_rewritten() {
     grep -q 'GPY_UI_SHOW_ICONS="0"' "$export_file"
@@ -87,7 +84,5 @@ fi
 shell_e2e_send 'exit\r'
 if [ "$failures" -gt 0 ]; then
     shell_e2e_dump_transcript
-    echo "FAILED: $failures assertion(s)"
-    exit 1
 fi
-echo "PASS: zsh config edit reaches the prompt via the reload doorbell"
+test_finish "zsh config edit reaches the prompt via the reload doorbell"

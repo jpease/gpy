@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-# Test: language instant cache is readable in non-Git project directories (#173)
+# Test: language instant cache is readable in non-Git project directories
 # The agent keys the language cache by the canonical request path when no Git
 # root exists (e.g. a package.json / Cargo.toml project with no .git). The shell
 # reader must mirror that fallback so warm language caches are consumed instead
@@ -55,7 +55,7 @@ if test "$fresh" = (printf '\e[32m js 22.0.0 \e[0m')
 else
     check "fresh lang cache served in non-git project" fail
 end
-# #612: staleness is now the exit-code status (2/6), not a side-effect global.
+# Staleness is reported through the exit-code status (2/6).
 if __gpy_cache_status_stale $fresh_status
     check "fresh warm read does not flag a refresh" fail
 else
@@ -80,7 +80,7 @@ end
 
 # --- Git cache must NOT use the path fallback (requires a real Git root) ---
 set -l git_file "$cache_dir/$cache_key.git.none.ansi"
-printf 'should-not-be-served' >"$git_file"
+printf should-not-be-served >"$git_file"
 set -l git_out (__gpy_read_instant_cache git "$proj")
 if test -z "$git_out"
     check "git cache miss in non-git project (no path fallback)" pass

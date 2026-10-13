@@ -3,12 +3,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # The builtin segment set, the shipped shell segment implementations and the
-# documented `gpy enable` segment list are the same set (#740).
+# documented `gpy enable` segment list are the same set.
 #
-# `hostname` and `username` shipped as fish/bash/zsh segment files while the
-# CLI registry (`plugin::builtin::BUILTIN_ORDER`) still knew six names, so
-# `gpy enable hostname` failed and `gpy doctor` flagged the starship preset.
-# Nothing tied the lists together. This checks both directions, for each of:
+# A segment file the CLI registry (`plugin::builtin::BUILTIN_ORDER`) does not
+# know makes `gpy enable <name>` fail and `gpy doctor` flag presets that use
+# it. This checks both directions, for each of:
 #
 #   registry  == fish/segments/*.fish   (minus documented helpers)
 #   registry  == bash/segments/*.bash   (minus documented helpers)
@@ -40,10 +39,6 @@ NON_SEGMENT_FILES="fish/segments/devtools.fish"
 # Names the docs list for a segment that are aliases, not segment names.
 #   `lang` -- accepted by `gpy enable` as an alias for `language`.
 DOC_ALIASES="lang"
-
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-segparity.XXXXXX")" || exit 1
 trap 'rm -rf "$SANDBOX"' EXIT
@@ -140,8 +135,4 @@ else
     compare_sets "the builtin segment registry" "$registry" "docs/user/cli-reference.md (gpy enable)" "$documented"
 fi
 
-if [ "$failures" -gt 0 ]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: builtin segments, shipped shell segment files and documented segments agree"
+test_finish "builtin segments, shipped shell segment files and documented segments agree"

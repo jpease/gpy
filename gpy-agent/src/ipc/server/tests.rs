@@ -38,7 +38,7 @@ fn create_language_project() -> TempDir {
     dir
 }
 
-// `notify_clients` rings the repaint doorbell for live-update subscribers (#540).
+// `notify_clients` rings the repaint doorbell for live-update subscribers.
 #[cfg(unix)]
 /// # Panics
 ///
@@ -163,7 +163,11 @@ fn hot_reload_git_enabled_blocks_requests() {
     let response = handle
         .handler_registry
         .route(&git_status_message(path.clone()));
-    assert!(matches!(response, Ok(Response::RepositoryStatus { .. })));
+    let Ok(Response::RepositoryStatus(status)) = &response else {
+        panic!("expected a RepositoryStatus for an enabled git segment, got {response:?}");
+    };
+    // A freshly `git init`ed repo has nothing pending.
+    assert_eq!(status.state, crate::git::RepositoryState::Clean);
 
     let mut disabled = cfg.clone();
     disabled.git.enabled = false;

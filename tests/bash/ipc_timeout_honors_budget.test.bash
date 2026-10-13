@@ -2,10 +2,10 @@
 # tests/bash/ipc_timeout_honors_budget.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #757: the socat transport ran `socat -t 0.1`, a hard
-# 100 ms cap that ignored GPY_IPC_TIMEOUT_MS, so a reply arriving later was
-# dropped and __gpy_request forked a blocking `gpy-agent oneshot`. (The nc
-# branch already honours the budget, so socat is required to exercise the bug.)
+# The socat transport must honour GPY_IPC_TIMEOUT_MS rather than a hard
+# 100 ms cap (`socat -t 0.1`): a reply arriving inside the budget must be
+# used, not dropped in favour of a blocking `gpy-agent oneshot` fork. (This
+# test needs socat; the nc branch is bounded by the budget on its own.)
 #
 # A python3 listener replies after 120 ms with GPY_IPC_TIMEOUT_MS=1000; a stub
 # `gpy-agent` on PATH logs oneshot calls. The reply must be used and no
@@ -54,11 +54,7 @@ except OSError:
     pass
 ' "$sock" 0.12 &
 listener_pid=$!
-for _ in $(seq 1 30); do
-    [ -S "$sock" ] && break
-    sleep 0.1
-done
-[ -S "$sock" ] || test_skip "could not create test Unix socket listener"
+shell_e2e_poll 3 test -S "$sock" || test_skip "could not create test Unix socket listener"
 
 : >"$oneshot_log"
 out="$(

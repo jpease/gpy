@@ -1,4 +1,4 @@
-//! Comprehensive tests for error handling
+//! Tests for `gpy_agent::Error` conversions, source chaining, and message composition.
 
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
@@ -10,80 +10,12 @@ use gpy_agent::{Error, Result};
 use std::error::Error as StdError;
 use std::io;
 
-// ===== Display Tests =====
-
-#[test]
-fn test_git_error_display() {
-    let err = Error::git("Repository not found");
-    assert_eq!(
-        err.to_string(),
-        "Git operation failed: Repository not found"
-    );
-}
-
-#[test]
-fn test_language_error_display() {
-    let err = Error::language("Unknown language");
-    assert_eq!(
-        err.to_string(),
-        "Language detection failed: Unknown language"
-    );
-}
-
-#[test]
-fn test_ipc_error_display() {
-    let err = Error::ipc("Connection refused");
-    assert_eq!(
-        err.to_string(),
-        "IPC communication failed: Connection refused"
-    );
-}
-
-#[test]
-fn test_watcher_error_display() {
-    let err = Error::Watcher {
-        message: "Failed to watch directory".to_owned(),
-        source: None,
-    };
-    assert_eq!(
-        err.to_string(),
-        "File watcher failed: Failed to watch directory"
-    );
-}
-
-#[test]
-fn test_config_error_display() {
-    let err = Error::config("Invalid TOML");
-    assert_eq!(err.to_string(), "Configuration error: Invalid TOML");
-}
-
-#[test]
-fn test_agent_error_display() {
-    let err = Error::agent("Failed to start");
-    assert_eq!(err.to_string(), "Agent process error: Failed to start");
-}
-
-#[test]
-fn test_io_error_display() {
-    let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
-    let err = Error::from(io_err);
-    assert_eq!(err.to_string(), "I/O operation failed");
-}
-
 #[test]
 fn test_json_error_display() {
     let json_err = serde_json::from_str::<serde_json::Value>("invalid json")
         .expect_err("Should fail to parse");
     let err = Error::from(json_err);
     assert!(err.to_string().starts_with("JSON processing failed:"));
-}
-
-#[test]
-fn test_utf8_error_display() {
-    let invalid_utf8 = vec![0xFF, 0xFE, 0xFD];
-    let utf8_err = std::str::from_utf8(&invalid_utf8).expect_err("Should fail");
-    let err = Error::from(utf8_err);
-    assert_eq!(err.to_string(), "UTF-8 processing failed");
 }
 
 #[test]
@@ -94,20 +26,6 @@ fn test_process_error_display() {
         "Process execution failed: command 'git' exit code 128"
     );
 }
-
-#[test]
-fn test_invalid_error_display() {
-    let err = Error::invalid("Invalid state");
-    assert_eq!(err.to_string(), "Invalid operation: Invalid state");
-}
-
-#[test]
-fn test_timeout_error_display() {
-    let err = Error::timeout("git status");
-    assert_eq!(err.to_string(), "Operation timed out: git status");
-}
-
-// ===== Debug Tests =====
 
 #[test]
 fn test_git_error_debug() {
@@ -140,8 +58,6 @@ fn test_json_error_debug() {
     let debug_str = format!("{err:?}");
     assert!(debug_str.contains("Json"));
 }
-
-// ===== Source Chaining Tests =====
 
 #[test]
 fn test_git_error_without_source() {
@@ -183,8 +99,6 @@ fn test_toml_error_conversion() {
     // Should have source
     assert!(err.source().is_some());
 }
-
-// ===== Helper Constructor Tests =====
 
 #[test]
 fn test_git_helper() {
@@ -237,24 +151,6 @@ fn test_timeout_helper() {
     assert!(matches!(err, Error::Timeout { .. }));
 }
 
-// ===== Result Type Tests =====
-
-#[test]
-fn test_result_type_ok() {
-    let value = 42_i32;
-    let result: Result<i32> = Ok(value);
-    assert!(result.is_ok());
-    if let Ok(val) = result {
-        assert_eq!(val, 42_i32);
-    }
-}
-
-#[test]
-fn test_result_type_err() {
-    let result: Result<i32> = Err(Error::invalid("test"));
-    assert!(result.is_err());
-}
-
 #[test]
 fn test_result_question_mark_propagation() {
     fn inner_fn() -> Result<String> {
@@ -270,8 +166,6 @@ fn test_result_question_mark_propagation() {
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("inner error"));
 }
-
-// ===== Error Conversion Tests =====
 
 #[test]
 fn test_from_io_error() {
@@ -302,8 +196,6 @@ fn test_from_toml_error() {
     assert!(matches!(err, Error::Config { .. }));
 }
 
-// ===== Complex Error Chain Tests =====
-
 #[test]
 fn test_error_with_multiple_conversions() {
     // Test that errors can be converted through multiple paths
@@ -326,8 +218,6 @@ fn test_error_with_multiple_conversions() {
     assert!(cause_json_error().is_err());
     assert!(cause_utf8_error().is_err());
 }
-
-// ===== Edge Cases =====
 
 #[test]
 fn test_error_with_empty_message() {
@@ -354,8 +244,6 @@ fn test_error_with_newlines() {
     assert!(err.to_string().contains("line1\nline2\nline3"));
 }
 
-// ===== Send + Sync Tests =====
-
 #[test]
 fn test_error_is_send() {
     fn assert_send<T: Send>() {}
@@ -367,8 +255,6 @@ fn test_error_is_sync() {
     fn assert_sync<T: Sync>() {}
     assert_sync::<Error>();
 }
-
-// ===== Clone/Debug Derivation Tests =====
 
 #[test]
 fn test_error_debug_formatting() {

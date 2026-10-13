@@ -145,7 +145,7 @@ impl<'a> GitResolver<'a> {
     ///
     /// Symbols and count visibility honor the active theme's `[segments.git]`
     /// overrides (`staged_icon`, …, `show_counts`) when set, falling back to
-    /// `config.git.icons` and the legacy "always show counts" behavior. This lets
+    /// `config.git.icons` and always showing counts. This lets
     /// the starship preset render Starship-exact `[!?]`-style status without
     /// per-category counts.
     fn status_text(&self) -> Option<String> {

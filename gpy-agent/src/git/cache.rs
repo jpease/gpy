@@ -100,7 +100,7 @@ fn reaggregate(entry: &mut CacheEntry) -> RepositoryStatus {
 }
 
 /// `path.starts_with(prefix)`, optionally comparing components
-/// ASCII-case-insensitively (a `core.ignorecase=true` repository, #713).
+/// ASCII-case-insensitively (a `core.ignorecase=true` repository).
 fn path_starts_with(path: &Path, prefix: &Path, ignore_case: bool) -> bool {
     if !ignore_case {
         return path.starts_with(prefix);
@@ -231,7 +231,7 @@ impl GitStatusCache {
     /// Identical to [`get_any_canonical`](Self::get_any_canonical) but also
     /// exposes the entry's age so callers can bound how stale a value they're
     /// willing to serve immediately, rather than accepting arbitrarily old
-    /// data on a persistently slow repo (#433).
+    /// data on a persistently slow repo.
     #[must_use]
     pub fn get_any_with_age_canonical(
         &self,
@@ -370,13 +370,13 @@ impl GitStatusCache {
     /// `scanned`, so each scanned path's cached subtree is replaced wholesale
     /// by `results` rather than merged into: a path the scan did not report is
     /// clean now, which is exactly how a rename's source path and a reverted
-    /// edit stop being counted (#466).
+    /// edit stop being counted.
     ///
     /// Returns `None` — meaning "do a full scan instead" — when the entry is
     /// missing or had its file-level details dropped for the memory budget,
     /// matching [`update_file_canonical`](Self::update_file_canonical), or
     /// when the scan cannot be merged consistently with git's collapsed
-    /// untracked directories (#711): a full scan reports a new untracked
+    /// untracked directories: a full scan reports a new untracked
     /// directory as one `dir/` entry, but a pathspec naming a file inside it
     /// makes git report that file instead. So the merge is refused when a
     /// cached untracked entry is a strict ancestor of a scanned path, or when
@@ -385,7 +385,7 @@ impl GitStatusCache {
     /// With `ignore_case` (the repository has `core.ignorecase=true`) scanned
     /// and cached paths are compared ASCII-case-insensitively: the watcher
     /// reports the on-disk spelling while the cached keys carry git's index
-    /// spelling, so `README.md` must clear a cached `Readme.md` (#713).
+    /// spelling, so `README.md` must clear a cached `Readme.md`.
     /// Non-ASCII names never get here; they take a full scan.
     #[must_use]
     pub fn update_paths_canonical(
@@ -424,8 +424,8 @@ impl GitStatusCache {
         }
 
         for relative in relative_scanned {
-            // A scanned path may be a directory (the new-directory follow-up of
-            // #416), in which case the scan covered its whole subtree.
+            // A scanned path may be a directory (a newly created directory),
+            // in which case the scan covered its whole subtree.
             entry
                 .data
                 .files
@@ -505,7 +505,7 @@ impl GitStatusCache {
 
     /// Test-only helper: backdate an entry's `cached_at` timestamp by `age`,
     /// so age-bound logic (e.g. `git_handler`'s `MAX_IMMEDIATE_STALE_AGE`) can
-    /// be exercised deterministically without sleeping (#433). No-op if the
+    /// be exercised deterministically without sleeping. No-op if the
     /// key has no entry.
     #[cfg(test)]
     pub(crate) fn age_entry_for_test(&self, key: &Path, age: std::time::Duration) {
@@ -517,7 +517,7 @@ impl GitStatusCache {
     }
 
     /// Test-only helper: the cached per-file map for `key`, so a differential
-    /// test can compare it path-for-path against git (#675). `None` if the
+    /// test can compare it path-for-path against git. `None` if the
     /// key has no entry.
     #[cfg(test)]
     pub(crate) fn files_for_test(&self, key: &Path) -> Option<HashMap<PathBuf, FileStatus>> {
@@ -549,7 +549,6 @@ mod tests {
     use crate::git::{FileStatus, RepositoryState, RepositoryStatus};
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use std::thread;
     use std::time::Duration;
 
     fn dummy_status() -> RepositoryStatus {
@@ -588,27 +587,25 @@ mod tests {
 
     #[test]
     fn is_fresh_uses_policy_cooldown() {
-        let cache = GitStatusCache::new();
         let repo = PathBuf::from("/repo");
-        cache.set(&repo, dummy_status(), HashMap::new());
+        let within = GitStatusCache::with_policy(CachePolicy {
+            ttl: Duration::from_secs(30),
+            cooldown: Duration::from_secs(3600),
+        });
+        within.set(&repo, dummy_status(), HashMap::new());
+        assert!(within.is_fresh(&repo));
 
-        // Policy cooldown is 150ms, so entry should be fresh immediately
-        assert!(cache.is_fresh(&repo));
-
-        // Sleep longer than cooldown
-        thread::sleep(Duration::from_millis(160));
-        assert!(!cache.is_fresh(&repo));
+        let past = GitStatusCache::with_policy(CachePolicy {
+            ttl: Duration::from_secs(30),
+            cooldown: Duration::ZERO,
+        });
+        past.set(&repo, dummy_status(), HashMap::new());
+        assert!(!past.is_fresh(&repo));
     }
 
     #[test]
-    fn cache_uses_git_status_policy() {
-        let cache = GitStatusCache::new();
-        let policy = cache.policy();
-
-        // Verify it uses the git_status policy
-        assert_eq!(policy, CachePolicy::git_status());
-        assert_eq!(policy.ttl(), Duration::from_secs(30));
-        assert_eq!(policy.cooldown(), Duration::from_millis(150));
+    fn new_uses_git_status_policy() {
+        assert_eq!(GitStatusCache::new().policy(), CachePolicy::git_status());
     }
 
     #[test]
@@ -634,18 +631,18 @@ mod tests {
     }
 
     #[test]
-    fn cache_respects_policy_ttl() {
-        let cache = GitStatusCache::new();
+    fn get_misses_once_policy_ttl_has_elapsed() {
         let repo = PathBuf::from("/repo");
-        cache.set(&repo, dummy_status(), HashMap::new());
+        let live = GitStatusCache::new();
+        live.set(&repo, dummy_status(), HashMap::new());
+        assert!(live.get(&repo).is_some());
 
-        // Should be cached immediately
-        assert!(cache.get(&repo).is_some());
-
-        // Sleep longer than TTL (30 seconds would be too long for a test)
-        // Instead, we verify the policy is being used
-        let policy = cache.policy();
-        assert_eq!(policy.ttl(), Duration::from_secs(30));
+        let expired = GitStatusCache::with_policy(CachePolicy {
+            ttl: Duration::ZERO,
+            cooldown: Duration::ZERO,
+        });
+        expired.set(&repo, dummy_status(), HashMap::new());
+        assert!(expired.get(&repo).is_none());
     }
 
     /// A repository with many dirty files must not push total retained bytes
@@ -842,7 +839,7 @@ mod tests {
         );
     }
 
-    /// #433: `get_any_with_age_canonical` must expose an entry's age
+    /// `get_any_with_age_canonical` must expose an entry's age
     /// alongside its status, so callers can bound how stale a value they're
     /// willing to serve immediately.
     #[test]
@@ -861,7 +858,7 @@ mod tests {
         );
     }
 
-    /// #433: an absent key must yield `None`, matching `get_any_canonical`.
+    /// An absent key must yield `None`, matching `get_any_canonical`.
     #[test]
     fn get_any_with_age_canonical_returns_none_for_absent_key() {
         let cache = GitStatusCache::new();
@@ -870,7 +867,7 @@ mod tests {
         assert!(cache.get_any_with_age_canonical(&repo).is_none());
     }
 
-    /// #466: a pathspec-limited scan is authoritative for everything under the paths it was
+    /// A pathspec-limited scan is authoritative for everything under the paths it was
     /// given.
     ///
     /// A path the scan did not report back is clean now, so its cache entry has to go —
@@ -900,7 +897,7 @@ mod tests {
         );
     }
 
-    /// #466 acceptance criterion 3: `git status` keys a rename under the
+    /// `git status` keys a rename under the
     /// destination only, so the source path comes back absent and must be
     /// dropped rather than left counted as a separate change.
     #[test]
@@ -928,7 +925,7 @@ mod tests {
         assert_eq!(status.staged, 1, "the rename destination must be recorded");
     }
 
-    /// #466: a directory path (a new-directory follow-up, #416) scans its whole
+    /// A directory path (a newly created directory) scans its whole
     /// subtree, so the cache entries beneath it are replaced by the scan's
     /// result rather than accumulating stale children.
     #[test]
@@ -955,7 +952,7 @@ mod tests {
         );
     }
 
-    /// #713: an ignore-case update clears a cached entry in another spelling.
+    /// An ignore-case update clears a cached entry in another spelling.
     ///
     /// On a `core.ignorecase=true` repository the watcher reports the on-disk
     /// spelling (`README.md`) while the cached key carries git's index spelling
@@ -984,7 +981,7 @@ mod tests {
         );
     }
 
-    /// #713: without `core.ignorecase` the comparison stays exact, so a
+    /// Without `core.ignorecase` the comparison stays exact, so a
     /// differently-cased path is a different file and its entry is kept.
     #[test]
     fn case_sensitive_update_keeps_a_differently_cased_entry() {
@@ -1001,10 +998,10 @@ mod tests {
         assert_eq!(status.unstaged, 1, "README.md is not Readme.md here");
     }
 
-    /// #713: the #711 refusal (a cached collapsed untracked directory above a
-    /// scanned path) must also see through a case difference.
+    /// Refusing an update beneath a cached collapsed untracked directory must
+    /// also see through a case difference.
     #[test]
-    fn ignore_case_update_refuses_a_collapsed_untracked_ancestor_in_another_case() {
+    fn ignore_case_update_refuses_collapsed_ancestor() {
         let cache = GitStatusCache::new();
         let repo = PathBuf::from("/repo/icase-collapsed");
         let mut files = HashMap::new();

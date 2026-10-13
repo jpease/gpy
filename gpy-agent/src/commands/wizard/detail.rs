@@ -1,6 +1,6 @@
 //! Pure detail-panel content for the master/detail wizard layout: describes
 //! whichever item currently has the cursor in the focused section, without
-//! requiring it to be selected first (issue #400).
+//! requiring it to be selected first.
 //!
 //! No terminal I/O — like `preview.rs`, this builds `ratatui` text types
 //! directly rather than an intermediate string representation, since
@@ -93,8 +93,7 @@ fn segment_detail(segment: &str) -> SegmentDetail {
 /// `theme` is the currently-selected theme as loaded from disk (the render
 /// loop's cached `ThemeConfig`) — needed for `"clock"`'s detail lines, since
 /// `segments.clock.*` (unlike `directory`/`language`'s config-level fields)
-/// lives in the per-theme TOML, not anything `WizardState` snapshots itself
-/// (#407).
+/// lives in the per-theme TOML, not anything `WizardState` snapshots itself.
 pub fn detail_lines(state: &WizardState, theme: &ThemeConfig) -> Vec<Line<'static>> {
     match state.focus() {
         Section::Theme => theme_or_palette_lines(
@@ -120,7 +119,7 @@ pub fn detail_lines(state: &WizardState, theme: &ThemeConfig) -> Vec<Line<'stati
 /// Always states the current selection and its startup-diff status — not
 /// just when the cursor happens to sit on the selected item — so the panel
 /// answers "what's selected, and has it changed from startup?" regardless
-/// of what's highlighted (issue #400's Theme/Palette acceptance criterion).
+/// of what's highlighted.
 fn theme_or_palette_lines(
     highlighted: Option<&String>,
     selected: &str,
@@ -259,8 +258,8 @@ fn language_display_lines(state: &WizardState) -> Vec<Line<'static>> {
 /// (`segments.clock.show_seconds`), each with the key to change it and a startup-diff note —
 /// mirrors `directory_display_lines`/`language_display_lines`, except the "startup" baseline
 /// compared against is `theme` (the loaded active theme) rather than `WizardState`'s own
-/// `initial_config`: these are theme-scoped fields `WizardState` doesn't snapshot itself
-/// (#407), so "unedited" means "matches `theme` as loaded from disk for the currently selected
+/// `initial_config`: these are theme-scoped fields `WizardState` doesn't snapshot itself, so
+/// "unedited" means "matches `theme` as loaded from disk for the currently selected
 /// theme", read through `WizardState::clock_time_format`/`clock_show_seconds`'s
 /// pending-edit-or-`theme` accessors.
 ///
@@ -297,10 +296,9 @@ fn clock_display_lines(state: &WizardState, theme: &ThemeConfig) -> Vec<Line<'st
 /// Extra detail lines for the `"duration"` segment.
 ///
 /// Its show-milliseconds flag (`segments.duration.show_milliseconds`), with the key to change
-/// it and a startup-diff note — mirrors `clock_display_lines`'s theme-scoped-field diff shape
-/// (#407), except there's no `Option::unwrap_or` fallback needed:
-/// `DurationTheme::show_milliseconds` is a plain `bool` (default `true`), not an
-/// `Option<bool>`.
+/// it and a startup-diff note, diffed against `theme` like `clock_display_lines`.
+/// `DurationTheme::show_milliseconds` is a plain `bool` (default `true`), so no
+/// `Option::unwrap_or` fallback is needed.
 ///
 fn duration_display_lines(state: &WizardState, theme: &ThemeConfig) -> Vec<Line<'static>> {
     let current = state.duration_show_milliseconds(theme);
@@ -321,15 +319,12 @@ fn duration_display_lines(state: &WizardState, theme: &ThemeConfig) -> Vec<Line<
 }
 
 /// Extra detail lines for the `"git"` segment's content-visibility
-/// multi-select (#410).
+/// multi-select.
 ///
 /// The three independent flags (`segments.git.show_branch` /
-/// `show_ahead_behind` / `show_stash`) together form the "which git info to
-/// show" multi-select, each with the key to toggle it and a startup-diff
-/// note — mirrors `clock_display_lines`'s theme-scoped-field diff shape
-/// (#407). Each flag is an `Option<bool>` on `GitTheme` defaulting to on when
-/// unset, so the baseline compared against is `theme` (the loaded active
-/// theme) read through `WizardState`'s pending-edit-or-`theme` accessors.
+/// `show_ahead_behind` / `show_stash`) each get the key to toggle it and a
+/// startup-diff note, diffed against `theme` like `clock_display_lines`.
+/// Each flag is an `Option<bool>` on `GitTheme` defaulting to on when unset.
 fn git_display_lines(state: &WizardState, theme: &ThemeConfig) -> Vec<Line<'static>> {
     let git = &theme.segments.git;
     let rows = [
@@ -391,8 +386,8 @@ mod tests {
         config.ui.palette = PaletteName::new(palette.to_owned()).expect("valid palette name");
         // Fixed, deterministic stand-ins for the real discovery lists
         // `WizardState::new` gathers from disk — see `state.rs`'s own
-        // `FIXED_THEMES`/`FIXED_PALETTES`/`FIXED_SEGMENTS` for the rationale
-        // (#607). Kept in sync with those exact values.
+        // `FIXED_THEMES`/`FIXED_PALETTES`/`FIXED_SEGMENTS` for the rationale.
+        // Kept in sync with those exact values.
         WizardState::from_parts(
             config,
             vec![

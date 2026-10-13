@@ -50,10 +50,6 @@ use ratatui::text::{Line, Span as RatatuiSpan};
 /// and `PreviewFacts::sample_character_success` document.
 const SAMPLE_CWD: &str = "~/dev/gpy";
 
-// ---------------------------------------------------------------------
-// Part A: `template::Span` -> `ratatui::text::Span` adapter
-// ---------------------------------------------------------------------
-
 /// Convert one resolved template color to a `ratatui` color.
 ///
 /// `Palette`/`PrevFg`/`PrevBg` are unreachable here in practice —
@@ -124,11 +120,9 @@ fn named_to_ratatui(name: &str) -> Option<RatatuiColor> {
 
 /// Convert a template style's attributes into a `ratatui` modifier.
 ///
-/// Variant names verified against `ratatui` 0.30.2 (`ratatui-core` 0.1.2,
-/// see `Cargo.toml`'s `ratatui = "0.30.2"` pin) — its `Modifier` bitflags are
-/// `BOLD`/`DIM`/`ITALIC`/`UNDERLINED`/`SLOW_BLINK`/`RAPID_BLINK`/`REVERSED`/
-/// `HIDDEN`/`CROSSED_OUT`, unchanged from pre-0.30 versions for this basic
-/// set.
+/// Variant names match `ratatui` 0.30.2's `Modifier` bitflags
+/// (`BOLD`/`DIM`/`ITALIC`/`UNDERLINED`/`SLOW_BLINK`/`RAPID_BLINK`/`REVERSED`/
+/// `HIDDEN`/`CROSSED_OUT`).
 const fn to_ratatui_modifier(attr: Attr) -> Modifier {
     match attr {
         Attr::Bold => Modifier::BOLD,
@@ -161,10 +155,6 @@ fn to_ratatui_style(style: &TemplateStyle) -> RatatuiStyle {
 fn to_ratatui_span(span: &TemplateSpan) -> RatatuiSpan<'static> {
     RatatuiSpan::styled(span.text.clone(), to_ratatui_style(&span.style))
 }
-
-// ---------------------------------------------------------------------
-// Part B: per-segment composition into one preview line
-// ---------------------------------------------------------------------
 
 /// One chain segment's rendered output plus the prev-colors it was rendered with.
 ///
@@ -238,7 +228,7 @@ pub fn render_preview_line(
     // The preview must show what the live prompt draws. With icons off the
     // agent resolves no `$sep_*` caps and the theme export erases private-use
     // delimiters, so the clock and status pills drawn from the theme's own
-    // delimiters must not show them here either (#695).
+    // delimiters must not show them here either.
     if Glyphs::from(&config.ui) == Glyphs::Nerd {
         return render_chain(state, config, theme, palette, facts);
     }
@@ -482,14 +472,11 @@ fn render_segment(
 ///
 /// Capped with the same opening/closing powerline glyphs the real
 /// Fish-rendered clock segment gets from `gpy_section_standalone`
-/// (`fish/core/renderer.fish`) — issue: the wizard preview was previously
-/// rendering clock with no cap glyphs at all, which only matched a theme
-/// with entirely empty delimiter icons (e.g. the `starship` preset); themes
-/// with real delimiter icons — including the `default` theme itself, whose
-/// `ui.segment_open`/`ui.segment_close`/`ui.prompt_close` icons are the same
-/// Nerd Font powerline glyphs (`""`/`""`/`""`) the other segments' `sep_open`/
-/// `sep_close` template tokens hardcode — showed a visibly different (capless)
-/// clock in the preview than the live prompt.
+/// (`fish/core/renderer.fish`), so themes with real delimiter icons (e.g.
+/// `default`, whose `ui.segment_open`/`ui.segment_close`/`ui.prompt_close` are
+/// the same powerline glyphs the other segments' `sep_open`/`sep_close` tokens
+/// hardcode) show the same capped clock as the live prompt, while themes with
+/// empty delimiter icons (e.g. `starship`) show no caps.
 ///
 /// The time text itself is a fixed, representative sample (9:41, chosen to
 /// need no AM/PM-boundary special-casing at hour 12/midnight) — the real
@@ -738,7 +725,7 @@ mod tests {
     /// Fixed, deterministic stand-in for `WizardState::new`'s real discovery.
     ///
     /// See `state.rs`'s own `FIXED_THEMES`/`FIXED_PALETTES`/`FIXED_SEGMENTS`
-    /// for the rationale (#607). Kept in sync with those exact values.
+    /// for the rationale. Kept in sync with those exact values.
     /// `FIXED_SEGMENTS`'s `BUILTIN_ORDER` ordering matters here: several
     /// tests below assert on chain position (e.g. which segment renders the
     /// opening/closing cap).
@@ -789,10 +776,9 @@ mod tests {
         }
     }
 
-    // -- Part A: color/attr adapter table tests --
     // One assertion per `TemplateColor` variant and per `Attr` variant, so a
-    // future missing/incorrect-arm regression fails on the specific variant
-    // rather than a loose loop hiding which one broke.
+    // missing/incorrect arm fails on the specific variant rather than a loose
+    // loop hiding which one broke.
 
     #[test]
     fn to_ratatui_color_maps_named_variant() {
@@ -844,8 +830,8 @@ mod tests {
     fn named_to_ratatui_white_is_gray_not_bright() {
         // gpy's "white" is ANSI 37 (see style_encoder.rs's "white" => 37),
         // which ratatui spells `Gray`, not `White` (`White` is ratatui's
-        // name for ANSI 97 / bright white). Regression test for the
-        // easy-to-get-backwards mapping documented on `named_to_ratatui`.
+        // name for ANSI 97 / bright white) — the easy-to-get-backwards
+        // mapping documented on `named_to_ratatui`.
         assert_eq!(named_to_ratatui("white"), Some(RatatuiColor::Gray));
     }
 
@@ -926,8 +912,6 @@ mod tests {
         assert_eq!(got.style.bg, Some(RatatuiColor::Rgb(1, 2, 3)));
         assert!(got.style.add_modifier.contains(Modifier::BOLD));
     }
-
-    // -- Part B: per-segment composition tests --
 
     #[test]
     fn render_segment_git_uses_state_precedence() {
@@ -1060,12 +1044,11 @@ mod tests {
 
     #[test]
     fn render_segment_language_hides_version_text_when_show_versions_off() {
-        // Regression coverage for the reported wizard bug: toggling
-        // language.show_versions had no visible effect in the preview
-        // whenever the detected language already had a version (e.g. this
-        // repo's own Rust toolchain) — `select_languages` only ever dropped
-        // *versionless* languages, it never suppressed already-present
-        // version text. See `LanguageResolver::resolve("version")`.
+        // Toggling language.show_versions must hide version text even when
+        // the detected language already has a version (e.g. this repo's own
+        // Rust toolchain): `select_languages` only drops *versionless*
+        // languages, so suppression happens in
+        // `LanguageResolver::resolve("version")`.
         let mut config = make_config(
             &[],
             GitLanguageFlags {
@@ -1386,7 +1369,7 @@ mod tests {
         );
     }
 
-    /// #826: the hostname icon is an SSH-only symbol; the preview draws the
+    /// The hostname icon is an SSH-only symbol; the preview draws the
     /// segment as it looks over SSH, so the icon shows, and a local sample
     /// drops it exactly as the real prompt does.
     #[test]
@@ -1430,9 +1413,8 @@ mod tests {
 
     #[test]
     fn clock_demo_spans_omits_cap_when_delimiter_icon_empty() {
-        // Regression guard for the *original* (correct) behavior on a flat
-        // theme like the `starship` preset, whose delimiter icons are all
-        // empty — clock should still render with no cap glyphs there.
+        // A flat theme like the `starship` preset, whose delimiter icons are
+        // all empty, renders clock with no cap glyphs.
         let mut theme = ThemeConfig::default();
         theme.ui.prompt_open = Some(delimiter("", "white", "transparent"));
         theme.ui.prompt_close = Some(delimiter("", "white", "transparent"));
@@ -1456,10 +1438,8 @@ mod tests {
 
     #[test]
     fn clock_demo_spans_renders_closing_cap_when_last() {
-        // Regression test for the bug this fixes: the wizard preview
-        // previously never rendered clock's closing cap, even for themes
-        // (like the built-in `default` theme) whose `ui.prompt_close` icon
-        // is a real glyph, not empty.
+        // A real `ui.prompt_close` glyph (as in the built-in `default` theme)
+        // must render as clock's closing cap when clock is last.
         let mut theme = ThemeConfig::default();
         theme.ui.prompt_close = Some(delimiter(")", "white", "transparent"));
 
@@ -1639,7 +1619,7 @@ mod tests {
         );
     }
 
-    /// #695: the preview matches the live prompt with `ui.show_icons` off.
+    /// The preview matches the live prompt with `ui.show_icons` off.
     ///
     /// The live prompt draws no powerline caps then. This covers both the
     /// template-resolver caps (duration/directory) and the theme-delimiter

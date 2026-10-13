@@ -116,9 +116,7 @@ fn check_config_and_theme(
     let theme_name = cfg.ui.theme.as_str();
     // `validate_by_name` already validates segment format templates as part of
     // loading the theme (see `theme::validate_theme_name`), so a single call
-    // covers both the "active theme" and "segment templates" checks below —
-    // running it twice under two labels validated nothing extra, it just
-    // repeated the same filesystem/parse work (#625).
+    // covers both the "active theme" and "segment templates" checks below.
     let theme_result = crate::commands::theme::validate_by_name_detailed(theme_name);
     let theme_ok = match &theme_result {
         Ok(report) => {

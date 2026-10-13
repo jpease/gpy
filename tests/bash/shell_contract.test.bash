@@ -3,12 +3,12 @@
 # tests/bash/shell_contract.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #847: the cross-shell contract harness. Fish, Bash and Zsh must BEHAVE the
-# same, not merely have the same functions (tests/*/parity.test.*) -- and the
-# drift fixed in the parity epic (#841-#845, #843, #844) was behaviour: an
-# agent-disabled prompt that rendered nothing, a supervisor flag that gated
-# the agent start, a cold git miss that forked a foreground oneshot, a slow
-# reply that was recomputed or resent, a clock that was never templated.
+# The cross-shell contract harness. Fish, Bash and Zsh must BEHAVE the
+# same, not merely have the same functions (tests/*/parity.test.*): an
+# agent-disabled prompt that renders nothing, a supervisor flag that gates
+# the agent start, a cold git miss that forks a foreground oneshot, a slow
+# reply that is recomputed or resent, and a clock that is never templated are
+# all behaviour drift a function-level check cannot see.
 #
 # Every row of tests/fixtures/shell_scenarios/scenarios.tsv (theme, segments,
 # status, env, config, cwd, agent state; the column list is in that file) is
@@ -34,7 +34,7 @@
 #
 # The raw prompt source of Bash and Zsh (before the shell expands it) is also
 # checked: every escape byte must sit inside the non-printing wrapper
-# (`\[ \]` / `%{ %}`), or readline/ZLE miscount the prompt's width (#679).
+# (`\[ \]` / `%{ %}`), or readline/ZLE miscount the prompt's width.
 #
 # The table is the only place a future drift fix adds a row; see
 # tests/fixtures/shell_scenarios/scenarios.tsv and tests/bash/README.md.
@@ -53,10 +53,6 @@ SCN_FIXTURES="$ROOT/tests/fixtures/shell_scenarios"
 SCN_LIB="$ROOT/tests/lib/shell_scenarios"
 NORMALIZE="$ROOT/tests/lib/normalize_prompt.py"
 SLOW_REPLY_SECONDS=1.8
-
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 shell_e2e_init "$ROOT"
 BASE_ROOT="$SHELL_E2E_ROOT"
@@ -411,8 +407,4 @@ if ((scenario_count == 0)); then
     fail "no scenarios found in $SCN_FIXTURES/scenarios.tsv"
 fi
 
-if ((failures > 0)); then
-    echo "=== FAILED: $failures check(s) ==="
-    exit 1
-fi
-echo "=== cross-shell contract test passed ($scenario_count scenarios) ==="
+test_finish "cross-shell contract test passed ($scenario_count scenarios)"

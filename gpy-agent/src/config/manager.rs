@@ -779,19 +779,8 @@ mod tests {
     #[allow(clippy::missing_panics_doc)]
     fn test_config_manager_start_stop_watching() {
         // Watch a `TempDir` rather than whatever `ConfigManager::new()`
-        // resolves from the ambient environment.
-        //
-        // This test used to gate its assertion on
-        // `XDG_CONFIG_HOME || HOME`, a #474-era workaround for a Windows
-        // runner that could not resolve a config location at all. Two things
-        // then went wrong with it. The predicate never named
-        // `%LOCALAPPDATA%`, so once #473 taught `paths.rs` to resolve Windows
-        // roots the test began asserting the absence of a feature that had
-        // shipped. And whether the environment names a config location was
-        // never what decided success (#527).
-        //
-        // A temp directory decides it locally on every platform, so the test
-        // exercises the start/stop contract instead of the host's
+        // resolves from the ambient environment, so the test exercises the
+        // start/stop contract on every platform instead of the host's
         // environment.
         let temp = tempfile::TempDir::new().expect("tempdir");
         let config_path = temp.path().join("config.toml");

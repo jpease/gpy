@@ -4,7 +4,7 @@
 # returns an empty response. An empty/failed optional segment emits nothing,
 # so the next segment's opening chevron must still blend against whatever
 # segment actually rendered before it — not silently recolor against a
-# segment that produced no visible output. Regression for #453.
+# segment that produced no visible output.
 #
 # Both segments are opt-in (never in a theme's default __enabled_segments),
 # so this sources each segment file directly and drives it with stubbed

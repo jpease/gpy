@@ -2,7 +2,7 @@
 # tests/bash/load_theme_cache.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #614: __gpy_load_theme sources the agent's cached theme-export.bash file
+# __gpy_load_theme sources the agent's cached theme-export.bash file
 # (written by gpy-agent/src/cache/theme_export.rs's write_theme_export_to_dir,
 # beside theme-export.fish/.zsh) when present, and only forks
 # `gpy-agent theme export` when the cache is absent. Mirrors Fish's
@@ -40,7 +40,7 @@ STUB
 chmod +x "$STUB_BIN_DIR/gpy-agent"
 
 export PATH="$STUB_BIN_DIR:$PATH"
-# Supervisor off in a sandbox config: the theme export re-sets the flag (#836).
+# Supervisor off in a sandbox config: the theme export re-sets the flag.
 source "$ROOT/tests/lib/supervisor_off.bash" "$TMP_DIR"
 export GPY_AGENT_SOCKET_PATH="$TMP_DIR/dead-agent.sock"
 

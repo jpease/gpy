@@ -10,7 +10,7 @@ set -gx GPY_FALLBACK_ENABLED 1 # Enable fallback for agent unavailable scenarios
 # Isolate the theme-export cache dir. fish/core/init.fish's __gpy_load_theme
 # fast path sources whatever cache it finds here before consulting any
 # per-test XDG_CONFIG_HOME override, so a live dogfooding daemon's real cache
-# can otherwise leak into the test (#402).
+# can otherwise leak into the test.
 set -gx XDG_CACHE_HOME (mktemp -d)
 
 # Override agent paths for testing
@@ -37,7 +37,7 @@ end
 # Honors $TMPDIR the same way the Rust test fixtures do (see
 # gpy-agent/tests/common/fixtures.rs's gpy_test_root), so cleanup tooling
 # (scripts/cleanup-test-agents.sh) can delete leaked sockets by location
-# instead of matching by name alone (#619).
+# instead of matching by name alone.
 function __gpy_test_root
     set -l base $TMPDIR
     if test -z "$base"
@@ -232,7 +232,7 @@ function ensure_agent_stopped
     # by process name: pkill -x would also SIGKILL a contributor's live
     # dogfooding daemon, and pkill -f would also match the `fish -c ...` test
     # runner itself, whose command line embeds the literal string "gpy-agent"
-    # via the PATH override (#285).
+    # via the PATH override.
     if command -q lsof
         for pid in (lsof -t "$test_socket" 2>/dev/null)
             kill -9 $pid 2>/dev/null
@@ -241,6 +241,8 @@ function ensure_agent_stopped
         echo "WARNING: lsof unavailable; cannot safely target the process on $test_socket" >&2
     end
 
+    # Grace period for the SIGKILLed agent to exit before its socket is removed
+    # (this file does not source test_helpers.fish, so poll_until is unavailable).
     sleep 0.5
 
     # Clean up test socket files
@@ -291,7 +293,7 @@ function cleanup_test_environment
 
     # Clean up any temporary files -- scoped to this harness's own GPY-owned
     # root, never a wider /tmp/gpy-test-* glob that could remove an unrelated
-    # same-named path (#619).
+    # same-named path.
     rm -rf (__gpy_test_root) 2>/dev/null || true
 
     # Reset environment variables

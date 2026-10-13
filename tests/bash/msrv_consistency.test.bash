@@ -1,20 +1,18 @@
 #!/usr/bin/env bash
 # tests/bash/msrv_consistency.test.bash
 #
-# Regression test for #516. The repository declares its minimum Rust version in
-# three places and they had drifted apart, each failure invisible to the person
-# who could have noticed it:
+# The repository declares its minimum Rust version in three places, and a
+# drift between them is invisible to the person who could notice it:
 #
-#   * gpy-agent/Cargo.toml       rust-version = "1.98"   (what cargo enforces)
-#   * gpy-agent/.clippy.toml     msrv = "1.90"           (what clippy lints against)
-#   * gpy-agent/rust-toolchain.toml  channel = "1.96.0"  (what a clone installs)
+#   * gpy-agent/Cargo.toml           rust-version  (what cargo enforces)
+#   * gpy-agent/.clippy.toml         msrv          (what clippy lints against)
+#   * gpy-agent/rust-toolchain.toml  channel       (what a clone installs)
 #
-# The clippy value silently disabled every lint gated on a newer MSRV --
-# clippy::duration_suboptimal_units was suppressed at three sites. The toolchain
-# pin was worse: it is BELOW the declared rust-version, so `cargo check` in a
-# fresh clone failed with "rustc 1.96.0 is not supported ... requires rustc
-# 1.98". Neither the maintainer (RUSTUP_TOOLCHAIN set) nor CI (every workflow
-# installs dtolnay/rust-toolchain@stable, overriding the file) ever ran it.
+# A clippy msrv below rust-version silently disables every lint gated on a
+# newer MSRV. A toolchain pin below rust-version makes `cargo check` in a
+# fresh clone fail with "rustc X is not supported ... requires rustc Y", and
+# neither the maintainer (RUSTUP_TOOLCHAIN set) nor CI (every workflow
+# installs dtolnay/rust-toolchain@stable, overriding the file) would see it.
 #
 # Values are read from the files rather than hardcoded here, so bumping the MSRV
 # in one place fails until the other two follow.
@@ -33,11 +31,8 @@ MANIFEST="gpy-agent/Cargo.toml"
 CLIPPY="gpy-agent/.clippy.toml"
 TOOLCHAIN="gpy-agent/rust-toolchain.toml"
 
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 # Normalize "1.98" and "1.98.0" to a comparable integer triple.
 version_key() {
@@ -59,7 +54,7 @@ echo "  rust-toolchain channel  : ${channel:-<none>}"
 if [[ -n "$rust_version" && -n "$clippy_msrv" ]]; then
     echo "--- clippy lints against the declared MSRV ---"
     if [[ "$(version_key "$clippy_msrv")" != "$(version_key "$rust_version")" ]]; then
-        fail "$CLIPPY msrv is $clippy_msrv but $MANIFEST declares rust-version $rust_version; every lint gated above $clippy_msrv is silently disabled (#516)"
+        fail "$CLIPPY msrv is $clippy_msrv but $MANIFEST declares rust-version $rust_version; every lint gated above $clippy_msrv is silently disabled"
     fi
 fi
 
@@ -69,7 +64,7 @@ if [[ -n "$rust_version" && -n "$channel" ]]; then
     # is a different decision; only a pinned x.y.z is checked here.
     if [[ "$channel" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
         if [[ "$(version_key "$channel")" -lt "$(version_key "$rust_version")" ]]; then
-            fail "$TOOLCHAIN pins $channel but $MANIFEST requires rust-version $rust_version; a fresh clone fails with 'rustc $channel is not supported' (#516)"
+            fail "$TOOLCHAIN pins $channel but $MANIFEST requires rust-version $rust_version; a fresh clone fails with 'rustc $channel is not supported'"
         fi
     fi
 fi
@@ -84,9 +79,4 @@ if grep -qiE '#.*match.*rust-version|#.*matches.*Cargo\.toml' "$CLIPPY"; then
     fi
 fi
 
-if [[ $failures -ne 0 ]]; then
-    echo "$failures assertion(s) failed"
-    exit 1
-fi
-
-echo "PASS"
+test_finish

@@ -8,10 +8,14 @@ cd "$(dirname "$0")/.."
 echo "=== Zsh Prompt Performance Benchmark ==="
 echo
 
-# Start agent if not running
+# Start agent if not running, then wait until it answers on its socket
 if ! gpy-agent status &>/dev/null; then
     gpy-agent start
-    sleep 0.5
+    for _ in $(seq 50); do
+        gpy-agent status &>/dev/null && break
+        sleep 0.1
+    done
+    gpy-agent status &>/dev/null || { echo "gpy-agent did not become ready" >&2; exit 1; }
 fi
 
 # Run benchmark

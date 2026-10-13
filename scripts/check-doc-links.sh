@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Fail if any tracked Markdown file links to a repository path that does not
-# exist, or to a heading anchor the target file does not define (gpy#505).
+# exist, or to a heading anchor the target file does not define.
 #
 # Also fails on a plain-text reference to a removed planning file (e.g. "see
-# TODO.md") outside docs/archive/: Markdown links are not the only way a doc
-# points at a file that no longer exists, and a link checker alone cannot
-# catch prose (2026-09-03 audit follow-up on gpy#505).
+# TODO.md"): Markdown links are not the only way a doc points at a file that
+# does not exist, and a link checker alone cannot catch prose.
 #
 # Scans tracked files only, via git ls-files, so build artifacts and local
 # scratch files can never trip the gate. Only repository-relative links are
@@ -62,9 +61,9 @@ basename_exists() {
 # basename_exists already covers all of these; this list is a second,
 # explicit guard so a future rename of one of them can't turn this pass into
 # a silent no-op for its own sake.
-# Deliberately omits the root agent-instruction files that the #509 cutover
-# excludes: a prose reference to one of them in a public document is exactly
-# what this pass should then flag (see #504's privacy guard).
+# Deliberately omits the root agent-instruction files, which are excluded from
+# the repository: a prose reference to one of them in a public document is
+# exactly what this pass should flag (see the #504 privacy guard).
 KNOWN_REAL_FILES=(
     README.md CONTRIBUTING.md SECURITY.md LICENSE CHANGELOG.md
     CODE_OF_CONDUCT.md INSTALL.md
@@ -272,16 +271,9 @@ check_file() {
 
 # Flag a plain-text mention of a SCREAMING_CASE.md filename (the shape planning
 # docs like TODO.md, AGENT.md, and DESIGN_DECISIONS.md take) when no tracked
-# file anywhere in the repository has that basename. Skips docs/archive/:
-# archived material is allowed to describe files that no longer exist because
-# it is documenting history, not current guidance, and already carries the
-# "> **Archived.**" marker that says so.
+# file anywhere in the repository has that basename.
 check_prose_refs() {
     local file="$1"
-
-    case "$file" in
-        docs/archive/*) return 0 ;;
-    esac
 
     while IFS=: read -r lineno token; do
         [[ -n "$token" ]] || continue

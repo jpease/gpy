@@ -2,7 +2,7 @@
 
 ## Status
 
-Superseded by native `git` subprocess implementation (see [design-decisions.md](../design-decisions.md), § "Optimized Git Subprocess (Native Git)")
+Superseded. GPY runs the native `git` binary (`git status --porcelain=v2`) and no longer depends on `gix`; see [design-decisions.md](../design-decisions.md#native-git-subprocess) for why. The rest of this record is the original decision, kept for context.
 
 ## Context
 
@@ -18,27 +18,27 @@ GPY needs to retrieve git repository information (branch, status, ahead/behind c
 ### Considered Alternatives
 
 1. **Shell out to `git` command**
-   - ✅ Accurate (it's the real git)
-   - ✅ Handles all edge cases
-   - ❌ Slow: 100-300ms startup overhead per invocation
-   - ❌ Parsing stdout is brittle
-   - ❌ No caching possible across invocations
+   - Pro: Accurate (it's the real git)
+   - Pro: Handles all edge cases
+   - Con: Slow: 100-300ms startup overhead per invocation
+   - Con: Parsing stdout is brittle
+   - Con: No caching possible across invocations
 
 2. **libgit2 (via git2-rs)**
-   - ✅ Widely used
-   - ✅ Stable API
-   - ✅ Good performance
-   - ❌ C dependency (harder to cross-compile)
-   - ❌ Some git features lag behind git
-   - ❌ Memory safety concerns at FFI boundary
+   - Pro: Widely used
+   - Pro: Stable API
+   - Pro: Good performance
+   - Con: C dependency (harder to cross-compile)
+   - Con: Some git features lag behind git
+   - Con: Memory safety concerns at FFI boundary
 
 3. **gix (Gitoxide) - Pure Rust**
-   - ✅ Pure Rust (no C dependencies)
-   - ✅ Memory safe
-   - ✅ Fast (comparable to libgit2)
-   - ✅ Easy cross-compilation
-   - ⚠️ Newer project (less battle-tested)
-   - ⚠️ Some git features still in development
+   - Pro: Pure Rust (no C dependencies)
+   - Pro: Memory safe
+   - Pro: Fast (comparable to libgit2)
+   - Pro: Easy cross-compilation
+   - Caveat: Newer project, less widely deployed
+   - Caveat: Some git features still in development
 
 ## Decision
 
@@ -102,7 +102,7 @@ For edge cases not yet supported by gix:
 
 1. **Maturity**: Newer than libgit2
    - Some edge cases may not be handled
-   - Fewer production deployments
+   - Fewer deployments than libgit2
    - API may change (though stable now)
 
 2. **Feature Coverage**: Not 100% git coverage yet
@@ -117,7 +117,7 @@ For edge cases not yet supported by gix:
 
 ### Mitigation Strategies
 
-1. **Comprehensive Testing**
+1. **Testing**
    - Test with various repo states (clean, dirty, rebasing)
    - Test with large repos (> 10k files)
    - Integration tests with real git repos
@@ -133,17 +133,9 @@ For edge cases not yet supported by gix:
    - Contribute fixes upstream when needed
    - Have escape hatch to shell out if needed
 
-## Performance Comparison
+## Performance
 
-Benchmark on a medium-sized repo (500 files):
-
-| Method | Cold Cache | Warm Cache |
-|--------|-----------|-----------|
-| `git status --porcelain` | 280ms | 85ms |
-| libgit2 | 45ms | 12ms |
-| **gix** | **38ms** | **8ms** |
-
-(Results on 2023 M1 MacBook Pro)
+The benchmark that motivated this decision is not reproducible against the current code. Current git-status budgets and measurements are in `tests/performance-baselines.json`.
 
 ## Edge Cases Handled
 

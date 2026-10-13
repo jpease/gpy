@@ -23,16 +23,8 @@ fn test_message_serialization_git_status() {
         prev_bg: None,
     };
 
-    let serialized_res = serialize_message(&msg);
-    assert!(serialized_res.is_ok(), "serialize_message failed");
-    let Ok(serialized) = serialized_res else {
-        return;
-    };
-    let deserialized_res = deserialize_message(&serialized);
-    assert!(deserialized_res.is_ok(), "deserialize_message failed");
-    let Ok(deserialized) = deserialized_res else {
-        return;
-    };
+    let serialized = serialize_message(&msg).expect("serialize_message failed");
+    let deserialized = deserialize_message(&serialized).expect("deserialize_message failed");
 
     assert!(
         matches!(deserialized, Message::RepositoryStatus { .. }),
@@ -55,16 +47,8 @@ fn test_message_serialization_language_detect() {
         virtual_env: None,
     };
 
-    let serialized_res = serialize_message(&msg);
-    assert!(serialized_res.is_ok());
-    let Ok(serialized) = serialized_res else {
-        return;
-    };
-    let deserialized_res = deserialize_message(&serialized);
-    assert!(deserialized_res.is_ok());
-    let Ok(deserialized) = deserialized_res else {
-        return;
-    };
+    let serialized = serialize_message(&msg).expect("serialize_message failed");
+    let deserialized = deserialize_message(&serialized).expect("deserialize_message failed");
 
     assert!(matches!(deserialized, Message::LanguageDetect { .. }));
     if let Message::LanguageDetect { path, format, .. } = deserialized {
@@ -105,16 +89,8 @@ fn test_message_serialization_register_client() {
         shell_version: None,
     };
 
-    let serialized_res = serialize_message(&msg);
-    assert!(serialized_res.is_ok());
-    let Ok(serialized) = serialized_res else {
-        return;
-    };
-    let deserialized_res = deserialize_message(&serialized);
-    assert!(deserialized_res.is_ok());
-    let Ok(deserialized) = deserialized_res else {
-        return;
-    };
+    let serialized = serialize_message(&msg).expect("serialize_message failed");
+    let deserialized = deserialize_message(&serialized).expect("deserialize_message failed");
 
     assert!(matches!(deserialized, Message::RegisterClient { .. }));
     if let Message::RegisterClient { pid, cwd, .. } = deserialized {
@@ -127,16 +103,8 @@ fn test_message_serialization_register_client() {
 fn test_message_serialization_ping() {
     let msg = Message::Ping;
 
-    let serialized_res = serialize_message(&msg);
-    assert!(serialized_res.is_ok());
-    let Ok(serialized) = serialized_res else {
-        return;
-    };
-    let deserialized_res = deserialize_message(&serialized);
-    assert!(deserialized_res.is_ok());
-    let Ok(deserialized) = deserialized_res else {
-        return;
-    };
+    let serialized = serialize_message(&msg).expect("serialize_message failed");
+    let deserialized = deserialize_message(&serialized).expect("deserialize_message failed");
 
     assert!(matches!(deserialized, Message::Ping));
 }
@@ -159,16 +127,8 @@ fn test_response_serialization_git_status() {
         rebase_progress: None,
     });
 
-    let serialized_res = serialize_response(&response);
-    assert!(serialized_res.is_ok());
-    let Ok(serialized) = serialized_res else {
-        return;
-    };
-    let deserialized_res = deserialize_response(&serialized);
-    assert!(deserialized_res.is_ok());
-    let Ok(deserialized) = deserialized_res else {
-        return;
-    };
+    let serialized = serialize_response(&response).expect("serialize_response failed");
+    let deserialized = deserialize_response(&serialized).expect("deserialize_response failed");
 
     match deserialized {
         Response::RepositoryStatus(s) => {
@@ -207,16 +167,8 @@ fn test_response_serialization_language() {
         ],
     };
 
-    let serialized_res = serialize_response(&response);
-    assert!(serialized_res.is_ok());
-    let Ok(serialized) = serialized_res else {
-        return;
-    };
-    let deserialized_res = deserialize_response(&serialized);
-    assert!(deserialized_res.is_ok());
-    let Ok(deserialized) = deserialized_res else {
-        return;
-    };
+    let serialized = serialize_response(&response).expect("serialize_response failed");
+    let deserialized = deserialize_response(&serialized).expect("deserialize_response failed");
 
     match deserialized {
         Response::Language { languages } => {
@@ -243,16 +195,8 @@ fn test_response_serialization_language() {
 fn test_response_serialization_ack() {
     let response = Response::Ack;
 
-    let serialized_res = serialize_response(&response);
-    assert!(serialized_res.is_ok());
-    let Ok(serialized) = serialized_res else {
-        return;
-    };
-    let deserialized_res = deserialize_response(&serialized);
-    assert!(deserialized_res.is_ok());
-    let Ok(deserialized) = deserialized_res else {
-        return;
-    };
+    let serialized = serialize_response(&response).expect("serialize_response failed");
+    let deserialized = deserialize_response(&serialized).expect("deserialize_response failed");
 
     match deserialized {
         Response::Ack => {
@@ -271,16 +215,8 @@ fn test_response_serialization_error() {
         message: "Test error".to_owned(),
     };
 
-    let serialized_res = serialize_response(&response);
-    assert!(serialized_res.is_ok());
-    let Ok(serialized) = serialized_res else {
-        return;
-    };
-    let deserialized_res = deserialize_response(&serialized);
-    assert!(deserialized_res.is_ok());
-    let Ok(deserialized) = deserialized_res else {
-        return;
-    };
+    let serialized = serialize_response(&response).expect("serialize_response failed");
+    let deserialized = deserialize_response(&serialized).expect("deserialize_response failed");
 
     match deserialized {
         Response::Error { message } => {
@@ -296,11 +232,7 @@ fn test_response_serialization_error() {
 #[test]
 fn test_fish_shell_ipc_format_git() {
     let json = r#"{"op":"git","cwd":"/test/path"}"#;
-    let deserialized_res = deserialize_message(json.as_bytes());
-    assert!(deserialized_res.is_ok());
-    let Ok(deserialized) = deserialized_res else {
-        return;
-    };
+    let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
 
     match deserialized {
         Message::RepositoryStatus { path, format, .. } => {
@@ -317,11 +249,7 @@ fn test_fish_shell_ipc_format_git() {
 #[test]
 fn test_fish_shell_ipc_format_lang() {
     let json = r#"{"op":"lang","cwd":"/project"}"#;
-    let deserialized_res = deserialize_message(json.as_bytes());
-    assert!(deserialized_res.is_ok());
-    let Ok(deserialized) = deserialized_res else {
-        return;
-    };
+    let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
 
     match deserialized {
         Message::LanguageDetect { path, format, .. } => {
@@ -339,11 +267,7 @@ fn test_fish_shell_ipc_format_lang() {
 fn test_fish_shell_ipc_format_register() {
     let pid = std::process::id();
     let json = format!(r#"{{"op":"register","pid":{pid},"cwd":"/tmp"}}"#);
-    let deserialized_res = deserialize_message(json.as_bytes());
-    assert!(deserialized_res.is_ok());
-    let Ok(deserialized) = deserialized_res else {
-        return;
-    };
+    let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
 
     match deserialized {
         Message::RegisterClient { pid: p, cwd, .. } => {
@@ -361,11 +285,7 @@ fn test_fish_shell_ipc_format_register() {
 fn test_fish_shell_ipc_format_workspace() {
     let pid = std::process::id();
     let json = format!(r#"{{"op":"workspace","pid":{pid},"cwd":"/repo"}}"#);
-    let deserialized_res = deserialize_message(json.as_bytes());
-    assert!(deserialized_res.is_ok());
-    let Ok(deserialized) = deserialized_res else {
-        return;
-    };
+    let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
 
     match deserialized {
         Message::WorkspaceUpdate { pid: p, cwd } => {
@@ -382,11 +302,7 @@ fn test_fish_shell_ipc_format_workspace() {
 #[test]
 fn test_fish_shell_ipc_format_ping() {
     let json = r#"{"op":"ping"}"#;
-    let deserialized_res = deserialize_message(json.as_bytes());
-    assert!(deserialized_res.is_ok());
-    let Ok(deserialized) = deserialized_res else {
-        return;
-    };
+    let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
 
     match deserialized {
         Message::Ping => {
@@ -437,15 +353,13 @@ fn test_missing_required_fields() {
     // Missing cwd for git operation
     let git_json = r#"{"op":"git"}"#;
     let git_result = deserialize_message(git_json.as_bytes());
-    assert!(matches!(&git_result, Ok(Message::RepositoryStatus { .. })));
-    if let Ok(Message::RepositoryStatus { path, format, .. }) = git_result {
-        assert_eq!(path, SafePath::new(".").unwrap());
-        assert_eq!(format, Format::Json);
-    } else {
-        return;
-    }
+    let Ok(Message::RepositoryStatus { path, format, .. }) = git_result else {
+        panic!("missing cwd must deserialize to RepositoryStatus with default path");
+    };
+    assert_eq!(path, SafePath::new(".").unwrap());
+    assert_eq!(format, Format::Json);
 
-    // Missing pid for register operation must now be rejected
+    // Missing pid for register operation must be rejected
     let register_json = r#"{"op":"register"}"#;
     let register_result = deserialize_message(register_json.as_bytes());
     assert!(
@@ -465,16 +379,8 @@ fn test_json_string_escaping() {
         prev_bg: None,
     };
 
-    let serialized_res = serialize_message(&msg);
-    assert!(serialized_res.is_ok());
-    let Ok(serialized) = serialized_res else {
-        return;
-    };
-    let deserialized_res = deserialize_message(&serialized);
-    assert!(deserialized_res.is_ok());
-    let Ok(deserialized) = deserialized_res else {
-        return;
-    };
+    let serialized = serialize_message(&msg).expect("serialize_message failed");
+    let deserialized = deserialize_message(&serialized).expect("deserialize_message failed");
 
     match deserialized {
         Message::RepositoryStatus { path, format, .. } => {

@@ -14,7 +14,7 @@
 //!
 //! These run concurrently via `tokio::select!` in the main event loop (see `start_background`).
 //!
-//! # Coordination Points (Critical for AI Agents)
+//! # Coordination Points
 //!
 //! **RULE**: Cross-module coordination MUST happen in this agent module. Independent subsystems
 //! (git, language, watcher, config, theme) should NOT directly coordinate with each other.
@@ -41,7 +41,7 @@
 //! owns caching policy, but this agent module coordinates the invalidation → refresh → notify
 //! sequence. This prevents circular dependencies between git and cache modules.
 //!
-//! **AI Agent Note**: When adding new cache invalidation triggers, add them to `handle_file_event()`.
+//! **Note**: When adding new cache invalidation triggers, add them to `handle_file_event()`.
 //! Do NOT add invalidation logic directly to git or cache modules.
 //!
 //! ## 2. File Watcher → Client Notifications (repaint doorbell)
@@ -65,7 +65,7 @@
 //! (`ipc::registry`) owns client management, but this agent module decides WHEN to notify
 //! clients based on event types and configuration state.
 //!
-//! **AI Agent Note**: All client notifications must flow through `ClientDirectory` methods.
+//! **Note**: All client notifications must flow through `ClientDirectory` methods.
 //! Never send signals directly from watcher or other modules. Use `notify_repaint_force()`
 //! for immediate updates or `notify_repaint()` for throttled updates.
 //!
@@ -88,10 +88,10 @@
 //! owns theme generation, but this agent module coordinates and ensures reload signals
 //! propagate correctly.
 //!
-//! **AI Agent Note**: When adding new config-driven features, ensure the affected state
+//! **Note**: When adding new config-driven features, ensure the affected state
 //! is exported via `theme export`. The reload doorbell is rung by the `ThemeManager` callback,
-//! not directly in this function. There is no config/theme cache to invalidate any more
-//! (#608) -- `ConfigManager`/`ThemeManager` each hold one live `Arc<RwLock<Arc<_>>>` state
+//! not directly in this function. There is no config/theme cache to invalidate:
+//! `ConfigManager`/`ThemeManager` each hold one live `Arc<RwLock<Arc<_>>>` state
 //! that is always current.
 //!
 //! ## 4. Clock Timer → Client Updates (repaint doorbell)
@@ -112,7 +112,7 @@
 //! **Why here**: Clock logic could live in a separate module, but centralizing timer
 //! coordination in the agent's event loop makes shutdown and signal throttling simpler.
 //!
-//! **AI Agent Note**: Only rings the doorbell if registered clients exist (see `clients.len() > 0` check).
+//! **Note**: Only rings the doorbell if registered clients exist (see `clients.len() > 0` check).
 //! This prevents unnecessary timer processing when no Fish shells are connected. To add new
 //! timer-based updates, add another `tokio::interval` to the `tokio::select!` block.
 //!
@@ -135,7 +135,7 @@
 //! owns file monitoring, but this agent module provides the shared `watcher_slot` that allows
 //! lazy registration. The `Agent` struct holds both components and coordinates their interaction.
 //!
-//! **AI Agent Note**: Watcher registration is automatic when enabled via config. The `watcher_slot`
+//! **Note**: Watcher registration is automatic when enabled via config. The `watcher_slot`
 //! is an `Arc<Mutex<Option<MultiRepoWatcher>>>` pattern allowing the server to register repos
 //! without holding permanent watcher references. This prevents reference cycles.
 //!
@@ -156,7 +156,7 @@
 //! **Why here**: Client registry and watcher share state through the agent's initialization.
 //! This coordination prevents all clients from being notified on every file change.
 //!
-//! **AI Agent Note**: Workspace tracking is optional but improves performance. The registry
+//! **Note**: Workspace tracking is optional but improves performance. The registry
 //! tracks client PIDs and CWDs. When a file changes, only clients in affected workspace
 //! receive signals. See `ClientDirectory::notify_repaint()`'s `target`.
 //!
@@ -200,7 +200,7 @@
 //! and git status, add coordination logic to `handle_file_event()` or create a new handler
 //! method in this agent module. Do NOT add cross-module calls in language or git modules.
 //!
-//! ## How to Add Shared State (For AI Agents)
+//! ## How to Add Shared State
 //!
 //! When you need to share state across IPC handlers (e.g., metrics, caches, trackers):
 //!
@@ -372,7 +372,7 @@
 //! of its own loop body, which normally only runs after an IPC `Shutdown`
 //! message. A signal short-circuits the event loop instead, dropping the
 //! server future mid-`accept()` — without an explicit `stop()` call here, the
-//! socket file would leak (#304).
+//! socket file would leak.
 //!
 //! **Why watcher before server?** Stopping the watcher first prevents events
 //! from queuing up during shutdown.
@@ -434,8 +434,8 @@ fn parse_reconcile_interval_secs(raw: Option<&str>) -> Option<u64> {
 /// back to `RECONCILE_INTERVAL_SECS`.
 ///
 /// This is a defense-in-depth knob for environments where the file
-/// watcher's OS-level notifications (`FSEvents` on macOS) never arrive — see
-/// #354. Tightening this interval does not add new watching machinery; it
+/// watcher's OS-level notifications (`FSEvents` on macOS) never arrive.
+/// Tightening this interval does not add new watching machinery; it
 /// just runs the existing reconcile scan (`refresh_and_notify_if_changed`
 /// per watched repo) more often.
 fn reconcile_interval_secs() -> u64 {
@@ -447,7 +447,7 @@ fn reconcile_interval_secs() -> u64 {
 /// never block the event loop).
 ///
 /// No-op when `repos` is empty. A panic inside `scan_fn` is caught by `spawn_blocking`'s
-/// `JoinHandle` and logged, matching the pre-#417 behavior.
+/// `JoinHandle` and logged rather than propagated.
 async fn run_reconcile_pass<F>(repos: Vec<PathBuf>, scan_fn: F)
 where
     F: Fn(Vec<PathBuf>) + Send + 'static,
@@ -467,8 +467,8 @@ where
 /// A tick skipped (due to the in-flight guard) while the first pass was running gets exactly
 /// one catch-up pass before `in_flight` is released.
 ///
-/// See #417: without this catch-up, a tick skipped during a slow scan was only caught up at
-/// the *next* interval, doubling worst-case staleness.
+/// Without this catch-up, a tick skipped during a slow scan would wait for the *next*
+/// interval, doubling worst-case staleness.
 ///
 /// Generic over `roots_fn` (how to fetch the currently-watched repo roots
 /// for the catch-up pass) and `scan_fn` (the actual per-repo scan) so this
@@ -545,7 +545,7 @@ fn prune_dead_clients(registry: &ClientDirectory, watcher_slot: &SharedWatcherSl
             let _ = watcher.unregister_client(*pid);
         }
 
-        // A doorbell broadcast drops clients from the registry alone (#782);
+        // A doorbell broadcast drops clients from the registry alone;
         // drop whatever the watcher still tracks for them. Snapshot first so
         // the watcher is never called with registry state held.
         for pid in watcher.client_pids() {
@@ -625,7 +625,7 @@ fn handle_clock_tick(
 ///
 /// When a scan is in flight this only records the tick as pending, so the
 /// in-flight scan's catch-up pass picks it up as soon as it finishes instead of
-/// waiting a full interval (#417). Otherwise it snapshots the watched repos and,
+/// waiting a full interval. Otherwise it snapshots the watched repos and,
 /// if there is nothing to scan, clears `in_flight` itself right here; if there
 /// is, it spawns [`run_reconcile_scan`], which then owns clearing `in_flight`
 /// once the scan (and any catch-up pass) completes. Exactly one of the two
@@ -642,7 +642,7 @@ fn spawn_reconcile_scan(
         // A scan is already running: record that this tick's work still
         // needs to happen, and let the in-flight scan's catch-up pass (see
         // run_reconcile_scan) pick it up as soon as it finishes, instead of
-        // waiting for the next full interval (#417).
+        // waiting for the next full interval.
         pending.store(true, Ordering::Release);
         debug_log!(
             "agent",
@@ -665,7 +665,7 @@ fn spawn_reconcile_scan(
     // the reconcile scan. The blocking scan is wrapped in an outer task so its
     // JoinHandle can be awaited: a bare spawn_blocking whose handle nobody
     // awaits would let a panic inside the scan vanish silently and would never
-    // clear the in-flight guard (#323).
+    // clear the in-flight guard.
     let reconcile_ctx = ctx.clone();
     let watcher_for_reconcile = Arc::clone(watcher_slot);
     let in_flight_for_scan = Arc::clone(in_flight);
@@ -674,7 +674,7 @@ fn spawn_reconcile_scan(
         for git_root in scan_repos {
             // Route through the coalescing wrapper so a reconcile scan for a
             // repo can never run concurrently with a watcher-dispatched scan
-            // for that same repo (#418).
+            // for that same repo.
             events::refresh_and_notify_coalesced(&reconcile_ctx, &git_root, &config, None);
         }
     };
@@ -698,11 +698,10 @@ fn spawn_reconcile_scan(
 pub struct Agent {
     server: EndpointHandle,
     watcher: SharedWatcherSlot,
-    /// The one place the agent's shared subsystem handles live (#587): the
+    /// The one place the agent's shared subsystem handles live: the
     /// config/theme managers, the client registry, the caches, and the refresh
-    /// coordinator. Previously the theme manager, config manager and client
-    /// registry were *also* held as three separate `Agent` fields cloned from
-    /// this very context, so each of those `Arc`s was stored twice.
+    /// coordinator. Access them through this context rather than duplicating
+    /// the `Arc`s as separate `Agent` fields.
     ctx: events::AgentContext,
 }
 
@@ -742,7 +741,7 @@ impl Agent {
         );
         // One registry for the whole agent, shared by the repo, config and
         // theme coordinators: `classify_event` consults the registered config
-        // paths on every coordinator, so they must all see the same set (#617).
+        // paths on every coordinator, so they must all see the same set.
         let watch_registry = Arc::new(crate::watcher::WatchRegistry::new());
         watch_registry.set_worktree_enabled(initial_config.git.watch_worktree);
 
@@ -754,7 +753,7 @@ impl Agent {
             Some(Arc::clone(&client_registry)),
             &watch_registry,
         ) {
-            // eprintln! vanishes once daemonized (stdio -> /dev/null); log instead (#323).
+            // eprintln! vanishes once daemonized (stdio -> /dev/null); log instead.
             debug_log!("agent", "Warning: Failed to start theme watching ({e})");
         }
 
@@ -764,7 +763,7 @@ impl Agent {
 
         // The initial theme-export cache is written by a background task in
         // `start_background` *after* the socket begins accepting, so the accept
-        // path is no longer gated on the theme render + atomic write. This is
+        // path is not gated on the theme render + atomic write. This is
         // safe because the export file's only reader is the shell's reload
         // handler, which falls back to spawning `gpy-agent theme export` on a
         // cache miss; first-prompt renders never read it.
@@ -874,7 +873,7 @@ impl Agent {
 
         // Theme-file hot reloads must refresh the export and instant caches
         // before the doorbell rings; the hook replaces the manager's direct
-        // `notify_reload` (#710).
+        // `notify_reload`.
         let ctx_for_theme_callback = ctx.clone();
         ctx.theme_manager.set_reload_callback(Arc::new(move || {
             let config = ctx_for_theme_callback.config_manager.get();
@@ -1000,7 +999,7 @@ impl Agent {
         startup::startup_checks(self.server.socket_path());
 
         // Recovery nudge. The daemon is the only place it runs (the
-        // `gpy-agent start` process just waits for readiness, #741), so each
+        // `gpy-agent start` process just waits for readiness), so each
         // tracked shell is nudged once: the daemon writes its `.reregister`
         // flag and rings its doorbell once our socket is accepting connections.
         // Those shells re-register and resume live updates without the user
@@ -1026,7 +1025,7 @@ impl Agent {
         // shell falls back to spawning `gpy-agent theme export`, so the prompt is
         // always correct, never gated on this write. If the write changed the
         // export (config edited while no agent ran), tracked shells are rung
-        // with `.reload` so they drop the stale theme they sourced (#701).
+        // with `.reload` so they drop the stale theme they sourced.
         {
             let theme_manager_for_export = Arc::clone(&self.ctx.theme_manager);
             let config_for_export = self.ctx.config_manager.get();
@@ -1068,13 +1067,13 @@ impl Agent {
         reconcile_timer.reset();
         // Guards against overlapping reconcile scans: a slow scan (many watched
         // repos, slow subprocess) could otherwise still be running when the next
-        // reconcile tick fires, piling up concurrent scans (#323).
+        // reconcile tick fires, piling up concurrent scans.
         let reconcile_in_flight = Arc::new(AtomicBool::new(false));
         // Set when a reconcile tick is skipped because a scan is already in
         // flight. `run_reconcile_scan` consumes this to run exactly one
         // catch-up pass right after the in-flight scan finishes, so a
         // watcher-dropped event skipped mid-scan is caught up in
-        // ~(interval + scan time) instead of doubling to ~2x interval (#417).
+        // ~(interval + scan time) instead of doubling to ~2x interval.
         let reconcile_pending = Arc::new(AtomicBool::new(false));
         let mut server_future = Box::pin(self.server.start());
         let mut shutdown_signal = startup::create_shutdown_signal();
@@ -1085,7 +1084,7 @@ impl Agent {
             tokio::select! {
                 result = &mut server_future => {
                     // The accept loop ends on an IPC `Shutdown` or when it
-                    // finds its socket removed or rebound (#779); both are
+                    // finds its socket removed or rebound; both are
                     // expected exits that release resources like a signal.
                     match &result {
                         Ok(()) => {
@@ -1190,7 +1189,7 @@ impl Agent {
         use std::sync::Mutex;
 
         // The embedded theme, built-in config defaults and a temp instant
-        // cache, never the developer's ~/.config/gpy or ~/.cache/gpy (#664).
+        // cache, never the developer's ~/.config/gpy or ~/.cache/gpy.
         let theme_manager = Arc::new(ThemeManager::builtin("default")?);
         let config_manager = Arc::new(crate::config::manager::ConfigManager::with_defaults()?);
         let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
@@ -1366,7 +1365,7 @@ mod reconcile_interval_tests {
     }
 }
 
-/// Tests for the reconcile-tick skip/catch-up logic (#417).
+/// Tests for the reconcile-tick skip/catch-up logic.
 ///
 /// A reconcile tick that arrives while a scan is already in flight must not be silently
 /// dropped until the next full interval — it must be caught up as soon as the in-flight scan
@@ -1431,7 +1430,7 @@ mod reconcile_scan_tests {
     /// Baseline / steady-state case: no tick is ever skipped, so exactly one scan pass runs
     /// and `pending` never triggers a catch-up.
     ///
-    /// Guards against a regression that would make the extraction always run a second pass.
+    /// Ensures the catch-up pass runs only when a tick was actually skipped.
     #[tokio::test]
     async fn no_pending_tick_runs_exactly_one_pass() {
         let call_count = Arc::new(AtomicUsize::new(0));
@@ -1481,7 +1480,7 @@ mod reconcile_scan_tests {
         );
     }
 
-    /// Core #417 regression: a tick that arrives while the first scan is
+    /// A tick that arrives while the first scan is
     /// still in flight sets `pending` instead of starting a second concurrent
     /// scan (mirrors the tick arm's guard in `start_background`).
     ///
@@ -1628,7 +1627,7 @@ mod reconcile_scan_tests {
 
 /// The registry and the watcher must agree on who is registered after every
 /// pruning pass, even when a doorbell broadcast removed clients from the
-/// registry alone (#782).
+/// registry alone.
 #[cfg(test)]
 mod prune_reconcile_tests {
     #![allow(clippy::unwrap_used)]

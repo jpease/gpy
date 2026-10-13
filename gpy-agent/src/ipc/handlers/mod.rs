@@ -32,10 +32,9 @@ use std::time::Duration;
 
 /// Why a handler refused or failed a request.
 ///
-/// Replaces the bare `String` the handlers used to return (#600): the error a
-/// handler produces is now inspectable by variant instead of only greppable by
+/// The error a handler produces is inspectable by variant rather than only by
 /// substring. It stays *internal* — `route_request_secure` stringifies it into
-/// the wire-visible `Response::Error { message }`, whose shape is unchanged —
+/// the wire-visible `Response::Error { message }`, whose shape is fixed —
 /// so every `Display` arm below reproduces its message byte-for-byte.
 #[derive(Debug, thiserror::Error)]
 pub enum HandlerError {
@@ -112,13 +111,12 @@ pub trait RequestHandler: Send + Sync {
 }
 
 /// Shared dependencies needed to write the instant-prompt cache and repaint
-/// live shells on a real content change (#587).
+/// live shells on a real content change.
 ///
 /// Every publish site runs the same sequence — read config, theme and palette,
-/// write the domain-specific cache, then notify-or-log on the result — and each
-/// used to thread these same five handles through its own parameter list. The
-/// handlers now hold one `RenderDeps` instead of five separate fields, and the
-/// background jobs they spawn capture a clone of it as a unit.
+/// write the domain-specific cache, then notify-or-log on the result — so the
+/// handlers hold these five handles as one `RenderDeps`, and the background
+/// jobs they spawn capture a clone of it as a unit.
 #[derive(Clone)]
 pub struct RenderDeps {
     /// Live configuration. Re-read on every publish so a hot reload is picked up.
@@ -133,7 +131,7 @@ pub struct RenderDeps {
     pub instant_cache: Arc<crate::cache::InstantPromptCache>,
     /// Live shells to repaint (SIGURG doorbell) when a write produces user-visibly
     /// different output. Required so a background refresh does not strand
-    /// updated status until the next keystroke (#160).
+    /// updated status until the next keystroke.
     pub client_registry: Arc<ClientDirectory>,
 }
 
@@ -144,9 +142,8 @@ pub struct RenderDeps {
 /// The write itself is domain-specific — git status and detected languages have
 /// different shapes — so callers perform their own `instant_cache.write_*` call
 /// and hand the `Result` here. This is the one place the "gate on change,
-/// notify-or-log" wrapper around that result lives (#587). The change gate keeps
-/// no-op refreshes silent, preserving the clock-gated broadcast behavior from
-/// #145/#146.
+/// notify-or-log" wrapper around that result lives. The change gate keeps
+/// no-op refreshes silent, so clock-gated broadcasts never wake terminals.
 pub(crate) fn notify_if_changed(
     client_registry: &ClientDirectory,
     root: &Path,
@@ -170,7 +167,7 @@ pub(crate) fn notify_if_changed(
 /// Both the async server path and any synchronous CLI/oneshot caller need "run
 /// this without blocking the caller", and each background-job spawn site used
 /// to carry its own copy of the try-current-runtime-or-fall-back-to-thread
-/// check (#587).
+/// check.
 pub(crate) fn spawn_detached<F>(job: F)
 where
     F: FnOnce() + Send + 'static,
@@ -207,8 +204,7 @@ impl<V> SharedJob<V> {
     /// Wait until the job completes.
     ///
     /// Test-only: production callers always bound their waits with
-    /// [`SharedJob::wait_timeout`] so a stuck job can never block indefinitely
-    /// (#154).
+    /// [`SharedJob::wait_timeout`] so a stuck job can never block indefinitely.
     #[cfg(test)]
     pub(super) fn wait(&self) -> Option<V>
     where
@@ -230,7 +226,7 @@ impl<V> SharedJob<V> {
     /// before the full `timeout` has elapsed. A single call would then return
     /// `None` and be mistaken for a real timeout; `wait_timeout_while` re-checks
     /// the predicate on every wakeup and keeps waiting until either the job
-    /// completes or the deadline genuinely passes (#323).
+    /// completes or the deadline genuinely passes.
     #[expect(
         clippy::significant_drop_tightening,
         reason = "clippy's suggested fix (drop(result_guard) after the wait_timeout_while call) doesn't apply -- result_guard is moved by value into wait_timeout_while and no longer exists afterward"
@@ -263,7 +259,7 @@ pub(super) type JobMap<K, V> = Arc<Mutex<HashMap<K, Arc<SharedJob<V>>>>>;
 /// (e.g. `spawn_blocking`/`std::thread::spawn`, whose `JoinHandle` nobody
 /// awaits) never calls `complete`/removes its map entry, so the slot for that
 /// key stays permanently poisoned: every later request joins the same dead
-/// job and waits out the full timeout, forever, until a daemon restart (#318).
+/// job and waits out the full timeout, forever, until a daemon restart.
 pub(super) struct JobGuard<K, V>
 where
     K: Eq + Hash,
@@ -284,7 +280,7 @@ where
     /// afterward.
     ///
     /// The map entry goes first, then the completion. See [`JobGuard`]'s
-    /// `Drop` for why that order is load-bearing (#531).
+    /// `Drop` for why that order is load-bearing.
     pub(super) fn finish(mut self, value: V) {
         self.fallback = None;
         if let Some(key) = self.key.take()
@@ -302,14 +298,13 @@ where
 {
     /// Free the slot first, complete the job second.
     ///
-    /// The order is the whole guarantee. Completing first published the
+    /// The order is the whole guarantee. Completing first would publish the
     /// fallback while the map still held the dead entry, so a caller that
     /// woke from `wait_timeout` and immediately re-requested the same key
     /// could still find that entry and rejoin the job it had just watched
-    /// die — the exact poisoning #318 added this guard to prevent, in a
-    /// window a few instructions wide. Removing the entry before the
-    /// completion is observable means anyone who has seen the result is
-    /// guaranteed to find the slot already free (#531).
+    /// die — poisoning the slot this guard exists to protect. Removing the
+    /// entry before the completion is observable means anyone who has seen
+    /// the result is guaranteed to find the slot already free.
     ///
     /// A `get_or_start` landing between the two steps starts a fresh job,
     /// which is correct: waiters already holding the old `Arc` still receive
@@ -468,7 +463,7 @@ mod tests {
     // `HandlerError` is stringified straight into the wire-visible
     // `Response::Error { message }`, so each arm below pins the exact text a
     // shell sees. A change to any of these strings is a change to the IPC
-    // payload, not a cosmetic edit (#600).
+    // payload, not a cosmetic edit.
 
     #[test]
     fn unexpected_message_renders_each_handlers_own_wording() {
@@ -554,7 +549,7 @@ mod tests {
     /// A cold cache miss must never wait forever.
     ///
     /// `wait_timeout` is the bounded primitive that backs git/language request
-    /// timeouts (#154). When the job never completes, it returns `None` promptly
+    /// timeouts. When the job never completes, it returns `None` promptly
     /// instead of blocking.
     #[test]
     fn wait_timeout_returns_none_without_blocking_indefinitely() {
@@ -627,28 +622,19 @@ mod tests {
         assert!(results.iter().all(|result| *result == Some(42)));
     }
 
-    /// Reproduces #318: a panic inside the spawned job body (before `finish`
-    /// runs) must not permanently poison the single-flight slot.
+    /// A panic inside the spawned job body must not poison the single-flight slot.
     ///
-    /// Proves both halves of the acceptance criterion:
+    /// With the panic before `finish` runs:
     /// (a) the in-flight `SharedJob` degrades to the fallback value promptly
     ///     instead of hanging until the caller's own timeout, and
     /// (b) a second `get_or_start` for the *same key*, issued once the
     ///     fallback has been observed, starts a genuinely fresh job rather
     ///     than rejoining the dead one.
     ///
-    /// (b) used to be a race, and flaked on `ubuntu-latest` and
-    /// `windows-latest` alike (#531): `Drop` published the fallback *before*
-    /// removing the map entry, so `wait_timeout` could return while the dead
-    /// entry was still there and `start_count` stayed at 1. `Drop` now frees
-    /// the slot first, which makes observing the fallback sufficient to
-    /// guarantee the slot is free — the assertion below is ordered by the
-    /// guard's own memory ordering rather than by how fast a panic unwinds.
-    ///
-    /// Against the pre-guard code, (a) hangs until `wait_timeout`'s deadline
-    /// and returns `None` (never the fallback), and (b) fails because
-    /// `get_or_start` returns the existing (dead) map entry early, so the
-    /// second call's `start` closure never runs and `start_count` stays at 1.
+    /// (b) relies on `Drop` freeing the slot *before* publishing the
+    /// fallback, so observing the fallback guarantees the slot is free — the
+    /// assertion below is ordered by the guard's own memory ordering rather
+    /// than by how fast a panic unwinds.
     #[test]
     fn panic_in_spawned_job_does_not_poison_slot_for_same_key() {
         const FALLBACK: usize = 999;

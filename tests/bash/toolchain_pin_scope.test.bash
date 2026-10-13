@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
 # tests/bash/toolchain_pin_scope.test.bash
 #
-# Regression test for #538. scripts/check-active-toolchain.sh asserts that the
-# active rustc is the one gpy-agent/rust-toolchain.toml pins, and it used to ask
-# that question from whatever directory it happened to be invoked in -- in CI,
-# the repository root.
+# scripts/check-active-toolchain.sh asserts that the active rustc is the one
+# gpy-agent/rust-toolchain.toml pins, and it must ask that question from
+# gpy-agent/, not from whatever directory it happens to be invoked in (in
+# CI, the repository root).
 #
 # A toolchain file governs its own directory and the directories below it.
 # rustup searches the current directory and its parents, never its children, so
 # gpy-agent/rust-toolchain.toml says nothing about the root: `rustc` there falls
-# through to rustup's default toolchain. The check was therefore reporting the
-# machine's default rather than the project's pin. It passed on ubuntu-latest
-# and windows-latest only because those images ship the pinned version as their
-# default, and failed the whole macOS quality gate in 19s because that image
-# ships a different one -- while all three were in fact compiling with the pin.
+# through to rustup's default toolchain. Probing from the root reports the
+# machine's default rather than the project's pin: it passes on images whose
+# default happens to be the pinned version and fails on any other, even
+# though every build compiles with the pin.
 #
-# The properties asserted here are the two that broke:
+# The properties asserted here:
 #
 #   (a) the probe is taken in the directory the pin governs, whatever the
 #       caller's working directory is
-#   (b) a genuine mismatch still fails, so the #518 guard is not hollowed out
+#   (b) a genuine mismatch still fails, so the toolchain guard is not
+#       hollowed out
 #
 # Both are tested against a fake `rustc` on PATH whose reported version depends
 # on the working directory, so the result does not depend on which toolchain the
@@ -31,11 +31,8 @@ cd "$ROOT" || exit 1
 SCRIPT="$ROOT/scripts/check-active-toolchain.sh"
 TOOLCHAIN="$ROOT/gpy-agent/rust-toolchain.toml"
 
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 # Indent captured output under the failure that reported it. Parameter
 # expansion rather than sed so shellcheck's SC2001 stays quiet.
@@ -93,7 +90,7 @@ for from in "$ROOT" "$ROOT/scripts" /; do
             indent "$output"
         fi
     else
-        fail "run from $from reported a mismatch; the probe followed the caller's directory instead of gpy-agent/ (#538)"
+        fail "run from $from reported a mismatch; the probe followed the caller's directory instead of gpy-agent/"
         indent "$output"
     fi
 done
@@ -121,9 +118,4 @@ else
     echo "  SKIP: rustc is not installed"
 fi
 
-if [[ $failures -ne 0 ]]; then
-    echo "$failures assertion(s) failed"
-    exit 1
-fi
-
-echo "PASS"
+test_finish

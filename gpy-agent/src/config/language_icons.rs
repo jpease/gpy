@@ -10,10 +10,6 @@ use std::fmt;
 use super::DelimiterConfig;
 use super::defaults::{default_color_black, default_color_white};
 
-// ============================================================================
-// Language Icons Configuration
-// ============================================================================
-
 /// Language icons configuration (Nerd Fonts icons)
 ///
 /// This struct allows users to customize the icons displayed for different
@@ -25,10 +21,6 @@ pub struct LanguageIcons {
     #[serde(flatten)]
     pub icons: HashMap<String, super::types::Icon>,
 }
-
-// ============================================================================
-// Language Theme Configuration
-// ============================================================================
 
 /// Language segment color configuration with per-language overrides
 ///
@@ -272,8 +264,7 @@ impl LanguageTheme {
     /// Get a theme-declared style-attribute string for a language.
     ///
     /// Returns the `<canonical>_style` override verbatim (so an explicit empty
-    /// string suppresses the default), or `"bold"` when no override is set —
-    /// matching the previously hardcoded attribute for every language.
+    /// string suppresses the default), or `"bold"` when no override is set.
     #[must_use]
     pub fn get_style(&self, language: &str) -> &str {
         let canonical = crate::language::metadata::get_canonical_name(language).unwrap_or(language);

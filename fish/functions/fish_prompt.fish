@@ -99,14 +99,15 @@ function fish_prompt
         # Check if this is the last segment
         #
         # `set -l is_last` (with no value) creates an EMPTY LIST, not an
-        # empty string -- Fish expands that to zero arguments below, which
-        # silently shifts $is_first into the $is_last slot for any
-        # first-but-not-last segment (#629). Seed an explicit "" so the
+        # empty string -- Fish expands that to zero arguments, which would
+        # shift $is_first into the $is_last slot. Seed an explicit "" so the
         # variable always expands to exactly one (possibly empty) argument.
         #
-        # Convention (#613): "true" or "" -- the same tokens IPC payloads use
+        # Convention: "true" or "" -- the same tokens IPC payloads use
         # (`,"is_last":true`) and every segment's render function receives
-        # directly, with no per-segment last/first-literal conversion.
+        # directly. A render function called with fewer args has an
+        # empty-list --argument-names binding, so each one re-seeds "" the
+        # same way (`set -q is_last[1]; or set is_last ""`).
         set -l is_last ""
         if test $current_idx -eq $segment_count
             set is_last true

@@ -1,9 +1,9 @@
-//! Simple profiling utilities for measuring operation timing
+//! Opt-in operation timing, enabled by setting `GPY_PROFILE`.
 
 use crate::warn_log;
 use std::time::Instant;
 
-/// Timer for measuring operation duration
+/// Logs the elapsed time between construction and drop when `GPY_PROFILE` is set.
 pub struct Timer {
     name: &'static str,
     start: Instant,
@@ -32,12 +32,4 @@ impl Drop for Timer {
             );
         }
     }
-}
-
-/// Macro for easy timing
-#[macro_export]
-macro_rules! profile {
-    ($name:expr) => {
-        let _timer = $crate::profiling::Timer::new($name);
-    };
 }

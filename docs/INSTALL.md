@@ -23,10 +23,10 @@ restating it.
 
 | OS | Support |
 |----|---------|
-| Linux (x86_64, aarch64) | Full on x86_64: every tier, including the shell end-to-end suites (Fish, Bash and Zsh against a real agent on a pseudo-terminal), runs on every pull request on `ubuntu-latest` (Fish 4, zsh, bash), and a fresh install into an empty `$HOME` on a stock `ubuntu:24.04` container renders a first prompt in fish, zsh and bash (`scripts/test-fresh-install.sh`). aarch64 binaries are built and checked against the glibc floor but not run in CI. Release binaries need glibc 2.31 or newer (e.g. Ubuntu 20.04+, Debian 11+); the release job rejects a binary that references a newer glibc and runs the x86_64 binaries in `ubuntu:20.04` (`GPY_GLIBC_FLOOR` in `.github/workflows/release.yml`, #694) |
+| Linux (x86_64, aarch64) | Full on x86_64: every tier, including the shell end-to-end suites (Fish, Bash and Zsh against a real agent on a pseudo-terminal), runs on every pull request on `ubuntu-latest` (Fish 4, zsh, bash), and a fresh install into an empty `$HOME` on a stock `ubuntu:24.04` container renders a first prompt in fish, zsh and bash (`scripts/test-fresh-install.sh`). aarch64 binaries are built and checked against the glibc floor but not run in CI. Release binaries need glibc 2.31 or newer (e.g. Ubuntu 20.04+, Debian 11+); the release job rejects a binary that references a newer glibc and runs the x86_64 binaries in `ubuntu:20.04` (`GPY_GLIBC_FLOOR` in `.github/workflows/release.yml`) |
 | macOS 11+ (Intel and Apple Silicon) | Full: every tier, including the shell end-to-end suites, runs on every pull request on `macos-latest` (Apple Silicon) and on the maintainer's pre-push gate. Intel binaries are built and checksummed in the release but only the Apple Silicon ones are run |
-| Windows, via WSL | Recommended — run the Linux instructions inside WSL. `.github/workflows/wsl-smoke.yml` builds the agent in Ubuntu 24.04 under WSL 2 on a Windows runner and runs `scripts/wsl-smoke.sh` and the cross-shell contract suite there, when its own files change, weekly and on demand (it is not part of the PR gate, #849). See [Windows (WSL)](#windows-wsl) for what is WSL-specific |
-| Windows, native | CLI-only; the prompt integration does not run there. The claim is backed by the five CLI integration targets the Windows gate runs on every pull request (`gpy_cli_tests`, `cli_config_mutation_tests`, `theme_import_tests`, `init_command_tests`, `cli_integration_tests`; `.github/workflows/windows-gate.yml`, #653). See [Windows (WSL)](#windows-wsl) below for what "not supported" covers. |
+| Windows, via WSL | Recommended — run the Linux instructions inside WSL. `.github/workflows/wsl-smoke.yml` builds the agent in Ubuntu 24.04 under WSL 2 on a Windows runner and runs `scripts/wsl-smoke.sh` and the cross-shell contract suite there, when its own files change, weekly and on demand (it is not part of the PR gate). See [Windows (WSL)](#windows-wsl) for what is WSL-specific |
+| Windows, native | CLI-only; the prompt integration does not run there. The claim is backed by the five CLI integration targets the Windows gate runs on every pull request (`gpy_cli_tests`, `cli_config_mutation_tests`, `theme_import_tests`, `init_command_tests`, `cli_integration_tests`; `.github/workflows/windows-gate.yml`). See [Windows (WSL)](#windows-wsl) below for what "not supported" covers. |
 
 What CI actually backs: `pr-gate.yml` runs on every pull request to `main`
 (and on manual dispatch), and `cross-platform-test.yml` runs after every push
@@ -50,10 +50,7 @@ What CI does not cover on native Windows is the shell integration, and it
 never will: the prompt talks to the agent over a Unix domain socket, which
 native Windows does not provide. `pr-gate.yml`'s Windows leg deliberately runs
 no Fish, Bash or Zsh suites for that reason. End-to-end behaviour on native
-Windows is unmeasured (#513), and one library test —
-`config::manager::tests::poll_fallback_reloads_without_any_watcher_running` —
-is a known intermittent timing flake on that leg; re-run once before treating
-a red result as a regression.
+Windows is unmeasured.
 
 ### Shells
 
@@ -62,6 +59,22 @@ a red result as a regression.
 | Fish | 3.6+ |
 | Zsh | 5.8+ |
 | Bash | 3.2+ (5.0+ recommended — see [Bash on macOS is too old](#bash-on-macos-is-too-old)) |
+
+### Shell feature matrix
+
+Every shell renders the same segments (directory, git, language, status,
+clock) and applies config and theme hot-reloads. The differences:
+
+| Feature | Fish | Zsh | Bash 5.x | Bash 4.x | Bash 3.2 (macOS default) |
+|---|---|---|---|---|---|
+| Live updates | Idle prompt repaints in place | Idle prompt repaints in place (`TRAPURG` + `zle reset-prompt`) | Shown at the next prompt (readline cannot repaint an idle prompt) | Same as Bash 5.x | Same as Bash 5.x |
+| Signal mechanism | One `--on-signal SIGURG` handler | Native `TRAPURG` function | No trap: SIGURG stays ignored, flag files are read at the next prompt | Same as Bash 5.x | Same as Bash 5.x |
+| Re-registers after an agent restart | Immediately | Immediately | At the next prompt | At the next prompt | At the next prompt |
+| Duration segment | Millisecond | Millisecond (`EPOCHREALTIME`) | Millisecond (`EPOCHREALTIME`) | `date +%s%N` with GNU `date`; whole seconds with BSD `date` | Disabled |
+| Transient prompt | No | No | No | No | No |
+
+Bash details (version detection, `PS1` differences, known issues) are in
+[Bash Limitations](user/bash-limitations.md).
 
 ### IPC transport dependencies
 

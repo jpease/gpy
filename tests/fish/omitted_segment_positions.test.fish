@@ -2,14 +2,13 @@
 # tests/fish/omitted_segment_positions.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #766.
-#
 # fish_prompt assigns first/last positions from the detect pass, before
 # anything renders. git and language pass detect on a .git root / project
 # marker, but on a cold miss (no instant-cache entry) language always prints
-# nothing, and git prints nothing while the agent is down. The segment still
-# held its position, so the previous segment ended with a dangling separator
-# instead of the closing cap, or the next one lost its first-segment form.
+# nothing, and git prints nothing while the agent is down. A segment that
+# prints nothing must not hold its position: otherwise the previous segment
+# ends with a dangling separator instead of the closing cap, or the next one
+# loses its first-segment form.
 #
 # Drives the real fish_prompt loop with no agent socket and an empty instant
 # cache. segment_directory_render is replaced by a stub that prints the
@@ -33,7 +32,7 @@ set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
 
 # Drop inherited repo-scoping git env so `git init` below targets the
-# throwaway repo, not this one, when run from a git hook (#275).
+# throwaway repo, not this one, when run from a git hook.
 set -e GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_NAMESPACE
 
 set -l saved_home $HOME

@@ -2,14 +2,23 @@
 # Create a huge git repository for performance testing
 # Usage: ./create-huge-test-repo.sh [path] [file_count]
 
+set -euo pipefail
+
 REPO_PATH="${1:-/tmp/huge-repo}"
 FILE_COUNT="${2:-100000}"
 
+case "$REPO_PATH" in
+    ""|/|.|..|"${HOME:-}"|"${HOME:-}/")
+        echo "Refusing to delete unsafe repo path: '$REPO_PATH'" >&2
+        exit 1
+        ;;
+esac
+
 echo "Creating huge repo at $REPO_PATH with $FILE_COUNT files..."
 
-rm -rf "$REPO_PATH"
+rm -rf -- "$REPO_PATH"
 mkdir -p "$REPO_PATH"
-cd "$REPO_PATH" || exit 1
+cd "$REPO_PATH"
 
 git init
 

@@ -3,7 +3,7 @@ set -euo pipefail
 
 # prek runs this from pre-push without clearing the repo-scoping variables git
 # exports to hooks, and this script runs `git worktree add/remove` against the
-# real repository (#555). Clear them, as quality-check.sh does (#275), so every
+# real repository (#555). Clear them, as quality-check.sh does, so every
 # git call resolves the repository from its own cwd.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
     GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
@@ -26,15 +26,14 @@ MEASUREMENT_SECONDS="${GPY_PERF_CANARY_MEASUREMENT_SECONDS:-1}"
 WARN_THRESHOLD_PCT="${GPY_PERF_CANARY_WARN_THRESHOLD_PCT:-10}"
 FAIL_THRESHOLD_PCT="${GPY_PERF_CANARY_FAIL_THRESHOLD_PCT:-20}"
 
-# language_detect_rust/python/node were tracked here through #524, then
-# dropped (#537): their 2-3-file synthetic corpus measured as unstable
+# language_detect_rust/python/node are not tracked here (#537): their 2-3-file synthetic corpus measured as unstable
 # diagnostic noise, not signal -- rerunning the canary twice against the same
 # two commits produced a +20.8% "regression" and a +5.9% "ok" for the same
 # benchmark, and the corpus's own baseline moved 23% between runs with no code
 # change on either side. The `language_detection` budget in
 # tests/performance-baselines.json already gates language detection properly,
 # against a realistic-sized corpus, via `./scripts/bench.sh --ci` -- this
-# canary duplicating that check on a smaller, noisier corpus added false
+# canary duplicating that check on a smaller, noisier corpus would add false
 # alarms without adding coverage. ipc_roundtrip and git_status_cold remain
 # because neither showed this instability.
 BENCHMARKS=(
@@ -217,13 +216,13 @@ run_canary_bench() {
   )
 }
 
-# Tripwire for #555: this is the only pre-push hook that runs `git worktree
+# Tripwire (#555): this is the only pre-push hook that runs `git worktree
 # add`/`remove` against the real repo (everything else in the gate uses
-# throwaway fixture repos). A pre-push run corrupted the *shared*
-# `.git/config` (visible to every worktree, `main` included) by flipping
-# `core.bare` to true; the exact trigger wasn't isolated. Snapshot it here and
+# throwaway fixture repos), and a pre-push run has been seen to corrupt the
+# *shared* `.git/config` (visible to every worktree, `main` included) by
+# flipping `core.bare` to true; the exact trigger is not isolated. Snapshot it here and
 # restore + warn loudly if it changes, so a recurrence gets caught with full
-# evidence instead of silently reappearing.
+# evidence instead of passing silently.
 CORE_BARE_BEFORE="$(git config --get core.bare 2>/dev/null || printf 'false')"
 
 WORKTREE_DIR="$(mktemp -d /tmp/gpy-perf-canary.XXXXXX)"

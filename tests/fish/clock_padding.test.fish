@@ -4,12 +4,12 @@
 # and relies on the renderer for the trailing gap, instead of padding both
 # sides itself.
 #
-# Regression guard: in a flat theme (e.g. the Starship preset) every segment
-# delimiter is empty, so segments would abut without some separator.
-# gpy_section_standalone/gpy_section_end now emit a same-background gap space
-# before a non-last closing cap unconditionally (added for the triangle-cap
-# default theme), which covers this case; the clock must NOT also add its own
-# trailing pad, or non-last renders would carry two spaces instead of one.
+# In a flat theme (e.g. the Starship preset) every segment delimiter is
+# empty, so segments would abut without some separator.
+# gpy_section_standalone/gpy_section_end emit a same-background gap space
+# before a non-last closing cap unconditionally, which covers this case; the
+# clock must NOT also add its own trailing pad, or non-last renders would
+# carry two spaces instead of one.
 
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
@@ -96,11 +96,11 @@ else
     check "clock content still contains the rendered time (got: '$__test_clock_content')" fail
 end
 
-# --- Date format strings (#644): the exact strftime spec for each clock mode.
+# --- Date format strings: the exact strftime spec for each clock mode.
 # The prompt folds this into its single `date` call, so a wrong spec here is
 # a wrong clock for every render. It is also the spec the agent embeds in a
 # templated clock (ClockResolver::time_spec, and Bash/Zsh's copies): when the
-# agent renders the clock (#844) fish finds this exact text in the response, so
+# agent renders the clock fish finds this exact text in the response, so
 # the no-pad forms are `%-I`/`%-H`, not the blank-padded `%l`/`%k`.
 function check_format --argument-names label time_format leading_zero seconds expected
     set -g __time_format $time_format

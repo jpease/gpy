@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # tests/bash/completions.test.bash
 #
-# Task 4/6 of Epic #326: BASH completions for the `gpy` CLI.
+# Bash completions for the `gpy` CLI.
 #
 # `gpy completions bash` (clap_complete) generates the STRUCTURAL surface
 # (subcommand/flag names) into a function named `_gpy`, registered via
 # `complete -F _gpy ... gpy`. It has no way to know the live set of themes,
 # palettes, or segments installed on this machine -- those come from the
-# hidden `gpy __complete <kind>` command (#328).
+# hidden `gpy __complete <kind>` command.
 #
 # bash/completions/gpy-dynamic.bash is the checked-in, hand-authored glue
 # that supplies those dynamic value lists. It must:
@@ -18,9 +18,9 @@
 #      per command in bash.
 #
 # This test sources the *generated* structural completion (built fresh from
-# the debug `gpy` binary, mirroring the "parity test needs binary rebuild"
-# gotcha -- `cargo test` does not rebuild bin targets) followed by the
-# checked-in dynamic glue, then drives `_gpy_dynamic` directly the same way
+# the debug `gpy` binary, since `cargo test` does not rebuild bin targets)
+# followed by the checked-in dynamic glue, then drives `_gpy_dynamic`
+# directly the same way
 # bash's programmable completion would: $1=command, $2=cur, $3=prev, with
 # COMP_WORDS/COMP_CWORD set as globals.
 
@@ -158,8 +158,7 @@ echo "Checking delegation degrades gracefully when _gpy is undefined..."
     fi
 ) || failures=$((failures + 1))
 
-# ---------------------------------------------------------------------------
-# Per-session caching (#346): __gpy_complete_cached must fork `gpy` at most
+# Per-session caching: __gpy_complete_cached must fork `gpy` at most
 # once per kind per session, and must never cache an empty/failed result.
 # A `gpy` shell function shadows the real binary for the rest of this
 # subshell (same stub approach as the checks above). The call counter can't
@@ -171,7 +170,6 @@ echo "Checking delegation degrades gracefully when _gpy is undefined..."
 # count, since file writes are a real OS-level side effect that survives the
 # subshell. Runs in `(...)` subshells so the stub/counter/cache-var resets
 # never leak into the checks above or below.
-# ---------------------------------------------------------------------------
 gpy_calls_file="$(mktemp -t gpy-cache-test-calls.XXXXXX)"
 trap 'rm -f "$gpy_calls_file"' EXIT
 

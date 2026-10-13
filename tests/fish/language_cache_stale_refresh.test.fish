@@ -57,7 +57,7 @@ else
     check "stale cache content is served" fail
 end
 
-# #612: staleness is now the exit-code status (2/6), not a side-effect global.
+# Staleness is reported through the exit-code status (2/6).
 if __gpy_cache_status_stale $content_status
     check "stale marker is set when cache exceeds TTL" pass
 else
@@ -82,7 +82,7 @@ else
     check "stale marker is NOT set for fresh cache" fail
 end
 
-# --- #458: the stale path must actually reach the agent ---
+# --- The stale path must actually reach the agent ---
 #
 # Detecting staleness is only half the self-heal: the refresh it fires has to
 # leave the shell. `__gpy_request` short-circuits on any instant-cache hit —
@@ -151,7 +151,7 @@ else
     echo "  payload was: [$stale_payload]"
 end
 
-# Scenario 2: cold miss (no cache file at all) must keep sending, unchanged.
+# Scenario 2: cold miss (no cache file at all) must keep sending.
 rm -f "$__gpy_test_ipc_marker"
 rm -f "$cache_file"
 set -e __gpy_last_segment_bg
@@ -167,14 +167,15 @@ else
     check "cold cache miss still triggers an IPC send" fail
 end
 
-# Scenario 3: the 500ms per-path/suffix throttle still suppresses a second
-# stale refresh fired immediately after the first.
+# Scenario 3: the 500ms per-path/suffix throttle suppresses a second stale
+# refresh fired immediately after the first.
 rm -f "$__gpy_test_ipc_marker"
 printf '\e[32m ruby 3.4.0 \e[0m' >"$cache_file"
 touch -t 200001010000 "$cache_file"
 set -e __gpy_last_segment_bg
 # Deliberately leave the throttle state from scenario 2 in place.
 segment_language_render >/dev/null
+# Window in which a backgrounded refresh, if not throttled, would land.
 sleep 0.3
 
 if test -s "$__gpy_test_ipc_marker"

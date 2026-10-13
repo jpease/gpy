@@ -48,9 +48,7 @@ pub(crate) mod separator;
 mod style_encoder;
 pub(crate) mod username_resolver;
 
-// The ANSI format is shell-agnostic and was previously a thin delegating
-// wrapper around `FishAnsiFormatter`; re-export it directly instead of
-// keeping a separate module whose only job was forwarding `render()`.
+// The ANSI format is shell-agnostic, so it is a re-export of `FishAnsiFormatter`.
 pub use fish::FishFormatter;
 pub use fish_ansi::FishAnsiFormatter as AnsiFormatter;
 // Zsh's shell-argument rendering is byte-identical to Fish's (both just emit

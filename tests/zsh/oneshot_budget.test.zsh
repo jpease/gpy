@@ -2,7 +2,7 @@
 # tests/zsh/oneshot_budget.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #614: a dead daemon must cost at most ONE `gpy-agent oneshot` fork per
+# A dead daemon must cost at most ONE `gpy-agent oneshot` fork per
 # prompt render, and that budget must be enforced with a plain per-render
 # shell variable (__gpy_oneshot_used) instead of a predictable
 # ${TMPDIR:-/tmp}/.gpy_oneshot_used_$$ marker file. __gpy_render_prompt runs
@@ -71,8 +71,8 @@ oneshot_calls=$(wc -c <"$COUNTER_FILE" | tr -d ' ')
 check "at most one oneshot fork per render" 1 "$oneshot_calls"
 
 # No leftover predictable-name marker/flag file under TMPDIR for this PID.
-# The shell's own private relay directory (gpy_cache_<pid>_<random>, 0700,
-# #763) carries the PID by design and is not a marker file.
+# The shell's own private relay directory (gpy_cache_<pid>_<random>, 0700)
+# carries the PID by design and is not a marker file.
 leftover_count=0
 setopt local_options nullglob dotglob
 for f in "${TMPDIR:-/tmp}"/*gpy*_$$*; do

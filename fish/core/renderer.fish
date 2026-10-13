@@ -85,10 +85,9 @@ end
 function gpy_section_end --argument-names bg is_last
     # Determine which delimiter to use based on position
     #
-    # `true` is the first-party convention (#613: fish_prompt.fish's dispatch
-    # loop and every built-in segment). `last` is accepted too, for backward
-    # compatibility with third-party plugin segments written against the
-    # pre-#613 dispatch, which passed the literal "last".
+    # `true` is the first-party convention (see fish_prompt.fish's dispatch
+    # loop). The literal `last` is also accepted for third-party plugin
+    # segments that pass it.
     set -l end_delim
     set -l delim_fg
     set -l delim_bg
@@ -171,8 +170,7 @@ end
 
 function gpy_section_standalone --argument-names bg fg content is_last
     # Determine which delimiters to use based on position. `is_last` accepts
-    # both "true" (first-party, #613) and the legacy "last" spelling (see
-    # gpy_section_end above for why).
+    # both "true" and "last" (see gpy_section_end above).
     set -l start_delim
     set -l end_delim
     set -l start_fg

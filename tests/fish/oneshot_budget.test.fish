@@ -3,14 +3,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # The Fish twin of tests/bash/oneshot_budget.test.bash and
-# tests/zsh/oneshot_budget.test.zsh (#845, #614).
+# tests/zsh/oneshot_budget.test.zsh.
 #
 # A dead daemon must cost at most ONE `gpy-agent oneshot` fork per prompt
 # render, and that budget must be a plain per-render variable
-# (__gpy_oneshot_used) rather than the predictable
-# ${TMPDIR}/.gpy_oneshot_used_$fish_pid marker file Fish used to keep: a path
-# another local user could pre-create to switch the fallback off, and one a
-# shell left behind whenever it exited with the budget spent.
+# (__gpy_oneshot_used), never a predictable
+# ${TMPDIR}/.gpy_oneshot_used_$fish_pid marker file: another local user could
+# pre-create such a path to switch the fallback off, and a shell would leave
+# it behind whenever it exited with the budget spent.
 #
 # This stubs `gpy-agent` on PATH to count `oneshot` invocations into a file,
 # points GPY_AGENT_SOCKET_PATH at a socket that never exists (dead daemon), and

@@ -361,9 +361,9 @@ mod tests {
         );
     }
 
-    /// The structured error must still render byte-for-byte the wording
-    /// validation failures have always had (#600). `Error::config` stringifies
-    /// this, so a change here is user-visible in `gpy theme check`.
+    /// The structured error renders the established wording byte-for-byte.
+    /// `Error::config` stringifies this, so a change here is user-visible in
+    /// `gpy theme check`.
     #[test]
     fn display_text_is_unchanged_by_the_structured_error() {
         let mut theme = ThemeConfig::default();
@@ -397,7 +397,7 @@ mod tests {
         assert_eq!(template, "[$duration](fg:nonsuch)");
     }
 
-    // --- Matrix tests for #669: clock, hostname, username ---
+    // Matrix tests: clock, hostname, username.
 
     #[test]
     fn ok_for_clock_none_and_valid() {

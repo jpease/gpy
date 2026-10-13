@@ -3,14 +3,14 @@
 # tests/bash/e2e_git_variant_fallback_bounded_sync.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Git segment variant fallback: bounded synchronous IPC (#843; the Bash twin of
-# tests/fish/e2e_git_variant_fallback_bounded_sync.test.fish, #436).
+# Git segment variant fallback: bounded synchronous IPC (the Bash twin of
+# tests/fish/e2e_git_variant_fallback_bounded_sync.test.fish).
 #
 # __gpy_read_instant_cache serves the context-free `.none` entry (status bit 4)
 # when no token-specific file exists yet for the render's real prev_bg. The
 # content is right but its opening chevron was rendered without prev_bg, so the
-# colour is wrong. Bash used to test only `== 1` and `& 2` and served it as an
-# ordinary hit. With the agent up, the FIRST render at a new prev_bg must now
+# colour is wrong; treating that status as an ordinary hit would keep the wrong
+# chevron. With the agent up, the FIRST render at a new prev_bg must
 # show the correct chevron (a bounded sync query with the real prev_bg); with
 # the agent down it falls back to the `.none` bytes (safety net).
 #
@@ -23,9 +23,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT/tests/lib/shell_e2e.sh"
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 PREV_BG=222
 cache_dir="$XDG_CACHE_HOME/gpy/instant-prompts"
@@ -97,8 +94,4 @@ case "$out2" in
     *) pass "with the agent unreachable the .none fallback is served unchanged" ;;
 esac
 
-if [ "$failures" -gt 0 ]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: bash git segment corrects the variant fallback via a bounded sync query"
+test_finish "bash git segment corrects the variant fallback via a bounded sync query"

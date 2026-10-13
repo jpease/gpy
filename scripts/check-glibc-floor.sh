@@ -28,20 +28,20 @@ floor="$2"
 objdump="${OBJDUMP:-objdump}"
 
 [[ "$floor" =~ ^[0-9]+\.[0-9]+$ ]] || {
-    echo "❌ glibc floor must look like 2.31, got '$floor'" >&2
+    echo "Error: glibc floor must look like 2.31, got '$floor'" >&2
     exit 2
 }
 [[ -f "$binary" ]] || {
-    echo "❌ no such binary: $binary" >&2
+    echo "Error: no such binary: $binary" >&2
     exit 1
 }
 command -v "$objdump" >/dev/null 2>&1 || {
-    echo "❌ $objdump not found (install binutils)" >&2
+    echo "Error: $objdump not found (install binutils)" >&2
     exit 1
 }
 
 if ! symbols="$("$objdump" -T "$binary" 2>&1)"; then
-    echo "❌ $objdump -T failed on $binary:" >&2
+    echo "Error: $objdump -T failed on $binary:" >&2
     printf '%s\n' "$symbols" >&2
     exit 1
 fi
@@ -51,14 +51,14 @@ versions="$(grep -o 'GLIBC_[0-9][0-9.]*' <<<"$symbols" | sed 's/^GLIBC_//' | sor
 if [[ -z "$versions" ]]; then
     # A glibc-linked release binary always references some GLIBC_ version;
     # none means this is not the binary the floor is meant to guard.
-    echo "❌ $binary references no GLIBC_ symbol versions; is it a dynamically linked glibc binary?" >&2
+    echo "Error: $binary references no GLIBC_ symbol versions; is it a dynamically linked glibc binary?" >&2
     exit 1
 fi
 
 max="$(sort -V <<<"$versions" | tail -n 1)"
 highest="$(printf '%s\n%s\n' "$max" "$floor" | sort -V | tail -n 1)"
 if [[ "$highest" != "$floor" ]]; then
-    echo "❌ $binary requires GLIBC_$max, above the floor GLIBC_$floor" >&2
+    echo "Error: $binary requires GLIBC_$max, above the floor GLIBC_$floor" >&2
     echo "   Symbols above the floor:" >&2
     while IFS= read -r version; do
         [[ "$(printf '%s\n%s\n' "$version" "$floor" | sort -V | tail -n 1)" == "$floor" ]] && continue
@@ -67,4 +67,4 @@ if [[ "$highest" != "$floor" ]]; then
     exit 1
 fi
 
-echo "✅ $binary: max GLIBC_$max <= floor GLIBC_$floor"
+echo "$binary: max GLIBC_$max <= floor GLIBC_$floor"

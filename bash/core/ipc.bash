@@ -10,11 +10,10 @@ __gpy_agent_enabled() {
 }
 
 # Escape JSON string. Order matters: backslashes first (so escapes introduced
-# by later steps aren't re-escaped), then quotes, then control characters --
-# mirrors fish/core/ipc.fish's __gpy_json_escape exactly (#614), which also
-# escapes \n/\r/\t: a branch name, commit message, or cwd containing a raw
-# newline/CR/tab would otherwise produce malformed JSON the agent rejects,
-# silently dropping the segment (same failure mode #302 fixed for backslash).
+# by later steps aren't re-escaped), then quotes, then control characters
+# (\n/\r/\t), as fish's __gpy_json_escape does. A raw newline/CR/tab in a
+# branch, commit message, or cwd would otherwise produce malformed JSON the
+# agent rejects, silently dropping the segment.
 __gpy_escape_json() {
     local s="$1"
     # Escape backslashes first
@@ -51,11 +50,9 @@ __gpy_lang_venv_json() {
 # other two shells apply (#626).
 #
 # Bash, unlike Fish and Zsh, does not re-derive $HOME when the environment does
-# not carry it, so every `$HOME/...` resolver here used to build a
-# filesystem-root path (`/.cache/gpy/gpy.sock`) -- a third answer, agreeing
-# with neither the shells nor the agent, in exactly the HOME-less environments
-# (cron, `env -i`, some systemd units) where the shell most needs to find the
-# running agent. `~user` is the derivation that consults the passwd database:
+# not carry it, so `$HOME/...` would become a filesystem-root path in HOME-less
+# environments (cron, `env -i`, some systemd units). `~user` is the derivation
+# that consults the passwd database:
 # a bare `~` returns $HOME whenever it is set, including when it is set to the
 # empty string, which `std::env::home_dir` (and therefore the agent) treats as
 # unset.
@@ -116,8 +113,7 @@ __gpy_ipc_endpoint() {
 
 # The agent's runtime root (crate::paths::runtime_root_for): where the
 # socket lives by default and where the agent looks for the shell PIDs it
-# nudges after a restart (#638). Mirrors fish's
-# __gpy_runtime_root, including the same fallbacks.
+# nudges after a restart. Same fallbacks as fish's __gpy_runtime_root.
 __gpy_runtime_root() {
     local home
     if [[ -n "${XDG_RUNTIME_DIR:-}" && "${XDG_RUNTIME_DIR:-}" == /* ]]; then
@@ -221,9 +217,7 @@ __gpy_theme_export_cache_path() {
 # __gpy_epoch_diff_ms in init.bash for the same pattern) rather than
 # `echo`+command-substitution, so this never forks -- safe to call on every
 # send rather than needing a version gate or a once-per-session precompute
-# (#341). GPY_IPC_TIMEOUT_MS is a session constant (constants.bash), but since
-# the conversion itself is already fork-free there is nothing a precompute
-# would save.
+# (#341).
 __gpy_ms_to_secs() {
     local ms="$1" out_var="$2"
     # Guard against a non-numeric override so `$(( ))` below can't error out
@@ -304,7 +298,7 @@ __gpy_send_json() {
     socket_path="$(__gpy_ipc_endpoint)"
     local response="" read_status=1 timeout_secs client_status="" connected_codes=" 0 "
     # One reply budget for every transport (#757).
-    __gpy_ms_to_secs "${GPY_IPC_TIMEOUT_MS:-150}" timeout_secs
+    __gpy_ms_to_secs "${GPY_IPC_TIMEOUT_MS:-}" timeout_secs
 
     # Check if socket exists
     [[ -S "$socket_path" ]] || return 1
@@ -601,8 +595,7 @@ __gpy_read_instant_cache() {
         # `$(<file)` is bash's built-in fast-path for reading a whole file --
         # it reads directly in-process instead of forking `cat` (#341), and
         # has been supported since early bash 2.x, so no version gate is
-        # needed. Verified byte-identical to the old `cat` here: every
-        # instant-cache file is written by the Rust prompt formatter
+        # needed. Every instant-cache file is written by the Rust prompt formatter
         # (gpy-agent/src/formatter/fish_ansi.rs), which never appends a trailing
         # newline, so there is nothing for `$(<file)`'s newline-stripping to
         # change (confirmed against real on-disk cache files -- none end in
@@ -671,8 +664,7 @@ __gpy_trigger_data_refresh() {
 # DOWN agent is an instant failure, no connect, no hang) and bounded by
 # GPY_IPC_TIMEOUT_MS. Prints the agent's rendered prompt text; non-zero on any miss.
 # The agent writes its own instant cache and notifies other shells while
-# handling the request, so a success needs no extra refresh. Mirrors the
-# inline `__gpy_ipc_send` block in fish/segments/git.fish.
+# handling the request, so a success needs no extra refresh.
 __gpy_sync_data_request() {
     local op="$1" cwd="$2" is_last="${3:-}" prev_bg="${4:-}" is_first="${5:-}"
     local response
@@ -797,9 +789,8 @@ __gpy_request() {
 # prompt), each with its own process-start latency (#324).
 #
 # Segments run inside `$(...)` command-substitution subshells and cannot
-# write back to __gpy_render_prompt's scope, so this is no longer a
-# predictable `${TMPDIR:-/tmp}/.gpy_oneshot_used_$$` marker file (#342's
-# rationale for a file, #614's reason to remove it): __gpy_render_prompt
+# write back to __gpy_render_prompt's scope, and a TMPDIR marker file would be
+# a predictable path, so: __gpy_render_prompt
 # resets the plain variable __gpy_oneshot_used=0 at the start of each render;
 # a request wrapper that actually claims the budget and forks oneshot
 # returns GPY_SEG_STATUS_ONESHOT, which the render loop reads off `$?` after

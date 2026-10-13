@@ -2,14 +2,21 @@
 //!
 //! # Test Isolation
 //!
-//! These tests manipulate the global `XDG_CONFIG_HOME` environment variable.
-//! The `serial_test` crate ensures they run sequentially to avoid interference.
+//! These tests point the process-global `XDG_CONFIG_HOME` (and related keys)
+//! at temp directories through [`EnvGuard`], and run `#[serial]` so no two
+//! tests observe each other's environment.
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::str_to_string)]
 #![allow(clippy::shadow_unrelated)]
 
+#[path = "common/env_guard.rs"]
+mod env_guard;
+#[path = "common/wait.rs"]
+mod wait;
+
+use env_guard::EnvGuard;
 use gpy_agent::shell::Shell;
 use gpy_agent::theme::{ThemeManager, ThemeSource};
 use serial_test::serial;
@@ -17,6 +24,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
+use wait::wait_until;
 
 // Helper to create a test theme file
 fn create_test_theme_toml(dir: &Path, theme_name: &str, content: &str) -> PathBuf {
@@ -27,17 +35,6 @@ fn create_test_theme_toml(dir: &Path, theme_name: &str, content: &str) -> PathBu
     fs::write(&theme_path, content).unwrap();
 
     theme_path
-}
-
-fn wait_until(timeout: Duration, poll_interval: Duration, predicate: impl Fn() -> bool) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < timeout {
-        if predicate() {
-            return true;
-        }
-        std::thread::sleep(poll_interval);
-    }
-    predicate()
 }
 
 // Minimal valid theme TOML
@@ -190,16 +187,12 @@ text_color = "black"
 #[test]
 #[serial]
 fn test_theme_manager_new_errors_when_missing() {
-    // Regression follow-up for #572: a theme name matching no user theme,
-    // plugin theme, or builtin must error, not silently succeed with a bare
-    // default -- this test used to assert the opposite (the bug #572 fixed).
+    // A theme name matching no user theme, plugin theme, or builtin must
+    // error rather than silently succeed with a bare default.
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().to_path_buf();
 
-    // Set XDG_CONFIG_HOME to temp directory
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", config_dir.to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", &config_dir);
 
     let Err(err) = ThemeManager::new("nonexistent") else {
         panic!("an unresolvable theme name must error, not silently succeed with a default theme");
@@ -208,11 +201,6 @@ fn test_theme_manager_new_errors_when_missing() {
         err.to_string().contains("nonexistent"),
         "error should name the theme, got: {err}"
     );
-
-    // Cleanup
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
@@ -224,10 +212,7 @@ fn test_theme_manager_loads_valid_theme() {
     // Create theme file
     create_test_theme_toml(&config_dir, "test", MINIMAL_THEME);
 
-    // Set XDG_CONFIG_HOME
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     // Load the theme
     let manager = ThemeManager::new("test").unwrap();
@@ -238,11 +223,6 @@ fn test_theme_manager_loads_valid_theme() {
     assert_eq!(theme.ui.root_prompt_icon, "#");
     assert_eq!(theme.segments.clock.bg_color, "blue");
     assert_eq!(theme.segments.directory.bg_color, "cyan");
-
-    // Cleanup
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
@@ -254,10 +234,7 @@ fn test_theme_manager_loads_custom_theme() {
     // Create custom theme file
     create_test_theme_toml(&config_dir, "custom", CUSTOM_THEME);
 
-    // Set XDG_CONFIG_HOME
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     // Load the theme
     let manager = ThemeManager::new("custom").unwrap();
@@ -283,11 +260,6 @@ fn test_theme_manager_loads_custom_theme() {
         theme.segments.status.ok_icon,
         Some(gpy_agent::config::types::Icon::new("✓").unwrap())
     );
-
-    // Cleanup
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
@@ -299,10 +271,7 @@ fn test_theme_manager_export_fish_format() {
     // Create theme file
     create_test_theme_toml(&config_dir, "export_test", CUSTOM_THEME);
 
-    // Set XDG_CONFIG_HOME
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     // Load the theme
     let manager = ThemeManager::new("export_test").unwrap();
@@ -327,19 +296,14 @@ fn test_theme_manager_export_fish_format() {
     assert!(fish_output.contains("set -g __color_clock_fg \"yellow\""));
     assert!(fish_output.contains("set -g __time_format \"%H:%M:%S\""));
     assert!(fish_output.contains("set -g __clock_show_seconds \"1\""));
-    // __icon_duration was removed from the agent export in #204: duration is
-    // agent-rendered so the shell-side icon is no longer needed from the theme.
+    // Duration is agent-rendered, so the theme export carries no shell-side
+    // duration icon.
     assert!(!fish_output.contains("__icon_duration"));
     assert!(fish_output.contains("set -g __enabled_segments clock directory git"));
     assert!(fish_output.contains("set -gx GPY_AGENT_ENABLED \"1\""));
     assert!(fish_output.contains("set -gx GPY_AGENT_SUPERVISOR_ENABLED \"1\""));
     assert!(fish_output.contains("set -gx GPY_LANGUAGE_ENABLED \"1\""));
     assert!(fish_output.contains("set -gx GPY_GIT_ENABLED \"1\""));
-
-    // Cleanup
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
@@ -350,9 +314,7 @@ fn test_theme_manager_export_hostname_format_and_icon_when_set() {
 
     create_test_theme_toml(&config_dir, "hostname_export", HOSTNAME_THEME);
 
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     let manager = ThemeManager::new("hostname_export").unwrap();
     let config = gpy_agent::config::Config::default();
@@ -371,10 +333,6 @@ fn test_theme_manager_export_hostname_format_and_icon_when_set() {
     assert!(fish_output.contains("set -g __hostname_format \"1\""));
     assert!(!fish_output.contains("[$hostname]($style)"));
     assert!(fish_output.contains("set -g __icon_hostname \"🖥\""));
-
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
@@ -386,10 +344,7 @@ fn test_theme_manager_reload() {
     // Create initial theme file
     let theme_path = create_test_theme_toml(&config_dir, "reload_test", MINIMAL_THEME);
 
-    // Set XDG_CONFIG_HOME
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     // Load the theme
     let manager = ThemeManager::new("reload_test").unwrap();
@@ -413,11 +368,6 @@ fn test_theme_manager_reload() {
         assert_eq!(theme.ui.prompt_icon, "→");
         assert_eq!(theme.segments.clock.bg_color, "magenta");
     }
-
-    // Cleanup
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
@@ -427,9 +377,7 @@ fn test_disabled_git_removed_from_segment_list() {
     let config_dir = temp_dir.path().join("gpy");
     create_test_theme_toml(&config_dir, "disabled_git", CUSTOM_THEME);
 
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     let manager = ThemeManager::new("disabled_git").unwrap();
     let mut config = gpy_agent::config::Config::default();
@@ -445,10 +393,6 @@ fn test_disabled_git_removed_from_segment_list() {
     assert!(!fish_output.contains("clock directory git"));
     assert!(fish_output.contains("set -g __enabled_segments clock directory"));
     assert!(fish_output.contains("set -gx GPY_GIT_ENABLED \"0\""));
-
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
@@ -460,10 +404,7 @@ fn test_theme_manager_reload_keeps_old_on_error() {
     // Create initial theme file
     let theme_path = create_test_theme_toml(&config_dir, "error_test", MINIMAL_THEME);
 
-    // Set XDG_CONFIG_HOME
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     // Load the theme
     let manager = ThemeManager::new("error_test").unwrap();
@@ -486,32 +427,22 @@ fn test_theme_manager_reload_keeps_old_on_error() {
         let theme = manager.get();
         assert_eq!(theme.ui.prompt_icon, "❯");
     }
-
-    // Cleanup
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
 #[serial]
 fn test_theme_manager_reload_errors_on_missing_file_and_keeps_last_good_theme() {
-    // Regression follow-up for #572: a reload whose theme file vanished (and
-    // doesn't match a builtin name) must error, not silently reset the
-    // in-memory theme to a bare default -- this test used to assert the
-    // latter (the bug #572 fixed). The in-memory theme must also be left
-    // exactly as it was: `reload`'s `?` on the failed load means the
-    // overwrite never happens.
+    // A reload whose theme file vanished (and doesn't match a builtin name)
+    // must error rather than reset the in-memory theme to a bare default. The
+    // in-memory theme must also be left exactly as it was: `reload`'s `?` on
+    // the failed load means the overwrite never happens.
     let temp_dir = TempDir::new().unwrap();
     let config_dir = temp_dir.path().join("gpy");
 
     // Create initial theme file
     let theme_path = create_test_theme_toml(&config_dir, "missing_test", MINIMAL_THEME);
 
-    // Set XDG_CONFIG_HOME
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     // Load the theme
     let manager = ThemeManager::new("missing_test").unwrap();
@@ -538,11 +469,6 @@ fn test_theme_manager_reload_errors_on_missing_file_and_keeps_last_good_theme() 
         let theme = manager.get();
         assert_eq!(theme.ui.prompt_icon, "❯");
     }
-
-    // Cleanup
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
@@ -554,10 +480,7 @@ fn test_theme_manager_start_stop_watching() {
     // Create theme file
     create_test_theme_toml(&config_dir, "watch_test", MINIMAL_THEME);
 
-    // Set XDG_CONFIG_HOME
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     // Load the theme
     let manager = ThemeManager::new("watch_test").unwrap();
@@ -575,11 +498,6 @@ fn test_theme_manager_start_stop_watching() {
 
     // Stopping again should be safe
     manager.stop_watching();
-
-    // Cleanup
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
@@ -591,10 +509,7 @@ fn test_theme_manager_get_returns_arc_clone() {
     // Create theme file
     create_test_theme_toml(&config_dir, "arc_test", MINIMAL_THEME);
 
-    // Set XDG_CONFIG_HOME
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     // Load the theme
     let manager = ThemeManager::new("arc_test").unwrap();
@@ -609,11 +524,6 @@ fn test_theme_manager_get_returns_arc_clone() {
         theme1.segments.clock.bg_color,
         theme2.segments.clock.bg_color
     );
-
-    // Cleanup
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
@@ -627,9 +537,7 @@ fn test_theme_manager_respects_xdg_config_home() {
 
     // Set custom XDG_CONFIG_HOME
     let xdg_path = temp_dir.path().join("custom_config");
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", xdg_path.to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", &xdg_path);
 
     // Load the theme - should find it in custom location
     let manager = ThemeManager::new("xdg_test").unwrap();
@@ -638,11 +546,6 @@ fn test_theme_manager_respects_xdg_config_home() {
     // Verify custom theme loaded
     assert_eq!(theme.ui.prompt_icon, "→");
     assert_eq!(theme.segments.clock.bg_color, "magenta");
-
-    // Cleanup
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
@@ -654,10 +557,7 @@ fn test_theme_manager_export_includes_all_segments() {
     // Create theme file
     create_test_theme_toml(&config_dir, "full_export", CUSTOM_THEME);
 
-    // Set XDG_CONFIG_HOME
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     // Load the theme
     let manager = ThemeManager::new("full_export").unwrap();
@@ -676,7 +576,7 @@ fn test_theme_manager_export_includes_all_segments() {
     let fish_output = manager.export(Shell::Fish, &config);
 
     // Clock and status still render shell-side and keep their color exports.
-    // directory/duration colors were retired in #199 (now agent-rendered).
+    // Directory/duration colors are agent-rendered and not exported here.
     assert!(fish_output.contains("__color_clock_bg"));
     assert!(fish_output.contains("__color_status_ok_bg"));
     assert!(fish_output.contains("__color_status_fail_bg"));
@@ -692,31 +592,24 @@ fn test_theme_manager_export_includes_all_segments() {
         fish_output
             .contains("set -g __enabled_segments clock directory duration status git language")
     );
-
-    // Cleanup
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
 #[serial]
 fn export_omits_migrated_color_vars() {
-    // Segments render from agent-provided ANSI; fg/text color exports and
-    // format toggles were retired in #199 and remain retired. Only bg colors
-    // for directory, duration, git, and language are re-added for powerline
-    // chevron tracking (`__gpy_last_segment_bg`). Clock and status still
-    // render shell-side and must keep their full `__color_*` exports.
+    // Segments render from agent-provided ANSI, so their fg/text color exports
+    // and format toggles are not exported. Only bg colors for directory,
+    // duration, git, and language are exported, for powerline chevron
+    // tracking (`__gpy_last_segment_bg`). Clock and status still render
+    // shell-side and must keep their full `__color_*` exports.
     let temp_dir = TempDir::new().unwrap();
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     let manager = ThemeManager::builtin("default").expect("builtin theme manager");
     let config = gpy_agent::config::Config::default();
     let exported = manager.export(Shell::Fish, &config);
 
-    // fg/text color exports for agent-rendered segments remain retired.
+    // No fg/text color exports for agent-rendered segments.
     for still_migrated in [
         "__color_directory_fg",
         "__color_duration_fg",
@@ -726,11 +619,11 @@ fn export_omits_migrated_color_vars() {
     ] {
         assert!(
             !exported.contains(still_migrated),
-            "retired segment color var {still_migrated} must not be exported"
+            "agent-rendered segment color var {still_migrated} must not be exported"
         );
     }
 
-    // Legacy format toggles remain retired.
+    // No legacy format toggles.
     for toggle in [
         "__gpy_directory_format",
         "__gpy_duration_format",
@@ -765,10 +658,6 @@ fn export_omits_migrated_color_vars() {
         exported.contains("__color_status_"),
         "status color vars must still be exported (shell-rendered)"
     );
-
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
@@ -780,10 +669,7 @@ fn test_theme_hot_reload_triggers_on_file_change() {
     // Create initial theme file
     let theme_path = create_test_theme_toml(&config_dir, "hotreload", MINIMAL_THEME);
 
-    // Set XDG_CONFIG_HOME
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let mut env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     // Load the theme
     let manager = ThemeManager::new("hotreload").unwrap();
@@ -796,9 +682,7 @@ fn test_theme_hot_reload_triggers_on_file_change() {
     }
 
     // Start watching with very short debounce for testing
-    unsafe {
-        std::env::set_var("GPY_THEME_WATCH_POLL_MS", "25");
-    }
+    env.set("GPY_THEME_WATCH_POLL_MS", "25");
     manager
         .start_watching(Duration::from_millis(50), None)
         .unwrap();
@@ -818,12 +702,6 @@ fn test_theme_hot_reload_triggers_on_file_change() {
 
     // Stop watching
     manager.stop_watching();
-
-    // Cleanup
-    unsafe {
-        std::env::remove_var("GPY_THEME_WATCH_POLL_MS");
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 // Test that a reload (flag file + SIGURG doorbell) reaches Fish clients when the theme file changes
@@ -858,9 +736,7 @@ fn test_theme_change_sends_reload() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let config_home = temp_dir.path();
 
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", config_home);
-    }
+    let mut env = EnvGuard::set_one("XDG_CONFIG_HOME", config_home);
 
     // Create initial theme
     let theme_path = create_test_theme_toml(&config_home.join("gpy"), "reload_test", MINIMAL_THEME);
@@ -881,9 +757,7 @@ fn test_theme_change_sends_reload() {
     let initial_count = DOORBELL_COUNTER.load(Ordering::Relaxed);
 
     // Start watching with client registry
-    unsafe {
-        std::env::set_var("GPY_THEME_WATCH_POLL_MS", "25");
-    }
+    env.set("GPY_THEME_WATCH_POLL_MS", "25");
     manager
         .start_watching(
             Duration::from_millis(50),
@@ -954,8 +828,6 @@ fail_text_color = "white"
     // late doorbell is still in flight from the watcher thread.
     unsafe {
         sigaction(Signal::SIGURG, &previous).expect("restore SIGURG");
-        std::env::remove_var("GPY_THEME_WATCH_POLL_MS");
-        std::env::remove_var("XDG_CONFIG_HOME");
     }
 }
 
@@ -972,9 +844,7 @@ fn test_theme_export_fish_includes_plugin_segment_vars() {
     let config_dir = temp_dir.path().join("gpy");
     create_test_theme_toml(&config_dir, "plugin_export_fish", PLUGIN_SEGMENT_THEME);
 
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     let manager = ThemeManager::new("plugin_export_fish").unwrap();
     let mut config = gpy_agent::config::Config::default();
@@ -997,10 +867,6 @@ fn test_theme_export_fish_includes_plugin_segment_vars() {
     assert!(output.contains("set -g __gpy_segment_my_seg_id \"my-seg\""));
     assert!(output.contains("set -g __color_my_seg_bg \"cyan\""));
     assert!(output.contains("set -g __color_clock_bg \"black\""));
-
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
@@ -1010,9 +876,7 @@ fn test_theme_export_zsh_bash_include_plugin_segment_vars() {
     let config_dir = temp_dir.path().join("gpy");
     create_test_theme_toml(&config_dir, "plugin_export_posix", PLUGIN_SEGMENT_THEME);
 
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     let manager = ThemeManager::new("plugin_export_posix").unwrap();
     let mut config = gpy_agent::config::Config::default();
@@ -1031,10 +895,6 @@ fn test_theme_export_zsh_bash_include_plugin_segment_vars() {
     assert!(bash_output.contains("export __gpy_segment_k8s_bg_color=\"#073642\""));
     assert!(bash_output.contains("export __color_k8s_context=\"#326ce5\""));
     assert!(bash_output.contains("export __icon_k8s_secondary=\"•\""));
-
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
@@ -1042,10 +902,9 @@ fn test_theme_export_zsh_bash_include_plugin_segment_vars() {
 fn test_theme_discovery_includes_starship_builtin() {
     let temp_dir = TempDir::new().unwrap();
 
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
-        std::env::remove_var("GPY_BUNDLED_PLUGIN_DIR");
-    }
+    let mut env = EnvGuard::default();
+    env.set("XDG_CONFIG_HOME", temp_dir.path());
+    env.remove("GPY_BUNDLED_PLUGIN_DIR");
 
     let themes = ThemeManager::discover_available_themes();
     let starship = themes
@@ -1057,10 +916,6 @@ fn test_theme_discovery_includes_starship_builtin() {
     // The other builtins remain discoverable (no regression).
     assert!(themes.iter().any(|t| t.name == "default"));
     assert!(themes.iter().any(|t| t.name == "text"));
-
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
@@ -1071,10 +926,9 @@ fn test_theme_discovery_includes_user_themes() {
 
     create_test_theme_toml(&config_dir, "community", MINIMAL_THEME);
 
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
-        std::env::remove_var("GPY_BUNDLED_PLUGIN_DIR");
-    }
+    let mut env = EnvGuard::default();
+    env.set("XDG_CONFIG_HOME", temp_dir.path());
+    env.remove("GPY_BUNDLED_PLUGIN_DIR");
 
     let themes = ThemeManager::discover_available_themes();
     let community = themes
@@ -1083,10 +937,6 @@ fn test_theme_discovery_includes_user_themes() {
         .expect("community theme present");
     assert_eq!(community.source, ThemeSource::User);
     assert!(community.path.is_some());
-
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 #[test]
@@ -1116,10 +966,9 @@ provided_segments = ["demo"]
     .unwrap();
     fs::write(themes_dir.join("shared.toml"), MINIMAL_THEME).unwrap();
 
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", user_temp.path());
-        std::env::set_var("GPY_BUNDLED_PLUGIN_DIR", bundled_temp.path());
-    }
+    let mut env = EnvGuard::default();
+    env.set("XDG_CONFIG_HOME", user_temp.path());
+    env.set("GPY_BUNDLED_PLUGIN_DIR", bundled_temp.path());
 
     let themes = ThemeManager::discover_available_themes();
     let shared = themes
@@ -1127,11 +976,6 @@ provided_segments = ["demo"]
         .find(|theme| theme.name == "shared")
         .expect("shared theme present");
     assert_eq!(shared.source, ThemeSource::User);
-
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-        std::env::remove_var("GPY_BUNDLED_PLUGIN_DIR");
-    }
 }
 
 #[test]
@@ -1163,10 +1007,9 @@ provided_segments = ["k8s-tools"]
     )
     .unwrap();
 
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", xdg_temp.path());
-        std::env::set_var("GPY_BUNDLED_PLUGIN_DIR", bundled_temp.path());
-    }
+    let mut env = EnvGuard::default();
+    env.set("XDG_CONFIG_HOME", xdg_temp.path());
+    env.set("GPY_BUNDLED_PLUGIN_DIR", bundled_temp.path());
 
     let manager = ThemeManager::new("plugin_files").unwrap();
     let mut config = gpy_agent::config::Config::default();
@@ -1180,11 +1023,6 @@ provided_segments = ["k8s-tools"]
     );
     assert!(output.contains(&expected_line));
     assert!(output.contains("set -g __enabled_segments clock k8s-tools"));
-
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-        std::env::remove_var("GPY_BUNDLED_PLUGIN_DIR");
-    }
 }
 
 #[cfg(unix)]
@@ -1217,10 +1055,9 @@ fn test_switch_theme_preserves_reload_notifications() {
     let default_path = create_test_theme_toml(&config_home, "default_switch", MINIMAL_THEME);
     let switched_path = create_test_theme_toml(&config_home, "after_switch", CUSTOM_THEME);
 
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
-        std::env::set_var("GPY_THEME_WATCH_POLL_MS", "25");
-    }
+    let mut env = EnvGuard::default();
+    env.set("XDG_CONFIG_HOME", temp_dir.path());
+    env.set("GPY_THEME_WATCH_POLL_MS", "25");
 
     let manager = ThemeManager::new("default_switch").expect("theme manager");
     let shell_dir = TempDir::new().expect("create shell dir");
@@ -1250,9 +1087,8 @@ fn test_switch_theme_preserves_reload_notifications() {
     fs::write(&switched_path, updated_theme).expect("update switched theme");
 
     // Wait for the edit itself to land, not merely for *a* doorbell: any reload
-    // raises the counter, so waiting on the counter let an unrelated reload
-    // release the wait before this edit had been read, and the test then failed
-    // on the theme assertion below with whatever was loaded instead (#551).
+    // raises the counter, so an unrelated reload could otherwise release the
+    // wait before this edit has been read.
     let reloaded = wait_until(Duration::from_secs(2), Duration::from_millis(25), || {
         manager.get().ui.prompt_color.as_deref() == Some("green")
             && DOORBELL_COUNTER_AFTER_SWITCH.load(Ordering::Relaxed) > initial_count
@@ -1278,19 +1114,15 @@ fn test_switch_theme_preserves_reload_notifications() {
     // late doorbell is still in flight.
     unsafe {
         sigaction(Signal::SIGURG, &previous).expect("restore SIGURG");
-        std::env::remove_var("GPY_THEME_WATCH_POLL_MS");
-        std::env::remove_var("XDG_CONFIG_HOME");
     }
 
     let _ = default_path;
 }
 
-/// #663: `switch_theme` stops the watcher and re-arms it through
-/// `start_watching`, which used to build a fresh private `WatchRegistry`
-/// (`Arc::new(WatchRegistry::new())`) instead of reusing the one the manager
-/// was started with. From the first switch onward the theme coordinator ran
-/// on an empty registry, dropping the agent-wide one the repo and config
-/// coordinators share (#617).
+/// `switch_theme` stops the watcher and re-arms it through `start_watching`,
+/// which must reuse the `WatchRegistry` the manager was started with rather
+/// than build a private one: the agent-wide registry is shared by the repo
+/// and config coordinators, and an empty private one would silently drop it.
 ///
 /// Requires the `test-support` feature for `watch_registry_for_test`, the
 /// only way to observe which registry currently backs the watcher.
@@ -1311,9 +1143,7 @@ fn switch_theme_reuses_the_registry_it_was_started_with() {
     create_test_theme_toml(&config_home, "registry_before", MINIMAL_THEME);
     create_test_theme_toml(&config_home, "registry_after", CUSTOM_THEME);
 
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     let manager = ThemeManager::new("registry_before").expect("theme manager");
     let registry = Arc::new(WatchRegistry::new());
@@ -1340,26 +1170,20 @@ fn switch_theme_reuses_the_registry_it_was_started_with() {
     assert!(
         Arc::ptr_eq(&after_switch, &registry),
         "switch_theme must re-arm on the same WatchRegistry it was started with, \
-         not a private default (#663)"
+         not a private default"
     );
 
     manager.stop_watching();
-
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
-/// #407 round-trip: editing a single theme field via `save_user_theme`,
+/// Round-trip: editing a single theme field via `save_user_theme`,
 /// then reloading through `ThemeManager::new`, changes only that field and
 /// carries every other field through untouched.
 #[test]
 #[serial]
 fn save_user_theme_round_trip_changes_only_intended_field() {
     let temp_dir = TempDir::new().unwrap();
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     // Deterministic base: the embedded builtin `default`, independent of any
     // theme file the developer's machine might have installed.
@@ -1406,22 +1230,16 @@ fn save_user_theme_round_trip_changes_only_intended_field() {
         reloaded_val, base_val,
         "the edit must actually change the theme relative to the base"
     );
-
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
-/// #407 AC: `save_user_theme` only ever materializes a copy under the user
+/// `save_user_theme` only ever materializes a copy under the user
 /// themes directory — the written theme is discovered as a `User` source,
 /// shadowing (never replacing) the builtin.
 #[test]
 #[serial]
 fn save_user_theme_materializes_a_user_source_copy() {
     let temp_dir = TempDir::new().unwrap();
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     // Before writing, `default` resolves to the builtin.
     let before = ThemeManager::discover_available_themes()
@@ -1449,10 +1267,6 @@ fn save_user_theme_materializes_a_user_source_copy() {
                 .join("default.toml")
         )
     );
-
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 /// `save_user_theme` rejects an unsafe theme name before touching the
@@ -1461,17 +1275,11 @@ fn save_user_theme_materializes_a_user_source_copy() {
 #[serial]
 fn save_user_theme_rejects_unsafe_name() {
     let temp_dir = TempDir::new().unwrap();
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path().to_str().unwrap());
-    }
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
 
     let theme = (*ThemeManager::builtin("default").unwrap().get()).clone();
     let result = ThemeManager::save_user_theme("../escape", &theme);
     assert!(result.is_err(), "unsafe theme name must be rejected");
-
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 }
 
 /// Extract the value assigned to `var` in a Fish theme export, e.g.
@@ -1484,19 +1292,17 @@ fn exported_value(output: &str, var: &str) -> Option<String> {
     inside.get(..end).map(ToOwned::to_owned)
 }
 
-/// #588: `switch_theme` installs the new name, path, and content as one
+/// `switch_theme` installs the new name, path, and content as one
 /// atomic swap, so a concurrent `export` can never emit one theme's name
 /// alongside another theme's content.
 ///
-/// Before #588 `ThemeManager` kept `theme_name`, `theme`, and `theme_path` in
-/// three independent `RwLock`s. `switch_theme` wrote them in three separate
-/// critical sections and `export` read two of them in two separate
-/// acquisitions, so a reader that took the theme lock just after the content
-/// write — and reached the name lock before the writer got there — saw the new
-/// theme under the old name. Several reader threads make that interleaving
-/// routine rather than exotic: `std`'s `RwLock` is reader-preferring on this
-/// platform, so every content write releases a queued burst of readers that
-/// then race the writer's two remaining writes.
+/// If name, theme, and path were guarded separately, a reader that took the
+/// theme lock just after the content write — and reached the name lock before
+/// the writer got there — would see the new theme under the old name. Several
+/// reader threads make that interleaving routine rather than exotic: `std`'s
+/// `RwLock` is reader-preferring on this platform, so every content write
+/// releases a queued burst of readers that then race the writer's remaining
+/// writes.
 ///
 /// The pairing is checked on two markers rather than the whole export string:
 /// the exported theme name, and a color the two themes genuinely disagree on.
@@ -1524,14 +1330,13 @@ fn concurrent_export_never_pairs_one_themes_name_with_anothers_colors() {
     create_test_theme_toml(&config_home, "race_b", CUSTOM_THEME);
     let empty_plugin_dir = temp_dir.path().join("no-plugins");
     fs::create_dir_all(&empty_plugin_dir).unwrap();
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
-        // Point plugin discovery at an empty directory so `export` is cheap
-        // and deterministic: it runs `discover_plugins()` on every call, and
-        // the developer's real plugin tree would both slow the readers down
-        // and vary the export between machines.
-        std::env::set_var("GPY_BUNDLED_PLUGIN_DIR", &empty_plugin_dir);
-    }
+    // Point plugin discovery at an empty directory so `export` is cheap
+    // and deterministic: it runs `discover_plugins()` on every call, and
+    // the developer's real plugin tree would both slow the readers down
+    // and vary the export between machines.
+    let mut env = EnvGuard::default();
+    env.set("XDG_CONFIG_HOME", temp_dir.path());
+    env.set("GPY_BUNDLED_PLUGIN_DIR", &empty_plugin_dir);
 
     let config = Arc::new(Config::default());
 
@@ -1620,10 +1425,6 @@ fn concurrent_export_never_pairs_one_themes_name_with_anothers_colors() {
         .collect();
 
     manager.stop_watching();
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-        std::env::remove_var("GPY_BUNDLED_PLUGIN_DIR");
-    }
 
     // If the readers had starved the writer, the switch loop would still be
     // running when they gave up at their deadline, and `torn` would be empty
@@ -1642,7 +1443,7 @@ fn concurrent_export_never_pairs_one_themes_name_with_anothers_colors() {
     );
 }
 
-/// #838: the builtin's raw source comes back verbatim. Runs with an empty
+/// The builtin's raw source comes back verbatim. Runs with an empty
 /// config root so an installed `~/.config/gpy/themes/default.toml` cannot
 /// shadow the builtin.
 #[test]
@@ -1650,16 +1451,11 @@ fn concurrent_export_never_pairs_one_themes_name_with_anothers_colors() {
 fn theme_source_content_returns_raw_builtin_content() {
     let temp_dir = TempDir::new().unwrap();
 
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
-        std::env::remove_var("GPY_BUNDLED_PLUGIN_DIR");
-    }
+    let mut env = EnvGuard::default();
+    env.set("XDG_CONFIG_HOME", temp_dir.path());
+    env.remove("GPY_BUNDLED_PLUGIN_DIR");
 
     let content = ThemeManager::theme_source_content("default");
-
-    unsafe {
-        std::env::remove_var("XDG_CONFIG_HOME");
-    }
 
     assert_eq!(
         content.expect("builtin default theme content should resolve"),

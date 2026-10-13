@@ -2,8 +2,8 @@
 # tests/fish/install_dev_remove_conflicting_binaries.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# install-dev.fish's _remove_conflicting_binaries deletes files on PATH
-# (#649). It must remove only a stale copy of OUR binary under $HOME that
+# install-dev.fish's _remove_conflicting_binaries deletes files on PATH.
+# It must remove only a stale copy of OUR binary under $HOME that
 # shadows the install dir, and leave everything else alone:
 #   (a) a `gpy-agent` under $HOME earlier on PATH whose --version says
 #       `gpy-agent ...` is deleted
@@ -11,8 +11,8 @@
 #       something else) is kept, with a warning
 #   (c) a tool-manager shim (a */shims/* path) is kept
 #   (d) a copy AFTER the install dir on PATH is kept (it does not shadow)
-#   (e) with the install dir absent from PATH, nothing is deleted (#693)
-#   (f) a shadowing copy of ours outside $HOME is kept, with a warning (#693)
+#   (e) with the install dir absent from PATH, nothing is deleted
+#   (f) a shadowing copy of ours outside $HOME is kept, with a warning
 #
 # The function is sourced from the real install-dev.fish (run with
 # --fish-only against a throwaway HOME so sourcing has no side effects on

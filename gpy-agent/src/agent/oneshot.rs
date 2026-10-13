@@ -22,7 +22,7 @@ use std::str::FromStr;
 /// Each variant serializes to the `snake_case` string the JSON wire form has
 /// always used (`GitStatus` ↔ `"git_status"`, `LanguageDetect` ↔
 /// `"language_detect"`, and so on), so this is a compile-time-checked
-/// replacement for the string matching the dispatcher used to do.
+/// replacement for matching on request-kind strings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OneshotKind {
@@ -77,7 +77,7 @@ pub struct OneshotRequest {
     /// `None` means this is not a hostname request; the handler defaults to empty.
     #[serde(default)]
     pub hostname: Option<String>,
-    /// Whether the session is over SSH; for `hostname` requests (#826). Gates
+    /// Whether the session is over SSH; for `hostname` requests. Gates
     /// the theme icon exactly as the IPC `is_ssh` field does.
     #[serde(default)]
     pub is_ssh: bool,
@@ -93,7 +93,7 @@ fn default_format() -> String {
 }
 
 /// JSON response body for an empty language list, used when language
-/// detection is disabled or a repository has none (#592).
+/// detection is disabled or a repository has none.
 const EMPTY_LANGUAGES_JSON: &str = "{\"languages\":[]}";
 
 /// Handle a single, already-parsed oneshot request (no background agent).
@@ -192,7 +192,7 @@ fn handle_oneshot_git_parsed(request: &OneshotRequest) -> Result<String> {
     }
 
     // Match against the canonical path (best effort), like the IPC `SafePath`,
-    // so `~/` and symlinked `git.skip_paths` entries apply here too (#696).
+    // so `~/` and symlinked `git.skip_paths` entries apply here too.
     let request_path = Path::new(&request.path);
     let canonical_request_path =
         std::fs::canonicalize(request_path).unwrap_or_else(|_| request_path.to_path_buf());
@@ -265,7 +265,7 @@ fn handle_oneshot_language_parsed(request: &OneshotRequest) -> Result<String> {
 
     // Resolve the project root exactly like the agent's lang handler (git root,
     // else nearest marker ancestor), so the fallback answer in a project
-    // subdirectory matches the daemon's (#784, #727).
+    // subdirectory matches the daemon's.
     let root = crate::language::project_root(Path::new(&request.path)).into_path();
     let detected_languages =
         Detector::detect_directory_bounded(&root, config.language.detection_mode);
@@ -391,9 +391,8 @@ fn handle_oneshot_username_parsed(request: &OneshotRequest) -> Result<String> {
 ///
 /// # Errors
 ///
-/// Returns an error if `format_str` does not name a known format (#572):
-/// previously this silently coerced an unknown format to `Format::Json`,
-/// hiding a typo'd `--format` flag behind a wrong-but-successful render.
+/// Returns an error if `format_str` does not name a known format, so a
+/// typo'd `--format` flag fails instead of rendering as JSON.
 fn parse_format(format_str: &str) -> Result<Format> {
     Format::from_str(format_str)
 }
@@ -427,7 +426,7 @@ fn load_config_and_theme(format: Format) -> (Config, ThemeConfig) {
 ///
 /// The CLI's `--is-last`/`--is-first` flags arrive as bools; this is the one
 /// place they become a [`SegmentPosition`], which then travels unconverted to
-/// the formatter (#586).
+/// the formatter.
 fn request_position(request: &OneshotRequest) -> SegmentPosition {
     SegmentPosition::new(
         IsLast::from(request.is_last),
@@ -462,7 +461,7 @@ mod tests {
 
     use super::{handle_oneshot, parse_format};
 
-    /// #572: an unknown `--format` must error, not silently coerce to JSON.
+    /// An unknown `--format` must error, not silently coerce to JSON.
     ///
     /// # Panics
     ///
@@ -478,7 +477,7 @@ mod tests {
         );
     }
 
-    /// #572 end-to-end: a oneshot request carrying an invalid format must
+    /// End-to-end: a oneshot request carrying an invalid format must
     /// fail the whole request rather than silently rendering as JSON.
     ///
     /// `directory` is the cheapest request type to exercise here since

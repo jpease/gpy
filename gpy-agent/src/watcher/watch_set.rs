@@ -1,4 +1,4 @@
-//! Reference-counted OS watch bookkeeping for [`super::filesystem`] (#687).
+//! Reference-counted OS watch bookkeeping for [`super::filesystem`].
 //!
 //! `notify` backends keep no owner information: one `unwatch(path)` undoes
 //! every `watch(path)` ever made, and on some backends more than that. Several
@@ -12,7 +12,7 @@
 //! `(path, mode)` pair carries an owner count; the OS sees at most one watch per
 //! path, in the strongest mode any owner still holds. Every change is returned
 //! as a list of [`OsOp`]s for the caller to apply to the backend in one batch
-//! (one `FSEventStream` rebuild on macOS, #388), so this module stays pure and
+//! (one `FSEventStream` rebuild on macOS), so this module stays pure and
 //! is unit-testable without a real backend.
 
 use notify::RecursiveMode;
@@ -92,8 +92,7 @@ pub struct WatchSet {
     /// it. False for `FSEvents` (each stream entry is independent; only
     /// entries equal to the path are removed) and for `PollWatcher` (exact
     /// key removal). The same per-directory walk is why a failed recursive
-    /// add can leave part of a tree armed (#722, see
-    /// [`WatchSet::record_failed_add`]).
+    /// add can leave part of a tree armed (see [`WatchSet::record_failed_add`]).
     removal_cascades: bool,
 }
 
@@ -126,7 +125,7 @@ impl WatchSet {
     }
 
     /// The OS watches currently armed, by path. Test-only observability of
-    /// what the backend holds (#718).
+    /// what the backend holds.
     #[cfg(test)]
     pub fn armed_paths(&self) -> BTreeMap<PathBuf, WatchMode> {
         self.entries
@@ -149,7 +148,7 @@ impl WatchSet {
     ///
     /// Usually nothing was armed, so `path` is marked unarmed and the next
     /// reconcile re-adds whatever mode is still wanted. A recursive add on a
-    /// backend whose removal cascades is the exception (#722): inotify and
+    /// backend whose removal cascades is the exception: inotify and
     /// kqueue arm the tree one directory at a time and stop at the first one
     /// they cannot watch, without undoing the ones already armed. `path` then
     /// stays armed here, so the reconcile that drops its last owner removes
@@ -255,7 +254,7 @@ mod tests {
         assert_eq!(set.release(Path::new("/other"), SHALLOW), None);
     }
 
-    /// The `FSEvents` failure in #687: a worktree holds `<common>` shallow, the
+    /// On `FSEvents`, a worktree holds `<common>` shallow and the
     /// main checkout then holds the same path recursively. Releasing the
     /// recursive owner must leave the shallow watch armed.
     #[test]
@@ -352,7 +351,7 @@ mod tests {
         );
     }
 
-    /// #722: a partially armed recursive tree is still removed with its owner.
+    /// A partially armed recursive tree is still removed with its owner.
     ///
     /// inotify arms a recursive watch one directory at a time and stops at the
     /// first one it cannot watch, without undoing the ones already armed.

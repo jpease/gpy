@@ -2,16 +2,18 @@
 # tests/zsh/omitted_segment_positions.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #766 (mirrors tests/fish/omitted_segment_positions.test.fish).
+# Mirrors tests/fish/omitted_segment_positions.test.fish.
 #
 # __gpy_render_prompt assigns first/last positions from the detect pass,
 # before anything renders. The language segment passes detect on a project
-# marker but prints nothing on a cold miss (no instant-cache entry), so its
-# neighbour lost its first-segment form or kept a trailing separator. Drives
+# marker but prints nothing on a cold miss (no instant-cache entry), so the
+# positions must account for it: its neighbour keeps its first-segment form
+# and no trailing separator is left behind. Drives
 # the real dispatch loop with no agent socket, an empty instant cache and a
 # directory stub that prints the is_last/is_first it was called with.
 
 ROOT=${0:a:h:h:h}
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 cd "$ROOT" || exit 1
 
 TMP_ROOT=$(mktemp -d)
@@ -59,10 +61,8 @@ __enabled_segments=(language directory)
 PROMPT=$(__gpy_render_prompt 0)
 check "language cold miss: directory is first and last" true \
     "$([[ "$PROMPT" == *"DIR[true|true]"* ]] && echo true || echo false)"
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-    [[ -s "$REFRESH_LOG" ]] && break
-    sleep 0.1
-done
+refresh_logged() { [[ -s "$REFRESH_LOG" ]]; }
+shell_e2e_poll 1 refresh_logged
 check "language cold miss still requests one refresh" lang "$(cat "$REFRESH_LOG" 2>/dev/null)"
 
 # --- Language cold miss in the middle: neighbours keep their positions ---

@@ -34,12 +34,8 @@ die() {
     exit 1
 }
 
-# --- download and verification helpers ----------------------------------------
-#
-# The downloader is resolved once here instead of branching on curl-vs-wget at
-# every call site; #494 replaced four near-identical copies of that branch,
-# each of which had to be kept in step with the others by hand.
-
+# The downloader is resolved once; every fetch goes through fetch_to or
+# fetch_stdout.
 if command -v curl >/dev/null 2>&1; then
     DOWNLOADER=curl
 elif command -v wget >/dev/null 2>&1; then
@@ -79,20 +75,20 @@ sha256_of() {
 # Verify a downloaded file against the .sha256 sidecar the release publishes
 # beside it (scripts/package-release.sh writes one per asset).
 #
-# Every branch fails closed. Before #494 this was opportunistic: a release with
-# no sidecar -- which was every release -- silently skipped verification, so an
-# attacker who could serve a binary could also serve no checksum and the
-# installer would shrug and continue. A missing sidecar and a stripped one are
-# indistinguishable from here, so both abort.
+# Every branch fails closed: an attacker who can serve a binary can also serve
+# no checksum, so an unreachable or empty sidecar aborts just like a mismatch.
 verify_download() {
     verify_file="$1"
     verify_url="$2"
     verify_label="$3"
 
-    verify_expected="$(fetch_stdout "$verify_url.sha256" | awk '{print $1}' || true)"
+    if ! verify_sidecar="$(fetch_stdout "$verify_url.sha256")"; then
+        die "Could not download the published checksum for $verify_label ($verify_url.sha256). Refusing to install an unverified binary."
+    fi
+    verify_expected="$(printf '%s\n' "$verify_sidecar" | awk '{print $1}')"
 
     if [ -z "$verify_expected" ]; then
-        die "No published checksum for $verify_label ($verify_url.sha256). Refusing to install an unverified binary."
+        die "Published checksum for $verify_label ($verify_url.sha256) is empty. Refusing to install an unverified binary."
     fi
 
     verify_actual="$(sha256_of "$verify_file")" ||
@@ -108,27 +104,47 @@ verify_download() {
 # Drop the macOS quarantine flag so Gatekeeper does not SIGKILL an unsigned
 # binary. Only ever called after verify_download has matched the file against
 # its published digest, so it never lowers a barrier on an unverified download.
-#
-# Scoped to com.apple.quarantine rather than the previous `xattr -c`, which
-# stripped every extended attribute including provenance metadata (#494).
+# Scoped to com.apple.quarantine so other extended attributes (provenance
+# metadata) survive.
 clear_quarantine() {
     if [ "$PLATFORM" = "darwin" ] && command -v xattr >/dev/null 2>&1; then
         xattr -d com.apple.quarantine "$1" 2>/dev/null || true
     fi
 }
 
+# Append a gpy-init marker block to rc file $1: header comment $2, body $3.
+# Returns 1 without writing when the file already carries a block, so a re-run
+# never stacks a second one.
+append_gpy_block() {
+    if grep -qF "# >>> gpy-init >>>" "$1" 2>/dev/null; then
+        return 1
+    fi
+    printf '\n# >>> gpy-init >>>\n# %s\n%s\n# <<< gpy-init <<<\n' "$2" "$3" >>"$1"
+}
+
+# Write the CLI's structural completions (subcommand/flag names) for shell $1
+# to $2, regenerated from the installed binary so they cannot drift from it.
+# Best-effort: the prompt does not depend on the gpy CLI, so a missing CLI or a
+# failed generation only warns and returns 1.
+generate_completions() {
+    if ! [ -x "$INSTALL_DIR/gpy" ]; then
+        warn "gpy CLI not installed; skipping shell completions"
+        return 1
+    fi
+    if "$INSTALL_DIR/gpy" completions "$1" >"$2" 2>/dev/null; then
+        success "Generated structural completions: $2"
+    else
+        warn "Could not generate gpy completions (gpy completions $1 failed)"
+        return 1
+    fi
+}
+
 main() {
-# Header
-echo ""
-bold "═══════════════════════════════════════"
-bold "  GPY: Guppy Prompt, Yay! 🐠"
-bold "  One-Line Installer"
-bold "═══════════════════════════════════════"
+bold "GPY one-line installer"
 echo ""
 
-# Both requirements are fatal up front rather than at the point of use: there
-# is no partial install worth starting if the machine cannot download or cannot
-# verify what it downloads (#494).
+# Both requirements are fatal up front: there is no partial install worth
+# starting if the machine cannot download or cannot verify what it downloads.
 if [ -z "$DOWNLOADER" ]; then
     die "Neither curl nor wget found. Please install one and try again."
 fi
@@ -143,14 +159,11 @@ PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 
 # Each platform/arch resolves BOTH the agent daemon ($BINARY_NAME) and the
-# user-facing CLI ($CLI_BINARY_NAME). They ship as a parallel pair of release
-# assets (gpy-agent-<platform>-<arch> and gpy-<platform>-<arch>); the CLI
-# powers shell completions and `gpy` subcommands (#327).
+# user-facing CLI ($CLI_BINARY_NAME), shipped as a parallel pair of release
+# assets; the CLI powers shell completions and `gpy` subcommands.
 #
-# No mingw*/msys*/cygwin* arm here, unlike install.sh's table: this installer
-# sets up shell integration (Fish/Zsh/Bash config, conf.d, completions),
-# which is Unix-socket-only, so there is nothing for it to install on
-# Windows even where a binary exists (#615).
+# No mingw*/msys*/cygwin* arm, unlike install.sh: this installer sets up
+# Unix-socket shell integration, which has nothing to install on Windows.
 case "$PLATFORM" in
     linux)
         case "$ARCH" in
@@ -200,14 +213,12 @@ esac
 # Set up directories
 INSTALL_DIR="$HOME/.local/bin"
 
-# Fish honors XDG_CONFIG_HOME for its own config dir; hardcoding
-# $HOME/.config here would install to a directory fish never reads for users
-# who've set it (#324, matching install.sh).
+# Fish honors XDG_CONFIG_HOME for its own config dir, so the install must too.
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 
-# Fish uses $CONFIG_HOME/fish/gpy/ to match existing install.sh
-# Other shells use $CONFIG_HOME/gpy/{zsh,bash}/
+# Fish uses $CONFIG_HOME/fish/gpy/ (same as install.sh); other shells use
+# $CONFIG_HOME/gpy/{zsh,bash}/.
 if [ "$CURRENT_SHELL" = "fish" ]; then
     SHELL_CONFIG_DIR="$CONFIG_HOME/fish/gpy"
 else
@@ -216,8 +227,8 @@ fi
 
 # The rc block sources this path inside double quotes, which fish, zsh and
 # bash all read identically -- except that `"`, `$`, a backtick, a backslash
-# or a newline still break out of them. Escaping for three shells is a bug
-# farm, so refuse such a path before any file is written (#746).
+# or a newline still break out of them. Rather than escape for three shells,
+# refuse such a path before any file is written.
 case "$SHELL_CONFIG_DIR" in
     *[\"\$\`\\]* | *"
 "*)
@@ -229,11 +240,8 @@ esac
 REPO="jpease/gpy"
 VERSION="${GPY_VERSION:-latest}"
 
-# Resolve the release tag. This used to fall back to VERSION="main" whenever
-# the GitHub API call failed, which pointed both the binary download and the
-# shell-file download at a mutable branch -- an unpinned, unverifiable install
-# whose contents changed with every push. A release install now either resolves
-# a tag or stops (#494).
+# Resolve the release tag or stop: never fall back to a mutable branch, which
+# would pair an unpinned, unverifiable binary with unreleased shell files.
 if [ "$VERSION" = "latest" ]; then
     info "Fetching latest release information..."
     LATEST_TAG="$(fetch_stdout "https://api.github.com/repos/$REPO/releases/latest" |
@@ -246,8 +254,8 @@ if [ "$VERSION" = "latest" ]; then
 fi
 
 # Delete every "$1".backup.* except the one just written ($2): only the most
-# recent previous version is worth keeping, and each backup is a full binary
-# (#807). Compares names rather than mtimes (same-second stamps tie).
+# recent previous version is worth keeping, and each backup is a full binary.
+# Compares names rather than mtimes (same-second stamps tie).
 prune_backups() {
     prune_dest="$1"
     prune_keep="$2"
@@ -263,21 +271,14 @@ info "Installing GPY agent..."
 
 mkdir -p "$INSTALL_DIR"
 
-# Download binary. Fixed /tmp/gpy-agent.$$ paths were both predictable
-# (guessable/pre-creatable by another local user) and never cleaned up on a
-# `die` exit (partial downloads leaked in /tmp); mktemp plus the trap below
-# fix both (#324).
+# mktemp (not a fixed /tmp path) so the name is unpredictable to other local
+# users; the EXIT trap removes partial downloads when the install dies.
 BINARY_URL="https://github.com/$REPO/releases/download/$VERSION/$BINARY_NAME"
 TEMP_BINARY=$(mktemp "${TMPDIR:-/tmp}/gpy-agent.XXXXXX") || die "Failed to create a temp file for the download"
 STAGED_AGENT="$INSTALL_DIR/.gpy-agent.new.$$"
 STAGED_CLI="$INSTALL_DIR/.gpy.new.$$"
 trap 'rm -f "$TEMP_BINARY" "$STAGED_AGENT" 2>/dev/null' EXIT
 
-# A failed download used to fall back to
-# raw.githubusercontent.com/$REPO/main/bin/$BINARY_NAME. That path has never
-# existed -- there is no tracked bin/ directory -- so the fallback only turned
-# a clear "release asset missing" into a confusing second 404, while
-# advertising a mutable, unverifiable install route. Removed in #494.
 info "Downloading agent from $BINARY_URL..."
 if ! fetch_to "$BINARY_URL" "$TEMP_BINARY"; then
     die "Failed to download $BINARY_NAME from the $VERSION release. Check your internet connection, or see https://github.com/$REPO/releases"
@@ -286,7 +287,7 @@ fi
 verify_download "$TEMP_BINARY" "$BINARY_URL" "$BINARY_NAME"
 
 # Stage the verified download beside its destination and run it there BEFORE
-# it replaces the installed agent (#806). Staging in $INSTALL_DIR rather than
+# it replaces the installed agent. Staging in $INSTALL_DIR rather than
 # $TMPDIR avoids a noexec /tmp and keeps the final mv an atomic same-filesystem
 # rename. A binary that cannot run on this host (newer glibc, wrong libc or
 # userland) is dropped and the working install is left exactly as it was.
@@ -299,10 +300,8 @@ if ! "$STAGED_AGENT" --version >/dev/null 2>&1; then
     die "Agent binary installation failed (binary not functional); the existing install was left untouched"
 fi
 
-# Back up only once there is a verified, working replacement to install.
-# Backing up first meant a failed download or a failed verification still
-# littered ~/.local/bin with a backup copy of a binary that was never
-# replaced (#494).
+# Back up only once there is a verified, working replacement to install, so a
+# failed download or verification leaves no stray backup behind.
 if [ -f "$INSTALL_DIR/gpy-agent" ]; then
     BACKUP_PATH="$INSTALL_DIR/gpy-agent.backup.$(date +%Y%m%d_%H%M%S)"
     info "Backing up existing agent to $BACKUP_PATH"
@@ -311,20 +310,16 @@ if [ -f "$INSTALL_DIR/gpy-agent" ]; then
 fi
 
 # mv, not cp: a rename replaces the directory entry, so it is ETXTBSY-safe
-# while the old agent is running (#307).
+# while the old agent is running.
 mv "$STAGED_AGENT" "$INSTALL_DIR/gpy-agent"
 clear_quarantine "$INSTALL_DIR/gpy-agent"
 
 success "Agent binary installed to $INSTALL_DIR/gpy-agent"
 
-# Install the CLI binary (gpy). Unlike the agent, an ABSENT gpy asset is
-# non-fatal: the prompt works without it (gpy only powers the CLI and shell
-# completions), so a release that is missing it degrades rather than blocking
-# every install (#327).
-#
-# A gpy asset that downloads but fails verification is a different matter and
-# aborts the install, same as the agent. Absence is tolerated; tampering is
-# not (#494).
+# Install the CLI binary (gpy). An ABSENT gpy asset is non-fatal: the prompt
+# works without it (gpy only powers the CLI and shell completions). A gpy
+# asset that downloads but fails verification aborts the install, same as the
+# agent: absence is tolerated, tampering is not.
 info "Installing GPY CLI (gpy)..."
 
 CLI_BINARY_URL="https://github.com/$REPO/releases/download/$VERSION/$CLI_BINARY_NAME"
@@ -341,8 +336,8 @@ if [ "$CLI_DOWNLOADED" -eq 1 ]; then
     verify_download "$TEMP_CLI_BINARY" "$CLI_BINARY_URL" "$CLI_BINARY_NAME"
 
     # Stage next to the destination and check it there before it replaces
-    # the installed gpy (#806); the CLI stays optional, so a staged binary
-    # that cannot run is dropped with a warning and the old gpy is kept.
+    # the installed gpy; the CLI stays optional, so a staged binary that
+    # cannot run is dropped with a warning and the old gpy is kept.
     chmod +x "$TEMP_CLI_BINARY"
     mv "$TEMP_CLI_BINARY" "$STAGED_CLI"
     clear_quarantine "$STAGED_CLI"
@@ -355,8 +350,7 @@ if [ "$CLI_DOWNLOADED" -eq 1 ]; then
             prune_backups "$INSTALL_DIR/gpy" "$CLI_BACKUP_PATH"
         fi
 
-        # mv (atomic rename) replaces the directory entry rather than overwriting
-        # the inode in place, so it's ETXTBSY-safe if an old gpy is mid-execution.
+        # mv, not cp: ETXTBSY-safe if an old gpy is mid-execution.
         mv "$STAGED_CLI" "$INSTALL_DIR/gpy"
         clear_quarantine "$INSTALL_DIR/gpy"
         success "CLI binary installed to $INSTALL_DIR/gpy"
@@ -384,22 +378,17 @@ info "Installing $CURRENT_SHELL integration files..."
 
 mkdir -p "$SHELL_CONFIG_DIR"
 
-# Download shell files from GitHub. Pinned to the same $VERSION as the
-# binary (a resolved release tag) so a fresh install never pairs a
-# release binary with unreleased shell scripts (#308).
+# Shell files are pinned to the same release tag as the binary so a fresh
+# install never pairs a release binary with unreleased shell scripts.
 SHELL_FILES_BASE_URL="https://raw.githubusercontent.com/$REPO/$VERSION/$CURRENT_SHELL"
 
-# Create temp directory for downloads. mktemp instead of a fixed
-# /tmp/gpy-install.$$ path for the same predictability/leak reasons as
-# TEMP_BINARY above; the trap replaces the earlier one and cleans up both
-# temps together (#324).
+# The EXIT trap now covers every temp path created so far.
 TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/gpy-install.XXXXXX") || die "Failed to create a temp directory for downloads"
 trap 'rm -f "$TEMP_BINARY" "$TEMP_CLI_BINARY" "$STAGED_AGENT" "$STAGED_CLI" 2>/dev/null; rm -rf "$TEMP_DIR" 2>/dev/null' EXIT
 
-# Per-shell file lists. Kept in named variables (instead of inline in the
-# for-loops below) so tests/fish/install_oneline_file_lists.test.fish can
-# verify these stay in sync with the files actually shipped in the repo,
-# catching list rot like #308 before it reaches users.
+# Per-shell file lists, kept in named variables so
+# tests/fish/install_oneline_file_lists.test.fish can check them against the
+# files shipped in the repo.
 FISH_CORE_FILES="constants.fish debug.fish init.fish ipc.fish renderer.fish util.fish"
 FISH_SEGMENT_FILES="clock.fish devtools.fish directory.fish duration.fish git.fish hostname.fish language.fish status.fish username.fish"
 FISH_FUNCTION_FILES="fish_prompt.fish"
@@ -420,11 +409,9 @@ case "$CURRENT_SHELL" in
 
         # Core files, the conf.d/gpy_init.fish entry point (sourced by the
         # config.fish block) and the functions below (fish_prompt.fish is the
-        # prompt symlink target) are required for GPY to function (unlike
-        # segments, which are best-effort) -- a failed download must stop the
-        # install before any rc file is touched, so a partial install never
-        # leaves rc files pointing at an incomplete shell integration (#309,
-        # #808).
+        # prompt symlink target) are required, unlike the best-effort
+        # segments: a failed download stops the install before any rc file is
+        # touched, so rc files never point at an incomplete integration.
         for file in $FISH_CORE_FILES; do
             fetch_to "$SHELL_FILES_BASE_URL/core/$file" "$SHELL_CONFIG_DIR/core/$file" || die "Failed to download core file: $file"
         done
@@ -441,35 +428,20 @@ case "$CURRENT_SHELL" in
             fetch_to "$SHELL_FILES_BASE_URL/functions/$func" "$SHELL_CONFIG_DIR/functions/$func" || die "Failed to download $func"
         done
 
-        # Install Fish completions as ONE autoloadable file,
-        # `completions/gpy.fish`: the STRUCTURAL completions
-        # (subcommand/flag names), regenerated from the installed CLI on
-        # every run rather than downloaded so they can never drift from the
-        # binary on disk, followed by the small, checked-in
-        # `completions/gpy-dynamic.fish` glue that supplies live
-        # theme/palette/segment names via `gpy __complete <kind>` (#328,
-        # #329). Fish autoloads `completions/<command>.fish` only for the
-        # command of that name, so the glue must be appended to gpy.fish,
-        # not installed beside it (#702). The glue is downloaded best-effort
-        # to a temp file: a failed download only loses dynamic-value
-        # completions, not the prompt. If the CLI is absent
-        # ($CLI_DOWNLOADED=0, #327) or generation fails, gpy.fish is the
-        # glue alone.
+        # Fish autoloads `completions/<command>.fish` only for the command of
+        # that name, so the structural completions and the checked-in
+        # gpy-dynamic.fish glue (live theme/palette/segment names via
+        # `gpy __complete <kind>`) share ONE file, completions/gpy.fish. Without
+        # structural completions, gpy.fish is the glue alone. The glue is
+        # best-effort: a failed download only loses dynamic-value completions.
         FISH_COMPLETIONS_DIR="$CONFIG_HOME/fish/completions"
         mkdir -p "$FISH_COMPLETIONS_DIR"
-        # Older installs wrote the glue as its own (never autoloaded) file.
+        # The glue is never autoloaded as its own file; remove any stray copy.
         rm -f "$FISH_COMPLETIONS_DIR/gpy-dynamic.fish"
 
         fish_completions_generated=0
-        if [ -x "$INSTALL_DIR/gpy" ]; then
-            if "$INSTALL_DIR/gpy" completions fish >"$FISH_COMPLETIONS_DIR/gpy.fish" 2>/dev/null; then
-                fish_completions_generated=1
-                success "Generated structural completions: $FISH_COMPLETIONS_DIR/gpy.fish"
-            else
-                warn "Could not generate gpy completions (gpy completions fish failed)"
-            fi
-        else
-            warn "gpy CLI not installed; skipping structural shell completions"
+        if generate_completions fish "$FISH_COMPLETIONS_DIR/gpy.fish"; then
+            fish_completions_generated=1
         fi
 
         dynamic_glue_tmp="$(mktemp)"
@@ -493,11 +465,8 @@ case "$CURRENT_SHELL" in
         # Download gpy.zsh entry point
         fetch_to "$SHELL_FILES_BASE_URL/gpy.zsh" "$SHELL_CONFIG_DIR/gpy.zsh" || die "Failed to download gpy.zsh"
 
-        # Download core files. Core files are required for GPY to function
-        # (unlike segments below, which are best-effort) -- a failed
-        # download must stop the install before any rc file is touched, so
-        # a partial install never leaves rc files pointing at an incomplete
-        # shell integration (#309).
+        # Core files are required, unlike the best-effort segments: a failed
+        # download stops the install before any rc file is touched.
         for file in $ZSH_CORE_FILES; do
             fetch_to "$SHELL_FILES_BASE_URL/core/$file" "$SHELL_CONFIG_DIR/core/$file" || die "Failed to download core file: $file"
         done
@@ -507,31 +476,14 @@ case "$CURRENT_SHELL" in
             fetch_to "$SHELL_FILES_BASE_URL/segments/$segment" "$SHELL_CONFIG_DIR/segments/$segment" || warn "Could not download $segment"
         done
 
-        # Install Zsh completions. `completions/_gpy` is STRUCTURAL
-        # (subcommand/flag names), regenerated fresh from the CLI binary
-        # since it must match the exact clap definitions shipped in this
-        # package -- same as the Bash/Fish structural completions above.
-        # `completions/_gpy-dynamic` is the checked-in, hand-authored glue
-        # that fills in dynamic values (themes, palettes, segments) and
-        # delegates to the structural function otherwise; it is downloaded
-        # like the other shell files. Both are best-effort: the CLI binary
-        # may be absent (#327 -- the CLI powers completions but the prompt
-        # itself does not depend on it), and a failed download only loses
-        # completions, not the prompt. `zsh/gpy.zsh` wires both into fpath
-        # and registers them with `compdef` on every shell start, so no
-        # rc-file changes are needed here beyond the gpy-init block already
-        # written below.
+        # `_gpy` holds the structural completions; the checked-in
+        # `_gpy-dynamic` glue fills in dynamic values and delegates to it.
+        # Both are best-effort. `zsh/gpy.zsh` adds them to fpath and runs
+        # `compdef` on every shell start, so no rc-file change is needed
+        # beyond the gpy-init block.
         mkdir -p "$SHELL_CONFIG_DIR/completions"
 
-        if [ -x "$INSTALL_DIR/gpy" ]; then
-            if "$INSTALL_DIR/gpy" completions zsh >"$SHELL_CONFIG_DIR/completions/_gpy" 2>/dev/null; then
-                success "Generated structural completions: $SHELL_CONFIG_DIR/completions/_gpy"
-            else
-                warn "Could not generate gpy completions (gpy completions zsh failed)"
-            fi
-        else
-            warn "gpy CLI not installed; skipping shell completions"
-        fi
+        generate_completions zsh "$SHELL_CONFIG_DIR/completions/_gpy" || true
 
         fetch_to "$SHELL_FILES_BASE_URL/completions/_gpy-dynamic" "$SHELL_CONFIG_DIR/completions/_gpy-dynamic" || warn "Could not download _gpy-dynamic"
         ;;
@@ -543,11 +495,8 @@ case "$CURRENT_SHELL" in
         # Download gpy.bash entry point
         fetch_to "$SHELL_FILES_BASE_URL/gpy.bash" "$SHELL_CONFIG_DIR/gpy.bash" || die "Failed to download gpy.bash"
 
-        # Download core files. Core files are required for GPY to function
-        # (unlike segments below, which are best-effort) -- a failed
-        # download must stop the install before any rc file is touched, so
-        # a partial install never leaves rc files pointing at an incomplete
-        # shell integration (#309).
+        # Core files are required, unlike the best-effort segments: a failed
+        # download stops the install before any rc file is touched.
         for file in $BASH_CORE_FILES; do
             fetch_to "$SHELL_FILES_BASE_URL/core/$file" "$SHELL_CONFIG_DIR/core/$file" || die "Failed to download core file: $file"
         done
@@ -557,27 +506,12 @@ case "$CURRENT_SHELL" in
             fetch_to "$SHELL_FILES_BASE_URL/segments/$segment" "$SHELL_CONFIG_DIR/segments/$segment" || warn "Could not download $segment"
         done
 
-        # Install Bash completions. `completions/gpy.bash` is STRUCTURAL
-        # (subcommand/flag names), regenerated fresh from the CLI binary
-        # since it must match the exact clap definitions shipped in this
-        # package. `completions/gpy-dynamic.bash` is the checked-in,
-        # hand-authored glue that fills in dynamic values (themes, palettes,
-        # segments) and delegates to the structural function otherwise; it
-        # is downloaded like the other shell files. Both are best-effort:
-        # the CLI binary may be absent (#327 -- the CLI powers completions
-        # but the prompt itself does not depend on it), and a failed
-        # download only loses completions, not the prompt.
+        # `gpy.bash` holds the structural completions; the checked-in
+        # `gpy-dynamic.bash` glue fills in dynamic values and delegates to it.
+        # Both are best-effort.
         mkdir -p "$SHELL_CONFIG_DIR/completions"
 
-        if [ -x "$INSTALL_DIR/gpy" ]; then
-            if "$INSTALL_DIR/gpy" completions bash >"$SHELL_CONFIG_DIR/completions/gpy.bash" 2>/dev/null; then
-                success "Generated structural completions: $SHELL_CONFIG_DIR/completions/gpy.bash"
-            else
-                warn "Could not generate gpy completions (gpy completions bash failed)"
-            fi
-        else
-            warn "gpy CLI not installed; skipping shell completions"
-        fi
+        generate_completions bash "$SHELL_CONFIG_DIR/completions/gpy.bash" || true
 
         fetch_to "$SHELL_FILES_BASE_URL/completions/gpy-dynamic.bash" "$SHELL_CONFIG_DIR/completions/gpy-dynamic.bash" || warn "Could not download gpy-dynamic.bash"
         ;;
@@ -598,20 +532,12 @@ case "$CURRENT_SHELL" in
 
         touch "$FISH_CONFIG"
 
-        # Add GPY initialization to config.fish. Unquoted heredoc so the
-        # sourced path matches wherever SHELL_CONFIG_DIR actually landed
-        # (CONFIG_HOME, not a hardcoded ~/.config) -- a literal '~' here
-        # would silently miss an XDG_CONFIG_HOME install (#615).
-        if ! grep -qF "# >>> gpy-init >>>" "$FISH_CONFIG" 2>/dev/null; then
-            cat >> "$FISH_CONFIG" << EOF
-
-# >>> gpy-init >>>
-# GPY Prompt Enhancement
-if status is-interactive
-    source "$SHELL_CONFIG_DIR/conf.d/gpy_init.fish"
-end
-# <<< gpy-init <<<
-EOF
+        # The sourced path is expanded at install time so the block sources
+        # wherever SHELL_CONFIG_DIR landed; a literal '~' would miss an
+        # XDG_CONFIG_HOME install.
+        if append_gpy_block "$FISH_CONFIG" "GPY Prompt Enhancement" "if status is-interactive
+    source \"$SHELL_CONFIG_DIR/conf.d/gpy_init.fish\"
+end"; then
             success "Added GPY initialization to $FISH_CONFIG"
         else
             success "GPY already configured in $FISH_CONFIG"
@@ -622,7 +548,7 @@ EOF
         FISH_PROMPT_SOURCE="$SHELL_CONFIG_DIR/functions/fish_prompt.fish"
 
         # Move aside anything that is not GPY's own link, foreign symlinks
-        # included; `mv` keeps a symlink a symlink (#744).
+        # included; `mv` keeps a symlink a symlink.
         if { [ -e "$FISH_PROMPT_TARGET" ] || [ -L "$FISH_PROMPT_TARGET" ]; } \
             && { [ ! -L "$FISH_PROMPT_TARGET" ] || [ "$(readlink "$FISH_PROMPT_TARGET")" != "$FISH_PROMPT_SOURCE" ]; }; then
             BACKUP="$FISH_PROMPT_TARGET.backup.$(date +%Y%m%d_%H%M%S)"
@@ -639,23 +565,14 @@ EOF
         ;;
 
     zsh)
-        # zsh reads ${ZDOTDIR:-$HOME}/.zshrc (#748). A file this installer
-        # creates is tagged `gpy-created-file` so the uninstaller can delete
-        # it again (#747).
+        # zsh reads ${ZDOTDIR:-$HOME}/.zshrc. A file this installer creates
+        # is tagged `gpy-created-file` so the uninstaller can delete it again.
         ZSH_RC="${ZDOTDIR:-$HOME}/.zshrc"
         ZSH_RC_NOTE=""
         [ -e "$ZSH_RC" ] || ZSH_RC_NOTE=" (gpy-created-file)"
         mkdir -p "$(dirname "$ZSH_RC")"
 
-        SOURCE_LINE="source \"$SHELL_CONFIG_DIR/gpy.zsh\""
-        if ! grep -qF "# >>> gpy-init >>>" "$ZSH_RC" 2>/dev/null; then
-            cat >> "$ZSH_RC" << EOF
-
-# >>> gpy-init >>>
-# GPY Prompt Enhancement$ZSH_RC_NOTE
-$SOURCE_LINE
-# <<< gpy-init <<<
-EOF
+        if append_gpy_block "$ZSH_RC" "GPY Prompt Enhancement$ZSH_RC_NOTE" "source \"$SHELL_CONFIG_DIR/gpy.zsh\""; then
             success "Added GPY initialization to $ZSH_RC"
         else
             success "GPY already configured in $ZSH_RC"
@@ -666,20 +583,12 @@ EOF
         # Always write the GPY block to ~/.bashrc (interactive non-login
         # shells read only that), creating it if missing. A file this
         # installer creates is tagged `gpy-created-file` in its block so the
-        # uninstaller can delete it again (#747).
+        # uninstaller can delete it again.
         BASH_RC="$HOME/.bashrc"
         BASH_RC_NOTE=""
         [ -e "$BASH_RC" ] || BASH_RC_NOTE=" (gpy-created-file)"
 
-        SOURCE_LINE="source \"$SHELL_CONFIG_DIR/gpy.bash\""
-        if ! grep -qF "# >>> gpy-init >>>" "$BASH_RC" 2>/dev/null; then
-            cat >> "$BASH_RC" << EOF
-
-# >>> gpy-init >>>
-# GPY Prompt Enhancement$BASH_RC_NOTE
-$SOURCE_LINE
-# <<< gpy-init <<<
-EOF
+        if append_gpy_block "$BASH_RC" "GPY Prompt Enhancement$BASH_RC_NOTE" "source \"$SHELL_CONFIG_DIR/gpy.bash\""; then
             success "Added GPY initialization to $BASH_RC"
         else
             success "GPY already configured in $BASH_RC"
@@ -702,24 +611,17 @@ EOF
             BASH_LOGIN="$HOME/.profile"
             BASH_LOGIN_NOTE=" (gpy-created-file)"
         fi
-        if ! grep -qF "# >>> gpy-init >>>" "$BASH_LOGIN" 2>/dev/null \
-            && ! grep -q '\.bashrc' "$BASH_LOGIN" 2>/dev/null; then
-            cat >> "$BASH_LOGIN" << EOF
-
-# >>> gpy-init >>>
-# GPY: load ~/.bashrc in login shells$BASH_LOGIN_NOTE
-[ -f "\$HOME/.bashrc" ] && . "\$HOME/.bashrc"
-# <<< gpy-init <<<
-EOF
+        # shellcheck disable=SC2016 # $HOME must stay literal in the rc file
+        if ! grep -q '\.bashrc' "$BASH_LOGIN" 2>/dev/null \
+            && append_gpy_block "$BASH_LOGIN" "GPY: load ~/.bashrc in login shells$BASH_LOGIN_NOTE" '[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"'; then
             success "Added ~/.bashrc loader to $BASH_LOGIN"
         fi
 
         # Warn about Bash version if on macOS. Probe the `bash` binary
         # directly rather than $SHELL: GPY_SHELL can force CURRENT_SHELL=bash
-        # while the user's actual login shell is something else (e.g. ksh),
-        # whose --version output wouldn't match this parse and could abort
-        # the whole script under `set -e` -- after the rc file above was
-        # already modified (#324).
+        # while the login shell is something else (e.g. ksh), whose
+        # --version output would not parse and could abort under `set -e`
+        # after the rc file was already modified.
         if [ "$PLATFORM" = "darwin" ] && command -v bash >/dev/null 2>&1; then
             BASH_MAJOR_VERSION=$(bash --version 2>/dev/null | head -n1 | sed -n 's/.*version \([0-9][0-9]*\).*/\1/p')
             if [ -n "$BASH_MAJOR_VERSION" ] && [ "$BASH_MAJOR_VERSION" -lt 5 ] 2>/dev/null; then
@@ -733,20 +635,17 @@ esac
 # Choose an icon style that renders on this machine before the first prompt.
 # `gpy-agent init` detects whether a Nerd Font is available and, on a fresh
 # install only (no existing config), writes the config with a matching
-# `show_icons` so a machine without a Nerd Font never renders tofu boxes on
-# its very first prompt (#411). It reads the user's confirmation from
-# /dev/tty (not this piped stdin), so a `curl | sh` install with an attached
-# terminal can still show a sample and ask; a fully non-interactive pipe
-# falls back to detection. Non-fatal (`|| warn`) so a failure never aborts
-# the install under `set -e`.
+# `show_icons` so a machine without a Nerd Font never renders tofu boxes. It
+# reads the user's confirmation from /dev/tty (not this piped stdin), so a
+# `curl | sh` install with an attached terminal can still show a sample and
+# ask; a fully non-interactive pipe falls back to detection. Non-fatal
+# (`|| warn`) so a failure never aborts the install under `set -e`.
 info "Configuring prompt icons..."
 "$INSTALL_DIR/gpy-agent" init || warn "Icon setup skipped (gpy-agent init failed); using built-in defaults"
 
 # Always run `start`, even if an agent already responds to `status`: `start`
 # is idempotent (no-op when a matching version is already running) and is
-# the only path that detects and restarts a version-mismatched old daemon
-# (#307). Skipping it whenever `status` succeeded left upgrades never
-# restarting the old daemon, so new shells kept talking to a stale protocol.
+# the only path that detects and restarts a version-mismatched old daemon.
 info "Starting GPY agent..."
 
 if "$INSTALL_DIR/gpy-agent" start >/dev/null 2>&1; then
@@ -755,17 +654,13 @@ else
     warn "Could not start agent automatically (will start on next shell session)"
 fi
 
-# Cleanup temp directory
 rm -rf "$TEMP_DIR"
 
-# Final success message
 echo ""
-bold "═══════════════════════════════════════"
-success "GPY installed successfully! 🎉"
-bold "═══════════════════════════════════════"
+success "GPY installed successfully"
 echo ""
 
-info "📦 Installation summary:"
+info "Installation summary:"
 echo "   • Agent: $INSTALL_DIR/gpy-agent"
 if [ -x "$INSTALL_DIR/gpy" ]; then
     echo "   • CLI:   $INSTALL_DIR/gpy"
@@ -778,7 +673,7 @@ case "$CURRENT_SHELL" in
 esac
 echo ""
 
-info "🚀 Next steps:"
+info "Next steps:"
 case "$CURRENT_SHELL" in
     fish)
         echo "   1. Restart Fish: exec fish"
@@ -795,27 +690,15 @@ case "$CURRENT_SHELL" in
 esac
 echo ""
 
-info "✨ Your prompt now includes:"
-echo "   • Git status indicators (branch, staged/unstaged/untracked)"
-echo "   • Language detection (14+ languages)"
-echo "   • Real-time updates via filesystem watching"
-echo "   • Optimized performance (<40ms even on large repos)"
-echo ""
-
-info "🔧 Customize GPY:"
+info "Configuration and help:"
 echo "   • View config: cat $CONFIG_HOME/gpy/config.toml"
 echo "   • Agent commands: gpy-agent --help"
 echo "   • Documentation: https://github.com/jpease/gpy"
-echo ""
-
-info "💡 Troubleshooting:"
 echo "   • Check agent status: gpy-agent status"
 echo "   • View logs: tail -f $CACHE_HOME/gpy/agent.log"
-# The uninstall scripts are the only complete removal path (binaries plus
-# their upgrade backups, completions, the rc-file block, config, cache and
-# runtime dirs, and the running processes). Download-then-run rather than
-# `curl | sh`: the script asks for confirmation on stdin, and a piped script
-# would feed itself to that read (#642).
+# The uninstall scripts are the only complete removal path. Download-then-run
+# rather than `curl | sh`: the script asks for confirmation on stdin, which a
+# piped script would feed itself to.
 UNINSTALL_URL="https://raw.githubusercontent.com/$REPO/$VERSION/scripts"
 case $CURRENT_SHELL in
     fish)
@@ -825,9 +708,6 @@ case $CURRENT_SHELL in
         echo "   • Uninstall: curl -fsSL $UNINSTALL_URL/uninstall.sh -o /tmp/gpy-uninstall.sh && GPY_SHELL=$CURRENT_SHELL sh /tmp/gpy-uninstall.sh"
         ;;
 esac
-echo ""
-
-bold "Happy prompting! 🐠"
 echo ""
 }
 

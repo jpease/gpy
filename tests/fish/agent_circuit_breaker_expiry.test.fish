@@ -1,9 +1,7 @@
 #!/usr/bin/env fish
 
 # SPDX-License-Identifier: GPL-3.0-or-later
-# ============================================================================
 # Unit Test: Agent Availability Circuit Breaker Expiry
-# ============================================================================
 #
 # The circuit breaker in `__gpy_agent_available` (fish/core/util.fish) opens
 # for GPY_CIRCUIT_BREAKER_BACKOFF_SECONDS after repeated ping failures, which
@@ -14,7 +12,7 @@
 # `__gpy_register_with_agent` gates on `__gpy_agent_available`, so such a shell
 # can never re-register -- not from the agent's restart .reregister nudge, not
 # from the agent's re-nudge, not from a prompt render -- and therefore never
-# receives another live update (#464).
+# receives another live update.
 
 source (dirname (status -f))/../lib/test_helpers.fish
 

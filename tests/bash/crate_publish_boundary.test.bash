@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # tests/bash/crate_publish_boundary.test.bash
 #
-# Locks in the distribution decision from #502: gpy-agent is never published to
+# gpy-agent is never published to
 # crates.io, and its library surface carries no semver guarantee.
 #
 # `cargo install gpy-agent` cannot deliver a working GPY. It places the two
 # binaries and nothing else -- no fish/core/, fish/segments/ or fish/conf.d/,
-# which is what the prompt actually renders from. Every place that offered it
-# was offering a broken install, so the string is banned outright rather than
-# deprecated.
+# which is what the prompt actually renders from. Any place offering it
+# offers a broken install, so the string is banned outright.
 #
 # `brew install gpy` is banned in its bare form because it implies homebrew-core.
 # The supported future spelling is a personal tap (`brew install jpease/tap/gpy`),
@@ -23,7 +22,7 @@
 #   (b) no `cargo install gpy-agent` in the installers, update script, docs,
 #       crate README, crate root docs, or the PR template
 #   (c) no bare `brew install gpy` in the installers, docs, or crate README
-#   (d) the crate README no longer advertises a crates.io/docs.rs publication
+#   (d) the crate README does not advertise a crates.io/docs.rs publication
 #       or a [dependencies] snippet
 #   (e) both the crate README and lib.rs state the unsupported-library boundary
 
@@ -34,11 +33,8 @@ MANIFEST="gpy-agent/Cargo.toml"
 CRATE_README="gpy-agent/README.md"
 CRATE_LIB="gpy-agent/src/lib.rs"
 
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 # Files that must never offer `cargo install gpy-agent`. Docs are globbed so a
 # new page is covered without editing this list.
@@ -59,7 +55,7 @@ echo "--- gpy-agent is marked unpublishable ---"
 if [[ ! -f "$MANIFEST" ]]; then
     fail "$MANIFEST not found"
 elif ! grep -qE '^[[:space:]]*publish[[:space:]]*=[[:space:]]*false' "$MANIFEST"; then
-    fail "$MANIFEST does not set publish = false (#502)"
+    fail "$MANIFEST does not set publish = false"
 fi
 
 # (b) the dead cargo channel is gone.
@@ -67,7 +63,7 @@ echo "--- no cargo install channel ---"
 for target in "${cargo_scan[@]}"; do
     [[ -f "$target" ]] || continue
     if grep -nF 'cargo install gpy-agent' "$target"; then
-        fail "$target still offers 'cargo install gpy-agent'; the crate is never published (#502)"
+        fail "$target still offers 'cargo install gpy-agent'; the crate is never published"
     fi
 done
 
@@ -80,7 +76,7 @@ for target in "${brew_scan[@]}"; do
     fi
 done
 
-# (d) the crate README no longer reads like a published library.
+# (d) the crate README does not read like a published library.
 echo "--- crate README does not advertise a registry publication ---"
 if [[ ! -f "$CRATE_README" ]]; then
     fail "$CRATE_README not found"
@@ -103,14 +99,9 @@ for target in "$CRATE_README" "$CRATE_LIB"; do
         continue
     }
     grep -qiF 'not published to crates.io' "$target" ||
-        fail "$target does not state that the crate is not published to crates.io (#502)"
+        fail "$target does not state that the crate is not published to crates.io"
     grep -qi 'semver' "$target" ||
-        fail "$target does not state that the library surface carries no semver guarantee (#502)"
+        fail "$target does not state that the library surface carries no semver guarantee"
 done
 
-if [[ $failures -ne 0 ]]; then
-    echo "$failures assertion(s) failed"
-    exit 1
-fi
-
-echo "PASS"
+test_finish

@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # tests/bash/missing_core_file_disables_cleanly.test.bash
 #
-# Regression test for #309: a partial one-line install can leave gpy.bash's
-# core/ directory missing a file (e.g. a download that failed mid-transfer).
-# Previously gpy.bash sourced every core file unconditionally, so a missing
-# file produced a raw "No such file or directory" error on every single new
-# shell forever, and half-loaded the prompt (some functions/constants
+# A partial one-line install can leave gpy.bash's core/ directory missing a
+# file (e.g. a download that failed mid-transfer). gpy.bash must not source
+# a missing core file: that prints a raw "No such file or directory" error in
+# every new shell and half-loads the prompt (some functions/constants
 # defined, others not).
 #
 # This copies bash/ into a scratch directory, deletes one core file, sources

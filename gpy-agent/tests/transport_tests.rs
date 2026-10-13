@@ -1,255 +1,155 @@
-//! Transport layer tests for Fish shell
-//! Tests Unix domain socket transport for Fish shell usage
+//! Unix domain socket transport tests.
+//!
+//! Every test points `XDG_RUNTIME_DIR` at its own temp directory so the
+//! transport's default socket path never touches a real agent's runtime dir.
 
-#![allow(clippy::panic)]
-#![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
-#![allow(unused_mut)]
-#![allow(clippy::missing_panics_doc)] // Test functions panic on assertion failures
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::ignored_unit_patterns)]
+#![allow(clippy::missing_panics_doc)]
 
+#[path = "common/env_guard.rs"]
+mod env_guard;
+
+use env_guard::EnvGuard;
 use gpy_agent::ipc::transport::Transport;
 use serial_test::serial;
+use std::path::PathBuf;
+use tempfile::TempDir;
 
-#[tokio::test]
-#[serial]
-async fn test_transport_creation() {
-    // Test server creation
-    let server = Transport::new_server();
-    assert!(server.is_ok());
+/// A temp runtime dir under `/tmp` (short enough for `sun_path`) installed as
+/// `XDG_RUNTIME_DIR` until the guard drops.
+fn isolated_runtime() -> (TempDir, EnvGuard) {
+    let dir = tempfile::Builder::new()
+        .prefix("gpy-tt")
+        .tempdir_in("/tmp")
+        .expect("create runtime dir");
+    let env = EnvGuard::set_one("XDG_RUNTIME_DIR", dir.path());
+    (dir, env)
+}
 
-    // Test client creation
-    let client = Transport::new_client();
-    assert!(client.is_ok());
+fn expected_socket(runtime: &TempDir) -> PathBuf {
+    runtime.path().join("gpy").join("gpy-test.sock")
 }
 
 #[tokio::test]
 #[serial]
-async fn test_transport_address() {
-    let address = Transport::address();
-    assert_ne!(address, "");
+async fn test_transport_address_uses_runtime_dir() {
+    let (runtime, _env) = isolated_runtime();
 
-    // Should be a Unix socket path ending with .sock
-    assert!(address.contains(".sock") || address.contains("gpy"));
-
-    // Should follow XDG Base Directory spec or fallback to /tmp
-    assert!(address.contains("gpy") || address.starts_with("/tmp"));
+    assert_eq!(
+        PathBuf::from(Transport::address()),
+        expected_socket(&runtime)
+    );
 }
 
 #[tokio::test]
 #[serial]
-async fn test_server_bind() {
-    let mut server = Transport::new_server().unwrap();
-    let result = server.bind();
+async fn test_new_server_creates_runtime_dir() {
+    let (runtime, _env) = isolated_runtime();
+    let socket_dir = runtime.path().join("gpy");
+    assert!(!socket_dir.exists());
 
-    // Should succeed on first bind, but might fail if another test is using the same socket
-    // This is acceptable for cross-platform IPC testing
-    match result {
-        Ok(_) => {
-            // Successful bind
-        }
-        Err(e) => {
-            // Might fail due to address already in use during parallel testing
-            let error_msg = e.to_string();
-            assert!(error_msg.contains("bind") || error_msg.contains("address"));
-        }
-    }
+    Transport::new_server().expect("server transport");
+
+    assert!(
+        socket_dir.is_dir(),
+        "{} should be created",
+        socket_dir.display()
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_server_bind_accepts_client() {
+    let (runtime, _env) = isolated_runtime();
+
+    let mut server = Transport::new_server().expect("server transport");
+    server.bind().expect("bind server socket");
+    assert!(
+        expected_socket(&runtime).exists(),
+        "bind should create the socket file"
+    );
+
+    let mut client = Transport::new_client().expect("client transport");
+    client
+        .connect()
+        .await
+        .expect("client connects to bound server");
+    client
+        .send(b"test message")
+        .await
+        .expect("send on connected client");
+}
+
+#[tokio::test]
+#[serial]
+async fn test_bind_replaces_stale_socket_file() {
+    let (runtime, _env) = isolated_runtime();
+
+    // A std listener does not unlink its socket on drop, so this leaves a stale
+    // socket file exactly where the transport binds.
+    let socket = expected_socket(&runtime);
+    std::fs::create_dir_all(socket.parent().expect("socket has a parent"))
+        .expect("create socket dir");
+    drop(std::os::unix::net::UnixListener::bind(&socket).expect("plant stale socket"));
+    assert!(socket.exists());
+
+    let mut second = Transport::new_server().expect("server transport");
+    second.bind().expect("rebind over a stale socket file");
 }
 
 #[tokio::test]
 #[serial]
 async fn test_client_connect_error() {
-    let mut client = Transport::new_client().unwrap();
+    let (_runtime, _env) = isolated_runtime();
+    let mut client = Transport::new_client().expect("client transport");
 
-    // Should fail to connect when no server is running
-    let result = client.connect().await;
-    assert!(result.is_err());
+    let err = client
+        .connect()
+        .await
+        .expect_err("connect should fail with no server bound");
+
+    assert!(
+        err.to_string().contains("Failed to connect"),
+        "unexpected error: {err}"
+    );
 }
 
 #[tokio::test]
 #[serial]
-async fn test_server_client_communication() {
-    // This test requires more complex setup due to async nature
-    // For now, just test that the methods exist and have correct signatures
+async fn test_unconnected_send_and_receive_fail() {
+    let (_runtime, _env) = isolated_runtime();
+    let mut server = Transport::new_server().expect("server transport");
+    let mut client = Transport::new_client().expect("client transport");
 
-    let mut server = Transport::new_server().unwrap();
-    let mut client = Transport::new_client().unwrap();
-
-    // Test that send/receive methods exist (will fail without connection)
-    let test_data = b"test message";
-
-    let send_result = server.send(test_data).await;
-    assert!(send_result.is_err()); // No connection established
-
-    let receive_result = server.receive().await;
-    assert!(receive_result.is_err()); // No connection established
-
-    let client_send_result = client.send(test_data).await;
-    assert!(client_send_result.is_err()); // No connection established
-
-    let client_receive_result = client.receive().await;
-    assert!(client_receive_result.is_err()); // No connection established
-}
-
-#[tokio::test]
-#[serial]
-async fn test_invalid_operations() {
-    let mut server = Transport::new_server().unwrap();
-    let mut client = Transport::new_client().unwrap();
-
-    // Test operations without proper setup
-    let test_data = b"test";
-
-    // Server should fail to send without connection
-    let server_result = server.send(test_data).await;
-    assert!(server_result.is_err());
-
-    // Client should fail to send without connection
-    let client_result = client.send(test_data).await;
-    assert!(client_result.is_err());
-}
-
-#[tokio::test]
-#[serial]
-async fn test_socket_path_creation() {
-    use std::env;
-
-    // Test XDG_RUNTIME_DIR path creation
-    unsafe {
-        let dir = format!(
-            "{}/target/test_runtime_{}",
-            env!("CARGO_MANIFEST_DIR"),
-            std::process::id()
+    for err in [
+        server.send(b"test").await.expect_err("server send"),
+        server.receive().await.expect_err("server receive"),
+        client.send(b"test").await.expect_err("client send"),
+        client.receive().await.expect_err("client receive"),
+    ] {
+        assert!(
+            err.to_string().contains("No active connection"),
+            "unexpected error: {err}"
         );
-        env::set_var("XDG_RUNTIME_DIR", dir);
     }
-    let server = Transport::new_server();
-    assert!(server.is_ok());
-
-    // Clean up
-    unsafe {
-        env::remove_var("XDG_RUNTIME_DIR");
-    }
-    let _ = std::fs::remove_dir_all(format!(
-        "{}/target/test_runtime_{}",
-        env!("CARGO_MANIFEST_DIR"),
-        std::process::id()
-    ));
 }
 
 #[tokio::test]
 #[serial]
 async fn test_transport_mode_validation() {
-    let mut server = Transport::new_server().unwrap();
-    let mut client = Transport::new_client().unwrap();
+    let (runtime, _env) = isolated_runtime();
+    let mut server = Transport::new_server().expect("server transport");
+    let mut client = Transport::new_client().expect("client transport");
 
-    // Server should not be able to connect (it should bind)
-    // Client should not be able to bind (it should connect)
+    let bind_err = client.bind().expect_err("client must not bind");
+    assert!(bind_err.to_string().contains("Cannot bind in client mode"));
 
-    // These operations should fail due to mode mismatch
-    // (Implementation details depend on platform-specific code)
-
-    // Just verify the transports were created successfully
-    // Note: Can't pattern match on platform-specific variants in cross-platform tests
-    // The important thing is that both were created without errors
-    drop(server);
-    drop(client);
-}
-
-#[tokio::test]
-#[serial]
-async fn test_transport_error_messages() {
-    let mut client = Transport::new_client().unwrap();
-
-    // Test that error messages are descriptive
-    let connect_result = client.connect().await;
-    if let Err(e) = connect_result {
-        let error_msg = e.to_string();
-        // Should contain context about what failed
-        assert!(error_msg.contains("Failed to") || error_msg.contains("Cannot"));
-    }
-
-    let send_result = client.send(b"test").await;
-    if let Err(e) = send_result {
-        let error_msg = e.to_string();
-        // Should indicate no connection
-        assert!(error_msg.contains("connection") || error_msg.contains("Connection"));
-    }
-}
-
-#[tokio::test]
-#[serial]
-async fn test_multiple_server_instances() {
-    let server1 = Transport::new_server();
-    let server2 = Transport::new_server();
-
-    // Both should create successfully
-    assert!(server1.is_ok());
-    assert!(server2.is_ok());
-
-    // Test that both instances are created properly
-    let _s1 = server1.unwrap();
-    let _s2 = server2.unwrap();
-
-    // Note: Testing actual binding conflicts is tricky in parallel test environment
-    // The important part is that instances can be created successfully
-}
-
-#[tokio::test]
-#[serial]
-async fn test_transport_cleanup() {
-    use std::env;
-
-    // Isolate from any real agent socket by using a test-specific runtime dir
-    let original_xdg_runtime = env::var("XDG_RUNTIME_DIR").ok();
-    let test_runtime_dir = format!(
-        "{}/target/test_runtime_{}_cleanup",
-        env!("CARGO_MANIFEST_DIR"),
-        std::process::id()
+    let connect_err = server.connect().await.expect_err("server must not connect");
+    assert!(
+        connect_err
+            .to_string()
+            .contains("Cannot connect in server mode")
     );
-    unsafe {
-        env::set_var("XDG_RUNTIME_DIR", &test_runtime_dir);
-    }
 
-    // Test that transports clean up properly when dropped
-    {
-        let mut server = Transport::new_server().unwrap();
-        let _ = server.bind();
-        // Server goes out of scope here
-    }
-
-    // Give the system a moment to clean up the socket file
-    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-
-    // Switch to a fresh runtime dir to avoid colliding with any existing socket
-    let second_runtime_dir = format!("/tmp/gpy_tc_{}", std::process::id());
-    unsafe {
-        env::set_var("XDG_RUNTIME_DIR", &second_runtime_dir);
-    }
-
-    // Should be able to create and bind a new server after cleanup
-    let mut new_server = Transport::new_server().unwrap();
-    let result = new_server.bind();
-    if let Err(e) = &result {
-        let msg = e.to_string().to_lowercase();
-        assert!(
-            msg.contains("bind")
-                || msg.contains("address")
-                || msg.contains("permission")
-                || msg.contains("operation not permitted")
-                || msg.contains("sun_len")
-                || msg.contains("path must be shorter")
-        );
-    }
-
-    // Restore environment and cleanup
-    unsafe {
-        match original_xdg_runtime {
-            Some(val) => env::set_var("XDG_RUNTIME_DIR", val),
-            None => env::remove_var("XDG_RUNTIME_DIR"),
-        }
-    }
-    let _ = std::fs::remove_dir_all(test_runtime_dir);
-    let _ = std::fs::remove_dir_all(second_runtime_dir);
+    assert!(!expected_socket(&runtime).exists());
 }

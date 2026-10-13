@@ -21,13 +21,12 @@ SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-hostile.XXXXXX")"
 cleanup() { rm -rf "$SANDBOX"; }
 trap cleanup EXIT
 # The child's XDG_CONFIG_HOME ($SANDBOX/config) disables the supervisor: the
-# theme export would re-set the env flag below from config.toml (#836).
+# theme export would re-set the env flag below from config.toml.
 source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"
 mkdir -p "$SANDBOX/run"
 
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 skip() { echo "SKIP: $*"; }
 
 # run_child <prelude> <input>: sets CHILD_OUT to the child's merged output.
@@ -205,8 +204,4 @@ run_scenario nounset_no_xdg
 run_scenario nounset_runtime_only
 run_scenario prompt_command_sees_status
 
-if ((failures > 0)); then
-    echo "=== $failures scenario assertion(s) failed ==="
-    exit 1
-fi
-echo "=== All Tests Passed ==="
+test_finish

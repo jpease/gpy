@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Bash probes `nc -h` for `-U` before using nc as the IPC client, exactly as
-# Fish does (#850). netcat-traditional (the `nc` on some minimal Debian and
-# Ubuntu images) has no Unix-socket support: Bash used to run `nc -U` against
-# it on every request anyway.
+# Fish does. netcat-traditional (the `nc` on some minimal Debian and
+# Ubuntu images) has no Unix-socket support, so Bash must never run `nc -U`
+# against it.
 #
 # `nc` here is a stub script on a PATH that holds nothing else (no socat), so
 # the nc branch is the only transport. It logs every invocation.
@@ -28,9 +28,6 @@ test_require_command python3 "python3 not installed, cannot create a Unix socket
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/gpy-nc-probe.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 # A socket node nothing listens on: the stub nc never connects to it, but the
 # pre-flight `-S` test needs the real thing.
@@ -94,5 +91,4 @@ else
     fail "nc with -U never got the socket: $(tr '\n' '|' <"$log")"
 fi
 
-[ "$failures" -eq 0 ] || exit 1
-echo "PASS: bash nc capability probe"
+test_finish "bash nc capability probe"

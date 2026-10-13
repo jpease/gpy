@@ -2,7 +2,7 @@
 # tests/bash/release_sbom.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Covers scripts/generate-sbom.sh (#494). The SBOM is a release asset that
+# Covers scripts/generate-sbom.sh. The SBOM is a release asset that
 # downstream consumers use to answer "is GPY affected by CVE-X", so a document
 # that is well-formed but wrong -- an empty component list, dev-dependencies
 # presented as shipped code, a version that disagrees with the tag -- is worse
@@ -25,11 +25,8 @@ WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
 
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 SBOM="$WORKDIR/sbom.cdx.json"
 
@@ -86,7 +83,7 @@ bad_purl="$(jq -r '[.components[] | select(.purl != ("pkg:cargo/" + .name + "@" 
 # as if they were. tempfile and tokio-test are dev-only in gpy-agent/Cargo.toml.
 for dev_only in tempfile tokio-test; do
     if ! grep -qE "^$dev_only" <<<"$(sed -n '/^\[dev-dependencies\]/,/^\[/p' "$ROOT/gpy-agent/Cargo.toml")"; then
-        # The manifest changed; don't assert on a crate that is no longer dev-only.
+        # Only assert on a crate the manifest still lists as dev-only.
         continue
     fi
     [[ "$(jq -r --arg n "$dev_only" '[.components[] | select(.name == $n)] | length' "$SBOM")" -eq 0 ]] ||
@@ -113,9 +110,4 @@ if "$ROOT/scripts/generate-sbom.sh" --version 9.9.9 --output "$WORKDIR/bad.json"
     fail "generate-sbom.sh accepted a version without the leading v"
 fi
 
-if [[ $failures -ne 0 ]]; then
-    echo "$failures assertion(s) failed"
-    exit 1
-fi
-
-echo "PASS"
+test_finish

@@ -73,10 +73,8 @@ function segment_clock_render --argument-names is_last is_first
     # same rule as Bash and Zsh (#844). The agent owns the powerline caps, the
     # delimiter colors and the template; its response carries the bare strftime
     # spec where the time goes, which is replaced with the time formatted above.
-    # is_last/is_first arrive already as "true"/"" (#613) but are normalized into
-    # always-one-token locals: a caller that passes zero arguments leaves the
-    # --argument-names binding an EMPTY LIST, which would collapse on unquoted
-    # expansion and shift $__gpy_last_segment_bg into the wrong slot.
+    # is_last/is_first are re-seeded as one-token locals so an empty-list
+    # binding cannot shift prev_bg (see fish_prompt.fish's dispatch loop).
     if test -n "$__clock_format"; and functions -q __gpy_request_clock
         set -l is_last_value ""
         test "$is_last" = true; and set is_last_value true

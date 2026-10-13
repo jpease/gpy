@@ -372,8 +372,8 @@ impl NativeGitBackend {
         // Add specific paths if provided. `:(literal)` stops git reading a
         // leading `:`, `*`, `?` or `[` in a filename as pathspec magic or a
         // glob, and `icase` makes a repository with `core.ignorecase=true`
-        // match the watcher's on-disk spelling against the index spelling
-        // (#713). The pathspec is built from the `OsStr` so a non-UTF-8 name
+        // match the watcher's on-disk spelling against the index spelling.
+        // The pathspec is built from the `OsStr` so a non-UTF-8 name
         // is not mangled.
         if let Some(p) = paths {
             let magic = if Self::ignores_case(repo_path) {
@@ -494,7 +494,7 @@ impl NativeGitBackend {
     /// way; am-style rebases (`.git/rebase-apply`) have no equivalent file, so
     /// this returns `None` for them. Plain file reads, no subprocess.
     ///
-    /// `total` deliberately does NOT read `rebase-merge/end` (#481): git
+    /// `total` deliberately does NOT read `rebase-merge/end`: git
     /// writes `end` once, when the rebase starts, and never rewrites it when
     /// `git rebase --edit-todo` changes the plan, so it goes stale the moment
     /// a step is added or removed mid-rebase. Git's own `git status` doesn't
@@ -526,8 +526,7 @@ impl NativeGitBackend {
     /// Every instruction line — `pick`, `exec`, `label`, `reset`, `break`, …
     /// — advances `msgnum` by exactly 1 when git executes it; git does not
     /// special-case any instruction type in its own step accounting, so a
-    /// uniform line count matches `git status`'s "remaining commands" figure
-    /// (#481).
+    /// uniform line count matches `git status`'s "remaining commands" figure.
     fn count_remaining_todo_steps(rebase_merge: &Path) -> Option<u32> {
         let todo = crate::fs_util::read_small_file(
             &rebase_merge.join("git-rebase-todo"),
@@ -700,8 +699,7 @@ pub(crate) const fn resolve_overall_state(
 /// prevents a hung repo (network mount, dead FUSE, stuck `core.fsmonitor`
 /// hook) or a descendant holding the output pipes open from wedging a
 /// blocking worker indefinitely. Shares its implementation with the
-/// language-version hardening in [`crate::language::version`] (#151, #177,
-/// #590).
+/// language-version hardening in [`crate::language::version`].
 ///
 /// # Errors
 ///
@@ -742,7 +740,7 @@ fn run_git_with_timeout<S: AsRef<OsStr>>(
 }
 
 /// Repository-selection environment variables the agent must never forward to
-/// git (#714). Git gives these precedence over `-C`, so an inherited value
+/// git. Git gives these precedence over `-C`, so an inherited value
 /// would make every status describe another repository.
 ///
 /// Mirrors `git rev-parse --local-env-vars`, plus `GIT_NAMESPACE`.
@@ -921,7 +919,7 @@ mod tests {
     /// Plain shell text manipulation (read/case/echo), not `sed -i`: this
     /// machine's `sed` is BSD, CI also runs Linux with GNU `sed`, and the two
     /// disagree on the `-i` flag's argument requirement. A hand-rolled POSIX
-    /// loop behaves identically on both (#481).
+    /// loop behaves identically on both.
     #[cfg(unix)]
     fn write_sequence_editor_script(dir: &Path, name: &str, body: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
@@ -972,18 +970,11 @@ mod tests {
         );
     }
 
-    /// Regression for #571: `git.timeout_seconds` bounded only the IPC
-    /// handler's wait for a reply, never the git subprocess itself.
+    /// `git.timeout_seconds` bounds the git subprocess itself.
     ///
-    /// That is because `run_git`/`run_git_optional` hard-coded
-    /// `GitTimeout::DEFAULT` no matter what `get_complete_status` was called
-    /// with. Proves the `timeout` parameter genuinely reaches and bounds the
-    /// real subprocess: an
-    /// unreasonably short timeout (well under the several-millisecond
-    /// fork/exec cost of any real `git` invocation) must time out, and a
-    /// generous timeout against the identical repo must still succeed --
-    /// showing the parameter changes behavior in both directions rather than
-    /// always erroring or always being ignored.
+    /// An unreasonably short timeout (well under the fork/exec cost of any
+    /// real `git` invocation) must time out, and a generous timeout against the
+    /// identical repo must still succeed.
     #[test]
     fn get_complete_status_respects_configured_timeout() {
         let (_dir, path) = init_test_repo();
@@ -1071,12 +1062,9 @@ mod tests {
         fs::create_dir_all(&rebase_merge).expect("create rebase-merge dir");
         fs::write(rebase_merge.join("msgnum"), "3\n").expect("write msgnum");
         fs::write(rebase_merge.join("end"), "5\n").expect("write end");
-        // Realistic fixture (#481): a real interactive rebase always has
-        // `git-rebase-todo` present whenever `msgnum` is, since `total` is now
-        // computed from `msgnum` + the todo's remaining non-comment lines
-        // rather than the (git-stale-prone) `end` file. 2 remaining picks
-        // here reproduces the same total (3 + 2 = 5) this test asserted
-        // before the fix.
+        // A real interactive rebase always has `git-rebase-todo` alongside
+        // `msgnum`; `total` is `msgnum` + the todo's remaining non-comment
+        // lines, not the (git-stale-prone) `end` file. 3 + 2 picks = 5.
         fs::write(
             rebase_merge.join("git-rebase-todo"),
             "pick aaaaaaa commit four\npick bbbbbbb commit five\n",
@@ -1099,16 +1087,6 @@ mod tests {
         );
     }
 
-    /// Regression for #481: `total` must reflect the CURRENT
-    /// `git-rebase-todo` after `git rebase --edit-todo`, not the stale
-    /// `rebase-merge/end` git never rewrites when the plan changes.
-    ///
-    /// Drives a real interactive rebase and a real `--edit-todo`: 5 commits,
-    /// stop after the first (`msgnum` = 1, `end` = 5), then edit the todo to
-    /// drop 2 of the remaining 4 `pick`s. `git status` itself reports "1
-    /// command done" / "2 remaining commands" for this exact state, so the
-    /// correct total is 3 — proving the fix tracks the edited plan rather
-    /// than the stale `end` value of 5.
     /// Add commits 2..=5 on top of `init_test_repo()`'s existing "init" commit
     /// (commit 1 of 5), so the repo has a 5-step rebase plan to work with.
     #[cfg(unix)]
@@ -1230,6 +1208,15 @@ mv "$tmp" "$todo""#,
         assert!(status.success(), "rebase --edit-todo should succeed");
     }
 
+    /// `total` must reflect the current `git-rebase-todo` after
+    /// `git rebase --edit-todo`, not the stale `rebase-merge/end` git never
+    /// rewrites when the plan changes.
+    ///
+    /// Drives a real interactive rebase and a real `--edit-todo`: 5 commits,
+    /// stop after the first (`msgnum` = 1, `end` = 5), then edit the todo to
+    /// drop 2 of the remaining 4 `pick`s. `git status` itself reports "1
+    /// command done" / "2 remaining commands" for this exact state, so the
+    /// correct total is 3, not the stale `end` value of 5.
     #[test]
     #[cfg(unix)]
     fn rebase_progress_total_reflects_edited_todo_after_edit_todo() {
@@ -1493,7 +1480,7 @@ mv "$tmp" "$todo""#,
     }
 
     #[test]
-    fn get_repo_state_returns_rebasing_for_apply_backend_rebase_without_applying_marker() {
+    fn get_repo_state_returns_rebasing_for_apply_backend_rebase() {
         let (_dir, path) = init_test_repo();
 
         // `git rebase --apply` shares rebase-apply with `git am` but never
@@ -1542,9 +1529,8 @@ mv "$tmp" "$todo""#,
         fs::create_dir_all(&rebase_merge).expect("create rebase-merge dir");
         fs::write(rebase_merge.join("msgnum"), "1\n").expect("write msgnum");
         fs::write(rebase_merge.join("end"), "2\n").expect("write end");
-        // Realistic fixture (#481): see the matching comment in
-        // `rebase_progress_present_for_interactive_rebase`. 1 remaining pick
-        // reproduces the same total (1 + 1 = 2) this test asserted before.
+        // A real interactive rebase keeps `git-rebase-todo` alongside
+        // `msgnum`: 1 done + 1 remaining pick = total 2.
         fs::write(
             rebase_merge.join("git-rebase-todo"),
             "pick aaaaaaa commit two\n",
@@ -1618,12 +1604,10 @@ mv "$tmp" "$todo""#,
         assert_eq!(state, RepositoryState::Clean);
     }
 
-    /// Regression for #180 and #181.
+    /// `-z` status parsing keys renames by destination and clamps ahead/behind.
     ///
-    /// A NUL-delimited `-z` status containing a staged rename with spaces must
-    /// key the file map by the destination path (skipping the trailing
-    /// original-path record), and ahead/behind counts must be clamped to
-    /// `max_ahead_behind`.
+    /// A staged rename with spaces must skip the trailing original-path
+    /// record, and counts must be clamped to `max_ahead_behind`.
     #[test]
     fn parse_v2_output_handles_rename_and_clamps_counts() {
         let output = concat!(
@@ -1637,13 +1621,13 @@ mv "$tmp" "$todo""#,
         let result = parser::parse_v2_records(output, 2);
 
         assert_eq!(result.branch, BranchHead::Named("main".to_owned()));
-        // #181: ahead 3 > max 2 -> clamped and capped; behind 1 <= max -> verbatim.
+        // Ahead 3 > max 2 -> clamped and capped; behind 1 <= max -> verbatim.
         assert_eq!(result.ahead, 2);
         assert!(result.ahead_capped);
         assert_eq!(result.behind, 1);
         assert!(!result.behind_capped);
 
-        // #180: the rename is one staged change, keyed by its destination.
+        // The rename is one staged change, keyed by its destination.
         assert_eq!(result.staged, 1);
         assert_eq!(result.untracked, 1);
         assert!(result.files.contains_key(Path::new("new name.txt")));
@@ -1664,7 +1648,7 @@ mv "$tmp" "$todo""#,
         assert!(renamed.staged);
     }
 
-    /// #713: `core.ignorecase` is read from the repository's config once and
+    /// `core.ignorecase` is read from the repository's config once and
     /// decides whether pathspecs fold case.
     #[test]
     fn ignores_case_reflects_the_repository_config() {
@@ -1681,7 +1665,7 @@ mv "$tmp" "$todo""#,
         }
     }
 
-    /// #713: a pathspec is passed to git as the raw `OsStr`, so a file whose
+    /// A pathspec is passed to git as the raw `OsStr`, so a file whose
     /// name is not valid UTF-8 is still matched. Skipped where the filesystem
     /// rejects such names (APFS).
     #[cfg(unix)]

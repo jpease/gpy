@@ -1,8 +1,6 @@
 #!/usr/bin/env fish
 # SPDX-License-Identifier: GPL-3.0-or-later
-# ============================================================================
-# E2E Test: the Fish prompt says the right thing (#644)
-# ============================================================================
+# E2E Test: the Fish prompt says the right thing
 #
 # Every other Fish prompt assertion in this suite is "non-empty" or "changed".
 # This one renders `fish_prompt` through a real `gpy-agent` from a real
@@ -10,7 +8,7 @@
 # git, language and directory segments must carry -- branch, ahead count,
 # dirty/untracked/stash/detached/rebase markers, language names and versions,
 # every directory display mode -- plus the prompt frame (icons, root) and the
-# "no JSON leaks" guarantee that used to live in tests/manual/.
+# "no JSON leaks" guarantee.
 #
 # Glyphs are the crate defaults from gpy-agent/src/config/defaults.rs and
 # gpy-agent/src/formatter/git_resolver.rs (`↑` ahead, `✱` unstaged,
@@ -282,7 +280,7 @@ function test_language_content
     # `[language] enabled = false` reaches the shell as GPY_LANGUAGE_ENABLED=0
     # through the theme export, and segment_language_detect then hides the
     # segment. (Setting the variable in config.fish instead is overwritten by
-    # that same export; see the follow-up filed from #644.)
+    # that same export.)
     write_config '[language]' 'enabled = false' 'display = "text"' 'show_versions = true'
     assert_render "language: [language] enabled = false hides the segment" $py "❯" "python|3.99.7"
 end
@@ -330,7 +328,7 @@ function test_directory_content --argument-names repo
     end
 end
 
-# ---- 3b. show_icons = false: no powerline caps (#695) --------------------------------
+# ---- 3b. show_icons = false: no powerline caps --------------------------------
 # A raw render: SGR escapes go, but unlike `strip_sgr` the powerline caps
 # (U+E0B0..U+E0BF) stay, because their absence is the assertion.
 function render_prompt_raw --argument-names cwd
@@ -340,6 +338,7 @@ function render_prompt_raw --argument-names cwd
         __gpy_register_with_agent >/dev/null 2>&1
         cd $argv[2]
         fish_prompt
+        # Linger for the language segment background request, as in render_prompt.
         sleep 0.2
     ' -- $__gpy_root $cwd 2>/dev/null | string replace -ra '\e\[[0-9;]*m' '' | string collect
 end
@@ -419,8 +418,6 @@ function test_prompt_frame
         check "frame: root prompt renders !❯! without asking the agent for a character" 0 "$root"
     end
 end
-
-# ---------------------------------------------------------------------------------
 
 init_test_env
 # The agent canonicalises paths (/private/tmp on macOS), so HOME must be the

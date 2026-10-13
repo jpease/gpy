@@ -1,53 +1,46 @@
-//! Integration Test Harness
+//! End-to-end integration test harness for the GPY agent.
 //!
-//! Provides utilities for end-to-end integration testing of the GPY agent.
-//! This harness spawns a full agent process, manages temporary git repositories,
-//! and provides methods to send IPC requests and verify responses.
+//! Spawns a full agent process, manages a temporary git repository, and sends
+//! IPC requests to the agent.
 //!
 //! # Architecture
 //!
 //! The harness creates:
 //! - A separate agent process (daemonized via `gpy-agent start`)
 //! - A temporary Unix socket for IPC communication (`TempSocket`)
-//! - A temporary git repository for testing (`TempGitRepo`)
-//! - Test configuration with automatic cleanup (`TestConfig`)
+//! - A temporary git repository (`TestRepo`)
+//! - A test configuration written to a temp dir (`TestConfig`)
 //!
 //! # Example Usage
 //!
 //! ## Basic Agent Test
 //!
-//! ```no_run
-//! use gpy_agent::ipc::{Message, Format};
+//! ```ignore
+//! use gpy_agent::ipc::Response;
 //!
 //! #[tokio::test]
 //! async fn test_agent_responds_to_ping() {
 //!     let server = IntegrationTestServer::new().await.unwrap();
 //!
-//!     // Send ping and verify response
 //!     let response = server.ping().await.unwrap();
 //!     assert!(matches!(response, Response::Ack));
 //!
-//!     // Verify agent is still alive
 //!     server.assert_agent_alive().await.unwrap();
 //! }
 //! ```
 //!
 //! ## Git Status Test
 //!
-//! ```no_run
+//! ```ignore
 //! #[tokio::test]
 //! async fn test_git_status_with_changes() {
 //!     let mut server = IntegrationTestServer::new().await.unwrap();
 //!
-//!     // Trigger git changes
-//!     server.trigger_git_change(GitChange::AddUntracked("test.txt".to_string())).unwrap();
-//!
-//!     // Get git status
+//!     server.trigger_git_change(GitChange::AddUntracked("test.txt".to_owned())).unwrap();
 //!     let status = server.get_git_status().await.unwrap();
 //!     assert_eq!(status.untracked, 1);
 //!
-//!     // Stage file and verify
-//!     server.trigger_git_change(GitChange::StageFile("test.txt".to_string())).unwrap();
+//!     server.trigger_git_change(GitChange::StageFile("test.txt".to_owned())).unwrap();
 //!     let status = server.get_git_status().await.unwrap();
 //!     assert_eq!(status.staged, 1);
 //! }
@@ -55,18 +48,12 @@
 //!
 //! ## Custom Configuration Test
 //!
-//! ```no_run
+//! ```ignore
 //! #[tokio::test]
 //! async fn test_with_custom_config() {
-//!     let config = TestConfig::new()
-//!         .with_git_disabled()
-//!         .with_language_enabled();
-//!
+//!     let config = TestConfig::new().with_live_updates_disabled();
 //!     let server = IntegrationTestServer::with_config(config).await.unwrap();
-//!
-//!     // Git should be disabled
-//!     let status = server.get_git_status().await;
-//!     assert!(status.is_err());
+//!     server.assert_agent_alive().await.unwrap();
 //! }
 //! ```
 //!
@@ -77,22 +64,18 @@
 //! - Testing agent startup, daemonization, and lifecycle
 //! - Testing CLI flag handling and configuration loading
 //! - Testing git repository interactions with a real agent process
-//! - Simulating production deployment scenarios
 //!
 //! **Use `EndpointHandle` (from other integration tests) when:**
 //! - Testing IPC protocol handling directly
 //! - Testing server/client communication patterns
 //! - Unit testing specific server components
-//! - When faster test execution is needed (no process spawning)
-//! - When testing internal server behavior without full agent
+//! - Faster test execution is needed (no process spawning)
 //!
 //! # Cleanup
 //!
-//! The harness automatically cleans up resources on drop:
-//! - Sends `Message::Shutdown` to the agent
-//! - Removes temporary socket
-//! - Removes temporary git repository
-//! - Removes temporary configuration files
+//! On drop the harness runs `gpy-agent stop` against its socket and waits
+//! briefly for the socket to disappear; the temporary socket, repository, and
+//! configuration directories remove themselves.
 
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::unwrap_used)]
@@ -133,7 +116,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::time::timeout;
 
-// Import test fixtures from common module
 mod fixtures;
 use crate::fixtures::TestRepo;
 use fixtures::TempSocket;
@@ -142,10 +124,6 @@ use fixtures::TempSocket;
 #[path = "../fixtures/config_helpers.rs"]
 pub mod config_helpers;
 use config_helpers::TestConfig;
-
-// Use config helpers from the crate's fixtures module
-// use crate::fixtures::config_helpers::TestConfig; // Removed duplicate
-// use crate::fixtures::TestRepo; // Removed
 
 /// Integration test server for full end-to-end testing
 ///
@@ -375,9 +353,9 @@ impl IntegrationTestServer {
         config.write();
 
         // Start agent process (it will fork and daemonize). The XDG roots
-        // live in the test's own temp dir: otherwise the daemon resolves
-        // themes and palettes from the developer's ~/.config/gpy and writes
-        // its theme exports and instant cache into ~/.cache/gpy (#664).
+        // live in the test's own temp dir so the daemon neither resolves
+        // themes and palettes from the developer's ~/.config/gpy nor writes
+        // theme exports and instant cache into ~/.cache/gpy.
         let agent_binary = env!("CARGO_BIN_EXE_gpy-agent");
         let status = Command::new(agent_binary)
             .arg("start")
@@ -584,7 +562,7 @@ impl Drop for IntegrationTestServer {
             std::thread::sleep(Duration::from_millis(50));
         }
 
-        // TempSocket, TempGitRepo, and TestConfig handle their own cleanup
+        // TempSocket, TestRepo, and TestConfig handle their own cleanup
     }
 }
 
@@ -714,26 +692,15 @@ mod tests {
         );
     }
 
-    /// Test triggering git changes through the harness
+    /// File changes in the worktree reach a registered client end to end:
+    /// `RegisterClient` arms the repository watches (the worktree-root watch
+    /// covers `.git`, since `git.watch_worktree` defaults to `true`), and the
+    /// agent's git status reflects untracked and staged files as they appear.
     ///
-    /// gpy-agent#388: previously `#[ignore]`d after reproducing a deterministic
-    /// (18/18) worktree-watch delivery failure, root-caused at the time to
-    /// `RegisterClient` arming the `.git` watch then (since
-    /// `git.watch_worktree` defaults to `true`) the worktree-root watch, with
-    /// the worktree-level file-creation event never delivered. A narrower fix
-    /// (skipping the redundant `.git`-dir watch when it's covered by the
-    /// worktree-root watch) landed in `start_repo_watches`, and this test now
-    /// passes reliably (30/30 isolated + full-nextest-contention runs) with
-    /// that fix in place. The deeper `Agent::new()` watcher-startup-sequencing
-    /// theory floated as a possible contributing factor did not need to be
-    /// pursued -- the deterministic reproduction did not recur once retested,
-    /// consistent with disk pressure (the host was at 99% capacity during the
-    /// original investigation and has since been cleared) rather than pure
-    /// application-level sequencing being the dominant factor. Re-added to the
-    /// `watcher_fsevents_bootstrap` `file_serial` group used by #384/#385/#386
-    /// as defense-in-depth: like those tests, this one bootstraps a real
-    /// `FSEventStream` in a full agent process and should not do so concurrently
-    /// with sibling watcher tests across nextest's per-test processes.
+    /// Runs in the `watcher_fsevents_bootstrap` `file_serial` group: it
+    /// bootstraps a real `FSEventStream` in a full agent process and must not
+    /// do so concurrently with sibling watcher tests across nextest's per-test
+    /// processes.
     #[tokio::test]
     #[serial_test::serial]
     #[serial_test::file_serial(watcher_fsevents_bootstrap)]
@@ -777,8 +744,7 @@ mod tests {
             .trigger_git_change(GitChange::AddUntracked("test.txt".to_string()))
             .expect("Adding untracked file should succeed");
 
-        // Retry loop for status check (30 * 200ms = 6s total; widened from 2s,
-        // see gpy-agent#386 above)
+        // Poll up to 6s (30 x 200ms) for the watcher-driven status update.
         let mut status = expect_git_status(&server, "Git status after adding file").await;
         for _ in 0..30 {
             if status.untracked == 1 {
@@ -799,8 +765,7 @@ mod tests {
             .trigger_git_change(GitChange::StageFile("test.txt".to_string()))
             .expect("Staging file should succeed");
 
-        // Retry loop for status check (30 * 200ms = 6s total; widened from 2s,
-        // see gpy-agent#386 above)
+        // Poll up to 6s (30 x 200ms) for the watcher-driven status update.
         status = expect_git_status(&server, "Git status after staging file").await;
         for _ in 0..30 {
             if status.staged == 1 {

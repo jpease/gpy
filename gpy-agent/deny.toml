@@ -17,18 +17,11 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 unsound = "all"
 unmaintained = "all"
 
-# Waived advisories. Canonical register: docs/dev/security-audit.md -- it
-# carries the full audit history and the review date. cargo-deny 0.20 accepts
-# only `id` and `reason` on an ignore entry (no expiry field), so the review
-# date lives in that document and tests/bash/dependency_advisory_claims
-# .test.bash fails once it passes.
-#
-# Empty as of 2026-09-01: `cargo audit` reports zero advisories against this
-# lockfile. The five that were waived here all arrived through hyperpolyglot
-# 0.1.7, removed in #523; retiring the dependency retired the advisories with
-# it (#525). `unsound`/`unmaintained` stay enabled below so a future advisory
-# in either class cannot pass silently the way RUSTSEC-2021-0145 and
-# RUSTSEC-2026-0097 briefly did.
+# Waived advisories. Canonical register: docs/dev/security-audit.md.
+# cargo-deny 0.20 accepts only `id` and `reason` on an ignore entry (no
+# expiry field). Empty: `cargo audit` reports zero advisories against this
+# lockfile. `unsound`/`unmaintained` stay enabled above so a future advisory
+# in either class cannot pass silently.
 ignore = [
 ]
 
@@ -79,16 +72,11 @@ deny = [
     { name = "chrono", version = "<0.4.20" },
 ]
 
-# Duplicate versions we accept. Each entry is checked against Cargo.lock by
-# tests/bash/dependency_advisory_claims.test.bash, which fails if a crate
-# listed here stops being duplicated -- a stale skip hides the next duplicate.
-# The per-crate reasoning is in the duplicate-version table in
-# gpy-agent/src/lib.rs.
+# Duplicate versions we accept, each with its reason. Every entry is checked
+# against Cargo.lock by tests/bash/deny_skip_list.test.bash, which fails if a
+# crate listed here stops being duplicated -- a stale skip hides the next
+# duplicate.
 skip = [
-    # clap 2.34.0 (hyperpolyglot's `hyply` binary) against clap 4.x (our own
-    # CLI) duplicated bitflags, clap, strsim and wasi. hyperpolyglot is gone
-    # (#523); all four are back to a single version and are not skipped here.
-
     # bitflags 1.3.2 (portable-pty, a Unix dev-dependency) against bitflags
     # 2.x (crossterm, notify, nix, ratatui)
     { name = "bitflags" },

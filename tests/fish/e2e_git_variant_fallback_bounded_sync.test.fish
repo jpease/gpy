@@ -1,32 +1,30 @@
 #!/usr/bin/env fish
 # SPDX-License-Identifier: GPL-3.0-or-later
-# ============================================================================
-# E2E Test: Git Segment Variant-Fallback Bounded Sync (#436)
-# ============================================================================
+# E2E Test: Git Segment Variant-Fallback Bounded Sync
 #
 # `__gpy_read_instant_cache` falls back to the context-free `.none` variant
 # when no token-specific file exists yet for the render's real `prev_bg` (a
 # NEW powerline context, e.g. the first render after the previous segment's
 # background changed). The `.none` content is correct git status, but its
 # opening chevron was rendered without prev_bg context, so its color is
-# wrong -- and because the read still returns non-empty, pre-fix
-# `segment_git_render` served it as an ordinary warm hit. The wrong-color
-# chevron could then persist beyond a single render cycle.
+# wrong -- and because the read still returns non-empty, serving it as an
+# ordinary warm hit would let the wrong-color chevron persist beyond a single
+# render cycle.
 #
 # AC1: with the agent UP, the FIRST render at a new prev_bg context must show
 # the CORRECT chevron color (a bounded synchronous IPC query with the real
-# prev_bg, mirroring the #434 cold-miss branch) instead of the `.none`
+# prev_bg, mirroring the cold-miss branch) instead of the `.none`
 # fallback's chevron.
 #
 # The stock default theme intentionally does NOT vary the git segment's caps
 # by prev_bg (only `[segments.character]` does -- see the
-# `git_cache_writes_one_file_per_prev_bg_context` regression test in
+# `git_cache_writes_one_file_per_prev_bg_context` test in
 # gpy-agent/src/cache/instant_prompt.rs, which asserts the rendered bytes are
 # IDENTICAL across prev_bg contexts for the default theme). To make the
 # chevron-color difference assertable at the byte level from Fish, this test
 # installs a custom theme whose git format reads `fg:prev_bg` for its opening
-# separator (exactly like `[segments.character]` already does), which is
-# exactly the class of theme #436 describes.
+# separator (exactly like `[segments.character]` already does) -- the class of
+# theme whose chevron color depends on prev_bg.
 #
 # Expected runtime: ~8 seconds
 
@@ -55,13 +53,13 @@ function __gpy_git_token_cache_absent
 end
 
 function test_variant_fallback_bounded_sync
-    print_test_header "E2E Test: Git Segment Variant-Fallback Renders via Bounded Sync IPC (#436)"
+    print_test_header "E2E Test: Git Segment Variant-Fallback Renders via Bounded Sync IPC"
     init_test_env
 
     # Install a custom theme whose git segment's opening separator reads
     # `fg:prev_bg` (like `[segments.character]` in the stock theme already
     # does) instead of `fg:$bg`, so the chevron's color actually varies with
-    # prev_bg and the fix is observable at the byte level.
+    # prev_bg and the chevron color is observable at the byte level.
     set -l theme_dir $XDG_CONFIG_HOME/gpy/themes
     mkdir -p $theme_dir
     set -l theme_file $theme_dir/test-theme.toml
@@ -135,9 +133,9 @@ function test_variant_fallback_bounded_sync
     # The correct chevron for prev_bg=222 encodes as the SGR fragment
     # `38;5;222` (Color::Ansi256(222) fg). The `.none` fallback's chevron
     # would instead resolve Color::PrevBg -> Named("default") -> SGR `39` --
-    # it never contains `38;5;222`. Pre-fix this assertion fails (the render
-    # serves the raw `.none` bytes); post-fix the bounded sync IPC query uses
-    # the real prev_bg, so the response bakes in the correct chevron color.
+    # it never contains `38;5;222`. The bounded sync IPC query uses the real
+    # prev_bg, so the response bakes in the correct chevron color; serving the
+    # raw `.none` bytes would fail this assertion.
     if string match -q '*38;5;222*' -- $rendered
         print_test_result "First render at new prev_bg context shows correct chevron color" PASS
     else

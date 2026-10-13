@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # install-oneline.sh must treat the two Fish files its wiring depends on as
-# required (#808): conf.d/gpy_init.fish (the file the config.fish block
+# required: conf.d/gpy_init.fish (the file the config.fish block
 # sources) and functions/fish_prompt.fish (the symlink target). A failed
 # download of either aborts the install before any rc file or symlink is
-# written, completing the partial-install contract of the core files (#309).
+# written, the same partial-install contract the core files follow.
 # A failed segment download stays best-effort.
 #
 # Each scenario runs the installer in a sandboxed HOME behind a fake `curl`
@@ -21,10 +21,6 @@ case "$(uname -s | tr '[:upper:]' '[:lower:]')" in
     linux | darwin) ;;
     *) test_skip "install-oneline.sh does not support $(uname -s)" ;;
 esac
-
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 write_fake_curl() {
     cat >"$1/curl" <<EOF
@@ -130,8 +126,4 @@ else
     sed 's/^/    /' "$log"
 fi
 
-if [ "$failures" -gt 0 ]; then
-    echo "FAIL: $failures check(s) failed"
-    exit 1
-fi
-echo "PASS: required Fish files abort the install before any rc change"
+test_finish "required Fish files abort the install before any rc change"

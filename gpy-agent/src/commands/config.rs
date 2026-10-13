@@ -177,11 +177,7 @@ fn validate_palette_selection(name: &str) -> Result<()> {
 ///
 /// `theme::validate_by_name` covers both failure shapes — a name that matches
 /// no builtin, user, or plugin theme, and a discovered theme whose file fails
-/// TOML parsing, schema validation, or segment template rendering. (Until
-/// #459 it only covered the second: `ThemeManager::new` falls back to the
-/// default theme for an undiscovered name, so this function had to check
-/// `ThemeManager::discover_available_themes` itself first. That check now
-/// lives centrally in `theme::validate_theme_name`.)
+/// TOML parsing, schema validation, or segment template rendering.
 ///
 /// On failure, prints the same remediation-focused diagnostic
 /// `gpy theme validate` uses (via `print_theme_validation_error`) before

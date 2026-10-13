@@ -1,7 +1,6 @@
 //! Fish shell source formatter
 //!
-//! Produces Fish `set -g` assignments that mirror the legacy
-//! `serialize_response_emit_fish` helper.
+//! Produces Fish `set -g` assignments for the response fields.
 
 use std::fmt::Write;
 
@@ -175,7 +174,7 @@ mod tests {
     /// # Panics
     ///
     /// Panics if the formatter fails to render the repository status response.
-    fn repository_status_matches_legacy_output() {
+    fn repository_status_renders_set_assignments() {
         let formatter = FishSourceFormatter;
         let (config, theme) = ctx();
         let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -206,7 +205,7 @@ mod tests {
     /// # Panics
     ///
     /// Panics if the formatter fails to render the language response.
-    fn language_output_matches_legacy() {
+    fn language_output_renders_set_assignments() {
         let formatter = FishSourceFormatter;
         let (config, theme) = ctx();
         let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -251,9 +250,8 @@ mod tests {
 
     /// A branch name containing an apostrophe must survive sourcing intact.
     ///
-    /// The old single-quote-doubling idiom turned `it's` into `its` because
     /// Fish does not read `''` as an escaped quote inside a single-quoted
-    /// string. Regression for #424.
+    /// string, so quote doubling would turn `it's` into `its`.
     ///
     /// # Panics
     ///

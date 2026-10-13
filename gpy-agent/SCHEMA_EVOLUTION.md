@@ -1,8 +1,12 @@
 # GPY Agent Schema Evolution
 
-This document tracks backward-compatibility of GPY's public schemas: the agent
-config file (`~/.config/gpy/config.toml`), the IPC request/response protocol,
-and the CLI output formats.
+This document records compatibility-relevant changes to GPY's schemas: the
+agent config file (`~/.config/gpy/config.toml`), theme files, the IPC
+request/response protocol, and the shell/CLI output contracts.
+
+The crate is unpublished and still at `0.1.0`. The MAJOR/MINOR/PATCH labels
+below classify each change's compatibility impact; they have not yet driven
+package version bumps.
 
 ---
 
@@ -18,8 +22,8 @@ and the CLI output formats.
 
 * **MINOR additions** — older config files deserialize unchanged; the new field
   takes its serde default. Older agent binaries ignore unknown JSON fields in IPC
-  responses (unrecognised keys are silently dropped by serde's `deny_unknown_fields`
-  opt-in, which GPY does **not** use globally).
+  responses: serde ignores unrecognised keys by default, and no GPY type opts
+  into `deny_unknown_fields`.
 * **MAJOR changes** — require a schema-version bump in `gpy-agent/src/ipc/protocol.rs`
   and corresponding Fish-side negotiation.
 
@@ -31,7 +35,7 @@ Changes are listed newest-first within each release group.
 
 ---
 
-### IPC protocol — `is_ssh` on the hostname request and response (MINOR, #826)
+### IPC protocol — `is_ssh` on the hostname request and response (MINOR)
 
 | Property | Value |
 |---|---|
@@ -46,12 +50,12 @@ Changes are listed newest-first within each release group.
 `Response::Hostname`, and `HostnameResolver` resolves `$symbol` to the theme icon only when it
 is true. The pure-shell render paths gate `__icon_hostname` on `__gpy_is_ssh` the same way.
 Visibility (`show_always` / SSH-only) is still decided by the shell. This supersedes the
-"no `is_ssh` field" note in the #259 entry below. The Starship importer now defaults
+"no `is_ssh` field" note in the hostname request/response entry below. The Starship importer now defaults
 `ssh_symbol` to `🌐 ` unconditionally, so `ssh_only = false` themes match Starship over SSH.
 
 ---
 
-### IPC protocol — published JSON schemas corrected (documentation only, #760)
+### IPC protocol — published JSON schemas corrected (documentation only)
 
 | Property | Value |
 |---|---|
@@ -60,7 +64,7 @@ Visibility (`show_always` / SSH-only) is still decided by the shell. This supers
 | IPC protocol | Unchanged; `PROTOCOL_VERSION` not bumped. `message.json` now lists every `Format` value (the nonexistent `fish-ansi` is gone) and every op/field the agent accepts, in both the `op` and native forms. `response.json` now describes the flat `format: "json"` replies (`{"status":"ok"}`, `{"error":"..."}`, `{"branch":...}`; only `AgentStatus` is wrapped). `tests/schema_validation.rs` keeps the files in step with the code |
 | Config schema | No change |
 
-### IPC protocol — single SIGURG doorbell for shell notifications (BREAKING, #674)
+### IPC protocol — single SIGURG doorbell for shell notifications (BREAKING)
 
 | Property | Value |
 |---|---|
@@ -77,14 +81,14 @@ repaint/reload notifications and must be upgraded together with the agent.
 
 ---
 
-### Config schema — bounded supervisor ints (BREAKING, #597)
+### Config schema — bounded supervisor ints (BREAKING)
 
 | Property | Value |
 |---|---|
 | Scope | `AgentSettings.supervisor.check_interval_seconds`, `.max_restart_attempts` |
 | Change type | BREAKING — field type change (raw `u64`/`u32` → bounded newtypes `types::SupervisorCheckInterval`/`types::SupervisorMaxRestartAttempts`), plus a narrowed accepted-value set |
 | IPC protocol | Unchanged |
-| Config schema | A previously-accepted value is now rejected: `check_interval_seconds = 0` or `max_restart_attempts = 0` used to load successfully (silently coerced to the default by `apply_defaults`'s `use_if_zero` hack) and now fails config load with a validation error. Every other value in each field's now-enforced range (5..=3600 seconds; 1..=100 attempts) round-trips unchanged — this range already matched what `validate_config`'s separate `validate_supervisor_interval`/`validate_supervisor_attempts` checks enforced, so only the `0` sentinel and any value already outside that range change behavior. |
+| Config schema | A previously-accepted value is now rejected: `check_interval_seconds = 0` or `max_restart_attempts = 0` used to load successfully (the loader silently replaced `0` with the default) and now fails config load with a validation error. Every other value in each field's now-enforced range (5..=3600 seconds; 1..=100 attempts) round-trips unchanged — this range already matched what `validate_config`'s separate `validate_supervisor_interval`/`validate_supervisor_attempts` checks enforced, so only the `0` sentinel and any value already outside that range change behavior. |
 
 **What changed.** These two fields were raw, unvalidated integers with a
 loader-level special case: an explicit `0` was silently replaced with the
@@ -158,7 +162,7 @@ into the wizard's live preview (`commands/wizard/preview.rs`), which also gained
 demo render for the `clock` segment (previously unrendered in the preview, since clock has no
 agent-side template).
 
-**#401 follow-up (resolved).** The on-disk instant-prompt cache used to serve `git`/`language`
+**Instant-prompt cache.** The on-disk instant-prompt cache used to serve `git`/`language`
 segments instantly on shell startup (`cache/instant_prompt.rs`, `fish/core/ipc.fish`'s
 `__gpy_read_instant_cache`) originally only had `git`/`git_last`/`lang`/`lang_last` cache
 variants — no `is_first`-aware ones. `write_git`/`write_language_variants` now render and write
@@ -185,14 +189,14 @@ fix for a pre-existing gap where the Bash/Zsh `git`/`language` segments never th
 with its own `format` string is unaffected unless it opts into `$sep_open`. `starship.toml`
 and `text.toml` don't use the powerline pill-cap style at all and are untouched.
 
-#### Theme schema — git content-visibility flags (MINOR, #410)
+#### Theme schema — git content-visibility flags (MINOR)
 
 | Property | Value |
 |---|---|
 | Scope | `theme::model::GitTheme.show_branch`, `.show_ahead_behind`, `.show_stash`; `[segments.git]` TOML keys of the same names; `GitResolver`'s `branch`/`ahead_behind`/`stash` variable resolvers |
 | Change type | MINOR — three new optional `Option<bool>` fields, each `#[serde(default, skip_serializing_if = "Option::is_none")]` |
 | IPC protocol | Unchanged |
-| Config schema | Additive (theme files only) — a theme predating #410 omits all three; each deserializes as `None`, which the resolver treats as `true` (the prior always-on behavior), so no existing theme changes output |
+| Config schema | Additive (theme files only) — a theme without these keys deserializes each as `None`, which the resolver treats as `true` (the prior always-on behavior), so no existing theme changes output |
 
 **What changed.** `GitTheme` previously had only one content toggle (`show_counts`); branch
 name, ahead/behind arrows, and the stash indicator were rendered unconditionally. Each now has
@@ -200,16 +204,16 @@ an independent `Option<bool>` flag honored by the corresponding `GitResolver` va
 (returning `None` — which collapses the format's optional `(…)` group — when the flag is
 `Some(false)`). The config wizard exposes these as a per-segment multi-select (`b`/`a`/`t` keys
 while the `git` segment is highlighted), persisted through the per-field theme-override save
-mechanism (#407). Unset defaults to on, so this is purely additive.
+mechanism. Unset defaults to on, so this is purely additive.
 
-#### Config schema — removed dead `ui.delimiter_style`/`ui.delimiters` (BREAKING, #377)
+#### Config schema — removed dead `ui.delimiter_style`/`ui.delimiters` (BREAKING)
 
 | Property | Value |
 |---|---|
 | Scope | `UiSettings.delimiter_style`, `UiSettings.delimiters`, `config::DelimiterPreset`, `config::DelimiterSettings`, `config::DelimiterStyle`, `ui.delimiter_style`/`ui.delimiters.*` `gpy config get/set/show` keys |
 | Change type | BREAKING — config schema fields removed |
 | IPC protocol | Unchanged |
-| Config schema | Removal — a `config.toml` with `[ui]` `delimiter_style` or a `[ui.delimiters]` table now fails validation on unknown-field strictness (if enabled) or is silently ignored (fields are simply no longer deserialized into `UiSettings`) |
+| Config schema | Removal — a `config.toml` that still sets `[ui]` `delimiter_style` or a `[ui.delimiters]` table still loads; the keys are ignored because they are no longer deserialized into `UiSettings` and GPY config types do not use `deny_unknown_fields` |
 
 **What changed.** `ui.delimiter_style` (`DelimiterPreset`: theme/ascii/nerd/powerline/none) and
 `[ui.delimiters]` (`DelimiterSettings`: per-preset `first`/`start`/`end`/`last` glyph overrides)
@@ -222,10 +226,10 @@ a purely visual/style concern — themes already own colors, icons, and other vi
 properties, and `config.toml` has no other precedent for a config.toml-level style override
 that competes with the theme file for the same rendered value — the dead schema was removed
 outright. To customize delimiters, edit or create a theme file (`gpy theme new`) instead.
-Follow-up: cloning an existing theme's values into a new theme (rather than only the blank
-default template) is tracked separately.
+Cloning an existing theme's values into a new theme (rather than only the blank default
+template) is not covered by this change.
 
-#### IPC protocol — `username` request/response (MINOR, #252)
+#### IPC protocol — `username` request/response (MINOR)
 
 | Property | Value |
 |---|---|
@@ -238,7 +242,7 @@ default template) is tracked separately.
 and `Response::Username { username }`, mirroring the `hostname` request path through
 `ShellIpcMessage` parsing (`"username"` op), `validate_message_content`
 (`validate_username_request`), the `HandlerRegistry` router, and the `fish-ansi` renderer.
-Like `hostname` (#259), the client resolves the effective username (`$USER`, which is
+Like `hostname`, the client resolves the effective username (`$USER`, which is
 `root` under root/sudo) and gates root/sudo visibility (`segment_username_detect`) before
 sending the request; the agent does not derive the username itself and only echoes the
 client-supplied value back after validating it as a bounded string (max 256 chars) with
@@ -246,7 +250,7 @@ the existing null-byte/control-character checks. Older shells and agents interop
 unchanged: the new `username` field on `ShellIpcMessage` is `#[serde(default)]`, and
 clients that never send `{"op":"username",...}` are unaffected.
 
-#### Theme schema — username segment (MINOR, #252)
+#### Theme schema — username segment (MINOR)
 
 | Property | Value |
 |---|---|
@@ -269,7 +273,7 @@ only — never the raw format string, for injection/`set -u` safety), and `__ico
 The Starship importer maps a `[username]` module onto `UsernameTheme` (`$user` → `$username`,
 `$style` inlined from `style_root`, `show_always` passthrough).
 
-#### IPC protocol — `hostname` request/response (MINOR, #259)
+#### IPC protocol — `hostname` request/response (MINOR)
 
 | Property | Value |
 |---|---|
@@ -281,18 +285,16 @@ The Starship importer maps a `[username]` module onto `UsernameTheme` (`$user` �
 **What changed.** Added `Message::HostnameRequest { hostname, format, is_last, prev_bg }`
 and `Response::Hostname { hostname }`, mirroring the existing `character` request path
 through `ShellIpcMessage` parsing (`"hostname"` op), `validate_message_content`, the
-`HandlerRegistry` router, and `EndpointHandle::route_request_secure` dispatch. Per #259,
-the client resolves the hostname string and gates SSH-only visibility before sending the
-request; the agent does not derive the hostname itself and there is no `is_ssh` field
-(this supersedes that part of the original design doc). The agent only echoes the
+`HandlerRegistry` router, and `EndpointHandle::route_request_secure` dispatch. The client
+resolves the hostname string and gates SSH-only visibility before sending the request; the
+agent does not derive the hostname itself and this change added no `is_ssh` field (see the
+`is_ssh` entry above). The agent only echoes the
 client-supplied hostname back after validating it as a bounded string (max 256 chars,
 same limit as `key`) with the existing null-byte/control-character checks. Older shells
 and agents interoperate unchanged: the new `hostname` field on `ShellIpcMessage` is
 `#[serde(default)]`, and clients that never send `{"op":"hostname",...}` are unaffected.
-Nothing renders the hostname segment yet — the resolver/renderer lands in a follow-up
-change.
 
-#### Theme schema — hostname segment (MINOR, #257/#258)
+#### Theme schema — hostname segment (MINOR)
 
 | Property | Value |
 |---|---|
@@ -318,7 +320,7 @@ table falls back to `HostnameTheme::default()`, which is behaviorally identical 
 being invisible (gated by `enabled_segments` membership, not this struct). No IPC or shell-contract
 change from this entry — see the IPC entry above for the wire-protocol addition.
 
-#### Theme schema — per-language style attributes (MINOR, #231)
+#### Theme schema — per-language style attributes (MINOR)
 
 | Field | `[segments.language] <lang>_style` (string, e.g. `java_style = "dimmed"`) |
 | Change type | MINOR — new optional field, serde default (empty map → `get_style` returns `"bold"`) |
@@ -328,7 +330,7 @@ map is empty and every language keeps the previously hardcoded `bold` attribute.
 
 ---
 
-#### SP4 — base16/base24 palette color schemes (MINOR, #230)
+#### Base16/base24 palette color schemes (MINOR)
 
 | Property | Value |
 |---|---|
@@ -387,7 +389,7 @@ falls back to `config.git` / `config.language`. The `starship` preset sets them 
 native Starship's `git_status` and language modules. No IPC change and no migration
 required.
 
-#### Starship importer — no schema change (PATCH, #186)
+#### Starship importer — no schema change (PATCH)
 
 | Property | Value |
 |---|---|
@@ -398,24 +400,24 @@ required.
 
 **What changed.** The `gpy theme import <starship.toml>` command was added. It is a
 CLI-only operation: it reads a `starship.toml` and emits two artifacts in existing
-TOML formats — a palette file (`PaletteConfig`, established in SP1 #198) and a theme
+TOML formats — a palette file (`PaletteConfig`, the format `ui.palette` selects) and a theme
 file (`ThemeConfig`, existing format). No new config fields, IPC operations, or schema
 versions are introduced. No migration is required.
 
-#### Shell-contract: retired `__color_*` exports + `__gpy_*_format` toggles (BREAKING, #199)
+#### Shell-contract: retired `__color_*` exports + `__gpy_*_format` toggles (BREAKING)
 
 | Property | Value |
 |---|---|
 | Scope | `gpy-agent theme export` output (Fish/Zsh/Bash) |
-| Change type | BREAKING — shell-contract change (pre-production; no compat shim per SP2 epic) |
+| Change type | BREAKING — shell-contract change (pre-production; no compatibility shim) |
 | IPC protocol | Unchanged |
 | Config schema | Unchanged |
 
 **What changed.** For the five segments that now have a confirmed agent render path
 (`directory`, `duration`, `character`, `git`, `language`), `gpy-agent theme export`
 no longer emits their per-segment `__color_*` shell variables or the
-`__gpy_*_format` toggle variables. These were consumed by the now-deleted
-shell-side colour renderers. Removed exports:
+`__gpy_*_format` toggle variables, which only fed shell-side colour renderers that
+were removed with them. Removed exports:
 
 - `__color_directory_bg`, `__color_directory_fg`
 - `__color_duration_bg`, `__color_duration_fg`
@@ -436,19 +438,19 @@ shell-side colour renderers. Removed exports:
 **not** removed from the config schema or Rust structs. They still feed the
 resolvers' style derivation and are consumed by the kept shell-side segments.
 The `GitTextElement` struct and per-element git colours are retained for the
-upcoming SP3 theme-importer (#186).
+Starship theme importer.
 
 **Backward compatibility.** This change affects the shell-side theme export contract
 only. The IPC protocol is unchanged. Config files deserialize without error.
 Shells referencing the removed variables will silently receive empty/unset values;
 remove those references.
 
-#### Palette rendering activation — behavior change (PATCH, #199)
+#### Palette rendering activation — behavior change (PATCH)
 
 | Property | Value |
 |---|---|
 | Scope | Agent rendering behavior; no schema shape change |
-| Change type | PATCH — behavior change only (schema unchanged since #198 added `ui.palette`) |
+| Change type | PATCH — behavior change only (schema unchanged since `ui.palette` was added) |
 | IPC protocol | Unchanged |
 
 **What changed.** `config.ui.palette` now actively affects rendering.
@@ -459,11 +461,11 @@ invalidates and refreshes the cache identically to a theme change.
 Template colour validation also resolves through the active palette and rejects
 colours absent from both palette and the standard ANSI name set.
 
-The config schema is unchanged from SP1 (#198). No migration required.
+The config schema is unchanged. No migration required.
 
 ---
 
-#### `[ui] palette` field — config schema (MINOR, #198)
+#### `[ui] palette` field — config schema (MINOR)
 
 | Property | Value |
 |---|---|
@@ -512,7 +514,7 @@ when `ui.palette` refers to a palette that cannot be found.
 ## IPC Protocol
 
 The IPC schema (`gpy-agent/schemas/message.json`, `response.json`) is versioned
-separately via `protocol_version` in `gpy-agent/src/ipc/protocol.rs`. The
+separately via `PROTOCOL_VERSION` in `gpy-agent/src/ipc/protocol.rs`. The
 `ui.palette` addition does not alter the IPC protocol; palette selection is
 resolved inside the agent at startup and exposed through the `theme export`
 response, which already carries named-color context.
@@ -539,7 +541,6 @@ Before merging any schema change, verify:
 - [ ] Update the schema tests if needed
 - [ ] Run the full compatibility suite
 - [ ] Update this document
-- [ ] Bump the version per the semver rules above
 - [ ] Record the compatibility notes in `CHANGELOG.md`
 
-A breaking schema change requires a major version bump.
+A breaking schema change must be labelled BREAKING here and in `CHANGELOG.md`.

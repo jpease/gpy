@@ -2,12 +2,12 @@
 # tests/fish/install_dev_verify_no_debug_log.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #743: install-dev.fish's _verify_installation probed
-# config hot-reload by starting the user's long-lived agent with
-# GPY_DEBUG_LOG=/tmp/gpy-verify-<pid>.log, so that daemon traced into a
-# predictable /tmp file forever (rm -f cannot stop it; the agent reopens the
-# path on every line). The probe must use a private temp dir and the agent
-# left running afterwards must start without GPY_DEBUG_LOG.
+# install-dev.fish's _verify_installation probes config hot-reload by
+# starting the agent with a GPY_DEBUG_LOG. That log must live in a private
+# temp dir, never a predictable /tmp/gpy-verify-<pid>.log (the agent reopens
+# the path on every line, so rm -f cannot stop a long-lived daemon tracing
+# into it), and the agent left running afterwards must start without
+# GPY_DEBUG_LOG.
 #
 # A stub gpy-agent records "<subcommand> GPY_DEBUG_LOG=<value|<unset>>" per
 # call. No real agent is started or stopped.
@@ -55,6 +55,9 @@ printf '%s\n' \
     _verify_installation >$driver
 
 touch "$marker"
+# `find -newer` compares mtimes at one-second granularity on some
+# filesystems; wait out the marker's second so a probe file created during
+# the run is strictly newer.
 sleep 1
 set -l out (env -i HOME=$home_dir XDG_CONFIG_HOME="$home_dir/.config" XDG_CACHE_HOME="$home_dir/.cache" \
     PATH="$stub_dir:$safe_path" fish --no-config $driver 2>&1)

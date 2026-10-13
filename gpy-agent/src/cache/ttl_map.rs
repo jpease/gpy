@@ -1,4 +1,4 @@
-//! A bounded, TTL-expiring cache primitive (#589).
+//! A bounded, TTL-expiring cache primitive.
 //!
 //! Four independent hand-rolled copies of this shape existed across
 //! `language/version.rs` (`VERSION_CACHE`, `TOOL_CONFIG_CACHE`,
@@ -23,7 +23,7 @@ use super::bounded::evict_to_capacity;
 
 /// Shared TTL (seconds) governing every [`TtlMap`] instance.
 ///
-/// One knob for all four caches, per #589's acceptance criteria — deliberately
+/// One knob for all four caches — deliberately
 /// a single crate-wide atomic rather than a per-instance field, so "one TTL
 /// knob" is literally true rather than four independently-set copies that
 /// happen to start equal.
@@ -32,8 +32,7 @@ static SHARED_CACHE_TTL_SECONDS: AtomicU64 = AtomicU64::new(24 * 60 * 60);
 /// Update the shared cache TTL (in hours), clamped to `[1, 720]`.
 ///
 /// Governs every [`TtlMap`] instance in the process, including the venv
-/// stash, which previously had its own hardcoded 24h TTL independent of this
-/// knob (#589).
+/// stash.
 pub fn set_shared_cache_ttl(hours: u64) {
     let clamped = hours.clamp(1, 720);
     SHARED_CACHE_TTL_SECONDS.store(clamped.saturating_mul(3600), Ordering::SeqCst);
@@ -48,15 +47,13 @@ pub fn shared_cache_ttl_seconds() -> u64 {
 /// Whether an entry inserted at `inserted_at` is still fresh at `now`, given `ttl`.
 ///
 /// Pure and clock-injectable so freshness logic is unit-testable without real
-/// sleeps (#589) — every production call site passes `SystemTime::now()` for
+/// sleeps — every production call site passes `SystemTime::now()` for
 /// `now`; tests pass a fixed, controlled instant instead.
 ///
 /// A backwards clock (`now` earlier than `inserted_at`) makes
 /// `now.duration_since(inserted_at)` return `Err`; that reads as "not fresh",
-/// matching the fail-safe direction of the hand-rolled callers this replaces
-/// (each treated a clock error as "definitely stale, evict it" by inflating
-/// the effective elapsed time past the TTL rather than reading it as zero
-/// elapsed / definitely fresh).
+/// failing safe toward re-fetching rather than serving a value of
+/// unverifiable age.
 fn is_fresh(inserted_at: SystemTime, now: SystemTime, ttl: Duration) -> bool {
     match now.duration_since(inserted_at) {
         Ok(elapsed) => elapsed < ttl,
@@ -71,7 +68,7 @@ type Entry<V> = (V, SystemTime);
 type Entries<K, V> = OnceLock<Mutex<HashMap<K, Entry<V>>>>;
 
 /// A bounded, TTL-expiring cache: `OnceLock<Mutex<HashMap<K, (V, SystemTime)>>>`
-/// plus a capacity bound and the shared, runtime-adjustable TTL (#589).
+/// plus a capacity bound and the shared, runtime-adjustable TTL.
 ///
 /// `get` evicts a stale entry as part of the lookup ("evict on stale read",
 /// matching all four caches this replaces). `insert` stamps the entry with
@@ -232,10 +229,8 @@ mod tests {
 
     #[test]
     fn clock_going_backwards_is_treated_as_stale_not_fresh() {
-        // now < inserted_at: the existing caches' `.elapsed()`-based checks treat
-        // this failure mode as "definitely stale" (fail safe toward re-fetching
-        // rather than serving a value with an unverifiable age); the pure
-        // function must preserve that direction.
+        // now < inserted_at must fail safe toward re-fetching rather than
+        // serving a value with an unverifiable age.
         let inserted = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
         let now = SystemTime::UNIX_EPOCH; // clock went backwards
         assert!(!is_fresh(inserted, now, Duration::from_secs(60)));

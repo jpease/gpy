@@ -2,10 +2,10 @@
 # tests/bash/instant_cache_status.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Exit-code contract for __gpy_read_instant_cache (#614): mirrors the
-# contract #612 gave Fish (tests/fish/instant_cache_status.test.fish). Status
-# is now carried ENTIRELY by the exit code -- no more `__gpy_<suffix>_stale_$$`
-# temp file for callers to `rm -f`/`-e` check.
+# Exit-code contract for __gpy_read_instant_cache, the same contract Fish
+# follows (tests/fish/instant_cache_status.test.fish). Status is carried
+# ENTIRELY by the exit code -- there is no `__gpy_<suffix>_stale_$$` temp
+# file for callers to `rm -f`/`-e` check.
 #   0 = fresh, exact-token hit
 #   1 = miss
 #   2 = stale, exact-token hit
@@ -13,14 +13,14 @@
 #   6 = stale, served via the `.none` variant fallback
 #
 # Drives staleness by back-dating the cache file's real mtime (portable
-# GNU/BSD touch, same trick tests/bash/parity.test.bash already uses) rather
+# GNU/BSD touch, same trick tests/bash/parity.test.bash uses) rather
 # than injecting a fake clock -- the real function has no clock-override hook.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
 # The theme export re-sets the supervisor flag from config.toml, so disable
-# it in a sandbox config; the missing socket stays there too (#836).
+# it in a sandbox config; the missing socket stays there too.
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-instant-cache-status.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
 source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"

@@ -2,7 +2,7 @@
 # tests/bash/ci_gate_shape.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The shape of the CI gate cannot regress silently (#556, #651, #514).
+# The shape of the CI gate cannot regress silently.
 #
 # pr-gate.yml is the only backstop for the local pre-push hook, so a quiet
 # edit could make it stop measuring what it claims. Pinned here:
@@ -16,15 +16,15 @@
 #   (c) `gate-result` is the one stable required check: it always runs, needs
 #       every gating job, and fails unless each one succeeded
 #   (d) the legs that drive a real shell install every shell-suite
-#       prerequisite the skip contract (#650) turns into a failure when
+#       prerequisite the skip contract turns into a failure when
 #       missing: fish (4, via the release-4 PPA), zsh, socat, netcat-openbsd,
 #       python3, jq, zip, starship, and shellcheck at the version the gate was
 #       written against
 #   (e) moon is installed wherever `just lint` runs (the lint leg and release
 #       validate), and release validate lints and enforces the perf budgets
-#   (f) a missing gate tool is a visible SKIP, and a failure under CI (#813)
-#   (g) the Windows leg is defined once, in windows-gate.yml (workflow_call,
-#       #653), called unconditionally by pr-gate.yml and cross-platform-
+#   (f) a missing gate tool is a visible SKIP, and a failure under CI
+#   (g) the Windows leg is defined once, in windows-gate.yml
+#       (workflow_call), called unconditionally by pr-gate.yml and cross-platform-
 #       test.yml; it runs the five CLI integration targets behind the CLI-only
 #       claim and declares GPY_CI_NO_SHELLS so its shell-less runner is an
 #       explicit exception, not a silent skip
@@ -42,9 +42,8 @@ WINDOWS_GATE=".github/workflows/windows-gate.yml"
 RELEASE=".github/workflows/release.yml"
 SHELLS_ACTION=".github/actions/install-shells/action.yml"
 
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 # `pin FILE PATTERN LABEL` -- the file contains a line matching PATTERN (ERE).
 pin() {
@@ -83,14 +82,14 @@ echo "--- (a) triggers are on and fork-safe ---"
 for wf in "$PR_GATE" "$SMOKE"; do
     absent "$wf" '^\s*pull_request_target:' "a pull_request_target trigger (it hands an untrusted PR the repository's trust)"
     absent "$wf" '\$\{\{\s*secrets\.' "secret references (a fork PR must run with none)"
-    absent "$wf" '^\s*#\s*(pull_request|push|schedule):' "a commented-out trigger left from the private-repo workaround (#556)"
+    absent "$wf" '^\s*#\s*(pull_request|push|schedule):' "a commented-out trigger left from the private-repo workaround"
     pin "$wf" '^  workflow_dispatch:$' "a workflow_dispatch trigger"
     pin "$wf" '^  group: .+' "a concurrency group"
 done
 pin "$PR_GATE" '^  pull_request:$' "a pull_request trigger"
 pin "$PR_GATE" '^    branches: \[main\]$' "pull_request scoped to main"
 pin "$PR_GATE" '^  cancel-in-progress: true$' "cancel-in-progress for superseded PR runs"
-absent "$PR_GATE" '^      run_(macos|windows):$' "a private-repo opt-in dispatch input (macOS and Windows are always on, #556)"
+absent "$PR_GATE" '^      run_(macos|windows):$' "a private-repo opt-in dispatch input (macOS and Windows are always on)"
 pin "$SMOKE" '^  push:$' "a push trigger"
 pin "$SMOKE" '^    branches: \[main\]$' "push scoped to main"
 pin "$SMOKE" "^    - cron: '[0-9*/, ]+'$" "a weekly schedule"
@@ -240,7 +239,7 @@ else
     fail "release validate must install shellcheck through install-action"
 fi
 # The shell leg also runs the dependency-advisory claims, which need
-# cargo-audit; without it the test fails under CI (#650).
+# cargo-audit; without it the test fails under CI.
 if job_block "$PR_GATE" shell | grep -qE '^          tool: .*cargo-audit'; then
     pass "pr-gate shell installs cargo-audit"
 else
@@ -270,10 +269,10 @@ fi
 if printf '%s\n' "$validate" | grep -q 'run: just bench-ci'; then
     pass "release validate enforces the performance budgets"
 else
-    fail "release validate must run just bench-ci (tests/performance-baselines.json is enforced nowhere else, #652)"
+    fail "release validate must run just bench-ci (tests/performance-baselines.json is enforced nowhere else)"
 fi
 
-echo "--- (f) a missing gate tool is a visible SKIP, and a failure under CI (#813) ---"
+echo "--- (f) a missing gate tool is a visible SKIP, and a failure under CI ---"
 for fn in check_fish_formatting check_shellcheck; do
     body="$(sed -n "/^${fn}() {/,/^}/p" scripts/quality-check.sh)"
     if [[ -z "$body" ]]; then
@@ -283,7 +282,7 @@ for fn in check_fish_formatting check_shellcheck; do
     if printf '%s\n' "$body" | grep -q 'echo "SKIP:'; then
         pass "$fn prints a SKIP: line when its tool is missing"
     else
-        fail "$fn has no SKIP: line for a missing tool (#650 skip contract)"
+        fail "$fn has no SKIP: line for a missing tool (skip contract)"
     fi
     if printf '%s\n' "$body" | grep -qE '\[\[ -n "\$\{CI:-\}" \]\] && return 1'; then
         pass "$fn fails a skipped check under CI"
@@ -293,8 +292,8 @@ for fn in check_fish_formatting check_shellcheck; do
 done
 
 echo "--- (g) the Windows leg is defined once and declares its shell-less runner ---"
-pin "$WINDOWS_GATE" '^  workflow_call:$' "a workflow_call trigger (the one Windows definition, #653)"
-pin "$WINDOWS_GATE" '^  GPY_CI_NO_SHELLS: "1"$' "GPY_CI_NO_SHELLS so the shell-injection tests skip explicitly (#650)"
+pin "$WINDOWS_GATE" '^  workflow_call:$' "a workflow_call trigger (the one Windows definition)"
+pin "$WINDOWS_GATE" '^  GPY_CI_NO_SHELLS: "1"$' "GPY_CI_NO_SHELLS so the shell-injection tests skip explicitly"
 for target in gpy_cli_tests cli_config_mutation_tests theme_import_tests init_command_tests cli_integration_tests; do
     pin "$WINDOWS_GATE" "^\s+--test $target\$" "the CLI integration target $target"
 done
@@ -312,7 +311,7 @@ for wf in "$PR_GATE" "$SMOKE"; do
 done
 windows_call="$(job_block "$PR_GATE" windows-gate)"
 if printf '%s\n' "$windows_call" | grep -qE '^    if:'; then
-    fail "pr-gate windows-gate must not be conditional: Windows is an always-on leg (#514)"
+    fail "pr-gate windows-gate must not be conditional: Windows is an always-on leg"
 else
     pass "pr-gate windows-gate is unconditional"
 fi
@@ -335,8 +334,4 @@ for wf in "$PR_GATE" "$SMOKE" "$WINDOWS_GATE" "$RELEASE"; do
     done < <(job_ids "$wf")
 done
 
-if [[ "$failures" -gt 0 ]]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: the CI gate keeps its measured shape"
+test_finish "the CI gate keeps its measured shape"

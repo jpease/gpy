@@ -2,7 +2,7 @@
 # tests/bash/path_parity.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Bash's path resolution agrees with the binary's (#647 row 6).
+# Bash's path resolution agrees with the binary's.
 #
 # `gpy debug paths --format kv` is the agent's own resolver; Bash resolves
 # the same paths in bash/core/ipc.bash (`__gpy_debug_paths`). The two must
@@ -15,8 +15,8 @@
 #
 # The instant-cache key encoding is checked the same way, against reality:
 # the file the agent writes for a repository must be exactly
-# `<shell key for that repo>.git*.bash`, so the hand-copied vectors the
-# suite used to carry can no longer drift from the Rust encoder unnoticed.
+# `<shell key for that repo>.git*.bash`, so the key encoding cannot drift
+# from the Rust encoder unnoticed.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tests/lib/shell_e2e.sh
@@ -34,10 +34,6 @@ fi
 # is empty resolve the passwd home, so they source only the core resolvers:
 # gpy.bash would also read that real home's config and may start an agent.
 PARITY_SRC=bash/gpy.bash
-
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 # Keys Bash resolves itself; every other key must be <unimplemented>.
 OWNED="runtime_root socket shell_registry_dir cache_root instant_prompts_dir"
@@ -76,8 +72,8 @@ tmp="$(mktemp -d "${TMPDIR:-/tmp}/gpy-path-parity.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 # gpy.bash decides on its startup agent start from the environment, but every
 # later supervisor check reads the flag the theme export sets from config.toml,
-# so disable it in every config dir the cases resolve to as well (#836). Only
-# `[agent] enabled = false` keeps the startup start away (#842).
+# so disable it in every config dir the cases resolve to as well. Only
+# `[agent] enabled = false` keeps the startup start away.
 for cfg in "$tmp/config" "$tmp/home/.config"; do
     mkdir -p "$cfg/gpy"
     printf '[agent]\nenabled = false\n\n[agent.supervisor]\nenabled = false\n' >"$cfg/gpy/config.toml"
@@ -85,11 +81,11 @@ done
 compare xdg_all_set HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache" XDG_RUNTIME_DIR="$tmp/run"
 compare runtime_unset HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache"
 compare xdg_unset HOME="$tmp/home"
-# #774: Windows-shaped XDG_* values are relative on Unix; every resolver ignores them.
+# Windows-shaped XDG_* values are relative on Unix; every resolver ignores them.
 compare xdg_windows_shaped HOME="$tmp/home" XDG_CONFIG_HOME='\\srv\cfg' XDG_CACHE_HOME='C:/x' XDG_RUNTIME_DIR='C:\x'
 # GPY_AGENT_SOCKET_PATH overrides only the socket, never the runtime root.
 compare socket_override HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/run" GPY_AGENT_SOCKET_PATH="$tmp/custom.sock"
-# #845: an empty HOME is "unset" -- the agent, Fish and Zsh take the passwd
+# An empty HOME is "unset" -- the agent, Fish and Zsh take the passwd
 # home, and Bash must not build a filesystem-root `/.cache/gpy` path instead.
 PARITY_SRC=bash/core/ipc.bash
 compare home_empty HOME= XDG_CONFIG_HOME="$tmp/config" XDG_CACHE_HOME="$tmp/cache" XDG_RUNTIME_DIR="$tmp/run"
@@ -100,11 +96,10 @@ PARITY_SRC=bash/gpy.bash
 # --- cache key encoding, against a file the agent wrote ----------------------------
 echo "--- cache key encoding ---"
 shell_e2e_init "$ROOT"
-# shell_e2e_init's EXIT trap replaced the one above; run both (#836).
+# shell_e2e_init's EXIT trap replaced the one above; run both.
 trap 'shell_e2e_cleanup; rm -rf "$tmp"' EXIT
 export GPY_AGENT_SUPERVISOR_ENABLED=0
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n\n[agent.supervisor]\nenabled = false\n' \
-    >"$XDG_CONFIG_HOME/gpy/config.toml"
+shell_e2e_text_config '"directory", "git"' false supervisor-off
 shell_e2e_start_agent || exit 1
 cd "$SHELL_E2E_REPO" || exit 1
 source "$ROOT/bash/gpy.bash"
@@ -119,7 +114,7 @@ else
     # shellcheck disable=SC2012  # diagnostic listing only
     fail "no cache file named from bash's key '$key'; agent wrote: $(ls "$XDG_CACHE_HOME/gpy/instant-prompts" 2>/dev/null | head -n 3)"
 fi
-# #705: a repo whose path holds the Windows-reserved characters ? and | must still
+# A repo whose path holds the Windows-reserved characters ? and | must still
 # resolve to the file the agent wrote (the agent escapes only the five documented tokens).
 odd_repo="$SHELL_E2E_ROOT/what?repo|x"
 mkdir -p "$odd_repo"
@@ -142,7 +137,7 @@ else
     # shellcheck disable=SC2012  # diagnostic listing only
     fail "no cache file named from bash's key '$odd_key'; agent wrote: $(ls "$XDG_CACHE_HOME/gpy/instant-prompts" 2>/dev/null | head -n 5)"
 fi
-# #771: a repo under a ~300-byte path has a key too long for one filename;
+# A repo under a ~300-byte path has a key too long for one filename;
 # the agent stores it chunked and the reader must find it.
 long_repo="$SHELL_E2E_ROOT/long/$(printf 'a%.0s' {1..80})/$(printf 'b%.0s' {1..80})/$(printf 'c%.0s' {1..80})"
 mkdir -p "$long_repo"
@@ -172,8 +167,4 @@ case "$(__gpy_path_to_cache_key "$odd")" in
     *) fail "unexpected encoding for '$odd': $(__gpy_path_to_cache_key "$odd")" ;;
 esac
 
-if [ "$failures" -gt 0 ]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: bash path resolution and cache keys agree with the binary"
+test_finish "bash path resolution and cache keys agree with the binary"

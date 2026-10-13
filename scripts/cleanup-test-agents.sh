@@ -77,10 +77,10 @@ else
     echo "Test root $ROOT does not exist; nothing to clean"
 fi
 
-# Reap oneshot-budget markers left by shells that no longer exist. The Fish
+# Reap oneshot-budget markers left by shells that have exited. The Fish
 # integration names its marker `${TMPDIR:-/tmp}/.gpy_oneshot_used_<pid>`
-# (fish/core/ipc.fish) and, before the fish_exit cleanup, a shell whose last
-# render claimed it left the file behind. A later process that reuses the
+# (fish/core/ipc.fish); a shell that exits without running the fish_exit
+# cleanup after claiming its budget leaves the file behind. A later process that reuses the
 # PID -- including this repo's Bash/Zsh oneshot tests, which assert no such
 # file exists for their own $$ -- then inherits a spent budget. This is a
 # bounded glob on a GPY-owned name, not a TMPDIR traversal (#619), and only

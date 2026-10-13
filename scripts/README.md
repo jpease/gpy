@@ -4,7 +4,7 @@ This directory contains utility scripts for development, testing, and quality as
 
 ## Quality Check Script
 
-`quality-check.sh` - Comprehensive code quality checks for both Rust and Fish code.
+`quality-check.sh` - Code quality gate for the Rust, Fish and shell code.
 
 ### Usage
 
@@ -103,24 +103,26 @@ The `--fast` mode is recommended for CI environments as it skips slower checks w
 
 ## Other Scripts
 
-- `test_fish.sh` - Run Fish shell tests
-- `test-windows-vm.sh` - Build and run `cargo test --locked --lib` on Windows over SSH, against a local Windows VM (e.g. Parallels) with the repo reachable via a shared folder. Mirrors the `windows-latest` leg of `cross-platform-test.yml` for local iteration without round-tripping through CI. Requires per-contributor setup: an SSH-reachable Windows VM (`~/.ssh/config` host alias, default `gpy-winvm`) with Rust + MSVC Build Tools installed, and the repo shared into the VM (default path `\\Mac\gpy`). Override via `GPY_WINVM_HOST`, `GPY_WINVM_PATH`, `GPY_WINVM_TARGET_DIR` env vars. Not available out of the box for every contributor.
+| Script | Purpose |
+|---|---|
+| `test_fish.sh` | Run the Fish shell tests. |
+| `bench.sh` | Run benchmarks; `--ci` checks the budgets in `tests/performance-baselines.json`. |
+| `perf-canary.sh` | Compare focused canary benchmarks against the last pushed commit on the same machine. |
+| `ci-bench.sh` | End-to-end prompt-latency and agent-memory budget benchmark (run via `just bench-ci`). |
+| `check-active-toolchain.sh` | Fail unless the `rustc` active in `gpy-agent/` is the version `gpy-agent/rust-toolchain.toml` pins; names the override on a mismatch. CI jobs and the local Rust gates run it first. It always probes from `gpy-agent/`, because the toolchain file only governs its own directory. |
+| `check-glibc-floor.sh <binary> <floor>` | Fail when a Linux binary references a `GLIBC_` symbol version above `<floor>`, naming the symbols. `release.yml` runs it against `GPY_GLIBC_FLOOR` (2.31). `OBJDUMP` selects the objdump. |
+| `wsl-smoke.sh [--contract]` | Smoke run inside a WSL distribution with the debug agent built: checks WSL detection, font detection and `GPY_NERD_FONT`, and `gpy-agent oneshot git` on a Linux-filesystem and a Windows-drive repository. `--contract` also runs `tests/bash/shell_contract.test.bash`. `GPY_WSL_DRVFS_DIR` sets the Windows-drive directory, `GPY_AGENT_BIN` the agent binary. |
+| `test-windows-vm.sh` | Run `cargo test --locked --lib` over SSH on a local Windows VM with the repo shared into it. Needs per-contributor setup; see below. |
+| `install-hooks.sh [--uninstall]` | Install (or remove) prek shims for `pre-commit`, `pre-push` and `commit-msg` from `.pre-commit-config.yaml`. Run once per clone. |
 
-  **What it cannot reproduce.** It approximates `windows-latest`; it is not that runner. Known differences, measured in #513:
+### `test-windows-vm.sh`
 
-  - It clears `HOME`, `XDG_CONFIG_HOME`, and `XDG_CACHE_HOME`, because Windows OpenSSH sets `HOME` in the session and the runner has none. Set `GPY_WINVM_KEEP_HOME=1` to keep them and exercise the shape a real interactive native-Windows user gets.
-  - A developer VM carries an installed toolchain — notably a real Git Bash, which the `theme::export` tests source. The runner resolved a `bash` that failed there (#528), so the script prints what `bash` resolves to before running.
-  - A Parallels VM on Apple Silicon is `aarch64-pc-windows-msvc`; `windows-latest` is x86_64.
+Requires an SSH-reachable Windows VM (`~/.ssh/config` host alias, default `gpy-winvm`) with Rust and the MSVC Build Tools installed, and the repo shared into the VM (default `\\Mac\gpy`). Override with `GPY_WINVM_HOST`, `GPY_WINVM_PATH` and `GPY_WINVM_TARGET_DIR`.
 
-  A green local run is evidence, not proof. Before concluding a Windows failure is fixed, check the CI leg too.
-- `check-active-toolchain.sh` - Assert that the `rustc` active **in `gpy-agent/`** is the version `gpy-agent/rust-toolchain.toml` pins. Every CI job that builds or lints runs it, because `actions-rust-lang/setup-rust-toolchain` falls back to `stable` silently when it cannot find the toolchain file — a moved crate or a dropped `rust-src-dir:` input would restore the #518 bug with every job still green. Also useful locally to catch a stray `RUSTUP_TOOLCHAIN` override. On a mismatch it names the override (the `RUSTUP_TOOLCHAIN` value, else rustup's report). Locally, `just clippy-strict`, `just lint`, the pre-commit `rustfmt` hook and every Rust mode of `quality-check.sh` (full, `--fix`, `--fast`, `--rust-only`) run it first and abort before any cargo command (#823). The directory matters and the script enforces it regardless of where you invoke it from: a toolchain file governs its own directory and those below it, so from the repository root `rustc` reports the machine's default instead of the pin. Probing there made the macOS gate red and the Linux and Windows gates green purely on which version those runner images default to (#538); `tests/bash/toolchain_pin_scope.test.bash` holds the probe in place.
-- `check-glibc-floor.sh <binary> <floor>` - Fail when a Linux binary's `objdump -T` references a `GLIBC_` symbol version above the floor, and name the symbols that do. `release.yml` runs it on both Linux binaries of each arch against `GPY_GLIBC_FLOOR` (2.31, the Ubuntu 20.04 / Debian 11 glibc) before uploading them (#694). Runs on any Linux build; Ubuntu's stock objdump reads both x86_64 and aarch64 binaries, and `OBJDUMP` overrides which objdump is used.
-- `wsl-smoke.sh [--contract]` - Smoke run for GPY under Windows Subsystem for Linux (#849). Run it inside a WSL distribution with the debug agent built. It asserts that the kernel and `WSL_DISTRO_NAME` say WSL, that `gpy-agent init` reports the fonts as undetectable (a Nerd Font file in a Linux font directory must not change that) and that `GPY_NERD_FONT=nerd` overrides it, and that `gpy-agent oneshot git` reports the branch of a repository on the Linux filesystem and of one on a Windows drive; it prints the filesystem type of each, and of `$HOME`, without asserting it. `--contract` also runs `tests/bash/shell_contract.test.bash`. `.github/workflows/wsl-smoke.yml` runs it on a Windows runner; a manual run on a real WSL machine is the same command. `GPY_WSL_DRVFS_DIR` names the Windows-drive directory to use, `GPY_AGENT_BIN` the agent binary.
-- `bench.sh` - Run benchmarks
-- `perf-canary.sh` - Compare focused canary benchmarks against the last pushed commit on the same machine
-- `ci-bench.sh` - End-to-end prompt-latency and agent-memory budget benchmark (run via `just bench-ci`)
-- `install-hooks.sh` - Install prek shims for `pre-commit`, `pre-push` and `commit-msg` from `.pre-commit-config.yaml` (pre-commit runs `just lint` and the cheap checks, pre-push repeats `just lint` and the outbound attribution check; the heavy gates run in CI). Replaces hook symlinks into `.raven/git-hooks/`. Run once per clone:
-  ```bash
-  ./scripts/install-hooks.sh          # install
-  ./scripts/install-hooks.sh --uninstall  # remove
-  ```
+It approximates the `windows-latest` CI runner but is not that runner:
+
+- It clears `HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME`, because Windows OpenSSH sets `HOME` and the runner has none. `GPY_WINVM_KEEP_HOME=1` keeps them.
+- A developer VM usually has a real Git Bash, which the `theme::export` tests source; the script prints what `bash` resolves to.
+- A Parallels VM on Apple Silicon is `aarch64-pc-windows-msvc`; `windows-latest` is x86_64.
+
+A green local run is evidence, not proof; check the CI leg too.

@@ -6,7 +6,7 @@
 ROOT=${0:a:h:h:h}
 cd "$ROOT"
 
-# Sourcing the entry point starts a supervised gpy-agent (#750). Keep it inside
+# Sourcing the entry point starts a supervised gpy-agent. Keep it inside
 # a throwaway XDG root and stop it on exit so a run leaves no daemon behind,
 # whether run directly or under quality-check.sh.
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'

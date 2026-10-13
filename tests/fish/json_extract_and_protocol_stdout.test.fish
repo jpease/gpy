@@ -2,17 +2,16 @@
 # tests/fish/json_extract_and_protocol_stdout.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression/contract tests for #612:
+# Contract tests:
 #   1. __gpy_json_extract_string / __gpy_json_extract_int parse a flat JSON
 #      blob fork-free (no `| tail -n 1` subprocess), against a literal JSON
 #      string -- covers the exact shape __gpy_get_agent_version parses from
 #      the agent's `{"op":"status"}` response.
-#   2. __gpy_get_agent_version, wired through those helpers, still populates
+#   2. __gpy_get_agent_version, wired through those helpers, populates
 #      __gpy_agent_version / __gpy_agent_protocol_version correctly.
-#   3. __gpy_check_protocol_version prints NOTHING on stdout on a mismatch
-#      (previously an errant `echo ""` leaked a blank line to stdout from
-#      inside a fish_prompt event handler, ipc.fish ~#821); only stderr
-#      should carry the warning.
+#   3. __gpy_check_protocol_version prints NOTHING on stdout on a mismatch:
+#      it runs inside a fish_prompt event handler, so even a blank line on
+#      stdout leaks into the terminal; only stderr may carry the warning.
 #
 # No socket, no running agent: __gpy_ipc_send / __gpy_get_agent_version are
 # redefined to return canned data.

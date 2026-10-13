@@ -4,7 +4,7 @@
 #
 # With the agent disabled in config.toml (exported GPY_AGENT_ENABLED=0), the
 # first prompt must not spawn a supervisor or start the agent, and a running
-# supervisor loop must exit instead of restarting the agent (#699). A loop
+# supervisor loop must exit instead of restarting the agent. A loop
 # spawned while both flags were on must exit within one check interval once
 # the agent rewrites the export cache with either flag off.
 
@@ -43,6 +43,8 @@ end
 source $repo_root/fish/core/init.fish
 test "$GPY_AGENT_ENABLED" = 0; or fail "theme export did not set GPY_AGENT_ENABLED=0 (got '$GPY_AGENT_ENABLED')"
 emit fish_prompt
+# Give any (wrongly) spawned supervisor a window to show up before asserting
+# that none did.
 sleep 1
 
 test -e $pidfile; and fail "supervisor.pid was created with GPY_AGENT_ENABLED=0"
@@ -90,6 +92,7 @@ function assert_loop_stops_on_export --argument-names flag --inherit-variable re
             function __gpy_agent_is_healthy; return 0; end
             __gpy_agent_supervisor_loop' -- $repo_root >/dev/null 2>&1 &
     set -l loop_pid $last_pid
+    # Let the loop run a while to prove it stays up while both flags are on.
     sleep 1
     kill -0 $loop_pid 2>/dev/null; or fail "supervisor loop exited with both flags on (checking $flag)"
 

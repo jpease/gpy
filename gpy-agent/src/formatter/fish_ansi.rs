@@ -111,14 +111,14 @@ fn render_or_warn(component: &str, result: crate::template::Result<String>) -> S
 }
 
 /// Render the git segment via the template engine. No format (or a template
-/// error) yields an empty segment — the legacy color path no longer exists.
+/// error) yields an empty segment.
 fn render_git_segment(
     status: &RepositoryStatus,
     ctx: &RenderContext<'_>,
     dialect: PromptDialect,
 ) -> String {
     let Some(format) = ctx.theme.segments.git.format.as_deref() else {
-        // No format configured: nothing to render (legacy color path removed).
+        // No format configured: nothing to render.
         return String::new();
     };
     render_or_warn(
@@ -146,15 +146,14 @@ fn render_git_via_template(
 }
 
 /// Render the language segment via the template engine. No format (or a
-/// template error) yields an empty segment — the legacy color path no longer
-/// exists.
+/// template error) yields an empty segment.
 fn render_language_segment(
     languages: &[LanguageInfo],
     ctx: &RenderContext<'_>,
     dialect: PromptDialect,
 ) -> String {
     let Some(format) = ctx.theme.segments.language.format.as_deref() else {
-        // No format configured: nothing to render (legacy color path removed).
+        // No format configured: nothing to render.
         return String::new();
     };
     render_or_warn(
@@ -320,8 +319,8 @@ fn render_clock_via_template(
 /// Entry point: render via template engine when a `format` is set.
 ///
 /// When no format template is configured the agent emits nothing and the
-/// shell renders the duration segment locally (byte-identical to pre-#192
-/// behavior). A malformed template also falls back to empty.
+/// shell renders the duration segment locally. A malformed template also
+/// falls back to empty.
 fn render_duration_segment(
     duration_ms: u64,
     ctx: &RenderContext<'_>,
@@ -358,8 +357,8 @@ fn render_duration_via_template(
 /// Entry point: render via template engine when a `format` is set.
 ///
 /// When no format template is configured the agent emits nothing and the
-/// shell renders the character segment locally (byte-identical to pre-#193
-/// behavior). A malformed template also falls back to empty.
+/// shell renders the character segment locally. A malformed template also
+/// falls back to empty.
 fn render_character_segment(
     success: bool,
     ctx: &RenderContext<'_>,
@@ -508,7 +507,7 @@ mod tests {
 
     #[test]
     fn git_without_format_emits_empty() {
-        // Post-migration contract: no format → agent emits nothing (no legacy path).
+        // No format → agent emits nothing.
         let formatter = FishAnsiFormatter::default();
         let (config, theme) = ctx();
         assert!(theme.segments.git.format.is_none());
@@ -530,7 +529,7 @@ mod tests {
         };
         let response = Response::RepositoryStatus(status);
         let got = formatter.render(&response, &rc).expect("render");
-        assert_eq!(got, "", "no format → empty (legacy path removed)");
+        assert_eq!(got, "", "no format → empty");
     }
 
     #[test]
@@ -556,10 +555,7 @@ mod tests {
         };
         let response = Response::RepositoryStatus(status);
         let got = formatter.render(&response, &rc).expect("render");
-        assert_eq!(
-            got, "",
-            "broken format → silent empty (legacy path removed)"
-        );
+        assert_eq!(got, "", "broken format → silent empty");
     }
 
     #[test]
@@ -631,13 +627,13 @@ mod tests {
 
     #[test]
     fn language_without_format_emits_empty() {
-        // Post-migration contract: no format → agent emits nothing (no legacy path).
+        // No format → agent emits nothing.
         let formatter = FishAnsiFormatter::default();
         let (config, theme) = ctx();
         assert!(theme.segments.language.format.is_none());
         let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
         let got = formatter.render(&rust_response(), &rc).expect("render");
-        assert_eq!(got, "", "no format → empty (legacy path removed)");
+        assert_eq!(got, "", "no format → empty");
     }
 
     #[test]
@@ -647,10 +643,7 @@ mod tests {
         theme.segments.language.format = Some("[$symbol(green)".to_owned()); // unbalanced
         let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
         let got = formatter.render(&rust_response(), &rc).expect("render");
-        assert_eq!(
-            got, "",
-            "broken format → silent empty (legacy path removed)"
-        );
+        assert_eq!(got, "", "broken format → silent empty");
     }
 
     #[test]
@@ -1153,21 +1146,10 @@ mod tests {
         );
     }
 
-    /// `render_or_warn` is the shared error-handling path all seven segment
-    /// entry points now route through.
+    /// A synthetic `Err` takes `render_or_warn`'s warn-and-empty branch.
     ///
-    /// Before this refactor, five of them
-    /// (directory/duration/character/hostname/username) discarded template
-    /// errors via `if let ... && let Ok(...)` with no `warn_fallback` call at
-    /// all, so a malformed template failed invisibly. There is no existing
-    /// stderr-capture test precedent in this codebase (`warn_fallback` is a
-    /// bare `eprintln!`), so rather than inventing new capture machinery this
-    /// test proves the control-flow contract directly: given a synthetic
-    /// `Err`, `render_or_warn` takes the warn-and-empty-string branch (as
-    /// opposed to, say, propagating the error or panicking). Combined with
-    /// the `*_malformed_format_emits_empty` tests above — which now all
-    /// route through this same helper — this closes the "silently discarded
-    /// error" gap for all five previously-silent segments.
+    /// `render_or_warn` is the shared error path for all seven segment entry
+    /// points; it must neither propagate the error nor panic.
     #[test]
     fn render_or_warn_takes_warn_and_empty_branch_on_error() {
         let error = crate::template::TemplateError::Unbalanced {

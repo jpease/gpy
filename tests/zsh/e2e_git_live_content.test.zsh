@@ -2,12 +2,11 @@
 # tests/zsh/e2e_git_live_content.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Live git content in an idle Zsh prompt (#647 row 1, pins #637).
+# Live git content in an idle Zsh prompt.
 #
-# The Zsh repaint handler used to be `zle reset-prompt` alone; PROMPT is a
-# string rendered once per precmd, so the redraw showed the same bytes and a
-# git change could not appear until the next Enter, while the docs called
-# Zsh live updates "Full". This drives `zsh -i` on a pty against a real
+# PROMPT is a string rendered once per precmd, so a repaint handler that only
+# runs `zle reset-prompt` redraws the same bytes and a git change cannot
+# appear until the next Enter. This drives `zsh -i` on a pty against a real
 # agent, edits a tracked file from OUTSIDE the shell without `git add`, and
 # asserts, with no keystroke sent:
 #   (a) the agent's instant-cache entry for the repo changes (so a cache-only
@@ -20,12 +19,8 @@ ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' \
-    >"$XDG_CONFIG_HOME/gpy/config.toml"
+shell_e2e_text_config '"directory", "git"'
 shell_e2e_start_agent || exit 1
 export GPY_AGENT_ENABLED=1
 export GPY_AGENT_SUPERVISOR_ENABLED=1
@@ -86,7 +81,5 @@ fi
 shell_e2e_send 'exit\r'
 if [ "$failures" -gt 0 ]; then
     shell_e2e_dump_transcript
-    echo "FAILED: $failures assertion(s)"
-    exit 1
 fi
-echo "PASS: zsh live git content repaints an idle prompt"
+test_finish "zsh live git content repaints an idle prompt"

@@ -24,7 +24,7 @@ impl SafePath {
     /// `canonicalize()` syscall. A hung filesystem (dead NFS/automount) blocks
     /// the calling thread indefinitely, so this — and any `SafePath`
     /// deserialization — must run on `tokio::task::spawn_blocking`, never
-    /// directly on an async task (#314).
+    /// directly on an async task.
     ///
     /// # Errors
     /// Returns an error if the path fails security validation.
@@ -102,13 +102,8 @@ impl PartialEq<SafePath> for &str {
 /// Maximum allowed path length in bytes
 const MAX_PATH_LENGTH: usize = 4096;
 
-/// Maximum message size in bytes (64KB)
-///
-/// The single definition of the wire-size cap (#578). `ipc::protocol`'s
-/// `validate_message_size` used to declare its own local copy of this value, so
-/// the two could drift and `GuardSettings::max_message_size` — which the
-/// connection-level buffer guard does honour — could never be raised past the
-/// protocol layer's hardcoded limit.
+/// Maximum message size in bytes (64KB): the single definition of the
+/// wire-size cap, shared by the connection guard and `ipc::protocol`.
 pub(crate) const MAX_MESSAGE_SIZE: usize = 64 * 1024;
 
 /// Default request timeout in seconds
@@ -125,7 +120,7 @@ const DEFAULT_MAX_CONCURRENT_CONNECTIONS: usize = 200;
 pub struct GuardSettings {
     /// Maximum request timeout (5 seconds based on IPC latency budget)
     pub request_timeout: Duration,
-    /// Maximum message size (64KB already implemented in protocol.rs)
+    /// Maximum message size (64KB by default)
     pub max_message_size: usize,
     /// Enable PID validation for register requests
     pub validate_pids: bool,
@@ -148,20 +143,17 @@ impl Default for GuardSettings {
 }
 
 /// Reject a field whose value contains a NUL byte or any other control
-/// character, rather than silently stripping it (#578).
+/// character, rather than silently stripping it.
 ///
 /// A stripped value is a *different* value than the caller specified, with no
 /// signal that anything changed — `/tmp/a\tb` silently becoming `/tmp/ab`
 /// names another directory entirely. Control characters in a value that later
 /// reaches the prompt can also line-break or otherwise corrupt the rendered
-/// output (#323), which is why they must not survive validation.
+/// output, which is why they must not survive validation.
 ///
-/// This is the one control-character policy for inbound data. Path validation
-/// ([`PathValidator::validate_path`]) and general IPC string-field validation
-/// (`ipc::protocol::validate_string_field`) previously disagreed — the former
-/// stripped every control character, the latter tolerated up to five
-/// non-whitespace ones — and now share this single "reject any control
-/// character, always" rule. The render-time stripping in `template::eval` is a
+/// This is the one control-character policy for inbound data, shared by path
+/// validation ([`PathValidator::validate_path`]) and general IPC string-field
+/// validation (`ipc::protocol::validate_string_field`). The render-time stripping in `template::eval` is a
 /// separate, deliberate defence: the prompt has to render something, so it
 /// cannot reject.
 ///
@@ -197,7 +189,7 @@ impl PathValidator {
     /// contains directory traversal attempts, or points to sensitive system files.
     pub fn validate_path(path: &str) -> Result<PathBuf> {
         // Reject NUL and other control characters rather than stripping them:
-        // a stripped path is a different path than the caller asked for (#578).
+        // a stripped path is a different path than the caller asked for.
         reject_control_chars("path", path)?;
 
         // Length cap (prevent extremely long paths)
@@ -211,7 +203,7 @@ impl PathValidator {
 
         // Canonicalize path (resolves symlinks, removes ..). Both branches run
         // the same component checks: a path that does not exist yet gets no
-        // weaker treatment than one that does (#578).
+        // weaker treatment than one that does.
         if let Ok(canonical) = path_buf.canonicalize() {
             Self::check_components(&canonical)?;
             Ok(canonical)
@@ -227,10 +219,10 @@ impl PathValidator {
     /// The canonical form is required because `validate_path` canonicalizes an
     /// input that exists: comparing `/private/etc/hosts` against the raw `/etc`
     /// prefix would never match, silently making the denylist a no-op on a host
-    /// where `/etc` is a symlink (macOS's `/etc` -> `/private/etc`) (#323). The
+    /// where `/etc` is a symlink (macOS's `/etc` -> `/private/etc`). The
     /// literal form is required for the opposite case: a path that does *not*
     /// exist is never canonicalized, so `/etc/does-not-exist` only matches the
-    /// unresolved `/etc` prefix (#578). The denied directories themselves are
+    /// unresolved `/etc` prefix. The denied directories themselves are
     /// unchanged — `/etc`, `/proc`, `/sys`, `/dev` — this only keeps both
     /// spellings of each one.
     fn denylisted_system_prefixes() -> &'static [PathBuf] {
@@ -253,7 +245,7 @@ impl PathValidator {
     /// Check a path's components for parent-directory traversal and for
     /// denylisted system directories.
     ///
-    /// Applied identically to both branches of [`Self::validate_path`] (#578).
+    /// Applied identically to both branches of [`Self::validate_path`].
     /// Previously the canonical branch ran the denylist check plus a `/../`
     /// *substring* check that can never fire on an already-canonical path
     /// (`canonicalize` resolves every `..` component by definition), while the
@@ -268,7 +260,7 @@ impl PathValidator {
     fn check_components(path: &Path) -> Result<()> {
         // Check for an actual `..` path component rather than a `".."` substring:
         // the substring check rejected legitimate names like `my..project` that
-        // merely contain two dots without being a parent-directory traversal (#323).
+        // merely contain two dots without being a parent-directory traversal.
         if path
             .components()
             .any(|component| matches!(component, Component::ParentDir))
@@ -298,12 +290,9 @@ impl PidValidator {
     /// Liveness only: the plausible-range invariant belongs to
     /// [`crate::config::types::ClientPid`], which cannot be constructed out of
     /// range. This runs exactly once per request, at IPC route time
-    /// (`ipc::server::connection::route_request_secure`), and is the one place
-    /// `GuardSettings::validate_pids` actually has an effect. It used to run at
-    /// `ClientPid` construction as well — unconditionally, before any
-    /// `GuardSettings` was in scope — so that toggle could not disable liveness
-    /// probing and every registration paid for the same `kill(pid, 0)` twice
-    /// (#578).
+    /// (`ipc::server::connection::route_request_secure`), so it is the one place
+    /// `GuardSettings::validate_pids` gates; `ClientPid` construction must not
+    /// probe, or that toggle could not disable liveness checking.
     ///
     /// A PID is not an identity: this proves a process exists, and nothing
     /// about who is on the other end of the socket.
@@ -327,8 +316,7 @@ impl PidValidator {
 
     /// Native Windows stub: there is no Unix-socket IPC peer to probe on this
     /// platform, so liveness always succeeds. The range invariant still holds —
-    /// it is enforced by [`crate::config::types::ClientPid`] on every platform
-    /// (#578).
+    /// it is enforced by [`crate::config::types::ClientPid`] on every platform.
     ///
     /// # Errors
     ///
@@ -407,7 +395,7 @@ impl RateLimiter {
     /// backward NTP step can timestamp already-recorded connections as
     /// "in the future" relative to a stepped-back wall clock, so they never
     /// expire and the window fills permanently, locking out every client
-    /// (#315). `Instant` cannot be affected by wall-clock adjustments.
+    ///. `Instant` cannot be affected by wall-clock adjustments.
     fn allow_connection_at(&mut self, now: Instant) -> bool {
         let one_second_ago = now.checked_sub(Duration::from_secs(1));
 
@@ -431,12 +419,8 @@ impl RateLimiter {
 mod tests {
     use super::*;
 
-    /// Ensure control characters are rejected, not rewritten.
-    ///
-    /// Was `test_path_sanitization`, which asserted the opposite for
-    /// non-NUL control characters: `sanitize_string` returned a *cleaned* copy
-    /// of the value, so the caller silently got a different path than it asked
-    /// for. #578 replaced that with `reject_control_chars`.
+    /// Ensure control characters are rejected, not rewritten: a cleaned copy
+    /// would silently name a different path than the caller asked for.
     ///
     /// # Panics
     ///
@@ -480,7 +464,7 @@ mod tests {
         assert!(PathValidator::validate_path("relative/path").is_ok());
     }
 
-    /// Regression test for #323: a `..` *substring* inside a single path
+    /// A `..` *substring* inside a single path
     /// segment (not a `..` path *component*) must not be treated as traversal.
     ///
     /// # Panics
@@ -494,11 +478,9 @@ mod tests {
         );
     }
 
-    /// Regression test for #323.
-    ///
     /// `/etc/hosts` must be denied even when the host resolves `/etc` through
-    /// a symlink (e.g. macOS's `/etc` -> `/private/etc`), which previously
-    /// bypassed a literal `/etc/` prefix check once the path was canonicalized.
+    /// a symlink (e.g. macOS's `/etc` -> `/private/etc`), which a literal
+    /// `/etc/` prefix check would miss once the path is canonicalized.
     ///
     /// # Panics
     ///
@@ -513,7 +495,7 @@ mod tests {
         }
     }
 
-    /// Regression test for #578: a path that does not exist on disk must still
+    /// A path that does not exist on disk must still
     /// be checked against the denylist.
     ///
     /// `canonicalize` fails for a nonexistent path, and the denylist check used
@@ -541,14 +523,12 @@ mod tests {
         }
     }
 
-    /// Newline/tab/CR in a path must be rejected (#578), superseding the #323
-    /// fix that stripped them.
+    /// Newline/tab/CR in a path must be rejected, not stripped.
     ///
-    /// #323 was right that these characters must not reach the prompt — a
-    /// directory name containing a newline can line-break the rendered output —
-    /// but stripping them handed the caller a path to a *different* directory
-    /// with no indication anything had changed. Rejecting refuses the request
-    /// instead, which is the only answer that cannot silently mislead.
+    /// These characters must not reach the prompt — a directory name
+    /// containing a newline can line-break the rendered output — but stripping
+    /// them would hand the caller a path to a *different* directory with no
+    /// indication anything changed. Rejecting cannot silently mislead.
     ///
     /// # Panics
     ///
@@ -567,8 +547,7 @@ mod tests {
         );
     }
 
-    /// Check the PID range invariant and the liveness probe, which #578 split
-    /// apart.
+    /// Check the PID range invariant and the liveness probe separately.
     ///
     /// Range belongs to `ClientPid` (enforced by construction, on every
     /// platform), liveness to `PidValidator` (probed once, at route time).
@@ -592,14 +571,13 @@ mod tests {
         assert!(PidValidator::validate_pid_liveness(current_pid).is_ok());
     }
 
-    /// #578: constructing a `ClientPid` must not probe liveness.
+    /// Constructing a `ClientPid` must not probe liveness.
     ///
     /// Liveness is probed exactly once per request, at route time
     /// (`route_request_secure`), which is the only call site of
     /// `PidValidator::validate_pid_liveness` in production code and the only
-    /// place `GuardSettings::validate_pids` can gate. Construction previously
-    /// ran its own `kill(pid, 0)`, so the toggle could not disable liveness
-    /// checking and every registration probed twice.
+    /// place `GuardSettings::validate_pids` can gate; a probe at construction
+    /// would bypass that toggle and probe every registration twice.
     ///
     /// A dead-but-in-range PID is the observable difference: it constructs
     /// cleanly now, and is rejected later at route time.
@@ -642,14 +620,11 @@ mod tests {
         assert!(!limiter.allow_connection());
     }
 
-    /// Regression test for #315.
+    /// The connection window expires and refills on monotonic time.
     ///
-    /// The limiter previously timestamped connections with `SystemTime::now()`.
-    /// A backward wall-clock step made already-recorded connections look like
-    /// they were made "in the future", so they never expired and the window
-    /// filled permanently, rejecting every client. `Instant` is monotonic and
-    /// immune to that class of failure; drive `allow_connection_at` directly
-    /// to verify the window still expires and refills correctly across time.
+    /// The limiter timestamps with `Instant`: with wall-clock time, a backward
+    /// step would make recorded connections look "in the future", so they
+    /// would never expire. Drives `allow_connection_at` directly.
     ///
     /// # Panics
     ///

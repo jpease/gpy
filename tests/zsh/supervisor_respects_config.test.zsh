@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 # tests/zsh/supervisor_respects_config.test.zsh
 #
-# Regression test for #762: the zsh per-prompt supervisor check must honour
+# The zsh per-prompt supervisor check must honour
 # the [agent.supervisor] values the theme export sets after zsh/gpy.zsh loads
 # (enabled, check_interval_seconds, max_restart_attempts).
 #
@@ -36,6 +36,9 @@ failed=0
 # call log, then evaluates $2 (calls to __gpy_supervisor_check). Paths and the
 # body reach the child as data (env and $1), never interpolated into -c code.
 # $1: STUB_SUPERVISOR_ENABLED; $3..: extra VAR=value environment.
+# The child's trailing `sleep 0.5` lets any `gpy-agent` call the checks start
+# reach the log before it exits; case 1 expects none, so there is no count to
+# poll for.
 run_case() {
     local sup=$1 body=$2
     shift 2
@@ -67,7 +70,7 @@ else
 fi
 
 # Case 2: check_interval_seconds rate-limits the health probe. The second
-# check is made to look 15 s after the first: past the old 10 s default,
+# check is made to look 15 s after the first: past a 10 s interval,
 # inside the configured 60 s.
 run_case 1 '__gpy_supervisor_check
     (( __gpy_supervisor_last_check_time -= 15 ))

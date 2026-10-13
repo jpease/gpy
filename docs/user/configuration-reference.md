@@ -4,8 +4,6 @@
 
 A complete field-by-field reference for `~/.config/gpy/config.toml`: every section, key, type, default, and valid range.
 
-**Last Updated:** 2026-07-07
-
 ---
 
 ## Scope
@@ -96,7 +94,7 @@ Controls the background agent process that serves prompt data over IPC.
 
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|
-| `enabled` | bool | `true` | — | Enables background agent mode. When `false`, every prompt render falls back to oneshot mode (slower, ~20ms, no persistent process). |
+| `enabled` | bool | `true` | — | Enables background agent mode. When `false`, every prompt render falls back to oneshot mode (slower, no persistent process). |
 | `timeout_seconds` | integer | `5` | `1`–`300` | IPC socket timeout in seconds before the shell gives up waiting on the agent and falls back to oneshot rendering. |
 | `live_updates` | bool | `true` | — | Enables live prompt updates pushed via signals (e.g., when a file watcher detects a git change) instead of only refreshing on the next command. |
 

@@ -2,10 +2,10 @@
 # tests/bash/json_escape_vectors.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #614: __gpy_escape_json must escape control characters (\n, \r, \t) the
+# __gpy_escape_json must escape control characters (\n, \r, \t) the
 # same way Fish's __gpy_json_escape does, not just `\` and `"`. Reads the
 # shared vector file tests/fixtures/json_escape_vectors.tsv -- run by all
-# three shells -- so escaping can never silently drift between them again.
+# three shells -- so escaping cannot silently drift between them.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1

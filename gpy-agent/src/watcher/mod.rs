@@ -23,7 +23,7 @@
 //! - **Dispatch threads**: One per drained event, spawned by the flush thread to invoke the
 //!   agent callback (which may run unbounded git/language scans). Because dispatch happens
 //!   off the flush thread and outside the debouncer lock, a slow callback for one repo can
-//!   neither stall event ingestion for other repos nor delay their delivery (#306).
+//!   neither stall event ingestion for other repos nor delay their delivery.
 //!
 //! **Why a dedicated flush thread?** The flush operation must happen on a timer independently
 //! of incoming events. Without it, if events stop arriving, pending events would never
@@ -41,17 +41,17 @@
 //! 2. If an entry exists, update `last_seen = now` (its `first_seen` is preserved).
 //!
 //! An entry may additionally carry a due-time floor, which holds it back until that instant
-//! whatever the two rules below say. Only the directory-create follow-up sets one (#416), and
-//! that is what keeps the follow-up's delay inside this engine instead of on a timer thread of
-//! its own: N directories created in one repository become one held entry rather than N
-//! sleeping threads, and `stop` clears them like anything else pending (#569).
+//! whatever the two rules below say. Only the directory-create follow-up sets one, which
+//! keeps that delay inside this engine instead of on a timer thread of its own: N
+//! directories created in one repository become one held entry rather than N sleeping
+//! threads, and `stop` clears them like anything else pending.
 //!
 //! The flush thread periodically drains entries whose quiet gap (`now - last_seen`) has
 //! reached the debounce window, **or** whose total age (`now - first_seen`) has reached the
 //! max-delay cap (and whose floor, if any, has passed). The cap exists because a pure
 //! quiet-gap check can be reset indefinitely by sustained churn (e.g. a large rebase, or a
 //! build emitting non-gitignored output faster than the debounce window), which would
-//! otherwise starve flushes entirely (#322).
+//! otherwise starve flushes entirely.
 //!
 //! **Default timing**: 100ms debounce window, 1s max-delay cap
 //! - Debounce window fast enough to feel responsive (< 200ms)
@@ -103,7 +103,7 @@ use std::time::{Duration, Instant};
 /// A raw watcher event always carries a single path ([`GitPaths::single`]).
 /// [`DebounceEngine`](debouncer::DebounceEngine) folds every path observed for
 /// one repository inside a debounce window into the same event, so a coalesced
-/// burst can no longer discard all but the last change (#466).
+/// burst never discards all but the last change.
 ///
 /// Accumulation is bounded by [`GitPaths::MAX_PATHS`]; past the bound the event
 /// degrades to [`GitPaths::WholeRepo`], which the agent services with a full
@@ -115,7 +115,7 @@ pub enum GitPaths {
     /// Never empty, never longer than [`GitPaths::MAX_PATHS`].
     Paths(Vec<PathBuf>),
     /// The whole repository changed: accumulation exceeded
-    /// [`GitPaths::MAX_PATHS`], or a backend-reported overflow/rescan (#616)
+    /// [`GitPaths::MAX_PATHS`], or a backend-reported overflow/rescan
     /// could not name which paths changed. [`PendingEvent::git_whole_repo`]
     /// is the constructor a rescan uses; the root-path handling in
     /// `agent::events::git_paths_hint` remains as defence for any other
@@ -218,7 +218,7 @@ impl PendingEvent {
     }
 
     /// A `Git` pending event covering the whole repository, as emitted by a
-    /// rescan (#616): a backend-reported overflow can't identify which paths
+    /// rescan: a backend-reported overflow can't identify which paths
     /// changed, so there is nothing to name — the repo just gets a full scan.
     #[must_use]
     pub const fn git_whole_repo(repo: PathBuf) -> Self {
@@ -240,15 +240,14 @@ pub struct DebouncedEvent {
     pub repo: PathBuf,
 }
 
-/// Every piece of watcher state that used to live in a process-global
-/// `OnceLock`, owned by whoever built the watcher instead (#617).
+/// All watcher state, owned by whoever built the watcher rather than held in
+/// process globals.
 ///
 /// One registry is shared by a [`WatchCoordinator`], the
 /// [`filesystem::FileSystemWatcher`] beneath it, and — in the agent — by the
-/// repo, config and theme coordinators alike, which is what preserves the
-/// old one-process-one-registry semantics exactly. Two watchers built
-/// without an explicit registry get one each and share nothing, so tests no
-/// longer have to serialise on a process-wide `AtomicBool`/`HashMap`.
+/// repo, config and theme coordinators alike, giving one registry per
+/// process. Two watchers built without an explicit registry get one each and
+/// share nothing, so tests need not serialise on shared state.
 ///
 /// All five pieces are behind their own lock rather than one lock over a
 /// struct: they are read on independent hot paths (`classify_event` reads
@@ -265,7 +264,7 @@ pub struct WatchRegistry {
     /// bookkeeping: client PIDs, gitdir identity, etc.) avoids leaking that
     /// type across the module boundary. It lets raw notify events be
     /// attributed to the watched repository whose watch produced them via a
-    /// longest-prefix match instead of an ancestor `.git` stat walk (#344).
+    /// longest-prefix match instead of an ancestor `.git` stat walk.
     /// Kept in sync at the same two points `watched_repos`'s key set changes:
     /// insertion in `track_new_repo` and removal in `unregister_client_locked`.
     /// `rearm_repo_watch` never touches this set because it only updates a
@@ -289,8 +288,7 @@ pub struct WatchRegistry {
 
 impl WatchRegistry {
     /// A registry with nothing registered and worktree watching resolved from
-    /// the environment exactly as the old process-global flag was: an explicit
-    /// `GPY_WATCH_WORKTREE` wins, otherwise ON.
+    /// the environment: an explicit `GPY_WATCH_WORKTREE` wins, otherwise ON.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -314,7 +312,7 @@ impl WatchRegistry {
     /// `GPY_WATCH_WORKTREE` env var overrides it. Newly registered
     /// repositories pick up the new value; already-active ones are brought
     /// into line by [`multi_repo::MultiRepoWatcher::resync_watch_worktree`],
-    /// which the config-reload path calls right after this (#444).
+    /// which the config-reload path calls right after this.
     pub(crate) fn set_worktree_enabled(&self, config_enabled: bool) {
         let effective = env_watch_worktree_override().unwrap_or(config_enabled);
         self.worktree_enabled.store(effective, Ordering::Relaxed);
@@ -521,7 +519,7 @@ impl WatchRegistry {
         dependents.iter().cloned().collect()
     }
 
-    /// Whether `path` lies under any registered common git directory (#468).
+    /// Whether `path` lies under any registered common git directory.
     ///
     /// Allocation- and stat-free: a linear `starts_with` over the handful of
     /// registered common directories, over an empty map for every repository
@@ -535,7 +533,7 @@ impl WatchRegistry {
     }
 
     /// Every registered-or-not *parent* repository working root whose gitlink status
-    /// can change because submodule git metadata at `path` changed (#467).
+    /// can change because submodule git metadata at `path` changed.
     ///
     /// Returns an empty vector — allocating nothing — for any path outside a
     /// submodule git directory, which is every path in a repository without
@@ -617,7 +615,7 @@ fn normalize_config_paths(path: &Path) -> Vec<PathBuf> {
 /// [`MultiRepoWatcher::find_git_root`]'s ancestor walk can recover the correct
 /// working root from such a path — and the gitdir *name* need not equal the
 /// working-dir path, so it cannot be derived from the string either. This
-/// registration-time mapping is the only source of truth (#428).
+/// registration-time mapping is the only source of truth.
 ///
 /// Lives in [`WatchRegistry`] rather than being derivable from the event path:
 /// the gitdir *name* need not equal the working-dir path, so registration time
@@ -640,7 +638,7 @@ fn is_git_significant_relative(relative: &Path) -> bool {
     // Ref updates: any file under refs/heads or refs/remotes (e.g. a branch or
     // remote-tracking ref move), plus the single stash ref.
     //
-    // `refs/tags/` is intentionally NOT classified as significant (#435):
+    // `refs/tags/` is intentionally NOT classified as significant:
     // `RepositoryStatus` carries no tag field and no segment surfaces git tags,
     // so a tag create/delete has no visible effect on the prompt. Waking a
     // refresh for it would only cost a spurious (and change-detection-suppressed)
@@ -655,7 +653,7 @@ fn is_git_significant_relative(relative: &Path) -> bool {
     if relative == Path::new("info/exclude") {
         return true;
     }
-    // Interactive-rebase / am-style-rebase operation metadata (#469, #481):
+    // Interactive-rebase / am-style-rebase operation metadata:
     // the bare directory entries — a notify event for a new directory carries
     // the directory path itself, so this is what makes create/remove of the
     // operation visible without waiting for an incidental HEAD write — and
@@ -663,18 +661,14 @@ fn is_git_significant_relative(relative: &Path) -> bool {
     // `rebase-merge/git-rebase-todo`) and `get_repo_state`
     // (`rebase-apply/applying`) read.
     //
-    // `rebase-merge/git-rebase-todo` joined this list in #481:
-    // `get_rebase_progress` no longer computes `total` from `end` (`end` goes
-    // stale after `git rebase --edit-todo` rewrites the plan — git never
-    // rewrites it until the next `--continue`) but from `msgnum` plus the
-    // current todo's remaining step count instead. That means a
-    // `--edit-todo` write to the todo file is the only signal that the plan —
-    // and thus the displayed total — changed; without classifying it, the
-    // corrected total would sit uncomputed until some unrelated event
-    // happened to trigger a rescan. `rebase-merge/end` stays in this list
-    // too even though `get_rebase_progress` no longer reads it: it is still
-    // written once at rebase start and its create/first-write remains a
-    // useful (harmless if redundant) rebase-start signal.
+    // `rebase-merge/git-rebase-todo` is listed because `get_rebase_progress`
+    // computes `total` from `msgnum` plus the current todo's remaining step
+    // count, not from `end` (`end` goes stale after `git rebase --edit-todo`
+    // rewrites the plan). A `--edit-todo` write to the todo file is the only
+    // signal that the plan — and thus the displayed total — changed.
+    // `rebase-merge/end` stays listed even though `get_rebase_progress`
+    // doesn't read it: it is written once at rebase start, so its
+    // create/first-write is a useful (harmless if redundant) start signal.
     //
     // Deliberately NOT the whole subtree: both directories are rewritten on
     // every step (`patch`, `message`, `stopped-sha`, …), and `git am`
@@ -690,7 +684,7 @@ fn is_git_significant_relative(relative: &Path) -> bool {
     {
         return true;
     }
-    // Sequencer and reftable state (#716): `get_repo_state` reads
+    // Sequencer and reftable state: `get_repo_state` reads
     // `sequencer/todo`, and reftable repos keep pseudorefs such as
     // `CHERRY_PICK_HEAD` (and every branch ref) behind `reftable/tables.list`,
     // which git rewrites on each ref transaction.
@@ -733,7 +727,7 @@ fn is_git_significant_relative(relative: &Path) -> bool {
 /// worktree of the repository — branch refs, remote-tracking refs,
 /// `packed-refs` and `config`. A change to that shared state made from the main
 /// checkout or a sibling worktree can move a linked worktree's ahead/behind or
-/// upstream output without touching anything the worktree itself watches (#468).
+/// upstream output without touching anything the worktree itself watches.
 ///
 /// Deliberately a *second* registry rather than widening [`ExternalGitDirs`] to
 /// one-to-many:
@@ -792,7 +786,7 @@ fn is_common_gitdir_significant_relative(relative: &Path) -> bool {
 }
 
 /// The component pair that identifies a *submodule's* external git directory, and
-/// separates the superproject's working root from it (#467).
+/// separates the superproject's working root from it.
 ///
 /// Git puts a submodule's git directory at `<super>/.git/modules/<name>`, where
 /// `<name>` is the submodule's name — not necessarily its working path, and it
@@ -888,10 +882,10 @@ pub type PendingCallback = Box<dyn Fn(PendingEvent) + Send + Sync>;
 /// `due`, coalescing with any other pending event sharing its debounce key
 /// exactly like an immediate one.
 ///
-/// See [`debouncer::DebounceEngine::handle_event_due`] (#569).
+/// See [`debouncer::DebounceEngine::handle_event_due`].
 ///
-/// The filesystem layer uses this for the directory-create follow-up, which
-/// used to be a detached sleeping thread per created directory. Invoking it is
+/// The filesystem layer uses this for the directory-create follow-up rather
+/// than a sleeping thread per created directory. Invoking it is
 /// synchronous and cheap: it mutates the debouncer's in-memory map and returns,
 /// leaving the waiting to the flush thread [`WatchCoordinator`] already owns.
 pub type DelayedEventScheduler = Arc<dyn Fn(PendingEvent, Instant) + Send + Sync>;
@@ -928,14 +922,12 @@ pub struct WatchCoordinator {
     flush_handle: Option<JoinHandle<()>>,
     /// The state this coordinator and its filesystem layer share, so callers
     /// that built the coordinator can register config paths and gitdir
-    /// mappings on the same registry the event path reads (#617).
+    /// mappings on the same registry the event path reads.
     registry: Arc<WatchRegistry>,
-    /// Every path this instance was asked to unwatch, in call order.
-    /// Instance-scoped test observability for #616's teardown-precision
-    /// tests: proving `unregister_client_locked`/`rearm_repo_watch` unwatch
-    /// exactly the paths they armed (no more, no less) needs to see what the
-    /// coordinator was actually asked to do, not just what `WatchedRepo`
-    /// claims it armed.
+
+    /// Every path this instance was asked to unwatch, in call order, so
+    /// teardown tests can prove `unregister_client_locked`/`rearm_repo_watch`
+    /// unwatch exactly the paths they armed (no more, no less).
     #[cfg(test)]
     unwatch_calls: Mutex<Vec<PathBuf>>,
 }
@@ -945,13 +937,13 @@ impl WatchCoordinator {
     ///
     /// `registry` is the [`WatchRegistry`] this coordinator shares with the
     /// filesystem layer beneath it: the watched git roots events are
-    /// attributed against (#344), the external/common gitdir maps, the
+    /// attributed against, the external/common gitdir maps, the
     /// registered config paths, the worktree-watch flag and the ignore
     /// caches. Pass `Some` to share one registry with other coordinators (the
     /// agent shares one across its repo, config and theme watchers); pass
     /// `None` for a standalone coordinator, which gets a private registry of
-    /// its own and therefore an empty watched-root set — the same
-    /// ancestor-walk attribution the old `None` handle produced.
+    /// its own and therefore an empty watched-root set, so attribution falls
+    /// back to the ancestor walk.
     ///
     /// # Errors
     ///
@@ -976,10 +968,10 @@ impl WatchCoordinator {
             }
         });
 
-        // The directory-create follow-up (#416) rides the same debouncer as
+        // The directory-create follow-up rides the same debouncer as
         // ordinary ingress, just with a due-time floor, so the flush thread
         // below does its waiting and coalescing. No timer thread per created
-        // directory, and nothing left running once `stop` clears the map (#569).
+        // directory, and nothing left running once `stop` clears the map.
         let debouncer_for_schedule = Arc::clone(&debouncer_arc);
         let schedule_delayed: DelayedEventScheduler = Arc::new(move |pending, due| {
             if let Ok(mut debouncer_guard) = debouncer_for_schedule.lock() {
@@ -989,7 +981,7 @@ impl WatchCoordinator {
 
         // Use the debounce window as the directory-create follow-up delay so a
         // brand-new directory's contents are rescanned even if the OS watch on
-        // it wasn't armed in time to deliver their create events (#416).
+        // it wasn't armed in time to deliver their create events.
         let watcher = filesystem::FileSystemWatcher::new(
             ingress_callback,
             Some(Arc::clone(&shared_registry)),
@@ -1005,11 +997,9 @@ impl WatchCoordinator {
             while !stop_flag_thread.load(Ordering::Relaxed) {
                 // Sleep in short slices so `stop` (which joins this thread)
                 // returns within one slice rather than one full debounce
-                // window. With the theme coordinator's 5 s debounce, a plain
-                // `sleep(debounce_interval)` here made every theme switch
-                // block its IPC connection for up to 5 s, long enough for the
-                // CLI's 2 s reload budget to expire and report "Agent not
-                // reloaded" for a reload the agent then completed (#656).
+                // window: with the theme coordinator's 5 s debounce, a full
+                // sleep would block a theme switch's IPC connection past the
+                // CLI's 2 s reload budget.
                 sleep_unless_stopped(debounce_interval, &stop_flag_thread);
                 if stop_flag_thread.load(Ordering::Relaxed) {
                     break;
@@ -1020,7 +1010,7 @@ impl WatchCoordinator {
                 );
                 // Dispatch each event on its own thread, off the flush loop
                 // and outside the debouncer lock, so a slow callback for one
-                // repo cannot delay flushing or delivery for another (#306).
+                // repo cannot delay flushing or delivery for another.
                 for event in expired {
                     let callback_for_event = Arc::clone(&callback_for_thread);
                     std::thread::spawn(move || {
@@ -1060,7 +1050,7 @@ impl WatchCoordinator {
         Ok(())
     }
 
-    /// Start watching a directory non-recursively (#468).
+    /// Start watching a directory non-recursively.
     ///
     /// See [`filesystem::FileSystemWatcher::watch_shallow`] for why the common
     /// git directory of a linked worktree must not be watched recursively.
@@ -1119,7 +1109,7 @@ impl WatchCoordinator {
     }
 
     /// Every path this instance was asked to unwatch, in call order.
-    /// Test-only observability (#616).
+    /// Test-only observability.
     #[cfg(test)]
     pub fn unwatch_calls(&self) -> Vec<PathBuf> {
         self.unwatch_calls
@@ -1128,7 +1118,7 @@ impl WatchCoordinator {
     }
 
     /// Logical registrations (with owner counts) and the OS watches armed
-    /// beneath them. Test-only observability (#718).
+    /// beneath them. Test-only observability.
     #[cfg(test)]
     pub(crate) fn held_watches(&self) -> filesystem::HeldWatches {
         self.watcher.as_ref().map_or_else(
@@ -1157,7 +1147,7 @@ impl WatchCoordinator {
 
     /// Process any pending debounced events, delivering them synchronously
     /// on the calling thread. Drains under the debouncer lock, then invokes
-    /// the callback after releasing it (#306).
+    /// the callback after releasing it.
     pub fn flush_pending_events(&self) {
         let expired = self.debouncer.lock().map_or_else(
             |_| Vec::new(),
@@ -1231,7 +1221,7 @@ fn filter_ignored(path: &Path) -> Option<()> {
     // `.git/info/` (notably `exclude`, a per-repo .gitignore) is intentionally
     // NOT blanket-ignored here: `classify_event` has a dedicated arm that
     // treats `.git/info/exclude` changes as a git status change, matching
-    // `.gitignore` (#323). Filtering the whole directory here would make
+    // `.gitignore`. Filtering the whole directory here would make
     // that arm unreachable.
     if path_contains_git_subdir(path, &["objects"])
         || path_contains_git_subdir(path, &["logs"])
@@ -1328,8 +1318,8 @@ fn classify_event(path: &Path, registry: &WatchRegistry) -> Option<FileEvent> {
     // Git metadata under a normal in-tree `.git/…` directory: the portion after
     // the last `.git` component is the git-relative path. `is_git_significant_relative`
     // is the single source of truth for which leaves matter, shared with the
-    // submodule/worktree external-gitdir path in `attribute_external_gitdir`
-    // (#428). External gitdirs (`.git/modules|worktrees/<name>/…`) aren't a
+    // submodule/worktree external-gitdir path in `attribute_external_gitdir`.
+    // External gitdirs (`.git/modules|worktrees/<name>/…`) aren't a
     // `.git`-descendant of the working tree, so they're handled there, not
     // here.
     if is_in_git_dir
@@ -1358,7 +1348,7 @@ fn classify_event(path: &Path, registry: &WatchRegistry) -> Option<FileEvent> {
 
 /// Lockfile / version-pin filenames that must invalidate the language cache
 /// but have no [`crate::language::metadata::LanguageMeta::marker_files`]
-/// equivalent (gpy-agent#602).
+/// equivalent.
 ///
 /// None of these are language *detection* markers — `metadata.rs`'s
 /// `marker_files` answers "what language is present in this directory" and
@@ -1368,10 +1358,9 @@ fn classify_event(path: &Path, registry: &WatchRegistry) -> Option<FileEvent> {
 /// cache-invalidating [`FileEvent::Language`].
 ///
 /// Kept as an explicit residual list rather than merged into `metadata.rs`:
-/// merging the two purposes ("what language is here" vs. "what changed a
-/// displayed version") into one list is exactly the drift #602 fixed on the
-/// *marker* side — a name that has no detection meaning shouldn't be added to
-/// the detection list just to keep this list in sync.
+/// "what language is here" and "what changed a displayed version" are
+/// different questions, and a name with no detection meaning must not be
+/// added to the detection list just to keep this list in sync.
 const LANGUAGE_CACHE_LOCKFILES: &[&str] = &[
     "package-lock.json",
     "yarn.lock",
@@ -1403,9 +1392,9 @@ const LANGUAGE_CACHE_LOCKFILES: &[&str] = &[
 ///
 /// Sharing the marker-file set with `metadata.rs` means a marker file added
 /// there automatically also triggers a watcher refresh here — no second list
-/// to remember to update (gpy-agent#602).
+/// to remember to update.
 ///
-/// Case-sensitive, matching `classify_event`'s historical behavior: unlike
+/// Case-sensitive, like the rest of `classify_event`: unlike
 /// `metadata.rs`'s marker-file *detection* lookups (which are
 /// case-insensitive, since directory scans use `eq_ignore_ascii_case`), this
 /// check does exact `&str` equality via `HashSet::contains`/slice `contains`.
@@ -1483,8 +1472,7 @@ mod tests {
     ///
     /// Every test using this shim asserts on classification rules that read
     /// nothing from the registry but the (empty) config-path set, so a private
-    /// registry per call is equivalent to the process-global one these tests
-    /// used before #617 — and independent of anything running in parallel.
+    /// registry per call keeps them independent of anything running in parallel.
     fn classify_event(path: &Path) -> Option<FileEvent> {
         super::classify_event(path, &WatchRegistry::new())
     }
@@ -1494,11 +1482,8 @@ mod tests {
         super::should_trigger_update(path, &WatchRegistry::new())
     }
 
-    /// `stop` must not wait out the debounce window (#656).
-    ///
-    /// It joins the flush thread, which used to sleep a whole debounce window
-    /// per iteration -- 5 s for the theme coordinator -- so every theme
-    /// switch stalled its IPC reply past the CLI's reload budget.
+    /// `stop` joins the flush thread, so it must not wait out the debounce
+    /// window (5 s for the theme coordinator, past the CLI's reload budget).
     #[test]
     fn stop_returns_promptly_regardless_of_debounce_window() {
         let mut coordinator = super::WatchCoordinator::new(
@@ -1529,13 +1514,8 @@ mod tests {
         assert!(matches!(event, Some(FileEvent::Language { .. })));
     }
 
-    /// Regression test for #323: `.git/info/exclude` must classify as a git
-    /// event.
-    ///
-    /// `.git/info/exclude` (a per-repo `.gitignore`) was previously
-    /// unreachable — blanket-filtered by `filter_ignored`'s `.git/info/`
-    /// pattern, and even if it had gotten through, `classify_event` had no arm
-    /// to match `exclude`'s parent directory (`info`, not `.git`).
+    /// `.git/info/exclude` (a per-repo `.gitignore`) must classify as a git
+    /// event even though its parent directory is `info`, not `.git`.
     #[test]
     fn git_info_exclude_is_git_event() {
         let event = classify_event(Path::new("/tmp/project/.git/info/exclude"));
@@ -1545,7 +1525,7 @@ mod tests {
         );
     }
 
-    /// Same regression, exercised through the full `should_trigger_update`
+    /// As `git_info_exclude_is_git_event`, through the full `should_trigger_update`
     /// pipeline (filter + classify), which is what the watcher actually calls.
     #[test]
     fn git_info_exclude_triggers_update() {
@@ -1556,9 +1536,8 @@ mod tests {
         );
     }
 
-    /// Regression test for #415: `git gc` / `git pack-refs` moves ref updates
-    /// into `.git/packed-refs`, which previously matched no arm in
-    /// `classify_event` and produced no event at all.
+    /// `git gc` / `git pack-refs` moves ref updates into `.git/packed-refs`,
+    /// which must classify as a Git event.
     #[test]
     fn packed_refs_is_git_event() {
         let event = classify_event(Path::new("/tmp/project/.git/packed-refs"));
@@ -1568,9 +1547,9 @@ mod tests {
         );
     }
 
-    /// Regression test for #415: a stash-only change (no index/worktree
-    /// touch) only writes `.git/refs/stash`, which previously matched
-    /// neither the `refs/heads/` nor `refs/remotes/` prefix arms.
+    /// A stash-only change (no index/worktree touch) only writes
+    /// `.git/refs/stash`, which matches neither the `refs/heads/` nor
+    /// `refs/remotes/` prefix arms and needs its own.
     #[test]
     fn refs_stash_is_git_event() {
         let event = classify_event(Path::new("/tmp/project/.git/refs/stash"));
@@ -1581,7 +1560,7 @@ mod tests {
     }
 
     /// `.git/ORIG_HEAD` (set by merge/rebase/reset before they rewrite HEAD)
-    /// should also classify as a Git event; see #415.
+    /// should also classify as a Git event.
     #[test]
     fn orig_head_is_git_event() {
         let event = classify_event(Path::new("/tmp/project/.git/ORIG_HEAD"));
@@ -1603,9 +1582,8 @@ mod tests {
     /// `filter_ignored` must continue to blanket-ignore loose object and reflog writes before
     /// `classify_event` ever runs.
     ///
-    /// So the new `packed-refs`/`refs/stash`/`ORIG_HEAD` arms don't introduce signal churn
-    /// from those high-frequency paths (#415).
-    ///
+    /// So the `packed-refs`/`refs/stash`/`ORIG_HEAD` arms don't introduce signal churn
+    /// from those high-frequency paths.
     #[test]
     fn filtered_git_dirs_still_produce_no_event() {
         let ignored_paths = [
@@ -1625,7 +1603,7 @@ mod tests {
         }
     }
 
-    /// The shared git-significance predicate (#428) must accept exactly the leaves the normal
+    /// The shared git-significance predicate must accept exactly the leaves the normal
     /// `.git` arms accept.
     ///
     /// HEAD-family, index/config, `refs/{heads,remotes}/**`, `refs/stash`, `info/exclude`,
@@ -1671,7 +1649,7 @@ mod tests {
         }
     }
 
-    /// Interactive-rebase and am-style-rebase operation metadata (#469, #481).
+    /// Interactive-rebase and am-style-rebase operation metadata.
     ///
     /// The bare `rebase-merge`/`rebase-apply` directory entries — whose create/remove is the
     /// `Rebasing`/`Applying` state transition — and the specific files `get_rebase_progress`
@@ -1682,16 +1660,11 @@ mod tests {
     /// `rebase-apply/next`, …) is rewritten on every step — every patch, for `git am` — and
     /// must stay rejected.
     ///
-    /// `rebase-merge/git-rebase-todo` moved from the rejected list to the
-    /// accepted one in #481: `get_rebase_progress` used to trust
-    /// `rebase-merge/end` for the displayed total, but git never rewrites
-    /// `end` when `git rebase --edit-todo` changes the plan, so the total
-    /// went stale until the next `--continue`. The fix reads the *current*
-    /// `git-rebase-todo` to count remaining steps instead, so a `--edit-todo`
-    /// write to that file is now the only signal that the total changed —
-    /// classifying it is what makes the corrected total actually reach the
-    /// prompt without waiting for an unrelated event. `git-rebase-todo.backup`
-    /// and `rebase-merge/done` stay rejected: nothing reads either.
+    /// `rebase-merge/git-rebase-todo` is accepted because `get_rebase_progress`
+    /// counts remaining steps from the current todo (git never rewrites `end`
+    /// on `git rebase --edit-todo`), so a write to that file is the only signal
+    /// that the displayed total changed. `git-rebase-todo.backup` and
+    /// `rebase-merge/done` stay rejected: nothing reads either.
     #[test]
     fn rebase_metadata_significant_relative_predicate() {
         let significant = [
@@ -1733,7 +1706,7 @@ mod tests {
     }
 
     /// `get_repo_state` reads `sequencer/todo` and, in reftable repos, asks git
-    /// for pseudorefs that live in `reftable/tables.list` (#716).
+    /// for pseudorefs that live in `reftable/tables.list`.
     #[test]
     fn sequencer_and_reftable_significant_relative_predicate() {
         for rel in ["sequencer", "sequencer/todo", "reftable/tables.list"] {
@@ -1754,14 +1727,10 @@ mod tests {
         }
     }
 
-    /// Full-pipeline regression: rebase step/total changes and the am-style marker must reach
-    /// `Git` events.
+    /// Rebase step/total changes and the am-style marker must reach `Git` events through
+    /// the full `should_trigger_update` pipeline.
     ///
-    /// An interactive-rebase step/total change (`rebase-merge/msgnum`, `rebase-merge/end`) and
-    /// an am-style-rebase operation marker (`rebase-apply/applying`) must reach `Git` events
-    /// through `should_trigger_update`, matching the existing
-    /// `git_info_exclude_triggers_update` regression pattern (#469 AC 1).
-    ///
+    /// Covers `rebase-merge/msgnum`, `rebase-merge/end` and `rebase-apply/applying`.
     #[test]
     fn rebase_progress_files_trigger_update() {
         for path in [
@@ -1782,8 +1751,7 @@ mod tests {
     ///
     /// The notify event for a new directory carries the directory path, not a file beneath it
     /// — so the `Rebasing`/`Applying` state transition is seen without waiting for an
-    /// incidental `HEAD` write (#469 AC 2).
-    ///
+    /// incidental `HEAD` write.
     #[test]
     fn rebase_operation_directory_entry_is_git_event() {
         for path in [
@@ -1802,8 +1770,7 @@ mod tests {
     /// pipeline, not merely fail the predicate in isolation.
     ///
     /// `filter_ignored` does not block `rebase-merge`/`rebase-apply` (only `objects/`,
-    /// `logs/`, `hooks/`, `refs/tags/`), so classification is the only gate (#469 AC 3).
-    ///
+    /// `logs/`, `hooks/`, `refs/tags/`), so classification is the only gate.
     #[test]
     fn rebase_high_churn_files_produce_no_event() {
         for path in [
@@ -1822,14 +1789,14 @@ mod tests {
         }
     }
 
-    /// Consumer 3 (#467's `owning_submodule_gitdir`, reused by `attribute_submodule_parents`):
+    /// `owning_submodule_gitdir` (reused by `attribute_submodule_parents`):
     /// rebase metadata inside a submodule's gitdir must resolve to that gitdir specifically.
     ///
     /// Not a shallower or deeper ancestor — attributing to the submodule's own working root
     /// via `attribute_external_gitdir` and fanning out to the registered superproject via
     /// `attribute_submodule_parents`.
     ///
-    /// High-churn rebase files under the same gitdir must resolve to no owner at all (#469).
+    /// High-churn rebase files under the same gitdir must resolve to no owner at all.
     #[test]
     fn submodule_rebase_metadata_resolves_to_owning_gitdir() {
         let registry = WatchRegistry::new();
@@ -1877,7 +1844,7 @@ mod tests {
         registry.unregister_external_gitdir(&git_dir);
     }
 
-    /// `attribute_external_gitdir` (#428) must map a significant leaf to its working root.
+    /// `attribute_external_gitdir` must map a significant leaf to its working root.
     ///
     /// Under a registered external gitdir, prefer the longest matching gitdir, reject
     /// non-significant churn, and return `None` for unregistered paths.
@@ -1920,7 +1887,7 @@ mod tests {
         );
     }
 
-    /// The common-directory predicate (#468) covers state shared by every worktree and nothing
+    /// The common-directory predicate covers state shared by every worktree and nothing
     /// else.
     ///
     /// `HEAD`/`index` are the load-bearing exclusions: for a linked worktree they are
@@ -2052,8 +2019,7 @@ mod tests {
     ///
     /// Accepts only leaves that can move the gitlink, and never fires for the two layouts
     /// that look similar but hold no gitlink: an ordinary nested repository (in-tree `.git`)
-    /// and a linked worktree's admin directory (#467).
-    ///
+    /// and a linked worktree's admin directory.
     #[test]
     fn submodule_parents_derive_the_superproject_from_the_gitdir() {
         let registry = WatchRegistry::new();
@@ -2148,25 +2114,13 @@ mod tests {
         registry.unregister_external_gitdir(&outer_gitdir);
     }
 
-    /// gpy-agent#602 Part A: `is_registered_config_path` must be a pure lookup
-    /// with zero `canonicalize`/`current_dir` calls in the per-event path.
+    /// `is_registered_config_path` must be a pure lookup with zero
+    /// `canonicalize`/`current_dir` calls in the per-event path.
     ///
-    /// There is no fs-call-counting harness in this crate to assert that
-    /// mechanically (unlike, say, a cache hit-counter), so this documents and
-    /// exercises the invariant the same way nearby doc comments in this file
-    /// justify allocation-/stat-free claims: by construction (read
-    /// `is_registered_config_path`'s own doc comment — it is a bare
-    /// `HashSet::contains`, no I/O of any kind) and by a behavioral proof that
-    /// would fail if a `canonicalize` call had crept back in. Registering a
-    /// path to a file that does NOT exist on disk means `Path::canonicalize`
-    /// on it would return `Err`; if `is_registered_config_path` still called
-    /// it (as it did before this fix, via `normalize_config_paths`), a
-    /// canonicalize failure would still fall through to the absolute-path
-    /// branch and this test wouldn't distinguish old from new behavior on its
-    /// own — the decisive check is the second half below, which looks up an
-    /// entirely different (never-registered) nonexistent path and confirms it
-    /// is NOT matched, proving the lookup is exact set membership rather than
-    /// some permissive fallback that would accept any unresolvable path.
+    /// No fs-call-counting harness exists, so this proves it behaviourally:
+    /// a registered path to a nonexistent file must match, and a different,
+    /// never-registered nonexistent path must NOT match, proving exact set
+    /// membership rather than a permissive fallback for unresolvable paths.
     ///
     /// Isolated by construction: the path is registered on a registry owned by
     /// this test.
@@ -2203,13 +2157,9 @@ mod tests {
         );
     }
 
-    /// gpy-agent#602 Part B: the `.sock` bug this issue names.
-    ///
-    /// A bare substring check (`path_str.contains(".sock")`) against the
-    /// whole path incorrectly filters out a legitimately named file like
-    /// `foo.socket.rs` (whose name contains the literal substring `.sock`)
-    /// forever. The fix checks the file NAME's extension, not a path
-    /// substring.
+    /// A file whose name merely contains `.sock` (e.g. `foo.socket.rs`) must
+    /// not be filtered: the check is on the file name's extension, not a
+    /// path substring.
     #[test]
     fn socket_lookalike_filename_is_not_filtered() {
         assert!(
@@ -2239,24 +2189,12 @@ mod tests {
         assert!(filter_ignored(Path::new("/var/log/gpy-agent.log")).is_none());
     }
 
-    /// gpy-agent#602 Part B: `.components()`-based matching, not a hardcoded `/`.
+    /// `filter_ignored`/`classify_event` match on `.components()`, not a
+    /// hardcoded `/`.
     ///
-    /// Every `filter_ignored`/`classify_event` site that used to do
-    /// forward-slash-literal string matching must instead work on
-    /// `.components()`, so it keeps working when the path uses the
-    /// PLATFORM'S OWN separator rather than a hardcoded `/`.
-    ///
-    /// This crate's test-running platform is not necessarily Windows, so a
-    /// literal `r"C:\Users\..."` string (as some existing tests in this crate
-    /// use for Windows-specific *parsing* logic) would not actually exercise
-    /// component-splitting here: on a Unix test run, `Path::new` treats a
-    /// whole backslash-separated string as ONE opaque component, defeating
-    /// the point. Building the path from an explicit list of path segments
-    /// via `PathBuf::from_iter` instead joins them with whatever separator
-    /// the compiling platform's `std::path` actually uses, so
-    /// `.components()`-based logic is exercised identically on every
-    /// platform `cargo test` might run on -- which is exactly the property
-    /// being fixed (no more hardcoded `/`).
+    /// The path is built with `PathBuf::from_iter` so it uses the compiling
+    /// platform's own separator; a literal `r"C:\..."` string would be one
+    /// opaque component on Unix and exercise nothing.
     #[test]
     fn classify_event_recognizes_platform_separated_paths() {
         let git_objects = PathBuf::from_iter([
@@ -2288,7 +2226,7 @@ mod tests {
         );
     }
 
-    /// #777: git metadata inside a repository rooted at (or tracking files
+    /// Git metadata inside a repository rooted at (or tracking files
     /// under) `gpy/themes` must classify as `Git`, not `Theme`; non-`.git`
     /// theme paths keep classifying as `Theme`.
     #[test]
@@ -2310,23 +2248,21 @@ mod tests {
         );
     }
 
-    /// gpy-agent#602 Part C: previously-missing `metadata.rs` detection
-    /// markers must now also trigger a language-cache refresh, via the shared
-    /// `marker_file_names` set.
+    /// `metadata.rs` detection markers trigger a language-cache refresh via
+    /// the shared `marker_file_names` set.
     #[test]
-    fn previously_missing_marker_files_now_trigger_language_event() {
+    fn metadata_marker_files_trigger_language_event() {
         for file_name in ["composer.json", "CMakeLists.txt", "tsconfig.json"] {
             let path = Path::new("/tmp/project").join(file_name);
             assert!(
                 matches!(classify_event(&path), Some(FileEvent::Language { .. })),
-                "{file_name} should now classify as a Language event (metadata.rs marker file)"
+                "{file_name} should classify as a Language event (metadata.rs marker file)"
             );
         }
     }
 
     /// The residual lockfile/version-pin list (no `metadata.rs` marker
-    /// equivalent) must keep triggering a language-cache refresh exactly as
-    /// before.
+    /// equivalent) triggers a language-cache refresh.
     #[test]
     fn residual_lockfiles_still_trigger_language_event() {
         for file_name in [
@@ -2344,7 +2280,7 @@ mod tests {
         }
     }
 
-    /// gpy-agent#725: version-pin files read by the version managers gpy
+    /// Version-pin files read by the version managers gpy
     /// shells out to must refresh the language segment when edited.
     #[test]
     fn version_pin_files_trigger_language_event() {
@@ -2364,7 +2300,7 @@ mod tests {
         }
     }
 
-    /// gpy-agent#602 Part B: nested submodules split at the FIRST pair.
+    /// Nested submodules split at the FIRST pair.
     ///
     /// `split_at_git_dir_modules` must split at the FIRST `.git`/`modules`
     /// component pair, not the last, for a submodule of a submodule --

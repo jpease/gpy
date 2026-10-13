@@ -1,12 +1,12 @@
 #!/usr/bin/env zsh
 # tests/zsh/json_escape.test.zsh
 #
-# Regression test for #302: __gpy_escape_json used `s=${s//\/\\}`, which in
-# zsh's pattern-substitution syntax matches the literal two-character
-# sequence `/\` and deletes it — it never escapes a lone backslash at all.
-# A cwd or branch name containing `\` (e.g. a Windows-style path) then
-# produced malformed JSON, which the agent rejects, silently dropping the
-# segment. The fix is `s=${s//\\/\\\\}`, matching bash/core/ipc.bash.
+# __gpy_escape_json must escape a lone backslash. In zsh's
+# pattern-substitution syntax `s=${s//\/\\}` matches the literal
+# two-character sequence `/\` and deletes it, never escaping a lone backslash;
+# a cwd or branch name containing `\` (e.g. a Windows-style path) would then
+# produce malformed JSON, which the agent rejects, silently dropping the
+# segment. The correct form is `s=${s//\\/\\\\}`, matching bash/core/ipc.bash.
 
 ROOT=${0:a:h:h:h}
 cd "$ROOT"
@@ -57,10 +57,10 @@ run_case "slash and backslash" 'x/\y'
 
 fi
 
-# #614: __gpy_escape_json must also escape control characters (\n, \r, \t)
+# __gpy_escape_json must also escape control characters (\n, \r, \t)
 # the same way Fish's __gpy_json_escape does. Read the shared vector file
-# (tests/fixtures/json_escape_vectors.tsv) so escaping can never silently
-# drift between bash/zsh/fish again -- see the fixture's own header comment
+# (tests/fixtures/json_escape_vectors.tsv) so escaping cannot silently
+# drift between bash/zsh/fish -- see the fixture's own header comment
 # for the input-column mini escape scheme.
 FIXTURE="$ROOT/tests/fixtures/json_escape_vectors.tsv"
 vector_count=0

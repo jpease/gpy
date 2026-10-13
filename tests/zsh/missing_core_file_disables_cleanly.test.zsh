@@ -1,11 +1,10 @@
 #!/usr/bin/env zsh
 # tests/zsh/missing_core_file_disables_cleanly.test.zsh
 #
-# Regression test for #309: a partial one-line install can leave gpy.zsh's
-# core/ directory missing a file (e.g. a download that failed mid-transfer).
-# Previously gpy.zsh sourced every core file unconditionally, so a missing
-# file produced a raw "no such file or directory" error on every single new
-# shell forever, and half-loaded the prompt (some functions/constants
+# A partial one-line install can leave gpy.zsh's core/ directory missing a
+# file (e.g. a download that failed mid-transfer). gpy.zsh must then disable
+# itself cleanly instead of printing a raw "no such file or directory" error
+# on every new shell and half-loading the prompt (some functions/constants
 # defined, others not).
 #
 # This copies zsh/ into a scratch directory, deletes one core file, sources
@@ -13,7 +12,7 @@
 #   (a) no raw "no such file or directory" leaks from `source`
 #   (b) exactly one clean diagnostic line is printed
 #   (c) the sourcing shell is not killed (proves `return`, not `exit`, is
-#       used to disable GPY -- an `exit` in a sourced file would terminate
+#       what disables GPY -- an `exit` in a sourced file would terminate
 #       the user's entire interactive shell session)
 
 ROOT=${0:a:h:h:h}

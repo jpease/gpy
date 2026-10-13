@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # tests/bash/toolchain_pin_hooks.test.bash
 #
-# Regression test for #823. CI asserts the active rustc is the
-# gpy-agent/rust-toolchain.toml pin (scripts/check-active-toolchain.sh), but the
-# local entry points did not: with RUSTUP_TOOLCHAIN=<newer> exported, rustup's
-# override beats the file and clippy-strict failed on lints the pin does not
-# raise, which reads as a code problem rather than a toolchain one.
+# The local Rust entry points must assert the active rustc is the
+# gpy-agent/rust-toolchain.toml pin (scripts/check-active-toolchain.sh), as
+# CI does: with RUSTUP_TOOLCHAIN=<newer> exported, rustup's override beats the
+# file and clippy-strict fails on lints the pin does not raise, which reads
+# as a code problem rather than a toolchain one.
 #
 # Asserted, for each Rust entry point (just clippy-strict, just lint,
 # quality-check.sh --rust-only / --fast / --fix):
@@ -19,11 +19,8 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 shim_dir="$(mktemp -d)"
 trap 'rm -rf "$shim_dir"' EXIT
@@ -67,8 +64,4 @@ else
     echo "SKIP: just not installed"
 fi
 
-if [[ $failures -ne 0 ]]; then
-    echo "FAILED: $failures"
-    exit 1
-fi
-echo "PASS"
+test_finish

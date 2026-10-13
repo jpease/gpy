@@ -3,7 +3,7 @@
 # tests/bash/supervisor_flag_contract.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #842: ONE contract for `[agent.supervisor] enabled`, run through Bash, Zsh
+# ONE contract for `[agent.supervisor] enabled`, run through Bash, Zsh
 # and Fish with the same environment:
 #
 #   * GPY_AGENT_ENABLED=1, GPY_AGENT_SUPERVISOR_ENABLED=0
@@ -15,8 +15,7 @@
 #   * GPY_AGENT_ENABLED=1, GPY_AGENT_SUPERVISOR_ENABLED=1
 #       -> baseline: every shell starts the agent at startup.
 #
-# This replaces the per-shell tests that pinned opposite behaviour. A stub
-# `gpy-agent` on PATH logs every `start`; its socket never exists, so the
+# A stub `gpy-agent` on PATH logs every `start`; its socket never exists, so the
 # agent always looks dead. Shells that are not installed are skipped (a
 # failure under CI, see test_skip in tests/lib/shell_e2e.sh).
 
@@ -48,16 +47,14 @@ exit 1
 STUB
 chmod +x "$TMP_DIR/bin/gpy-agent"
 
-# Number of `gpy-agent start` calls after waiting for a backgrounded start to
-# land (bounded poll: up to ~1 s, or until the expected count is reached).
+start_count_at_least() {
+    [[ "$(wc -l <"$CALL_LOG" 2>/dev/null | tr -d ' ')" -ge "$1" ]]
+}
+
+# Number of `gpy-agent start` calls after waiting (bounded) for a
+# backgrounded start to land.
 starts() {
-    local expected="$1" i=0 n
-    while ((i < 10)); do
-        n="$(wc -l <"$CALL_LOG" 2>/dev/null | tr -d ' ')"
-        [[ "$n" -ge "$expected" ]] && break
-        sleep 0.1
-        i=$((i + 1))
-    done
+    shell_e2e_poll 1 start_count_at_least "$1" || true
     # Let a wrongly-started extra call land before counting.
     sleep 0.2
     wc -l <"$CALL_LOG" | tr -d ' '

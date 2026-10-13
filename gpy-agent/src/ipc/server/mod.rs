@@ -77,10 +77,10 @@
 
 /// Builder pattern for constructing IPC server endpoints.
 pub mod builder;
-/// Per-connection request serving, split out from `handle` (#359).
+/// Per-connection request serving, split out from `handle`.
 // Serving an accepted connection is Unix-only: the only constructor of
 // `ConnectionHandler` is `EndpointHandle::spawn_client_handler`, which is
-// itself `cfg(unix)` because the transport is a Unix domain socket (#540).
+// itself `cfg(unix)` because the transport is a Unix domain socket.
 #[cfg(unix)]
 mod connection;
 /// Core IPC server endpoint implementation and request handling.

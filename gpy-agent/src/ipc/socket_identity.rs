@@ -1,5 +1,5 @@
 //! Identity of a bound socket file: the single ownership token shared by the
-//! IPC server, the lifecycle start/eviction path and the version marker (#723).
+//! IPC server, the lifecycle start/eviction path and the version marker.
 
 use std::path::Path;
 

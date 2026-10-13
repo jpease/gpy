@@ -1,13 +1,12 @@
 #!/usr/bin/env fish
-# The Fish twin of tests/zsh/ipc_no_double_send_on_slow_reply.test.zsh (#845).
+# The Fish twin of tests/zsh/ipc_no_double_send_on_slow_reply.test.zsh.
 #
 # One slow-reply policy across the shells: an agent that accepted the request
 # but answers late is working on it. The shell must (a) put the request on the
-# wire exactly once -- no resend over a second connection (#575) -- and (b)
-# report "connected, no reply" (status 2, empty output) so no caller recomputes
-# the same segment with a blocking `gpy-agent oneshot` fork (#757). Before #845
-# Fish reported status 1 and __gpy_request forked oneshot on every late reply.
-# Only an agent that cannot be reached at all (status 1) may fall back.
+# wire exactly once -- no resend over a second connection -- and (b) report
+# "connected, no reply" (status 2, empty output) so no caller recomputes the
+# same segment with a blocking `gpy-agent oneshot` fork. Only an agent that
+# cannot be reached at all (status 1) may fall back.
 #
 # A python3 listener plays the slow agent and records one line per accepted
 # connection. Each transport that exists on this machine is exercised on its
@@ -21,7 +20,7 @@ source "$repo_root/fish/core/constants.fish"
 source "$repo_root/fish/core/util.fish"
 source "$repo_root/fish/core/ipc.fish"
 
-print_test_header "IPC slow-reply policy (#845)"
+print_test_header "IPC slow-reply policy"
 
 if not command -q python3
     test_skip "python3 not installed, cannot simulate a slow-to-reply agent"
@@ -86,10 +85,7 @@ while True:
     c.close()
 ' $tmp/slow.sock $tmp/connections $delay $lifetime &
     set -g listener_pid $last_pid
-    for i in (seq 1 30)
-        test -S $tmp/slow.sock; and return 0
-        sleep 0.1
-    end
+    poll_until 3 test -S $tmp/slow.sock; and return 0
     finish
     test_skip "could not create test Unix socket listener"
 end
@@ -108,6 +104,8 @@ function check_transport --argument-names label use_path delay
     set -l out (__gpy_ipc_send '{"op":"ping"}')
     set -l rc $status
     set -gx PATH $real_path
+    # Window in which a resend over a second connection would land; the
+    # connection count below must still be exactly one after it.
     sleep 0.3
     stop_listener
 

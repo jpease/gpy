@@ -62,7 +62,7 @@ log_success() {
 }
 
 log_warn() {
-    echo -e "${YELLOW}[⚠]${NC} $*"
+    echo -e "${YELLOW}[WARN]${NC} $*"
 }
 
 log_error() {
@@ -194,7 +194,7 @@ compare_to_baseline() {
     # Summary
     echo
     if [[ "$HAS_VIOLATION" == "true" ]]; then
-        log_error "⚠️  Some metrics exceed their budgets"
+        log_error "Some metrics exceed their budgets"
         return 1
     else
         log_success "✓ All measured metrics within budgets"

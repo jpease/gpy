@@ -1,10 +1,8 @@
 #!/usr/bin/env fish
 # SPDX-License-Identifier: GPL-3.0-or-later
-# ============================================================================
-# E2E Test: Agent-Down One-Shot Fallback for a Stale Git Segment (#430)
-# ============================================================================
+# E2E Test: Agent-Down One-Shot Fallback for a Stale Git Segment
 #
-# Serve-stale-first (#160) shows the last cached git segment instantly and
+# Serve-stale-first shows the last cached git segment instantly and
 # refreshes in the background. That refresh is a fire-and-forget IPC send: with
 # the agent DOWN there is nothing to recompute the status or SIGURG a repaint,
 # so a stale entry is served indefinitely -- the prompt keeps showing the OLD
@@ -17,8 +15,8 @@
 #
 # This test drives segment_git_render in-process: it populates the instant cache
 # for a CLEAN repo (agent up), stops the agent, dirties the working tree, then
-# renders again with the agent down. Pre-fix the render returns the stale clean
-# value; post-fix it returns the fresh dirty value from the oneshot fallback.
+# renders again with the agent down. A stale-serving render would return the
+# clean value; the oneshot fallback must return the fresh dirty value instead.
 #
 # Expected runtime: ~8 seconds
 
@@ -76,7 +74,8 @@ function test_agent_down_oneshot_fallback
     end
 
     # Render from inside the repo. Force every cache read to be STALE so the
-    # stale branch (the one the fix guards) is exercised deterministically.
+    # agent-down stale branch (the one the oneshot fallback guards) is
+    # exercised deterministically.
     cd $repo
     set -gx GPY_GIT_INSTANT_CACHE_TTL_SECONDS 0
 

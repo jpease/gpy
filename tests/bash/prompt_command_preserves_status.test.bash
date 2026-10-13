@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # tests/bash/prompt_command_preserves_status.test.bash
 #
-# Regression test for #761: __gpy_precmd is prepended to PROMPT_COMMAND and
-# used to return 0, so every user hook that ran after it saw `$?` = 0 instead
+# __gpy_precmd is prepended to PROMPT_COMMAND and must return the command's
+# exit status, or every user hook that runs after it sees `$?` = 0 instead
 # of the command's exit status. Each case starts a FRESH interactive child bash
 # (system bash 3.2 and the bash running this test), whose rc builds a
 # PROMPT_COMMAND, sources gpy.bash, then is fed `false` / `(exit 42)`; the
@@ -19,13 +19,12 @@ SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-pcstatus.XXXXXX")"
 cleanup() { rm -rf "$SANDBOX"; }
 trap cleanup EXIT
 # The child's XDG_CONFIG_HOME ($SANDBOX/config) disables the supervisor: the
-# theme export would re-set the env flag below from config.toml (#836).
+# theme export would re-set the env flag below from config.toml.
 source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"
 mkdir -p "$SANDBOX/run"
 
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 # run_child <bash> <prelude> <trailer> <input>: sets CHILD_OUT. The rc runs
 # <prelude>, sources gpy.bash at top level, then runs <trailer>; <input> is
@@ -114,7 +113,7 @@ exit'
         run_child "$bin" 'PROMPT_COMMAND=('"'"'echo "A1=$?"'"'"' '"'"'echo "A2=$?"'"'"')' '' 'false
 (exit 42)
 exit'
-        # bash restores `$?` between array elements, so A2 was always right;
+        # bash restores `$?` between array elements, so A2 is right regardless;
         # A1 is the element gpy's precmd is prepended to.
         expect "$label, array element 0" A1 "1 42"
         expect "$label, array element 1" A2 "1 42"
@@ -123,8 +122,4 @@ exit'
     fi
 done
 
-if ((failures > 0)); then
-    echo "=== $failures assertion(s) failed ==="
-    exit 1
-fi
-echo "=== All Tests Passed ==="
+test_finish

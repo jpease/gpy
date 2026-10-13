@@ -4,16 +4,15 @@
 # A bare `read` splits on the default IFS, which strips leading and trailing
 # whitespace from the line it assigns. Agent responses are rendered prompt
 # fragments where that whitespace is significant: the character segment's
-# template ends in a space so the prompt reads `❯ cmd`, and a bare `read` ate
-# it, giving `❯cmd` in zsh while fish rendered it correctly. Dropping `-r`
-# additionally mangles backslashes, which now matters because the clock
-# response embeds bash's `\D{…}` prompt token.
+# template ends in a space so the prompt reads `❯ cmd`, and a bare `read`
+# eats it, giving `❯cmd`. Dropping `-r` additionally mangles backslashes,
+# which matters because the clock response embeds bash's `\D{…}` prompt token.
 #
-# Every read site in both shells already followed this convention except the
-# zsh zsocket fd read — the fastest path, and therefore the one that actually
-# rendered. This is a shape guard rather than a behavioral test because the
-# alternative needs a live agent on a real socket; it pins the invariant at
-# the only layer where it can be checked cheaply.
+# The zsh zsocket fd read is the fastest path and therefore the one that
+# usually renders, so it is covered too. This is a shape guard rather than a
+# behavioral test because the alternative needs a live agent on a real
+# socket; it pins the invariant at the only layer where it can be checked
+# cheaply.
 
 set -uo pipefail
 

@@ -77,7 +77,7 @@ hostname, username, and language formats. The preset's `[ui]` and
 | `rust`, `python`, `nodejs`, `golang`, `java`, `ruby`, `php`, `swift`, `elixir`, `c`, `cpp`, `csharp`, `erlang`, … | `language` | Starts from the preset's language theme (format `via [$symbol( v$version)]($attr fg:$color) `, per-language colors, symbols, `enabled_languages`). Per-language `style` → palette entry + `{lang}_bg_color` (foreground color, `fg:` prefix optional, palette aliases resolved to the selected Starship palette's value) + `{lang}_style` (attributes, exposed as `$attr`). GPY has one shared language format, so a style's `bg:` color is dropped with a `LossyMapping` warning, and a module's own `format` is not carried over (also a `LossyMapping` warning). Per-language `symbol` overrides are lossy (they live in `[language.icons]`, not the prompt theme): each produces a warning and drops the preset's symbol for that language so `[language.icons]` applies. |
 | `time` | `clock` | `time_format` (strftime) → GPY `time_format` (`"12"` or `"24"`) + `show_seconds` on a best-effort basis. Non-representable formats produce a warning. |
 | `username` | `username` | `format`, with `$user` → `$username`; `$style` is inlined from `style_root` (default `bold red`); `show_always` (default `false`). |
-| `hostname` | `hostname` | `format`, with `$ssh_symbol` → `$symbol`; `$style` is inlined from `style` (default `bold dimmed green`); `ssh_symbol` → `icon` (Starship's default `🌐 ` when unset). As in Starship, `$symbol` renders only in SSH sessions: the shell reports its SSH state to the agent (#826). `ssh_only` (default `true`) inverted onto `show_always`; `trim_at`. |
+| `hostname` | `hostname` | `format`, with `$ssh_symbol` → `$symbol`; `$style` is inlined from `style` (default `bold dimmed green`); `ssh_symbol` → `icon` (Starship's default `🌐 ` when unset). As in Starship, `$symbol` renders only in SSH sessions: the shell reports its SSH state to the agent. `ssh_only` (default `true`) inverted onto `show_always`; `trim_at`. |
 | `line_break` | — | Not a segment and never warned about: it sets the theme's `two_line` (see [Layout](#layout)). |
 | `kubernetes`, `aws`, `docker_context`, `package`, `memory_usage`, `battery`, custom modules, and everything else | — | Skipped with a warning: `module 'X' has no GPY equivalent; omitted from layout`. |
 
@@ -144,7 +144,7 @@ Supported attributes and their fish-ansi SGR codes:
 > bold (`%B`), underline (`%U`), and standout/inverted (`%S`), and raw SGR
 > wrapped in `%{…%}` for the rest (no zsh escape exists for them). Bash/zsh
 > live output uses the shell-agnostic ANSI encoder, which already maps all
-> eight (#232).
+> eight.
 
 ## Palette emission
 
@@ -214,7 +214,7 @@ These Starship constructs cannot be fully represented in a GPY artifact:
 | Name matches a builtin or plugin theme/palette without `--force` (e.g. the default name `starship` from `starship.toml`) | Error naming the shadowed artifact and suggesting `--name <other>` or `--force`; nothing is written; non-zero exit. |
 | Per-construct translation problems | Warning collected; import continues; exit 0. |
 
-## Migration from Starship (#88)
+## Migration from Starship
 
 If you are migrating from Starship, the typical workflow is:
 

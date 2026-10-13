@@ -47,7 +47,7 @@ pub fn deserialize_message(data: &[u8]) -> Result<Message> {
 ///
 /// The format is read before path resolution and content validation, so a
 /// request that fails those later steps (for example a denylisted `cwd`) can
-/// still be answered in the format the client asked for (#680). It is `None`
+/// still be answered in the format the client asked for. It is `None`
 /// when the bytes do not parse as a message at all, or for an op that carries
 /// no format.
 pub fn deserialize_message_with_format(data: &[u8]) -> (Option<super::Format>, Result<Message>) {
@@ -102,10 +102,10 @@ fn parse_wire(data: &[u8]) -> Result<WireMessage> {
 /// [`crate::security::SafePath::new`], which canonicalizes and so touches the
 /// filesystem. [`crate::config::types::ClientPid`] is constructed here too.
 ///
-/// `ClientPid::new` is a pure range check since #578, not a `kill(pid, 0)`
-/// probe; it lives here anyway so that `WireMessage`'s field types stay
-/// uniformly raw wire values and this function is the single place `Message`'s
-/// stronger types get constructed.
+/// `ClientPid::new` is a pure range check, not a `kill(pid, 0)` probe; it
+/// lives here anyway so that `WireMessage`'s field types stay uniformly raw
+/// wire values and this function is the single place `Message`'s stronger
+/// types get constructed.
 ///
 /// # Errors
 ///
@@ -299,8 +299,8 @@ pub fn deserialize_response(data: &[u8]) -> Result<Response> {
 ///
 /// Returns an error if the message exceeds the maximum allowed size.
 pub fn validate_message_size(data: &[u8]) -> Result<()> {
-    // One definition of the cap, shared with `GuardSettings`'s default (#578);
-    // this used to be a separate local constant that could drift from it.
+    // One definition of the cap, shared with `GuardSettings`'s default, so
+    // the two cannot drift.
     if data.len() > crate::security::MAX_MESSAGE_SIZE {
         return Err(Error::ipc(format!(
             "Message too large: {} bytes (max {})",
@@ -344,7 +344,7 @@ pub fn validate_message_content(msg: &Message) -> Result<()> {
         // No additional validation needed. `UnregisterClient` and
         // `WorkspaceUpdate` carry only a `ClientPid`, which cannot be
         // constructed out of range, so re-checking the range of an
-        // already-constructed one proves nothing (#578); liveness is probed
+        // already-constructed one proves nothing; liveness is probed
         // once, at route time.
         Message::UnregisterClient { .. }
         | Message::WorkspaceUpdate { .. }
@@ -387,8 +387,7 @@ fn validate_username_request(prev_bg: Option<&str>, username: &str) -> Result<()
 ///
 /// The PID needs no check here: it arrives as a `ClientPid`, whose constructor
 /// already guarantees the range invariant, and its liveness is probed once at
-/// route time (#578). This function used to re-check the range of a value that
-/// could not hold an out-of-range PID in the first place.
+/// route time.
 ///
 /// # Errors
 ///
@@ -403,10 +402,8 @@ fn validate_register_client(shell_version: Option<&str>) -> Result<()> {
 /// Validate string field length and content
 ///
 /// Control characters (NUL included) are rejected outright by the crate's one
-/// shared policy, [`crate::security::reject_control_chars`] (#578). This layer
-/// used to run its own more permissive rule — up to five non-whitespace control
-/// characters tolerated, whitespace ones unlimited — which disagreed with the
-/// path validator's.
+/// shared policy, [`crate::security::reject_control_chars`], so this layer
+/// and the path validator agree on what is allowed.
 ///
 /// # Errors
 ///
@@ -441,11 +438,11 @@ fn validate_length(field_name: &str, value: &str, max_length: usize) -> Result<(
 ///
 /// # Version History
 ///
-/// - **Version 2** (current): Shell notification channel changed (#674). The
+/// - **Version 2** (current): Shell notification channel changed. The
 ///   agent signals shells only with SIGURG (a "doorbell" whose default
 ///   disposition is ignore) and carries meaning in per-shell flag files under
 ///   `<runtime_root>/shells/` (`<pid>.reload`, `<pid>.reregister`);
-///   the earlier per-purpose signals are no longer sent. Wire messages are unchanged.
+///   no other signals are sent. Wire messages are unchanged.
 /// - **Version 1**: Initial stable protocol
 ///   - Fish shell format (legacy) with `op` field
 ///   - Native Rust enum serialization
@@ -532,7 +529,7 @@ pub const PROTOCOL_VERSION: u8 = 2;
 /// Every field `Message` holds as a type whose constructor touches the
 /// filesystem or enforces a domain invariant — `SafePath`, `ClientPid` — is a
 /// plain `String`/`u32` here, so a payload can be parsed into this enum with no
-/// I/O at all (#601). [`resolve`] converts it into a `Message` and is the only
+/// I/O at all. [`resolve`] converts it into a `Message` and is the only
 /// place those stronger types get constructed.
 ///
 /// Variant names, field names and the remaining field types mirror `Message`
@@ -657,7 +654,7 @@ enum WireMessage {
         /// Whether this is the last segment in the prompt.
         #[serde(default)]
         is_last: bool,
-        /// Whether the client session is over SSH (#826).
+        /// Whether the client session is over SSH.
         #[serde(default)]
         is_ssh: bool,
         /// Previous segment's background color.
@@ -765,14 +762,14 @@ struct ShellIpcMessage {
     /// Previous segment's background color for powerline chevron transitions.
     #[serde(default)]
     prev_bg: Option<String>,
-    /// Client-resolved hostname string for the `hostname` op (#259).
+    /// Client-resolved hostname string for the `hostname` op.
     #[serde(default)]
     hostname: Option<String>,
-    /// Client-detected SSH session state for the `hostname` op (#826); absent
+    /// Client-detected SSH session state for the `hostname` op; absent
     /// means `false`.
     #[serde(default)]
     is_ssh: Option<bool>,
-    /// Client-resolved effective username string for the `username` op (#252).
+    /// Client-resolved effective username string for the `username` op.
     #[serde(default)]
     username: Option<String>,
     /// Client-forwarded `$VIRTUAL_ENV` for the `lang` op (venv-aware Python).
@@ -1002,14 +999,14 @@ mod tests {
             } => {
                 assert_eq!(hostname, "myhost");
                 assert!(!is_last);
-                assert!(!is_ssh, "an absent is_ssh must default to false (#826)");
+                assert!(!is_ssh, "an absent is_ssh must default to false");
                 assert_eq!(prev_bg, None);
             }
             other => panic!("expected HostnameRequest, got {other:?}"),
         }
     }
 
-    /// #826: `is_ssh` survives the native serialize/deserialize round trip when
+    /// `is_ssh` survives the native serialize/deserialize round trip when
     /// set, and is omitted on the wire (then defaults back to `false`) when not.
     #[test]
     fn test_hostname_native_round_trip_is_ssh_present_and_absent() {
@@ -1167,10 +1164,10 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // Regression tests for #339: `deserialize_message` tries `ShellIpcMessage`
-    // first (hot path for shell traffic) and falls back to the native `Message`
-    // enum. These tests pin that both directions still work after the reorder,
-    // and that the two wire formats are provably disjoint, which is exactly what
+    // `deserialize_message` tries `ShellIpcMessage` first (hot path for shell
+    // traffic) and falls back to the native `Message` enum. These tests pin
+    // that both directions work, and that the two wire formats are provably
+    // disjoint, which is exactly what
     // makes trying `ShellIpcMessage` first safe (it can never shadow a native
     // `Message` payload, or vice versa).
 
@@ -1232,7 +1229,7 @@ mod tests {
         );
     }
 
-    // #601: `parse_wire` is the pure half of the parse pipeline. Every test
+    // `parse_wire` is the pure half of the parse pipeline. Every test
     // below goes from raw JSON bytes to a `WireMessage` without constructing a
     // `SafePath` or a `ClientPid`, without touching the filesystem, and without
     // referencing any real process. Several deliberately use paths and PIDs

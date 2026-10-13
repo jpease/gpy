@@ -4,10 +4,9 @@
 #
 # GPY_IPC_TIMEOUT_MS and the two instant-cache TTL knobs are honoured when set
 # in the environment before the shell integration loads, identically in all
-# three shells (#845; tests/fish/env_knobs_honoured.test.fish and
-# tests/bash/env_knobs_honoured.test.bash are the twins).
-# zsh/core/constants.zsh used to overwrite GPY_IPC_TIMEOUT_MS with 150 at
-# source time, so exporting it in .zshrc did nothing (the TTLs were honoured).
+# three shells (tests/fish/env_knobs_honoured.test.fish and
+# tests/bash/env_knobs_honoured.test.bash are the twins). Sourcing
+# zsh/core/constants.zsh must not overwrite an exported GPY_IPC_TIMEOUT_MS.
 # A non-numeric IPC budget falls back to 150 ms inside __gpy_ms_to_secs.
 
 ROOT=${0:a:h:h:h}

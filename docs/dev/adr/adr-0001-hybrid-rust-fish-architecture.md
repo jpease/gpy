@@ -70,7 +70,7 @@ Implement a **hybrid architecture** with clear separation of concerns:
 1. **Performance**: Fast Rust operations + lightweight Fish rendering
    - Git status: < 50ms (cached), < 500ms (cold)
    - IPC latency: < 1ms
-   - Total prompt render: < 10ms typical
+   - Total prompt render (cached): 20 ms target, 50 ms max
 
 2. **Maintainability**: Clear boundaries between components
    - Rust code handles complex logic
@@ -107,7 +107,7 @@ Implement a **hybrid architecture** with clear separation of concerns:
 ### Mitigation Strategies
 
 1. **Clear Documentation**
-   - Comprehensive architecture docs
+   - Architecture docs
    - IPC protocol specification
    - Contribution guides for both languages
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-# Test: is_first-aware instant-prompt cache suffix selection (#401)
+# Test: is_first-aware instant-prompt cache suffix selection
 #
 # The instant-prompt cache writer (gpy-agent/src/cache/instant_prompt.rs)
 # writes all four is_last/is_first combinations unconditionally
@@ -53,23 +53,21 @@ test -z "$resolved_root"; and set resolved_root $fake_repo
 set -l cache_key (__gpy_path_to_cache_key "$resolved_root")
 
 # Distinct sentinel bytes per variant so a mismatch is unambiguous.
-printf 'GIT-NORMAL' >"$cache_dir/$cache_key.git.none.ansi"
-printf 'GIT-LAST' >"$cache_dir/$cache_key.git_last.none.ansi"
-printf 'GIT-FIRST' >"$cache_dir/$cache_key.git_first.none.ansi"
-printf 'GIT-FIRST-LAST' >"$cache_dir/$cache_key.git_first_last.none.ansi"
+printf GIT-NORMAL >"$cache_dir/$cache_key.git.none.ansi"
+printf GIT-LAST >"$cache_dir/$cache_key.git_last.none.ansi"
+printf GIT-FIRST >"$cache_dir/$cache_key.git_first.none.ansi"
+printf GIT-FIRST-LAST >"$cache_dir/$cache_key.git_first_last.none.ansi"
 
-printf 'LANG-NORMAL' >"$cache_dir/$cache_key.lang.none.ansi"
-printf 'LANG-LAST' >"$cache_dir/$cache_key.lang_last.none.ansi"
-printf 'LANG-FIRST' >"$cache_dir/$cache_key.lang_first.none.ansi"
-printf 'LANG-FIRST-LAST' >"$cache_dir/$cache_key.lang_first_last.none.ansi"
+printf LANG-NORMAL >"$cache_dir/$cache_key.lang.none.ansi"
+printf LANG-LAST >"$cache_dir/$cache_key.lang_last.none.ansi"
+printf LANG-FIRST >"$cache_dir/$cache_key.lang_first.none.ansi"
+printf LANG-FIRST-LAST >"$cache_dir/$cache_key.lang_first_last.none.ansi"
 
 set -g __gpy_prompt_now (date +%s)
 set -gx GPY_LANGUAGE_ENABLED 1
 set -gx GPY_LANGUAGE_CACHE_TTL_SECONDS 30
 
-# #613: segment render functions now receive is_last/is_first as "true"/""
-# (not the old "last"/"first" literals) -- call arguments updated, assertions
-# about which cache file gets selected are unchanged.
+# Segment render functions receive is_last/is_first as "true"/"".
 check "git: not first, not last" (test (segment_git_render) = GIT-NORMAL; and echo pass; or echo fail)
 check "git: last, not first" (test (segment_git_render true) = GIT-LAST; and echo pass; or echo fail)
 check "git: first, not last" (test (segment_git_render "" true) = GIT-FIRST; and echo pass; or echo fail)

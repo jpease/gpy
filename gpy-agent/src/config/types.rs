@@ -21,10 +21,8 @@ impl ClientPid {
     /// Range only: this does *not* probe whether a process with this PID is
     /// alive. Liveness is checked exactly once per request, at IPC route time
     /// (`ipc::server::connection::route_request_secure`), gated by
-    /// `GuardSettings::validate_pids`. Probing here as well — unconditionally,
-    /// before any `GuardSettings` was in scope — meant that toggle could not
-    /// actually disable liveness probing, and every registration paid for the
-    /// same `kill(pid, 0)` syscall twice (#578).
+    /// `GuardSettings::validate_pids`, so that toggle really disables
+    /// probing and registration does not pay for `kill(pid, 0)` twice.
     ///
     /// # Errors
     /// Returns an error if the PID is out of range (0, or above the platform's
@@ -40,9 +38,7 @@ impl ClientPid {
     /// Whether `pid` is a plausible process ID: nonzero and within the
     /// platform's maximum.
     ///
-    /// Applied uniformly on every platform (#578) — the upper bound used to be
-    /// checked on the non-Unix path only, so a Unix host accepted any nonzero
-    /// `u32` as a PID.
+    /// Applied uniformly on every platform, including the upper bound.
     #[must_use]
     pub const fn pid_in_range(pid: u32) -> bool {
         pid > 0 && pid <= Self::MAX
@@ -378,11 +374,7 @@ impl TryFrom<u64> for GitTimeout {
 
 /// Supervisor check interval in seconds (5..=3600).
 ///
-/// Bounded at construction (#597) so an explicit `0` in a saved config is
-/// rejected at deserialize time rather than silently coerced to the default
-/// by the loader — see `config::loader::apply_defaults`'s history for the
-/// inconsistency this closes (a value of exactly `0` used to be silently
-/// replaced, while `1`..`4` hard-failed later in `validate_config`).
+/// Out-of-range values, including `0`, are rejected at deserialize time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "u64")]
 pub struct SupervisorCheckInterval(u64);
@@ -440,8 +432,7 @@ impl fmt::Display for SupervisorCheckInterval {
 
 /// Maximum supervisor restart attempts before giving up (1..=100).
 ///
-/// Bounded at construction (#597); see [`SupervisorCheckInterval`]'s doc for
-/// the inconsistency this closes.
+/// Bounded at construction; see [`SupervisorCheckInterval`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "u32")]
 pub struct SupervisorMaxRestartAttempts(u32);

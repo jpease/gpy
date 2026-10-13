@@ -1,7 +1,7 @@
 #!/usr/bin/env fish
 # Test: username segment (fish/segments/username.fish) — root/sudo visibility,
 # pure-fish render (icon on/off, colour override), and the dual-path branch to
-# agent-resolved rendering. Part of #252 (sudo/root prompt prefix segment).
+# agent-resolved rendering.
 #
 # The segment is opt-in (never added to a theme's default __enabled_segments —
 # see fish/segments/username.fish), so these tests source the segment file
@@ -199,10 +199,10 @@ else
     check "agent path: still tracks __gpy_last_segment_bg for the next segment (got: '$__gpy_last_segment_bg')" fail
 end
 
-# Regression: when username is NOT the last rendered segment, the render is
-# called with NO argument (is_last empty). The agent branch must still forward
-# prev_bg into the 3rd slot and pass "" (not the bg) as is_last — mirroring the
-# hostname segment's fix for the unquoted-empty-is_last collapse.
+# When username is NOT the last rendered segment, the render is called with
+# NO argument (is_last empty). The agent branch must still forward prev_bg
+# into the 3rd slot and pass "" (not the bg) as is_last: an unquoted empty
+# is_last would collapse on expansion and shift prev_bg out of position.
 set -g __username_format some-opaque-agent-side-value
 set -g __gpy_last_segment_bg green
 set -e __test_username_arg_is_last
@@ -228,9 +228,8 @@ set -e __username_format
 # --- __gpy_request_username (edge, IPC payload construction) ---
 #
 # Source the real IPC helpers and stub __gpy_ipc_send to capture the payload,
-# so JSON-escaping and the is_last "true"/"" convention are verified directly
-# (#613: username now shares the exact same "true"/"" contract as character,
-# hostname, and every other segment -- there is no more distinct convention).
+# so JSON-escaping and the is_last "true"/"" convention (shared by every
+# segment) are verified directly.
 source "$repo_root/fish/core/constants.fish"
 source "$repo_root/fish/core/util.fish"
 source "$repo_root/fish/core/ipc.fish"

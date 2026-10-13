@@ -6,15 +6,13 @@
 #![allow(clippy::doc_markdown)]
 
 # SPDX-License-Identifier: GPL-3.0-or-later
-# ============================================================================
-# Regression test: scoped agent cleanup (#484)
-# ============================================================================
+# Scoped agent cleanup
 #
-# tests/lib/test_helpers.fish and tests/support/setup_test_env.fish used to
-# clean up test agents with `pkill -9 -x gpy-agent` / `pkill -x gpy-agent`,
-# matched on process name alone. That cannot distinguish a test's own agent
-# from any other gpy-agent running on the machine -- including a
-# contributor's live dogfooding daemon.
+# tests/lib/test_helpers.fish and tests/support/setup_test_env.fish must
+# clean up test agents by the socket they hold, never with
+# `pkill -9 -x gpy-agent` / `pkill -x gpy-agent`: matching on process name
+# alone cannot distinguish a test's own agent from any other gpy-agent
+# running on the machine -- including a contributor's live dogfooding daemon.
 #
 # This test simulates that daemon with a decoy gpy-agent bound to its own,
 # distinct socket path (never under test_helpers.fish's
@@ -28,9 +26,8 @@
 # (e.g. assert_equals) with different signatures -- sourcing both into one
 # process would let the second definition silently shadow the first.
 #
-# Without the fix (a raw `pkill -x gpy-agent` / `pkill -9 -x gpy-agent`) this
-# test fails: the decoy is a real `gpy-agent` process by name, so it gets
-# killed regardless of which socket it holds.
+# A name-based kill fails this test: the decoy is a real `gpy-agent` process
+# by name, so it would be killed regardless of which socket it holds.
 
 set -g __gpy_root (realpath (dirname (status -f))/../..)
 set -g __decoy_dir /tmp/gpy-484-decoy-$fish_pid
@@ -102,6 +99,8 @@ function stop_decoy_agent
     if test -n "$__decoy_pid"
         set -lx GPY_AGENT_SOCKET_PATH $__decoy_socket
         gpy-agent stop >/dev/null 2>&1
+        # Grace period for the graceful stop before the force-kill below
+        # (this file deliberately does not source test_helpers.fish).
         sleep 0.3
         kill -9 $__decoy_pid 2>/dev/null
     end
@@ -166,7 +165,7 @@ function test_setup_test_env_scoped_kill
     assert_decoy_survived "decoy survives setup_test_env.fish ensure_agent_stopped"
 end
 
-print_test_header "Scoped-kill regression test (#484)"
+print_test_header "Scoped-kill regression test"
 
 if not start_decoy_agent
     echo "ERROR: failed to start decoy gpy-agent for the test" >&2
@@ -192,9 +191,9 @@ stop_decoy_agent
 
 echo ""
 if test $overall_result -eq 0
-    echo "✅ Scoped-kill regression test (#484): PASS"
+    echo "✅ Scoped-kill regression test: PASS"
 else
-    echo "❌ Scoped-kill regression test (#484): FAIL"
+    echo "❌ Scoped-kill regression test: FAIL"
 end
 
 exit $overall_result

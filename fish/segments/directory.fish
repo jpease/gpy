@@ -8,19 +8,12 @@ function segment_directory_detect --description "Always show directory segment"
 end
 
 function segment_directory_render --argument-names is_last is_first --description "Render directory segment from agent ANSI"
-    # A caller that passes fewer than 2 args leaves the corresponding
-    # --argument-names binding an EMPTY LIST, not an empty string -- normalize
-    # so every unquoted use below always expands to exactly one word instead
-    # of silently collapsing and shifting a later positional argument (#629-class).
+    # Seed missing args as "" (see fish_prompt.fish's dispatch loop).
     set -q is_last[1]; or set is_last ""
     set -q is_first[1]; or set is_first ""
 
-    # Directory is always agent-rendered (#199): the agent applies the theme
-    # template and returns pre-formatted ANSI. The shell no longer renders it
-    # locally and no longer consumes `__color_directory_*`.
-    #
-    # is_last/is_first arrive already as "true"/"" (#613: fish_prompt.fish's
-    # dispatch-loop convention), so no per-segment conversion is needed here.
+    # Directory is always agent-rendered: the agent applies the theme
+    # template and returns pre-formatted ANSI.
     # Memoized (#343): skip the IPC round-trip + fork entirely when the input
     # tuple (theme identity + PWD + is_last + is_first + prev_bg) matches the last render.
     set -l dir_key "$__gpy_theme_name:$PWD:$is_last:$is_first:$__gpy_last_segment_bg"

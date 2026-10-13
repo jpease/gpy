@@ -21,13 +21,8 @@ __gpy_supervisor_is_running() {
     local response
     response=$(__gpy_send_json "$ping_json" 2>/dev/null)
 
-    # Check for valid pong response
-    # The daemon answers a ping with its JSON acknowledgement,
-    # {"status":"ok"} (the shape every shell's registration check matches).
-    # This used to look for an invented `"op":"pong"` reply the daemon has
-    # never sent, so a live agent was never recognised: every new shell
-    # respawned `gpy-agent start` and the mid-session check burned its
-    # attempts on a healthy daemon (#638).
+    # The daemon answers a ping with {"status":"ok"} (the shape every shell's
+    # registration check matches).
     [[ -n "$response" && "$response" == *'"status":"ok"'* ]] || return 1
 
     # A responsive agent speaking the wrong wire protocol (e.g. an old
@@ -114,14 +109,9 @@ __gpy_supervisor_check() {
         return
     fi
 
-    # Rate-limit gate FIRST, before any IPC round-trip (#340). The healthy
-    # path used to pay for a ping (and a second protocol-version round-trip)
-    # on every single prompt because __gpy_supervisor_is_running was called
-    # unconditionally as the first action here; only the restart itself was
-    # rate-limited. Checking the window before touching the socket means a
-    # healthy agent costs zero round-trips within the window, and the
-    # down/restart path below is reached -- and thus pings -- at most once
-    # per window, same cadence as before. The interval and attempt cap come
+    # Rate-limit gate FIRST, before any IPC round-trip (#340), so a healthy
+    # agent costs zero round-trips within the window and the down/restart
+    # path below pings at most once per window. The interval and attempt cap come
     # from the theme export ([agent.supervisor] in config.toml) and are read
     # here, not at source time, so a reload applies (#762). The legacy
     # GPY_SUPERVISOR_CHECK_* names stay as explicit overrides.

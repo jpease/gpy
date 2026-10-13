@@ -39,7 +39,7 @@ pub(super) fn create_clock_timer() -> tokio::time::Interval {
 ///
 /// Its first tick lands at +60 s, not at t=0: the restart-nudge task is the
 /// only nudge at agent start, so a tracked shell is nudged once per start
-/// and no re-nudge attempt is spent at t=0 (#781).
+/// and no re-nudge attempt is spent at t=0.
 pub(super) fn create_pruning_timer() -> tokio::time::Interval {
     let mut pruning_timer = tokio::time::interval(Duration::from_secs(60));
     pruning_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -142,7 +142,7 @@ mod tests {
     use nix::sys::signal::{Signal, raise};
     use serial_test::serial;
 
-    /// #781: the restart nudge must be the only nudge at t=0.
+    /// The restart nudge must be the only nudge at t=0.
     #[tokio::test]
     async fn pruning_timer_first_tick_is_not_immediate() {
         let mut timer = create_pruning_timer();

@@ -153,11 +153,10 @@ const VENV_STASH_CAPACITY: usize = 256;
 /// How long a stashed forwarded venv stays authoritative for its repo.
 ///
 /// Shares [`crate::language::version`]'s TTL knob via [`TtlMap`] rather than
-/// a fixed duration of its own (#589) — venv stashing exists to support
+/// a fixed duration of its own — venv stashing exists to support
 /// Python version-detection accuracy, the same config domain
 /// `config.language.cache_ttl_hours` already governs, so a change to that
-/// setting now also reaches this stash instead of the two silently drifting
-/// apart.
+/// setting also reaches this stash.
 static VENV_STASH: TtlMap<PathBuf, PathBuf> = TtlMap::new(VENV_STASH_CAPACITY);
 
 fn stash_key(repo_root: &Path) -> PathBuf {
@@ -441,10 +440,8 @@ mod tests {
         assert_eq!(stashed_project_venv(repo.path()), None);
     }
 
-    /// Regression for #589: the venv stash previously had its own hardcoded
-    /// 24h TTL, independent of `config.language.cache_ttl_hours`. It now
-    /// shares that knob via `TtlMap`, so narrowing/widening the shared TTL
-    /// changes stash freshness too.
+    /// The venv stash shares `config.language.cache_ttl_hours` via `TtlMap`,
+    /// so narrowing/widening the shared TTL changes stash freshness too.
     #[test]
     #[serial_test::serial(global_ttl)]
     fn stash_freshness_tracks_the_shared_cache_ttl_knob() {

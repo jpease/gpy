@@ -2,11 +2,11 @@
 # tests/zsh/prompt_text_literal.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #677 (twin of tests/bash/prompt_text_literal.test.bash):
-# agent-rendered segment text lands in PROMPT as prompt source, and zsh (with
-# the prompt_subst gpy sets) expands `$(...)`, `$VAR`, backticks and `%x`
-# prompt escapes in it on every draw. Directory and branch names are
-# untrusted data, so this ran commands.
+# Twin of tests/bash/prompt_text_literal.test.bash: agent-rendered segment
+# text lands in PROMPT as prompt source, and zsh (with the prompt_subst gpy
+# sets) expands `$(...)`, `$VAR`, backticks and `%x` prompt escapes in it on
+# every draw. Directory and branch names are untrusted data, so they must
+# reach PROMPT escaped or they would run commands.
 #
 # With a live sandboxed agent, render the real prompt in directories and on a
 # branch whose names contain those characters, and assert that
@@ -18,12 +18,8 @@ ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { print -r -- "FAIL: $*"; failures=$((failures + 1)); }
-pass() { print -r -- "PASS: $*"; }
 
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n\n[agent.supervisor]\nenabled = false\n' \
-    >"$XDG_CONFIG_HOME/gpy/config.toml"
+shell_e2e_text_config '"directory", "git"' false supervisor-off
 export GPY_AGENT_ENABLED=1
 shell_e2e_start_agent || exit 1
 cd "$SHELL_E2E_REPO" || exit 1
@@ -96,8 +92,4 @@ fi
 
 shell_e2e_stop_agent
 
-if [ "$failures" -ne 0 ]; then
-    echo "=== $failures FAILED ==="
-    exit 1
-fi
-echo "=== All Tests Passed ==="
+test_finish

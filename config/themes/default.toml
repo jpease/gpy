@@ -102,7 +102,7 @@ ahead_behind_bg_color = "yellow"
 conflicts_text_color = "black"
 conflicts_bg_color = "red"
 # Distinct from dirty_*/clean_* so untracked-only and in-progress repos are
-# visually distinguishable out of the box, not just via fallback (#246).
+# visually distinguishable out of the box, not just via fallback.
 untracked_only_text_color = "black"
 untracked_only_bg_color = "cyan"
 in_progress_text_color = "white"
@@ -113,7 +113,7 @@ bg_color = "black"
 text_color = "white"
 # icon, trim_at, show_always: defaults
 
-# Username (#252): root/sudo warning prefix. Opt-in — not in the default
+# Username: root/sudo warning prefix. Opt-in — not in the default
 # enabled_segments; add "username" to config.ui.enabled_segments to show it.
 # Hidden for normal users (show_always defaults to false); a red pill flags
 # elevated (root/sudo) sessions, mirroring Starship's bold-red `username`.

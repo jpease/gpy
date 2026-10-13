@@ -135,7 +135,7 @@ end
 # get the current theme's fish variables into this shell" primitive shared
 # by shell startup (__gpy_load_theme), the manual reload command
 # (__gpy_reload_theme / prompt-reload), and the agent's .reload doorbell
-# handler (#576) -- it used to be hand-copied three times and drifted.
+# handler.
 #
 # Returns the status of whichever path ran (source's status, the spawned
 # command's status, or 1 if neither a cache file nor an agent binary could
@@ -324,14 +324,9 @@ function __gpy_reload_theme --description 'reload GPY theme from config (interna
         set -e $var
     end
 
-    # Clear character/directory render caches (#343): re-exporting the SAME
-    # theme name after its content changed (e.g. editing the active theme's
-    # colors in place, then running prompt-reload) must not leave a stale
-    # cached render behind, even though the cache key -- which is keyed on
-    # theme NAME, not content -- would otherwise still match (#576: this
-    # clear was missing here even though the agent reload path already had
-    # it, so a manual reload silently under-invalidated compared to the
-    # automatic one).
+    # Clear character/directory render caches: the cache key is the theme
+    # NAME, so re-exporting an edited theme under the same name would
+    # otherwise serve a stale render. The agent reload path clears these too.
     set -e __gpy_char_cache_key
     set -e __gpy_char_cache_val
     set -e __gpy_dir_cache_key

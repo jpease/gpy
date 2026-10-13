@@ -1,8 +1,6 @@
 #!/usr/bin/env fish
 # SPDX-License-Identifier: GPL-3.0-or-later
-# ============================================================================
 # E2E Test Infrastructure Helpers
-# ============================================================================
 #
 # This file provides utility functions for end-to-end integration tests that
 # validate the live update functionality of GPY.
@@ -26,7 +24,7 @@ set -g __gpy_test_client_pids
 # prints nothing if the socket doesn't exist or lsof isn't available. This
 # lets cleanup target the exact process that owns a specific socket instead
 # of matching by process name, which cannot distinguish a test agent from a
-# contributor's live dogfooding daemon (#484).
+# contributor's live dogfooding daemon.
 function __gpy_pids_for_socket --argument-names socket_path
     test -S "$socket_path"; or return 1
     command -q lsof; or return 1
@@ -57,7 +55,7 @@ function init_test_env
     # Drop any inherited repo-scoping git env (GIT_DIR/GIT_WORK_TREE/...). Left
     # set — e.g. when tests run from a git pre-push hook — they override the
     # `git -C <tmpdir>` used by fixtures, so a test's git ops would hit the real
-    # repo instead of its throwaway one (#275).
+    # repo instead of its throwaway one.
     set -e GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_NAMESPACE
 
     # Create temp directories
@@ -69,21 +67,20 @@ function init_test_env
     # isolated too: fish/core/init.fish's __gpy_load_theme fast path sources
     # whatever theme-export cache it finds there before ever consulting
     # XDG_CONFIG_HOME, so leaving it unset lets a live dogfooding daemon's
-    # real cache leak into the test (#402).
+    # real cache leak into the test.
     set -gx XDG_CONFIG_HOME $__gpy_test_tmp_dir/config
     set -gx XDG_CACHE_HOME $__gpy_test_tmp_dir/cache
     set -gx GPY_AGENT_SOCKET_PATH $__gpy_test_tmp_dir/gpy.sock
     # The runtime root (shell PID files, supervisor.pid) then falls back to
-    # the isolated $XDG_CACHE_HOME/gpy instead of the caller's runtime dir (#665).
+    # the isolated $XDG_CACHE_HOME/gpy instead of the caller's runtime dir.
     set -e XDG_RUNTIME_DIR
     mkdir -p $XDG_CONFIG_HOME $XDG_CACHE_HOME
 
     # Belt-and-braces guard: refuse to proceed if the test socket doesn't look
     # like it lives under a throwaway temp dir. Everything below (leftover-
     # process cleanup, and stop_test_agent's force-kill) trusts that scoping
-    # to decide what it's safe to kill; a future refactor that widens this
-    # path back toward something shared must fail loudly here instead of
-    # silently reopening #484.
+    # to decide what it's safe to kill; a path widened toward something shared
+    # must fail loudly here rather than risk killing a live dogfooding daemon.
     if not string match -q "/tmp/*" -- $GPY_AGENT_SOCKET_PATH
         echo "ERROR: refusing to proceed — GPY_AGENT_SOCKET_PATH ($GPY_AGENT_SOCKET_PATH) is not under /tmp" >&2
         return 1
@@ -95,11 +92,23 @@ function init_test_env
     # pkill -x would also SIGKILL a contributor's live dogfooding daemon, and
     # pkill -f would also match the `fish -c ...` test runner itself, whose
     # command line embeds the literal string "gpy-agent" via the PATH
-    # override (#285).
+    # override.
+    set -l leftover_pids
     for leftover_socket in /tmp/gpy-e2e-test-*/gpy.sock
+        set -a leftover_pids (__gpy_pids_for_socket "$leftover_socket")
         __gpy_kill_socket_owner "$leftover_socket"
     end
-    sleep 1
+    if set -q leftover_pids[1]
+        poll_until 3 __gpy_pids_gone $leftover_pids
+    end
+end
+
+# Predicate for poll_until: true when none of the given PIDs is still alive.
+function __gpy_pids_gone
+    for pid in $argv
+        kill -0 $pid 2>/dev/null; and return 1
+    end
+    return 0
 end
 
 # Start the GPY agent in test mode
@@ -134,10 +143,9 @@ end
 
 # Stop the GPY agent and cleanup
 function stop_test_agent
-    # Try graceful shutdown first, then poll for the process to actually exit
-    # instead of a fixed `sleep 1`. This helper runs on every start_test_agent
-    # and every restart, so shaving the common-case wait compounds across the
-    # whole suite.
+    # Try graceful shutdown first, then poll for the process to actually exit.
+    # This helper runs on every start_test_agent and every restart, so the
+    # common-case wait compounds across the whole suite.
     gpy-agent stop >/dev/null 2>&1
     poll_until 3 __gpy_agent_stopped
 
@@ -189,11 +197,10 @@ end
 
 # Poll until a predicate succeeds, or a timeout elapses.
 #
-# Replaces fixed `sleep N` padding before an assertion: instead of waiting the
-# worst-case duration every run, wait only until the condition the test is about
-# to assert actually holds. Typically resolves in ~100ms rather than seconds,
-# while a genuinely failing case still exits at the timeout and lets the
-# following assertion report the failure exactly as a fixed sleep would.
+# Use instead of fixed `sleep N` padding before an assertion: wait only until
+# the condition the test is about to assert actually holds. Typically resolves
+# in ~100ms, while a genuinely failing case still exits at the timeout and lets
+# the following assertion report the failure.
 #
 # Arguments:
 #   $argv[1]  - timeout in seconds (fractional allowed)
@@ -261,6 +268,7 @@ function register_test_client
 
         # Trigger fish_prompt to ensure state is initialized
         fish_prompt >/dev/null 2>&1
+        touch $signal_dir/ready-$fish_pid
 
         # Wait for specified duration using a loop to remain responsive to signals
         set -l end_time (math (date +%s) + $duration)
@@ -272,8 +280,8 @@ function register_test_client
     set -l client_pid $last_pid
     set -a __gpy_test_client_pids $client_pid
 
-    # Give the client time to register
-    sleep 1
+    # Wait for the client to finish registering and its first prompt
+    poll_until 5 test -e $__gpy_test_signal_dir/ready-$client_pid
 
     echo $client_pid
 end
@@ -381,21 +389,21 @@ function create_test_repo
     echo $test_repo
 end
 
-# Skip contract (#650): a test that cannot run because a prerequisite is
-# missing calls `test_skip "reason"`. Locally that prints `SKIP: reason` and
-# exits 0; under `CI` it exits 1, so the gate can never go green on a test
-# that did not actually execute. Never `exit 0` on a missing prerequisite
-# directly. The Bash/Zsh twin lives in tests/lib/shell_e2e.sh.
+# Skip contract: a test that cannot run because a prerequisite is missing
+# calls `test_skip "reason"`. Locally that prints `SKIP: reason` and exits 0;
+# under `CI` it exits 1, so the gate can never go green on a test that did
+# not actually execute. Never `exit 0` on a missing prerequisite directly.
+# The Bash/Zsh twin lives in tests/lib/shell_e2e.sh.
 function test_skip
     echo "SKIP: $argv"
     if set -q CI; and test -n "$CI"
-        echo "FAIL: a skipped test is a failure under CI (#650)"
+        echo "FAIL: a skipped test is a failure under CI"
         exit 1
     end
     exit 0
 end
 
-# Nanoseconds since the epoch, identical on every platform (#848). `date
+# Nanoseconds since the epoch, identical on every platform. `date
 # +%s%N` is GNU-only: BSD/macOS date prints a literal `N`, which `math` then
 # rejects. perl's Time::HiRes ships with macOS and every Linux base image.
 # The interpreter is resolved once, at source time, so a test that later

@@ -14,7 +14,7 @@ set -euo pipefail
 # 1. Local mode: Interactive use, benchmarks Fish shell + agent using hyperfine
 # 2. CI mode: Automated CI use, benchmarks Rust agent + enforces performance budgets
 
-# --- Helper function for CI mode ---
+# Helper function for CI mode
 
 # Parses a benchmark result and checks it against a budget.
 # Arguments:
@@ -81,7 +81,7 @@ check_budget() {
 }
 
 
-# --- Enhanced CI Mode ---
+# Enhanced CI mode
 
 if [[ " $* " == *" --ci "* ]]; then
   echo "--- Running benchmarks in CI mode ---"
@@ -120,14 +120,14 @@ if [[ " $* " == *" --ci "* ]]; then
     BUDGET_CACHE_OPS=$(jq -r '.budgets.cache_write.max_ms * 1000000' "$BASELINE_FILE" 2>/dev/null || echo "25000000")
     BUDGET_MEMORY_MB=$(jq -r '.budgets.memory_usage.max_mb' "$BASELINE_FILE" 2>/dev/null || echo "50")
 
-    # Cold-start canaries added for issue #335 (Agent::new sub-steps + the
-    # version-detection subprocess spawn path).
+    # Cold-start canaries (#335): Agent::new sub-steps plus the
+    # version-detection subprocess spawn path.
     BUDGET_CONFIG_LOAD=$(jq -r '.budgets.config_validation.max_ms * 1000000' "$BASELINE_FILE" 2>/dev/null || echo "100000000")
     BUDGET_THEME_LOAD=$(jq -r '.budgets.theme_manager_load.max_ms * 1000000' "$BASELINE_FILE" 2>/dev/null || echo "20000000")
     BUDGET_THEME_EXPORT=$(jq -r '.budgets.theme_export_write.max_ms * 1000000' "$BASELINE_FILE" 2>/dev/null || echo "30000000")
     BUDGET_VERSION_SPAWN=$(jq -r '.budgets.version_command_spawn.max_ms * 1000000' "$BASELINE_FILE" 2>/dev/null || echo "50000000")
 
-    # Language detection budget (issue #521): directory-wide detection cost,
+    # Language detection budget (#521): directory-wide detection cost,
     # benched against a realistic 5k-file corpus in
     # gpy-agent/benches/language_bench.rs's `lang_detect_5k`.
     BUDGET_LANG_DETECT=$(jq -r '.budgets.language_detection.max_ms * 1000000' "$BASELINE_FILE" 2>/dev/null || echo "200000000")
@@ -172,7 +172,7 @@ if [[ " $* " == *" --ci "* ]]; then
   check_budget "$BENCH_OUTPUT" "git_status_cold" "$BUDGET_GIT_COLD" "Git Status (cold)" || ((FAILURES++))
   check_budget "$BENCH_OUTPUT" "cache_write_new_entry" "$BUDGET_CACHE_OPS" "Cache Operations" || ((FAILURES++))
 
-  # Cold-start canaries (issue #335): Agent::new's dominant sub-steps
+  # Cold-start canaries: Agent::new's dominant sub-steps
   # (config load, theme-manager load, theme export write) plus the
   # version-detection subprocess spawn path, benched in
   # gpy-agent/benches/agent_startup_bench.rs.
@@ -181,7 +181,7 @@ if [[ " $* " == *" --ci "* ]]; then
   check_budget "$BENCH_OUTPUT" "theme_export_write" "$BUDGET_THEME_EXPORT" "Theme Export Write" || ((FAILURES++))
   check_budget "$BENCH_OUTPUT" "version_command_spawn" "$BUDGET_VERSION_SPAWN" "Version Command Spawn" || ((FAILURES++))
 
-  # Language detection (issue #521): directory-wide detect against a
+  # Language detection: directory-wide detect against a
   # realistic 5k-file corpus, benched in gpy-agent/benches/language_bench.rs.
   check_budget "$BENCH_OUTPUT" "lang_detect_5k" "$BUDGET_LANG_DETECT" "Language Detection (5k-file corpus)" || ((FAILURES++))
 
@@ -227,15 +227,15 @@ EOF
   echo -e "\nBenchmark summary written to bench-results.json"
 
   if [[ $FAILURES -gt 0 ]]; then
-    echo -e "\n❌ $FAILURES benchmark(s) exceeded performance budget"
+    echo -e "\nError: $FAILURES benchmark(s) exceeded performance budget"
     exit 1
   else
-    echo -e "\n✅ All benchmarks are within budget"
+    echo -e "\nAll benchmarks are within budget"
     exit 0
   fi
 fi
 
-# --- Local Mode ---
+# Local mode
 echo "--- Running benchmarks in Local mode ---"
 
 MODE=fast

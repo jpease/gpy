@@ -2,12 +2,12 @@
 # tests/bash/e2e_agent_autostart.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# A real interactive Bash, a real agent, a real repository (#646).
+# A real interactive Bash, a real agent, a real repository.
 #
-# Nothing in tests/bash/ started gpy-agent before this file: the integration
-# suite runs with the supervisor off and a socket that does not exist, so
-# autostart, registration, the real IPC transport, first-prompt rendering and
-# __gpy_sync_workspace could all regress without failing any gate. This
+# The rest of tests/bash/ runs with the supervisor off and a socket that does
+# not exist, so without this file autostart, registration, the real IPC
+# transport, first-prompt rendering and __gpy_sync_workspace could all break
+# without failing any gate. This
 # drives `bash -i` on a pseudo-terminal (tests/lib/pty_session.py) through
 # tests/lib/shell_e2e.sh and asserts on what the terminal shows:
 #
@@ -30,18 +30,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 shell_e2e_init "$ROOT"
 
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
-pass() {
-    echo "PASS: $*"
-}
-
 # The text theme renders plain tokens the assertions can name (no glyphs).
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' \
-    >"$XDG_CONFIG_HOME/gpy/config.toml"
+shell_e2e_text_config '"directory", "git"'
 
 # --- 1. autostart, registration, first prompt --------------------------------
 echo "--- 1. autostart from an interactive bash ---"
@@ -83,7 +73,7 @@ else
     fail "no SGR escape in the first prompt"
 fi
 # The shell starts in $HOME, so the directory segment contracts it to `~`
-# (the logical path the shell reports, #697).
+# (the logical path the shell reports).
 first="$(shell_e2e_transcript 0)"
 case "$first" in
     *'~'*) pass "the first prompt shows the home directory as ~" ;;
@@ -121,8 +111,8 @@ echo dirty >>"$SHELL_E2E_REPO/tracked.txt"
 # gpy-agent writes the instant-prompt cache before it signals at all (the
 # watcher event lands, the cache is refreshed, *then* SIGURG goes out), so
 # the data is ready within milliseconds of the edit. What is NOT available is
-# Bash showing it while it sits idle in readline: Bash ignores the SIGURG (no
-# trap, #678), and readline cannot repaint an idle prompt anyway.
+# Bash showing it while it sits idle in readline: Bash installs no SIGURG
+# trap, and readline cannot repaint an idle prompt anyway.
 # __gpy_precmd renders synchronously off already-fresh data on every
 # keystroke-driven prompt, so poll by sending real newlines instead of
 # waiting on the async push -- each one drives an ordinary render that reads
@@ -149,7 +139,7 @@ fi
 # --- 4. workspace sync ---------------------------------------------------------------
 echo "--- 4. workspace op ---"
 # A workspace op re-registers the PID's watch at its new cwd, which the
-# watcher logs as `attach_pid_to: pid=<pid>, cwd=<repo>` (#718); the first
+# watcher logs as `attach_pid_to: pid=<pid>, cwd=<repo>`; the first
 # registration logged the home directory, so a line naming the repo can only
 # come from the workspace update.
 if grep -q "attach_pid_to: pid=$client_pid, cwd=.*$(basename "$SHELL_E2E_REPO")" "$GPY_DEBUG_LOG" 2>/dev/null; then
@@ -184,7 +174,5 @@ esac
 
 if [ "$failures" -gt 0 ]; then
     shell_e2e_dump_transcript
-    echo "FAILED: $failures assertion(s)"
-    exit 1
 fi
-echo "PASS: bash autostart to first prompt end to end"
+test_finish "bash autostart to first prompt end to end"

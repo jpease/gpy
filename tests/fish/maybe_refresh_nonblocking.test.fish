@@ -1,9 +1,9 @@
 #!/usr/bin/env fish
-# Regression test for #685: fish background git/language refreshes ran in the
-# foreground. Fish does not fork for functions, so `some_function … &` runs the
-# function synchronously with `$last_pid` unset. `__gpy_maybe_refresh` therefore
-# blocked the prompt for the whole IPC round-trip and, with the agent down, the
-# language cold miss forked a foreground `gpy-agent oneshot` that spent the
+# Fish background git/language refreshes must not run in the foreground. Fish
+# does not fork for functions, so `some_function … &` runs the function
+# synchronously with `$last_pid` unset; a refresh sent that way blocks the
+# prompt for the whole IPC round-trip and, with the agent down, a language
+# cold miss would fork a foreground `gpy-agent oneshot` that spends the
 # per-render oneshot budget the directory segment needs.
 #
 # Case 1: `__gpy_maybe_refresh git|lang` returns at once against a listener
@@ -24,7 +24,7 @@ source "$repo_root/fish/core/constants.fish"
 source "$repo_root/fish/core/util.fish"
 source "$repo_root/fish/core/ipc.fish"
 
-print_test_header "Fish background refresh is non-blocking (#685)"
+print_test_header "Fish background refresh is non-blocking"
 
 if not command -q python3
     test_skip "python3 not installed, cannot simulate a slow agent"
@@ -58,7 +58,7 @@ printf '%s\n' '#!/bin/sh' \
 chmod +x $tmp/stub-agent
 set -gx GPY_AGENT_BINARY_PATH $tmp/stub-agent
 
-# --- Case 1: non-blocking against a slow listener ---------------------------
+# --- Case 1: non-blocking against a slow listener ---
 set -l sock $tmp/gpy.sock
 python3 -c '
 import socket, sys, threading, time
@@ -101,8 +101,8 @@ if not test -S $sock
 end
 
 # Restrict PATH so the IPC client is nc without coreutils `timeout` or socat
-# (stock macOS), whatever the host has installed. That is the path where the
-# old foreground send blocked for the full `nc -w 1` second.
+# (stock macOS), whatever the host has installed. That is the path where a
+# foreground send would block for the full `nc -w 1` second.
 set -l fake_bin $tmp/bin
 mkdir -p $fake_bin
 ln -s (command -v nc) $fake_bin/nc
@@ -139,7 +139,7 @@ set -e GPY_AGENT_SOCKET_PATH
 set -e __gpy_registered
 set -e __gpy_prompt_now
 
-# --- Case 2: agent down, a language cold miss forks no oneshot -------------
+# --- Case 2: agent down, a language cold miss forks no oneshot ---
 # Point the socket somewhere that never exists so nothing can answer.
 set -gx GPY_AGENT_SOCKET_PATH $tmp/absent.sock
 source "$repo_root/fish/segments/language.fish"
@@ -160,7 +160,7 @@ else
     check "cold-miss language render leaves the oneshot budget unclaimed" PASS
 end
 
-# --- Case 3: agent down, the directory segment still renders ---------------
+# --- Case 3: agent down, the directory segment still renders ---
 source "$repo_root/fish/core/renderer.fish"
 source "$repo_root/fish/segments/directory.fish"
 source "$repo_root/fish/functions/fish_prompt.fish"

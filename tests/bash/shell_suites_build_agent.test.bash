@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # tests/bash/shell_suites_build_agent.test.bash
 #
-# Regression test for #812. The Fish runner and `run_shell_tests` built the
-# debug agent only when target/debug/gpy-agent did not exist, so after any Rust
-# edit the shell suites validated the PREVIOUS binary (false green / false red).
+# The Fish runner and `run_shell_tests` must rebuild the debug agent on every
+# run, not only when target/debug/gpy-agent is missing; otherwise after any
+# Rust edit the shell suites validate the PREVIOUS binary (false green / false
+# red).
 #
 # Structural checks (a behavioural one would need a stub cargo and an empty
 # test glob):
@@ -15,11 +16,8 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 fish_script="scripts/test_fish.sh"
 gate_script="scripts/quality-check.sh"
@@ -52,8 +50,4 @@ if ! printf '%s\n' "$fn_body" | grep -q 'run_check "Build debug binaries"'; then
     fail "run_shell_tests: build does not go through run_check \"Build debug binaries\""
 fi
 
-if [ "$failures" -ne 0 ]; then
-    echo "$failures check(s) failed"
-    exit 1
-fi
-echo "PASS: shell suites build the agent unconditionally"
+test_finish "shell suites build the agent unconditionally"

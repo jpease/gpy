@@ -5,8 +5,8 @@
 # (#518). The mechanism is a silent one: actions-rust-lang/setup-rust-toolchain
 # installs from the file only when it finds it in the working directory, and
 # falls back to `stable` when it does not -- no warning, no failed step. A
-# renamed file, a moved crate, or a dropped `rust-src-dir:` input would restore
-# the exact bug #518 fixed while every job stayed green.
+# renamed file, a moved crate, or a dropped `rust-src-dir:` input would silently
+# build with `stable` while every job stayed green.
 #
 # So the resolution is asserted rather than assumed. This is also what makes a
 # deliberate bump of rust-toolchain.toml observable: bump the pin, and every
@@ -20,13 +20,9 @@
 # repository root, where `rustc` falls through to rustup's default toolchain,
 # whatever the machine happens to have set.
 #
-# This script used to probe from the root and so reported that default. It was
-# green on ubuntu-latest and windows-latest only because those images ship
-# 1.98.0 as their default, and red on macos-latest, which ships 1.97.1 -- while
-# all three were in fact building with the pinned 1.98.0. A coincidence of
-# runner images is not an assertion; the next image bump would have turned the
-# passing runners red the same way, and any contributor whose rustup default is
-# not the pin (a nightly default is common) saw the same false alarm locally.
+# Probing from the root would therefore report that default, so the result
+# would depend on which default each runner image or contributor machine ships
+# rather than on the toolchain actually building the crate.
 #
 # Every Rust command in this repository runs from gpy-agent/ (see the justfile
 # and scripts/quality-check.sh), so that is the directory whose active toolchain

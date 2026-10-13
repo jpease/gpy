@@ -2,13 +2,11 @@
 # tests/fish/uninstall_no_repo_checkout.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #310: scripts/uninstall.fish sourced
-# ../fish/core/util.fish (a repo-relative path) just to call the 5-line
-# __gpy_config_root helper, so the uninstaller crashed immediately for
-# anyone who installed via install.sh/install-oneline.sh and has no local
-# repo checkout. It also used `read -p "literal text"`, which fish
-# interprets as a custom prompt *function name* (not literal text) and
-# errors with "Unknown command: Press".
+# scripts/uninstall.fish must run with no repo checkout on disk (installs via
+# install.sh/install-oneline.sh leave none), so it must not source any
+# repo-relative file such as ../fish/core/util.fish. Its confirmation prompt
+# must use `read -P "literal text"`: fish's `read -p` takes a prompt
+# *function name*, and a literal there errors with "Unknown command: Press".
 #
 # This test copies ONLY scripts/uninstall.fish (never fish/core/util.fish,
 # never any other repo file) into an isolated directory with no `fish/`
@@ -22,7 +20,7 @@ cd "$repo_root"
 
 # uninstall.fish resolves its paths from XDG_CONFIG_HOME/XDG_CACHE_HOME/
 # XDG_RUNTIME_DIR and ZDOTDIR; a caller's values would send the HOME-only
-# sandboxed run outside its sandbox (#665).
+# sandboxed run outside its sandbox.
 set -e XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_RUNTIME_DIR ZDOTDIR
 
 set -g failed 0
@@ -50,7 +48,7 @@ else
     __gpy_test_fail "scripts/uninstall.fish does not use 'read -P' for its confirmation prompt"
 end
 
-# --- Static check: no repo-relative sourcing ---------------------------------
+# --- Static check: no repo-relative sourcing ---
 
 if grep -q 'source.*\.\./fish/core' scripts/uninstall.fish
     __gpy_test_fail "scripts/uninstall.fish still sources a repo-relative fish/core file"
@@ -58,7 +56,7 @@ else
     __gpy_test_pass "scripts/uninstall.fish does not source any repo-relative file"
 end
 
-# --- Runtime check: works with no repo checkout on disk ----------------------
+# --- Runtime check: works with no repo checkout on disk ---
 
 set -l isolated_dir (mktemp -d)
 cp scripts/uninstall.fish "$isolated_dir/uninstall.fish"
@@ -97,7 +95,7 @@ else
     __gpy_test_pass "scripts/uninstall.fish printed no 'Unknown command' errors"
 end
 
-# #814: the confirmation listing must show the conf.d path, not an empty item.
+# The confirmation listing must show the conf.d path, not an empty item.
 set -l fish_line (string match -r -- '.*- Fish: .*' $run_out)
 if string match -q -- "*$sandbox_home/.config/fish/conf.d/gpy_init.fish*" $fish_line; and not string match -q -- '*, ,*' $fish_line
     __gpy_test_pass "#814: listing shows the conf.d/gpy_init.fish path"
@@ -107,7 +105,7 @@ end
 
 rm -rf "$isolated_dir" "$sandbox_home"
 
-# --- Regression suite for #667 (prompt destination preservation) and #670 (backup timestamp selection) ---
+# --- Prompt destination preservation and backup timestamp selection ---
 
 set -l isolated_bin (mktemp -d)
 cp scripts/uninstall.fish "$isolated_bin/uninstall.fish"
@@ -128,7 +126,7 @@ function __gpy_test_uninstall --argument-names isolated_script root
         fish "$isolated_script" >/dev/null 2>&1
 end
 
-# 1. Current unrelated regular prompt + valid backup: bytes unchanged, backup unchanged (#667)
+# 1. Current unrelated regular prompt + valid backup: bytes unchanged, backup unchanged
 set -l t1 (mktemp -d)
 set -l t1_fn "$t1/config/fish/functions"
 mkdir -p "$t1_fn"
@@ -144,7 +142,7 @@ else
 end
 rm -rf "$t1"
 
-# 2. Unrelated valid symlink + backup: target string and target bytes unchanged, backup unchanged (#667)
+# 2. Unrelated valid symlink + backup: target string and target bytes unchanged, backup unchanged
 set -l t2 (mktemp -d)
 set -l t2_fn "$t2/config/fish/functions"
 set -l t2_custom "$t2/custom_theme"
@@ -163,7 +161,7 @@ else
 end
 rm -rf "$t2"
 
-# 3. Unrelated dangling symlink + backup: remains a symlink with the same target, backup unchanged (#667)
+# 3. Unrelated dangling symlink + backup: remains a symlink with the same target, backup unchanged
 set -l t3 (mktemp -d)
 set -l t3_fn "$t3/config/fish/functions"
 mkdir -p "$t3_fn"
@@ -179,7 +177,7 @@ else
 end
 rm -rf "$t3"
 
-# 4. Actual GPY prompt symlink + backup: old prompt restored; GPY link removed (#667)
+# 4. Actual GPY prompt symlink + backup: old prompt restored; GPY link removed
 set -l t4 (mktemp -d)
 set -l t4_fn "$t4/config/fish/functions"
 set -l t4_gpy "$t4/config/fish/gpy/functions"
@@ -198,7 +196,7 @@ else
 end
 rm -rf "$t4"
 
-# 5. GPY-owned regular prompt + backup: old prompt restored (#667)
+# 5. GPY-owned regular prompt + backup: old prompt restored
 set -l t5 (mktemp -d)
 set -l t5_fn "$t5/config/fish/functions"
 mkdir -p "$t5_fn"
@@ -214,7 +212,7 @@ else
 end
 rm -rf "$t5"
 
-# 6. Absent destination with/without backup: restore only in former case (#667)
+# 6. Absent destination with/without backup: restore only in former case
 set -l t6a (mktemp -d)
 set -l t6a_fn "$t6a/config/fish/functions"
 mkdir -p "$t6a_fn"
@@ -241,7 +239,7 @@ else
 end
 rm -rf "$t6b"
 
-# 7. Directory at destination + backup: neither replaced or consumed (#667)
+# 7. Directory at destination + backup: neither replaced or consumed
 set -l t7 (mktemp -d)
 set -l t7_fn "$t7/config/fish/functions"
 mkdir -p "$t7_fn"
@@ -257,7 +255,7 @@ else
 end
 rm -rf "$t7"
 
-# 8. Repeat uninstall after successful restoration (#667)
+# 8. Repeat uninstall after successful restoration
 set -l t8 (mktemp -d)
 set -l t8_fn "$t8/config/fish/functions"
 mkdir -p "$t8_fn"
@@ -281,7 +279,7 @@ else
 end
 rm -rf "$t8"
 
-# 9. Older .gpy-backup. plus newer .backup.: restore newer .backup. (#670)
+# 9. Older .gpy-backup. plus newer .backup.: restore newer .backup.
 set -l t9 (mktemp -d)
 set -l t9_fn "$t9/config/fish/functions"
 mkdir -p "$t9_fn"
@@ -298,7 +296,7 @@ else
 end
 rm -rf "$t9"
 
-# 10. Newer .gpy-backup. plus older .backup.: restore newer .gpy-backup. (#670)
+# 10. Newer .gpy-backup. plus older .backup.: restore newer .gpy-backup.
 set -l t10 (mktemp -d)
 set -l t10_fn "$t10/config/fish/functions"
 mkdir -p "$t10_fn"
@@ -315,7 +313,7 @@ else
 end
 rm -rf "$t10"
 
-# 11. Multiple backups of either convention alone: greatest suffix wins (#670)
+# 11. Multiple backups of either convention alone: greatest suffix wins
 set -l t11 (mktemp -d)
 set -l t11_fn "$t11/config/fish/functions"
 mkdir -p "$t11_fn"
@@ -334,7 +332,7 @@ else
 end
 rm -rf "$t11"
 
-# 12. Same suffix tie policy: .gpy-backup. wins tie (#670)
+# 12. Same suffix tie policy: .gpy-backup. wins tie
 set -l t12 (mktemp -d)
 set -l t12_fn "$t12/config/fish/functions"
 mkdir -p "$t12_fn"
@@ -351,7 +349,7 @@ else
 end
 rm -rf "$t12"
 
-# 13. Malformed suffix and matching directory candidates ignored (#670)
+# 13. Malformed suffix and matching directory candidates ignored
 set -l t13 (mktemp -d)
 set -l t13_fn "$t13/config/fish/functions"
 mkdir -p "$t13_fn"
@@ -368,9 +366,9 @@ else
 end
 rm -rf "$t13"
 
-# 13b. A symlink backup of a user's own prompt is restored as the symlink
-# (#744). Installers now move a symlinked (dotfiles) prompt aside as-is,
-# which #670 predates: it assumed every backup was a regular file.
+# 13b. A symlink backup of a user's own prompt is restored as the symlink:
+# installers move a symlinked (dotfiles) prompt aside as-is, so a backup is
+# not always a regular file.
 set -l t13b (mktemp -d)
 set -l t13b_fn "$t13b/config/fish/functions"
 mkdir -p "$t13b_fn" "$t13b/dotfiles"
@@ -386,7 +384,7 @@ else
 end
 rm -rf "$t13b"
 
-# 14. Fixture root includes spaces: correct restoration, no split-path (#670)
+# 14. Fixture root includes spaces: correct restoration, no split-path
 set -l t14 (mktemp -d "/tmp/gpy test spaces.XXXXXX")
 set -l t14_fn "$t14/config/fish/functions"
 mkdir -p "$t14_fn"
@@ -402,8 +400,6 @@ end
 rm -rf "$t14"
 
 rm -rf "$isolated_bin"
-
-# ===========================================================================
 
 if test $failed -eq 1
     exit 1

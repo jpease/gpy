@@ -3,8 +3,8 @@
 # Sourced by zsh tests that must neither start nor supervise an agent. The
 # theme export re-exports GPY_AGENT_ENABLED and GPY_AGENT_SUPERVISOR_ENABLED
 # from config.toml after gpy.zsh loads, so an environment value alone does not
-# turn them off (#657, #762). `[agent.supervisor] enabled = false` alone only
-# stops restarts: the startup start depends on `[agent] enabled` (#842), so the
+# turn them off. `[agent.supervisor] enabled = false` alone only
+# stops restarts: the startup start depends on `[agent] enabled`, so the
 # agent is disabled as well. A test that needs the IPC paths exports
 # GPY_AGENT_ENABLED=1 after sourcing gpy.zsh. This points XDG_CONFIG_HOME and
 # XDG_CACHE_HOME at a throwaway root whose config.toml disables both, and

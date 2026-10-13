@@ -8,7 +8,7 @@ Accepted (2026-10). Supersedes in part [ADR-0004](adr-0004-sigusr1-live-updates.
 
 The agent used three signals to talk to registered shells: SIGUSR1 (repaint), SIGUSR2 (reload theme/config) and SIGALRM (re-register after an agent restart). All three have a default disposition of *terminate*.
 
-A shell that runs `exec fish` (or `exec bash` / `exec zsh`) keeps its PID and process start time, and `fish_exit` does not fire on `exec`, so the PID stays registered with the agent. Between the `exec` and the moment the new shell installs its handlers, any of those signals kills the shell and the terminal pane closes (jpease/gpy-archive#674).
+A shell that runs `exec fish` (or `exec bash` / `exec zsh`) keeps its PID and process start time, and `fish_exit` does not fire on `exec`, so the PID stays registered with the agent. Between the `exec` and the moment the new shell installs its handlers, any of those signals kills the shell and the terminal pane closes.
 
 ## Decision
 
@@ -29,7 +29,7 @@ Fish and zsh install one SIGURG handler (fish `--on-signal SIGURG`, zsh `TRAPURG
 
 With no flag present, SIGURG is a plain repaint. Existence checks are shell builtins, so the common path forks nothing. Reload notifications are never throttled, so a written flag is always followed by a signal. The agent removes flags for dead PIDs; shells remove their own flags on exit. The agent restart marker file is gone: re-registration is driven by the flag. The IPC protocol version is bumped to 2.
 
-Bash installs no SIGURG trap (jpease/gpy-archive#678) and leaves SIGURG ignored. Readline cannot repaint an idle prompt, so a bash handler could only re-render a `PS1` nobody sees, and it did harm: bash 5 nested those renders while doorbells kept arriving (a hang), bash 3.2 ran them at the idle prompt, and any trapped signal makes a running `wait` return early. Instead `__gpy_precmd` performs steps 1 and 2 before every render, at the cost of two `[[ -e ]]` tests when no flag exists; the render itself is step 3.
+Bash installs no SIGURG trap and leaves SIGURG ignored. Readline cannot repaint an idle prompt, so a bash handler could only re-render a `PS1` nobody sees, and it did harm: bash 5 nested those renders while doorbells kept arriving (a hang), bash 3.2 ran them at the idle prompt, and any trapped signal makes a running `wait` return early. Instead `__gpy_precmd` performs steps 1 and 2 before every render, at the cost of two `[[ -e ]]` tests when no flag exists; the render itself is step 3.
 
 `GPY_SIGUSR1_THROTTLE_MS` keeps its name and now throttles repaint notifications.
 
@@ -53,5 +53,4 @@ Bash installs no SIGURG trap (jpease/gpy-archive#678) and leaves SIGURG ignored.
 
 ## References
 
-- jpease/gpy-archive#674
 - [ADR-0004](adr-0004-sigusr1-live-updates.md), [ADR-0005](adr-0005-theme-hot-reload.md)

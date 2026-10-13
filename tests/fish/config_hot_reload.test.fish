@@ -7,7 +7,7 @@ mkdir -p $config_dir
 set -l config_path "$config_dir/config.toml"
 
 # Initial config: language enabled with versions shown
-printf "[language]\nenabled = true\nshow_versions = true\n\n[ui]\nshow_icons = false\ntheme = \"default\"\ndirectory.max_length = 80\nenabled_segments = [\"clock\",\"directory\",\"language\",\"git\"]\n" > $config_path
+printf "[language]\nenabled = true\nshow_versions = true\n\n[ui]\nshow_icons = false\ntheme = \"default\"\ndirectory.max_length = 80\nenabled_segments = [\"clock\",\"directory\",\"language\",\"git\"]\n" >$config_path
 
 set -lx XDG_CONFIG_HOME $temp_root
 set -lx XDG_CACHE_HOME "$temp_root/cache"
@@ -39,7 +39,7 @@ if not string match -q '*1.23*' -- $rendered
 end
 
 echo "Reload config with show_versions=false"
-printf "[language]\nenabled = true\nshow_versions = false\n\n[ui]\nshow_icons = false\ntheme = \"default\"\ndirectory.max_length = 80\nenabled_segments = [\"clock\",\"directory\",\"language\",\"git\"]\n" > $config_path
+printf "[language]\nenabled = true\nshow_versions = false\n\n[ui]\nshow_icons = false\ntheme = \"default\"\ndirectory.max_length = 80\nenabled_segments = [\"clock\",\"directory\",\"language\",\"git\"]\n" >$config_path
 # Reload theme by re-sourcing the theme export (simulates the agent reload doorbell)
 gpy-agent theme export --format fish 2>/dev/null | source
 
@@ -50,7 +50,7 @@ if string match -q '*1.23*' -- $rendered
 end
 
 echo "Reload config with language disabled"
-printf "[language]\nenabled = false\nshow_versions = false\n\n[ui]\nshow_icons = false\ntheme = \"default\"\ndirectory.max_length = 80\nenabled_segments = [\"clock\",\"directory\",\"language\",\"git\"]\n" > $config_path
+printf "[language]\nenabled = false\nshow_versions = false\n\n[ui]\nshow_icons = false\ntheme = \"default\"\ndirectory.max_length = 80\nenabled_segments = [\"clock\",\"directory\",\"language\",\"git\"]\n" >$config_path
 # Reload theme by re-sourcing the theme export (simulates the agent reload doorbell)
 gpy-agent theme export --format fish 2>/dev/null | source
 

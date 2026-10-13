@@ -163,9 +163,8 @@ struct StagedTerminal<'a, Ops: TerminalOps> {
 impl<'a, Ops: TerminalOps> StagedTerminal<'a, Ops> {
     /// Enable raw mode, then enter the alternate screen. If entering the
     /// alternate screen fails, raw mode is disabled again before returning
-    /// (the local `raw_mode` guard drops, still armed) — the fix for the bug
-    /// this module exists to prevent: a step-2 failure used to leak raw mode
-    /// because no guard existed yet to roll it back.
+    /// (the local `raw_mode` guard drops, still armed), so a step-2 failure
+    /// never leaks raw mode.
     ///
     /// # Errors
     ///
@@ -272,11 +271,9 @@ impl<Ops: TerminalOps> Drop for TerminalGuard<Ops> {
 /// `run()` calls this before `TerminalGuard::new` enters raw mode / the alt
 /// screen.
 ///
-/// Installation is process-wide and happens at most once (#461). Each install
-/// wraps whatever hook is current, so calling this once per `run()` would
-/// nest one restoration closure per invocation — harmless today only because
-/// the wizard is a one-shot CLI command and the restoration calls are
-/// idempotent, but unbounded growth as soon as the wizard runs more than once
+/// Installation is process-wide and happens at most once: each install wraps
+/// whatever hook is current, so installing once per `run()` would nest one
+/// restoration closure per invocation whenever the wizard runs more than once
 /// in a process.
 ///
 /// Returns `true` when this call performed the installation, `false` when a
@@ -352,7 +349,7 @@ struct WizardRuntime {
     cached_theme: std::sync::Arc<crate::theme::ThemeConfig>,
     cached_palette: crate::template::Palette,
     /// Why the last theme activation was refused (the theme failed to load);
-    /// shown in the detail panel until the next key press (#802).
+    /// shown in the detail panel until the next key press.
     theme_error: Option<String>,
 }
 
@@ -393,7 +390,7 @@ impl WizardRuntime {
 /// Returns an error if drawing the frame fails, or the very first theme load
 /// fails (no previously loaded theme to fall back to). A later theme that
 /// fails to load is refused instead: the selection reverts to the last theme
-/// that loaded and the failure is shown in the detail panel (#802).
+/// that loaded and the failure is shown in the detail panel.
 fn draw_frame<Ops: TerminalOps>(
     guard: &mut TerminalGuard<Ops>,
     runtime: &mut WizardRuntime,
@@ -420,7 +417,7 @@ fn draw_frame<Ops: TerminalOps>(
 
     let mut preview_config = runtime.config.clone();
     runtime.state.apply_to(&mut preview_config);
-    // Theme-scoped picker edits (clock/duration/git, #407) live in
+    // Theme-scoped picker edits (clock/duration/git) live in
     // `state.pending_theme()`, not `cached_theme` (the unedited on-disk
     // theme) — the preview must render the pending edit, not the on-disk
     // value, the moment the user toggles it.
@@ -573,7 +570,7 @@ pub fn run() -> Result<()> {
     };
 
     // Restore the terminal before anything is printed: output written while the
-    // alternate screen is active is discarded when it is left (#801).
+    // alternate screen is active is discarded when it is left.
     drop(guard);
 
     if should_save {
@@ -699,12 +696,9 @@ mod tests {
         );
     }
 
-    /// #461: `run()` calls `install_panic_hook()` on every invocation, and the hook wraps
-    /// whatever hook is current.
-    ///
-    /// Without a guard, N invocations in one process nest N restoration closures, each calling
-    /// the next — unbounded growth the moment the wizard is driven more than once per process
-    /// (a restart flow, a long-lived host, an in-process test harness).
+    /// `run()` calls `install_panic_hook()` on every invocation, and the hook
+    /// wraps whatever hook is current, so without the once-guard N invocations
+    /// in one process would nest N restoration closures.
     ///
     /// This test claims the process-wide install itself, so it necessarily
     /// leaves the wizard's hook in place; it resets to the default hook
@@ -756,11 +750,10 @@ mod tests {
         );
     }
 
-    /// `TerminalGuard`'s own `Drop` now routes through `TerminalOps`.
-    ///
-    /// It used to call crossterm directly, so a `RecordingTerminalOps`
-    /// double can now observe the full success-path lifecycle end-to-end —
-    /// not just the failure-path setup rollback the tests above cover.
+    /// `TerminalGuard`'s `Drop` routes through `TerminalOps`, so a
+    /// `RecordingTerminalOps` double observes the full success-path lifecycle
+    /// end-to-end, not just the failure-path setup rollback the tests above
+    /// cover.
     ///
     /// The backend uses a fixed viewport: `Terminal::new` asks the terminal
     /// for its size, which falls back to opening `/dev/tty` and fails on a

@@ -65,7 +65,7 @@ pub fn save_to(state: &WizardState, path: &str) -> Result<()> {
 /// Prints nothing and does not reload the agent: the caller runs this after
 /// the terminal is restored, then reports the saved path and calls
 /// `reload_agent_and_notify` itself, so the feedback lands on the normal
-/// screen instead of being discarded with the alternate screen (#801).
+/// screen instead of being discarded with the alternate screen.
 ///
 /// # Errors
 ///
@@ -78,7 +78,7 @@ pub fn save(state: &WizardState) -> Result<String> {
     // Theme-level field edits (clock/duration/git/…) live in the per-theme
     // TOML file, not `config.toml`, so they persist through a separate path:
     // materialize a user-writable copy of the active theme and write the edits
-    // into it, never touching the builtin source (#407). No-op when no theme
+    // into it, never touching the builtin source. No-op when no theme
     // field was edited.
     if let Some(theme) = state.pending_theme() {
         crate::theme::ThemeManager::save_user_theme(state.selected_theme(), theme)?;
@@ -114,7 +114,7 @@ mod tests {
     /// Fixed, deterministic stand-in for `WizardState::new`'s real discovery.
     ///
     /// See `state.rs`'s own `FIXED_THEMES`/`FIXED_PALETTES`/`FIXED_SEGMENTS`
-    /// for the rationale (#607). Kept in sync with those exact values.
+    /// for the rationale. Kept in sync with those exact values.
     fn test_state(config: Config) -> WizardState {
         WizardState::from_parts(
             config,
@@ -180,8 +180,8 @@ mod tests {
 
     #[test]
     fn save_to_round_trip_keeps_git_and_language_rendered() {
-        // #692: saving without touching anything must keep git/language in
-        // the list the prompt export iterates.
+        // Saving without touching anything must keep git/language in the
+        // list the prompt export iterates.
         let (_dir, path) = write_starting_config(
             "[ui]\ntheme = \"default\"\npalette = \"default\"\nenabled_segments = [\"clock\", \"duration\", \"language\", \"directory\", \"git\"]\n",
         );

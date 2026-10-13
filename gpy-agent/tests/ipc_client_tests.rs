@@ -1,337 +1,265 @@
-//! Tests for IPC client behavior with mock server
+//! Tests for IPC client behavior against mock servers.
 
 #![allow(clippy::panic)]
-#![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::unused_async)]
 #![allow(clippy::as_conversions)]
-#![allow(clippy::indexing_slicing)]
-#![allow(clippy::shadow_unrelated)]
 
-use gpy_agent::ipc::{LanguageInfo, Message, Response, client::SessionHandle};
+#[path = "common/env_guard.rs"]
+mod env_guard;
+
+use env_guard::EnvGuard;
+use gpy_agent::ipc::protocol::deserialize_message;
+use gpy_agent::ipc::{Format, LanguageInfo, Message, Response, client::SessionHandle};
 use serial_test::serial;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixListener;
-use tokio::time::sleep;
+use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::oneshot;
 
-// ===== Mock Server Helpers =====
+/// Upper bound for `SessionHandle::connect`, whose own timeout is 5s.
+const CONNECT_BOUND: Duration = Duration::from_secs(6);
 
-// Create a mock server that responds to length-prefixed messages
-async fn mock_server_normal(socket_path: PathBuf, response: Response) {
-    let listener = UnixListener::bind(&socket_path).expect("Failed to bind socket");
+/// Read one length-prefixed request frame, or `None` if the client hung up.
+async fn read_frame(stream: &mut UnixStream) -> Option<Vec<u8>> {
+    let mut len_bytes = [0u8; 4];
+    stream.read_exact(&mut len_bytes).await.ok()?;
+    let mut msg_bytes = vec![0u8; u32::from_be_bytes(len_bytes) as usize];
+    stream.read_exact(&mut msg_bytes).await.ok()?;
+    Some(msg_bytes)
+}
+
+/// Bind `socket_path` and answer the first request with `response`.
+///
+/// The listener is bound before this returns, so clients may connect
+/// immediately. The receiver yields the raw request bytes the client sent.
+fn mock_server_normal(socket_path: &Path, response: Response) -> oneshot::Receiver<Vec<u8>> {
+    let listener = UnixListener::bind(socket_path).expect("Failed to bind socket");
+    let (request_tx, request_rx) = oneshot::channel();
 
     tokio::spawn(async move {
-        if let Ok((mut stream, _)) = listener.accept().await {
-            // Read message length
-            let mut len_bytes = [0u8; 4];
-            if stream.read_exact(&mut len_bytes).await.is_err() {
-                return;
-            }
+        let Ok((mut stream, _)) = listener.accept().await else {
+            return;
+        };
+        let Some(request) = read_frame(&mut stream).await else {
+            return;
+        };
+        let _ = request_tx.send(request);
 
-            // Read message
-            let msg_len = u32::from_be_bytes(len_bytes) as usize;
-            let mut msg_bytes = vec![0u8; msg_len];
-            if stream.read_exact(&mut msg_bytes).await.is_err() {
-                return;
-            }
+        let response_bytes = serde_json::to_vec(&response).unwrap_or_default();
+        let response_len = (response_bytes.len() as u32).to_be_bytes();
+        let _ = stream.write_all(&response_len).await;
+        let _ = stream.write_all(&response_bytes).await;
+        let _ = stream.flush().await;
+    });
 
-            // Send response
-            let response_bytes = serde_json::to_vec(&response).unwrap_or_default();
-            let response_len = (response_bytes.len() as u32).to_be_bytes();
+    request_rx
+}
 
-            let _ = stream.write_all(&response_len).await;
-            let _ = stream.write_all(&response_bytes).await;
-            let _ = stream.flush().await;
+/// Bind `socket_path` and answer the first request with `malformed_data` as the body.
+fn mock_server_malformed(socket_path: &Path, malformed_data: Vec<u8>) {
+    let listener = UnixListener::bind(socket_path).expect("Failed to bind socket");
+
+    tokio::spawn(async move {
+        let Ok((mut stream, _)) = listener.accept().await else {
+            return;
+        };
+        if read_frame(&mut stream).await.is_none() {
+            return;
         }
+        let response_len = (malformed_data.len() as u32).to_be_bytes();
+        let _ = stream.write_all(&response_len).await;
+        let _ = stream.write_all(&malformed_data).await;
+        let _ = stream.flush().await;
     });
 }
 
-// Create a mock server that sends malformed response
-async fn mock_server_malformed(socket_path: PathBuf, malformed_data: Vec<u8>) {
-    let listener = UnixListener::bind(&socket_path).expect("Failed to bind socket");
-
-    tokio::spawn(async move {
-        if let Ok((mut stream, _)) = listener.accept().await {
-            // Read message length
-            let mut len_bytes = [0u8; 4];
-            if stream.read_exact(&mut len_bytes).await.is_err() {
-                return;
-            }
-
-            // Read message
-            let msg_len = u32::from_be_bytes(len_bytes) as usize;
-            let mut msg_bytes = vec![0u8; msg_len];
-            if stream.read_exact(&mut msg_bytes).await.is_err() {
-                return;
-            }
-
-            // Send malformed response
-            let response_len = (malformed_data.len() as u32).to_be_bytes();
-            let _ = stream.write_all(&response_len).await;
-            let _ = stream.write_all(&malformed_data).await;
-            let _ = stream.flush().await;
-        }
-    });
-}
-
-// Create a mock server that closes connection immediately
-async fn mock_server_disconnect(socket_path: PathBuf) {
-    let listener = UnixListener::bind(&socket_path).expect("Failed to bind socket");
+/// Bind `socket_path` and close the first accepted connection without replying.
+fn mock_server_disconnect(socket_path: &Path) {
+    let listener = UnixListener::bind(socket_path).expect("Failed to bind socket");
 
     tokio::spawn(async move {
         if let Ok((stream, _)) = listener.accept().await {
-            // Close immediately
             drop(stream);
         }
     });
 }
 
-// Create a mock server that sends oversized response
-async fn mock_server_oversized(socket_path: PathBuf) {
-    let listener = UnixListener::bind(&socket_path).expect("Failed to bind socket");
+/// Bind `socket_path` and answer the first request with a length prefix above the client's 64KB cap.
+fn mock_server_oversized(socket_path: &Path) {
+    let listener = UnixListener::bind(socket_path).expect("Failed to bind socket");
 
     tokio::spawn(async move {
-        if let Ok((mut stream, _)) = listener.accept().await {
-            // Read message
-            let mut len_bytes = [0u8; 4];
-            if stream.read_exact(&mut len_bytes).await.is_err() {
-                return;
-            }
-            let msg_len = u32::from_be_bytes(len_bytes) as usize;
-            let mut msg_bytes = vec![0u8; msg_len];
-            if stream.read_exact(&mut msg_bytes).await.is_err() {
-                return;
-            }
-
-            // Send response claiming to be 1MB (should exceed limit)
-            let fake_len = (1_000_000_u32).to_be_bytes();
-            let _ = stream.write_all(&fake_len).await;
-            let _ = stream.flush().await;
+        let Ok((mut stream, _)) = listener.accept().await else {
+            return;
+        };
+        if read_frame(&mut stream).await.is_none() {
+            return;
         }
+        let _ = stream.write_all(&1_000_000_u32.to_be_bytes()).await;
+        let _ = stream.flush().await;
     });
 }
 
-// ===== Connection Tests =====
+fn socket_in(temp_dir: &TempDir) -> PathBuf {
+    temp_dir.path().join("test.sock")
+}
 
 #[tokio::test]
 #[serial]
 async fn test_connect_missing_socket() {
-    // Set a socket path that doesn't exist
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let socket_path = temp_dir.path().join("nonexistent.sock");
+    let _env = EnvGuard::set_one("GPY_AGENT_SOCKET_PATH", &socket_path);
 
-    unsafe {
-        std::env::set_var("GPY_AGENT_SOCKET_PATH", socket_path.to_str().unwrap());
-    }
+    let Err(err) = tokio::time::timeout(CONNECT_BOUND, SessionHandle::connect())
+        .await
+        .expect("connect should give up within its own timeout")
+    else {
+        panic!("connect to a missing socket should fail");
+    };
 
-    let result = tokio::time::timeout(Duration::from_secs(6), SessionHandle::connect()).await;
-
-    unsafe {
-        std::env::remove_var("GPY_AGENT_SOCKET_PATH");
-    }
-
-    // Should timeout or error
-    assert!(result.is_err() || result.unwrap().is_err());
-}
-
-#[tokio::test]
-#[serial]
-async fn test_connect_success() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let socket_path = temp_dir.path().join("test.sock");
-
-    unsafe {
-        std::env::set_var("GPY_AGENT_SOCKET_PATH", socket_path.to_str().unwrap());
-    }
-
-    // Start mock server
-    mock_server_normal(socket_path.clone(), Response::Ack).await;
-    sleep(Duration::from_millis(50)).await;
-
-    let result = SessionHandle::connect().await;
-
-    unsafe {
-        std::env::remove_var("GPY_AGENT_SOCKET_PATH");
-    }
-
-    assert!(result.is_ok());
-}
-
-// ===== Send Request Tests =====
-
-#[tokio::test]
-#[serial]
-async fn test_send_request_ping() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let socket_path = temp_dir.path().join("test.sock");
-
-    unsafe {
-        std::env::set_var("GPY_AGENT_SOCKET_PATH", socket_path.to_str().unwrap());
-    }
-
-    mock_server_normal(socket_path.clone(), Response::Ack).await;
-    sleep(Duration::from_millis(50)).await;
-
-    let mut client = SessionHandle::connect().await.expect("Failed to connect");
-    let result = client.send_request(Message::Ping).await;
-
-    unsafe {
-        std::env::remove_var("GPY_AGENT_SOCKET_PATH");
-    }
-
-    assert!(result.is_ok());
-    assert!(matches!(result.unwrap(), Response::Ack));
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Failed to connect") && msg.contains(&socket_path.display().to_string()),
+        "error should name the unreachable socket: {msg}"
+    );
 }
 
 #[tokio::test]
 #[serial]
 async fn test_send_request_malformed_response() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let socket_path = temp_dir.path().join("test.sock");
+    let socket_path = socket_in(&temp_dir);
+    let _env = EnvGuard::set_one("GPY_AGENT_SOCKET_PATH", &socket_path);
 
-    unsafe {
-        std::env::set_var("GPY_AGENT_SOCKET_PATH", socket_path.to_str().unwrap());
-    }
-
-    // Send invalid JSON
-    let malformed = b"not valid json".to_vec();
-    mock_server_malformed(socket_path.clone(), malformed).await;
-    sleep(Duration::from_millis(50)).await;
+    mock_server_malformed(&socket_path, b"not valid json".to_vec());
 
     let mut client = SessionHandle::connect().await.expect("Failed to connect");
     let result = client.send_request(Message::Ping).await;
 
-    unsafe {
-        std::env::remove_var("GPY_AGENT_SOCKET_PATH");
-    }
-
-    // Should fail with deserialization error
-    assert!(result.is_err());
+    assert!(
+        result.is_err(),
+        "malformed response body should fail to deserialize"
+    );
 }
 
 #[tokio::test]
 #[serial]
 async fn test_send_request_oversized_response() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let socket_path = temp_dir.path().join("test.sock");
+    let socket_path = socket_in(&temp_dir);
+    let _env = EnvGuard::set_one("GPY_AGENT_SOCKET_PATH", &socket_path);
 
-    unsafe {
-        std::env::set_var("GPY_AGENT_SOCKET_PATH", socket_path.to_str().unwrap());
-    }
-
-    mock_server_oversized(socket_path.clone()).await;
-    sleep(Duration::from_millis(50)).await;
+    mock_server_oversized(&socket_path);
 
     let mut client = SessionHandle::connect().await.expect("Failed to connect");
-    let result = client.send_request(Message::Ping).await;
+    let err = client
+        .send_request(Message::Ping)
+        .await
+        .expect_err("oversized response should be rejected");
 
-    unsafe {
-        std::env::remove_var("GPY_AGENT_SOCKET_PATH");
-    }
-
-    // Should reject oversized response
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("too large"));
+    assert!(
+        err.to_string().contains("too large"),
+        "unexpected error: {err}"
+    );
 }
 
 #[tokio::test]
 #[serial]
 async fn test_send_request_disconnect_during_read() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let socket_path = temp_dir.path().join("test.sock");
+    let socket_path = socket_in(&temp_dir);
+    let _env = EnvGuard::set_one("GPY_AGENT_SOCKET_PATH", &socket_path);
 
-    unsafe {
-        std::env::set_var("GPY_AGENT_SOCKET_PATH", socket_path.to_str().unwrap());
-    }
-
-    mock_server_disconnect(socket_path.clone()).await;
-    sleep(Duration::from_millis(50)).await;
+    mock_server_disconnect(&socket_path);
 
     let mut client = SessionHandle::connect().await.expect("Failed to connect");
-    let result = client.send_request(Message::Ping).await;
+    let err = client
+        .send_request(Message::Ping)
+        .await
+        .expect_err("request on a closed connection should fail");
 
-    unsafe {
-        std::env::remove_var("GPY_AGENT_SOCKET_PATH");
-    }
-
-    // Should fail when trying to read response
-    assert!(result.is_err());
+    let msg = err.to_string();
+    assert!(
+        msg.contains("read") || msg.contains("send") || msg.contains("response"),
+        "error should say which step failed: {msg}"
+    );
 }
-
-// ===== Ping Tests =====
 
 #[tokio::test]
 #[serial]
 async fn test_ping_success() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let socket_path = temp_dir.path().join("test.sock");
+    let socket_path = socket_in(&temp_dir);
+    let _env = EnvGuard::set_one("GPY_AGENT_SOCKET_PATH", &socket_path);
 
-    unsafe {
-        std::env::set_var("GPY_AGENT_SOCKET_PATH", socket_path.to_str().unwrap());
-    }
-
-    mock_server_normal(socket_path.clone(), Response::Ack).await;
-    sleep(Duration::from_millis(50)).await;
+    let request = mock_server_normal(&socket_path, Response::Ack);
 
     let mut client = SessionHandle::connect().await.expect("Failed to connect");
-    let result = client.ping().await;
+    assert!(client.ping().await.expect("ping should succeed"));
 
-    unsafe {
-        std::env::remove_var("GPY_AGENT_SOCKET_PATH");
-    }
-
-    assert!(result.is_ok());
-    assert!(result.unwrap());
+    let sent = request.await.expect("server should capture the request");
+    assert!(matches!(
+        deserialize_message(&sent).expect("client sent a valid message"),
+        Message::Ping
+    ));
 }
 
 #[tokio::test]
 #[serial]
 async fn test_ping_unexpected_response() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let socket_path = temp_dir.path().join("test.sock");
+    let socket_path = socket_in(&temp_dir);
+    let _env = EnvGuard::set_one("GPY_AGENT_SOCKET_PATH", &socket_path);
 
-    unsafe {
-        std::env::set_var("GPY_AGENT_SOCKET_PATH", socket_path.to_str().unwrap());
-    }
-
-    // Send wrong response type
-    mock_server_normal(
-        socket_path.clone(),
+    let _request = mock_server_normal(
+        &socket_path,
         Response::Error {
             message: "test error".to_owned(),
         },
-    )
-    .await;
-    sleep(Duration::from_millis(50)).await;
+    );
+
+    let mut client = SessionHandle::connect().await.expect("Failed to connect");
+    let alive = client
+        .ping()
+        .await
+        .expect("a well-formed non-Ack response is not a transport failure");
+
+    assert!(!alive, "ping should report false for a non-Ack response");
+}
+
+#[tokio::test]
+#[serial]
+async fn test_ping_transport_failure_is_err() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let socket_path = socket_in(&temp_dir);
+    let _env = EnvGuard::set_one("GPY_AGENT_SOCKET_PATH", &socket_path);
+
+    mock_server_disconnect(&socket_path);
 
     let mut client = SessionHandle::connect().await.expect("Failed to connect");
     let result = client.ping().await;
 
-    unsafe {
-        std::env::remove_var("GPY_AGENT_SOCKET_PATH");
-    }
-
-    // Ping should return false for unexpected responses
-    assert!(result.is_ok());
-    assert!(!result.unwrap());
+    assert!(
+        result.is_err(),
+        "ping over a dropped connection should be Err, got {result:?}"
+    );
 }
-
-// ===== Helper Function Tests =====
 
 #[tokio::test]
 #[serial]
 async fn test_load_repository_state() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let socket_path = temp_dir.path().join("test.sock");
-
-    unsafe {
-        std::env::set_var("GPY_AGENT_SOCKET_PATH", socket_path.to_str().unwrap());
-    }
+    let socket_path = socket_in(&temp_dir);
+    let _env = EnvGuard::set_one("GPY_AGENT_SOCKET_PATH", &socket_path);
+    let repo_path = temp_dir
+        .path()
+        .canonicalize()
+        .expect("canonicalize temp dir");
 
     let response = Response::RepositoryStatus(gpy_agent::git::RepositoryStatus {
         branch: "main".to_owned(),
@@ -348,22 +276,25 @@ async fn test_load_repository_state() {
         detached: false,
         rebase_progress: None,
     });
-
-    mock_server_normal(socket_path.clone(), response).await;
-    sleep(Duration::from_millis(50)).await;
+    let request = mock_server_normal(&socket_path, response);
 
     let mut client = SessionHandle::connect().await.expect("Failed to connect");
-    let result = client.load_repository_state(".".to_owned()).await;
+    let result = client
+        .load_repository_state(repo_path.display().to_string())
+        .await;
 
-    unsafe {
-        std::env::remove_var("GPY_AGENT_SOCKET_PATH");
+    match result.expect("load_repository_state should succeed") {
+        Response::RepositoryStatus(status) => assert_eq!(status.branch, "main"),
+        other => panic!("unexpected response {other:?}"),
     }
 
-    assert!(result.is_ok());
-    if let Ok(Response::RepositoryStatus(s)) = result {
-        assert_eq!(s.branch, "main");
-    } else {
-        panic!("Unexpected response type");
+    let sent = request.await.expect("server should capture the request");
+    match deserialize_message(&sent).expect("client sent a valid message") {
+        Message::RepositoryStatus { path, format, .. } => {
+            assert_eq!(path.as_path(), repo_path);
+            assert_eq!(format, Format::Json);
+        }
+        other => panic!("unexpected request {other:?}"),
     }
 }
 
@@ -371,124 +302,62 @@ async fn test_load_repository_state() {
 #[serial]
 async fn test_detect_languages() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let socket_path = temp_dir.path().join("test.sock");
-
-    unsafe {
-        std::env::set_var("GPY_AGENT_SOCKET_PATH", socket_path.to_str().unwrap());
-    }
+    let socket_path = socket_in(&temp_dir);
+    let _env = EnvGuard::set_one("GPY_AGENT_SOCKET_PATH", &socket_path);
+    let repo_path = temp_dir
+        .path()
+        .canonicalize()
+        .expect("canonicalize temp dir");
 
     let response = Response::Language {
         languages: vec![LanguageInfo {
             name: "Rust".to_owned(),
             version: None,
-            color: gpy_agent::config::types::ColorSpec::new("#dea584").unwrap(),
+            color: gpy_agent::config::types::ColorSpec::new("#dea584").expect("valid color"),
         }],
     };
-
-    mock_server_normal(socket_path.clone(), response).await;
-    sleep(Duration::from_millis(50)).await;
+    let request = mock_server_normal(&socket_path, response);
 
     let mut client = SessionHandle::connect().await.expect("Failed to connect");
-    let result = client.detect_languages(".".to_owned()).await;
+    let result = client
+        .detect_languages(repo_path.display().to_string())
+        .await;
 
-    unsafe {
-        std::env::remove_var("GPY_AGENT_SOCKET_PATH");
+    match result.expect("detect_languages should succeed") {
+        Response::Language { languages } => {
+            let names: Vec<&str> = languages.iter().map(|l| l.name.as_str()).collect();
+            assert_eq!(names, ["Rust"]);
+        }
+        other => panic!("unexpected response {other:?}"),
     }
 
-    assert!(result.is_ok());
-    if let Ok(Response::Language { languages }) = result {
-        assert_eq!(languages.len(), 1);
-        assert_eq!(languages[0].name, "Rust");
-    } else {
-        panic!("Unexpected response type");
+    let sent = request.await.expect("server should capture the request");
+    match deserialize_message(&sent).expect("client sent a valid message") {
+        Message::LanguageDetect { path, format, .. } => {
+            assert_eq!(path.as_path(), repo_path);
+            assert_eq!(format, Format::Json);
+        }
+        other => panic!("unexpected request {other:?}"),
     }
 }
-
-// ===== Socket Path Tests =====
 
 #[test]
 #[serial]
 fn test_socket_path_custom() {
-    unsafe {
-        std::env::set_var("GPY_AGENT_SOCKET_PATH", "/custom/path.sock");
-    }
+    let _env = EnvGuard::set_one("GPY_AGENT_SOCKET_PATH", "/custom/path.sock");
 
-    let path = SessionHandle::socket_path();
-
-    unsafe {
-        std::env::remove_var("GPY_AGENT_SOCKET_PATH");
-    }
-
-    assert_eq!(path, "/custom/path.sock");
+    assert_eq!(SessionHandle::socket_path(), "/custom/path.sock");
 }
 
 #[test]
 #[serial]
 fn test_socket_path_default() {
-    // Clear all related env vars
-    unsafe {
-        std::env::remove_var("GPY_AGENT_SOCKET_PATH");
-        std::env::remove_var("XDG_RUNTIME_DIR");
-        std::env::remove_var("XDG_CACHE_HOME");
-    }
+    let _env = EnvGuard::cleared(&["GPY_AGENT_SOCKET_PATH", "XDG_RUNTIME_DIR", "XDG_CACHE_HOME"]);
 
     let path = SessionHandle::socket_path();
 
-    // Should include gpy-test.sock
-    assert!(path.contains("gpy-test.sock"));
-}
-
-// ===== Error Message Tests =====
-
-#[tokio::test]
-#[serial]
-async fn test_connection_error_message() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let socket_path = temp_dir.path().join("missing.sock");
-
-    unsafe {
-        std::env::set_var("GPY_AGENT_SOCKET_PATH", socket_path.to_str().unwrap());
-    }
-
-    let result = tokio::time::timeout(Duration::from_secs(6), SessionHandle::connect()).await;
-
-    unsafe {
-        std::env::remove_var("GPY_AGENT_SOCKET_PATH");
-    }
-
-    // Should have descriptive error message
-    if let Ok(Err(err)) = result {
-        let msg = err.to_string();
-        assert!(msg.contains("connect") || msg.contains("timeout") || msg.contains("IPC"));
-    }
-}
-
-#[tokio::test]
-#[serial]
-async fn test_send_error_message() {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let socket_path = temp_dir.path().join("test.sock");
-
-    unsafe {
-        std::env::set_var("GPY_AGENT_SOCKET_PATH", socket_path.to_str().unwrap());
-    }
-
-    mock_server_disconnect(socket_path.clone()).await;
-    sleep(Duration::from_millis(50)).await;
-
-    let mut client = SessionHandle::connect().await.expect("Failed to connect");
-    let result = client.send_request(Message::Ping).await;
-
-    unsafe {
-        std::env::remove_var("GPY_AGENT_SOCKET_PATH");
-    }
-
-    if let Err(err) = result {
-        let msg = err.to_string();
-        // Error should mention what failed
-        assert!(
-            msg.contains("read") || msg.contains("response") || msg.contains("IPC"),
-            "Error message should be descriptive: {msg}"
-        );
-    }
+    assert!(
+        path.contains("gpy-test.sock"),
+        "unexpected default path: {path}"
+    );
 }

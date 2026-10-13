@@ -2,9 +2,8 @@
 # tests/bash/install_checksum_verification.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #494: install.sh installed whatever bin/<asset> happened
-# to contain. The archive ships checksums now, and the installer must refuse to
-# install a binary that does not match one -- including when the checksum is
+# install.sh must refuse to install a bin/<asset> that does not match the
+# checksum the archive ships -- including when the checksum is
 # absent entirely, since "the release published no verification metadata" and
 # "someone stripped it" look identical from the installing machine.
 #
@@ -32,11 +31,8 @@ WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
 
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 # Every asset name the build matrix produces, so the test does not have to
 # reimplement install.sh's platform detection -- whichever pair this machine
@@ -159,7 +155,7 @@ grep -q "checksum mismatch" "$WORKDIR/tamper.log" ||
 
 # --- (d) an unverifiable CLI aborts too ---------------------------------------
 #
-# A missing gpy asset is tolerated by design (#327): the prompt does not need
+# A missing gpy asset is tolerated by design: the prompt does not need
 # the CLI. A gpy asset that is present but cannot be verified is not.
 
 echo "--- package with an unverifiable CLI (must fail) ---"
@@ -207,9 +203,4 @@ if compgen -G "$HOME_EXISTING/.local/bin/gpy-agent.backup.*" >/dev/null; then
     fail "a failed verification left backup files behind; it should abort before touching anything"
 fi
 
-if [[ $failures -ne 0 ]]; then
-    echo "$failures assertion(s) failed"
-    exit 1
-fi
-
-echo "PASS"
+test_finish

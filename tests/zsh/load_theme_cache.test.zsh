@@ -2,7 +2,7 @@
 # tests/zsh/load_theme_cache.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #614: __gpy_load_theme sources the agent's cached theme-export.zsh file
+# __gpy_load_theme sources the agent's cached theme-export.zsh file
 # (written by gpy-agent/src/cache/theme_export.rs's write_theme_export_to_dir,
 # beside theme-export.fish/.bash) when present, and only forks
 # `gpy-agent theme export` when the cache is absent. Mirrors Fish's

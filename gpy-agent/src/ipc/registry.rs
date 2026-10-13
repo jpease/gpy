@@ -102,7 +102,7 @@ pub(crate) fn ring_doorbell(pid: u32) -> nix::Result<()> {
 /// Start time (seconds since the epoch) of the process occupying `pid`.
 ///
 /// `None` if it can't be determined (process gone, or a transient lookup
-/// failure). Shared by the client registry and the shell-tracking scan (#781).
+/// failure). Shared by the client registry and the shell-tracking scan.
 #[cfg(unix)]
 pub(crate) fn process_start_time_secs(sys: &mut sysinfo::System, pid: u32) -> Option<u64> {
     let sys_pid = sysinfo::Pid::from_u32(pid);
@@ -122,15 +122,14 @@ struct ClientSnapshot {
     /// The client's working directory, when it reported one.
     #[cfg_attr(not(unix), allow(dead_code))]
     cwd: Option<PathBuf>,
-    /// Process start time, used to detect a recycled PID (#319/#432).
+    /// Process start time, used to detect a recycled PID.
     started_at: Option<u64>,
 }
 
 /// Whether a broadcast bypasses the per-repo throttle.
 ///
 /// Replaces a bare `force: bool` threaded through `notify_with_signal` and
-/// `should_broadcast`, where the boolean said nothing about what it forced
-/// (#600).
+/// `should_broadcast`, where the boolean said nothing about what it forced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BroadcastMode {
     /// Respect the normal throttle/coalescing window.
@@ -140,7 +139,7 @@ enum BroadcastMode {
 }
 
 /// Per-repo throttle bookkeeping: when the last signal for that repo was delivered, plus the
-/// content token it carried (#438).
+/// content token it carried.
 ///
 /// The token lets the throttle coalesce genuine duplicates while still delivering a *distinct*
 /// change within the window (latest-wins). A `None` token means the caller supplied no
@@ -149,7 +148,7 @@ enum BroadcastMode {
     not(unix),
     expect(
         dead_code,
-        reason = "`token` is compared only by `should_notify_repo`, which is Unix-only because the throttle exists to coalesce repaint pushes (#540)"
+        reason = "`token` is compared only by `should_notify_repo`, which is Unix-only because the throttle exists to coalesce repaint pushes"
     )
 )]
 #[derive(Clone, Copy)]
@@ -196,7 +195,7 @@ struct ClientInfo {
     /// before every signal: if the OS has recycled the PID to an unrelated
     /// process since the registered shell exited, the start time will
     /// differ and the signal must be skipped, so an unrelated process is
-    /// never sent a doorbell nor has flag files written for it (#319).
+    /// never sent a doorbell nor has flag files written for it.
     /// `None` means the start time couldn't be determined at
     /// registration (e.g. a transient lookup failure) and is treated as
     /// "nothing to compare", not as a mismatch.
@@ -247,11 +246,11 @@ impl ClientDirectory {
     pub fn register(&self, pid: u32, cwd: Option<PathBuf>) {
         let started_at = self.process_start_time(pid);
         // Boundary invariant: store the cwd canonical so `paths_related`'s
-        // correctness no longer silently depends on a far-away
+        // correctness does not silently depend on a far-away
         // `PathValidator::validate_path` canonicalization in the caller
-        // (defense-in-depth for #432, not a live-bug fix). Done best-effort at
-        // register time -- off the broadcast hot loop -- and a redundant no-op
-        // for the already-canonical production path.
+        // (defense-in-depth). Done best-effort at register time -- off the
+        // broadcast hot loop -- and a redundant no-op for the
+        // already-canonical production path.
         let stored_cwd = cwd.map(|p| std::fs::canonicalize(&p).unwrap_or(p));
         if let Ok(mut guard) = self.inner.lock() {
             guard.insert(
@@ -288,17 +287,17 @@ impl ClientDirectory {
     /// client. Once a start time was recorded, though, it must match the
     /// PID's *current* occupant exactly -- including the case where the
     /// current lookup itself fails (`current: None`), which correctly
-    /// refuses to signal a PID we can no longer positively identify (#319).
+    /// refuses to signal a PID we can no longer positively identify.
     #[cfg(unix)]
     fn identity_matches(recorded: Option<u64>, current: Option<u64>) -> bool {
         recorded.is_none_or(|recorded_started_at| current == Some(recorded_started_at))
     }
 
     /// Whether a PID's registered identity is *confirmed* to belong to a
-    /// different process now -- the only case that justifies pruning it (#319).
+    /// different process now -- the only case that justifies pruning it.
     /// A transient lookup failure (`current` is `None`) is NOT a confirmed
     /// recycle: the PID may still be the original, live client, so it must be
-    /// kept (and simply not signaled this round) rather than pruned (#432).
+    /// kept (and simply not signaled this round) rather than pruned.
     #[cfg(unix)]
     const fn is_confirmed_recycle(recorded: Option<u64>, current: Option<u64>) -> bool {
         matches!((recorded, current), (Some(r), Some(c)) if r != c)
@@ -321,12 +320,12 @@ impl ClientDirectory {
     /// registered identity, collecting a *confirmed* PID recycle into `stale`
     /// for pruning. Returns `true` when the caller must not signal this PID.
     ///
-    /// One `process_start_time` lookup drives a three-way decision (#319/#432):
+    /// One `process_start_time` lookup drives a three-way decision:
     /// - confirmed recycle: push to `stale`, return `true` (prune and never
-    ///   signal -- a different process now holds this PID, #319).
+    ///   signal -- a different process now holds this PID).
     /// - unconfirmed identity (transient `process_start_time` failure on a
     ///   still-registered PID): return `true` but do NOT push to `stale` --
-    ///   keep the client and merely skip signaling this round (#432); it'll be
+    ///   keep the client and merely skip signaling this round; it'll be
     ///   signaled on the next broadcast once the lookup recovers.
     /// - positively identified: return `false` (safe to signal).
     #[cfg(unix)]
@@ -367,9 +366,9 @@ impl ClientDirectory {
     /// Returns `true` if the PID was registered and updated, `false` if not registered.
     #[must_use]
     pub fn update_workspace(&self, pid: u32, cwd: &Path) -> bool {
-        // Same register-time canonical-cwd boundary invariant as `register`
-        // (defense-in-depth for #432): store canonical, off the hot loop, so
-        // `paths_related` compares canonical-to-canonical regardless of caller.
+        // Same register-time canonical-cwd boundary invariant as `register`:
+        // store canonical, off the hot loop, so `paths_related` compares
+        // canonical-to-canonical regardless of caller.
         let canonical_cwd = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
         if let Ok(mut guard) = self.inner.lock() {
             let mut updated = false;
@@ -409,7 +408,7 @@ impl ClientDirectory {
 
     /// Whether a registered client PID is still alive (native Windows stub).
     ///
-    /// Native Windows has no signal-based live-update path (#284), so there is
+    /// Native Windows has no signal-based live-update path, so there is
     /// nothing to keep a liveness check honest for; assume the client is alive
     /// rather than pruning registrations the agent cannot verify.
     #[cfg(not(unix))]
@@ -435,7 +434,7 @@ impl ClientDirectory {
     /// This method checks all registered PIDs and removes those that no longer
     /// exist, or whose PID now belongs to a different process (a confirmed
     /// recycle, judged like the broadcast path does: a failed start-time
-    /// lookup is not a recycle, #432).
+    /// lookup is not a recycle).
     /// Returns a vector of PIDs that were pruned (so caller can clean up watchers, etc.).
     #[must_use]
     pub fn prune_dead_clients(&self) -> Vec<u32> {
@@ -476,7 +475,7 @@ impl ClientDirectory {
         self.notify_with_signal(target, BroadcastMode::Throttled, None, None);
     }
 
-    /// Ring a throttled repaint doorbell carrying a content token (#438).
+    /// Ring a throttled repaint doorbell carrying a content token.
     ///
     /// Same per-repo throttle as [`Self::notify_repaint`], but a token that differs
     /// from the last delivered one for that repo is delivered even inside the
@@ -546,7 +545,7 @@ impl ClientDirectory {
             // No blocking fs::canonicalize needed here
             let target_owned = target.map(Path::to_path_buf);
 
-            // Decided at most once per broadcast, not per client (#565).
+            // Decided at most once per broadcast, not per client.
             let mut should_notify: Option<bool> = None;
 
             for ClientSnapshot {
@@ -571,7 +570,7 @@ impl ClientDirectory {
                 }
 
                 // Skip PIDs we can't positively identify; prune only a
-                // confirmed recycle (#319/#432). Same single lookup as before.
+                // confirmed recycle.
                 if self.skip_signal_for_identity(started_at, pid, &mut stale) {
                     continue;
                 }
@@ -655,7 +654,7 @@ impl ClientDirectory {
     /// Reuses [`Self::paths_related`], the exact per-client targeting rule
     /// [`Self::notify_with_signal`] applies (plus its "a client with `cwd:
     /// None` subscribes to every target" rule), rather than reimplementing
-    /// it, so a caller gating work on "would this reach a client" (#480) can
+    /// it, so a caller gating work on "would this reach a client" can
     /// never drift from what notification actually delivers. `repo` is
     /// expected to already be canonical, matching every other caller of
     /// `paths_related`.
@@ -701,7 +700,7 @@ impl ClientDirectory {
 
     #[cfg(unix)]
     /// Test-only helper: read back the stored cwd for a PID, so tests can
-    /// assert the register-time canonical-cwd boundary invariant (#432).
+    /// assert the register-time canonical-cwd boundary invariant.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn client_cwd(&self, pid: u32) -> Option<PathBuf> {
@@ -738,7 +737,7 @@ impl ClientDirectory {
     /// this at most once per broadcast and reuse the result across every
     /// client -- calling it per client lets the first approved client consume
     /// the one-shot approval and starves every later client in the same repo
-    /// of its throttled signal (#565).
+    /// of its throttled signal.
     #[cfg(unix)]
     fn should_broadcast(
         &self,
@@ -752,7 +751,7 @@ impl ClientDirectory {
         })
     }
 
-    /// Pure decision core for the per-repo throttle (#565): given the previous
+    /// Pure decision core for the per-repo throttle: given the previous
     /// record for a repo (if any), the current time, the throttle window, and
     /// the push's content token, decide whether to allow the signal and what
     /// record to store afterward.
@@ -762,8 +761,7 @@ impl ClientDirectory {
     ///   (same `Some` token, or no token to compare -- time-based fallback):
     ///   suppress, leaving the record UNCHANGED.
     /// - Otherwise (outside the window, or a *distinct* `Some` token inside
-    ///   it): allow and refresh the record to `now`/`token` (latest-wins,
-    ///   #438).
+    ///   it): allow and refresh the record to `now`/`token` (latest-wins).
     ///
     /// Callers decide this once per broadcast and store the result themselves
     /// (see `should_notify_repo`); this function does not touch the map.
@@ -795,7 +793,7 @@ impl ClientDirectory {
     ///
     /// The throttle coalesces a burst of *identical* pushes for the same repo,
     /// but must never swallow a genuinely different change that lands inside the
-    /// window (#438). `token` is a content fingerprint of the push (see
+    /// window. `token` is a content fingerprint of the push (see
     /// `content_token`); within the window a matching token is suppressed as a
     /// duplicate, while a *distinct* token is delivered (latest-wins) and
     /// becomes the new baseline. A `None` token carries no content to compare,
@@ -838,8 +836,6 @@ mod tests {
     #[cfg(unix)]
     use std::path::PathBuf;
     #[cfg(unix)]
-    use std::thread;
-    #[cfg(unix)]
     use std::time::Duration;
     #[cfg(unix)]
     use std::time::Instant;
@@ -851,27 +847,26 @@ mod tests {
     /// Panics if throttle logic malfunctions.
     fn throttle_suppresses_within_window() {
         let directory = ClientDirectory::new();
-        directory.set_throttle_ms(50);
+        directory.set_throttle_ms(60_000);
         let repo = Path::new("/repo");
 
+        // Window expiry is covered against the pure core by
+        // `throttle_decision_outside_window_allows_and_refreshes`.
         assert!(directory.throttle_allows(repo));
         assert!(!directory.throttle_allows(repo));
-
-        thread::sleep(Duration::from_millis(55));
-        assert!(directory.throttle_allows(repo));
     }
 
     #[cfg(unix)]
     #[test]
     /// A genuinely distinct content token within the throttle window must still
-    /// be delivered (latest-wins, #438); only a *duplicate* token is coalesced.
+    /// be delivered (latest-wins); only a *duplicate* token is coalesced.
     ///
     /// # Panics
     ///
     /// Panics if the throttle drops a distinct push within the window.
     fn throttle_delivers_distinct_token_within_window() {
         let directory = ClientDirectory::new();
-        directory.set_throttle_ms(50);
+        directory.set_throttle_ms(60_000);
         let repo = Path::new("/repo");
 
         // First push for token 1 is delivered.
@@ -883,8 +878,6 @@ mod tests {
         // ...and once delivered, its own duplicate is coalesced again.
         assert!(!directory.throttle_allows_token(repo, 2));
     }
-
-    // --- #565: `throttle_decision` pure-core coverage ---
 
     #[cfg(unix)]
     #[test]
@@ -937,7 +930,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    /// Inside the window with a distinct `Some` token: allow (latest-wins, #438)
+    /// Inside the window with a distinct `Some` token: allow (latest-wins)
     /// and refresh the record to `now`/the new token.
     ///
     /// # Panics
@@ -1023,20 +1016,15 @@ mod tests {
         assert_eq!(record.token, Some(1));
     }
 
-    // --- #565: broadcast throttle must be decided once per broadcast, not per client ---
-
     #[cfg(unix)]
     #[test]
-    /// Regression test for #565: two clients registered in the same repo must
+    /// Two clients registered in the same repo must
     /// BOTH receive a throttled signal in one broadcast.
     ///
-    /// Before the fix, `should_notify_repo` was called (and mutated
-    /// `last_notify`) inside the per-client loop, so whichever client the
-    /// (nondeterministic) `HashMap` iteration order visited first consumed the
-    /// one-shot throttle approval; the second client then saw
-    /// `within_window && is_duplicate == true` and was skipped via `continue`
-    /// *before* ever reaching `kill()` -- so it was never marked stale and
-    /// stayed registered (`len() == 1`, not `0`).
+    /// The throttle decision is made once per repo per broadcast, not inside
+    /// the per-client loop: a per-client check would let whichever client the
+    /// (nondeterministic) `HashMap` iteration visited first consume the
+    /// one-shot approval and skip the other before it ever reached `kill()`.
     ///
     /// Uses two guaranteed-nonexistent PIDs with no recorded `started_at` (same
     /// pattern as `notify_does_not_block_signal_when_identity_unknown`) so both
@@ -1277,8 +1265,6 @@ mod tests {
         assert_eq!(directory.len(), 0, "Should still have 0 clients");
     }
 
-    // --- #319: PID-recycling defense ---
-
     #[cfg(unix)]
     #[test]
     /// A registration where the start time couldn't be determined must not
@@ -1331,10 +1317,10 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    /// End-to-end regression test for #319.
+    /// End-to-end PID-recycle check.
     ///
     /// A registered PID that is very much alive (the test process itself) but
-    /// whose recorded start time no longer matches its real one -- simulating
+    /// whose recorded start time does not match its real one -- simulating
     /// the PID having been recycled to a different process since registration
     /// -- must be treated as stale and pruned, not signaled.
     ///
@@ -1395,7 +1381,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     /// The timer's `prune_dead_clients` must prune a live PID whose recorded
-    /// start time proves the PID now belongs to a different process (#782).
+    /// start time proves the PID now belongs to a different process.
     ///
     /// # Panics
     ///
@@ -1427,15 +1413,13 @@ mod tests {
         assert_eq!(directory.len(), 1);
     }
 
-    // --- #432: false-positive PID-identity prune (keep + skip-signal) ---
-
     #[cfg(unix)]
     #[test]
     /// `is_confirmed_recycle` is true only when both start times are known and
-    /// they differ -- the only case that justifies pruning (#319).
+    /// they differ -- the only case that justifies pruning.
     ///
     /// A transient current-lookup failure (`current` is `None`) is the crux of
-    /// #432: it is NOT a confirmed recycle, so the PID must be kept (and merely
+    /// It is NOT a confirmed recycle, so the PID must be kept (and merely
     /// not signaled this round), not pruned. Forcing real sysinfo to return
     /// `None` for a live PID isn't feasible, so this pure-function coverage
     /// plus the three-way branch in `notify_with_signal` IS the deterministic
@@ -1454,15 +1438,13 @@ mod tests {
         assert!(ClientDirectory::is_confirmed_recycle(Some(5), Some(9)));
     }
 
-    // --- #432: register-time canonical-cwd boundary invariant ---
-
     #[test]
     #[cfg(unix)]
     /// A cwd handed to `register` through a symlink must be stored canonical, so
     /// `paths_related` (which assumes canonical inputs) matches a canonical notify target for
     /// the real directory.
     ///
-    /// Locks the register-time boundary invariant added for #432.
+    /// Locks the register-time canonical-cwd boundary invariant.
     ///
     /// # Panics
     ///
@@ -1522,7 +1504,7 @@ mod doorbell_tests {
         let _ = child.wait();
     }
 
-    /// #674 regression: a registered process with NO handler (a shell that
+    /// A registered process with NO handler (a shell that
     /// just `exec`ed itself) must survive every agent notification.
     #[test]
     fn unhandled_registered_process_survives_repaint_and_reload() {
@@ -1538,6 +1520,8 @@ mod doorbell_tests {
         registry.notify_repaint_force(None);
         registry.notify_repaint(None);
         registry.notify_reload();
+        // Negative proof: no event marks "the signal was ignored", so give a
+        // default-terminate disposition time to kill the child before checking.
         std::thread::sleep(Duration::from_millis(200));
 
         assert!(
@@ -1554,11 +1538,13 @@ mod doorbell_tests {
     fn notify_reload_writes_flag_before_signalling() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mark = dir.path().join("delivered");
+        let ready = dir.path().join("ready");
         let flag_glob = dir.path().join("$$.reload");
         let script = format!(
-            "trap '[ -e \"{flag}\" ] && touch \"{mark}\"' URG; while :; do sleep 0.05; done",
+            "trap '[ -e \"{flag}\" ] && touch \"{mark}\"' URG; touch \"{ready}\"; while :; do sleep 0.05; done",
             flag = flag_glob.display(),
             mark = mark.display(),
+            ready = ready.display(),
         );
         let child = Command::new("sh")
             .arg("-c")
@@ -1566,8 +1552,10 @@ mod doorbell_tests {
             .spawn()
             .expect("spawn sh");
         let pid = child.id();
-        // Let sh install its trap before the doorbell rings.
-        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            wait_for(&ready),
+            "sh must install its trap before the doorbell rings"
+        );
 
         let registry = ClientDirectory::with_shell_dir(dir.path().to_path_buf());
         registry.register(pid, None);

@@ -2,18 +2,17 @@
 # tests/fish/install_oneline_main_wrapper.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #309: install-oneline.sh's body was a flat top-to-bottom
-# script (not wrapped in main()+invoked at the end), so a truncated
-# `curl | sh` (network cut mid-transfer) could execute whatever prefix of the
-# script was received -- e.g. install the binary but stop mid-way through
-# editing an rc file. Also, individual core-file downloads only `warn`ed on
-# failure and fell through to editing rc files unconditionally, so a failed
-# core-file download still left the rc file modified.
+# install-oneline.sh's body must be wrapped in main() and invoked only at the
+# end: a truncated `curl | sh` (network cut mid-transfer) would otherwise
+# execute whatever prefix of a flat script was received -- e.g. install the
+# binary but stop mid-way through editing an rc file. Individual core-file
+# downloads must also hard-fail rather than warn and fall through, so a failed
+# core-file download never leaves the rc file modified.
 #
 # This is a static/text-level check in the same spirit as
-# install_oneline_file_lists.test.fish (#308) for the structural claims that
+# install_oneline_file_lists.test.fish for the structural claims that
 # aren't independently network-testable, plus a real (network-free)
-# truncated-execution test proving criterion 3 concretely.
+# truncated-execution test proving the truncation guarantee concretely.
 
 set -l script_dir (dirname (status --filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
@@ -22,7 +21,7 @@ cd "$repo_root"
 set -l installer install-oneline.sh
 set -g failed 0
 
-# --- Static structural checks -------------------------------------------------
+# --- Static structural checks ---
 
 if grep -q '^main() {' $installer
     echo "✅ $installer: main() {} is defined"
@@ -71,7 +70,7 @@ for shell_upper in FISH ZSH BASH
     end
 end
 
-# --- Truncated-execution check (criterion 3) ----------------------------------
+# --- Truncated-execution check ---
 #
 # A truncated script must execute nothing of the procedural body -- proven by
 # checking that the very first message main()'s body would print

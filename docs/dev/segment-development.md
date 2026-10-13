@@ -4,7 +4,6 @@
 
 **Prerequisites**:
 - Read [architecture.md](architecture.md) for system overview
-- Read [modules.md](../archive/modules.md) for module references (archived)
 
 This guide walks through adding a new segment to the GPY prompt system, from Rust agent implementation to Fish shell rendering.
 
@@ -820,11 +819,11 @@ end
 ### Segment Not Appearing
 
 **Checklist**:
-1. ✅ Added to `segments.order` in config?
-2. ✅ Segment enabled: `k8s_enabled = true`?
-3. ✅ IPC operation wired up in `ipc/server.rs`?
-4. ✅ Fish function exists: `__gpy_segment_k8s.fish`?
-5. ✅ Agent restarted: `gpy restart`?
+1. Added to `segments.order` in config?
+2. Segment enabled: `k8s_enabled = true`?
+3. IPC operation wired up in `ipc/server.rs`?
+4. Fish function exists: `__gpy_segment_k8s.fish`?
+5. Agent restarted: `gpy restart`?
 
 **Debug**:
 ```fish
@@ -837,9 +836,9 @@ printf '{"op":"k8s","cwd":"%s","format":"json"}\n' $PWD | socat - UNIX-CONNECT:~
 ### Segment Rendering Issues
 
 **Checklist**:
-1. ✅ Theme colors defined in `theme.toml`?
-2. ✅ Colors exported to Fish: `set -gx __color_k8s_icon ...`?
-3. ✅ Fish syntax valid: `fish -n __gpy_segment_k8s.fish`?
+1. Theme colors defined in `theme.toml`?
+2. Colors exported to Fish: `set -gx __color_k8s_icon ...`?
+3. Fish syntax valid: `fish -n __gpy_segment_k8s.fish`?
 
 **Debug**:
 ```fish
@@ -900,7 +899,7 @@ set -g __enabled_segments clock duration language directory git your_segment
 **Fix - Option A** (Fish-only, fast path):
 ```fish
 function segment_docker_detect
-    # ✅ GOOD: Quick check (< 5ms)
+    # GOOD: Quick check (< 5ms)
     command -v docker >/dev/null 2>&1 || return 1
     test -f .dockerenv || return 1
     return 0
@@ -932,7 +931,7 @@ time segment_your_segment_detect
 **Wrong**:
 ```fish
 function segment_kubectl_render
-    # ❌ BAD: Crashes if kubectl not installed
+    # BAD: Crashes if kubectl not installed
     set -l context (kubectl config current-context)
     printf '%s' $context
 end
@@ -941,7 +940,7 @@ end
 **Right**:
 ```fish
 function segment_kubectl_render
-    # ✅ GOOD: Check first
+    # GOOD: Check first
     command -v kubectl >/dev/null 2>&1 || return
 
     set -l context (kubectl config current-context 2>/dev/null)
@@ -964,7 +963,7 @@ end
 **Wrong**:
 ```fish
 function segment_aws_render
-    # ❌ BAD: No error handling
+    # BAD: No error handling
     set -l profile (aws configure get profile)
     printf 'AWS: %s' $profile  # Shows "AWS: " if command fails
 end
@@ -973,7 +972,7 @@ end
 **Right**:
 ```fish
 function segment_aws_render
-    # ✅ GOOD: Validate output before rendering
+    # GOOD: Validate output before rendering
     set -l profile (aws configure get profile 2>/dev/null)
 
     # Return early if no profile
@@ -1034,7 +1033,7 @@ fn test_cache_miss() { /* ... */ }
 **Wrong**:
 ```fish
 function segment_git_render
-    # ❌ BAD: Hardcoded colors
+    # BAD: Hardcoded colors
     printf '%s' (set_color blue)"  main"(set_color normal)
 end
 ```
@@ -1042,7 +1041,7 @@ end
 **Right**:
 ```fish
 function segment_git_render
-    # ✅ GOOD: Use theme variables
+    # GOOD: Use theme variables
     set -l branch_color $__color_git_branch
     set -l icon $__glyph_git_branch
     printf '%s' (set_color $branch_color)"$icon main"(set_color normal)
@@ -1143,8 +1142,8 @@ pub fn detect_your_segment(path: &Path) -> Result<Option<YourInfo>> {
 **Fish escaping**:
 ```fish
 # Use proper quoting
-set -l output (some-command "$PWD")  # ✅ Quoted
-set -l output (some-command $PWD)    # ❌ Breaks on spaces
+set -l output (some-command "$PWD")  # quoted
+set -l output (some-command $PWD)    # breaks on spaces
 ```
 
 ---
@@ -1207,27 +1206,25 @@ Before submitting:
 ## Best Practices
 
 ### DO:
-- ✅ Cache expensive operations (file I/O, subprocesses)
-- ✅ Return `None` early if detection not applicable
-- ✅ Use structured data types (`struct` not `HashMap`)
-- ✅ Write unit tests for detection logic
-- ✅ Provide sensible default theme values
-- ✅ Document configuration options
+- Cache expensive operations (file I/O, subprocesses)
+- Return `None` early if detection not applicable
+- Use structured data types (`struct` not `HashMap`)
+- Write unit tests for detection logic
+- Provide sensible default theme values
+- Document configuration options
 
 ### DON'T:
-- ❌ Make network calls without caching (>100ms latency)
-- ❌ Run subprocesses on every prompt render
-- ❌ Use blocking I/O in async context
-- ❌ Forget to handle missing files gracefully
-- ❌ Hardcode colors in Fish functions
-- ❌ Skip error handling
+- Make network calls without caching (>100ms latency)
+- Run subprocesses on every prompt render
+- Use blocking I/O in async context
+- Forget to handle missing files gracefully
+- Hardcode colors in Fish functions
+- Skip error handling
 
 ---
 
 ## Next Steps
 
-- **For module references**: See [modules.md](../archive/modules.md) (archived)
-- **For cache tuning**: See [caching-strategy.md](../archive/caching-strategy.md) (archived)
 - **For system architecture**: See [architecture.md](architecture.md)
 
 ---

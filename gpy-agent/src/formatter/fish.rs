@@ -1,7 +1,7 @@
 //! Fish shell argument formatter
 //!
-//! Produces space-separated flags that mirror the legacy `format_git_status_fish`
-//! and `format_languages_as_fish_args` helpers.
+//! Produces space-separated `--flag value` arguments for the Fish prompt
+//! functions.
 //!
 //! This implementation is also re-exported as [`crate::formatter::ZshFormatter`]:
 //! Zsh's shell-argument rendering needs the exact same space-separated
@@ -80,7 +80,7 @@ mod tests {
     /// # Panics
     ///
     /// Panics if the formatter fails to render the repository status response.
-    fn repository_status_matches_legacy_output() {
+    fn repository_status_renders_fish_flags() {
         let formatter = FishFormatter;
         let (config, theme) = ctx();
         let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -113,7 +113,7 @@ mod tests {
     /// # Panics
     ///
     /// Panics if the formatter fails to render the language response.
-    fn language_output_matches_legacy() {
+    fn language_output_renders_fish_flags() {
         let formatter = FishFormatter;
         let (config, theme) = ctx();
         let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);

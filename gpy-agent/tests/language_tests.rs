@@ -1,67 +1,7 @@
-//! Unit tests for language detection functionality
-//!
-//! # Test Navigation Map
-//!
-//! **Total Tests**: 27
-//! **Last Updated**: 2026-06-29
-//!
-//! ## Test Categories
-//!
-//! ### ✅ Basic Operations (10 tests)
-//! Tests covering normal/happy path scenarios:
-//! - `test_normalize_language_name` - Language name normalization to canonical forms
-//! - `test_get_language_color_from_theme` - Language color mapping from theme configuration
-//! - `test_version_parsing_rust` - Rust version extraction from rustc output
-//! - `test_version_parsing_node` - Node version extraction from node output
-//! - `test_version_parsing_python` - Python version extraction from python output
-//! - `test_version_parsing_go` - Go version extraction from go version output
-//! - `test_version_parsing_swift` - Swift version extraction from swift output
-//! - `test_version_parsing_java` - Java version extraction from java output
-//! - `test_version_detectors_list` - Verify all 10 language detectors present
-//! - `test_version_caching` - Version cache hit/miss functionality
-//!
-//! ### ❌ Error Cases (0 tests)
-//! Tests covering error scenarios and failure modes:
-//! - (None - error handling embedded in parsing tests)
-//!
-//! ### 🔀 Edge Cases (0 tests)
-//! Tests covering boundary conditions:
-//! - (Edge cases embedded in version parsing tests)
-//!
-//! ### 🔗 Integration (2 tests)
-//! Tests covering cross-module interactions:
-//! - `test_language_aggregation_js_ts_to_node` - JS/TS file aggregation into single node entry
-//! - `test_no_pathbuf_collections_retained` - Regression test for memory-efficient metrics over path collections
-//!
-//! ### 🧭 Detection Modes (#227, 5 tests)
-//! Marker-based vs content-scan language detection:
-//! - `markers_mode_detects_languages_with_markers_present`
-//! - `markers_mode_hides_languages_without_markers`
-//! - `markers_mode_orders_by_evidence_count`
-//! - `markers_mode_is_case_insensitive_for_marker_files`
-//! - `detect_for_mode_content_matches_default_detector`
-//!
-//! ## What's NOT Tested (TODO)
-//! Known gaps for this module (from the original planning notes, since removed):
-//! - Version detection failure modes (command not found, permission denied)
-//! - Invalid/corrupted version output handling
-//! - Timeout handling for version detection commands
-//! - Cache invalidation and expiry scenarios
-//! - Custom language themes with missing color mappings
-//! - Directory detection with symlinks or special files
-//! - Unicode and non-UTF8 filenames in language detection
-//! - Language detection in very large directories (>10k files)
-//!
-//! ## Related Code
-//! - **Production**: `src/language/detector.rs`, `src/language/version.rs`, `src/language/cache.rs`, `src/config.rs` (`LanguageTheme`)
-//! - **Other Tests**: `integration_tests.rs::test_language_detection_integration`, `agent_daemon_tests.rs::test_oneshot_language_command`
-//! - **Fixtures**: None (uses tempfile for file creation tests)
-//!
-//! ## Quick Reference
-//! ```bash
-//! cargo test --test language_tests
-//! cargo test --test language_tests -- --nocapture
-//! ```
+//! Language detection tests: name normalization, theme colors, version
+//! parsing, directory scans in Markers/Content/Hybrid modes (including the
+//! bounded scan's fallbacks), and canonical naming across every renderable
+//! language.
 
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
@@ -759,8 +699,7 @@ fn test_language_aggregation_js_ts_to_node() {
 }
 
 #[test]
-fn test_no_pathbuf_collections_retained() {
-    // Regression test to ensure DetectedLanguage does not retain PathBuf collections
+fn test_detection_reports_file_count_and_bytes() {
     use gpy_agent::language::detector::Detector;
     use std::fs;
     use tempfile::tempdir;
@@ -777,21 +716,17 @@ fn test_no_pathbuf_collections_retained() {
     // Detect languages
     let detected = Detector::detect_directory(temp_path);
 
-    // Verify the structure uses metrics, not path collections
     for lang in &detected {
-        // The DetectedLanguage struct should have file_count and total_bytes
-        // but NOT a Vec<PathBuf> field
         assert!(
             lang.file_count > 0,
-            "Should have file_count metric instead of path collection"
+            "{} should report a file_count",
+            lang.name
         );
         assert!(
             lang.total_bytes > 0,
-            "Should have total_bytes metric instead of path collection"
+            "{} should report total_bytes",
+            lang.name
         );
-
-        // This test will fail to compile if anyone adds back a Vec<PathBuf> field
-        // and tries to access it, serving as a compile-time regression guard
     }
 
     // Verify we detected the JavaScript files
@@ -803,8 +738,6 @@ fn test_no_pathbuf_collections_retained() {
         "Should detect all 10 JavaScript files"
     );
 }
-
-// --- Marker-based detection mode (#227) -------------------------------------
 
 #[test]
 fn markers_mode_detects_languages_with_markers_present() {
@@ -873,8 +806,8 @@ fn bounded_content_detection_falls_back_to_markers_outside_a_git_repo() {
     // Same 95%/5% byte split as test_confidence_dominant_language: raw Content
     // mode would give rust a weighted confidence around ~0.95. With no `.git`
     // anywhere above `dir`, the bounded entry point must not run the
-    // unbounded recursive content scan at all (#390) -- it should fall back
-    // to Markers mode instead, which always reports flat 1.0 confidence.
+    // unbounded recursive content scan at all -- it falls back to Markers
+    // mode instead, which always reports flat 1.0 confidence.
     let dir = create_test_repo(&[("main.rs", 9500), ("config.json", 500)]);
     let detected = Detector::detect_directory_bounded(dir.path(), DetectionMode::Content);
 
@@ -905,9 +838,9 @@ fn bounded_content_detection_matches_unbounded_inside_a_git_repo() {
     );
 }
 
-/// #391: even inside a real git repo (past the #390 guard), a tree whose
-/// non-ignored file count exceeds the scan budget must still fall back to
-/// Markers mode rather than run the unbounded content scan.
+/// Even inside a real git repo, a tree whose non-ignored file count exceeds
+/// the scan budget must still fall back to Markers mode rather than run the
+/// unbounded content scan.
 #[test]
 fn bounded_content_detection_falls_back_when_file_count_exceeds_budget() {
     let dir = create_test_repo(&[("main.rs", 9500), ("config.json", 500)]);
@@ -932,8 +865,8 @@ fn bounded_content_detection_falls_back_when_file_count_exceeds_budget() {
     );
 }
 
-/// #391: staying under the budget must not change behavior versus the
-/// unbounded content scan.
+/// Staying under the budget must not change behavior versus the unbounded
+/// content scan.
 #[test]
 fn bounded_content_detection_stays_content_mode_under_budget() {
     let dir = create_test_repo(&[("main.rs", 9500), ("config.json", 500)]);
@@ -954,9 +887,9 @@ fn bounded_content_detection_stays_content_mode_under_budget() {
 #[test]
 fn bounded_hybrid_detection_falls_back_to_markers_outside_a_git_repo() {
     // Hybrid starts from the same expensive recursive content scan as
-    // Content, so it must get the same #390 repo-boundary protection: outside
-    // a git repo, the bounded entry point must fall back to Markers instead
-    // of running Hybrid's own content-based sub-scan.
+    // Content, so it gets the same repo-boundary protection: outside a git
+    // repo, the bounded entry point must fall back to Markers instead of
+    // running Hybrid's own content-based sub-scan.
     let dir = create_test_repo(&[("main.rs", 9500), ("config.json", 500)]);
     let detected = Detector::detect_directory_bounded(dir.path(), DetectionMode::Hybrid);
 
@@ -981,8 +914,6 @@ fn markers_mode_is_case_insensitive_for_marker_files() {
         "marker file match should be case-insensitive: {names:?}"
     );
 }
-
-// --- Hybrid detection mode (#229) -------------------------------------------
 
 #[test]
 fn hybrid_mode_gates_content_scan_by_markers() {
@@ -1077,8 +1008,6 @@ fn hybrid_mode_preserves_content_scan_confidence() {
     );
 }
 
-// --- gengo-language detector parity (#523) ----------------------------------
-
 /// One unambiguous source file per renderable canonical language, with content
 /// idiomatic enough that a content-based disambiguator lands on the same answer
 /// a path-based one does.
@@ -1167,8 +1096,8 @@ fn create_repo_with_contents(files: &[(&str, &str)]) -> tempfile::TempDir {
     dir
 }
 
-/// #523 acceptance criterion: a corpus covering all 14 renderable languages
-/// must produce the same canonical names before and after the detector swap.
+/// A corpus covering all 14 renderable languages yields each language's
+/// canonical name.
 #[test]
 fn content_scan_names_every_renderable_language() {
     let files: Vec<(&str, &str)> = RENDERABLE_LANGUAGE_FIXTURES
@@ -1248,10 +1177,8 @@ fn extensionless_shebang_script_resolves_to_python() {
     );
 }
 
-/// Documented parity edge (#523): the extension decides before the shebang is
-/// ever read, so a `.py` file claiming a Ruby interpreter is still Python.
-///
-/// This is the answer hyperpolyglot gave, deliberately preserved.
+/// The extension decides before the shebang is ever read, so a `.py` file
+/// claiming a Ruby interpreter is still Python.
 #[test]
 fn extension_wins_over_shebang_for_mislabelled_script() {
     let dir = create_repo_with_contents(&[(
@@ -1298,8 +1225,7 @@ fn vendored_and_documentation_paths_are_excluded_from_the_scan() {
     );
 }
 
-/// `detect_file` had no test coverage before #523 — only a benchmark exercised
-/// it — so its post-swap behaviour rests entirely on this.
+/// `detect_file` reports name, file count, and byte size for a single file.
 #[test]
 fn detect_file_reports_single_file_metrics() {
     let source = "fn main() {\n    println!(\"hello\");\n}\n";

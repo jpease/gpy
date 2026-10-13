@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # tests/bash/privacy_patterns.test.bash
 #
-# Regression test for #498: tracked docs linked to /Users/jpease/... and named
-# a private client project, which would have shipped to a public audience at
-# first publication.
+# Tracked docs must not link to a workstation path (/Users/jpease/...) or
+# name a private client project: they ship to a public audience.
 #
 # This exercises scripts/check-privacy-patterns.sh against throwaway git
 # repositories rather than re-implementing its scan, so the gate itself is
@@ -26,11 +25,8 @@ WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
 
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 # Build a scratch repo containing $2 as docs/sample.md, run the scanner in it,
 # and echo "<exit>|<output>". The scanner resolves the repo root as
@@ -111,9 +107,4 @@ if ! bash "$SCANNER" >/dev/null 2>&1; then
     fail "the repository has privacy-pattern violations"
 fi
 
-if [[ $failures -ne 0 ]]; then
-    echo "$failures assertion(s) failed"
-    exit 1
-fi
-
-echo "PASS"
+test_finish

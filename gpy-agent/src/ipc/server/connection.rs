@@ -59,7 +59,7 @@ pub(super) struct RouteResult {
 /// The chain position travels as a [`SegmentPosition`] rather than two
 /// `bool`s — together with `should_shutdown` that would be three bools on one
 /// struct, tripping `clippy::struct_excessive_bools` — and it is built once,
-/// at the wire boundary, so nothing downstream converts it back (#586).
+/// at the wire boundary, so nothing downstream converts it back.
 struct BlockingLineResult {
     response: Response,
     format: Format,
@@ -213,7 +213,7 @@ impl ConnectionHandler {
     /// single-flight `Condvar`s during cache misses (git status, language
     /// detection). All of it must stay off the Tokio worker threads: a
     /// single stalled `canonicalize()` (e.g. a hung NFS/automount cwd) must
-    /// not wedge every other connection (#154, #314).
+    /// not wedge every other connection.
     #[cfg(unix)]
     async fn route_line_blocking(&self, line_data: &[u8]) -> BlockingLineResult {
         let line_data_owned = line_data.to_vec();
@@ -291,9 +291,9 @@ impl ConnectionHandler {
 
     /// Blocking: parses the wire message and routes it (routing writes the
     /// language/git instant cache inside the handler). Runs on the blocking
-    /// pool via `spawn_blocking` (#314) since parsing does a `canonicalize()`
+    /// pool via `spawn_blocking` since parsing does a `canonicalize()`
     /// and routing can wait on synchronous single-flight `Condvar`s during
-    /// cache misses (#154).
+    /// cache misses.
     fn parse_and_route_blocking(
         line_data: &[u8],
         handler_registry: &HandlerRegistry,
@@ -325,7 +325,7 @@ impl ConnectionHandler {
             // A request that parsed far enough to name its format (e.g. one
             // whose `cwd` fails path validation) is answered in that format,
             // so a prompt request gets an empty segment rather than protocol
-            // JSON (#680). Unparseable bytes have no format: answer in JSON.
+            // JSON. Unparseable bytes have no format: answer in JSON.
             Err(e) => BlockingLineResult {
                 response: Response::Error {
                     message: format!("Parse error: {e}"),
@@ -346,12 +346,12 @@ impl ConnectionHandler {
     /// reference) so the caller can move cheap `Arc`/`GuardSettings` clones into a
     /// `spawn_blocking` closure. Handlers may perform synchronous single-flight
     /// waits on cache misses, so this MUST run on the blocking pool rather than a
-    /// Tokio worker thread (#154).
+    /// Tokio worker thread.
     ///
     /// Every segment-render message variant carries the same `format`/`is_last`/
-    /// `prev_bg` triple; rather than destructuring each variant in its own match
-    /// arm (as before #359), that shared shape is pulled once via
-    /// [`Message::request_meta`], and the live-update notification path via
+    /// `prev_bg` triple, pulled once via [`Message::request_meta`] rather than
+    /// destructured in a match arm per variant, and the live-update
+    /// notification path via
     /// [`Message::notify_path`]. `RegisterClient` remains a special case because
     /// (uniquely) it can short-circuit routing entirely on PID validation failure.
     pub(super) fn route_request_secure(
@@ -448,7 +448,7 @@ impl ConnectionHandler {
                 Ok(rendered) => rendered,
                 Err(e) => {
                     // The client asked for a format the socket does not serve:
-                    // answer with a JSON error rather than staying silent (#759).
+                    // answer with a JSON error rather than staying silent.
                     warn_log!("connection", "Failed to render response: {e}");
                     let error = Response::Error {
                         message: e.to_string(),
@@ -629,7 +629,7 @@ mod tests {
         );
     }
 
-    /// #680: a prompt request whose `cwd` fails path validation is answered
+    /// A prompt request whose `cwd` fails path validation is answered
     /// in the format it asked for, so the shell gets an empty segment rather
     /// than a JSON error line printed into the prompt.
     #[test]
@@ -648,15 +648,12 @@ mod tests {
         );
     }
 
-    /// #570: a single `LanguageDetect` request must write each of the 4
+    /// A single `LanguageDetect` request must write each of the 4
     /// variant cache files (`lang`, `lang_last`, `lang_first`,
     /// `lang_first_last`) exactly once, not twice.
     ///
-    /// Before the fix, the handler wrote all 4 variants via
-    /// `write_language_variants`, then `parse_and_route_blocking` wrote the
-    /// same 4 files again via the now-removed
-    /// `write_language_instant_cache_blocking`, for 8 total `write_cache_file`
-    /// calls.
+    /// The handler writes all 4 variants via `write_language_variants`;
+    /// `parse_and_route_blocking` must not write them again.
     ///
     /// The detection result is pre-seeded into the `DetectionCache` so the
     /// request takes the synchronous cache-hit path in
@@ -702,13 +699,13 @@ mod tests {
             result.response
         );
 
-        // 4 position variants, each written once per output dialect (#677).
+        // 4 position variants, each written once per output dialect.
         let expected = 4 * crate::formatter::PromptDialect::ALL.len();
         let calls = instant_cache.write_call_count() - before;
         assert_eq!(
             calls,
             u64::try_from(expected).expect("small count"),
-            "one language request must write each of the 4 variant files exactly once per dialect, not twice (#570)"
+            "one language request must write each of the 4 variant files exactly once per dialect, not twice"
         );
     }
 }

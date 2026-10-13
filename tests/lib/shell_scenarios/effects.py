@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Summarise one shell's observable side effects for the contract harness (#847).
+"""Summarise one shell's observable side effects for the contract harness.
 
     effects.py CALLS IPC
 

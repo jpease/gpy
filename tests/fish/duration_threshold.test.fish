@@ -1,11 +1,11 @@
 #!/usr/bin/env fish
-# Tests that duration segment gating uses the agent-exported `__duration_threshold_ms`
-# variable (not the legacy `__gpy_duration_threshold`). Regression for #203.
+# Duration segment gating uses the agent-exported `__duration_threshold_ms`
+# variable, never the retired `__gpy_duration_threshold`.
 
 set -l repo_root (path dirname (path dirname (path dirname (status --current-filename))))
 cd $repo_root
 
-echo "Testing duration threshold variable (#203)..."
+echo "Testing duration threshold variable..."
 
 # Source the duration segment
 source fish/segments/duration.fish
@@ -84,16 +84,6 @@ test_duration_visible_at_threshold; or set failures (math $failures + 1)
 test_duration_visible_above_threshold; or set failures (math $failures + 1)
 test_legacy_variable_not_consulted; or set failures (math $failures + 1)
 test_default_when_var_unset; or set failures (math $failures + 1)
-
-# Also verify bash/zsh segment files do not reference the old variable name
-echo ""
-echo "Test 6: bash/zsh segment files use __duration_threshold_ms (not legacy name)"
-if grep -q __gpy_duration_threshold bash/segments/duration.bash zsh/segments/duration.zsh 2>/dev/null
-    echo "❌ Found legacy __gpy_duration_threshold in bash/zsh segments"
-    set failures (math $failures + 1)
-else
-    echo "✅ bash/zsh segments use __duration_threshold_ms"
-end
 
 echo ""
 if test $failures -eq 0

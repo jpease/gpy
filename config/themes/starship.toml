@@ -79,7 +79,7 @@ show_leading_zero = false
 # root/sudo (gated shell-side by segment_username_detect), so `$style` maps to
 # Starship's `style_root` (bold red) — the elevated-session case. Non-root users
 # see nothing (show_always = false), matching Starship's default. GPY renders a
-# single style rather than Starship's root-vs-user style switch (#252).
+# single style rather than Starship's root-vs-user style switch.
 [segments.username]
 format = "[$username](bold red) in "
 show_always = false
@@ -89,7 +89,7 @@ show_always = false
 # default: the shell's segment_hostname_detect hides this segment off-SSH. The
 # icon is Starship's default `ssh_symbol` (globe + trailing space); like
 # Starship, `$symbol` resolves to it only in SSH sessions (the shell reports
-# its SSH state to the agent, #826), so a theme that sets show_always = true
+# its SSH state to the agent), so a theme that sets show_always = true
 # shows the bare hostname locally and the globe only over SSH.
 [segments.hostname]
 format = "[$symbol$hostname](bold dimmed green) in "

@@ -4,8 +4,8 @@
 #
 # Bash 4 has no EPOCHREALTIME, so durations come from `date +%s%N` -- but only
 # GNU date knows `%N`. BSD/macOS date (Homebrew's Bash 4 on a Mac) prints a
-# literal `N`, and the old code then fed `1730000000N` into `$(( ))` on every
-# prompt (#850). The method is now chosen by probing `date` once.
+# literal `N`, and feeding `1730000000N` into `$(( ))` errors on every prompt.
+# The method is therefore chosen by probing `date` once.
 #
 # A Bash 4 interpreter is not required: __gpy_select_duration_method takes the
 # major version as an argument, and `date` is a PATH shim that behaves like
@@ -85,6 +85,7 @@ __gpy_keep_arm_hook_last() { :; }
 __gpy_duration_method=date-seconds
 __gpy_cmd_duration=""
 PATH="$SANDBOX/bsd:$PATH" __gpy_preexec
+# A real ~2 s command: the measured duration is the subject under test.
 sleep 2
 PATH="$SANDBOX/bsd:$PATH" __gpy_precmd 2>"$SANDBOX/precmd.err" >/dev/null
 check "date-seconds precmd prints no arithmetic error" "" "$(cat "$SANDBOX/precmd.err")"

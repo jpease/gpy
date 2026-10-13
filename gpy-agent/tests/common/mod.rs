@@ -1,10 +1,14 @@
-//! Common test utilities and fixtures
+//! Shared test helpers for the integration-test binaries that `mod common;`.
 //!
-//! This module provides reusable test fixtures to eliminate duplicate test setup code
-//! and accelerate test development across the GPY project.
+//! Binaries that only need one helper include that file directly with
+//! `#[path = "common/<file>.rs"] mod <file>;` instead.
 
 pub mod cli_harness;
+pub mod endpoint;
+pub mod env_guard;
 pub mod fixtures;
+pub mod git;
+pub mod wait;
 
 #[allow(unused_imports)]
 pub use fixtures::{
@@ -14,3 +18,12 @@ pub use fixtures::{
 
 #[allow(unused_imports)]
 pub use cli_harness::{CliCommandResult, CliTestEnv, SharedCliTestEnv};
+
+#[allow(unused_imports)]
+pub use endpoint::{endpoint_builder, wait_for_socket};
+
+#[allow(unused_imports)]
+pub use env_guard::EnvGuard;
+
+#[allow(unused_imports)]
+pub use wait::{wait_until, wait_until_async};

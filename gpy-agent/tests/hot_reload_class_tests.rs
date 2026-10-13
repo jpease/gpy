@@ -1,4 +1,4 @@
-//! HOT-RELOAD class test.
+//! Hot-reload consistency tests.
 //!
 //! Invariant: for every way config/theme/palette can change on disk while the
 //! agent runs, once the reload settles, what the agent exported
@@ -8,12 +8,8 @@
 //!
 //! One `const` row per change mechanism, all driven through one
 //! harness (`Agent::new()` against temp `XDG_*` dirs, the production wiring).
-//!
-//! Extension points (later issues add one row each): symlinked config.toml
-//! (#720), palette file edit (#772), poll-thread stop latency (#778),
-//! keys removed on theme switch (#791). Instant-cache comparison joins the
-//! harness once it can seed a warm repo (`Agent` exposes no handle to its git
-//! cache).
+//! The instant cache is not compared: `Agent` exposes no handle to its git
+//! cache, so the harness cannot seed a warm repo.
 
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -23,6 +19,12 @@
 #![allow(clippy::default_numeric_fallback)]
 #![cfg(unix)]
 
+#[path = "common/env_guard.rs"]
+mod env_guard;
+#[path = "common/wait.rs"]
+mod wait;
+
+use env_guard::EnvGuard;
 use gpy_agent::agent::Agent;
 use gpy_agent::cache::theme_export::write_theme_export_to_dir;
 use gpy_agent::config::Config;
@@ -32,12 +34,12 @@ use gpy_agent::palette::active_palette;
 use gpy_agent::theme::ThemeManager;
 use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
 use serial_test::serial;
-use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
+use wait::wait_until;
 
 static DOORBELL_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -68,7 +70,7 @@ struct Mechanism {
 /// The table: one `const` row per mechanism plus one `#[test]` below that runs
 /// it. Add a row here (and a test) to cover a new way the disk can change.
 const EDIT_ACTIVE_THEME: Mechanism = Mechanism {
-    name: "edit active theme file in place (#710)",
+    name: "edit active theme file in place",
     setup: None,
     apply: edit_active_theme_in_place,
     doorbells: Some(1),
@@ -86,51 +88,51 @@ const EDIT_CONFIG_IN_PLACE: Mechanism = Mechanism {
     doorbells: None,
 };
 const EDIT_SYMLINKED_CONFIG_TARGET: Mechanism = Mechanism {
-    name: "edit the target of a symlinked config.toml (#720)",
+    name: "edit the target of a symlinked config.toml",
     setup: Some(symlink_config_into_dotfiles),
     apply: edit_symlinked_config_target,
     doorbells: None,
 };
 const RETARGET_SYMLINKED_CONFIG: Mechanism = Mechanism {
-    name: "retarget a symlinked config.toml (#720)",
+    name: "retarget a symlinked config.toml",
     setup: Some(symlink_config_into_dotfiles),
     apply: retarget_symlinked_config,
     doorbells: None,
 };
 
 const EDIT_ACTIVE_PALETTE: Mechanism = Mechanism {
-    name: "edit the active palette file in place (#772)",
+    name: "edit the active palette file in place",
     setup: None,
     apply: edit_active_palette_in_place,
     doorbells: Some(1),
 };
 const REAPPLY_SAME_PALETTE: Mechanism = Mechanism {
-    name: "rewrite config.toml with the same palette name after a palette edit (#772)",
+    name: "rewrite config.toml with the same palette name after a palette edit",
     setup: None,
     apply: reapply_same_palette,
     doorbells: None,
 };
 
 const INVALID_THEN_FIXED_CONFIG: Mechanism = Mechanism {
-    name: "fix an invalid lower-priority config.toml the agent started without (#788)",
+    name: "fix an invalid lower-priority config.toml the agent started without",
     setup: Some(invalid_home_config_only),
     apply: fix_home_config,
     doorbells: None,
 };
 const DELETE_CONFIG: Mechanism = Mechanism {
-    name: "delete the active config.toml (#788)",
+    name: "delete the active config.toml",
     setup: None,
     apply: delete_active_config,
     doorbells: None,
 };
 const HIGHER_PRIORITY_CONFIG_APPEARS: Mechanism = Mechanism {
-    name: "create a higher-priority config.toml while running on a lower one (#788)",
+    name: "create a higher-priority config.toml while running on a lower one",
     setup: Some(config_lives_under_home),
     apply: create_xdg_config,
     doorbells: None,
 };
 const DELETE_CONFIG_WITH_LOCAL_GPY_TOML: Mechanism = Mechanism {
-    name: "delete the active config.toml with a .gpy.toml in the agent's cwd (#733)",
+    name: "delete the active config.toml with a .gpy.toml in the agent's cwd",
     setup: Some(local_gpy_toml_in_cwd),
     apply: delete_active_config,
     doorbells: None,
@@ -157,7 +159,7 @@ fn delete_active_config(h: &Harness) {
 
 /// A `.gpy.toml` in the directory the agent starts from, naming a theme that
 /// differs from both the active config and the defaults. It is not a config
-/// source (#733), so it must never become active.
+/// source, so it must never become active.
 fn local_gpy_toml_in_cwd(h: &Harness) {
     std::env::set_current_dir(&h.home).expect("enter launch dir");
     Harness::write_config_at(&h.home.join(".gpy.toml"), OTHER_THEME, true);
@@ -228,7 +230,7 @@ struct Harness {
     home: PathBuf,
     config_home: PathBuf,
     cache_home: PathBuf,
-    prev_env: Vec<(&'static str, Option<OsString>)>,
+    _env: EnvGuard,
     prev_cwd: PathBuf,
     prev_sigurg: SigAction,
 }
@@ -248,24 +250,11 @@ impl Harness {
         ] {
             fs::create_dir_all(dir).expect("create dir");
         }
-        let vars: [(&'static str, Option<&Path>); 6] = [
-            ("HOME", Some(&root)),
-            ("XDG_CONFIG_HOME", Some(&config_home)),
-            ("XDG_CACHE_HOME", Some(&cache_home)),
-            ("XDG_RUNTIME_DIR", Some(&runtime)),
-            ("GPY_CONFIG_PATH", None),
-            ("GPY_DISABLE_WATCHER", None),
-        ];
-        let mut prev_env = Vec::new();
-        for (key, value) in vars {
-            prev_env.push((key, std::env::var_os(key)));
-            unsafe {
-                match value {
-                    Some(v) => std::env::set_var(key, v),
-                    None => std::env::remove_var(key),
-                }
-            }
-        }
+        let mut env = EnvGuard::cleared(&["GPY_CONFIG_PATH", "GPY_DISABLE_WATCHER"]);
+        env.set("HOME", &root);
+        env.set("XDG_CONFIG_HOME", &config_home);
+        env.set("XDG_CACHE_HOME", &cache_home);
+        env.set("XDG_RUNTIME_DIR", &runtime);
         DOORBELL_COUNTER.store(0, Ordering::Relaxed);
         let handler = SigAction::new(
             SigHandler::Handler(count_doorbell),
@@ -278,7 +267,7 @@ impl Harness {
             home: root,
             config_home,
             cache_home,
-            prev_env,
+            _env: env,
             prev_cwd: std::env::current_dir().expect("current dir"),
             prev_sigurg,
         };
@@ -408,27 +397,11 @@ impl Harness {
 impl Drop for Harness {
     fn drop(&mut self) {
         let _ = std::env::set_current_dir(&self.prev_cwd);
+        // SAFETY: restores the handler `Harness::new` replaced; tests are serial.
         unsafe {
             let _ = sigaction(Signal::SIGURG, &self.prev_sigurg);
-            for (key, value) in self.prev_env.drain(..) {
-                match value {
-                    Some(v) => std::env::set_var(key, v),
-                    None => std::env::remove_var(key),
-                }
-            }
         }
     }
-}
-
-fn wait_until(deadline: Duration, predicate: impl Fn() -> bool) -> bool {
-    let start = Instant::now();
-    while start.elapsed() < deadline {
-        if predicate() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    predicate()
 }
 
 fn run_mechanism(mechanism: &Mechanism) {
@@ -461,7 +434,9 @@ fn run_mechanism(mechanism: &Mechanism) {
     );
 
     let agent_state = || (harness.agent_exports(), agent.active_palette_for_testing());
-    let settled = wait_until(SETTLE_DEADLINE, || agent_state() == expected);
+    let settled = wait_until(SETTLE_DEADLINE, Duration::from_millis(50), || {
+        agent_state() == expected
+    });
     assert!(
         settled,
         "[{}] exports/palette never matched a fresh load from disk.\nagent fish export:\n{}\nfresh fish export:\n{}\nagent palette: {:?}\nfresh palette: {:?}",
@@ -528,7 +503,7 @@ fn hot_reload_edit_active_palette_in_place() {
     run_mechanism(&EDIT_ACTIVE_PALETTE);
 }
 
-/// #778: with the poll fallback in use, a theme switch by name must not wait
+/// With the poll fallback in use, a theme switch by name must not wait
 /// out the poll interval (the CLI gives the agent 2 s to acknowledge a reload).
 /// Drives `ThemeManager` directly: `switch_theme` is what the `config_reload`
 /// request runs synchronously, and it re-arms the watcher via `HotReloadSlot`.
@@ -537,8 +512,7 @@ fn hot_reload_edit_active_palette_in_place() {
 fn hot_reload_switch_theme_by_name_with_poll_fallback_is_prompt() {
     const POLL_VAR: &str = "GPY_THEME_WATCH_POLL_MS";
     let harness = Harness::new();
-    let prev = std::env::var_os(POLL_VAR);
-    unsafe { std::env::set_var(POLL_VAR, "250") };
+    let poll_env = EnvGuard::set_one(POLL_VAR, "250");
 
     let manager = ThemeManager::new(ACTIVE_THEME).expect("theme manager");
     manager
@@ -551,12 +525,7 @@ fn hot_reload_switch_theme_by_name_with_poll_fallback_is_prompt() {
     let switched = manager.switch_theme(OTHER_THEME);
     let elapsed = started.elapsed();
 
-    unsafe {
-        match prev {
-            Some(v) => std::env::set_var(POLL_VAR, v),
-            None => std::env::remove_var(POLL_VAR),
-        }
-    }
+    drop(poll_env);
     drop(manager);
     drop(harness);
 
@@ -573,7 +542,7 @@ fn hot_reload_reapply_same_palette() {
     run_mechanism(&REAPPLY_SAME_PALETTE);
 }
 
-/// #788: the agent starts on an unparsable lower-priority config (falling
+/// The agent starts on an unparsable lower-priority config (falling
 /// back to defaults), and fixing that file must apply it.
 #[test]
 #[serial]
@@ -581,21 +550,21 @@ fn hot_reload_invalid_config_then_fixed() {
     run_mechanism(&INVALID_THEN_FIXED_CONFIG);
 }
 
-/// #788: deleting the active config.toml reverts the agent to defaults.
+/// Deleting the active config.toml reverts the agent to defaults.
 #[test]
 #[serial]
 fn hot_reload_delete_config() {
     run_mechanism(&DELETE_CONFIG);
 }
 
-/// #788: a higher-priority candidate appearing switches the agent to it.
+/// A higher-priority candidate appearing switches the agent to it.
 #[test]
 #[serial]
 fn hot_reload_higher_priority_config_appears() {
     run_mechanism(&HIGHER_PRIORITY_CONFIG_APPEARS);
 }
 
-/// #733: with the active config.toml gone, the agent falls back to defaults,
+/// With the active config.toml gone, the agent falls back to defaults,
 /// never to a `.gpy.toml` in the directory it was launched from.
 #[test]
 #[serial]

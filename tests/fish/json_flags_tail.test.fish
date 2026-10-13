@@ -2,23 +2,19 @@
 # tests/fish/json_flags_tail.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression/contract test for #613.
+# Contract test for the shared is_last/is_first/prev_bg JSON tail.
 #
-# Before this issue, is_last/is_first/prev_bg JSON tail-building was hand-
-# duplicated across five IPC request builders in fish/core/ipc.fish
-# (__gpy_build_data_payload, __gpy_request_duration, __gpy_request_character,
-# __gpy_request_hostname, __gpy_request_username), and each segment
-# re-converted the dispatch loop's is_last/is_first into whatever local
-# convention it felt like using. This test:
+# Every IPC request builder in fish/core/ipc.fish (__gpy_build_data_payload,
+# __gpy_request_duration, __gpy_request_character, __gpy_request_hostname,
+# __gpy_request_username) builds its flags tail through __gpy_json_flags_tail
+# and the dispatch loop's single "true"/"" convention. This test:
 #
 #   1. Exercises __gpy_json_flags_tail directly across every
 #      (is_last, is_first, prev_bg) combination, plus a prev_bg that needs
 #      JSON escaping.
-#   2. Proves the five refactored IPC builders produce byte-identical JSON by
-#      intercepting __gpy_ipc_send and asserting the exact request string for
+#   2. Pins the exact JSON each of the five IPC builders produces by
+#      intercepting __gpy_ipc_send and asserting the request string for
 #      several flag combinations.
-#
-# Must FAIL on a tree without __gpy_json_flags_tail (function undefined).
 
 set -l script_dir (dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
@@ -75,10 +71,8 @@ check "tail: last, prev_bg needing escaping" \
     ',"is_last":true,"prev_bg":"blue\"bg\\\\path"' \
     (__gpy_json_flags_tail true "" 'blue"bg\path')
 
-# --- 2. Payload byte-equality proof: intercept __gpy_ipc_send and assert the
-# exact JSON each refactored builder sends, per flag combination. This makes
-# the refactor's "byte-identical payloads for the same inputs" claim a
-# permanent, executable check rather than a one-off manual diff.
+# --- 2. Payload byte-equality: intercept __gpy_ipc_send and assert the
+# exact JSON each builder sends, per flag combination.
 function __gpy_ipc_send
     # Echo the payload verbatim instead of touching a real socket.
     echo $argv[1]

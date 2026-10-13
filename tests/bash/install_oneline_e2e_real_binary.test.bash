@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # install-oneline.sh -> first prompt -> uninstall, per shell, with the real
-# binaries (#649, pins #642).
+# binaries.
 #
 # The `curl | sh` installer downloads everything: a fake `curl` on PATH maps
 # each release URL onto the debug binaries (with real `.sha256` sidecar
@@ -12,7 +12,7 @@
 # its own sandboxed HOME:
 #
 #   install   exit 0; the installer's uninstall hint names the scripts
-#             (#642); zsh/bash: the structural completions file the
+#             to run; zsh/bash: the structural completions file the
 #             installed `gpy` generated is present and the shell's
 #             completion loader parses it; the installed agent responds
 #   first     a real interactive shell on a pty (fish -i / zsh -i / bash -i)
@@ -59,10 +59,6 @@ case "$(uname -s | tr '[:upper:]' '[:lower:]')" in
         ;;
     *) test_skip "install-oneline.sh does not support $(uname -s)" ;;
 esac
-
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 # A `curl` that serves release assets from the debug build and shell files
 # from this checkout. `-o FILE` downloads; a bare URL prints to stdout (used
@@ -250,8 +246,4 @@ run_shell fish fish
 run_shell zsh sh
 run_shell bash sh
 
-if [ "$failures" -gt 0 ]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: install-oneline.sh installs, renders a first prompt and uninstalls for fish, zsh and bash"
+test_finish "install-oneline.sh installs, renders a first prompt and uninstalls for fish, zsh and bash"

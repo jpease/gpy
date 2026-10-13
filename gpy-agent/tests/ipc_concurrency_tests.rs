@@ -1,24 +1,7 @@
-//! Concurrency tests for asynchronous cache-miss handling (#154).
-//!
-//! These tests verify that expensive cold cache misses (git status, language
-//! detection) no longer block Tokio worker threads. Request routing runs on the
-//! blocking pool via `spawn_blocking`, so cached/warm requests (ping) stay
-//! responsive while many simultaneous misses are in flight.
-//!
-//! # What is exercised
-//!
-//! - `test_mixed_cold_and_warm_requests_all_succeed` — many simultaneous cold git
-//!   misses, language detections, and warm pings all complete successfully.
-//! - `test_pings_stay_responsive_under_cold_git_load` — pings round-trip within a
-//!   bounded budget while a batch of cold git misses runs concurrently. Before the
-//!   #154 fix, the synchronous single-flight waits ran inline on worker threads and
-//!   could starve the runtime; offloading to the blocking pool keeps ping latency
-//!   bounded.
-//!
-//! ## Quick Reference
-//! ```bash
-//! cargo test --test ipc_concurrency_tests
-//! ```
+//! Concurrency and admission-control tests for the IPC server: cold cache
+//! misses run on the blocking pool so warm requests stay responsive, a
+//! saturated connection semaphore rejects fast, and slow clients hit the
+//! whole-connection deadline.
 
 #![allow(clippy::panic)]
 #![allow(clippy::expect_used)]
@@ -26,13 +9,12 @@
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::missing_errors_doc)]
 
+mod common;
+
+use common::git::{git, git_init};
+use common::{endpoint_builder, wait_for_socket};
 use gpy_agent::config::manager::ConfigManager;
-use gpy_agent::git::cache::GitStatusCache;
-use gpy_agent::ipc::ClientDirectory;
-use gpy_agent::ipc::LatencyTracker;
-use gpy_agent::ipc::server::EndpointHandle;
 use gpy_agent::security::GuardSettings;
-use gpy_agent::theme::ThemeManager;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -52,8 +34,8 @@ async fn start_server(socket_name: &str) -> (tokio::task::JoinHandle<()>, PathBu
 /// security config.
 ///
 /// Lets tests shrink `max_concurrent_connections` or the per-read timeout to
-/// exercise the admission-control paths (#316) deterministically instead of
-/// needing hundreds of real connections.
+/// exercise the admission-control paths deterministically instead of needing
+/// hundreds of real connections.
 async fn start_server_with(
     socket_name: &str,
     config_manager: Arc<ConfigManager>,
@@ -61,34 +43,17 @@ async fn start_server_with(
 ) -> (tokio::task::JoinHandle<()>, PathBuf, TempDir) {
     let temp_dir = tempdir().expect("temp dir");
     let socket_path = temp_dir.path().join(socket_name);
-    let server_socket_path = socket_path.clone();
 
+    let mut server = endpoint_builder(socket_path.clone())
+        .config_manager(config_manager)
+        .security_config(security_config)
+        .build()
+        .expect("server build");
     let server_handle = tokio::spawn(async move {
-        let mut server = EndpointHandle::builder()
-            .socket_path(server_socket_path)
-            .client_registry(ClientDirectory::new().shared())
-            .git_cache(Arc::new(GitStatusCache::new()))
-            .config_manager(config_manager)
-            .watcher_slot(Arc::new(std::sync::Mutex::new(None)))
-            .theme_manager(Arc::new(ThemeManager::builtin("default").expect("theme")))
-            .instant_cache(Arc::new(
-                gpy_agent::cache::InstantPromptCache::new_for_test(),
-            ))
-            .latency_tracker(Arc::new(LatencyTracker::new(1000)))
-            .language_cache(gpy_agent::language::DetectionCache::new())
-            .security_config(security_config)
-            .build()
-            .expect("server build");
         server.start().await.expect("server start");
     });
 
-    timeout(Duration::from_secs(5), async {
-        while !socket_path.exists() {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("server socket not ready in time");
+    wait_for_socket(&socket_path, Duration::from_secs(5)).await;
 
     (server_handle, socket_path, temp_dir)
 }
@@ -97,25 +62,10 @@ async fn start_server_with(
 fn make_repo() -> TempDir {
     let repo = tempdir().expect("repo dir");
     let path = repo.path();
-    for args in [
-        vec!["init"],
-        vec!["config", "user.email", "test@example.com"],
-        vec!["config", "user.name", "Test User"],
-    ] {
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(path)
-            .output()
-            .expect("git command");
-    }
+    git_init(path);
     std::fs::write(path.join("README.md"), "# Concurrency Test\n").expect("write file");
-    for args in [vec!["add", "README.md"], vec!["commit", "-m", "init"]] {
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(path)
-            .output()
-            .expect("git command");
-    }
+    git(path, &["add", "README.md"]);
+    git(path, &["commit", "-q", "-m", "init"]);
     repo
 }
 
@@ -207,9 +157,9 @@ async fn test_mixed_cold_and_warm_requests_all_succeed() {
 
 /// Pings stay responsive while a batch of cold git misses runs concurrently.
 ///
-/// The two worker threads would be saturated by inline blocking single-flight
-/// waits before #154; with the waits offloaded to the blocking pool, ping
-/// round-trips stay well under the budget.
+/// Single-flight cache-miss waits block, so they run on the blocking pool;
+/// inline on the two worker threads they would starve the runtime. Ping
+/// round-trips therefore stay well under the budget.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_pings_stay_responsive_under_cold_git_load() {
     let (server_handle, socket_path, _temp_dir) =
@@ -249,8 +199,8 @@ async fn test_pings_stay_responsive_under_cold_git_load() {
     }
 
     // Generous bound: catches a full runtime stall without being flaky on slow CI.
-    // Worker threads are never blocked on cache-miss waits after #154, so pings
-    // round-trip in milliseconds in practice.
+    // Worker threads never block on cache-miss waits, so pings round-trip in
+    // milliseconds in practice.
     assert!(
         max_ping < Duration::from_secs(2),
         "pings must stay responsive under cold git load; slowest was {max_ping:?}"
@@ -267,13 +217,13 @@ async fn test_pings_stay_responsive_under_cold_git_load() {
 /// Saturating the connection semaphore must reject new connections fast,
 /// by closing them without a reply.
 ///
-/// Fast rejection instead of queueing forever is #316 (acceptance criterion
-/// 2). Closing without a reply is #680: the request is never read, so its
-/// format is unknown and any reply line could land in a prompt.
+/// Fast rejection keeps a stuck client from queueing every later prompt
+/// behind it. The request is never read, so its format is unknown and any
+/// reply line could land in a prompt; hence a close with no reply.
 ///
-/// Regression check: this test hangs against `semaphore.acquire().await`
-/// (blocks indefinitely once the single permit is held), and fails against
-/// the pre-#680 rejection that wrote a JSON `Response::Error` line.
+/// A blocking `semaphore.acquire().await` would make this test hang (once
+/// the single permit is held), and a rejection that writes a JSON
+/// `Response::Error` line fails it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_semaphore_saturation_fails_fast_without_reply() {
     let config_manager = Arc::new(ConfigManager::with_defaults().expect("default config"));
@@ -302,9 +252,10 @@ async fn test_semaphore_saturation_fails_fast_without_reply() {
         .expect("write partial (unterminated) line");
 
     // Give the accept loop time to spawn the holder's handler task and
-    // acquire the sole permit before the second connection races it; the
-    // holder is the only connection in play so it is guaranteed to win once
-    // its task has actually run.
+    // acquire the sole permit before the second connection races it. Permit
+    // acquisition is server-internal with no client-visible signal to poll,
+    // so a fixed pause is used; the holder is the only connection in play,
+    // so it is guaranteed to win once its task has run.
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // A second connection must fail fast instead of queueing behind the
@@ -344,15 +295,13 @@ async fn test_semaphore_saturation_fails_fast_without_reply() {
     server_handle.abort();
 }
 
-/// A connection cannot live longer than the documented whole-connection
-/// deadline, even if no individual `read()` ever times out (#316,
-/// acceptance criterion 1).
+/// A connection cannot live longer than the whole-connection deadline, even
+/// if no individual `read()` ever times out.
 ///
 /// A slow-loris client trickles single bytes (no newline, so no complete
 /// message ever arrives) spaced comfortably under the per-read timeout.
-/// Before the fix, nothing ever ends this connection; after the fix, the
-/// whole-connection deadline (4x the live per-read timeout, see
-/// `spawn_client_handler` in `src/ipc/server/handle.rs`) force-closes it.
+/// Only the whole-connection deadline (4x the live per-read timeout, see
+/// `spawn_client_handler` in `src/ipc/server/handle.rs`) can force-close it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_slow_loris_connection_hits_whole_connection_deadline() {
     // Shrink the live per-read timeout to 2s so the derived whole-connection

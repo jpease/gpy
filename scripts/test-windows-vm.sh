@@ -38,10 +38,8 @@ fi
 success "SSH connection to $WINVM_HOST OK"
 
 # Windows OpenSSH sets HOME in the session it hands us; windows-latest has no
-# HOME, and no XDG_* either. That single difference decided two tests: the run
-# measured for #513 saw 1 failure here against 8 on the runner, because with
-# HOME set the cache- and config-root tests took a branch the runner cannot
-# reach (#530). Clear the three variables so a local run starts from the
+# HOME, and no XDG_* either. With HOME set, the cache- and config-root tests
+# take a branch the runner cannot reach (#530). Clear the three variables so a local run starts from the
 # runner's environment shape.
 #
 # Set GPY_WINVM_KEEP_HOME=1 to deliberately test the HOME-present path -- that

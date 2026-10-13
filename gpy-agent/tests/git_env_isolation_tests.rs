@@ -1,4 +1,4 @@
-//! GIT-ENV class test (#714).
+//! Git environment isolation tests.
 //!
 //! Invariant: the agent's git status for repo B, computed with a hostile
 //! inherited git environment, equals the status computed with a clean
@@ -6,9 +6,8 @@
 //! not asked to. The hostile environment is passed only to the `gpy-agent`
 //! child process, never to the test process or to the fixture `git` calls.
 //!
-//! To add a case (e.g. #715's `core.untrackedCache` overwrite), append a row
-//! to [`hostile_rows`] and, if it needs a new observable, extend
-//! [`Snapshot`].
+//! To add a case, append a row to [`hostile_rows`] and, if it needs a new
+//! observable, extend [`Snapshot`].
 
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::missing_panics_doc)]
@@ -21,25 +20,13 @@ use std::process::Command;
 
 #[path = "common/cli_harness.rs"]
 mod cli_harness;
+#[path = "common/git.rs"]
+mod git_helpers;
 use cli_harness::CliTestEnv;
+use git_helpers::{git, git_init};
 
 /// One hostile inherited-environment row: a label and the variables to set.
 type Row = (&'static str, Vec<(&'static str, String)>);
-
-fn git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args(["-c", "commit.gpgsign=false", "-c", "user.name=T"])
-        .args(["-c", "user.email=t@example.com"])
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("spawn git");
-    assert!(
-        output.status.success(),
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
 
 /// Repo A on `featureA` (one extra tracked file), repo B on `main` with a
 /// modified tracked file and one untracked file. Returns `(a, b)`.
@@ -205,7 +192,7 @@ fn local_untracked_cache(repo: &Path) -> Vec<String> {
         .collect()
 }
 
-/// #715: gpy must never override a `core.untrackedCache` the user set at any
+/// gpy must never override a `core.untrackedCache` the user set at any
 /// scope, but still enables it when it is unset everywhere.
 #[test]
 fn test_agent_respects_user_untracked_cache_setting() {
@@ -231,7 +218,7 @@ fn test_agent_respects_user_untracked_cache_setting() {
     for (index, (label, local, global, expected)) in rows.into_iter().enumerate() {
         let repo = env.root().join(format!("uc{index}"));
         fs::create_dir_all(&repo).expect("mkdir");
-        git(&repo, &["init", "-q", "-b", "main"]);
+        git_init(&repo);
         fs::write(repo.join("f"), "x\n").expect("write");
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-q", "-m", "init"]);

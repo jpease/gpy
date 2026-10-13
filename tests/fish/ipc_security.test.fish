@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-# Test IPC security - path injection vulnerability fixes
+# Test IPC security - request payloads JSON-escape paths, preventing injection
 
 # Source the core files
 source fish/core/util.fish
@@ -113,7 +113,7 @@ function test_json_escape_function
     end
 end
 
-# Test that the old string escape method would have been vulnerable
+# Contrast naive `string escape` quoting with __gpy_request's JSON escaping
 function test_old_method_vulnerability
     echo "Testing that old string escape method would be vulnerable..."
 
@@ -123,14 +123,14 @@ function test_old_method_vulnerability
 
     echo "Old method payload: $old_payload"
 
-    # The old method might produce invalid JSON or allow injection
+    # `string escape` is not JSON escaping: it may produce invalid JSON or allow injection
     if echo $old_payload | jq . >/dev/null 2>&1
         echo "⚠ Old method still produces valid JSON (unexpected)"
     else
         echo "✓ Old method produces invalid JSON (as expected)"
     end
 
-    # Compare with new method
+    # __gpy_request's payload must be valid JSON
     set -l new_payload (__gpy_request git $malicious_path)
     echo "New method payload: $new_payload"
 

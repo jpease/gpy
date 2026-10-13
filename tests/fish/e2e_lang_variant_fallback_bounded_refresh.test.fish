@@ -1,30 +1,27 @@
 #!/usr/bin/env fish
 # SPDX-License-Identifier: GPL-3.0-or-later
-# ============================================================================
-# E2E Test: Language Segment Variant-Fallback Bounded Refresh (#454)
-# ============================================================================
+# E2E Test: Language Segment Variant-Fallback Bounded Refresh
 #
 # `__gpy_read_instant_cache` falls back to the context-free `.none` variant
 # when no token-specific file exists yet for the render's real `prev_bg` (a
 # NEW powerline context, e.g. the first render after the previous segment's
-# background changed). For git this is already corrected (#436) via a bounded
-# SYNCHRONOUS IPC query. Pre-#454 the language branch computed the same
-# fallback but discarded it -- the language segment treated the fallback as an
-# ordinary warm hit and could redisplay the wrong-context chevron indefinitely,
-# never causing the token-specific entry to be written.
+# background changed). Git corrects this via a bounded SYNCHRONOUS IPC query.
+# Treating the fallback as an ordinary warm hit would let the language
+# segment redisplay the wrong-context chevron indefinitely, never causing the
+# token-specific entry to be written.
 #
 # Unlike git, language's cold-miss path is deliberately background-only (see
 # the comment in fish/segments/language.fish) to avoid blocking the prompt on
-# slow language detection. The language fix therefore corrects via a bounded
+# slow language detection. Language therefore corrects via a bounded
 # BACKGROUND refresh, not a synchronous one: the `.none` content is already
 # correct (only the chevron color is wrong), so the milder defect doesn't
 # justify giving up language's "never blocks" latency guarantee.
 #
-# The bug report is specifically about SWITCHING backgrounds ("after the
+# The failure mode is specifically about SWITCHING backgrounds (after the
 # segment before language changes background color, the language segment's
-# opening separator can retain the wrong foreground/background transition
-# indefinitely") -- a single-token test cannot catch a fix that happens to
-# special-case `none` while still serving one token's stale ANSI when the
+# opening separator must not retain the wrong foreground/background
+# transition) -- a single-token test cannot catch an implementation that
+# special-cases `none` while still serving one token's stale ANSI when the
 # render moves to a DIFFERENT token. This test therefore exercises TWO
 # distinct numeric prev_bg tokens (A and B) and asserts:
 #
@@ -84,12 +81,12 @@ function __gpy_lang_token_cache_present --argument-names token
 end
 
 function test_variant_fallback_bounded_refresh
-    print_test_header "E2E Test: Language Segment Variant-Fallback Renders via Bounded Background Refresh (#454)"
+    print_test_header "E2E Test: Language Segment Variant-Fallback Renders via Bounded Background Refresh"
     init_test_env
 
     # Install a custom theme whose language segment's opening separator reads
     # `fg:prev_bg` instead of `fg:$bg`, so the chevron's color actually varies
-    # with prev_bg and the fix is observable at the byte level.
+    # with prev_bg and the correction is observable at the byte level.
     set -l theme_dir $XDG_CONFIG_HOME/gpy/themes
     mkdir -p $theme_dir
     set -l theme_file $theme_dir/test-theme.toml
@@ -184,10 +181,9 @@ function test_variant_fallback_bounded_refresh
 
     # AC2: the correction must be BOUNDED, not synchronous -- the first render
     # at the new context still serves the `.none` fallback's chevron (does NOT
-    # contain token A's SGR fragment). This documents the language-vs-git
-    # judgment call: language's cold-miss path is deliberately background-only,
-    # so the correction here is a throttled background refresh, not a bounded
-    # synchronous IPC query.
+    # contain token A's SGR fragment): language's cold-miss path is
+    # deliberately background-only, so the correction here is a throttled
+    # background refresh, not a bounded synchronous IPC query.
     if string match -q "*38;5;$__gpy_test_prev_bg_a*" -- $rendered_a1
         print_test_result "First render at token A does not block for a synchronous correction" FAIL "unexpectedly contained the corrected chevron already; language's cold-miss path is supposed to stay background-only"
         cleanup_test_files
@@ -224,10 +220,10 @@ function test_variant_fallback_bounded_refresh
         return 1
     end
 
-    # --- Now switch to token B: this is the actual reported bug. A fix that
-    # only special-cases the `none` token could still wrongly reuse token A's
-    # now-warm cached ANSI (or fail to fire its own correction) when the
-    # render moves to a DIFFERENT prev_bg context. ---
+    # --- Now switch to token B. An implementation that only special-cases
+    # the `none` token could still wrongly reuse token A's now-warm cached
+    # ANSI (or fail to fire its own correction) when the render moves to a
+    # DIFFERENT prev_bg context. ---
     if __gpy_lang_token_cache_absent $__gpy_test_prev_bg_b
         print_test_result "No token-specific cache file for token B yet" PASS
     else
@@ -247,9 +243,8 @@ function test_variant_fallback_bounded_refresh
     end
     print_test_result "First render at token B is non-empty" PASS
 
-    # Must NOT reuse token A's cached ANSI -- this is the core regression
-    # guard for the reported bug (switching backgrounds retaining the wrong
-    # transition indefinitely).
+    # Must NOT reuse token A's cached ANSI (switching backgrounds must not
+    # retain the wrong transition).
     if string match -q "*38;5;$__gpy_test_prev_bg_a*" -- $rendered_b1
         print_test_result "First render at token B does not reuse token A's chevron" FAIL "rendered output still contained token A's chevron color (38;5;$__gpy_test_prev_bg_a): $rendered_b1"
         cleanup_test_files
@@ -258,8 +253,8 @@ function test_variant_fallback_bounded_refresh
         print_test_result "First render at token B does not reuse token A's chevron" PASS
     end
 
-    # AC3 for token B, and a live test of the per-token throttle key (judgment
-    # call #2): if the throttle were keyed only by path+suffix (not also by
+    # AC3 for token B, and a live test of the per-token throttle key: if the
+    # throttle were keyed only by path+suffix (not also by
     # token), token A's very recent correction could starve this one.
     if poll_until 8 __gpy_lang_token_cache_present $__gpy_test_prev_bg_b
         print_test_result "Token-B cache file written by bounded background refresh" PASS

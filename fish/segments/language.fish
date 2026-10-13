@@ -60,19 +60,13 @@ end
 # 2. Medium: from a cache file (if not stale).
 # 3. Slow: by running a one-shot gpy-agent command.
 function segment_language_render --argument-names is_last is_first
-    # A caller that passes fewer than 2 args (some tests call this with none,
-    # to simulate a middle-of-prompt render) leaves the corresponding
-    # --argument-names binding an EMPTY LIST, not an empty string -- normalize
-    # so every unquoted use below always expands to exactly one word instead
-    # of silently collapsing and shifting a later positional argument (#629-class).
+    # Seed missing args as "" (see fish_prompt.fish's dispatch loop); some
+    # tests call this with none to simulate a middle-of-prompt render.
     set -q is_last[1]; or set is_last ""
     set -q is_first[1]; or set is_first ""
 
     # Use current directory - agent will handle project root discovery
     set -l root $PWD
-
-    # is_last/is_first arrive already as "true"/"" (#613: fish_prompt.fish's
-    # dispatch-loop convention), so no per-segment conversion is needed here.
 
     # Snapshot prev_bg at render time so background jobs get the correct value.
     set -l prev_bg $__gpy_last_segment_bg

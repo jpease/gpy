@@ -2,12 +2,10 @@
 # tests/fish/uninstall_rc_marker_roundtrip.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #310: install.sh and install-oneline.sh appended a
-# plain "# GPY Prompt Enhancement" block (fish) or a bare `source` line
-# (zsh/bash) with NO delimiter markers at all, while scripts/uninstall.fish
-# looked for a "# >>> GPY prompt init >>>" marker that no installer ever
-# wrote -- so uninstalling never removed the rc-file block and every new
-# shell errored forever. There was also no uninstaller at all for zsh/bash.
+# Every installer must wrap the rc-file block it writes in the
+# "# >>> GPY prompt init >>>" delimiter markers the uninstallers look for, for
+# fish, zsh and bash alike; a block without them can never be removed and
+# leaves every new shell erroring after an uninstall.
 #
 # This test proves, for every installer/shell combination in scope:
 #   1. install -> uninstall round-trips the rc file byte-identically.
@@ -25,9 +23,9 @@ set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
 
 # The installers and uninstallers resolve their config, cache and runtime
-# roots from XDG_CONFIG_HOME/XDG_CACHE_HOME/XDG_RUNTIME_DIR (#615) and the zsh
-# rc file from ZDOTDIR, so a caller's values would send every sandboxed run
-# outside its $HOME (#665). The XDG parts (Part D onwards) pass theirs explicitly.
+# roots from XDG_CONFIG_HOME/XDG_CACHE_HOME/XDG_RUNTIME_DIR and the zsh rc
+# file from ZDOTDIR, so a caller's values would send every sandboxed run
+# outside its $HOME. The XDG sections below pass theirs explicitly.
 set -e XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_RUNTIME_DIR ZDOTDIR
 
 set -g failed 0
@@ -41,7 +39,7 @@ function __gpy_test_pass --argument-names msg
     echo "✅ $msg"
 end
 
-# --- fake curl: stubs every network download install-oneline.sh performs --
+# --- fake curl: stubs every network download install-oneline.sh performs ---
 # Writes a trivial `#!/bin/sh\nexit 0\n` stub to whatever `-o FILE` target was
 # requested, regardless of URL. This lets install-oneline.sh run to completion
 # (binary --version check, core-file existence checks) with zero network
@@ -49,7 +47,7 @@ end
 #
 # A request with no `-o` is a fetch-to-stdout. For a `<asset>.sha256` URL it
 # answers with the digest of that same stub payload, standing in for the
-# checksum sidecar every release publishes (#494) -- without it the installer
+# checksum sidecar every release publishes -- without it the installer
 # correctly refuses to install an unverified binary and this test never
 # reaches the rc-file behavior it exists to check.
 function __gpy_write_fake_curl --argument-names bin_dir
@@ -99,8 +97,8 @@ exit 0
     chmod +x "$bin_dir/curl"
 end
 
-# Write the SHA-256 sidecar install.sh now requires beside each packaged
-# binary (#494). Mirrors what scripts/package-release.sh produces.
+# Write the SHA-256 sidecar install.sh requires beside each packaged
+# binary. Mirrors what scripts/package-release.sh produces.
 function __gpy_write_sidecar --argument-names file
     set -l digest
     if command -q sha256sum
@@ -111,7 +109,7 @@ function __gpy_write_sidecar --argument-names file
     printf '%s  %s\n' $digest (basename "$file") >"$file.sha256"
 end
 
-# --- shared round-trip assertion -------------------------------------------
+# --- shared round-trip assertion ---
 # Compares $current_file against $original_file (both real files on disk).
 function __gpy_assert_byte_identical --argument-names label original_file current_file
     if diff -q "$original_file" "$current_file" >/dev/null 2>&1
@@ -124,13 +122,11 @@ function __gpy_assert_byte_identical --argument-names label original_file curren
     end
 end
 
-# ===========================================================================
-# Part A: install.sh (fish-only dev installer)
-# ===========================================================================
+# --- install.sh (fish-only dev installer) ---
 
 # install.sh installs from the package directory it runs in (bin/ plus the
 # fish/ tree). Build one under a temp root rather than writing stub binaries
-# into the checkout's gitignored bin/ (#649: no test mutates the checkout).
+# into the checkout's gitignored bin/ (no test mutates the checkout).
 set -l pkg_a (mktemp -d)
 mkdir -p "$pkg_a/bin"
 cp -R "$repo_root/fish" "$pkg_a/fish"
@@ -181,9 +177,7 @@ end
 rm -rf "$pkg_a"
 rm -rf "$home_a"
 
-# ===========================================================================
-# Part B: install-oneline.sh (fish / zsh / bash)
-# ===========================================================================
+# --- install-oneline.sh (fish / zsh / bash) ---
 
 function __gpy_test_install_oneline_roundtrip --argument-names shell_name rc_relpath uninstaller_kind
     set -l home_b (mktemp -d)
@@ -240,13 +234,11 @@ __gpy_test_install_oneline_roundtrip fish .config/fish/config.fish fish
 __gpy_test_install_oneline_roundtrip zsh .zshrc sh
 __gpy_test_install_oneline_roundtrip bash .bashrc sh
 
-# ===========================================================================
-# Part C: removal does not spill into unrelated trailing content
-# ===========================================================================
+# --- Removal does not spill into unrelated trailing content ---
 #
-# Simulates a block that was installed earlier, with another tool's config
-# appended below it afterwards -- proving the delete range is bounded by the
-# close marker and doesn't consume anything past it.
+# Simulates a block installed earlier, with another tool's config appended
+# below it afterwards -- proving the delete range is bounded by the close
+# marker and doesn't consume anything past it.
 
 set -l home_c (mktemp -d)
 set -l rc_file_fish "$home_c/.config/fish/config.fish"
@@ -303,18 +295,15 @@ end
 __gpy_assert_byte_identical "uninstall.sh trailing-content: surrounding content preserved" "$expected_zsh" "$rc_file_zsh"
 rm -rf "$home_d"
 
-# ===========================================================================
-# Part D: XDG_CONFIG_HOME/XDG_CACHE_HOME-respecting install/uninstall (#615)
-# ===========================================================================
+# --- XDG_CONFIG_HOME/XDG_CACHE_HOME-respecting install/uninstall ---
 #
-# install-oneline.sh used to hardcode $HOME/.config for fish's shell files,
-# completions, and config.fish regardless of XDG_CONFIG_HOME, and
-# scripts/uninstall.sh hardcoded $HOME/.config/gpy and $HOME/.cache/gpy for
-# the agent's own config/cache directories -- missing the real directories
-# for anyone with either XDG variable set (gpy-agent/src/paths.rs
-# config_root_for/cache_root_for is the source of truth both now follow).
-# This proves the integration lands under $XDG_CONFIG_HOME, nothing leaks
-# to $HOME/.config, and uninstall removes the XDG locations.
+# install-oneline.sh must place fish's shell files, completions, and
+# config.fish under $XDG_CONFIG_HOME, and scripts/uninstall.sh must remove
+# the agent's own config/cache directories from their XDG-resolved locations
+# (gpy-agent/src/paths.rs config_root_for/cache_root_for is the source of
+# truth both follow). This proves the integration lands under
+# $XDG_CONFIG_HOME, nothing leaks to $HOME/.config, and uninstall removes the
+# XDG locations.
 
 function __gpy_assert_no_default_config_dir --argument-names label home_dir
     if test -e "$home_dir/.config"
@@ -325,7 +314,7 @@ function __gpy_assert_no_default_config_dir --argument-names label home_dir
     end
 end
 
-# --- fish: install-oneline.sh + scripts/uninstall.fish ----------------------
+# --- fish: install-oneline.sh + scripts/uninstall.fish ---
 set -l home_e (mktemp -d)
 set -l xdg_config_e "$home_e/xdg-config"
 set -l xdg_cache_e "$home_e/xdg-cache"
@@ -362,7 +351,7 @@ else
     touch "$xdg_config_e/gpy/config.toml" "$xdg_cache_e/gpy/agent.log"
 
     # Uninstall must target the same XDG-resolved fish config dir, and the
-    # same XDG-resolved agent config/cache dirs (#615).
+    # same XDG-resolved agent config/cache dirs.
     printf '\n' | env HOME=$home_e XDG_CONFIG_HOME=$xdg_config_e XDG_CACHE_HOME=$xdg_cache_e fish scripts/uninstall.fish >/dev/null 2>&1
 
     if test -d "$xdg_config_e/fish/gpy"
@@ -386,7 +375,7 @@ end
 
 rm -rf "$home_e" "$fake_bin_e"
 
-# --- bash: install-oneline.sh + scripts/uninstall.sh ------------------------
+# --- bash: install-oneline.sh + scripts/uninstall.sh ---
 set -l home_f (mktemp -d)
 set -l xdg_config_f "$home_f/xdg-config"
 set -l xdg_cache_f "$home_f/xdg-cache"
@@ -433,9 +422,7 @@ end
 
 rm -rf "$home_f" "$fake_bin_f"
 
-# ===========================================================================
-# Part C: Multi-shell global uninstall regressions (#671)
-# ===========================================================================
+# --- Multi-shell global uninstall ---
 
 # --- 1. Bash + Zsh installed; run sh uninstaller with GPY_SHELL=bash and zsh ---
 for gpy_shell_val in bash zsh
@@ -545,7 +532,7 @@ for uninstaller_entry in "fish:scripts/uninstall.fish" "sh:scripts/uninstall.sh"
     rm -rf "$h_all"
 end
 
-# --- 2b. Legacy install-dev.fish backup name is restored when newest (#744) ---
+# --- 2b. Legacy install-dev.fish backup name is restored when newest ---
 for uninstaller_entry in "fish:scripts/uninstall.fish" "sh:scripts/uninstall.sh"
     set -l parts (string split ':' -- "$uninstaller_entry")
     set -l u_type $parts[1]
@@ -685,8 +672,6 @@ for uninstaller in "sh scripts/uninstall.sh" "fish --no-config scripts/uninstall
     __gpy_assert_byte_identical "#671 ($uninstaller): missing trailing newline preserved" "$h6/exp_profile" "$h6/.bash_profile"
     rm -rf "$h6"
 end
-
-# ===========================================================================
 
 if test $failed -eq 1
     exit 1

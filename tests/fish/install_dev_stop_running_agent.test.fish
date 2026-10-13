@@ -2,13 +2,12 @@
 # tests/fish/install_dev_stop_running_agent.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #615: install-dev.fish's _stop_running_agent used to
-# force-kill with a bare `pkill -9 gpy-agent`, matched by process name alone
-# -- indistinguishable from a contributor's live dogfooding daemon, or from
+# install-dev.fish's _stop_running_agent must stop only the agent on its own
+# socket and never force-kill by process name (`pkill gpy-agent`), which is
+# indistinguishable from a contributor's live dogfooding daemon or from
 # another test agent bound to its own gpy-test-*.sock (see
-# scripts/cleanup-test-agents.sh). It also slept a fixed 1s even though
-# `gpy-agent stop` already polls (bounded, #317) until the agent stops
-# responding.
+# scripts/cleanup-test-agents.sh). `gpy-agent stop` already polls (bounded)
+# until the agent stops responding, so no extra fixed wait is needed.
 #
 # This drives the REAL _stop_running_agent, sourced from the real
 # install-dev.fish (not reimplemented here), against two REAL gpy-agent
@@ -21,9 +20,8 @@
 # Function definitions are pulled out of install-dev.fish by actually
 # sourcing the file (with --fish-only and PATH scrubbed so gpy-agent is
 # unreachable, mirroring install_dev_config_theme_preserve.test.fish's
-# sandboxing technique) -- this runs the real, harmless --fish-only flow
 # once against a throwaway $HOME, then PATH is switched back in so the
-# now-defined _stop_running_agent can be called directly against the two
+# defined _stop_running_agent can be called directly against the two
 # real agents started below.
 
 set -l script_dir (dirname (status --filename))
@@ -62,8 +60,8 @@ set -l pkill_log "$home_dir/pkill.log"
 touch "$pkill_log"
 
 # Fake pkill: records every invocation instead of doing anything. Placed
-# ahead of the real pkill on PATH so a regression back to matching by
-# process name shows up here instead of silently killing the decoy.
+# ahead of the real pkill on PATH so any matching by process name shows up
+# here instead of silently killing the decoy.
 printf '%s\n' '#!/bin/sh' 'echo "$@" >> "'"$pkill_log"'"' 'exit 0' >"$stub_dir/pkill"
 chmod +x "$stub_dir/pkill"
 

@@ -120,15 +120,6 @@ end
 # ============================================================================
 # CACHE PATHS
 # ============================================================================
-#
-# `gpy_config_runtime_dir` and `gpy_config_path` used to live here: a THIRD
-# runtime-root implementation (its own `/tmp/gpy-$USER` fallback, disagreeing
-# with both `__gpy_runtime_root` and the agent) pointing at a `config.json`
-# snapshot nothing in the agent has ever written. Their only readers tested
-# for a file that could not exist and created a directory nothing used, so
-# #626 deleted all of it rather than teaching a fourth resolver the shared
-# precedence. `__gpy_runtime_root` (fish/core/ipc.fish) is the runtime root;
-# `__gpy_locate_config_path` is the config file.
 
 # Return the path to the cached Fish-format theme export.
 # The agent writes this file before ringing the reload doorbell, so shells can source it

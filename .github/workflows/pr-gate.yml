@@ -13,21 +13,15 @@ name: PR Quality Gate
 # that one name in the branch ruleset rather than the individual legs, whose
 # names carry the OS matrix.
 #
-# History: the automatic triggers were switched off on 2026-09-02, and macOS
-# was split into a manual-only job, to stop the private repository's 10x macOS
-# minute multiplier burning the account's allowance (#556). Hosted-runner
-# minutes are free and unlimited for a public repository, which removes the
-# only reason for either decision: the triggers are back, macOS is back in the
-# automatic matrix (the 2026-09-03 "macOS stays manual" decision was about
-# cost, not coverage, and it reverses with the cost), and nothing here is
-# opt-in any more.
+# macOS runs in the automatic matrix: hosted-runner minutes are free for a
+# public repository, so there is no cost reason to make any leg opt-in (#556).
 #
 # Fork safety: `pull_request`, never `pull_request_target`. A fork's PR runs
 # this file from its own branch with a read-only token and no secrets, and
 # nothing below uses either. Keep it that way: a `pull_request_target` or a
 # secret in this workflow would hand an untrusted PR the repository's trust.
 #
-# The Windows leg (windows-gate.yml, #482/#653) is CLI-only: native Windows
+# The Windows leg (windows-gate.yml) is CLI-only: native Windows
 # has no shell integration, the agent's IPC is a Unix socket. It mirrors
 # cross-platform-test.yml's Windows leg by being the same reusable workflow.
 # config::manager::tests::poll_fallback_reloads_without_any_watcher_running is
@@ -71,7 +65,7 @@ jobs:
       - name: Install Rust toolchain
         # No `toolchain:` input: the action resolves the pin from
         # gpy-agent/rust-toolchain.toml, which `rust-src-dir` points it at.
-        # See that file for why CI must not install @stable (#189, #518).
+        # See that file for why CI must not install @stable (#518).
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           rust-src-dir: gpy-agent

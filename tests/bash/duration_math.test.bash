@@ -1,29 +1,26 @@
 #!/usr/bin/env bash
 # tests/bash/duration_math.test.bash
 #
-# Regression test for #341: the bash duration segment computed
-# EPOCHREALTIME-to-milliseconds via an `awk` fork on every prompt
-# (bash/core/init.bash, epochrealtime branch). __gpy_epoch_diff_ms replaces
-# that with pure-bash integer arithmetic assigned via indirect `printf -v`
-# (no fork at all).
+# __gpy_epoch_diff_ms converts an EPOCHREALTIME delta to milliseconds with
+# pure-bash integer arithmetic assigned via indirect `printf -v` (no fork at
+# all), instead of an `awk` fork on every prompt.
 #
-# This compares __gpy_epoch_diff_ms's output against the *original* awk
+# This compares __gpy_epoch_diff_ms's output against the awk reference
 # formula across representative EPOCHREALTIME value pairs: same-second
 # sub-millisecond deltas, a cross-second boundary, a value with a
 # leading-zero fractional part (the octal-literal trap `10#` guards against),
 # a value with a leading-zero integer part, and a comma-decimal-separator
-# string (confirmed for real: `LC_ALL=de_DE.UTF-8 bash -c 'echo
-# $EPOCHREALTIME'` prints e.g. "1783061985,338122" on this machine).
+# string (`LC_ALL=de_DE.UTF-8 bash -c 'echo $EPOCHREALTIME'` prints e.g.
+# "1783061985,338122").
 #
 # Bash's arithmetic truncates instead of rounding (unlike awk's `%.0f`), so
-# results are asserted within +/-1ms rather than requiring exact equality --
-# the same tolerance the issue's acceptance criteria specify.
+# results are asserted within +/-1ms rather than requiring exact equality.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
 # The theme export re-sets the supervisor flag from config.toml, so disable
-# it in a sandbox config; the missing socket stays there too (#836).
+# it in a sandbox config; the missing socket stays there too.
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-duration-math.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
 source "$ROOT/tests/lib/supervisor_off.bash" "$SANDBOX"
@@ -38,14 +35,14 @@ fi
 
 FAILED=0
 
-# old_awk_ms START END -- the exact formula __gpy_precmd used before #341.
+# old_awk_ms START END -- the awk reference formula (float subtract, round).
 old_awk_ms() {
     local start="$1" end="$2"
     awk "BEGIN {printf \"%.0f\", ($end - $start) * 1000}"
 }
 
 # assert_within_tolerance LABEL START END TOLERANCE_MS
-# Compares __gpy_epoch_diff_ms's result against the old awk formula.
+# Compares __gpy_epoch_diff_ms's result against the awk reference formula.
 assert_within_tolerance() {
     local label="$1" start="$2" end="$3" tolerance="$4"
 
@@ -70,7 +67,7 @@ assert_within_tolerance() {
     fi
 }
 
-# assert_exact_ms LABEL START END EXPECTED_MS -- for cases the old awk formula
+# assert_exact_ms LABEL START END EXPECTED_MS -- for cases the awk formula
 # cannot be trusted as a reference (comma-decimal locale strings; awk parses
 # only up to the first non-numeric byte, so it silently mis-evaluates a
 # comma-separated value instead of computing the real delta).
@@ -117,12 +114,11 @@ echo ""
 echo "=== Duration math: comma-decimal locale (verified real bash behavior) ==="
 # Real bash under a comma-decimal locale prints EPOCHREALTIME with a comma:
 #   LC_ALL=de_DE.UTF-8 bash -c 'echo $EPOCHREALTIME' -> "1783061985,338122"
-# The old awk formula cannot be used as a reference here: awk parses a
+# The awk formula cannot be used as a reference here: awk parses a
 # numeric string only up to the first non-numeric byte, so "501,000000"
 # evaluates as 501 rather than 501.000000, silently producing the wrong
-# delta. __gpy_epoch_diff_ms fixes this by splitting on a `[.,]` character
-# class instead of a literal ".", so it is checked against a hand-computed
-# expected value instead.
+# delta. __gpy_epoch_diff_ms splits on a `[.,]` character class instead of a
+# literal ".", so it is checked against a hand-computed expected value.
 assert_exact_ms "comma-locale, 750ms delta" "500,250000" "501,000000" 750
 
 if [[ $FAILED -ne 0 ]]; then

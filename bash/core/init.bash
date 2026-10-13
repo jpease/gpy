@@ -258,12 +258,9 @@ __gpy_precmd() {
     # Render prompt (pass exit code for status segment)
     __gpy_render_prompt "$exit_code"
 
-    # Registration used to be attempted exactly once, at init, and never again
-    # unless a `cd` happened; a shell that started while its autostarted
-    # agent was still coming up (or whose agent restarted later) stayed
-    # unregistered -- no agent notifications -- for its whole life (#638). Retry
-    # on each prompt until it sticks; it is one `test -S` when nothing
-    # listens.
+    # Retry registration on each prompt until it sticks, so a shell that
+    # started before its agent was up (or whose agent restarted) still gets
+    # notifications. It is one `test -S` when nothing listens.
     if [[ -z "$__gpy_registered" ]]; then
         __gpy_register_with_agent &>/dev/null
     fi

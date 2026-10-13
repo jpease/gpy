@@ -1,24 +1,23 @@
 #!/usr/bin/env zsh
 # tests/zsh/ipc_partial_response.test.zsh
 #
-# Regression test for #300: a truncated (partial-write) IPC response must
-# never reach the caller as if it were complete. __gpy_send_json previously
-# treated any non-empty read as a valid response, so an agent that wrote
-# `{"status":"o` and then stalled or died mid-write would have that exact
-# truncated string handed to __gpy_request_character/_duration (raw ANSI,
-# echoed straight into the prompt) — corrupting terminal rendering.
+# A truncated (partial-write) IPC response must never reach the caller as if
+# it were complete. If any non-empty read counted as a valid response, an
+# agent that wrote `{"status":"o` and then stalled or died mid-write would
+# have that exact truncated string handed to __gpy_request_character/_duration
+# (raw ANSI, echoed straight into the prompt) — corrupting terminal rendering.
 #
 # The "wedged-mid-write agent" is simulated with a tiny Python listener that
 # accept()s the connection, writes a partial (non-newline-terminated) frame,
 # then goes silent. The listener self-destructs after a few seconds so this
-# test has a hard, deterministic upper bound even if the fix regresses and
-# the client hangs waiting for more bytes.
+# test has a hard, deterministic upper bound even if the client hangs waiting
+# for more bytes.
 #
-# A second case guards against the fix being too strict: a normally-terminated
+# A second case guards against over-strict framing: a normally-terminated
 # complete response must still be returned intact.
 
 ROOT=${0:a:h:h:h}
-# Shared skip contract (#650): exits 0 locally, fails under CI.
+# Shared skip contract: exits 0 locally, fails under CI.
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 cd "$ROOT"
 
@@ -32,7 +31,6 @@ if ! (( $+commands[socat] )) && ! (( $+commands[nc] )); then
 fi
 
 test_tmp_dir=$(mktemp -d)
-test_result=0
 
 cleanup() {
     kill -9 "$1" 2>/dev/null
@@ -54,12 +52,7 @@ time.sleep(float(sys.argv[2]))
 listener1_pid=$!
 disown 2>/dev/null
 
-for _ in {1..20}; do
-    [[ -S "$sock1" ]] && break
-    sleep 0.1
-done
-
-if [[ ! -S "$sock1" ]]; then
+if ! shell_e2e_poll 2 test -S "$sock1"; then
     cleanup "$listener1_pid"
     rm -rf "$test_tmp_dir"
     test_skip "could not create test Unix socket listener"
@@ -71,10 +64,9 @@ result="$(__gpy_send_json '{"op":"ping"}')"
 cleanup "$listener1_pid"
 
 if [[ -n "$result" ]]; then
-    echo "FAIL: partial write is discarded, not returned: got '$result'"
-    test_result=1
+    fail "partial write is discarded, not returned: got '$result'"
 else
-    echo "PASS: partial write is discarded, not returned"
+    pass "partial write is discarded, not returned"
 fi
 
 # --- Case 2: a complete, newline-terminated response still round-trips ---
@@ -92,12 +84,7 @@ conn.close()
 listener2_pid=$!
 disown 2>/dev/null
 
-for _ in {1..20}; do
-    [[ -S "$sock2" ]] && break
-    sleep 0.1
-done
-
-if [[ ! -S "$sock2" ]]; then
+if ! shell_e2e_poll 2 test -S "$sock2"; then
     cleanup "$listener2_pid"
     rm -rf "$test_tmp_dir"
     test_skip "could not create second test Unix socket listener"
@@ -110,10 +97,9 @@ cleanup "$listener2_pid"
 rm -rf "$test_tmp_dir"
 
 if [[ "$complete_result" == '{"status":"ok"}' ]]; then
-    echo "PASS: complete response still round-trips"
+    pass "complete response still round-trips"
 else
-    echo "FAIL: complete response still round-trips: got '$complete_result'"
-    test_result=1
+    fail "complete response still round-trips: got '$complete_result'"
 fi
 
-exit "$test_result"
+test_finish

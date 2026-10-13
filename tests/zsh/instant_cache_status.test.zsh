@@ -2,10 +2,9 @@
 # tests/zsh/instant_cache_status.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Exit-code contract for __gpy_read_instant_cache (#614): mirrors the
-# contract #612 gave Fish (tests/fish/instant_cache_status.test.fish). Status
-# is now carried ENTIRELY by the exit code -- no more `__gpy_<suffix>_stale_$$`
-# temp file for callers to `rm -f`/`-e` check.
+# Exit-code contract for __gpy_read_instant_cache, mirroring Fish's
+# (tests/fish/instant_cache_status.test.fish). Status is carried ENTIRELY by
+# the exit code; there is no side-channel temp file for callers to check.
 #   0 = fresh, exact-token hit
 #   1 = miss
 #   2 = stale, exact-token hit
@@ -13,7 +12,7 @@
 #   6 = stale, served via the `.none` variant fallback
 #
 # Drives staleness by back-dating the cache file's real mtime (portable
-# GNU/BSD touch, same trick tests/zsh/parity.test.zsh already uses) rather
+# GNU/BSD touch, as tests/zsh/parity.test.zsh does) rather
 # than injecting a fake clock -- the real function has no clock-override hook.
 
 ROOT=${0:a:h:h:h}

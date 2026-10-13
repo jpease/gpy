@@ -1,23 +1,16 @@
-//! One discovery implementation for the named TOML artifacts GPY resolves by
-//! name: themes and palettes (#588).
+//! Discovery for the named TOML artifacts GPY resolves by name: themes and
+//! palettes.
 //!
-//! Both were the same code under different names — scan a directory, keep the
-//! `.toml` files, take each file stem as the artifact's name, tag it with where
-//! it came from, and merge it into a map where the highest-precedence source
-//! for a given name wins. `theme::manager` and `palette::manager` now call
-//! these functions instead of each keeping a copy.
-//!
-//! Precedence is unchanged from what each manager implemented separately:
-//! **User > Plugin > Builtin**.
+//! Scan a directory, keep the `.toml` files, name each by file stem, tag it
+//! with its source, and merge into a map where the highest-precedence source
+//! for a name wins: **User > Plugin > Builtin**.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Where a discovered artifact came from, for precedence and UX display.
 ///
-/// Re-exported as `theme::ThemeSource` and `palette::PaletteSource`; the two
-/// were structurally identical enums with identical precedence, so they are now
-/// one type under those names.
+/// Re-exported as `theme::ThemeSource` and `palette::PaletteSource`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     /// Built into the GPY distribution.
@@ -26,10 +19,7 @@ pub enum Source {
     User,
     /// Provided by a discovered plugin.
     ///
-    /// Palettes never construct this variant: plugin manifests carry no
-    /// `palettes` field yet, so plugin palette discovery stays deferred to a
-    /// later sub-project. The variant exists for themes, which do wire it up,
-    /// and for palettes' forward compatibility.
+    /// Only themes produce this variant; plugin manifests carry no palettes.
     Plugin {
         /// Plugin identifier from the provider manifest.
         plugin_id: String,
@@ -186,9 +176,8 @@ mod tests {
         let mut found: Vec<String> = toml_stems(temp.path()).map(|(name, _)| name).collect();
         found.sort();
 
-        // A *directory* named `nested.toml` still matches the extension check,
-        // exactly as both managers' original loops did; reading it later is
-        // what fails, and that failure is already handled per-artifact.
+        // A *directory* named `nested.toml` still matches the extension check;
+        // reading it later is what fails, and that is handled per-artifact.
         assert_eq!(found, ["alpha", "beta", "nested"]);
     }
 

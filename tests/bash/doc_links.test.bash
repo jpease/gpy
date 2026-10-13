@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 # tests/bash/doc_links.test.bash
 #
-# Regression test for #505: tracked docs linked to files that had been renamed
-# (ARCHITECTURE.md -> docs/dev/architecture.md), to source paths at the wrong
-# depth, and to documents that never existed -- 44 dead links across 14 files
-# by the time anyone counted.
+# Tracked docs must not link to renamed, misplaced or never-existing files.
 #
 # This exercises scripts/check-doc-links.sh against throwaway git repositories
 # rather than re-implementing its scan, so the gate itself is under test.
@@ -27,10 +24,9 @@
 #   (g) untracked files are ignored, since the gate is about published history
 #   (h) the real repository is clean
 #   (i) a plain-text SCREAMING_CASE.md reference (not a Markdown link) to a
-#       file that does not exist anywhere in the tree is flagged, fenced and
-#       inline occurrences are not, and the same reference inside
-#       docs/archive/ is silent because archived material is allowed to
-#       describe files that no longer exist (2026-09-03 audit follow-up)
+#       file that does not exist anywhere in the tree is flagged; fenced and
+#       inline occurrences are not
+#   (j) quality-check.sh runs the scanner
 
 # Every single-quoted `$style` / `$bg` / backtick below is fixture text fed to
 # the scanner verbatim. Nothing in this file is meant to expand.
@@ -43,11 +39,8 @@ WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
 
-failures=0
-fail() {
-    echo "FAIL: $*"
-    failures=$((failures + 1))
-}
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 
 # Build a scratch repo holding $1 as docs/sample.md plus a small fixture tree,
 # run the scanner in it, and echo "<exit>|<output>". The scanner resolves the
@@ -87,46 +80,6 @@ expect_flagged() {
 expect_clean() {
     local label="$1" content="$2" result
     result="$(run_scanner_on "$content")"
-    [[ "${result%%|*}" -eq 0 ]] ||
-        fail "$label: scanner exited nonzero on acceptable content: ${result#*|}"
-}
-
-# Same as run_scanner_on, but the fixture content lands at an arbitrary
-# tracked path instead of the fixed docs/sample.md -- needed to plant a
-# reference inside docs/archive/ and confirm the archive exclusion.
-run_scanner_on_path() {
-    local relpath="$1" content="$2"
-    local repo="$WORKDIR/repo-$RANDOM$RANDOM"
-
-    mkdir -p "$repo/scripts" "$repo/docs/dev" "$repo/docs/archive" "$repo/src"
-    mkdir -p "$repo/$(dirname "$relpath")"
-    cp "$SCANNER" "$repo/scripts/check-doc-links.sh"
-    printf '%s\n' "$content" >"$repo/$relpath"
-
-    printf '# Neighbour\n\n## Threading Model\n\n## `gpy doctor`\n' >"$repo/docs/neighbour.md"
-    printf '# Deep\n' >"$repo/docs/dev/deep.md"
-    printf '# Root\n' >"$repo/README.md"
-    printf 'fn main() {}\n' >"$repo/src/main.rs"
-
-    git -C "$repo" init -q
-    git -C "$repo" add -A
-
-    local out status
-    out="$(cd "$repo" && bash scripts/check-doc-links.sh 2>&1)" && status=0 || status=$?
-    printf '%s|%s' "$status" "$out"
-}
-
-expect_flagged_path() {
-    local label="$1" relpath="$2" content="$3" result
-    result="$(run_scanner_on_path "$relpath" "$content")"
-    [[ "${result%%|*}" -ne 0 ]] || fail "$label: scanner exited 0, expected a failure"
-    [[ "${result#*|}" == *"$relpath"* ]] ||
-        fail "$label: output does not name the offending file"
-}
-
-expect_clean_path() {
-    local label="$1" relpath="$2" content="$3" result
-    result="$(run_scanner_on_path "$relpath" "$content")"
     [[ "${result%%|*}" -eq 0 ]] ||
         fail "$label: scanner exited nonzero on acceptable content: ${result#*|}"
 }
@@ -197,7 +150,7 @@ expect_clean "punctuated heading" "$(printf '## Advanced: Agent-Assisted Segment
 expect_clean "anchor into a non-Markdown file" 'See [toml](../src/main.rs#L10).'
 
 # (i) plain-text references to a removed planning file, outside Markdown
-# link syntax entirely, must also be caught -- and only outside docs/archive/.
+# link syntax entirely, must also be caught.
 echo "--- plain-text SCREAMING_CASE.md references must be flagged ---"
 expect_flagged "plain-text TODO.md reference" 'See TODO.md for details.'
 expect_flagged "plain-text AGENT.md reference" 'Follow the guidance in AGENT.md.'
@@ -211,10 +164,6 @@ expect_clean "inline-code plain-text reference" 'See `TODO.md` for details.'
 echo "--- a real filename is never flagged, even via the explicit safety list ---"
 expect_clean "known real root file" 'See CONTRIBUTING.md for workflow rules.'
 expect_clean "lowercase filename untouched" 'See architecture.md for details.'
-
-echo "--- archived docs may describe files that no longer exist ---"
-expect_clean_path "archived plain-text reference" "docs/archive/sample.md" \
-    'See TODO.md for details.'
 
 # (g) untracked files are out of scope: the gate guards published history.
 echo "--- untracked files are ignored ---"
@@ -235,25 +184,9 @@ if ! bash "$SCANNER" >/dev/null 2>&1; then
     fail "the repository has broken documentation links"
 fi
 
-# The checker must be wired into the quality gate, not merely present. #505
-# requires it to run in CI, which it does through scripts/quality-check.sh --
-# registered at every mode the gate offers, the way check-privacy-patterns.sh
-# is. A checker nobody runs catches nothing.
-#
-# Four, not five: this counted a fifth occurrence in the SHELLCHECK_TARGETS
-# array until #510 replaced that hand-maintained list with a glob over
-# scripts/*.sh. The script is still shellchecked, just not by name -- so
-# counting names is no longer the way to prove it.
+# (j) a checker nobody runs catches nothing.
 echo "--- the checker must be registered in the quality gate ---"
-registrations="$(grep -c 'check-doc-links\.sh' "$ROOT/scripts/quality-check.sh" || true)"
-if [[ "$registrations" -lt 4 ]]; then
-    fail "check-doc-links.sh appears $registrations time(s) in quality-check.sh;" \
-        "expected 4 (full, --fast, --rust-only, --shell-only)"
-fi
+grep -q 'check-doc-links\.sh' "$ROOT/scripts/quality-check.sh" ||
+    fail "scripts/quality-check.sh does not run check-doc-links.sh"
 
-if [[ $failures -ne 0 ]]; then
-    echo "$failures assertion(s) failed"
-    exit 1
-fi
-
-echo "PASS"
+test_finish

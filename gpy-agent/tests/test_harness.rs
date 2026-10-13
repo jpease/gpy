@@ -95,16 +95,6 @@ impl SignalCounter {
             // Got notification, loop to check count again
         }
     }
-
-    /// Wait for the counter to increment by at least N
-    ///
-    /// Similar to `wait_for_count` but waits for a delta from the current value.
-    #[allow(dead_code)]
-    pub async fn wait_for_increment(&self, delta: u32, timeout: Duration) -> bool {
-        let initial = self.get();
-        self.wait_for_count(initial.saturating_add(delta), timeout)
-            .await
-    }
 }
 
 impl Default for SignalCounter {

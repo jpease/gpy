@@ -2,11 +2,10 @@
 # tests/bash/debug_trap_preserves_last_arg.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #682: gpy's DEBUG trap was installed as
-# `trap '__gpy_debug_trap' DEBUG`, and bash sets `$_` to the last argument of
-# every simple command it runs -- the trap's own included. `$_` therefore
-# always expanded to "__gpy_debug_trap" on bash >= 4, so the
-# `mkdir -p dir && cd $_` idiom failed.
+# gpy's DEBUG trap must not clobber `$_`. Bash sets `$_` to the last argument
+# of every simple command it runs -- the trap's own included -- so a trap
+# installed as `trap '__gpy_debug_trap' DEBUG` makes `$_` always expand to
+# "__gpy_debug_trap" on bash >= 4 and breaks the `mkdir -p dir && cd $_` idiom.
 #
 # Drives a real interactive bash (the interpreter running this file, so the
 # gate's $GPY_BASH and a plain `bash` both get covered) with gpy loaded and
@@ -31,10 +30,10 @@ T="$(cd "$T" && pwd -P)"
 cleanup() { rm -rf "$T"; }
 trap cleanup EXIT
 # The child's XDG_CONFIG_HOME ($T/config) disables the supervisor: the theme
-# export would re-set the env flag below from config.toml (#836).
+# export would re-set the env flag below from config.toml.
 source "$ROOT/tests/lib/supervisor_off.bash" "$T"
 
-# Scrub every GPY_* variable inherited from the developer's shell (#270).
+# Scrub every GPY_* variable inherited from the developer's shell.
 gpy_scrub=()
 while IFS='=' read -r __gpy_env_name _; do
     case "$__gpy_env_name" in
@@ -59,27 +58,22 @@ out="$(printf '%s\n' \
         PATH=/usr/bin:/bin TERM=dumb \
         "$BASH" --noprofile --rcfile "$rc" -i 2>&1)"
 
-failures=0
 if [[ "$out" == *"cd: __gpy_debug_trap"* ]]; then
-    echo "FAIL: \`cd \$_\` expanded to __gpy_debug_trap"
-    failures=$((failures + 1))
+    fail "\`cd \$_\` expanded to __gpy_debug_trap"
 fi
 if [[ "$out" == *"PWD=$T/a/b"* ]]; then
-    echo "PASS: mkdir -p \"\$T/a/b\" && cd \$_ changed into \$T/a/b"
+    pass "mkdir -p \"\$T/a/b\" && cd \$_ changed into \$T/a/b"
 else
-    echo "FAIL: \`mkdir -p \"\$T/a/b\" && cd \$_\` did not change into $T/a/b"
-    failures=$((failures + 1))
+    fail "\`mkdir -p \"\$T/a/b\" && cd \$_\` did not change into $T/a/b"
 fi
 if [[ "$out" == *"LAST=/tmp"* ]]; then
-    echo "PASS: \$_ after \`ls /tmp\` is /tmp"
+    pass "\$_ after \`ls /tmp\` is /tmp"
 else
-    echo "FAIL: \$_ after \`ls /tmp\` is not /tmp"
-    failures=$((failures + 1))
+    fail "\$_ after \`ls /tmp\` is not /tmp"
 fi
 
-if (( failures > 0 )); then
+if [ "$failures" -gt 0 ]; then
     echo "--- child output ---"
     printf '%s\n' "$out"
-    exit 1
 fi
-echo "=== All Tests Passed ==="
+test_finish

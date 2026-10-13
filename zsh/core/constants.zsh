@@ -27,8 +27,8 @@ typeset -g __root_prompt_color="red"
 # Initialize segments array
 typeset -g -a __enabled_segments=()
 
-# IPC round-trip bound in milliseconds. An environment value overrides the
-# default, as in Bash and Fish (#845); __gpy_ms_to_secs rejects a non-numeric one.
+# IPC round-trip bound in milliseconds; the single default for this shell. An
+# environment value overrides it; __gpy_ms_to_secs rejects a non-numeric one.
 typeset -g GPY_IPC_TIMEOUT_MS=${GPY_IPC_TIMEOUT_MS:-150}
 
 # Git instant-cache TTL (seconds). This is the pull-based self-heal bound when
@@ -91,8 +91,7 @@ function __gpy_segment_bg() {
 # fallback this call (#614). __gpy_render_prompt reads this off `$?` after
 # every `seg_out=$(__gpy_segment_$seg ..)` and folds it into the per-render
 # __gpy_oneshot_used variable, so a dead daemon costs at most ONE oneshot fork
-# per prompt render -- replacing the old predictable `.gpy_oneshot_used_$$`
-# marker file under ${TMPDIR:-/tmp}.
+# per prompt render without a TMPDIR marker file.
 typeset -g GPY_SEG_STATUS_ONESHOT=3
 
 # Ensure prompt substitution is enabled, and pin the prompt options the

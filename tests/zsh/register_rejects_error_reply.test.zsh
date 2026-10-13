@@ -1,16 +1,17 @@
 #!/usr/bin/env zsh
 # tests/zsh/register_rejects_error_reply.test.zsh
 #
-# Regression test for #758: __gpy_register_with_agent must count a
+# __gpy_register_with_agent must count a
 # registration as successful only when the reply carries "status":"ok" (as
-# fish does). An {"error":...} reply used to set __gpy_registered=1, so the
-# shell stopped retrying and received no repaint doorbells.
+# fish does). Treating an {"error":...} reply as success would set
+# __gpy_registered=1, so the shell would stop retrying and receive no repaint
+# doorbells.
 #
 # A Python Unix-socket listener plays the agent and answers every request
 # (sourcing init may itself register once); it is killed on exit.
 
 ROOT=${0:a:h:h:h}
-# Shared skip contract (#650): exits 0 locally, fails under CI.
+# Shared skip contract: exits 0 locally, fails under CI.
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 cd "$ROOT"
 
@@ -22,7 +23,6 @@ if ! (( $+commands[socat] )) && ! (( $+commands[nc] )); then
 fi
 
 test_tmp_dir=$(mktemp -d)
-test_result=0
 listener_pid=""
 
 cleanup() {
@@ -48,11 +48,7 @@ while True:
 ' "$sock" "$reply" &
     listener_pid=$!
     disown 2>/dev/null
-    for _ in {1..20}; do
-        [[ -S "$sock" ]] && break
-        sleep 0.1
-    done
-    if [[ ! -S "$sock" ]]; then
+    if ! shell_e2e_poll 2 test -S "$sock"; then
         test_skip "could not create test Unix socket listener"
     fi
 
@@ -71,14 +67,13 @@ while True:
     listener_pid=""
 
     if [[ "$out" == *"rc=$want_rc registered=[$want_reg]" ]]; then
-        echo "PASS: $name"
+        pass "$name"
     else
-        echo "FAIL: $name: want rc=$want_rc registered=[$want_reg], got '$out'"
-        test_result=1
+        fail "$name: want rc=$want_rc registered=[$want_reg], got '$out'"
     fi
 }
 
 run_case error_reply '{"error":"x"}' 1 ""
 run_case ok_reply '{"status":"ok"}' 0 1
 
-exit "$test_result"
+test_finish

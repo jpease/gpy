@@ -2,13 +2,13 @@
 # tests/bash/ipc_no_double_send_on_slow_reply.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The Bash twin of tests/zsh/ipc_no_double_send_on_slow_reply.test.zsh (#845).
+# The Bash twin of tests/zsh/ipc_no_double_send_on_slow_reply.test.zsh.
 #
 # One slow-reply policy across the shells: an agent that accepted the request
 # but answers late is working on it. The shell must (a) put the request on the
-# wire exactly once -- no resend over a second connection (#575) -- and (b)
+# wire exactly once -- no resend over a second connection -- and (b)
 # report "connected, no reply" (status 2, empty output) so no caller recomputes
-# the same segment with a blocking `gpy-agent oneshot` fork (#757). Only an
+# the same segment with a blocking `gpy-agent oneshot` fork. Only an
 # agent that cannot be reached at all (status 1) may fall back to oneshot.
 #
 # A python3 listener plays the slow agent and records one line per accepted
@@ -36,10 +36,6 @@ cleanup() {
     rm -rf "$tmp"
 }
 trap cleanup EXIT
-
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 real_path="$PATH"
 # make_shim NAME TOOL...: a PATH holding only the named tools.
@@ -83,10 +79,7 @@ while True:
     c.close()
 ' "$tmp/slow.sock" "$tmp/connections" "$1" "$2" &
     listener_pid=$!
-    for _ in $(seq 1 30); do
-        [ -S "$tmp/slow.sock" ] && return 0
-        sleep 0.1
-    done
+    shell_e2e_poll 3 test -S "$tmp/slow.sock" && return 0
     test_skip "could not create test Unix socket listener"
 }
 
@@ -105,6 +98,7 @@ check_transport() {
     out="$(__gpy_send_json '{"op":"ping"}')"
     status=$?
     PATH="$real_path"
+    # Leave a window in which a resend would open a second connection.
     sleep 0.3
     stop_listener
     [ -f "$tmp/connections" ] && connections="$(wc -l <"$tmp/connections" | tr -d ' ')"
@@ -190,5 +184,4 @@ else
     fail "dead socket: output '$out', oneshot log '$(cat "$oneshot_log")'"
 fi
 
-[ "$failures" -eq 0 ] || exit 1
-echo "PASS: bash slow-reply policy holds on every available transport"
+test_finish "bash slow-reply policy holds on every available transport"

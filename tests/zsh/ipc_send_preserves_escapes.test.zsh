@@ -1,11 +1,11 @@
 #!/usr/bin/env zsh
 # tests/zsh/ipc_send_preserves_escapes.test.zsh
 #
-# Regression test for #676: zsh's `print` (without -r) and `echo` interpret
-# backslash escapes, so the send path turned the doubled backslashes from
-# __gpy_escape_json back into single ones (`a\b` reached the agent as
-# `a<BS>b`, `notes\stuff` as invalid JSON), and every reply, cache key and
-# prompt string re-emitted with `echo` lost its `\c`/`\b` sequences.
+# zsh's `print` (without -r) and `echo` interpret backslash escapes, so the
+# send path must not use them: the doubled backslashes from __gpy_escape_json
+# would collapse (`a\b` would reach the agent as `a<BS>b`, `notes\stuff` as
+# invalid JSON), and every reply, cache key and prompt string would lose its
+# `\c`/`\b` sequences.
 #
 # A Python listener records the exact request line it receives and replies
 # with literal backslash sequences. The test asserts that the request
@@ -13,7 +13,6 @@
 # and that __gpy_find_git_root returns a repo root containing `\` verbatim.
 
 ROOT=${0:a:h:h:h}
-# Shared skip contract (#650): exits 0 locally, fails under CI.
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 cd "$ROOT"
 
@@ -27,10 +26,6 @@ if ! command -v git &>/dev/null; then
 fi
 
 test_tmp_dir=$(mktemp -d)
-test_result=0
-
-pass() { print -r -- "PASS: $1"; }
-fail() { print -r -- "FAIL: $1"; test_result=1; }
 
 # --- Request and reply round-trip through __gpy_send_json ---
 
@@ -56,11 +51,7 @@ conn.close()
 listener_pid=$!
 disown 2>/dev/null
 
-for _ in {1..20}; do
-    [[ -S "$sock" ]] && break
-    sleep 0.1
-done
-if [[ ! -S "$sock" ]]; then
+if ! shell_e2e_poll 2 test -S "$sock"; then
     kill -9 "$listener_pid" 2>/dev/null
     rm -rf "$test_tmp_dir"
     test_skip "could not create test Unix socket listener"
@@ -102,4 +93,4 @@ else
 fi
 
 rm -rf "$test_tmp_dir"
-exit "$test_result"
+test_finish "zsh IPC send and reply preserve backslashes"

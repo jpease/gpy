@@ -86,7 +86,6 @@ Tab completion for `gpy` is installed for all three shells.
 - [User guide](docs/user/README.md), [CLI reference](docs/user/cli-reference.md),
   and [Advanced Configuration](docs/user/advanced-configuration.md)
 - [Migrating from Starship](docs/user/migrating-from-starship.md)
-- [How GPY compares](docs/COMPETITIVE_COMPARISON.md)
 - [Developer docs](docs/dev/README.md)
 
 ## Contributing

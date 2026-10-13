@@ -3,22 +3,22 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Verifies the character and directory segments memoize their agent-rendered
-# output (#343): a repeat render with the same input tuple must make zero
+# output: a repeat render with the same input tuple must make zero
 # additional IPC calls (cache hit), an exit-status flip must re-render the
 # character, a `cd` must re-render the directory, a theme change (agent reload)
 # must re-render both, a manual reload (__gpy_reload_theme / prompt-reload)
-# must re-render both even without a theme name change (#576), and an
+# must re-render both even without a theme name change, and an
 # empty/failed render must never be cached.
 
 # Isolate the theme-export cache dir so init.fish's fast path can't read a
-# real, live dogfooding daemon's cache (#402). Pre-seed it with an empty,
+# real, live dogfooding daemon's cache. Pre-seed it with an empty,
 # no-op cache file so every source-or-spawn call in this test
 # (__gpy_load_theme, __gpy_reload_theme, __gpy_apply_agent_reload) takes the
 # fast "source the cache" path instead of possibly falling through to spawn
 # a REAL gpy-agent binary, if one happens to be resolvable on this machine
 # -- a real spawn would clobber __gpy_theme_name with a real theme's name,
 # defeating the "reload without a theme name change" isolation step 5 below
-# needs (#576).
+# needs.
 set -gx XDG_CACHE_HOME (mktemp -d)
 mkdir -p "$XDG_CACHE_HOME/gpy"
 touch "$XDG_CACHE_HOME/gpy/theme-export.fish"
@@ -125,7 +125,7 @@ check "theme change re-renders character" 2 $__gpy_char_call_count
 check "theme change re-renders directory" 2 $__gpy_dir_call_count
 
 # --- 5. Manual reload (prompt-reload / __gpy_reload_theme) re-renders both
-#        segments even when the theme NAME does not change (#576) ---
+#        segments even when the theme NAME does not change ---
 #
 # The character/directory cache key includes the theme name but not its
 # content, so a reload of the SAME-NAMED theme (e.g. after editing its

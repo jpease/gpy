@@ -2,16 +2,16 @@
 # tests/zsh/e2e_git_variant_fallback_bounded_sync.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Git segment variant fallback: bounded synchronous IPC (#843; the Zsh twin of
-# tests/fish/e2e_git_variant_fallback_bounded_sync.test.fish, #436).
+# Git segment variant fallback: bounded synchronous IPC (the Zsh twin of
+# tests/fish/e2e_git_variant_fallback_bounded_sync.test.fish).
 #
 # __gpy_read_instant_cache serves the context-free `.none` entry (status bit 4)
 # when no token-specific file exists yet for the render's real prev_bg. The
 # content is right but its opening chevron was rendered without prev_bg, so the
-# colour is wrong. Zsh used to test only `== 1` and `& 2` and served it as an
-# ordinary hit. With the agent up, the FIRST render at a new prev_bg must now
-# show the correct chevron (a bounded sync query with the real prev_bg); with
-# the agent down it falls back to the `.none` bytes (safety net).
+# colour is wrong; it must not be served as an ordinary hit. With the agent up,
+# the FIRST render at a new prev_bg must show the correct chevron (a bounded
+# sync query with the real prev_bg); with the agent down it falls back to the
+# `.none` bytes (safety net).
 #
 # The stock theme does not vary the git cap by prev_bg, so the test installs a
 # theme whose git opening separator reads `fg:prev_bg`. prev_bg 222 is numeric
@@ -21,9 +21,6 @@ ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 PREV_BG=222
 cache_dir="$XDG_CACHE_HOME/gpy/instant-prompts"
@@ -86,7 +83,7 @@ fi
 # --- agent unreachable: serve the .none bytes unchanged -------------------------------
 # Copy the real .none entry into a cache root the running agent never inherited.
 # A background refresh rewrites every remembered prev_bg, even after the socket
-# disappears, so deleting the original token file is not fixture isolation (#863).
+# disappears, so deleting the original token file is not fixture isolation.
 fallback_cache_home="$SHELL_E2E_ROOT/fallback-cache"
 fallback_cache_dir="$fallback_cache_home/gpy/instant-prompts"
 none_files=("$cache_dir"/*".git_last.none.zsh"(N))
@@ -135,8 +132,4 @@ fallback_token_files=("$fallback_cache_dir"/*".git_last.$PREV_BG.zsh"(N))
 [ "${#fallback_token_files}" -eq 0 ] && pass "the isolated cache still has no token-specific file" \
     || fail "the unreachable render wrote a token-specific file into the isolated cache"
 
-if [ "$failures" -gt 0 ]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: zsh git segment corrects the variant fallback via a bounded sync query"
+test_finish "zsh git segment corrects the variant fallback via a bounded sync query"

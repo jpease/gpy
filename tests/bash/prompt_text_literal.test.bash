@@ -3,10 +3,10 @@
 # tests/bash/prompt_text_literal.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #677: agent-rendered segment text lands in PS1 as
-# prompt source, and bash expands `$(...)`, `$VAR`, backticks and `\x`
-# prompt escapes in it on every draw. Directory and branch names are
-# untrusted data (a cloned repo, an unpacked archive), so this ran commands.
+# Agent-rendered segment text lands in PS1 as prompt source, and bash
+# expands `$(...)`, `$VAR`, backticks and `\x` prompt escapes in it on every
+# draw. Directory and branch names are untrusted data (a cloned repo, an
+# unpacked archive), so unescaped text would run commands.
 #
 # With a live sandboxed agent, render the real prompt in directories and on a
 # branch whose names contain those characters, and assert the displayed
@@ -20,12 +20,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT/tests/lib/shell_e2e.sh"
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n\n[agent.supervisor]\nenabled = false\n' \
-    >"$XDG_CONFIG_HOME/gpy/config.toml"
+shell_e2e_text_config '"directory", "git"' false supervisor-off
 export GPY_AGENT_ENABLED=1
 export GPY_AGENT_SUPERVISOR_ENABLED=0
 shell_e2e_start_agent || exit 1
@@ -108,8 +104,4 @@ fi
 
 shell_e2e_stop_agent
 
-if [ "$failures" -ne 0 ]; then
-    echo "=== $failures FAILED ==="
-    exit 1
-fi
-echo "=== All Tests Passed ==="
+test_finish

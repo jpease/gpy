@@ -2,7 +2,7 @@
 # tests/fish/venv_forwarding_vectors.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #729: Fish's __gpy_forwarded_venv picks the same `virtual_env` value as every
+# Fish's __gpy_forwarded_venv picks the same `virtual_env` value as every
 # row of tests/fixtures/venv_forwarding_vectors.tsv (also read by the Rust and
 # Bash/Zsh tests). See the fixture's header for the format.
 

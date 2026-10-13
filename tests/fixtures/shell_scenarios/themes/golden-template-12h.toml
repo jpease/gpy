@@ -1,4 +1,4 @@
-# Fixture theme for the cross-shell segment golden test (#844): the same
+# Fixture theme for the cross-shell segment golden test: the same
 # templates as golden-template, with a 12-hour, zero-padded clock that shows
 # seconds. In Fish the agent's response carries the clock's strftime spec and
 # Fish swaps in the time, so every spec variant has to match the agent's.

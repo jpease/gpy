@@ -1,9 +1,9 @@
 #!/usr/bin/env fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Test: the Fish clock is agent-rendered whenever the theme sets
-# `[segments.clock].format`, like Bash and Zsh (#844). Fish used to always draw
-# the clock locally, so a templated theme (the default, or a custom template)
-# looked different in Fish than in the other two shells.
+# `[segments.clock].format`, like Bash and Zsh, so a templated theme (the
+# default, or a custom template) looks the same in Fish as in the other two
+# shells.
 #
 # The agent's Fish response carries the clock's bare strftime spec where the
 # time goes (Fish has no prompt-level time token), and segment_clock_render

@@ -3,13 +3,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # A registered Bash shell that runs `exec bash` survives an agent
-# notification during the new shell's startup (#674).
+# notification during the new shell's startup.
 #
 # `exec` keeps the PID, and the EXIT trap does not run on exec, so the PID
-# stays registered with the agent. A notification that arrives before the new
-# shell has sourced gpy used to be SIGUSR-style and killed it (default
-# disposition: terminate), closing the terminal pane. The agent now only
-# rings SIGURG, whose default disposition is ignore, and leaves the meaning
+# stays registered with the agent and a notification can arrive before the new
+# shell has sourced gpy. A signal whose default disposition is terminate would
+# kill it there, closing the terminal pane, so the agent only rings SIGURG,
+# whose default disposition is ignore, and leaves the meaning
 # in a `<pid>.reload` / `<pid>.reregister` flag file. With a real agent and a
 # `bash -i` on a pty:
 #   (a) after `exec bash`, the new shell's rc blocks before loading gpy until
@@ -25,12 +25,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT/tests/lib/shell_e2e.sh"
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
-config="$XDG_CONFIG_HOME/gpy/config.toml"
-printf '[ui]\nshow_icons = true\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' >"$config"
+shell_e2e_text_config '"directory", "git"' true
 shell_e2e_start_agent || exit 1
 export GPY_AGENT_ENABLED=1
 export GPY_AGENT_SUPERVISOR_ENABLED=1
@@ -54,7 +50,7 @@ shell_e2e_poll 5 counted || fail "the PID is not registered across exec; the not
 
 # --- (b) the agent notifies the PID while the new shell has no handler -------
 signals_before="$(grep -c 'to reload via SIGURG' "$GPY_DEBUG_LOG" 2>/dev/null || true)"
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["directory", "git"]\n' >"$config"
+shell_e2e_text_config '"directory", "git"'
 shells_dir="$XDG_RUNTIME_DIR/gpy/shells"
 notified() {
     now="$(grep -c 'to reload via SIGURG' "$GPY_DEBUG_LOG" 2>/dev/null || true)"
@@ -85,7 +81,5 @@ fi
 shell_e2e_send 'exit\r'
 if [ "$failures" -gt 0 ]; then
     shell_e2e_dump_transcript
-    echo "FAILED: $failures assertion(s)"
-    exit 1
 fi
-echo "PASS: bash survives an agent notification during exec startup"
+test_finish "bash survives an agent notification during exec startup"

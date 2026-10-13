@@ -1,7 +1,7 @@
 # tests/fixtures/venv_forwarding_vectors.tsv
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Shared virtualenv-forwarding vectors (#729). `lang` requests carry a
+# Shared virtualenv-forwarding vectors. `lang` requests carry a
 # `virtual_env` value chosen from the shell environment: $VIRTUAL_ENV wins;
 # otherwise $CONDA_PREFIX, but only when $CONDA_DEFAULT_ENV is non-empty and
 # not `base` (a forwarded venv beats the project's .venv, and many setups

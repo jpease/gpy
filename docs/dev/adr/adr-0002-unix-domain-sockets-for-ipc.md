@@ -16,31 +16,31 @@ The hybrid Rust/Fish architecture requires inter-process communication between t
 ### Considered Alternatives
 
 1. **Named Pipes (FIFOs)**
-   - ✅ Fast
-   - ❌ No built-in connection handling
-   - ❌ Complex bidirectional communication
-   - ❌ Limited cross-platform support
+   - Pro: Fast
+   - Con: No built-in connection handling
+   - Con: Complex bidirectional communication
+   - Con: Limited cross-platform support
 
 2. **TCP Sockets (localhost)**
-   - ✅ Well-understood protocol
-   - ✅ Good library support
-   - ❌ ~0.5-2ms latency (too slow)
-   - ❌ Security: must manage ports, firewall rules
-   - ❌ Port conflicts possible
+   - Pro: Well-understood protocol
+   - Pro: Good library support
+   - Con: ~0.5-2ms latency (too slow)
+   - Con: Security: must manage ports, firewall rules
+   - Con: Port conflicts possible
 
 3. **Shared Memory**
-   - ✅ Extremely fast (< 0.1ms)
-   - ❌ Complex synchronization required
-   - ❌ Difficult error handling
-   - ❌ Platform-specific implementations
+   - Pro: Extremely fast (< 0.1ms)
+   - Con: Complex synchronization required
+   - Con: Difficult error handling
+   - Con: Platform-specific implementations
 
 4. **Unix Domain Sockets**
-   - ✅ Sub-millisecond latency (< 0.5ms)
-   - ✅ Filesystem permissions for security
-   - ✅ Connection-oriented (like TCP)
-   - ✅ Excellent library support (tokio, nix)
-   - ✅ Works on Linux, macOS, WSL
-   - ❌ Not available on native Windows
+   - Pro: Sub-millisecond latency (< 0.5ms)
+   - Pro: Filesystem permissions for security
+   - Pro: Connection-oriented (like TCP)
+   - Pro: Excellent library support (tokio, nix)
+   - Pro: Works on Linux, macOS, WSL
+   - Con: Not available on native Windows
 
 ## Decision
 

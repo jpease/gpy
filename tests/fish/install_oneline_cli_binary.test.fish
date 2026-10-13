@@ -2,12 +2,12 @@
 # tests/fish/install_oneline_cli_binary.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #327: install-oneline.sh must download and install the
+# install-oneline.sh must download and install the
 # user-facing `gpy` CLI binary alongside the `gpy-agent` daemon, so a
 # `curl | sh` install leaves a working `gpy` on PATH for shell completions.
 #
 # Static/text-level check in the same spirit as
-# install_oneline_file_lists.test.fish (#308): it parses install-oneline.sh
+# install_oneline_file_lists.test.fish: it parses install-oneline.sh
 # rather than running a network install, asserting that the script (1)
 # computes a per-platform `gpy-<platform>-<arch>` CLI binary name for every
 # platform it already handles for the agent, and (2) installs that binary to

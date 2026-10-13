@@ -2,13 +2,12 @@
 # tests/fish/install_sh_cli_binary.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Regression test for #327: the user-facing `gpy` CLI binary must ship
-# through install.sh alongside the `gpy-agent` daemon. Before this change
-# install.sh only installed gpy-agent, so shell completions (which call the
-# `gpy` CLI) had no binary to invoke after a local-package install.
+# The user-facing `gpy` CLI binary must ship through install.sh alongside
+# the `gpy-agent` daemon: shell completions call the `gpy` CLI, so a
+# local-package install without it leaves them no binary to invoke.
 #
 # Static/text-level check in the same spirit as
-# install_oneline_file_lists.test.fish (#308): it parses install.sh rather
+# install_oneline_file_lists.test.fish: it parses install.sh rather
 # than running a full install, asserting that install.sh (1) computes a
 # per-platform `gpy-<platform>-<arch>` CLI binary name for every platform it
 # already handles for the agent, and (2) installs that binary to

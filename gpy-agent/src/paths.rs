@@ -1,4 +1,4 @@
-//! Pure path resolution for GPY's XDG-style roots (#477).
+//! Pure path resolution for GPY's XDG-style roots.
 //!
 //! GPY has three independent roots, each with its own precedence chain over
 //! a handful of environment variables:
@@ -12,14 +12,11 @@
 //! - **config** (`XDG_CONFIG_HOME/gpy` -> `HOME/.config/gpy`): user themes,
 //!   user plugins, and `config.toml`.
 //!
-//! Before #477, each root's precedence was re-derived independently at every
-//! call site (ten-plus copies for the runtime root alone), so a fix to one
-//! copy -- like #475, which found a resolver that silently skipped the
-//! `XDG_CACHE_HOME` step -- did not propagate to the others. This module is
-//! the single definition of each root's precedence; every call site routes
-//! its path *value* through the matching function here while keeping its own
-//! I/O, error handling, and suffix logic (directory creation, `AlreadyExists`
-//! tolerance, the `#426` `/tmp` symlink hardening, etc.) exactly as before.
+//! This module is the single definition of each root's precedence, so a fix
+//! to one resolver cannot miss another copy. Every call site routes its path
+//! *value* through the matching function here while keeping its own I/O,
+//! error handling, and suffix logic (directory creation, `AlreadyExists`
+//! tolerance, the `/tmp` symlink hardening, etc.).
 //!
 //! Each function is pure -- no ambient `std::env` reads -- so the precedence
 //! can be table-tested. `std::env::set_var` requires `unsafe` under the 2024
@@ -29,7 +26,7 @@
 //! tests live in `gpy-agent/tests/` integration binaries instead, which are
 //! compiled as separate crates and are not bound by the lib's `forbid`.
 //!
-//! ## Windows (#478)
+//! ## Windows
 //!
 //! The **cache** root gets a native-Windows branch, via the [`Os`] enum
 //! and [`cache_root_for`]'s third parameter. The **runtime** root does not:
@@ -58,7 +55,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-/// The directory `gpy-agent start` ran in, recorded before it forks (#724).
+/// The directory `gpy-agent start` ran in, recorded before it forks.
 ///
 /// The daemon `chdir`s to `/` so it never keeps a mount busy, yet relative
 /// paths the user supplied (`--socket`, `GPY_AGENT_SOCKET_PATH`,
@@ -139,7 +136,7 @@ pub fn socket_path_problem(path: &Path, capacity: usize) -> Option<String> {
 }
 
 /// Refuse a socket path the kernel would reject, with a message that names the
-/// length, the limit and the fix (#850).
+/// length, the limit and the fix.
 ///
 /// macOS's `sun_path` is 104 bytes against Linux's 108, so a long `$HOME`,
 /// `XDG_RUNTIME_DIR` or `GPY_AGENT_SOCKET_PATH` fails on macOS first -- and
@@ -171,8 +168,8 @@ pub fn check_socket_path_len(path: &Path) -> crate::Result<()> {
 /// The XDG Base Directory specification says an environment variable that is
 /// "either not set or empty" must be treated as unset, and that a value which
 /// "is not an absolute path" is invalid "and should be ignored". Every
-/// resolver in this module runs its `XDG_*` inputs through this function
-/// (#626), so `XDG_RUNTIME_DIR=` no longer makes the agent join a *relative*
+/// resolver in this module runs its `XDG_*` inputs through this function, so
+/// `XDG_RUNTIME_DIR=` never makes the agent join a *relative*
 /// `gpy/gpy.sock` that no shell ever looks for, and a relative
 /// `XDG_CACHE_HOME=cache` falls through to `$HOME/.cache` instead of writing
 /// a cache next to whatever directory the process happened to start in.
@@ -182,14 +179,14 @@ pub fn check_socket_path_len(path: &Path) -> crate::Result<()> {
 /// equivalents), which is what makes the four implementations agree under the
 /// cross-shell parity harness.
 ///
-/// "Absolute" depends on the [`Os`] whose rules apply (#774). On
+/// "Absolute" depends on the [`Os`] whose rules apply. On
 /// [`Os::Unix`] (Linux, macOS, WSL) only a leading `/` counts, exactly like the
 /// shells' `'/*'` checks: `C:\x`, `C:/x`, `\\server\share` and `~/x` are
 /// *relative* paths there, and honouring them would bind sockets and write
-/// caches under the process's current directory (the WSL `WSLENV` hazard from
-/// #478). On [`Os::Windows`] the spellings `/...`, `\...`, `C:\...`,
-/// `C:/...` and UNC all count, so the `XDG_CACHE_HOME` override that #478
-/// gives native-Windows users keeps working. The function stays pure:
+/// caches under the process's current directory (the WSL `WSLENV` hazard).
+/// On [`Os::Windows`] the spellings `/...`, `\...`, `C:\...`, `C:/...` and
+/// UNC all count, so native-Windows users can still override the cache root
+/// with `XDG_CACHE_HOME`. The function stays pure:
 /// the caller's `os`, not `cfg!(windows)`, decides.
 #[must_use]
 pub fn xdg_value(value: Option<&str>, os: Os) -> Option<&str> {
@@ -213,15 +210,14 @@ fn is_absolute_windows(value: &str) -> bool {
 
 /// The current user's home directory, as a string.
 ///
-/// The single source of `HOME` for every resolver in this crate (#626).
+/// The single source of `HOME` for every resolver in this crate.
 /// [`std::env::home_dir`] was un-deprecated in Rust 1.85 once its Unix
 /// implementation was fixed: it reads `$HOME`, treats an empty value as
 /// unset, and falls back to the passwd database (`getpwuid_r`) -- which is
 /// exactly what Fish and Zsh do when the environment does not carry `HOME`.
-/// Reading the variable directly instead is what made the agent resolve
-/// `/tmp/gpy` (and Bash the filesystem-root `/.cache/gpy`) while the shells
-/// resolved the real home, so a shell and the agent used different sockets in
-/// any `HOME`-less environment (cron, some systemd units, `env -i`).
+/// Reading the variable directly would resolve `/tmp/gpy` while the shells
+/// resolve the real home, so a shell and the agent would use different sockets
+/// in any `HOME`-less environment (cron, some systemd units, `env -i`).
 ///
 /// Returns `None` only when there is no home directory at all, which is what
 /// keeps `/tmp/gpy` alive as [`runtime_root_for`]'s last resort.
@@ -235,7 +231,7 @@ fn ambient_home() -> Option<PathBuf> {
     std::env::home_dir()
 }
 
-/// The [`root_var_os`] test seam's stand-in for HOME (#839).
+/// The [`root_var_os`] test seam's stand-in for HOME.
 #[cfg(test)]
 #[expect(
     clippy::unnecessary_wraps,
@@ -249,7 +245,7 @@ fn ambient_home() -> Option<PathBuf> {
 /// `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR`, `GPY_CONFIG_PATH`.
 ///
 /// Every ambient read of those variables goes through here or [`root_var`],
-/// and with [`home_dir`] this is the crate's one test seam for them (#839):
+/// and with [`home_dir`] this is the crate's one test seam for them:
 /// lib unit tests cannot redirect the environment (`std::env::set_var` needs
 /// the `unsafe` this crate forbids), so under `cfg(test)` the XDG variables
 /// point inside a per-process temp root and every other key reads as unset.
@@ -300,8 +296,7 @@ fn test_root() -> &'static Path {
 /// `#[cfg(windows)]` at the call site, see
 /// `cache::instant_prompt::get_gpy_cache_dir` -- and passed in. This type
 /// itself carries no platform-conditional compilation, which is exactly what
-/// lets every branch be exercised from any host in a table-driven test
-/// (#478).
+/// lets every branch be exercised from any host in a table-driven test.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Os {
     /// Linux, macOS, and WSL. WSL presents as a Unix environment, so it uses
@@ -336,8 +331,7 @@ impl Os {
 /// 3. `$HOME/.cache/gpy`
 /// 4. `/tmp/gpy`
 ///
-/// Moved here from `agent::lifecycle` (where it landed for #475) as the
-/// shared definition every runtime-root consumer routes through: the four
+/// The shared definition every runtime-root consumer routes through: the four
 /// wrappers in `agent::lifecycle::{mod, start}`, `ipc::server::handle`,
 /// `ipc::client`, and `ipc::transport` each call this for the path *value*
 /// and keep their own I/O and error handling.
@@ -365,7 +359,7 @@ pub fn runtime_root_for(
 /// 1. `$XDG_CACHE_HOME/gpy`
 /// 2. `$HOME/.cache/gpy`
 ///
-/// Precedence for [`Os::Windows`] (#478):
+/// Precedence for [`Os::Windows`]:
 /// 1. `$XDG_CACHE_HOME/gpy` -- an explicitly-set override still wins, even on
 ///    Windows
 /// 2. `%LOCALAPPDATA%\gpy` -- Local, not Roaming: a cache and a socket must
@@ -406,7 +400,7 @@ pub fn cache_root_for(
 /// reads.
 ///
 /// Precedence, with `XDG_CONFIG_HOME` judged absolute by `os`'s rules
-/// ([`xdg_value`], #774): a Windows-shaped value is relative and ignored
+/// ([`xdg_value`]): a Windows-shaped value is relative and ignored
 /// under [`Os::Unix`], and honoured under [`Os::Windows`], exactly like the
 /// `XDG_CACHE_HOME` override of [`cache_root_for`]:
 /// 1. `$XDG_CONFIG_HOME/gpy`
@@ -414,12 +408,8 @@ pub fn cache_root_for(
 ///    when `HOME` is also unset.
 ///
 /// Theme-name resolution (`theme::manager::ThemeManager::resolve_path`, used
-/// by both the daemon and CLI oneshot rendering, #572) routes through this
-/// function via `ThemeManager::user_theme_path`. It previously had its own
-/// hand-rolled, no-`./`-prefix fallback for the no-`XDG_CONFIG_HOME`
-/// no-`HOME` case (`config::loader::get_theme_path`, since removed); that
-/// divergence was deliberately preserved once (#477) but is gone now that
-/// theme resolution unified onto this function.
+/// by both the daemon and CLI oneshot rendering) routes through this
+/// function via `ThemeManager::user_theme_path`.
 #[must_use]
 pub fn config_root_for(xdg_config_home: Option<&str>, home: Option<&str>, os: Os) -> PathBuf {
     if let Some(xdg_config) = xdg_value(xdg_config_home, os) {
@@ -442,14 +432,11 @@ mod tests {
         &'static str,
     );
 
-    /// Regression test for #475, moved here from `agent::lifecycle::runtime_dir_tests` as part
-    /// of #477's centralization.
+    /// The runtime root's precedence is the contract every socket-path consumer must honour.
     ///
-    /// The runtime root's precedence is the contract every socket-path consumer must honour,
-    /// and a second resolver in `commands::utils` used to omit the `XDG_CACHE_HOME` step -- so
-    /// with `XDG_CACHE_HOME` set and `XDG_RUNTIME_DIR` unset (the conventional macOS setup,
-    /// and what every test fixture uses) the CLI connected to a socket nothing was listening
-    /// on, and `gpy config set` silently failed to reload a running agent.
+    /// With `XDG_CACHE_HOME` set and `XDG_RUNTIME_DIR` unset (the conventional macOS setup,
+    /// and what every test fixture uses) a resolver that skips the `XDG_CACHE_HOME` step
+    /// connects the CLI to a socket nothing is listening on.
     ///
     /// Expressed against the pure resolver because the environment cannot be
     /// mutated in-process: `std::env::set_var` is unavailable under
@@ -471,13 +458,12 @@ mod tests {
             (None, Some("/cache"), Some("/home/u"), "/cache/gpy"),
             (None, None, Some("/home/u"), "/home/u/.cache/gpy"),
             (None, None, None, "/tmp/gpy"),
-            // #626: an empty $XDG_* value is "not set" per the XDG spec. This
-            // used to join onto the empty string and return the RELATIVE
-            // "gpy", a path no shell ever looked for.
+            // An empty $XDG_* value is "not set" per the XDG spec, never
+            // the RELATIVE "gpy", a path no shell looks for.
             (Some(""), Some("/cache"), Some("/home/u"), "/cache/gpy"),
             (Some(""), Some(""), Some("/home/u"), "/home/u/.cache/gpy"),
             (Some(""), Some(""), None, "/tmp/gpy"),
-            // #626: a relative $XDG_* value is invalid and ignored.
+            // A relative $XDG_* value is invalid and ignored.
             (Some("run"), Some("/cache"), Some("/home/u"), "/cache/gpy"),
             (
                 Some("run"),
@@ -485,7 +471,7 @@ mod tests {
                 Some("/home/u"),
                 "/home/u/.cache/gpy",
             ),
-            // #774: Windows-shaped values are relative on Unix and ignored.
+            // Windows-shaped values are relative on Unix and ignored.
             (Some("C:/x"), None, Some("/home/u"), "/home/u/.cache/gpy"),
             (Some(r"C:\x"), None, Some("/home/u"), "/home/u/.cache/gpy"),
             (
@@ -525,11 +511,11 @@ mod tests {
             (Some("/cache"), Some("/home/u"), Some("/cache/gpy")),
             (None, Some("/home/u"), Some("/home/u/.cache/gpy")),
             (None, None, None),
-            // #626: empty and relative XDG_CACHE_HOME both fall through.
+            // Empty and relative XDG_CACHE_HOME both fall through.
             (Some(""), Some("/home/u"), Some("/home/u/.cache/gpy")),
             (Some("cache"), Some("/home/u"), Some("/home/u/.cache/gpy")),
             (Some(""), None, None),
-            // #774: Windows-shaped values are relative on Unix and ignored.
+            // Windows-shaped values are relative on Unix and ignored.
             (Some("C:/x"), Some("/home/u"), Some("/home/u/.cache/gpy")),
             (Some(r"C:\x"), Some("/home/u"), Some("/home/u/.cache/gpy")),
             (
@@ -551,9 +537,7 @@ mod tests {
     /// One row: `XDG_CACHE_HOME`, then `LOCALAPPDATA`, then the expected output.
     ///
     /// `None` when neither is set -- exercised with `Os::Windows` from this Unix test runner,
-    /// per #478's acceptance criterion that the Windows env matrix is table-tested without a
-    /// Windows host.
-    ///
+    /// so the Windows env matrix is table-tested without a Windows host.
     type WindowsCacheCase = (
         Option<&'static str>,
         Option<&'static str>,
@@ -614,7 +598,7 @@ mod tests {
             );
         }
 
-        // #774: Windows spellings are relative on Unix.
+        // Windows spellings are relative on Unix.
         for rejected in [
             "",
             "cache",
@@ -641,7 +625,7 @@ mod tests {
     /// # Panics
     ///
     /// Panics if a Windows-absolute spelling is rejected on Windows, or a
-    /// relative one accepted (#478 behaviour).
+    /// relative one accepted.
     #[test]
     fn xdg_value_windows_keeps_windows_and_posix_absolute_values() {
         for accepted in [
@@ -700,17 +684,9 @@ mod tests {
         let cases: [ConfigCase; 6] = [
             (Some("/xdgcfg"), Some("/home/u"), "/xdgcfg/gpy"),
             (None, Some("/home/u"), "/home/u/.config/gpy"),
-            // No leading `./` guaranteed here. The one caller that historically
-            // needed a no-slash string for this branch (config::loader's old,
-            // now-removed get_theme_path/theme_path_for, #477) has since
-            // unified onto this function (#572), so nothing depends on the
-            // no-`./` form anymore.
             (None, None, "./.config/gpy"),
-            // #626 flips this row: an empty XDG_CONFIG_HOME used to produce
-            // the relative "gpy", which is what made the agent report
-            // "/gpy/config.toml" (the filesystem root) as its config
-            // candidate. It now falls through to $HOME like every other
-            // resolver.
+            // An empty XDG_CONFIG_HOME is unset and falls through to $HOME
+            // like every other resolver, never the relative "gpy".
             (Some(""), Some("/home/u"), "/home/u/.config/gpy"),
             (Some(""), None, "./.config/gpy"),
             // Relative values are invalid per the spec and ignored too.
@@ -746,7 +722,7 @@ mod tests {
         );
     }
 
-    /// #850: the boundary is `capacity - 1` bytes (the NUL takes the last), and
+    /// The boundary is `capacity - 1` bytes (the NUL takes the last), and
     /// the message carries what a user needs to fix it.
     ///
     /// # Panics
@@ -778,7 +754,7 @@ mod tests {
         }
     }
 
-    /// #850: the constant is the kernel's real limit on this platform.
+    /// The constant is the kernel's real limit on this platform.
     ///
     /// std builds a socket address only for paths that fit, so a path of
     /// exactly `SUN_PATH_CAPACITY - 1` bytes must be the longest one.

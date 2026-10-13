@@ -3,11 +3,11 @@
 # tests/bash/maybe_refresh_nonblocking.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# __gpy_maybe_refresh: throttled, non-blocking background refresh (#843; the
-# Bash twin of Fish's __gpy_maybe_refresh, #612).
+# __gpy_maybe_refresh: throttled, non-blocking background refresh (the Bash
+# twin of Fish's __gpy_maybe_refresh).
 #
-# A stale cache entry with the agent up used to send an unthrottled background
-# request on EVERY render. __gpy_maybe_refresh now caps that at one request per
+# A stale cache entry with the agent up must not send a background request on
+# EVERY render: __gpy_maybe_refresh caps that at one request per
 # 500 ms per op+suffix+path(+token). Segments render inside `$(...)` subshells,
 # so the throttle state must survive them (it lives in a per-shell stamp file).
 # Asserted with a recording stub for __gpy_trigger_data_refresh and a real agent:
@@ -16,19 +16,15 @@
 #   (c) a different throttle key (variant token) is not starved by (b);
 #   (d) after the interval the same key sends again;
 #   (e) a stale git segment render burst sends ONE request;
-#   (f) with the agent disabled (#841) nothing is sent at all.
+#   (f) with the agent disabled nothing is sent at all.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tests/lib/shell_e2e.sh
 . "$ROOT/tests/lib/shell_e2e.sh"
 
 shell_e2e_init "$ROOT"
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
-printf '[ui]\nshow_icons = false\ntheme = "text"\nenabled_segments = ["git"]\n' \
-    >"$XDG_CONFIG_HOME/gpy/config.toml"
+shell_e2e_text_config '"git"'
 export GPY_GIT_INSTANT_CACHE_TTL_SECONDS=5
 cd "$SHELL_E2E_REPO" || exit 1
 # Source with the agent disabled and off PATH (the theme export would re-set the
@@ -62,7 +58,7 @@ else
     fail "__gpy_maybe_refresh blocked on the refresh ($t0 -> $t1)"
 fi
 if shell_e2e_poll 5 count_is 1; then
-    sleep 0.3
+    sleep 0.3 # window in which a second request would show up
     [ "$(count)" -eq 1 ] && pass "a burst across the shell and subshells sent exactly one request" \
         || fail "burst sent $(count) requests"
 else
@@ -78,7 +74,7 @@ else
 fi
 
 # --- (d) after the interval the same key sends again ------------------------------------
-sleep 1.2
+sleep 1.2 # wait out the 500 ms throttle interval
 __gpy_maybe_refresh git "$root" git_last true black ""
 if shell_e2e_poll 5 count_is 3; then
     pass "after the throttle interval the same key sends again"
@@ -96,7 +92,7 @@ key="$(__gpy_path_to_cache_key "$(realpath "$root")")"
 entry="$cache_dir/$key.git_last.red.bash"
 printf '%s' "STALE" >"$entry"
 python3 -c "import os,sys,time; os.utime(sys.argv[1], (time.time()-60, time.time()-60))" "$entry"
-sleep 0.6
+sleep 0.6 # wait out the 500 ms throttle interval
 before="$(count)"
 for _ in 1 2 3 4; do out="$(__gpy_segment_git "true" red "")"; done
 if [ "$out" = "STALE" ]; then
@@ -105,7 +101,7 @@ else
     fail "expected the stale value, got '$out'"
 fi
 if shell_e2e_poll 5 count_is $((before + 1)); then
-    sleep 0.3
+    sleep 0.3 # window in which a second request would show up
     [ "$(count)" -eq $((before + 1)) ] && pass "four stale renders sent exactly one request" \
         || fail "four stale renders sent $(($(count) - before)) requests"
 else
@@ -113,17 +109,13 @@ else
 fi
 
 # --- (f) agent-free mode: nothing is sent ------------------------------------------------
-sleep 1.2
+sleep 1.2 # wait out the 500 ms throttle interval
 before="$(count)"
 export GPY_AGENT_ENABLED=0
 __gpy_maybe_refresh git "$root" git_last true black ""
-sleep 1.3
+sleep 1.3 # longer than the stub's 1 s refresh: nothing may be recorded
 export GPY_AGENT_ENABLED=1
 [ "$(count)" -eq "$before" ] && pass "with the agent disabled no refresh is sent" \
     || fail "a refresh was sent with GPY_AGENT_ENABLED=0"
 
-if [ "$failures" -gt 0 ]; then
-    echo "FAILED: $failures assertion(s)"
-    exit 1
-fi
-echo "PASS: __gpy_maybe_refresh is throttled and non-blocking"
+test_finish "__gpy_maybe_refresh is throttled and non-blocking"

@@ -1,7 +1,7 @@
 # tests/fixtures/xdg_absoluteness_vectors.tsv
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Shared XDG_* absoluteness vectors (#774). On Unix (Linux, macOS, WSL) an
+# Shared XDG_* absoluteness vectors. On Unix (Linux, macOS, WSL) an
 # XDG_* value is honoured iff it starts with `/`; Windows spellings, relative
 # paths, `~`, empty and leading-space values are ignored. Read by ALL FOUR
 # implementations so they cannot drift apart:

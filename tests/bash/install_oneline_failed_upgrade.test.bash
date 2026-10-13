@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # install-oneline.sh must verify a downloaded binary BEFORE it replaces the
-# installed one (#806). A checksum-valid asset that cannot run on the host
-# (needs a newer glibc, wrong libc, wrong userland) used to be moved over a
-# working ~/.local/bin/gpy-agent first and checked afterwards, leaving a
-# broken agent behind and the old one only as a backup nobody restored.
+# installed one. A checksum-valid asset that cannot run on the host
+# (needs a newer glibc, wrong libc, wrong userland) must never be moved over a
+# working ~/.local/bin/gpy-agent first and checked afterwards: that leaves a
+# broken agent behind and the old one only as a backup nobody restores.
 #
 # Each scenario runs the installer in its own sandboxed HOME behind a fake
 # `curl` serving stub assets (with matching `.sha256` sidecars), with an
@@ -27,10 +27,6 @@ case "$(uname -s | tr '[:upper:]' '[:lower:]')" in
     linux | darwin) ;;
     *) test_skip "install-oneline.sh does not support $(uname -s)" ;;
 esac
-
-failures=0
-fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
-pass() { echo "PASS: $*"; }
 
 digest_of() {
     if command -v sha256sum >/dev/null 2>&1; then
@@ -205,8 +201,4 @@ else
     fail "good upgrade: staged file left or agent missing"
 fi
 
-if [ "$failures" -gt 0 ]; then
-    echo "FAIL: $failures check(s) failed"
-    exit 1
-fi
-echo "PASS: a failed binary check leaves the previously installed agent and gpy untouched"
+test_finish "a failed binary check leaves the previously installed agent and gpy untouched"

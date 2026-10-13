@@ -2,7 +2,7 @@
 # tests/fish/cache_key_vectors.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# #705: __gpy_path_to_cache_key must produce the same Unix key as the agent's
+# __gpy_path_to_cache_key must produce the same Unix key as the agent's
 # encoder for every row of tests/fixtures/cache_key_vectors.tsv (also read by
 # the Rust, Bash and Zsh tests). See the fixture's header for the format.
 
@@ -56,7 +56,7 @@ while read -d \t -la cols
     set -l real_input (unescape_input "$input_col" | string collect)
     set -l actual (__gpy_path_to_cache_key "$real_input")
     check "vector $vector_count ($input_col)" "$expected_col" "$actual"
-    # #771: the relative cache-file path the reader builds from the key.
+    # The relative cache-file path the reader builds from the key.
     test (count $cols) -ge 3; or set cols[3] ''
     set -l stem (__gpy_chunk_cache_key "$actual")
     check "vector $vector_count stem" "$cols[3].git.none.ansi" "$stem.git.none.ansi"

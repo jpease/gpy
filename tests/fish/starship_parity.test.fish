@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Test: Native Starship vs GPY (starship theme) prompt parity
-# ---------------------------------------------------------------------------
 # Verifies that GPY's `starship` theme (applied with `gpy theme use starship
 # --force`) renders the same prompt as native `starship` for a set of
 # directories.
@@ -23,7 +22,7 @@
 #     differently — but the colour signature catches real colour drift (e.g.
 #     swift red vs 256-colour 202) that stripping alone would hide.
 #
-# GATING (must hold; a regression fails the suite)
+# GATING (must hold; any drift fails the suite)
 #   Full module-line parity AND character parity (text + colour) for every
 #   built-in fixture (plain dir, clean git repo, dirty git repo). GPY's starship
 #   theme reproduces Starship's hostname, directory, git (branch spacing +
@@ -35,9 +34,9 @@
 #   default (`ssh_only`/`show_always`), so the fixture sets `ssh_only = false`
 #   and the isolated GPY config is patched to `show_always = true` for this
 #   comparison only (see `__sp_patch_hostname_visible`). The preset's icon is
-#   kept: like Starship's `ssh_symbol`, GPY draws it only in SSH sessions
-#   (#826), so a local run exercises `<hostname> in ` with the icon suppressed
-#   on both sides.
+#   kept: like Starship's `ssh_symbol`, GPY draws it only in SSH sessions, so
+#   a local run exercises `<hostname> in ` with the icon suppressed on both
+#   sides.
 #
 # DELIBERATE EXCLUSION
 #   * package module: Starship shows `is 📦 v1.2.3`; GPY does not emulate it, so
@@ -51,7 +50,8 @@
 #   Pass extra directories as arguments for ad-hoc test beds (report-only):
 #       fish tests/fish/starship_parity.test.fish ~/some/repo ~/another/dir
 #
-# Skips cleanly (exit 0) when `starship` is not installed (e.g. CI).
+# Skips via test_skip when `starship` is not installed (exit 0 locally, a
+# failure under CI).
 
 # Resolve to an ABSOLUTE repo root: helpers below cd into fixture dirs before
 # using $match_cfg / the binaries, so relative paths (status dirname is relative
@@ -59,10 +59,8 @@
 set -l test_root (status dirname)/../..
 set -g repo_root (path resolve $test_root)
 
-# ---------------------------------------------------------------------------
-# Prerequisites
-# ---------------------------------------------------------------------------
-# Shared skip contract (#650): exits 0 locally, fails under CI.
+# --- Prerequisites ---
+# Shared skip contract: exits 0 locally, fails under CI.
 source (dirname (status filename))/../lib/test_helpers.fish
 if not command -q starship
     test_skip "starship not installed — parity comparison unavailable"
@@ -89,16 +87,14 @@ end
 set -g SP_STATUS 0
 set -g SP_DURATION 5000 # > Starship's 2s threshold so the duration module shows
 
-# ---------------------------------------------------------------------------
-# Isolated GPY config: apply the starship theme without touching real config
-# ---------------------------------------------------------------------------
+# --- Isolated GPY config: apply the starship theme without touching real config ---
 # Override the isolated copy's [segments.hostname] block so the segment is
 # visible for this comparison.
 #
 # The shipped preset is SSH-only (show_always = false) with an icon set to
 # Starship's ssh_symbol default. This harness never runs over SSH, so it forces
 # the segment on. The icon stays: the shell reports its SSH state to the agent,
-# which draws the icon only over SSH (#826), matching real Starship, which
+# which draws the icon only over SSH, matching real Starship, which
 # suppresses `ssh_symbol` off-SSH even with `ssh_only = false` (see
 # fixtures/starship_match.toml). Only the isolated test copy is patched.
 function __sp_patch_hostname_visible --argument-names theme_path
@@ -125,7 +121,7 @@ __sp_patch_hostname_visible $SP_ISO/gpy/themes/starship.toml
 
 set -gx XDG_CONFIG_HOME $SP_ISO
 set -gx HOME $SP_ISO
-# Cache and runtime roots follow the sandboxed HOME, never the caller's (#665).
+# Cache and runtime roots follow the sandboxed HOME, never the caller's.
 set -e XDG_CACHE_HOME XDG_RUNTIME_DIR
 set -gx MISE_DISABLE 1
 
@@ -135,9 +131,7 @@ if not $gpy_bin theme use starship --force >/dev/null 2>&1
     exit 1
 end
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# --- Helpers ---
 
 # Strip ANSI SGR escape sequences (\e[...m) from stdin/args.
 function __sp_strip
@@ -235,11 +229,9 @@ function __sp_nonblank
     end
 end
 
-# ---------------------------------------------------------------------------
-# Comparison + report for a single directory.
+# --- Comparison + report for a single directory ---
 # Prints the report and sets globals SP_MOD_MATCH / SP_CHR_MATCH (1 = identical
 # visible text AND identical per-character colour).
-# ---------------------------------------------------------------------------
 function __sp_compare --argument-names label dir
     # GPY: module line + character line.
     set -l gpy_mod (__sp_gpy_modules $dir)
@@ -308,9 +300,7 @@ function __sp_gate --argument-names ok desc
     end
 end
 
-# ---------------------------------------------------------------------------
-# Build deterministic fixtures.
-# ---------------------------------------------------------------------------
+# --- Build deterministic fixtures ---
 function __sp_mkrepo --argument-names dir
     mkdir -p $dir
     git -C $dir init -q
@@ -341,17 +331,15 @@ git -C $fx_dirty commit -qm init
 echo modified >>$fx_dirty/a.txt
 echo new >$fx_dirty/untracked.txt
 
-# ---------------------------------------------------------------------------
-# Run.
+# --- Run ---
 #
-# Gating invariants (must hold; a regression fails the suite): full module-line
+# Gating invariants (must hold; any drift fails the suite): full module-line
 # parity AND character parity for every built-in fixture. The starship theme's
 # [segments.git]/[segments.language] settings make GPY render Starship-exact
 # output for directory, git (branch spacing + `[!?]`-style status), language
 # (symbol shown without a version; fish excluded), command-duration, and
 # character. The only deliberate exclusion is Starship's `package` module, which
 # GPY does not emulate and which the baseline config disables.
-# ---------------------------------------------------------------------------
 set -g SP_FAILURES 0
 
 echo "=== Gating fixtures ==="
@@ -376,9 +364,7 @@ if test (count $argv) -gt 0
     end
 end
 
-# ---------------------------------------------------------------------------
-# Cleanup + verdict
-# ---------------------------------------------------------------------------
+# --- Cleanup + verdict ---
 rm -rf $SP_ISO $fixtures_root
 
 echo

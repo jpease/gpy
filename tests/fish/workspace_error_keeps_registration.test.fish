@@ -1,8 +1,8 @@
 #!/usr/bin/env fish
-# Regression test for #764: a registered shell must keep its registration when
-# a workspace sync returns an error other than "not registered" (e.g. `cd /etc`
-# rejected by the agent's path validator). Dropping it made every later `cd`
-# skip the sync while the agent still held the PID with its old cwd.
+# A registered shell must keep its registration when a workspace sync returns
+# an error other than "not registered" (e.g. `cd /etc` rejected by the agent's
+# path validator). Dropping it would make every later `cd` skip the sync while
+# the agent still held the PID with its old cwd.
 #
 # A python3 fake listener stands in for the agent (the real agent is never
 # started): `workspace`/`register` -> error for a cwd named `denied` (the real
@@ -17,7 +17,7 @@ source "$repo_root/fish/core/constants.fish"
 source "$repo_root/fish/core/util.fish"
 source "$repo_root/fish/core/ipc.fish"
 
-print_test_header "Workspace error keeps registration (#764)"
+print_test_header "Workspace error keeps registration"
 
 if not command -q python3
     test_skip "python3 not installed, cannot run a fake listener"
@@ -68,17 +68,14 @@ while True:
 ' $sock $oplog >/dev/null 2>&1 &
 set -g __ws_listener_pid $last_pid
 
-for i in (seq 1 30)
-    test -S $sock; and break
-    sleep 0.1
-end
+poll_until 3 test -S $sock
 if not test -S $sock
     test_skip "could not create fake listener socket"
 end
 
 set -gx GPY_AGENT_SOCKET_PATH $sock
 # Registration writes the shell PID file under the runtime root; keep it in
-# the sandbox instead of the caller's XDG_RUNTIME_DIR or ~/.cache (#665).
+# the sandbox instead of the caller's XDG_RUNTIME_DIR or ~/.cache.
 set -gx XDG_CACHE_HOME $__ws_tmp/cache
 set -e XDG_RUNTIME_DIR
 set -e GPY_SUPERVISOR_CHILD
@@ -119,7 +116,7 @@ __gpy_sync_workspace
 __ws_check "next cd sends a workspace op" (test (__ws_count workspace) = 2; and echo 1; or echo 0) "workspace ops=$(__ws_count workspace)"
 __ws_check "next cd records __gpy_last_workspace" (test "$__gpy_last_workspace" = "$__ws_tmp/other"; and echo 1; or echo 0) "last_workspace=$__gpy_last_workspace"
 
-# 2b. Fish syncs once per cd (never per prompt, #833); cd away and back re-sends.
+# 2b. Fish syncs once per cd (never per prompt); cd away and back re-sends.
 cd $__ws_tmp/denied
 __gpy_sync_workspace
 __ws_check "cd back into rejected dir re-sends" (test (__ws_count workspace) = 3; and echo 1; or echo 0) "workspace ops=$(__ws_count workspace)"
