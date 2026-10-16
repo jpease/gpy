@@ -252,7 +252,7 @@ fi
 # (d) release notes come from the CHANGELOG.
 echo "--- release notes for a version present in the CHANGELOG ---"
 NOTES="$WORKDIR/notes.md"
-if ! "$ROOT/scripts/release-notes.sh" --version v0.1.0 --output "$NOTES" >/dev/null; then
+if ! "$ROOT/scripts/release-notes.sh" --version v0.4.0 --output "$NOTES" >/dev/null; then
     fail "release-notes.sh exited non-zero for a version present in the CHANGELOG"
 fi
 
@@ -265,10 +265,10 @@ if [[ -f "$NOTES" ]]; then
     for stale in CROSS_PLATFORM_TESTING.md config.example.fish REFACTOR.md; do
         grep -qE "\]\([^)]*$stale" "$NOTES" && fail "release notes still link removed file '$stale'"
     done
-    grep -q "^# GPY v0.1.0" "$NOTES" || fail "release notes missing the version heading"
+    grep -q "^# GPY v0.4.0" "$NOTES" || fail "release notes missing the version heading"
     grep -q "install-oneline.sh" "$NOTES" || fail "release notes missing the one-line installer"
     grep -q "docs/INSTALL.md" "$NOTES" || fail "release notes do not link the installation guide"
-    grep -qF "curl -fsSL https://github.com/jpease/gpy/releases/download/v0.1.0/install-oneline.sh | sh" "$NOTES" ||
+    grep -qF "curl -fsSL https://github.com/jpease/gpy/releases/download/v0.4.0/install-oneline.sh | sh" "$NOTES" ||
         fail "release notes do not give the release-asset one-liner for the tag"
     grep -qF 'raw.githubusercontent.com' "$NOTES" && fail "release notes still fetch an installer from raw.githubusercontent.com"
 else
@@ -278,7 +278,7 @@ fi
 # The asset table is generated from the binaries actually built.
 echo "--- release notes asset table ---"
 ASSET_NOTES="$WORKDIR/notes-assets.md"
-if ! "$ROOT/scripts/release-notes.sh" --version v0.1.0 --assets "$OUT/gpy-release/bin" \
+if ! "$ROOT/scripts/release-notes.sh" --version v0.4.0 --assets "$OUT/gpy-release/bin" \
     --output "$ASSET_NOTES" >/dev/null; then
     fail "release-notes.sh exited non-zero with --assets"
 else
