@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+function segment_duration_detect
+    set -l threshold (set -q __duration_threshold_ms && echo $__duration_threshold_ms || echo 100)
+    test -n "$CMD_DURATION" && test "$CMD_DURATION" -ge $threshold
+end
+
+function segment_duration_render --argument-names is_last is_first
+    # Seed missing args as "" (see fish_prompt.fish's dispatch loop).
+    set -q is_last[1]; or set is_last ""
+    set -q is_first[1]; or set is_first ""
+
+    set -l ms $CMD_DURATION
+    test -z "$ms"; and set ms 0
+    set -l dur_output (__gpy_request_duration "$ms" $is_last $__gpy_last_segment_bg $is_first)
+    printf '%s' $dur_output
+    if test -n "$dur_output"
+        set -g __gpy_last_segment_bg $__color_duration_bg
+    end
+end

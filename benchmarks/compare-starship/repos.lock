@@ -1,0 +1,7 @@
+# Benchmark fixtures. Columns: name  clone-url  commit  ref
+# `commit` is fetched and verified; `ref` is informational. Pin a tag's commit
+# (annotated: the `^{}` line of `git ls-remote --tags`), never a branch tip.
+tiny-express        https://github.com/expressjs/express.git        cd7d4397c398a3f3ecadeaf9ef6ac1377bd414c4  v5.1.0
+small-redis         https://github.com/redis/redis.git              e91a340e241cf0abe3c6a0c254214fbe4aa1d95f  8.0.0
+medium-kubernetes   https://github.com/kubernetes/kubernetes.git    f28b4c9efbca5c5c0af716d9f2d5702667ee8a45  v1.34.0
+large-tensorflow    https://github.com/tensorflow/tensorflow.git    72fbba3d20f4616d7312b5e2b7f79daf6e82f2fa  v2.20.0

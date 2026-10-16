@@ -1,0 +1,642 @@
+//! CLI config path resolution and malformed-config handling: mutations load
+//! and save the same active file, and a load failure aborts without writing.
+
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::panic)]
+#![allow(clippy::missing_panics_doc)]
+
+use std::fs;
+use std::path::Path;
+use std::process::{Command, Output};
+use tempfile::TempDir;
+
+const MALFORMED_TOML: &str = "[ui\nthis is invalid toml\n";
+
+/// Parses, but `skip_paths` entries must be absolute or `~`-relative.
+const INVALID_VALIDATION_TOML: &str = "[git]\nskip_paths = [\"relative/path\"]\n";
+
+/// Run `gpy` with `HOME`, `XDG_CONFIG_HOME`, and the agent socket pinned under
+/// the temp tree, and any inherited `GPY_CONFIG_PATH` cleared.
+fn run_gpy(
+    args: &[&str],
+    home: &Path,
+    xdg: &Path,
+    config_path: Option<&Path>,
+    cwd: &Path,
+) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_gpy"));
+    command
+        .args(args)
+        .current_dir(cwd)
+        .env("HOME", home)
+        .env("XDG_CONFIG_HOME", xdg)
+        .env("XDG_RUNTIME_DIR", home)
+        .env("XDG_CACHE_HOME", home)
+        .env("GPY_AGENT_SOCKET_PATH", home.join("gpy.sock"))
+        .env_remove("GPY_CONFIG_PATH");
+
+    if let Some(path) = config_path {
+        command.env("GPY_CONFIG_PATH", path);
+    }
+
+    command.output().expect("gpy binary should run")
+}
+
+fn isolated_dirs() -> (TempDir, std::path::PathBuf, std::path::PathBuf) {
+    let temp = TempDir::new().expect("temp dir");
+    let home = temp.path().join("home");
+    let xdg = temp.path().join("xdg");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&xdg).unwrap();
+    (temp, home, xdg)
+}
+
+fn stderr_of(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+#[test]
+fn gpy_config_path_is_used_for_both_load_and_save() {
+    let (temp, home, xdg) = isolated_dirs();
+    let custom = temp.path().join("custom.toml");
+    fs::write(&custom, "[ui]\ndirectory.max_length = 77\n").unwrap();
+
+    let output = run_gpy(
+        &["config", "set", "ui.directory.max_length", "123"],
+        &home,
+        &xdg,
+        Some(&custom),
+        temp.path(),
+    );
+
+    assert!(
+        output.status.success(),
+        "config set should succeed; stderr: {}",
+        stderr_of(&output)
+    );
+
+    let contents = fs::read_to_string(&custom).unwrap();
+    assert!(
+        contents.contains("123"),
+        "GPY_CONFIG_PATH file should hold the new value: {contents}"
+    );
+    assert!(
+        !contents.contains("77"),
+        "old value must be overwritten in the active file"
+    );
+    assert!(
+        !xdg.join("gpy").join("config.toml").exists(),
+        "no global XDG config may be created when GPY_CONFIG_PATH is active"
+    );
+}
+
+/// A `.gpy.toml` in the current directory is not a config source: the agent
+/// is one daemon for every directory.
+#[test]
+fn local_gpy_toml_is_ignored() {
+    let (temp, home, xdg) = isolated_dirs();
+    let workdir = temp.path().join("work");
+    fs::create_dir_all(&workdir).unwrap();
+    let local = workdir.join(".gpy.toml");
+    let local_contents = "[ui]\ntheme = \"text\"\n";
+    fs::write(&local, local_contents).unwrap();
+
+    let get = run_gpy(&["config", "get", "ui.theme"], &home, &xdg, None, &workdir);
+    assert!(
+        get.status.success(),
+        "config get should succeed; stderr: {}",
+        stderr_of(&get)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&get.stdout).trim(),
+        "default",
+        "a local .gpy.toml must not be read"
+    );
+
+    let set = run_gpy(
+        &["config", "set", "ui.directory.max_length", "99"],
+        &home,
+        &xdg,
+        None,
+        &workdir,
+    );
+    assert!(
+        set.status.success(),
+        "config set should succeed; stderr: {}",
+        stderr_of(&set)
+    );
+    assert_eq!(
+        fs::read_to_string(&local).unwrap(),
+        local_contents,
+        "a local .gpy.toml must not be written"
+    );
+    let global = fs::read_to_string(xdg.join("gpy").join("config.toml"))
+        .expect("config set must write the XDG config");
+    assert!(
+        global.contains("99"),
+        "XDG config should hold the new value: {global}"
+    );
+}
+
+/// A relative `GPY_CONFIG_PATH` resolves against the current directory
+/// once, so every reported, stored, and watched config path is absolute.
+#[test]
+fn relative_gpy_config_path_is_made_absolute() {
+    let (temp, home, xdg) = isolated_dirs();
+    let workdir = temp.path().join("work");
+    fs::create_dir_all(&workdir).unwrap();
+    // Unix reports the child's cwd canonical (macOS `/var` -> `/private/var`);
+    // Windows `canonicalize` would add a `\\?\` prefix the child never sees.
+    let base = if cfg!(windows) {
+        workdir.clone()
+    } else {
+        fs::canonicalize(&workdir).unwrap()
+    };
+    let expected = base.join("rel").join("custom.toml");
+
+    let output = run_gpy(
+        &["debug", "paths", "--format", "kv"],
+        &home,
+        &xdg,
+        Some(Path::new("rel/custom.toml")),
+        &workdir,
+    );
+    assert!(
+        output.status.success(),
+        "debug paths should succeed; stderr: {}",
+        stderr_of(&output)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let value_of = |key: &str| {
+        stdout
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{key}=")))
+            .unwrap_or_else(|| panic!("{key} missing from:\n{stdout}"))
+            .to_owned()
+    };
+    // `Path` equality is per component, so `/` vs `\` on Windows is fine.
+    assert_eq!(
+        Path::new(&value_of("config_path")),
+        expected.as_path(),
+        "debug paths config_path"
+    );
+    assert_eq!(
+        value_of("config_candidates")
+            .split('|')
+            .next()
+            .map(Path::new),
+        Some(expected.as_path())
+    );
+}
+
+fn lookup<'a>(table: &'a toml::Table, path: &str) -> Option<&'a toml::Value> {
+    let mut parts = path.split('.');
+    let mut value = table.get(parts.next()?)?;
+    for part in parts {
+        value = value.get(part)?;
+    }
+    Some(value)
+}
+
+#[test]
+fn config_set_language_icon_writes_map_entry() {
+    let (temp, home, xdg) = isolated_dirs();
+    let custom = temp.path().join("custom.toml");
+
+    let output = run_gpy(
+        &["config", "set", "language.icons.rs", "X"],
+        &home,
+        &xdg,
+        Some(&custom),
+        temp.path(),
+    );
+    assert!(
+        output.status.success(),
+        "config set should succeed; stderr: {}",
+        stderr_of(&output)
+    );
+
+    let parsed: toml::Table = fs::read_to_string(&custom).unwrap().parse().unwrap();
+    assert_eq!(
+        lookup(&parsed, "language.icons.rust").and_then(toml::Value::as_str),
+        Some("X"),
+        "alias must normalize to the canonical icon key: {parsed:?}"
+    );
+
+    let got = run_gpy(
+        &["config", "get", "language.icons.rust"],
+        &home,
+        &xdg,
+        Some(&custom),
+        temp.path(),
+    );
+    assert!(got.status.success(), "{}", stderr_of(&got));
+    assert_eq!(String::from_utf8_lossy(&got.stdout).trim(), "X");
+}
+
+#[test]
+fn config_set_unknown_palette_is_rejected_without_writing() {
+    let (temp, home, xdg) = isolated_dirs();
+    let custom = temp.path().join("custom.toml");
+
+    let output = run_gpy(
+        &["config", "set", "ui.palette", "nosuch"],
+        &home,
+        &xdg,
+        Some(&custom),
+        temp.path(),
+    );
+    assert!(!output.status.success(), "unknown palette must be rejected");
+    assert!(!custom.exists(), "no file may be written on rejection");
+}
+
+#[test]
+fn config_show_prints_valid_toml_with_every_field() {
+    let (temp, home, xdg) = isolated_dirs();
+    let custom = temp.path().join("custom.toml");
+
+    let output = run_gpy(&["config", "show"], &home, &xdg, Some(&custom), temp.path());
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: toml::Table = stdout.parse().expect("config show output must be TOML");
+    assert_eq!(
+        lookup(&parsed, "ui.palette").and_then(toml::Value::as_str),
+        Some("default")
+    );
+    assert_eq!(
+        lookup(&parsed, "git.skip_paths")
+            .and_then(toml::Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+    assert!(lookup(&parsed, "git.icons").is_some_and(toml::Value::is_table));
+    assert!(lookup(&parsed, "language.icons").is_some_and(toml::Value::is_table));
+    assert!(lookup(&parsed, "language.detection_mode").is_some_and(toml::Value::is_str));
+}
+
+fn write_xdg_config(xdg: &Path, body: &str) -> std::path::PathBuf {
+    let config_dir = xdg.join("gpy");
+    fs::create_dir_all(&config_dir).unwrap();
+    let config_path = config_dir.join("config.toml");
+    fs::write(&config_path, body).unwrap();
+    config_path
+}
+
+#[test]
+fn malformed_config_aborts_mutation_and_preserves_file() {
+    let (temp, home, xdg) = isolated_dirs();
+    let config_path = write_xdg_config(&xdg, MALFORMED_TOML);
+
+    let output = run_gpy(
+        &["config", "set", "ui.directory.max_length", "123"],
+        &home,
+        &xdg,
+        None,
+        temp.path(),
+    );
+
+    assert!(
+        !output.status.success(),
+        "mutation must fail when the active config is malformed"
+    );
+    assert_eq!(
+        fs::read_to_string(&config_path).unwrap(),
+        MALFORMED_TOML,
+        "malformed config must remain byte-for-byte unchanged"
+    );
+}
+
+#[test]
+fn validation_failure_aborts_mutation_and_preserves_file() {
+    let (temp, home, xdg) = isolated_dirs();
+    let config_path = write_xdg_config(&xdg, INVALID_VALIDATION_TOML);
+
+    let output = run_gpy(
+        &["config", "set", "ui.directory.max_length", "123"],
+        &home,
+        &xdg,
+        None,
+        temp.path(),
+    );
+
+    assert!(
+        !output.status.success(),
+        "mutation must fail when the active config fails validation"
+    );
+    assert_eq!(
+        fs::read_to_string(&config_path).unwrap(),
+        INVALID_VALIDATION_TOML,
+        "a validation failure must leave the config unchanged"
+    );
+}
+
+#[test]
+fn read_only_get_reports_error_on_malformed_config() {
+    let (temp, home, xdg) = isolated_dirs();
+    write_xdg_config(&xdg, MALFORMED_TOML);
+
+    let output = run_gpy(
+        &["config", "get", "ui.directory.max_length"],
+        &home,
+        &xdg,
+        None,
+        temp.path(),
+    );
+
+    assert!(
+        !output.status.success(),
+        "read-only get must exit non-zero on a malformed config"
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("80"),
+        "get must not print the default value for an invalid config"
+    );
+}
+
+// `ThemeName::new` only checks syntax, so `config set ui.theme` must itself
+// reject missing and malformed themes.
+
+const MISSING_THEME_NAME: &str = "this-theme-does-not-exist-450";
+
+const MALFORMED_THEME_TOML: &str = "[ui\nthis is not valid toml\n";
+
+/// `load_active_config` defaults a missing file, so a bug here would create
+/// a new file rather than mutate one.
+#[test]
+fn config_set_ui_theme_missing_name_creates_no_config_file() {
+    let (temp, home, xdg) = isolated_dirs();
+    let config_path = xdg.join("gpy").join("config.toml");
+    assert!(
+        !config_path.exists(),
+        "precondition: no config file exists yet"
+    );
+
+    let output = run_gpy(
+        &["config", "set", "ui.theme", MISSING_THEME_NAME],
+        &home,
+        &xdg,
+        None,
+        temp.path(),
+    );
+
+    assert!(
+        !output.status.success(),
+        "setting a nonexistent theme must fail; stderr: {}",
+        stderr_of(&output)
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(1_i32),
+        "process must exit with a non-zero status code; stderr: {}",
+        stderr_of(&output)
+    );
+    assert!(
+        !config_path.exists(),
+        "a failed mutation must not create a config file where none existed"
+    );
+}
+
+#[test]
+fn config_set_ui_theme_missing_name_preserves_existing_config_byte_for_byte() {
+    let (temp, home, xdg) = isolated_dirs();
+    let starting_contents = "[ui]\ntheme = \"default\"\n";
+    let config_path = write_xdg_config(&xdg, starting_contents);
+    let original_bytes = fs::read(&config_path).unwrap();
+
+    let output = run_gpy(
+        &["config", "set", "ui.theme", MISSING_THEME_NAME],
+        &home,
+        &xdg,
+        None,
+        temp.path(),
+    );
+
+    assert!(
+        !output.status.success(),
+        "setting a nonexistent theme must fail; stderr: {}",
+        stderr_of(&output)
+    );
+    assert_eq!(
+        fs::read(&config_path).unwrap(),
+        original_bytes,
+        "config file must remain byte-for-byte unchanged on a missing theme"
+    );
+}
+
+#[test]
+fn config_set_ui_theme_malformed_theme_file_preserves_config_byte_for_byte() {
+    let (temp, home, xdg) = isolated_dirs();
+    let starting_contents = "[ui]\ntheme = \"default\"\n";
+    let config_path = write_xdg_config(&xdg, starting_contents);
+    let original_bytes = fs::read(&config_path).unwrap();
+
+    let themes_dir = xdg.join("gpy").join("themes");
+    fs::create_dir_all(&themes_dir).unwrap();
+    fs::write(themes_dir.join("badtheme.toml"), MALFORMED_THEME_TOML).unwrap();
+
+    let output = run_gpy(
+        &["config", "set", "ui.theme", "badtheme"],
+        &home,
+        &xdg,
+        None,
+        temp.path(),
+    );
+
+    assert!(
+        !output.status.success(),
+        "setting a malformed theme must fail; stderr: {}",
+        stderr_of(&output)
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(1_i32),
+        "process must exit with a non-zero status code; stderr: {}",
+        stderr_of(&output)
+    );
+    assert_eq!(
+        fs::read(&config_path).unwrap(),
+        original_bytes,
+        "config file must remain byte-for-byte unchanged on a malformed theme"
+    );
+}
+
+#[test]
+fn config_set_ui_theme_valid_discovered_name_still_succeeds() {
+    let (temp, home, xdg) = isolated_dirs();
+    let config_path = write_xdg_config(&xdg, "[ui]\ntheme = \"text\"\n");
+
+    let output = run_gpy(
+        &["config", "set", "ui.theme", "default"],
+        &home,
+        &xdg,
+        None,
+        temp.path(),
+    );
+
+    assert!(
+        output.status.success(),
+        "setting a valid, discoverable theme must still succeed; stderr: {}",
+        stderr_of(&output)
+    );
+    let contents = fs::read_to_string(&config_path).unwrap();
+    assert!(
+        contents.contains("\"default\""),
+        "config should hold the newly set theme: {contents}"
+    );
+}
+
+#[test]
+fn every_mutation_command_family_aborts_on_malformed_config() {
+    let families: &[&[&str]] = &[
+        &["config", "set", "ui.directory.max_length", "123"],
+        &["theme", "use", "default"],
+        &["enable", "git"],
+        &["disable", "git"],
+        &["lang", "versions", "on"],
+    ];
+
+    for args in families {
+        let (temp, home, xdg) = isolated_dirs();
+        let config_path = write_xdg_config(&xdg, MALFORMED_TOML);
+
+        let output = run_gpy(args, &home, &xdg, None, temp.path());
+
+        assert!(
+            !output.status.success(),
+            "`gpy {}` must fail on a malformed active config",
+            args.join(" ")
+        );
+        assert_eq!(
+            fs::read_to_string(&config_path).unwrap(),
+            MALFORMED_TOML,
+            "`gpy {}` must not rewrite the malformed config",
+            args.join(" ")
+        );
+    }
+}
+
+#[test]
+fn config_set_preserves_comments_unknown_keys_and_absent_defaults() {
+    let (temp, home, xdg) = isolated_dirs();
+    let config_path = write_xdg_config(
+        &xdg,
+        "# my comment\n[ui]\ncustom_key = 1 # keep\n[git]\ntimeout_seconds = 3\n",
+    );
+
+    let output = run_gpy(
+        &["config", "set", "git.show_upstream", "false"],
+        &home,
+        &xdg,
+        None,
+        temp.path(),
+    );
+    assert!(
+        output.status.success(),
+        "config set should succeed; stderr: {}",
+        stderr_of(&output)
+    );
+
+    let contents = fs::read_to_string(&config_path).unwrap();
+    assert!(contents.contains("# my comment"), "{contents}");
+    assert!(contents.contains("custom_key = 1 # keep"), "{contents}");
+    assert!(contents.contains("timeout_seconds = 3"), "{contents}");
+    assert!(contents.contains("show_upstream = false"), "{contents}");
+    assert!(!contents.contains("max_ahead_behind"), "{contents}");
+    assert!(!contents.contains("Generated automatically"), "{contents}");
+}
+
+#[test]
+fn config_set_is_deterministic_with_language_icons() {
+    let (temp, home, xdg) = isolated_dirs();
+    let names: [&str; 10] = [
+        "zig", "rust", "go", "python", "node", "java", "elixir", "c", "cpp", "ruby",
+    ];
+    let seed: String = std::iter::once("[language.icons]\n".to_owned())
+        .chain(names.iter().map(|name| format!("{name} = \"i-{name}\"\n")))
+        .collect();
+    let config_path = write_xdg_config(&xdg, &seed);
+
+    let mut results = Vec::new();
+    for _ in 0_u8..2_u8 {
+        let output = run_gpy(
+            &["config", "set", "git.timeout_seconds", "5"],
+            &home,
+            &xdg,
+            None,
+            temp.path(),
+        );
+        assert!(
+            output.status.success(),
+            "config set should succeed; stderr: {}",
+            stderr_of(&output)
+        );
+        results.push(fs::read_to_string(&config_path).unwrap());
+    }
+
+    let [first, second] = results.as_slice() else {
+        panic!("expected two results");
+    };
+    assert_eq!(first, second, "two identical runs must match");
+    let icon_lines: Vec<&str> = first
+        .lines()
+        .filter(|line| line.contains("= \"i-"))
+        .collect();
+    let expected: Vec<String> = names
+        .iter()
+        .map(|name| format!("{name} = \"i-{name}\""))
+        .collect();
+    assert_eq!(icon_lines, expected, "icon order must be preserved");
+}
+
+#[test]
+fn theme_use_writes_only_ui_theme() {
+    let (temp, home, xdg) = isolated_dirs();
+
+    let output = run_gpy(&["theme", "use", "text"], &home, &xdg, None, temp.path());
+    assert!(
+        output.status.success(),
+        "theme use should succeed; stderr: {}",
+        stderr_of(&output)
+    );
+
+    let contents = fs::read_to_string(xdg.join("gpy").join("config.toml")).unwrap();
+    let table: toml::Table = contents.parse().unwrap();
+    let mut expected = toml::Table::new();
+    let mut ui = toml::Table::new();
+    ui.insert("theme".to_owned(), toml::Value::String("text".to_owned()));
+    expected.insert("ui".to_owned(), toml::Value::Table(ui));
+    assert_eq!(table, expected, "{contents}");
+}
+
+#[cfg(unix)]
+#[test]
+fn config_set_through_symlink_keeps_symlink() {
+    let (temp, home, xdg) = isolated_dirs();
+    let target_dir = temp.path().join("dotfiles");
+    fs::create_dir_all(&target_dir).unwrap();
+    let target = target_dir.join("config.toml");
+    fs::write(&target, "# linked\n[git]\ntimeout_seconds = 3\n").unwrap();
+    let config_dir = xdg.join("gpy");
+    fs::create_dir_all(&config_dir).unwrap();
+    let link = config_dir.join("config.toml");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    let output = run_gpy(
+        &["config", "set", "git.show_upstream", "false"],
+        &home,
+        &xdg,
+        None,
+        temp.path(),
+    );
+    assert!(
+        output.status.success(),
+        "config set should succeed; stderr: {}",
+        stderr_of(&output)
+    );
+
+    assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+    let contents = fs::read_to_string(&target).unwrap();
+    assert!(contents.contains("show_upstream = false"), "{contents}");
+    assert!(contents.contains("# linked"), "{contents}");
+}

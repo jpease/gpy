@@ -1,0 +1,385 @@
+//! Language icon mappings and per-language theme colors.
+
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fmt;
+
+use super::DelimiterConfig;
+use super::defaults::{default_color_black, default_color_white};
+
+/// Language icons configuration (Nerd Fonts icons); unset entries use built-ins.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct LanguageIcons {
+    /// Dynamic map of language icons
+    #[serde(flatten)]
+    pub icons: HashMap<String, super::types::Icon>,
+}
+
+/// Language segment colors with per-language overrides.
+#[derive(Debug, Clone, Serialize)]
+pub struct LanguageTheme {
+    /// Starship-style template controlling how this segment renders.
+    /// The language segment is always agent-rendered, so `None` renders nothing.
+    #[serde(default)]
+    pub format: Option<String>,
+    /// Open delimiter configuration (supports fg/bg colors)
+    #[serde(default)]
+    pub open: Option<DelimiterConfig>,
+    /// Close delimiter configuration (supports fg/bg colors)
+    #[serde(default)]
+    pub close: Option<DelimiterConfig>,
+    /// Background color (fallback for unknown languages)
+    #[serde(default = "default_color_black")]
+    pub bg_color: super::types::ColorSpec,
+    /// Text color (fallback for unknown languages)
+    #[serde(default = "default_color_white")]
+    pub text_color: super::types::ColorSpec,
+
+    /// Per-language color overrides (e.g. `rust_bg_color`, `rust_text_color`).
+    pub overrides: HashMap<String, super::types::ColorSpec>,
+    /// Per-language symbol overrides (e.g., `rust_symbol = "🦀"`).
+    /// Takes precedence over config icons when `show_icons` is enabled.
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub symbols: HashMap<String, String>,
+    /// Per-language style attributes (e.g. `java_style = "dimmed"`); default `"bold"`.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub styles: HashMap<String, String>,
+
+    /// Show a language's symbol even when no version resolves (Starship behavior).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_symbol_without_version: Option<bool>,
+
+    /// Theme-owned allow-list of languages (case-insensitive); `None` defers to
+    /// `config.language.enabled_languages`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled_languages: Option<Vec<String>>,
+}
+
+// Manual Deserialize: toml's `#[serde(flatten)]` on a map would capture named
+// fields like `format` and validate them as ColorSpec.
+impl<'de> Deserialize<'de> for LanguageTheme {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        d.deserialize_map(LanguageThemeVisitor)
+    }
+}
+
+struct LanguageThemeVisitor;
+
+impl<'de> serde::de::Visitor<'de> for LanguageThemeVisitor {
+    type Value = LanguageTheme;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("language theme table")
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(
+        self,
+        mut map: A,
+    ) -> Result<LanguageTheme, A::Error> {
+        let mut format: Option<String> = None;
+        let mut open: Option<DelimiterConfig> = None;
+        let mut close: Option<DelimiterConfig> = None;
+        let mut bg_color: Option<super::types::ColorSpec> = None;
+        let mut text_color: Option<super::types::ColorSpec> = None;
+        let mut overrides: HashMap<String, super::types::ColorSpec> = HashMap::new();
+        let mut symbols: HashMap<String, String> = HashMap::new();
+        let mut styles: HashMap<String, String> = HashMap::new();
+        let mut show_symbol_without_version: Option<bool> = None;
+        let mut enabled_languages: Option<Vec<String>> = None;
+
+        while let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
+                "format" => format = map.next_value()?,
+                "open" => open = map.next_value()?,
+                "close" => close = map.next_value()?,
+                "bg_color" => bg_color = Some(map.next_value()?),
+                "text_color" => text_color = Some(map.next_value()?),
+                "show_symbol_without_version" => show_symbol_without_version = map.next_value()?,
+                "enabled_languages" => enabled_languages = map.next_value()?,
+                // Flat keys (rust_bg_color = "red") or a nested [..overrides] subtable.
+                "overrides" => {
+                    let nested: HashMap<String, super::types::ColorSpec> = map.next_value()?;
+                    overrides.extend(nested);
+                }
+                // Nested [..symbols] subtable or flat keys like rust_symbol = "🦀".
+                "symbols" => {
+                    let nested: HashMap<String, String> = map.next_value()?;
+                    symbols.extend(nested);
+                }
+                k if k.ends_with("_symbol") => {
+                    symbols.insert(key, map.next_value()?);
+                }
+                // Nested [..styles] subtable or flat keys like java_style = "dimmed".
+                "styles" => {
+                    let nested: HashMap<String, String> = map.next_value()?;
+                    styles.extend(nested);
+                }
+                k if k.ends_with("_style") => {
+                    styles.insert(key, map.next_value()?);
+                }
+                _ => {
+                    overrides.insert(key, map.next_value()?);
+                }
+            }
+        }
+
+        Ok(LanguageTheme {
+            format,
+            open,
+            close,
+            bg_color: bg_color.unwrap_or_else(default_color_black),
+            text_color: text_color.unwrap_or_else(default_color_white),
+            overrides,
+            symbols,
+            styles,
+            show_symbol_without_version,
+            enabled_languages,
+        })
+    }
+}
+
+impl Default for LanguageTheme {
+    fn default() -> Self {
+        let mut overrides = HashMap::new();
+
+        #[expect(
+            clippy::expect_used,
+            reason = "colors come from the static LANGUAGES metadata table; a color string baked into the binary is infallible to parse in practice"
+        )]
+        for lang in crate::language::metadata::LANGUAGES {
+            if let Some(color) = lang.default_color {
+                overrides.insert(
+                    format!("{}_bg_color", lang.canonical),
+                    super::types::ColorSpec::new(color)
+                        .expect("Metadata default color must be valid"),
+                );
+                overrides.insert(
+                    format!("{}_text_color", lang.canonical),
+                    super::types::ColorSpec::new("white")
+                        .expect("Metadata default color must be valid"),
+                );
+            }
+        }
+
+        Self {
+            format: None,
+            open: None,
+            close: None,
+            bg_color: default_color_black(),
+            text_color: default_color_white(),
+            overrides,
+            symbols: HashMap::new(),
+            styles: HashMap::new(),
+            show_symbol_without_version: None,
+            enabled_languages: None,
+        }
+    }
+}
+
+impl LanguageTheme {
+    /// Background color for `language` (case-insensitive, aliases resolved), else `bg_color`.
+    #[must_use]
+    pub fn get_bg_color(&self, language: &str) -> &str {
+        let canonical = crate::language::metadata::get_canonical_name(language).unwrap_or(language);
+        let key = format!("{canonical}_bg_color");
+        self.overrides
+            .get(&key)
+            .map_or_else(|| self.bg_color.as_str(), |c| c.as_str())
+    }
+
+    /// Text color for `language` (case-insensitive), else `text_color`.
+    #[must_use]
+    pub fn get_text_color(&self, language: &str) -> &str {
+        let canonical = crate::language::metadata::get_canonical_name(language).unwrap_or(language);
+        let key = format!("{canonical}_text_color");
+        self.overrides
+            .get(&key)
+            .map_or_else(|| self.text_color.as_str(), |c| c.as_str())
+    }
+
+    /// Get a theme-declared symbol for a specific language, if set.
+    ///
+    /// `None` means fall back to config icons.
+    #[must_use]
+    pub fn get_symbol(&self, language: &str) -> Option<&str> {
+        let canonical = crate::language::metadata::get_canonical_name(language).unwrap_or(language);
+        let key = format!("{canonical}_symbol");
+        self.symbols.get(&key).map(String::as_str)
+    }
+
+    /// Get a theme-declared style-attribute string for a language.
+    ///
+    /// Explicit empty string suppresses the `"bold"` default.
+    #[must_use]
+    pub fn get_style(&self, language: &str) -> &str {
+        let canonical = crate::language::metadata::get_canonical_name(language).unwrap_or(language);
+        let key = format!("{canonical}_style");
+        self.styles.get(&key).map_or("bold", String::as_str)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::missing_panics_doc)]
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn language_theme_parses_format_from_toml() {
+        let toml_str = "format = \"[ ](fg:prev_bg bg:$bg)[$symbol]($style)([ $version]($style))([$sep_close](fg:$bg))\"\ntext_color = \"black\"\nbg_color = \"white\"\nrust_bg_color = \"red\"\n";
+        let theme: LanguageTheme = toml::from_str(toml_str).expect("parse");
+        assert_eq!(
+            theme.format.as_deref(),
+            Some(
+                "[ ](fg:prev_bg bg:$bg)[$symbol]($style)([ $version]($style))([$sep_close](fg:$bg))"
+            )
+        );
+        assert_eq!(theme.bg_color.as_str(), "white");
+        assert_eq!(theme.text_color.as_str(), "black");
+        assert_eq!(
+            theme
+                .overrides
+                .get("rust_bg_color")
+                .map(super::super::types::ColorSpec::as_str),
+            Some("red")
+        );
+    }
+
+    #[test]
+    fn language_theme_format_does_not_pollute_overrides() {
+        let toml_str = "[ui]\nprompt_icon = \"❯\"\n\n[segments.language]\nformat = \"[ ](fg:prev_bg bg:$bg)[$symbol]($style)\"\ntext_color = \"black\"\nbg_color = \"white\"\nrust_bg_color = \"red\"\n";
+        let result = crate::theme::parse(toml_str, "test");
+        assert!(result.is_ok(), "theme::parse failed: {:?}", result.err());
+        let theme = result.expect("already checked");
+        assert_eq!(
+            theme.segments.language.format.as_deref(),
+            Some("[ ](fg:prev_bg bg:$bg)[$symbol]($style)")
+        );
+    }
+
+    #[test]
+    fn language_theme_parses_symbol_from_toml() {
+        let toml_str = "rust_symbol = \"🦀\"\npython_symbol = \"🐍\"\n";
+        let theme: LanguageTheme = toml::from_str(toml_str).expect("parse");
+        assert_eq!(theme.get_symbol("Rust"), Some("🦀"));
+        assert_eq!(theme.get_symbol("Python"), Some("🐍"));
+    }
+
+    #[test]
+    fn symbol_not_in_overrides() {
+        let toml_str = "rust_symbol = \"🦀\"\nrust_bg_color = \"red\"\n";
+        let theme: LanguageTheme = toml::from_str(toml_str).expect("parse");
+        // Symbol must not pollute the color overrides map.
+        assert!(!theme.overrides.contains_key("rust_symbol"));
+        assert_eq!(
+            theme
+                .overrides
+                .get("rust_bg_color")
+                .map(super::super::types::ColorSpec::as_str),
+            Some("red")
+        );
+    }
+
+    #[test]
+    fn get_symbol_returns_none_when_unset() {
+        let theme = LanguageTheme::default();
+        assert_eq!(theme.get_symbol("Rust"), None);
+    }
+
+    #[test]
+    fn get_symbol_uses_canonical_name() {
+        let toml_str = "rust_symbol = \"🦀\"\n";
+        let theme: LanguageTheme = toml::from_str(toml_str).expect("parse");
+        // "rust" and "Rust" both canonicalize to "rust".
+        assert_eq!(theme.get_symbol("rust"), Some("🦀"));
+        assert_eq!(theme.get_symbol("Rust"), Some("🦀"));
+    }
+
+    #[test]
+    fn starship_theme_uses_role_names_for_off_ansi_languages() {
+        let content = crate::config::defaults::STARSHIP_THEME_CONTENT;
+        let theme = crate::theme::parse(content, "starship").expect("starship theme parses");
+        let lang = &theme.segments.language.overrides;
+        assert_eq!(
+            lang.get("swift_bg_color").expect("swift").as_str(),
+            "orange"
+        );
+        assert_eq!(
+            lang.get("php_bg_color").expect("php").as_str(),
+            "bright_magenta"
+        );
+        assert_eq!(
+            lang.get("cpp_bg_color").expect("cpp").as_str(),
+            "bright_green"
+        );
+        assert_eq!(lang.get("c_bg_color").expect("c").as_str(), "bright_green");
+    }
+
+    #[test]
+    fn language_theme_parses_style_from_toml() {
+        let toml_str = "java_style = \"dimmed\"\nrust_style = \"bold italic\"\n";
+        let theme: LanguageTheme = toml::from_str(toml_str).expect("parse");
+        assert_eq!(theme.get_style("java"), "dimmed");
+        assert_eq!(theme.get_style("rust"), "bold italic");
+    }
+
+    #[test]
+    fn language_theme_parses_styles_subtable() {
+        let toml_str = "[styles]\njava_style = \"dimmed\"\nrust_style = \"bold italic\"\n";
+        let theme: LanguageTheme = toml::from_str(toml_str).expect("parse");
+        assert_eq!(theme.get_style("java"), "dimmed");
+        assert_eq!(theme.get_style("rust"), "bold italic");
+    }
+
+    #[test]
+    fn get_style_defaults_to_bold_when_unset() {
+        let theme = LanguageTheme::default();
+        assert_eq!(theme.get_style("python"), "bold");
+    }
+
+    #[test]
+    fn get_style_uses_canonical_name() {
+        let toml_str = "java_style = \"dimmed\"\n";
+        let theme: LanguageTheme = toml::from_str(toml_str).expect("parse");
+        assert_eq!(theme.get_style("Java"), "dimmed");
+        assert_eq!(theme.get_style("java"), "dimmed");
+    }
+
+    #[test]
+    fn get_style_returns_empty_override_verbatim() {
+        // An explicit empty style suppresses the bold default (Starship `style = "red"`).
+        let toml_str = "go_style = \"\"\n";
+        let theme: LanguageTheme = toml::from_str(toml_str).expect("parse");
+        assert_eq!(theme.get_style("go"), "");
+    }
+
+    #[test]
+    fn style_not_in_overrides() {
+        let toml_str = "java_style = \"dimmed\"\njava_bg_color = \"red\"\n";
+        let theme: LanguageTheme = toml::from_str(toml_str).expect("parse");
+        assert!(!theme.overrides.contains_key("java_style"));
+        assert_eq!(
+            theme
+                .overrides
+                .get("java_bg_color")
+                .map(super::super::types::ColorSpec::as_str),
+            Some("red")
+        );
+    }
+
+    #[test]
+    fn starship_preset_sets_java_dimmed_and_uses_attr_var() {
+        let content = crate::config::defaults::STARSHIP_THEME_CONTENT;
+        let theme = crate::theme::parse(content, "starship").expect("starship theme parses");
+        let lang = &theme.segments.language;
+        assert_eq!(lang.get_style("java"), "dimmed");
+        assert_eq!(lang.get_style("rust"), "bold"); // default, unchanged
+        assert!(
+            lang.format
+                .as_deref()
+                .expect("format present")
+                .contains("$attr"),
+            "language format must reference $attr"
+        );
+    }
+}

@@ -1,0 +1,236 @@
+#!/usr/bin/env fish
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Update the Fish scripts and config from this checkout; run from the repo root:
+#   fish scripts/update.fish
+
+function _check_for_updates
+    echo "Checking for GPY updates..."
+
+    set -l current_version (string match -r '"version":\s*"([^"]+)"' < fish/fisher.json | head -1 | sed 's/.*"version":\s*"\([^"]*\)".*/\1/')
+
+    if test -z "$current_version"
+        echo "Could not determine current version from fisher.json"
+        return 1
+    end
+
+    echo "Current version: $current_version"
+
+    set -l latest_release (curl -s https://api.github.com/repos/jpease/gpy/releases/latest | string match -r '"tag_name":\s*"([^"]+)"' | head -1 | sed 's/.*"tag_name":\s*"\([^"]*\)".*/\1/')
+
+    if test -z "$latest_release"
+        echo "Could not fetch latest release information"
+        return 1
+    end
+
+    echo "Latest version: $latest_release"
+
+    if test "$current_version" = "$latest_release"
+        echo "GPY is already up to date ($current_version)"
+        return 0
+    else
+        echo "Update available: $current_version → $latest_release"
+        return 2
+    end
+end
+
+# Installers put the binary in ~/.local/bin, `cargo install` in ~/.cargo/bin;
+# with both, PATH order silently picks the version, so keep one copy.
+function _sync_cargo_binary_to_local_bin
+    set -l cargo_bin "$HOME/.cargo/bin/gpy-agent"
+    if not test -f "$cargo_bin"
+        return 0
+    end
+
+    mkdir -p "$HOME/.local/bin"
+    cp "$cargo_bin" "$HOME/.local/bin/gpy-agent"
+    chmod +x "$HOME/.local/bin/gpy-agent"
+    echo "Synced Cargo-installed binary to ~/.local/bin/gpy-agent"
+end
+
+# gpy-agent is not on crates.io, so point at the installer instead of replacing
+# the binary; _verify_update still fails if no agent is present afterwards.
+function _update_agent
+    echo "Updating GPY agent..."
+
+    _sync_cargo_binary_to_local_bin
+
+    if not command -q gpy-agent
+        echo "GPY agent not found in PATH"
+    end
+
+    echo "Agent binaries come from the release archive, not a package registry."
+    echo "   Re-run the installer to pick up a new agent:"
+    echo "   curl -fsSL https://github.com/jpease/gpy/releases/latest/download/install-oneline.sh | sh"
+    echo "   Or download a release: https://github.com/jpease/gpy/releases"
+
+    return 0
+end
+
+function _update_fish_scripts
+    echo "Updating Fish scripts..."
+
+    if test -f (dirname (status filename))/../fish/core/util.fish
+        source (dirname (status filename))/../fish/core/util.fish
+    else
+        echo "Core utilities not found"
+        return 1
+    end
+
+    set -l fish_config_dir (__gpy_config_root)
+    set -l prompt_dir "$fish_config_dir/gpy"
+    set -l gpy_config_dir "$HOME/.config/gpy"
+    if set -q XDG_CONFIG_HOME; and test -n "$XDG_CONFIG_HOME"
+        set gpy_config_dir "$XDG_CONFIG_HOME/gpy"
+    end
+
+    if test -d "$prompt_dir"
+        echo "Backing up current configuration..."
+        set -l backup_dir "$fish_config_dir/gpy.backup."(date +%Y%m%d_%H%M%S)
+        cp -r "$prompt_dir" "$backup_dir"
+        echo "   Backup created: $backup_dir"
+    end
+
+    mkdir -p "$prompt_dir"
+    mkdir -p "$gpy_config_dir"
+    echo "Updating Fish files in $prompt_dir..."
+
+    for src in fish/core fish/segments fish/functions
+        if not test -d "$src"
+            echo "Missing source directory: $src"
+            return 1
+        end
+        set -l dest_dir "$prompt_dir/"(basename "$src")
+        if command -q rsync
+            rsync -a --delete "$src/" "$dest_dir/"
+        else
+            rm -rf "$dest_dir"
+            cp -r "$src" "$prompt_dir/"
+        end
+    end
+
+    # Never delete: users' custom themes must survive.
+    if not test -d config/themes
+        echo "Missing source directory: config/themes"
+        return 1
+    end
+    mkdir -p "$gpy_config_dir/themes"
+    if command -q rsync
+        rsync -a config/themes/ "$gpy_config_dir/themes/"
+    else
+        cp -r config/themes/. "$gpy_config_dir/themes/"
+    end
+
+    # Never overwrite an existing config.toml; ship the new default beside it.
+    if test -f config/config.toml
+        if not test -e "$gpy_config_dir/config.toml"
+            cp config/config.toml "$gpy_config_dir/config.toml"
+        else if not cmp -s config/config.toml "$gpy_config_dir/config.toml"
+            cp config/config.toml "$gpy_config_dir/config.toml.new"
+            echo "New default config available: $gpy_config_dir/config.toml.new"
+            echo "   Your existing config.toml was left untouched; review the .new file for any changes."
+        end
+    end
+
+    if test -f fish/conf.d/gpy_init.fish
+        set -l conf_d_dir "$fish_config_dir/conf.d"
+        mkdir -p "$conf_d_dir"
+        cp fish/conf.d/gpy_init.fish "$conf_d_dir/"
+        echo "Configuration updated"
+    end
+
+    echo "Fish scripts and configuration updated"
+    return 0
+end
+
+function _restart_agent
+    echo "Restarting GPY agent..."
+
+    if not command -q gpy-agent
+        echo "Agent not found after update"
+        return 1
+    end
+
+    # `start` restarts a version-mismatched daemon; without it an old daemon
+    # keeps the socket and new shells speak a newer protocol to it.
+    if gpy-agent start >/dev/null 2>&1
+        echo "GPY agent restarted"
+        return 0
+    else
+        echo "Could not restart agent automatically (will start on next shell session)"
+        return 0
+    end
+end
+
+function _verify_update
+    echo "Verifying update..."
+
+    if command -q gpy-agent
+        set -l agent_version (gpy-agent --version 2>/dev/null | string trim)
+        if test -n "$agent_version"
+            echo "Agent version: $agent_version"
+        else
+            echo "Could not determine agent version"
+        end
+    else
+        echo "Agent not found after update"
+        return 1
+    end
+
+    if functions -q gpy_render_prompt
+        echo "Fish functions available"
+    else
+        echo "Fish functions may not be loaded"
+        echo "   Try restarting your Fish shell"
+    end
+
+    return 0
+end
+
+function update_gpy
+    echo "GPY Update Script"
+    echo ""
+
+    # Status 0: up to date; 2: update available; anything else: check failed.
+    _check_for_updates
+    set -l update_status $status
+
+    if test $update_status -eq 0
+        return 0
+    else if test $update_status -eq 2
+        echo ""
+    else
+        echo "Update check failed, continuing anyway..."
+        echo ""
+    end
+
+    if not _update_agent
+        echo "Agent update failed"
+        return 1
+    end
+
+    if not _update_fish_scripts
+        echo "Fish scripts update failed"
+        return 1
+    end
+
+    _restart_agent
+
+    if not _verify_update
+        echo "Update completed with warnings"
+        return 1
+    end
+
+    echo ""
+    echo "GPY updated successfully!"
+    echo ""
+    echo "Next steps:"
+    echo "   • Restart your Fish shell: exec fish"
+    echo "   • Or reload config: source ~/.config/fish/config.fish"
+    echo "   • Test with: gpy-agent --help"
+    echo ""
+    echo "For issues, see: https://github.com/jpease/gpy/issues"
+
+    return 0
+end
+
+update_gpy $argv

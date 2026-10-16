@@ -1,0 +1,11 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy doctor
+expression: help
+---
+Run health checks and diagnostics
+
+Usage: gpy doctor
+
+Options:
+  -h, --help  Print help

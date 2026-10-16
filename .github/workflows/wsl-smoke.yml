@@ -1,0 +1,130 @@
+name: WSL Smoke
+
+# Builds the agent in Ubuntu under WSL 2 on a Windows runner and runs
+# scripts/wsl-smoke.sh plus the cross-shell contract suite. Kept out of
+# pr-gate.yml: it is slow and WSL-only behaviour changes rarely, so it runs
+# when its files change, weekly, and on demand.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/wsl-smoke.yml
+      - scripts/wsl-smoke.sh
+  schedule:
+    - cron: '30 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: wsl-smoke-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  wsl:
+    name: WSL smoke (Ubuntu 24.04)
+    runs-on: windows-latest
+    timeout-minutes: 75
+
+    steps:
+      # Windows checks out CRLF by default, which breaks every sourced script.
+      - name: Check text out with LF endings
+        shell: bash
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up WSL
+        uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7.0.0
+        with:
+          distribution: Ubuntu-24.04
+          use-cache: true
+          set-as-default: true
+          # As root the shells draw the prompt character themselves, which
+          # changes what the contract suite observes; run as a normal user.
+          wsl-shell-user: user
+          # The shell-suite prerequisites from .github/actions/install-shells,
+          # plus build tools and util-linux (findmnt).
+          additional-packages: >-
+            build-essential pkg-config curl ca-certificates git util-linux
+            software-properties-common zsh socat netcat-openbsd python3 jq
+
+      - name: Show the WSL environment
+        shell: wsl-bash {0}
+        run: |
+          uname -a
+          cat /proc/sys/kernel/osrelease
+          echo "WSL_DISTRO_NAME=$WSL_DISTRO_NAME"
+          pwd
+          findmnt -T "$PWD" || true
+
+      - name: Install Fish 4
+        # Ubuntu 24.04's apt has Fish 3.7; the suites need Fish 4.
+        shell: wsl-bash -u root {0}
+        run: |
+          add-apt-repository -y ppa:fish-shell/release-4
+          apt-get update
+          apt-get install -y fish
+          fish --version
+
+      # Build and test from a Linux-filesystem copy (drvfs is slow); the
+      # checkout itself is the Windows-drive repository the smoke exercises.
+      - name: Copy the checkout to the Linux filesystem
+        shell: wsl-bash {0}
+        run: |
+          echo "GPY_WSL_DRVFS_DIR=$PWD" >> "$HOME/.gpy-wsl-env"
+          cp -a . "$HOME/gpy"
+
+      - name: Install Rust toolchain
+        # Pinned rustup-init verified against its digest, not a piped
+        # installer. Digest: static.rust-lang.org/rustup/archive/<version>/
+        # x86_64-unknown-linux-gnu/rustup-init.sha256.
+        shell: wsl-bash {0}
+        run: |
+          set -euo pipefail
+          # Not step `env:`: Windows env vars do not reach WSL without WSLENV.
+          RUSTUP_VERSION=1.29.1
+          RUSTUP_INIT_SHA256=dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71
+          rustup_init="$(mktemp)"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$rustup_init" \
+            "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x86_64-unknown-linux-gnu/rustup-init"
+          echo "${RUSTUP_INIT_SHA256}  ${rustup_init}" | sha256sum -c -
+          chmod +x "$rustup_init"
+          "$rustup_init" -y --profile minimal --default-toolchain none
+          rm -f "$rustup_init"
+          . "$HOME/.cargo/env"
+          cd "$HOME/gpy/gpy-agent"
+          rustup toolchain install
+          ../scripts/check-active-toolchain.sh
+
+      - name: Build agent
+        shell: wsl-bash {0}
+        run: |
+          . "$HOME/.cargo/env"
+          cd "$HOME/gpy/gpy-agent"
+          cargo build --locked
+
+      # As root: an ordinary user cannot `git init` on the drvfs checkout
+      # (root-owned, mounted without `metadata`).
+      - name: WSL smoke (fonts and git on both filesystems)
+        shell: wsl-bash -u root {0}
+        run: |
+          . /home/user/.gpy-wsl-env
+          export GPY_WSL_DRVFS_DIR
+          cd /home/user/gpy
+          GPY_AGENT_BIN=/home/user/gpy/gpy-agent/target/debug/gpy-agent scripts/wsl-smoke.sh
+
+      - name: Cross-shell contract suite
+        shell: wsl-bash {0}
+        run: |
+          . "$HOME/.cargo/env"
+          cd "$HOME/gpy"
+          scripts/wsl-smoke.sh --contract-only

@@ -1,0 +1,49 @@
+# Hooks without an explicit `stages` run on commit and on push only.
+default_stages: [pre-commit, pre-push]
+
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+    -   id: check-yaml
+    -   id: end-of-file-fixer
+        # Golden ANSI fixtures are byte-exact contracts; never append newlines.
+        exclude: ^gpy-agent/tests/golden/.*\.ansi$
+    -   id: trailing-whitespace
+        # Golden ANSI fixtures are byte-exact contracts; never trim bytes.
+        exclude: ^gpy-agent/tests/golden/.*\.ansi$
+    -   id: check-added-large-files
+        # Recorded feature-walkthrough GIF embedded in the README (demo/README.md).
+        exclude: ^assets/demo\.gif$
+
+-   repo: local
+    hooks:
+    -   id: rustfmt
+        name: rustfmt
+        entry: bash -c './scripts/check-active-toolchain.sh && rustfmt --edition 2024 "$@"' --
+        language: system
+        types: [rust]
+        files: ^gpy-agent/
+        pass_filenames: true
+    -   id: clippy
+        name: clippy
+        description: cargo clippy over all targets and features (policy in gpy-agent/Cargo.toml [lints])
+        entry: just lint
+        language: system
+        files: '(\.rs$|(^|/)Cargo\.(toml|lock)$|(^|/)\.clippy\.toml$)'
+        pass_filenames: false
+    -   id: fish-check
+        name: fish-check
+        description: Run Fish shell syntax and formatting checks
+        entry: scripts/quality-check.sh --fish-only
+        language: system
+        files: \.fish$
+        pass_filenames: false
+    -   id: gitleaks
+        name: gitleaks
+        description: Scan staged changes for secrets
+        entry: bash -c 'command -v gitleaks >/dev/null 2>&1 || exit 0; gitleaks git --staged --redact'
+        language: system
+        pass_filenames: false
+    # Heavy gates run in CI (pr-gate.yml); clippy also runs on push so a
+    # --no-verify commit is still linted.

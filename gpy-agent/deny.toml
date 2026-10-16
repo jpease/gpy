@@ -1,0 +1,82 @@
+# cargo-deny policy: advisories, licenses, duplicate versions and sources.
+
+[graph]
+
+[advisories]
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+
+# Fail on unsound/unmaintained advisories too, unless waived below.
+unsound = "all"
+unmaintained = "all"
+
+# Waivers (register: docs/dev/security-audit.md). cargo-deny has no expiry
+# field, so re-check each entry at every audit review.
+ignore = [
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained; reached only via serde_yaml as a build-dependency of gengo-language 0.15.0 (latest release), which parses its embedded language tables at compile time. Not linked into the shipped binaries. Drop when gengo-language stops depending on serde_yaml." },
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+
+    "Unicode-3.0",
+
+    "CC0-1.0",
+    "Unlicense",
+
+    "BSL-1.0",
+]
+
+confidence-threshold = 0.9
+
+exceptions = [
+    { name = "gpy-agent", allow = ["GPL-3.0-or-later"] },
+]
+
+[bans]
+deny = [
+    # Prefer the rustls ecosystem.
+    { name = "openssl-sys" },
+    { name = "native-tls" },
+
+    { name = "cmake" },
+
+    { name = "time", version = ">=0.2.0, <0.2.23" },
+    { name = "chrono", version = "<0.4.20" },
+]
+
+# Accepted duplicates; tests/bash/deny_skip_list.test.bash fails when one
+# stops being duplicated, since a stale skip hides the next duplicate.
+skip = [
+    # bitflags 1.3.2 (portable-pty, a Unix dev-dependency) against bitflags
+    # 2.x (crossterm, notify, nix, ratatui)
+    { name = "bitflags" },
+
+    # windows-sys 0.60.2 (notify) against windows-sys 0.61.2 (rustix, mio,
+    # socket2, clap's anstream/anstyle-wincon, ignore/walkdir's winapi-util)
+    { name = "windows-sys" },
+
+    # getrandom 0.3.4 and 0.4.3, both dev-only: 0.3.4 under rand_core 0.9.5
+    # (proptest), 0.4.3 under tempfile (insta, proptest, rusty-fork)
+    { name = "getrandom" },
+]
+
+skip-tree = [
+    { name = "proc-macro2" },
+    { name = "syn" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+allow-git = []

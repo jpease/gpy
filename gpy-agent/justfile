@@ -1,0 +1,45 @@
+# gpy-agent recipes for working inside gpy-agent/; the root justfile is canonical.
+
+# Default recipe
+default:
+    @just --list
+
+# Build the agent in debug mode
+build:
+    cargo build
+
+# Build the agent in release mode
+build-release:
+    cargo build --release
+
+# Run tests
+test *args:
+    cargo nextest run {{args}}
+
+# Run doc tests
+test-doc:
+    cargo test --doc
+
+# Run clippy (policy: Cargo.toml [lints])
+clippy *args:
+    cargo clippy --all-targets --all-features {{args}}
+
+# Run clippy and apply fixes
+clippy-fix:
+    cargo clippy --fix --allow-dirty --allow-staged --all-targets
+
+# Run benchmarks
+bench *args:
+    cargo bench {{args}}
+
+# Check formatting
+fmt-check:
+    cargo fmt -- --check
+
+# Apply formatting
+fmt:
+    cargo fmt
+
+# Clean build artifacts
+clean:
+    cargo clean

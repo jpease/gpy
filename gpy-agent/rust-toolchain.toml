@@ -1,0 +1,12 @@
+# Pinned so the clippy lint set is the same locally and in CI. Must be >=
+# rust-version in Cargo.toml (tests/bash/msrv_consistency.test.bash).
+#
+# CI installs from this file via actions-rust-lang/setup-rust-toolchain, which
+# silently falls back to `stable` when it cannot find it; every job therefore
+# runs scripts/check-active-toolchain.sh.
+#
+# Bump when rust-version moves or a dependency's MSRV passes the pin, together
+# with `.clippy.toml` msrv and Cargo.toml rust-version.
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]

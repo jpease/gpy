@@ -1,0 +1,78 @@
+# tests/fixtures/git_root_vectors.tsv
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Shared vectors for Git-root discovery and the instant-cache key path built
+# on it (the directory whose cache key names a git*/lang* cache file). The
+# agent keys a repo's cache by its canonical (symlink-resolved) root, and a
+# non-Git language project by its canonical request path, so every shell must
+# find the same directory. Read by:
+#   - Bash:  __gpy_find_git_root + __gpy_instant_cache_key_path
+#            (tests/bash/git_root_vectors.test.bash)
+#   - Zsh:   same functions (tests/zsh/git_root_vectors.test.zsh)
+#   - Fish:  __gpy_find_git_root + __gpy_instant_cache_key_path
+#            (tests/fish/git_root_vectors.test.fish)
+#
+# Format: tab-separated, first column names the row kind. Every path is
+# relative to a fresh scratch directory S the reader creates and resolves
+# with realpath; `.` is S itself. Rows are applied in file order, so the
+# layout rows come first.
+#   mkdir<TAB>path                  mkdir -p S/path
+#   gitdir<TAB>path                 mkdir -p S/path/.git      (a repository)
+#   gitfile<TAB>path                S/path/.git as a FILE     (worktree/submodule)
+#   symlink<TAB>link<TAB>target     S/link -> S/target
+#   root<TAB>start<TAB>expected     __gpy_find_git_root S/start
+#   key<TAB>suffix<TAB>start<TAB>expected
+#                                   __gpy_instant_cache_key_path SUFFIX S/start
+# `expected` is S-relative; the token \e means "none": empty output and a
+# non-zero status. Blank lines and lines starting with # are ignored; extra
+# columns MUST be ignored. Every reader MUST fail on an unknown kind, or if
+# this file is missing or yields no root/key vectors.
+#
+# Known divergences, deliberately absent (all off the prompt's path):
+#   - a FILE as `start`: Bash/Zsh realpath it and walk up (finding the repo),
+#     Fish requires a directory and finds nothing. Callers always pass a cwd.
+#   - a lang key for a NONEXISTENT start (cwd deleted under the shell):
+#     Bash/Zsh find no key (realpath fails), Fish keys by the lexically
+#     resolved path. Either way no cache file exists for it.
+
+mkdir	plain/sub
+mkdir	repo/src/deep
+gitdir	repo
+mkdir	repo/vendor/inner/lib
+gitdir	repo/vendor/inner
+mkdir	wt/a
+gitfile	wt
+mkdir	sp ace/r
+gitdir	sp ace
+mkdir	nogit/.github
+symlink	link	repo/src
+symlink	link_plain	plain/sub
+symlink	link_repo	repo
+
+root	repo	repo
+root	repo/src	repo
+root	repo/src/deep	repo
+root	repo/src/../src/deep	repo
+root	repo/vendor/inner	repo/vendor/inner
+root	repo/vendor/inner/lib	repo/vendor/inner
+root	wt	wt
+root	wt/a	wt
+root	sp ace/r	sp ace
+root	link	repo
+root	link_repo	repo
+root	plain	\e
+root	plain/sub	\e
+root	link_plain	\e
+root	nogit	\e
+root	missing	\e
+root	missing/deeper	\e
+
+key	git	repo/src	repo
+key	lang	repo/src	repo
+key	git_last	repo/vendor/inner/lib	repo/vendor/inner
+key	git	link	repo
+key	git	plain/sub	\e
+key	lang	plain/sub	plain/sub
+key	lang_first_last	plain	plain
+key	lang	link_plain	plain/sub
+key	git	missing	\e

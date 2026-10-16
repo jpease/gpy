@@ -1,0 +1,14 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy lang versions
+expression: help
+---
+Toggle version display (on/off)
+
+Usage: gpy lang versions <TOGGLE>
+
+Arguments:
+  <TOGGLE>  Enable or disable version display [possible values: on, off]
+
+Options:
+  -h, --help  Print help

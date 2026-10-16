@@ -1,0 +1,76 @@
+name: Windows gate
+
+# The single Windows leg, called by pr-gate.yml and cross-platform-test.yml.
+# Native Windows is CLI-only (the prompt talks to the agent over a Unix
+# socket), so it runs the lib tests and the hermetic CLI integration targets.
+#
+# config::manager::tests::poll_fallback_reloads_without_any_watcher_running is
+# a known timing flake here; re-run once before treating red as a regression.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: ""
+  # windows-latest has no shell the theme-export injection tests can drive
+  # (its bash.exe launches, then fails); this lets them skip the shells.
+  GPY_CI_NO_SHELLS: "1"
+
+jobs:
+  windows:
+    name: Windows lib and CLI tests
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        # No `toolchain:` input: resolved from gpy-agent/rust-toolchain.toml.
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          rust-src-dir: gpy-agent
+          cache: false
+
+      - name: Verify the pinned toolchain is active
+        shell: bash
+        run: ./scripts/check-active-toolchain.sh
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: gpy-agent
+
+      - name: Install nextest
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-nextest
+
+      - name: Build agent
+        working-directory: gpy-agent
+        run: cargo build --locked --verbose
+
+      - name: Rust lib tests
+        working-directory: gpy-agent
+        run: cargo test --locked --lib --verbose
+
+      - name: CLI integration tests (the targets behind the CLI-only claim)
+        if: ${{ !cancelled() }}
+        working-directory: gpy-agent
+        # Runs even when the lib step failed. Each target uses an isolated
+        # HOME/XDG_* and no running agent.
+        run: >-
+          cargo nextest run --locked --no-fail-fast --features test-support
+          --test gpy_cli_tests
+          --test cli_config_mutation_tests
+          --test theme_import_tests
+          --test init_command_tests
+          --test cli_integration_tests

@@ -1,0 +1,1424 @@
+//! Agent daemon lifecycle: runtime paths, socket discovery, version markers,
+//! compatibility checks, and Unix daemon startup.
+
+/// Agent startup and background process management.
+pub mod start;
+pub use start::start_background_agent;
+
+#[cfg(unix)]
+use crate::Error;
+use crate::{Result, VERSION};
+#[cfg(unix)]
+use std::cmp::Ordering;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+#[cfg(unix)]
+use crate::ipc::socket_identity::SocketIdentity;
+#[cfg(unix)]
+use std::os::unix::net::UnixListener;
+
+/// Overrides the default agent socket path (tests, fixed deployments).
+pub static SOCKET_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
+
+/// Runtime directory for agent files: `$XDG_RUNTIME_DIR/gpy`, then
+/// `$XDG_CACHE_HOME/gpy`, `$HOME/.cache/gpy`, `/tmp/gpy` (matches Fish and server).
+///
+/// # Errors
+/// Returns an error if the runtime directory cannot be created.
+pub fn get_runtime_dir() -> Result<PathBuf> {
+    let path = crate::paths::runtime_root_for(
+        crate::paths::root_var("XDG_RUNTIME_DIR").as_deref(),
+        crate::paths::root_var("XDG_CACHE_HOME").as_deref(),
+        crate::paths::home_dir().as_deref(),
+    );
+    std::fs::create_dir_all(&path)?;
+    Ok(path)
+}
+
+/// Socket path for the agent.
+///
+/// # Errors
+/// Returns an error if the runtime directory cannot be created or the path
+/// exceeds the platform's Unix socket path limit.
+pub fn get_socket_path() -> Result<PathBuf> {
+    let path = resolve_socket_path()?;
+    crate::paths::check_socket_path_len(&crate::paths::absolutize(&path))?;
+    Ok(path)
+}
+
+/// The configured socket path before the length check, for diagnostics.
+///
+/// # Errors
+/// Returns an error if the runtime directory cannot be created.
+pub fn resolve_socket_path() -> Result<PathBuf> {
+    if let Some(override_path) = SOCKET_OVERRIDE.get() {
+        return Ok(override_path.clone());
+    }
+
+    // Empty means unset, matching Bash and Zsh.
+    if let Some(custom_path) = socket_path_override() {
+        return Ok(custom_path);
+    }
+
+    Ok(get_runtime_dir()?.join("gpy.sock"))
+}
+
+/// The `GPY_AGENT_SOCKET_PATH` override; empty counts as unset everywhere.
+#[must_use]
+pub fn socket_path_override() -> Option<PathBuf> {
+    std::env::var_os("GPY_AGENT_SOCKET_PATH")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Version marker path: `<runtime>/agent.version` for the default socket,
+/// `<socket>.version` for an overridden one so agents never share a marker.
+///
+/// # Errors
+/// Returns an error if the runtime directory cannot be created.
+pub fn get_version_file_path() -> Result<PathBuf> {
+    let socket_override = SOCKET_OVERRIDE.get().cloned().or_else(socket_path_override);
+    match socket_override {
+        Some(socket) => Ok(version_file_for(Some(&socket), Path::new(""))),
+        None => Ok(version_file_for(None, &get_runtime_dir()?)),
+    }
+}
+
+/// Version marker path for `socket_override`, or the default under `runtime_dir`.
+fn version_file_for(socket_override: Option<&Path>, runtime_dir: &Path) -> PathBuf {
+    socket_override.map_or_else(
+        || runtime_dir.join("agent.version"),
+        |socket| {
+            let mut marker = socket.as_os_str().to_owned();
+            marker.push(".version");
+            PathBuf::from(marker)
+        },
+    )
+}
+
+/// A parsed `MAJOR.MINOR.PATCH[-prerelease]` version.
+#[cfg(unix)]
+type AgentVersion<'a> = ((u64, u64, u64), Option<&'a str>);
+
+/// Parse an agent version, ignoring surrounding whitespace.
+#[cfg(unix)]
+fn parse_agent_version(raw: &str) -> Option<AgentVersion<'_>> {
+    let trimmed = raw.trim();
+    let (core, pre) = match trimmed.split_once('-') {
+        Some((core, pre)) if !pre.is_empty() => (core, Some(pre)),
+        Some(_) => return None,
+        None => (trimmed, None),
+    };
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(((major, minor, patch), pre))
+}
+
+/// Order two parsed versions; a pre-release sorts before its release.
+#[cfg(unix)]
+fn compare_agent_versions(left: &AgentVersion<'_>, right: &AgentVersion<'_>) -> Ordering {
+    left.0.cmp(&right.0).then_with(|| match (left.1, right.1) {
+        (None, None) => Ordering::Equal,
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(left_pre), Some(right_pre)) => left_pre.cmp(right_pre),
+    })
+}
+
+/// Whether a running agent should be replaced: only if older or unparsable,
+/// so a corrupt marker self-heals.
+#[cfg(unix)]
+fn should_replace(running: &str, binary: &str) -> bool {
+    let Some(running_version) = parse_agent_version(running) else {
+        return true;
+    };
+    parse_agent_version(binary).map_or_else(
+        || running.trim() != binary.trim(),
+        |binary_version| {
+            compare_agent_versions(&running_version, &binary_version) == Ordering::Less
+        },
+    )
+}
+
+/// Read the version of the currently running agent.
+#[must_use]
+pub fn read_agent_version() -> Option<String> {
+    let version_path = get_version_file_path().ok()?;
+    std::fs::read_to_string(version_path)
+        .ok()
+        .map(|s| s.trim().to_owned())
+}
+
+/// Write the current agent version to file.
+///
+/// # Errors
+/// Returns an error if the version file cannot be written.
+pub fn write_agent_version() -> Result<()> {
+    let version_path = get_version_file_path()?;
+    std::fs::write(version_path, VERSION)?;
+    Ok(())
+}
+
+/// Check the socket path is bindable, then release it.
+///
+/// # Errors
+/// Returns an error if socket binding fails.
+#[cfg(unix)]
+pub fn test_socket_bind(socket_path: &PathBuf) -> std::io::Result<()> {
+    // Bind is atomic, so success proves exclusive access.
+    let listener = UnixListener::bind(socket_path)?;
+    drop(listener);
+    let _ = std::fs::remove_file(socket_path);
+    Ok(())
+}
+
+/// Test-only counters of which step decided a ping. Relaxed atomics and no
+/// I/O, since stderr writes perturb the timing being measured. Process-global,
+/// so reported but never asserted on.
+#[cfg(all(test, unix))]
+pub(crate) mod ping_probe {
+    use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+
+    pub static ANSWERED: AtomicU32 = AtomicU32::new(0);
+    pub static CONNECT_ERROR: AtomicU32 = AtomicU32::new(0);
+    pub static CONNECT_TIMEOUT: AtomicU32 = AtomicU32::new(0);
+    pub static WRITE_ERROR: AtomicU32 = AtomicU32::new(0);
+    pub static READ_TIMEOUT: AtomicU32 = AtomicU32::new(0);
+    pub static READ_CLOSED: AtomicU32 = AtomicU32::new(0);
+    pub static UNRECOGNIZED: AtomicU32 = AtomicU32::new(0);
+    /// `raw_os_error` of the most recent failed connect, or 0 if there was none.
+    pub static LAST_CONNECT_ERRNO: AtomicI32 = AtomicI32::new(0);
+
+    pub fn bump(counter: &AtomicU32) {
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_connect_errno(errno: i32) {
+        LAST_CONNECT_ERRNO.store(errno, Ordering::Relaxed);
+    }
+
+    /// A one-line reading of every counter, for a failure message.
+    pub fn summary() -> String {
+        let read = |c: &AtomicU32| c.load(Ordering::Relaxed);
+        format!(
+            "answered={} connect_error={} (last errno {}) connect_timeout={} \
+             write_error={} read_timeout={} read_closed={} unrecognized={}",
+            read(&ANSWERED),
+            read(&CONNECT_ERROR),
+            LAST_CONNECT_ERRNO.load(Ordering::Relaxed),
+            read(&CONNECT_TIMEOUT),
+            read(&WRITE_ERROR),
+            read(&READ_TIMEOUT),
+            read(&READ_CLOSED),
+            read(&UNRECOGNIZED),
+        )
+    }
+}
+
+/// Record a ping outcome when the probe is compiled in; a no-op otherwise.
+#[cfg(unix)]
+macro_rules! ping_outcome {
+    ($counter:ident) => {{
+        #[cfg(test)]
+        crate::agent::lifecycle::ping_probe::bump(&crate::agent::lifecycle::ping_probe::$counter);
+    }};
+}
+
+/// Record which way a connect failed, when the probe is compiled in.
+#[cfg(unix)]
+fn record_connect_failure(e: &std::io::Error) {
+    #[cfg(test)]
+    {
+        ping_probe::record_connect_errno(e.raw_os_error().unwrap_or(-1_i32));
+        ping_probe::bump(&ping_probe::CONNECT_ERROR);
+    }
+    #[cfg(not(test))]
+    let _ = e;
+}
+
+/// Connect within the ping's connect budget; refusal and timeout are recorded
+/// separately for the probe.
+#[cfg(unix)]
+async fn ping_connect(socket_path: &PathBuf) -> Option<tokio::net::UnixStream> {
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        tokio::net::UnixStream::connect(socket_path),
+    )
+    .await
+    {
+        Ok(Ok(stream)) => Some(stream),
+        Ok(Err(e)) => {
+            record_connect_failure(&e);
+            None
+        }
+        Err(_) => {
+            ping_outcome!(CONNECT_TIMEOUT);
+            None
+        }
+    }
+}
+
+/// Outcome of one ping attempt. `NotListening` is weak evidence (a busy
+/// runtime looks the same); `AcceptedNoReply` means something is alive.
+#[cfg(unix)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PingOutcome {
+    /// The agent answered with a well-formed [`crate::ipc::Response::Ack`].
+    Answered,
+    /// Nothing accepted the connection.
+    NotListening,
+    /// The connection was accepted but never produced a recognized reply.
+    AcceptedNoReply,
+}
+
+/// Ping the agent once and classify the attempt.
+///
+/// # Errors
+/// Returns an error if runtime creation fails or the write to an accepted
+/// connection fails (a local failure, not evidence about the agent).
+#[cfg(unix)]
+fn ping_agent_outcome(socket_path: &PathBuf) -> Result<PingOutcome> {
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // Current-thread: a pool per ping churns threads enough to make pings fail
+    // locally, which callers would mistake for agent death.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Error::process("ping_runtime".to_owned(), e.to_string()))?;
+
+    rt.block_on(async {
+        let Some(stream) = ping_connect(socket_path).await else {
+            return Ok(PingOutcome::NotListening);
+        };
+
+        let (mut reader, mut writer) = stream.into_split();
+
+        // Single write: a server that answers and closes can EPIPE a second write.
+        let ping_msg = b"{\"op\":\"ping\"}\n";
+
+        if let Err(e) = writer.write_all(ping_msg).await {
+            ping_outcome!(WRITE_ERROR);
+            // Something is listening; report as indeterminate, not stopped.
+            return Err(Error::ipc(format!("ping write failed: {e}")));
+        }
+
+        let mut buffer = [0; 1024];
+        match tokio::time::timeout(Duration::from_millis(500), reader.read(&mut buffer)).await {
+            Ok(Ok(n)) if n > 0 => {
+                let Some(chunk) = buffer.get(..n) else {
+                    ping_outcome!(UNRECOGNIZED);
+                    return Ok(PingOutcome::AcceptedNoReply);
+                };
+                let response = String::from_utf8_lossy(chunk);
+                // A real reply is a `Response`, so decide on the decoded
+                // value rather than on substrings of the raw bytes:
+                // `contains("ok")` would match any error message with "ok"
+                // in it. The daemon renders `Ack` through the JSON formatter
+                // as `{"status":"ok"}` (`ipc::ACK_WIRE_JSON`), not as serde's
+                // `"Ack"`, so the decoder has to accept the formatter shape
+                // or a live agent is never seen answering.
+                if crate::ipc::decode_wire_reply(&response).is_ok_and(|reply| is_ack(&reply)) {
+                    ping_outcome!(ANSWERED);
+                    Ok(PingOutcome::Answered)
+                } else {
+                    ping_outcome!(UNRECOGNIZED);
+                    Ok(PingOutcome::AcceptedNoReply)
+                }
+            }
+            Err(_) => {
+                ping_outcome!(READ_TIMEOUT);
+                Ok(PingOutcome::AcceptedNoReply)
+            }
+            // Clean close or read error: accepted but unanswered.
+            Ok(_) => {
+                ping_outcome!(READ_CLOSED);
+                Ok(PingOutcome::AcceptedNoReply)
+            }
+        }
+    })
+}
+
+/// Blocking ping: whether the agent answered.
+///
+/// # Errors
+/// Returns an error if runtime creation or ping operations fail.
+#[cfg(unix)]
+pub fn ping_agent_blocking(socket_path: &PathBuf) -> Result<bool> {
+    Ok(matches!(
+        ping_agent_outcome(socket_path)?,
+        PingOutcome::Answered
+    ))
+}
+
+/// Blocking ping (native Windows stub: no daemon, always `false`).
+///
+/// # Errors
+/// Never returns an error on this platform.
+#[cfg(not(unix))]
+pub fn ping_agent_blocking(_socket_path: &PathBuf) -> Result<bool> {
+    Ok(false)
+}
+
+/// Whether `response` is an acknowledgement. Decides on the decoded value, since
+/// a substring check would match an `Error` whose message contains "ok".
+#[cfg(unix)]
+#[must_use]
+const fn is_ack(response: &crate::ipc::Response) -> bool {
+    matches!(response, crate::ipc::Response::Ack)
+}
+
+/// Send `message` (JSON op, no trailing newline) to the agent and decode the
+/// reply. The whole exchange is bounded by `budget`; message and newline go
+/// in one write to avoid EPIPE from a server that answers and closes.
+///
+/// # Errors
+/// Returns an error if the exchange fails, the budget elapses, the agent
+/// closes without replying, or the reply does not decode.
+#[cfg(unix)]
+async fn request(
+    socket_path: &std::path::Path,
+    message: &str,
+    budget: std::time::Duration,
+) -> Result<crate::ipc::Response> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::UnixStream;
+
+    tokio::time::timeout(budget, async {
+        let mut stream = UnixStream::connect(socket_path)
+            .await
+            .map_err(|e| Error::ipc(format!("Failed to connect to agent: {e}")))?;
+
+        let mut payload = Vec::with_capacity(message.len().saturating_add(1));
+        payload.extend_from_slice(message.as_bytes());
+        payload.push(b'\n');
+        stream
+            .write_all(&payload)
+            .await
+            .map_err(|e| Error::ipc(format!("Failed to send command: {e}")))?;
+
+        let mut buffer = [0u8; 1024];
+        let n = stream
+            .read(&mut buffer)
+            .await
+            .map_err(|e| Error::ipc(format!("Failed to read response: {e}")))?;
+        if n == 0 {
+            return Err(Error::ipc(
+                "Agent closed the connection without replying".to_owned(),
+            ));
+        }
+        let chunk = buffer
+            .get(..n)
+            .ok_or_else(|| Error::ipc("Invalid buffer slice".to_owned()))?;
+        let text = String::from_utf8_lossy(chunk);
+        crate::ipc::decode_wire_reply(&text)
+    })
+    .await
+    .map_err(|_| Error::ipc("Timed out communicating with agent".to_owned()))?
+}
+
+/// Send shutdown command to agent.
+///
+/// # Errors
+/// Returns an error if the exchange fails or times out, or the reply is not an ack.
+#[cfg(unix)]
+pub async fn send_shutdown_command() -> Result<()> {
+    // Bounded so a wedged agent cannot hang `gpy-agent stop`.
+    let socket_path = get_socket_path()?;
+    let response = request(
+        &socket_path,
+        r#"{"op":"shutdown"}"#,
+        std::time::Duration::from_secs(2),
+    )
+    .await?;
+
+    if is_ack(&response) {
+        Ok(())
+    } else {
+        Err(Error::ipc(format!(
+            "Unexpected shutdown response: {response:?}"
+        )))
+    }
+}
+
+/// Send shutdown command to agent (native Windows stub).
+///
+/// # Errors
+/// Always returns an error on this platform.
+#[cfg(not(unix))]
+pub async fn send_shutdown_command() -> Result<()> {
+    Err(crate::ipc::native_windows_unsupported())
+}
+
+/// Send config reload command; `Ok(true)` only when acknowledged.
+///
+/// # Errors
+/// Returns an error only if the socket path cannot be computed.
+#[cfg(unix)]
+pub async fn send_config_reload_command() -> Result<bool> {
+    let socket_path = get_socket_path()?;
+    if !socket_path.exists() {
+        return Ok(false);
+    }
+
+    let outcome = request(
+        &socket_path,
+        crate::ipc::protocol::CONFIG_RELOAD_JSON,
+        std::time::Duration::from_secs(2),
+    )
+    .await;
+
+    // An unconfirmed reload is never a success.
+    Ok(outcome.is_ok_and(|response| is_ack(&response)))
+}
+
+/// Send config reload command (native Windows stub: always `false`).
+///
+/// # Errors
+/// Never returns an error on this platform.
+#[cfg(not(unix))]
+pub async fn send_config_reload_command() -> Result<bool> {
+    Ok(false)
+}
+
+/// Agent status information from IPC query.
+#[derive(Debug)]
+pub struct AgentStatusInfo {
+    /// The version of the running agent.
+    pub version: String,
+    /// The protocol version the agent is using.
+    pub protocol_version: u8,
+    /// The number of repositories currently being watched by the agent.
+    pub watched_repos: usize,
+    /// The number of clients currently registered with the agent.
+    pub registered_clients: usize,
+    /// The number of entries in the agent's cache.
+    pub cache_entries: usize,
+}
+
+/// Query the running agent for its status via IPC.
+///
+/// # Errors
+/// Returns an error if the socket connection fails or the response cannot be parsed.
+#[cfg(unix)]
+pub async fn query_agent_status() -> Result<AgentStatusInfo> {
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::UnixStream;
+
+    let socket_path = get_socket_path()?;
+    let stream = tokio::time::timeout(Duration::from_secs(2), UnixStream::connect(socket_path))
+        .await
+        .map_err(|_| Error::ipc("Timeout connecting to agent".to_owned()))?
+        .map_err(|e| Error::ipc(format!("Failed to connect to agent: {e}")))?;
+
+    let (mut reader, mut writer) = stream.into_split();
+
+    let status_msg = r#"{"op":"status"}"#;
+    writer.write_all(status_msg.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+
+    let mut buffer = vec![0u8; 4096];
+    let n = tokio::time::timeout(Duration::from_secs(2), reader.read(&mut buffer))
+        .await
+        .map_err(|_| Error::ipc("Timeout reading agent response".to_owned()))?
+        .map_err(|e| Error::ipc(format!("Failed to read response: {e}")))?;
+
+    if n == 0 {
+        return Err(Error::ipc("Empty response from agent".to_owned()));
+    }
+
+    let chunk = buffer
+        .get(..n)
+        .ok_or_else(|| Error::ipc("Invalid buffer slice".to_owned()))?;
+    let response = String::from_utf8_lossy(chunk);
+
+    parse_agent_status_response(&response)
+}
+
+/// Query agent status (native Windows stub).
+///
+/// # Errors
+/// Always returns an error on this platform.
+#[cfg(not(unix))]
+pub async fn query_agent_status() -> Result<AgentStatusInfo> {
+    Err(crate::ipc::native_windows_unsupported())
+}
+
+/// Parse the agent status JSON response.
+///
+/// # Errors
+/// Returns an error if the JSON cannot be parsed or is not an `AgentStatus`.
+#[cfg(unix)]
+fn parse_agent_status_response(json: &str) -> Result<AgentStatusInfo> {
+    match serde_json::from_str::<crate::ipc::Response>(json) {
+        Ok(crate::ipc::Response::AgentStatus {
+            version,
+            protocol_version,
+            watched_repos,
+            registered_clients,
+            cache_entries,
+        }) => Ok(AgentStatusInfo {
+            version,
+            protocol_version,
+            watched_repos,
+            registered_clients,
+            cache_entries,
+        }),
+        Ok(other) => Err(Error::ipc(format!(
+            "Expected an AgentStatus response, got: {other:?}"
+        ))),
+        Err(e) => Err(Error::ipc(format!("Failed to parse JSON response: {e}"))),
+    }
+}
+
+/// Warn if the running agent's protocol version differs from ours.
+pub fn check_protocol_version_compatibility(agent_protocol_version: u8) {
+    use crate::ipc::protocol::PROTOCOL_VERSION;
+
+    if agent_protocol_version != PROTOCOL_VERSION {
+        println!();
+        crate::commands::output::warn("Protocol version mismatch");
+        println!("=================================================");
+        println!("Running agent protocol version: {agent_protocol_version}");
+        println!("Expected protocol version: {PROTOCOL_VERSION}");
+        println!();
+        println!("This may cause compatibility issues. Recommended actions:");
+        println!("  1. Restart the agent: gpy-agent stop && gpy-agent start");
+        println!("  2. If issues persist, reinstall: ./install-dev.fish");
+        println!();
+        println!("Fallback: Use oneshot mode if IPC fails:");
+        println!("  gpy-agent oneshot git --cwd . --format ansi");
+        println!("=================================================");
+    }
+}
+
+/// Ping attempts before an existing socket is declared stale. A busy live agent
+/// can miss one 500ms ping; unlinking its socket would orphan it. Refused
+/// connects fail in microseconds, so retries are cheap for leftover sockets.
+#[cfg(unix)]
+const PING_STALE_ATTEMPTS: u32 = 3;
+
+/// Backoff slept between failed ping attempts.
+#[cfg(unix)]
+const PING_STALE_BACKOFF: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Max wait for a shutdown-signalled agent to stop responding before unlinking
+/// its socket. Ownership-verified cleanup in the server protects the new socket
+/// if the old agent exits late.
+#[cfg(unix)]
+const SHUTDOWN_WAIT_MAX: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Poll interval while waiting for the old agent to stop responding.
+#[cfg(unix)]
+const SHUTDOWN_WAIT_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// What a round of pings established. Reading "never managed to ask" as death
+/// would unlink a live agent's socket and fork a duplicate.
+#[cfg(unix)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum AgentLiveness {
+    /// An attempt was answered. The agent is alive.
+    Responding,
+    /// Every attempt reached the socket unanswered; the only stale verdict.
+    NotResponding,
+    /// Every attempt connected but got no valid reply: alive but wedged.
+    /// Justifies eviction, not silent unlink.
+    AcceptedNoReply,
+    /// A ping failed locally; says nothing about the agent.
+    Indeterminate,
+}
+
+/// Ping the agent, retrying before concluding anything.
+#[cfg(unix)]
+fn ping_agent_liveness(socket_path: &PathBuf) -> AgentLiveness {
+    ping_agent_liveness_with(|| ping_agent_outcome(socket_path), PING_STALE_BACKOFF)
+}
+
+/// [`ping_agent_liveness`] over an arbitrary ping, for tests. Any local
+/// failure makes the round indeterminate: erring that way costs a retry,
+/// the other way a running daemon.
+#[cfg(unix)]
+fn ping_agent_liveness_with<F>(mut ping: F, backoff: std::time::Duration) -> AgentLiveness
+where
+    F: FnMut() -> Result<PingOutcome>,
+{
+    let mut local_failure = false;
+    let mut saw_not_listening = false;
+    let mut saw_accepted_no_reply = false;
+
+    for attempt in 0..PING_STALE_ATTEMPTS {
+        match ping() {
+            Ok(PingOutcome::Answered) => return AgentLiveness::Responding,
+            Ok(PingOutcome::NotListening) => saw_not_listening = true,
+            Ok(PingOutcome::AcceptedNoReply) => saw_accepted_no_reply = true,
+            Err(_) => local_failure = true,
+        }
+        if attempt
+            .checked_add(1)
+            .is_some_and(|next| next < PING_STALE_ATTEMPTS)
+        {
+            std::thread::sleep(backoff);
+        }
+    }
+
+    if local_failure {
+        AgentLiveness::Indeterminate
+    } else if saw_accepted_no_reply && !saw_not_listening {
+        // A mixed round may be a dead agent replaced mid-round.
+        AgentLiveness::AcceptedNoReply
+    } else {
+        AgentLiveness::NotResponding
+    }
+}
+
+/// Poll until the agent stops responding to pings, bounded by `SHUTDOWN_WAIT_MAX`.
+/// Returns `false` if still answering (or only indeterminate) when the budget ends.
+#[cfg(unix)]
+#[must_use]
+pub fn wait_for_agent_shutdown(socket_path: &PathBuf) -> bool {
+    let deadline = std::time::Instant::now()
+        .checked_add(SHUTDOWN_WAIT_MAX)
+        .unwrap_or_else(std::time::Instant::now);
+    loop {
+        if ping_agent_liveness(socket_path) == AgentLiveness::NotResponding {
+            return true; // Reached the socket every time, never answered: confirmed stopped.
+        }
+        if std::time::Instant::now() >= deadline {
+            return false; // Bounded fallback: still responding or unverifiable.
+        }
+        std::thread::sleep(SHUTDOWN_WAIT_POLL);
+    }
+}
+
+/// Native Windows stub: always "not confirmed stopped".
+#[cfg(not(unix))]
+#[must_use]
+pub fn wait_for_agent_shutdown(_socket_path: &PathBuf) -> bool {
+    false
+}
+
+/// What the identity-aware wait could establish about an evicted agent.
+#[cfg(unix)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ShutdownWait {
+    /// The path is gone or holds a different socket, which is not ours to remove.
+    Released,
+    /// The captured socket is still at the path and no longer answers.
+    Stopped,
+    /// The captured socket still answers (or cannot be verified) at the deadline.
+    TimedOut,
+}
+
+/// Whether the socket captured as `identity` has left `socket_path`: the path
+/// is missing or holds a different inode. Any other `stat` failure is not
+/// evidence of release.
+#[cfg(unix)]
+fn socket_released(socket_path: &Path, identity: SocketIdentity) -> bool {
+    match SocketIdentity::at(socket_path) {
+        Ok(current) => current != identity,
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+    }
+}
+
+/// Wait until the socket captured as `identity` stops answering or leaves the
+/// path, bounded by `SHUTDOWN_WAIT_MAX`. A replacement's answers end the wait.
+#[cfg(unix)]
+pub(crate) fn wait_for_socket_release(
+    socket_path: &PathBuf,
+    identity: SocketIdentity,
+) -> ShutdownWait {
+    let deadline = std::time::Instant::now()
+        .checked_add(SHUTDOWN_WAIT_MAX)
+        .unwrap_or_else(std::time::Instant::now);
+    loop {
+        if socket_released(socket_path, identity) {
+            return ShutdownWait::Released;
+        }
+        if ping_agent_liveness(socket_path) == AgentLiveness::NotResponding {
+            // The round may have reached a replacement bound mid-round.
+            return if socket_released(socket_path, identity) {
+                ShutdownWait::Released
+            } else {
+                ShutdownWait::Stopped
+            };
+        }
+        if std::time::Instant::now() >= deadline {
+            return ShutdownWait::TimedOut;
+        }
+        std::thread::sleep(SHUTDOWN_WAIT_POLL);
+    }
+}
+
+/// Remove the socket and version marker only while the path still holds the
+/// captured socket (the check-then-unlink window is inherent).
+#[cfg(unix)]
+fn remove_socket_if_unchanged(socket_path: &Path, identity: SocketIdentity) {
+    if socket_released(socket_path, identity) {
+        return;
+    }
+    let _ = std::fs::remove_file(socket_path);
+    if let Ok(version_path) = get_version_file_path() {
+        let _ = std::fs::remove_file(version_path);
+    }
+}
+
+/// Evict a wedged or incompatible agent: request shutdown, wait for release,
+/// then unlink only the captured socket. Returns `true` when a responsive
+/// replacement already holds the path, so the caller must not fork another.
+#[cfg(unix)]
+fn evict_wedged_agent(socket_path: &PathBuf, identity: SocketIdentity) -> bool {
+    // Best-effort graceful shutdown.
+    if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        let _ = runtime.block_on(send_shutdown_command());
+    }
+
+    // Proceed either way, but only ever unlink the captured socket.
+    if wait_for_socket_release(socket_path, identity) != ShutdownWait::Released {
+        remove_socket_if_unchanged(socket_path, identity);
+        return false;
+    }
+
+    // A different, answering agent is the replacement: do not fork another.
+    if SocketIdentity::at(socket_path).is_ok()
+        && matches!(ping_agent_outcome(socket_path), Ok(PingOutcome::Answered))
+    {
+        eprintln!("GPY Agent is already running and responsive");
+        return true;
+    }
+    false
+}
+
+/// Check for a running agent and clean up a stale socket. Returns `true` if a
+/// compatible agent is running.
+#[cfg(unix)]
+#[must_use]
+pub fn check_and_cleanup_socket(socket_path: &PathBuf) -> bool {
+    // Every later wait and unlink concerns this socket, never a replacement.
+    let Ok(identity) = SocketIdentity::at(socket_path) else {
+        return false;
+    };
+
+    let liveness = ping_agent_liveness(socket_path);
+
+    // Wrongly treating a live agent as stale forks a duplicate; wrongly treating
+    // a dead one as live costs one prompt. So leave an unverifiable socket alone.
+    if liveness == AgentLiveness::Indeterminate {
+        eprintln!("Could not verify whether the GPY agent is running; leaving its socket alone");
+        return true;
+    }
+
+    // Alive but wedged: evict rather than silently unlink.
+    if liveness == AgentLiveness::AcceptedNoReply {
+        eprintln!(
+            "GPY agent accepted a connection but did not answer across every retry; evicting the wedged agent..."
+        );
+        return evict_wedged_agent(socket_path, identity);
+    }
+
+    if liveness == AgentLiveness::Responding {
+        if let Some(running_version) = read_agent_version()
+            && running_version != VERSION
+        {
+            if should_replace(&running_version, VERSION) {
+                eprintln!(
+                    "Detected version mismatch (running: {running_version}, binary: {VERSION})"
+                );
+                eprintln!("Restarting agent with this binary's version ({VERSION})...");
+                return evict_wedged_agent(socket_path, identity);
+            }
+            eprintln!(
+                "A newer GPY agent ({running_version}) is already running; not replacing it with {VERSION}"
+            );
+            return true;
+        }
+
+        eprintln!("GPY Agent is already running and responsive");
+        true
+    } else {
+        // Unresponsive across every retry; unlink unless already replaced.
+        eprintln!("Cleaning up stale socket...");
+        remove_socket_if_unchanged(socket_path, identity);
+        false
+    }
+}
+
+#[cfg(all(test, unix))]
+mod version_order_tests {
+    use super::{should_replace, version_file_for};
+    use std::path::{Path, PathBuf};
+
+    /// # Panics
+    /// Panics when a case's verdict differs from the expected one.
+    #[test]
+    fn only_older_or_unparsable_running_versions_are_replaced() {
+        let cases = [
+            ("0.0.9", "0.1.0", true),
+            ("9.9.9", "0.1.0", false),
+            ("0.1.0", "0.1.0", false),
+            ("0.1.0-rc1", "0.1.0", true),
+            ("0.1.0", "0.1.0-rc1", false),
+            ("0.0.0-old", "0.1.0", true),
+            ("garbage", "0.1.0", true),
+            ("0.1", "0.1.0", true),
+            ("0.1.0-", "0.1.0", true),
+            (" 0.1.0\n", "0.1.0", false),
+            ("0.10.0", "0.9.0", false),
+        ];
+        for (running, binary, expected) in cases {
+            assert_eq!(
+                should_replace(running, binary),
+                expected,
+                "should_replace({running:?}, {binary:?})"
+            );
+        }
+    }
+
+    /// # Panics
+    /// Panics when a marker path differs from the expected one.
+    #[test]
+    fn version_marker_follows_the_socket_override() {
+        let runtime = Path::new("/run/gpy");
+        assert_eq!(
+            version_file_for(None, runtime),
+            PathBuf::from("/run/gpy/agent.version")
+        );
+        assert_eq!(
+            version_file_for(Some(Path::new("/x/dev.sock")), runtime),
+            PathBuf::from("/x/dev.sock.version")
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod stale_socket_tests {
+    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::panic)]
+    #![allow(clippy::missing_panics_doc)]
+    #![allow(missing_docs)]
+
+    // `check_and_cleanup_socket` retries are tested in `tests/stale_socket_tests.rs`,
+    // which needs `unsafe` env mutation the lib denies.
+    use super::{SHUTDOWN_WAIT_MAX, wait_for_agent_shutdown};
+    use crate::ipc::Response;
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
+    use std::time::{Duration, Instant};
+
+    /// The daemon's wire `Response::Ack`, pinned by
+    /// `ack_wire_form_is_what_the_json_formatter_emits`.
+    const ACK_WIRE_FORM: &[u8] = b"{\"status\":\"ok\"}\n";
+
+    #[test]
+    fn wait_for_agent_shutdown_returns_promptly_when_dead() {
+        let tmp = tempfile::tempdir().unwrap();
+        let socket_path = tmp.path().join("missing.sock"); // nothing listening
+
+        let started = Instant::now();
+        let stopped = wait_for_agent_shutdown(&socket_path);
+        let elapsed = started.elapsed();
+
+        assert!(
+            stopped,
+            "must report the agent as confirmed stopped when nothing is listening"
+        );
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "must not wait the full fallback budget when the agent is already gone, took {elapsed:?}"
+        );
+    }
+
+    /// A rebound path releases the captured socket even though something answers.
+    #[test]
+    fn wait_for_socket_release_sees_a_rebound_path_as_released() {
+        use super::{ShutdownWait, wait_for_socket_release};
+        use crate::ipc::socket_identity::SocketIdentity;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let socket_path = tmp.path().join("agent.sock");
+        let old = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        let identity = SocketIdentity::at(&socket_path).unwrap();
+        std::fs::remove_file(&socket_path).unwrap();
+        let _replacement = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        drop(old);
+
+        let started = Instant::now();
+        let outcome = wait_for_socket_release(&socket_path, identity);
+        let elapsed = started.elapsed();
+
+        assert_eq!(outcome, ShutdownWait::Released);
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "a rebound path must end the wait at once, took {elapsed:?}"
+        );
+    }
+
+    use super::{AgentLiveness, PING_STALE_ATTEMPTS, PingOutcome, ping_agent_liveness_with};
+    use crate::Error;
+    use std::cell::RefCell;
+
+    /// Drive the classifier over scripted ping outcomes with no backoff.
+    fn classify(outcomes: Vec<crate::Result<PingOutcome>>) -> (AgentLiveness, usize) {
+        let call_counter = RefCell::new(0_usize);
+        let script = RefCell::new(outcomes.into_iter());
+        let verdict = ping_agent_liveness_with(
+            || {
+                let mut call_count = call_counter.borrow_mut();
+                *call_count = call_count.saturating_add(1);
+                drop(call_count);
+                script
+                    .borrow_mut()
+                    .next()
+                    .unwrap_or_else(|| panic!("classifier asked for more pings than scripted"))
+            },
+            Duration::ZERO,
+        );
+        let calls = *call_counter.borrow();
+        (verdict, calls)
+    }
+
+    /// A ping that failed locally.
+    ///
+    /// # Errors
+    /// Always.
+    fn local_failure() -> crate::Result<PingOutcome> {
+        Err(Error::process(
+            "ping_runtime".to_owned(),
+            "simulated".to_owned(),
+        ))
+    }
+
+    #[test]
+    fn an_answered_ping_stops_the_round_immediately() {
+        let (verdict, calls) = classify(vec![Ok(PingOutcome::Answered)]);
+        assert_eq!(verdict, AgentLiveness::Responding);
+        assert_eq!(calls, 1, "a responding agent must not be pinged again");
+    }
+
+    #[test]
+    fn pings_that_never_reach_the_agent_are_a_confirmed_stop() {
+        let unanswered = (0..PING_STALE_ATTEMPTS)
+            .map(|_| Ok(PingOutcome::NotListening))
+            .collect();
+        let (verdict, calls) = classify(unanswered);
+        assert_eq!(verdict, AgentLiveness::NotResponding);
+        assert_eq!(
+            calls,
+            usize::try_from(PING_STALE_ATTEMPTS).expect("PING_STALE_ATTEMPTS fits in usize")
+        );
+    }
+
+    /// All pings accepted but unanswered: wedged, not stopped.
+    #[test]
+    fn unanswered_pings_that_all_reached_the_agent_are_accepted_no_reply() {
+        let unanswered = (0..PING_STALE_ATTEMPTS)
+            .map(|_| Ok(PingOutcome::AcceptedNoReply))
+            .collect();
+        let (verdict, calls) = classify(unanswered);
+        assert_eq!(verdict, AgentLiveness::AcceptedNoReply);
+        assert_eq!(
+            calls,
+            usize::try_from(PING_STALE_ATTEMPTS).expect("PING_STALE_ATTEMPTS fits in usize")
+        );
+    }
+
+    /// One `NotListening` denies `AcceptedNoReply`: it may be a replaced dead agent.
+    #[test]
+    fn a_mix_of_not_listening_and_accepted_no_reply_resolves_toward_not_responding() {
+        let (verdict, calls) = classify(vec![
+            Ok(PingOutcome::AcceptedNoReply),
+            Ok(PingOutcome::NotListening),
+            Ok(PingOutcome::AcceptedNoReply),
+        ]);
+        assert_eq!(verdict, AgentLiveness::NotResponding);
+        assert_eq!(
+            calls,
+            usize::try_from(PING_STALE_ATTEMPTS).expect("PING_STALE_ATTEMPTS fits in usize")
+        );
+    }
+
+    /// A ping that never left this process is not evidence about the agent.
+    #[test]
+    fn one_local_failure_makes_the_whole_round_indeterminate() {
+        let (verdict, _) = classify(vec![
+            Ok(PingOutcome::NotListening),
+            local_failure(),
+            Ok(PingOutcome::NotListening),
+        ]);
+        assert_eq!(
+            verdict,
+            AgentLiveness::Indeterminate,
+            "a round containing a ping we never managed to send cannot confirm a shutdown"
+        );
+    }
+
+    /// A local failure also overrides `AcceptedNoReply` evidence.
+    #[test]
+    fn a_local_failure_mixed_with_accepted_no_reply_is_still_indeterminate() {
+        let (verdict, _) = classify(vec![
+            Ok(PingOutcome::AcceptedNoReply),
+            local_failure(),
+            Ok(PingOutcome::AcceptedNoReply),
+        ]);
+        assert_eq!(
+            verdict,
+            AgentLiveness::Indeterminate,
+            "a round containing a ping we never managed to send cannot confirm anything, \
+             even when every other attempt reached the agent"
+        );
+    }
+
+    #[test]
+    fn a_round_of_only_local_failures_is_indeterminate() {
+        let (verdict, _) = classify(vec![local_failure(), local_failure(), local_failure()]);
+        assert_eq!(verdict, AgentLiveness::Indeterminate);
+    }
+
+    /// A later answer outranks an earlier local failure.
+    #[test]
+    fn a_later_answer_outranks_an_earlier_local_failure() {
+        let (verdict, calls) = classify(vec![local_failure(), Ok(PingOutcome::Answered)]);
+        assert_eq!(verdict, AgentLiveness::Responding);
+        assert_eq!(calls, 2);
+    }
+
+    /// Cap on retried `ECONNABORTED` (a ping that timed out in the backlog) and
+    /// `EINTR` accept errors before the fake agent gives up.
+    const MAX_TRANSIENT_ACCEPT_ERRORS: u32 = 64;
+
+    /// What the fake agent did; relaxed atomics, since stderr writes hide the races.
+    struct FakeAgentCounters {
+        answered: Arc<AtomicU32>,
+        transient_errors: Arc<AtomicU32>,
+        fatal_errno: Arc<AtomicI32>,
+    }
+
+    impl FakeAgentCounters {
+        fn new() -> Self {
+            Self {
+                answered: Arc::new(AtomicU32::new(0)),
+                transient_errors: Arc::new(AtomicU32::new(0)),
+                fatal_errno: Arc::new(AtomicI32::new(0)),
+            }
+        }
+
+        fn snapshot(&self) -> FakeAgentReport {
+            FakeAgentReport {
+                answered: self.answered.load(Ordering::Relaxed),
+                transient_errors: self.transient_errors.load(Ordering::Relaxed),
+                fatal_errno: self.fatal_errno.load(Ordering::Relaxed),
+            }
+        }
+    }
+
+    /// A reading of [`FakeAgentCounters`] taken the moment the verdict landed.
+    struct FakeAgentReport {
+        answered: u32,
+        transient_errors: u32,
+        fatal_errno: i32,
+    }
+
+    impl std::fmt::Display for FakeAgentReport {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "agent answered {} pings, {} transient accept errors, fatal errno {}",
+                self.answered, self.transient_errors, self.fatal_errno
+            )
+        }
+    }
+
+    impl FakeAgentReport {
+        /// The premise of a "still responding" test: the agent was still there.
+        fn assert_agent_stayed_up(&self) {
+            assert_eq!(
+                self.fatal_errno, 0_i32,
+                "the fake agent stopped accepting; this run measured a departed \
+                 fixture, not shutdown detection ({self})"
+            );
+            assert!(
+                self.answered > 0,
+                "the fake agent answered no pings, so nothing here exercised \
+                 shutdown detection ({self})"
+            );
+        }
+    }
+
+    /// Serve pings on a blocking `accept()` loop until `stop` is set.
+    fn spawn_fake_agent(
+        listener: std::os::unix::net::UnixListener,
+        stop: &Arc<AtomicBool>,
+        counters: &FakeAgentCounters,
+    ) -> std::thread::JoinHandle<()> {
+        let stop_flag = Arc::clone(stop);
+        let answered = Arc::clone(&counters.answered);
+        let transient_errors = Arc::clone(&counters.transient_errors);
+        let fatal_errno = Arc::clone(&counters.fatal_errno);
+
+        std::thread::spawn(move || {
+            loop {
+                let mut stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::Interrupted
+                        ) =>
+                    {
+                        if transient_errors.fetch_add(1, Ordering::Relaxed)
+                            >= MAX_TRANSIENT_ACCEPT_ERRORS
+                        {
+                            fatal_errno
+                                .store(e.raw_os_error().unwrap_or(-1_i32), Ordering::Relaxed);
+                            break;
+                        }
+                        continue;
+                    }
+                    Err(e) => {
+                        fatal_errno.store(e.raw_os_error().unwrap_or(-1_i32), Ordering::Relaxed);
+                        break;
+                    }
+                };
+                if stop_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+                let mut buf = [0_u8; 1024];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(ACK_WIRE_FORM);
+                answered.fetch_add(1, Ordering::Relaxed);
+            }
+        })
+    }
+
+    /// An agent that answers and immediately closes is alive.
+    #[test]
+    fn a_reply_then_close_is_still_a_live_agent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let socket_path = tmp.path().join("terse.sock");
+
+        let listener =
+            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fake socket");
+        let server = std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = [0_u8; 1024];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(ACK_WIRE_FORM);
+            drop(stream);
+        });
+
+        let alive = super::ping_agent_blocking(&socket_path);
+        server.join().expect("join fake server thread");
+
+        assert!(
+            matches!(alive, Ok(true)),
+            "an agent that replied and closed is alive; got {alive:?} (pings: {})",
+            super::ping_probe::summary()
+        );
+    }
+
+    // `gpy stop` must not report success while the agent still answers pings.
+    #[test]
+    fn wait_for_agent_shutdown_reports_still_responding_on_timeout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let socket_path = tmp.path().join("alive.sock");
+
+        let listener =
+            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fake socket");
+        let stop = Arc::new(AtomicBool::new(false));
+        let counters = FakeAgentCounters::new();
+        let server = spawn_fake_agent(listener, &stop, &counters);
+
+        let started = Instant::now();
+        let stopped = wait_for_agent_shutdown(&socket_path);
+        let elapsed = started.elapsed();
+        let report = counters.snapshot();
+
+        stop.store(true, Ordering::Relaxed);
+        let _ = std::os::unix::net::UnixStream::connect(&socket_path);
+        server.join().expect("join fake server thread");
+
+        // Premise first, so a departed fixture is not mistaken for a bug.
+        report.assert_agent_stayed_up();
+
+        assert!(
+            !stopped,
+            "must report the agent as still responding, not confirmed stopped \
+             ({report}; pings: {})",
+            super::ping_probe::summary()
+        );
+        assert!(
+            elapsed >= SHUTDOWN_WAIT_MAX,
+            "must wait the full bounded budget before giving up, took {elapsed:?}"
+        );
+    }
+
+    /// Pins the fixtures to the daemon's real JSON-formatted `Ack` reply.
+    #[test]
+    fn ack_wire_form_is_what_the_json_formatter_emits() {
+        use crate::formatter::{Format, RenderContext, SegmentPosition, create_formatter};
+
+        let config = crate::config::Config::default();
+        let theme = crate::theme::ThemeConfig::default();
+        let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
+        let rendered = create_formatter(Format::Json)
+            .expect("JSON formatter exists")
+            .render(&Response::Ack, &ctx)
+            .expect("Ack renders");
+
+        assert_eq!(rendered, crate::ipc::ACK_WIRE_JSON);
+        assert_eq!(
+            ACK_WIRE_FORM,
+            format!("{rendered}\n").as_bytes(),
+            "the test fixtures must send exactly what the daemon sends"
+        );
+    }
+
+    /// Serde's own `"Ack"` encoding also decodes as an acknowledgement.
+    #[test]
+    fn a_native_ack_over_the_wire_is_an_acknowledgement() {
+        let response = request_against(b"\"Ack\"\n").expect("native Ack decodes");
+        assert!(super::is_ack(&response), "got {response:?}");
+    }
+
+    /// A formatter error whose message contains "ok" is not an acknowledgement.
+    #[test]
+    fn a_formatter_error_reply_over_the_wire_is_not_an_acknowledgement() {
+        let response = request_against(b"{\"error\":\"config not ok: parse failed\"}\n")
+            .expect("a formatter Error reply decodes as a Response");
+        assert!(
+            matches!(&response, Response::Error { message } if message == "config not ok: parse failed"),
+            "got {response:?}"
+        );
+        assert!(!super::is_ack(&response));
+    }
+
+    /// A serde `Error` reply containing "ok" is not an acknowledgement.
+    #[test]
+    fn an_error_reply_containing_ok_is_not_an_acknowledgement() {
+        let failure = Response::Error {
+            message: "something not ok here".to_owned(),
+        };
+        let wire = serde_json::to_string(&failure).expect("Error response serializes");
+
+        assert!(
+            wire.contains("ok"),
+            "premise: a substring check would match this reply ({wire})"
+        );
+        assert!(
+            !super::is_ack(&failure),
+            "an Error reply is never an acknowledgement, whatever its message says"
+        );
+        assert!(super::is_ack(&Response::Ack));
+    }
+
+    /// Run one `request()` exchange against a fake agent replying with `reply`.
+    ///
+    /// # Errors
+    /// Whatever `request()` reported.
+    fn request_against(reply: &'static [u8]) -> crate::Result<Response> {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let socket_path = tmp.path().join("reply.sock");
+
+        let listener =
+            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fake socket");
+        let server = std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = [0_u8; 1024];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(reply);
+        });
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build test runtime");
+        let outcome = runtime.block_on(super::request(
+            &socket_path,
+            r#"{"op":"config_reload"}"#,
+            Duration::from_secs(2),
+        ));
+        server.join().expect("join fake server thread");
+
+        outcome
+    }
+
+    /// A wire `Error` reply to `config_reload` mentioning "ok" is not a reload.
+    #[test]
+    fn a_failure_reply_over_the_wire_is_not_an_acknowledgement() {
+        let outcome =
+            request_against(b"{\"Error\":{\"message\":\"config not ok: parse failed\"}}\n");
+
+        let response = outcome.expect("a well-formed Error reply still decodes as a Response");
+        assert!(
+            !super::is_ack(&response),
+            "a decoded Error reply must not be treated as an acknowledgement, got {response:?}"
+        );
+    }
+
+    /// The daemon's real `Ack` is recognized.
+    #[test]
+    fn an_ack_over_the_wire_is_an_acknowledgement() {
+        let response = request_against(ACK_WIRE_FORM).expect("Ack decodes as a Response");
+        assert!(super::is_ack(&response), "got {response:?}");
+    }
+
+    /// A reply that is not a `Response` is an error.
+    #[test]
+    fn an_undecodable_reply_is_an_error() {
+        let outcome = request_against(b"{\"op\":\"pong\"}\n");
+        assert!(
+            outcome.is_err(),
+            "a reply that is not a Response must not decode, got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn agent_status_is_deserialized_from_the_response_enum() {
+        let json = serde_json::to_string(&Response::AgentStatus {
+            version: "9.9.9".to_owned(),
+            protocol_version: 3_u8,
+            watched_repos: 5_usize,
+            registered_clients: 2_usize,
+            cache_entries: 12_usize,
+        })
+        .expect("AgentStatus serializes");
+
+        let info = super::parse_agent_status_response(&json).expect("round-trips");
+        assert_eq!(info.version, "9.9.9");
+        assert_eq!(info.protocol_version, 3_u8);
+        assert_eq!(info.watched_repos, 5_usize);
+        assert_eq!(info.registered_clients, 2_usize);
+        assert_eq!(info.cache_entries, 12_usize);
+    }
+
+    /// A partial status payload is an error, not a defaulted status.
+    #[test]
+    fn a_malformed_agent_status_is_an_error_not_a_zeroed_status() {
+        let partial = r#"{"AgentStatus":{"version":"9.9.9"}}"#;
+        assert!(
+            super::parse_agent_status_response(partial).is_err(),
+            "a status payload missing required fields must not be reported as a status"
+        );
+        assert!(
+            super::parse_agent_status_response("\"Ack\"").is_err(),
+            "a non-status Response must not be reported as a status"
+        );
+        assert!(super::parse_agent_status_response("not json").is_err());
+    }
+}

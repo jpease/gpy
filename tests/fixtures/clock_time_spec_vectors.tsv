@@ -1,0 +1,33 @@
+# tests/fixtures/clock_time_spec_vectors.tsv
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Shared vectors for the clock segment's strftime(3) spec, built from the
+# theme's clock settings. The agent's `ClockResolver::time_spec` is the
+# authority whenever the agent renders; the shells' local copies MUST produce
+# the same spec, character for character. Read by:
+#   - Bash:  __gpy_clock_time_spec    (tests/bash/clock_time_spec_vectors.test.bash)
+#   - Zsh:   __gpy_clock_time_spec    (tests/zsh/clock_time_spec_vectors.test.zsh)
+#   - Fish:  __gpy_clock_date_format  (tests/fish/clock_time_spec_vectors.test.fish)
+#
+# Format: one vector per line, tab-separated:
+#   __time_format<TAB>__clock_show_leading_zero<TAB>__clock_show_seconds<TAB>expected
+# Blank lines and lines starting with # are ignored. The whole-column token \e
+# means the variable is EMPTY (empty and unset are treated alike); `expected`
+# is literal. Every reader MUST fail if this file is missing or yields no
+# vectors.
+#
+# Contract: only `24` selects the 24-hour clock and only `1` enables an
+# option; anything else is the default (12-hour, no leading zero, no seconds).
+
+12	0	0	%-I:%M %p
+12	1	0	%I:%M %p
+12	0	1	%-I:%M:%S %p
+12	1	1	%I:%M:%S %p
+24	0	0	%-H:%M
+24	1	0	%H:%M
+24	0	1	%-H:%M:%S
+24	1	1	%H:%M:%S
+\e	\e	\e	%-I:%M %p
+24	\e	\e	%-H:%M
+\e	1	1	%I:%M:%S %p
+24h	true	yes	%-I:%M %p

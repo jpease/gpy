@@ -1,0 +1,26 @@
+# Clippy options for gpy-agent. Lint levels live in Cargo.toml [lints].
+
+# doc_markdown: identifiers that may appear in docs without backticks
+doc-valid-idents = [
+    "GPY", "IPC", "JSON", "CLI", "API",
+    "SIGURG", "SIGTERM", "macOS", "TOML", "UTF8",
+]
+
+single-char-binding-names-threshold = 2
+upper-case-acronyms-aggressive = true
+
+# Also flag `use super::*` and prelude-style imports.
+warn-on-all-wildcard-imports = true
+
+# Restriction lints denied in Cargo.toml, relaxed in test code.
+allow-expect-in-tests = true
+allow-unwrap-in-tests = true
+allow-panic-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true
+
+# Keep equal to Cargo.toml rust-version; a stale value disables newer lints.
+msrv = "1.99"
+
+# The library has no semver guarantee, so lints may suggest signature changes.
+avoid-breaking-exported-api = false

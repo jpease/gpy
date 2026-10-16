@@ -1,0 +1,15 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy config set
+expression: help
+---
+Set a config value
+
+Usage: gpy config set <KEY> <VALUE>
+
+Arguments:
+  <KEY>    Config key using dot-notation
+  <VALUE>  New value
+
+Options:
+  -h, --help  Print help

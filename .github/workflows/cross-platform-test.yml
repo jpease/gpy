@@ -1,0 +1,69 @@
+name: Cross-Platform Smoke
+
+# Post-merge and weekly smoke on Linux, macOS and Windows: catches runner-image
+# and toolchain drift that no PR exercised.
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Mondays 09:00 UTC: runner-image and toolchain drift with no commit.
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: cross-platform-smoke-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  smoke:
+    name: Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        # No `toolchain:` input: resolved from gpy-agent/rust-toolchain.toml.
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          rust-src-dir: gpy-agent
+          cache: false
+
+      - name: Verify the pinned toolchain is active
+        shell: bash
+        run: ./scripts/check-active-toolchain.sh
+
+      # Lib tests run generated theme code through Fish, Bash and Zsh.
+      - name: Install shells and shell-suite prerequisites
+        if: runner.os != 'Windows'
+        uses: ./.github/actions/install-shells
+
+      - name: Build agent
+        working-directory: gpy-agent
+        run: cargo build --locked --verbose
+
+      - name: Rust smoke tests
+        working-directory: gpy-agent
+        run: cargo test --locked --lib --verbose
+
+      - name: Fish syntax smoke
+        shell: bash
+        run: find fish install-dev.fish -name '*.fish' -print0 | xargs -0 -n1 fish -n
+
+  windows:
+    name: Windows lib and CLI tests
+    uses: ./.github/workflows/windows-gate.yml

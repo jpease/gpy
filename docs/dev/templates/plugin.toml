@@ -1,0 +1,11 @@
+# GPY plugin manifest template (v1)
+id = "acme-tools"
+name = "Acme Tools"
+version = "0.1.0"
+api_version = "v1"
+entry_type = "file"
+provided_segments = ["acme-tools"]
+description = "Example plugin segment for Acme tooling status"
+
+[compatibility_constraints]
+min_gpy_version = "0.1.0"

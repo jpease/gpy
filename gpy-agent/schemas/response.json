@@ -1,0 +1,366 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/jpease/gpy/schemas/response.json",
+  "title": "GPY Agent IPC Response (format: json)",
+  "description": "Replies the agent writes, one JSON object per line, when the request's format is `json` (the default). Replies are flat objects, not serde enum wrappers, except AgentStatus. For every other format the reply is one line of rendered text, not JSON. A missing client-side format in the shell form falls back to json. Errors are {\"error\":...} for json requests.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "branch",
+        "ahead",
+        "behind",
+        "staged",
+        "unstaged",
+        "untracked",
+        "conflicts",
+        "state"
+      ],
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "ahead": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Commits ahead of upstream"
+        },
+        "behind": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Commits behind upstream"
+        },
+        "ahead_capped": {
+          "type": "boolean"
+        },
+        "behind_capped": {
+          "type": "boolean"
+        },
+        "staged": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Staged changes"
+        },
+        "unstaged": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Unstaged changes"
+        },
+        "untracked": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Untracked files"
+        },
+        "conflicts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Conflicted files"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "clean",
+            "dirty",
+            "conflicts",
+            "merging",
+            "rebasing",
+            "cherry-picking",
+            "reverting",
+            "bisecting",
+            "applying",
+            "in-progress"
+          ]
+        },
+        "stash_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Stash entries"
+        },
+        "detached": {
+          "type": "boolean"
+        },
+        "rebase_progress": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "step",
+                "total"
+              ],
+              "properties": {
+                "step": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Current step (1-indexed)"
+                },
+                "total": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Total steps"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "title": "RepositoryStatus (git)",
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "languages"
+      ],
+      "properties": {
+        "languages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/LanguageInfo"
+          }
+        }
+      },
+      "title": "Language (lang)",
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "cwd",
+        "read_only"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string"
+        },
+        "read_only": {
+          "type": "boolean"
+        }
+      },
+      "title": "Directory",
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "shell"
+      ],
+      "properties": {
+        "shell": {
+          "type": "string",
+          "enum": [
+            "fish",
+            "zsh",
+            "bash"
+          ]
+        }
+      },
+      "title": "Clock",
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "duration_ms"
+      ],
+      "properties": {
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Command duration in milliseconds"
+        }
+      },
+      "title": "Duration",
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "success"
+      ],
+      "properties": {
+        "success": {
+          "type": "boolean"
+        }
+      },
+      "title": "Character",
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "hostname"
+      ],
+      "properties": {
+        "hostname": {
+          "type": "string"
+        },
+        "is_ssh": {
+          "type": "boolean",
+          "description": "Whether the requesting client's session is over SSH"
+        }
+      },
+      "title": "Hostname",
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "username"
+      ],
+      "properties": {
+        "username": {
+          "type": "string"
+        }
+      },
+      "title": "Username",
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "ok"
+        }
+      },
+      "title": "Ack (ping, register, unregister, workspace, shutdown, config_reload)",
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "value"
+      ],
+      "properties": {
+        "value": {
+          "type": "string"
+        }
+      },
+      "title": "ThemeValue (theme)",
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "min_ms",
+        "max_ms",
+        "avg_ms",
+        "sample_count"
+      ],
+      "properties": {
+        "min_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "min_ms"
+        },
+        "max_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "max_ms"
+        },
+        "avg_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "avg_ms"
+        },
+        "sample_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "sample_count"
+        }
+      },
+      "title": "LatencyStatsResult (latency_stats)",
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "error"
+      ],
+      "properties": {
+        "error": {
+          "type": "string",
+          "description": "Human-readable error message"
+        }
+      },
+      "title": "Error",
+      "additionalProperties": false
+    },
+    {
+      "title": "AgentStatus (status)",
+      "type": "object",
+      "required": [
+        "AgentStatus"
+      ],
+      "additionalProperties": false,
+      "description": "The only wrapped reply: sent with the native serializer regardless of the requested format.",
+      "properties": {
+        "AgentStatus": {
+          "type": "object",
+          "required": [
+            "version",
+            "protocol_version",
+            "watched_repos",
+            "registered_clients",
+            "cache_entries"
+          ],
+          "properties": {
+            "version": {
+              "type": "string"
+            },
+            "protocol_version": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "watched_repos": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Watched repositories"
+            },
+            "registered_clients": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Registered clients"
+            },
+            "cache_entries": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Cache entries"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "LanguageInfo": {
+      "type": "object",
+      "required": [
+        "name",
+        "version",
+        "color"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "color": {
+          "type": "string",
+          "description": "Display colour (hex)"
+        }
+      }
+    }
+  }
+}

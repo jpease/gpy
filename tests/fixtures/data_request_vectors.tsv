@@ -1,0 +1,29 @@
+# tests/fixtures/data_request_vectors.tsv
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Shared vectors for the git/lang data-request JSON builder: op, escaped cwd,
+# format, the __gpy_json_flags_tail tail, and -- for `lang` only -- the
+# forwarded virtualenv. Read by all three implementations so the request bytes
+# cannot drift apart:
+#   - Bash:  __gpy_build_data_request  (tests/bash/data_request_vectors.test.bash)
+#   - Zsh:   __gpy_build_data_request  (tests/zsh/data_request_vectors.test.zsh)
+#   - Fish:  __gpy_build_data_payload  (tests/fish/data_request_vectors.test.fish)
+# Which virtualenv is forwarded is pinned separately by
+# venv_forwarding_vectors.tsv; here only $VIRTUAL_ENV is set (CONDA_* unset).
+#
+# Format: one vector per line, tab-separated:
+#   op<TAB>cwd<TAB>format<TAB>is_last<TAB>is_first<TAB>prev_bg<TAB>VIRTUAL_ENV<TAB>expected
+# Blank lines and lines starting with # are ignored. The whole-column token \e
+# means the EMPTY string. The input columns use the mini escape scheme of
+# json_escape_vectors.tsv (backslash first: \\ -> one backslash, \n -> LF,
+# \r -> CR, \t -> tab). `expected` is literal -- the builder's output with no
+# trailing newline. Every reader MUST fail if this file is missing or yields
+# no vectors.
+
+git	/home/u/repo	bash-prompt	\e	\e	\e	\e	{"op":"git","cwd":"/home/u/repo","format":"bash-prompt"}
+git	/home/u/repo	ansi	true	true	blue	/home/u/.venv	{"op":"git","cwd":"/home/u/repo","format":"ansi","is_last":true,"is_first":true,"prev_bg":"blue"}
+lang	/home/u/repo	zsh-prompt	true	\e	\e	\e	{"op":"lang","cwd":"/home/u/repo","format":"zsh-prompt","is_last":true}
+lang	/home/u/repo	ansi	\e	true	#5277C3	/home/u/.venv	{"op":"lang","cwd":"/home/u/repo","format":"ansi","is_first":true,"prev_bg":"#5277C3","virtual_env":"/home/u/.venv"}
+lang	/tmp/a "q"\\b	ansi	\e	\e	\e	/v "x"\\y	{"op":"lang","cwd":"/tmp/a \"q\"\\b","format":"ansi","virtual_env":"/v \"x\"\\y"}
+git	/tmp/tab\there\nline	ansi	\e	\e	\e	\e	{"op":"git","cwd":"/tmp/tab\there\nline","format":"ansi"}
+lang	/srv/proj	ansi	true	true	a"b	/srv/proj/.venv	{"op":"lang","cwd":"/srv/proj","format":"ansi","is_last":true,"is_first":true,"prev_bg":"a\"b","virtual_env":"/srv/proj/.venv"}

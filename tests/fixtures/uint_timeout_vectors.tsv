@@ -1,0 +1,46 @@
+# tests/fixtures/uint_timeout_vectors.tsv
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Shared vectors for validating a numeric GPY_* setting (non-negative decimal
+# integer, else the default) and for the GPY_IPC_TIMEOUT_MS -> seconds
+# conversion the IPC send path hands to `timeout`. The default here is 150,
+# GPY_IPC_TIMEOUT_MS's. Read by:
+#   - Fish:  __gpy_uint_or_default VALUE 150 -> `validated`
+#            (tests/fish/uint_timeout_vectors.test.fish)
+#   - Bash:  __gpy_ms_to_secs VALUE -> `secs`, which validates inline with the
+#            same rule (tests/bash/uint_timeout_vectors.test.bash)
+#   - Zsh:   __gpy_ms_to_secs VALUE -> `secs`
+#            (tests/zsh/uint_timeout_vectors.test.zsh)
+# `secs` is `validated` read as a DECIMAL millisecond count (a leading zero is
+# not octal), printed as whole.milliseconds. Fish converts with an inline
+# `math` at its use sites, so it has no `secs` helper to test.
+#
+# Format: one vector per line, tab-separated: value<TAB>validated<TAB>secs.
+# Blank lines and lines starting with # are ignored. The whole-column token \e
+# means the EMPTY string; `value` is otherwise literal (spaces included).
+# Every reader MUST fail if this file is missing or yields no vectors.
+#
+# Out of range on purpose: values past 2^63 overflow shell arithmetic
+# differently in every shell and are not a meaningful timeout.
+
+150	150	0.150
+0	0	0.000
+1	1	0.001
+999	999	0.999
+1000	1000	1.000
+1999	1999	1.999
+2500	2500	2.500
+010	010	0.010
+0150	0150	0.150
+08	08	0.008
+09	09	0.009
+\e	150	0.150
+-5	150	0.150
++5	150	0.150
+1e3	150	0.150
+1.5	150	0.150
+ 150	150	0.150
+150 	150	0.150
+abc	150	0.150
+0x10	150	0.150
+١٥٠	150	0.150

@@ -1,0 +1,6 @@
+---
+source: tests/formatter_snapshot_tests.rs
+description: Multiple languages with versions in JSON format
+expression: output
+---
+{"languages":[{"color":"#dea584","name":"Rust","version":"1.75.0"},{"color":"#3178c6","name":"TypeScript","version":"5.3.3"}]}

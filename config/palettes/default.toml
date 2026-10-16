@@ -1,0 +1,50 @@
+# GPY default color palette
+# Identity-maps the standard ANSI names used in prompt format templates.
+name = "default"
+description = "GPY default palette (standard ANSI names)"
+
+[colors]
+# Standard ANSI names (identity) — keeps any standard token in a format working.
+black = "black"
+red = "red"
+green = "green"
+yellow = "yellow"
+blue = "blue"
+magenta = "magenta"
+cyan = "cyan"
+white = "white"
+
+# Segment role aliases — reserved for future use (e.g. importer wiring in SP3).
+# The builtin default.toml / text.toml themes currently drive colors via literal
+# ANSI names in `style` fields, so these entries are not yet referenced.
+# dir-fg = "black"
+# dir-bg = "blue"
+# git-clean-bg = "green"
+# git-dirty-bg = "red"
+# git-ahead-behind-bg = "yellow"
+# git-conflicts-bg = "red"
+# git-fg = "black"
+# lang-fg = "black"
+# lang-bg = "white"
+# duration-fg = "white"
+# duration-bg = "black"
+# clock-fg = "white"
+# clock-bg = "black"
+# status-ok-bg = "green"
+# status-fail-bg = "red"
+# status-fg = "black"
+
+# Bright ANSI names (identity) — keeps standard bright tokens working.
+bright_black = "bright_black"
+bright_red = "bright_red"
+bright_green = "bright_green"
+bright_yellow = "bright_yellow"
+bright_blue = "bright_blue"
+bright_magenta = "bright_magenta"
+bright_cyan = "bright_cyan"
+bright_white = "bright_white"
+
+# Extended base24 accent roles (base09 / base0F). Honest defaults; the starship
+# palette overrides `orange` to Starship's exact swift index (202).
+orange = "208"
+brown = "130"

@@ -1,0 +1,16 @@
+# Starship config for the GPY comparison: only what GPY's `oneshot git` renders
+# (branch, state, status). Symbols are Starship's defaults, pinned so run.sh's
+# preflight check survives default changes. The long command_timeout stops
+# Starship silently dropping status on large repos, which would look fast.
+
+add_newline = false
+command_timeout = 10000
+format = "$git_branch$git_state$git_status"
+
+[git_branch]
+symbol = ""
+
+[git_status]
+staged = "+"
+modified = "!"
+untracked = "?"

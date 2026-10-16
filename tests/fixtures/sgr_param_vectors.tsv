@@ -1,0 +1,67 @@
+# tests/fixtures/sgr_param_vectors.tsv
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Shared vectors for the shell-drawn renderer's colour -> SGR parameter map,
+# which must emit the codes the agent's style encoder emits
+# (gpy-agent/src/formatter/style_encoder.rs) so a shell-drawn segment matches
+# an agent-drawn one. Read by:
+#   - Bash:  __gpy_sgr_param  (tests/bash/sgr_param_vectors.test.bash)
+#   - Zsh:   __gpy_sgr_param  (tests/zsh/sgr_param_vectors.test.zsh)
+# Fish draws with its builtin `set_color`, so it has no copy of this map.
+#
+# Format: one vector per line, tab-separated: color<TAB>fg<TAB>bg, where fg/bg
+# are the SGR parameters for `__gpy_sgr_param fg|bg COLOR`. Blank lines and
+# comment lines are ignored; since a colour can start with `#`, a comment is
+# a line that is exactly `#` or starts with `# ` (hash, space). The
+# whole-column token \e means the EMPTY string; everything else is literal.
+# Every reader MUST fail if this file is missing or yields no vectors.
+#
+# Contract: named colours and their bright forms map to 30-37/90-97 (fg) and
+# 40-47/100-107 (bg); `#RRGGBB` (either case) to 38;2;R;G;B / 48;2;R;G;B;
+# a decimal 0-255 to 38;5;N / 48;5;N; anything else -- `transparent`,
+# `normal`, `default`, empty, out-of-range, malformed -- to the terminal
+# default 39/49.
+
+black	30	40
+red	31	41
+green	32	42
+yellow	33	43
+blue	34	44
+magenta	35	45
+purple	35	45
+cyan	36	46
+white	37	47
+brblack	90	100
+bright_black	90	100
+bright-black	90	100
+gray	90	100
+grey	90	100
+brred	91	101
+bright_red	91	101
+bright-red	91	101
+brgreen	92	102
+bryellow	93	103
+brblue	94	104
+brmagenta	95	105
+bright_magenta	95	105
+bright-purple	95	105
+brcyan	96	106
+bright-cyan	96	106
+brwhite	97	107
+bright_white	97	107
+#5277C3	38;2;82;119;195	48;2;82;119;195
+#ff00aa	38;2;255;0;170	48;2;255;0;170
+#000000	38;2;0;0;0	48;2;0;0;0
+0	38;5;0	48;5;0
+42	38;5;42	48;5;42
+255	38;5;255	48;5;255
+256	39	49
+-1	39	49
+transparent	39	49
+normal	39	49
+default	39	49
+\e	39	49
+#5277C	39	49
+#5277C3F	39	49
+#GG77C3	39	49
+5277C3	39	49

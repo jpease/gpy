@@ -1,0 +1,156 @@
+[package]
+name = "gpy-agent"
+
+description = "Fast, cross-platform agent for Git status and language detection used by the GPY prompt for Bash, Fish, and Zsh"
+
+version = "0.3.1"
+rust-version = "1.99"
+edition = "2024"
+authors = ["Justin Pease <536+jpease@users.noreply.github.com>"]
+license = "GPL-3.0-or-later"
+readme = "README.md"
+repository = "https://github.com/jpease/gpy"
+
+# Not published: a registry install would lack the fish/, bash/ and zsh/ trees.
+publish = false
+
+# Kept accurate for `cargo package --list` and source archives.
+exclude = [
+  "*.backup",
+  "tests/snapshots/",
+  "lcov.info",
+  "deny.toml",
+  "SCHEMA_EVOLUTION.md",
+]
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+# priority = -1 so a per-item #[allow]/#[expect] still overrides the group.
+pedantic = { level = "deny", priority = -1 }
+dbg_macro = "deny"
+expect_used = "deny"
+panic = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
+
+[dependencies]
+clap = { version = "4.6", features = ["derive", "string"] }
+clap_complete = "4.6"
+
+tokio = { version = "1.53", features = ["full"] }
+
+thiserror = "2.0"
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+toml = "1.1"
+toml_edit = "0.25"
+
+# Matcher tables only; `gengo` itself is not used because `Gengo::analyze`
+# reads every file in the tree (too slow for the prompt) and pulls in gix.
+gengo-language = "0.15"
+
+notify = { version = "8.2", features = ["macos_fsevent"] }
+# .gitignore matching for the watcher and the language-detection walk.
+ignore = "0.4"
+
+ratatui = "0.30"
+crossterm = "0.29"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2"
+fork = "0.10"
+nix = { version = "0.31", features = ["signal", "process", "fs", "user"] }
+# Process start time, so a recycled PID is never signaled; the crate forbids
+# unsafe and macOS has no /proc.
+sysinfo = "0.39"
+
+# No Windows dependencies: Windows builds the CLI only; IPC is Unix-socket only.
+
+[target."cfg(unix)".dev-dependencies]
+# PTY-backed wizard terminal-restoration test (needs the `test-support` feature).
+portable-pty = "0.9"
+
+[features]
+# Compiles in test-only surface (hidden `gpy __wizard_force_fail`).
+test-support = []
+
+[dev-dependencies]
+tempfile = "3.27"
+futures = "0.3"
+serial_test = { version = "4.0", features = ["file_locks"] }
+regex = "1.13"
+
+insta = { version = "1.49", features = ["json", "redactions"] }
+proptest = "1.12"
+
+criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
+
+[[bin]]
+name = "gpy-agent"
+path = "src/main.rs"
+
+[[bin]]
+name = "gpy"
+path = "src/bin/gpy.rs"
+
+[[bench]]
+name = "template_bench"
+harness = false
+
+[[bench]]
+name = "formatter_bench"
+harness = false
+
+[[bench]]
+name = "ipc_bench"
+harness = false
+
+[[bench]]
+name = "git_bench"
+harness = false
+
+[[bench]]
+name = "cache_bench"
+harness = false
+
+[[bench]]
+name = "language_bench"
+harness = false
+
+[[bench]]
+name = "perf_canary_bench"
+harness = false
+
+[[bench]]
+name = "agent_startup_bench"
+harness = false
+
+# Tuned for build speed: local `--release` builds and `cargo bench` use this.
+# Shipped binaries use `release-dist`, so local benchmarks understate them.
+[profile.release]
+lto = false
+codegen-units = 256
+panic = "abort"
+strip = false
+opt-level = 1
+
+[profile.fast]
+inherits = "dev"
+opt-level = 1
+debug = false
+overflow-checks = false
+
+# Shipped binaries (build-release-binaries.sh and the release workflow).
+[profile.release-dist]
+inherits = "release"
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

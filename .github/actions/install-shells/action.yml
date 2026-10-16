@@ -1,0 +1,49 @@
+name: Install shells and shell-suite prerequisites
+description: >-
+  Everything the shell suites and shell-driving Rust tests need. Under CI a
+  missing prerequisite fails a test instead of skipping it.
+
+runs:
+  using: composite
+  steps:
+    # Fish 4 from the project PPA (apt has 3.7). shellcheck comes from
+    # install-action instead, so every runner lints with one version.
+    # Starship is a pinned x86_64 tarball checked against its digest (from the
+    # release's .sha256 asset), not a piped installer.
+    - name: Install shells and prerequisites (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        STARSHIP_VERSION: v1.26.0
+        STARSHIP_SHA256: b7c232b0e8249d8e55a40beb79c5c43a7d370f3f9408bd215deb0170daeaadf3
+      run: |
+        set -euo pipefail
+        sudo add-apt-repository -y ppa:fish-shell/release-4
+        sudo apt-get update
+        sudo apt-get install -y fish zsh socat netcat-openbsd python3 jq zip unzip hyperfine
+
+        [ "$(uname -m)" = x86_64 ] || { echo "::error::the pinned starship tarball is x86_64-only"; exit 1; }
+        starship_tmp="$(mktemp -d)"
+        starship_tar="$starship_tmp/starship.tar.gz"
+        curl --proto '=https' --tlsv1.2 -fsSL -o "$starship_tar" \
+          "https://github.com/starship/starship/releases/download/${STARSHIP_VERSION}/starship-x86_64-unknown-linux-musl.tar.gz"
+        echo "${STARSHIP_SHA256}  ${starship_tar}" | sha256sum -c -
+        tar -xzf "$starship_tar" -C "$starship_tmp" starship
+        sudo install -m 0755 "$starship_tmp/starship" /usr/local/bin/starship
+        rm -rf "$starship_tmp"
+
+        fish --version
+        starship --version
+
+    # macOS's bash is 3.2 (no associative arrays); quality-check.sh picks the
+    # Homebrew one.
+    - name: Install shells and prerequisites (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      env:
+        HOMEBREW_NO_AUTO_UPDATE: "1"
+        HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      run: |
+        brew install fish zsh bash socat jq hyperfine starship
+        fish --version
+        starship --version

@@ -1,0 +1,304 @@
+//! Shared hot-reload machinery for managers that watch a single TOML file:
+//! OS notifications plus an optional polling fallback.
+
+use crate::Result;
+use crate::watcher::WatchCoordinator;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::thread::JoinHandle;
+use std::time::Duration;
+
+/// A fingerprint of a watched file's contents; `None` when unreadable.
+///
+/// Content, not mtime: Windows `LastWriteTime` is too coarse (~2–15.6ms), so
+/// two quick writes would collide and the second be missed permanently.
+/// `DefaultHasher` is unstable across releases, but values are never persisted.
+pub fn content_fingerprint(path: &Path) -> Option<u64> {
+    use std::hash::Hasher as _;
+
+    let bytes = std::fs::read(path).ok()?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hasher.write(&bytes);
+    Some(hasher.finish())
+}
+
+/// Parse a raw poll-interval env value into milliseconds; `None` when unset,
+/// non-numeric, or `0` (disabled).
+fn parse_poll_interval_ms(raw: Option<&str>) -> Option<u64> {
+    raw?.parse::<u64>().ok().filter(|value| *value > 0)
+}
+
+/// Resolves the file the poll loop should check on this tick.
+pub type PathSource = Box<dyn Fn() -> Option<PathBuf> + Send>;
+
+/// Applies a change the poll loop detected in that file.
+pub type ReloadAction = Box<dyn Fn(&Path) + Send>;
+
+/// The two manager-specific halves of a poll loop.
+pub struct PollTarget {
+    /// Which file to check; consulted every tick because the path can be
+    /// repointed at runtime. `None` ends the loop.
+    pub path_of: PathSource,
+    /// Applied when that file's contents change.
+    pub reload: ReloadAction,
+}
+
+/// The file watcher and poll-fallback thread backing one hot-reloaded file.
+pub struct HotReloadSlot {
+    /// OS-level file watcher, when watching.
+    watcher: Arc<Mutex<Option<WatchCoordinator>>>,
+    /// Stop flag for the poll-fallback thread.
+    poll_stop: Arc<AtomicBool>,
+    /// Handle for the poll-fallback thread, if running.
+    poll_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
+    /// Whether a vanished polled file triggers the reload.
+    reload_on_missing: bool,
+}
+
+impl Default for HotReloadSlot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HotReloadSlot {
+    /// An idle slot: no watcher, no poll thread.
+    pub fn new() -> Self {
+        Self {
+            watcher: Arc::new(Mutex::new(None)),
+            poll_stop: Arc::new(AtomicBool::new(false)),
+            poll_handle: Arc::new(Mutex::new(None)),
+            reload_on_missing: false,
+        }
+    }
+
+    /// Also reload when the polled file is gone for two consecutive ticks
+    /// (for managers that map "no file" to defaults).
+    #[must_use]
+    pub const fn reloading_on_missing(mut self) -> Self {
+        self.reload_on_missing = true;
+        self
+    }
+
+    /// A handle to the watcher slot, for a reload callback that must re-arm
+    /// watches. Callers must only `try_lock` it: [`stop`](Self::stop) holds the
+    /// lock while it joins the thread running that callback.
+    pub fn watcher_handle(&self) -> Arc<Mutex<Option<WatchCoordinator>>> {
+        Arc::clone(&self.watcher)
+    }
+
+    /// Install the watcher `build` returns; `Ok(false)` if one already runs.
+    /// Check and install share one lock so concurrent callers cannot both install.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `build` fails.
+    pub fn start_watcher<F>(&self, build: F) -> Result<bool>
+    where
+        F: FnOnce() -> Result<WatchCoordinator>,
+    {
+        let mut watcher_guard = self.watcher.lock().unwrap_or_else(PoisonError::into_inner);
+        if watcher_guard.is_some() {
+            return Ok(false);
+        }
+
+        *watcher_guard = Some(build()?);
+        drop(watcher_guard);
+        Ok(true)
+    }
+
+    /// Start the poll fallback when `env_var` holds positive milliseconds, for
+    /// environments where OS notifications (`FSEvents`) never arrive.
+    pub fn start_poll_fallback(
+        &self,
+        env_var: &str,
+        debounce_duration: Duration,
+        target: PollTarget,
+    ) {
+        let raw = std::env::var(env_var).ok();
+        let Some(poll_interval_ms) = parse_poll_interval_ms(raw.as_deref()) else {
+            return;
+        };
+        self.spawn_poll_thread(
+            Duration::from_millis(poll_interval_ms),
+            debounce_duration,
+            target,
+        );
+    }
+
+    /// Spawn the poll thread with a resolved interval (no-op if running).
+    /// Split out so tests avoid `set_var`; interval is floored at `debounce_duration`.
+    pub fn spawn_poll_thread(
+        &self,
+        poll_interval: Duration,
+        debounce_duration: Duration,
+        target: PollTarget,
+    ) {
+        let PollTarget { path_of, reload } = target;
+        let mut handle_guard = self
+            .poll_handle
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if handle_guard.is_some() {
+            return;
+        }
+
+        self.poll_stop.store(false, Ordering::Relaxed);
+
+        let stop_flag = Arc::clone(&self.poll_stop);
+        let debounce_ms = u64::try_from(debounce_duration.as_millis()).unwrap_or(u64::MAX);
+        let poll_ms = u64::try_from(poll_interval.as_millis()).unwrap_or(u64::MAX);
+        let interval = Duration::from_millis(poll_ms.max(debounce_ms));
+
+        // Capture the baseline before spawning: a lazy read on the thread would
+        // race a write landing before its first tick and miss it forever.
+        let initial_fingerprint = path_of().as_deref().and_then(content_fingerprint);
+
+        let reload_on_missing = self.reload_on_missing;
+        let handle = std::thread::spawn(move || {
+            let mut last_fingerprint = initial_fingerprint;
+            // A deletion is only acted on once seen on two consecutive ticks:
+            // an atomic-rename save briefly leaves no file.
+            let mut missing_once = false;
+            while !stop_flag.load(Ordering::Relaxed) {
+                let Some(path) = path_of() else {
+                    break;
+                };
+
+                match content_fingerprint(&path) {
+                    Some(fingerprint) => {
+                        missing_once = false;
+                        let changed = last_fingerprint != Some(fingerprint);
+                        if changed {
+                            last_fingerprint = Some(fingerprint);
+                            reload(&path);
+                        }
+                    }
+                    None if reload_on_missing && last_fingerprint.is_some() => {
+                        if missing_once {
+                            missing_once = false;
+                            last_fingerprint = None;
+                            reload(&path);
+                        } else {
+                            missing_once = true;
+                        }
+                    }
+                    None => {}
+                }
+
+                crate::watcher::sleep_unless_stopped(interval, &stop_flag);
+            }
+        });
+
+        *handle_guard = Some(handle);
+    }
+
+    /// Stop the poll thread and watcher (idempotent); `true` if a watcher was taken down.
+    pub fn stop(&self) -> bool {
+        self.poll_stop.store(true, Ordering::Relaxed);
+        {
+            let mut handle_guard = self
+                .poll_handle
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if let Some(handle) = handle_guard.take() {
+                let _ = handle.join();
+            }
+        }
+
+        let mut watcher_guard = self.watcher.lock().unwrap_or_else(PoisonError::into_inner);
+        watcher_guard
+            .take()
+            .map(|mut watcher| watcher.stop())
+            .is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::panic)]
+    #![allow(clippy::missing_panics_doc)]
+    #![allow(missing_docs)]
+
+    use super::{HotReloadSlot, PollTarget, content_fingerprint, parse_poll_interval_ms};
+    use std::time::{Duration, Instant};
+
+    /// Same-length payloads written close together must still read as a change.
+    #[test]
+    fn content_fingerprint_tracks_content_not_length_or_mtime() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let path = temp.path().join("watched.toml");
+
+        let enabled = "[git]\nenabled = true \n";
+        let disabled = "[git]\nenabled = false\n";
+        assert_eq!(
+            enabled.len(),
+            disabled.len(),
+            "the two payloads must be the same length for this test to mean anything"
+        );
+
+        std::fs::write(&path, enabled).expect("write file");
+        let before = content_fingerprint(&path);
+        std::fs::write(&path, disabled).expect("rewrite file");
+        let after = content_fingerprint(&path);
+
+        assert!(before.is_some(), "a readable file must fingerprint");
+        assert_ne!(
+            before, after,
+            "a same-length rewrite must change the fingerprint"
+        );
+
+        // Identical bytes must not read as a change.
+        std::fs::write(&path, disabled).expect("rewrite identical content");
+        assert_eq!(
+            after,
+            content_fingerprint(&path),
+            "identical content must fingerprint identically"
+        );
+
+        assert_eq!(
+            content_fingerprint(&temp.path().join("absent.toml")),
+            None,
+            "a missing file must not fingerprint"
+        );
+    }
+
+    /// `stop()` must wake the poll thread promptly, not sleep out its interval.
+    #[test]
+    fn stop_does_not_wait_for_full_poll_interval() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let file = temp.path().join("watched.toml");
+        std::fs::write(&file, "a = 1\n").expect("write file");
+
+        let slot = HotReloadSlot::new();
+        slot.spawn_poll_thread(
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            PollTarget {
+                path_of: Box::new(move || Some(file.clone())),
+                reload: Box::new(|_| {}),
+            },
+        );
+        // Let the thread finish its first tick and enter its sleep.
+        std::thread::sleep(Duration::from_millis(300));
+
+        let started = Instant::now();
+        slot.stop();
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "stop() blocked for {elapsed:?}; it must not wait out the poll interval"
+        );
+    }
+
+    #[test]
+    fn parse_poll_interval_ms_rejects_unset_zero_and_invalid() {
+        assert_eq!(parse_poll_interval_ms(None), None);
+        assert_eq!(parse_poll_interval_ms(Some("0")), None);
+        assert_eq!(parse_poll_interval_ms(Some("abc")), None);
+        assert_eq!(parse_poll_interval_ms(Some("25")), Some(25_u64));
+    }
+}

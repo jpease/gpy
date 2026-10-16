@@ -1,0 +1,14 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy enable
+expression: help
+---
+Enable a prompt segment
+
+Usage: gpy enable <SEGMENT>
+
+Arguments:
+  <SEGMENT>  Segment name (built-in or discovered plugin segment, e.g. `git`, `lang`, `k8s-tools`)
+
+Options:
+  -h, --help  Print help

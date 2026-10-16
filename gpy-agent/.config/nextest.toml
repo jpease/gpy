@@ -1,0 +1,12 @@
+# Nextest configuration for gpy-agent
+#
+# No blanket retries: a green run must mean every test passed on its first
+# attempt. Watcher tests that bootstrap FSEventStreams are serialized with
+# `#[file_serial(watcher_fsevents_bootstrap)]` instead of being retried.
+# A genuinely flaky test gets a named `test(...)` override documenting its race.
+# `status-level`/`final-status-level` keep any retry visible in the output.
+
+[profile.default]
+retries = 0
+status-level = "retry"
+final-status-level = "flaky"

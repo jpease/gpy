@@ -1,0 +1,22 @@
+# Verbatim Starship default format strings (source of truth for golden tests).
+[character]
+format = "$symbol "
+success_symbol = "[❯](bold green)"
+error_symbol = "[❯](bold red)"
+
+[directory]
+format = "[$path]($style)[$read_only]($read_only_style) "
+style = "bold cyan"
+
+[git_branch]
+format = "on [$symbol$branch(:$remote_branch)]($style) "
+symbol = " "
+style = "bold purple"
+
+[git_status]
+format = '([\[$all_status$ahead_behind\]]($style) )'
+style = "bold red"
+
+[cmd_duration]
+format = "took [$duration]($style) "
+style = "bold yellow"

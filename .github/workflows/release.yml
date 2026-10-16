@@ -1,0 +1,416 @@
+name: Release
+
+# Validates the tag against every declared version, runs the full gate and
+# budgets, builds, packages (scripts/package-release.sh, fail-closed),
+# smoke-tests the archive, and publishes.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+      publish:
+        description: 'Create the GitHub release (a tag push always publishes; a manual run only builds, packages and smoke-tests unless this is set)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: ""
+  # Oldest glibc the Linux binaries may require (Ubuntu 20.04, Debian 11).
+  # Kept in step with docs/INSTALL.md by tests/bash/release_glibc_floor.test.bash.
+  GPY_GLIBC_FLOOR: "2.31"
+  GPY_GLIBC_FLOOR_IMAGE: ubuntu:20.04
+
+jobs:
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # Passed downstream so later jobs use the version validated here.
+      - name: Resolve and validate version
+        id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION="$REF_NAME"
+          fi
+          echo "Release version: $VERSION"
+
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format: $VERSION (expected v1.2.3)"
+            exit 1
+          fi
+          BARE="${VERSION#v}"
+
+          CARGO_VERSION="$(grep -m1 '^version = ' gpy-agent/Cargo.toml | sed 's/version = "\(.*\)"/\1/')"
+          if [ "$CARGO_VERSION" != "$BARE" ]; then
+            echo "::error::gpy-agent/Cargo.toml declares $CARGO_VERSION but the tag is $VERSION"
+            exit 1
+          fi
+
+          FISHER_VERSION="$(grep -m1 '"version"' fish/fisher.json | sed 's/.*"version": *"\([^"]*\)".*/\1/')"
+          if [ "$FISHER_VERSION" != "$BARE" ]; then
+            echo "::error::fish/fisher.json declares $FISHER_VERSION but the tag is $VERSION"
+            exit 1
+          fi
+
+          if ! grep -q "^## \[$BARE\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [$BARE]' section; release notes are generated from it"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >>"$GITHUB_OUTPUT"
+          echo "Version metadata is consistent across Cargo.toml, fisher.json, and CHANGELOG.md"
+
+      - name: Install Rust toolchain
+        # No `toolchain:` input: resolved from gpy-agent/rust-toolchain.toml.
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          rust-src-dir: gpy-agent
+          cache: false
+          components: clippy, rustfmt
+
+      - name: Verify the pinned toolchain is active
+        shell: bash
+        run: ./scripts/check-active-toolchain.sh
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: gpy-agent
+
+      - name: Install Rust tooling (nextest, audit, deny)
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-nextest,cargo-audit,cargo-deny,just,shellcheck
+
+      - name: Install shells and shell-suite prerequisites
+        uses: ./.github/actions/install-shells
+
+      # The same gate a PR runs, so a tag cannot ship what would not merge.
+      - name: Rust toolchain gate
+        run: just check-rust
+
+      - name: Shell integration gate
+        run: just check-shell
+
+      # The only place the budgets are enforced. Shared runners are noisy, so
+      # these are the loose `max` ceilings: they catch order-of-magnitude
+      # regressions, not a few percent.
+      - name: Performance budgets
+        run: just bench-ci
+
+  build:
+    name: Build Release Binaries
+    needs: validate
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        include:
+          # One build yields both binaries (agent + CLI). asset_name is the
+          # installers' contract; renaming a row means updating
+          # EXPECTED_ASSETS in scripts/package-release.sh and the platform
+          # cases in install.sh / install-oneline.sh
+          # (tests/bash/release_asset_contract.test.bash).
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: gpy-agent
+            asset_name: gpy-agent-linux-x86_64
+            cli_artifact_name: gpy
+            cli_asset_name: gpy-linux-x86_64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact_name: gpy-agent
+            asset_name: gpy-agent-linux-aarch64
+            cli_artifact_name: gpy
+            cli_asset_name: gpy-linux-aarch64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: gpy-agent
+            asset_name: gpy-agent-macos-x86_64
+            cli_artifact_name: gpy
+            cli_asset_name: gpy-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: gpy-agent
+            asset_name: gpy-agent-macos-aarch64
+            cli_artifact_name: gpy
+            cli_asset_name: gpy-macos-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: gpy-agent.exe
+            asset_name: gpy-agent-windows-x86_64.exe
+            cli_artifact_name: gpy.exe
+            cli_asset_name: gpy-windows-x86_64.exe
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        # No `toolchain:` input: resolved from gpy-agent/rust-toolchain.toml.
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          rust-src-dir: gpy-agent
+          target: ${{ matrix.target }}
+
+      - name: Verify the pinned toolchain is active
+        shell: bash
+        run: ./scripts/check-active-toolchain.sh
+
+      # Link Linux binaries against the glibc floor via zig's stubs (a plain
+      # build on ubuntu-latest needs glibc 2.39); also cross-links aarch64.
+      # zig/cargo-zigbuild versions are a pair cargo-zigbuild's CI tests.
+      - name: Install zig (Linux)
+        if: endsWith(matrix.target, '-unknown-linux-gnu')
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+
+      - name: Install cargo-zigbuild (Linux)
+        if: endsWith(matrix.target, '-unknown-linux-gnu')
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-zigbuild@0.23.4
+
+      - name: Build release binary
+        working-directory: gpy-agent
+        # zigbuild drops the `.<glibc>` suffix from the output directory.
+        run: |
+          case "${{ matrix.target }}" in
+            *-unknown-linux-gnu)
+              cargo zigbuild --locked --profile release-dist --target "${{ matrix.target }}.${GPY_GLIBC_FLOOR}"
+              ;;
+            *)
+              cargo build --locked --profile release-dist --target ${{ matrix.target }}
+              ;;
+          esac
+        shell: bash
+
+      # Also proves std's pidfd_spawnp/pidfd_getpid (GLIBC_2.39) linked weak,
+      # not as hard references. Stock objdump reads aarch64 binaries too.
+      - name: Enforce the glibc floor (Linux)
+        if: endsWith(matrix.target, '-unknown-linux-gnu')
+        shell: bash
+        run: |
+          for bin in ${{ matrix.artifact_name }} ${{ matrix.cli_artifact_name }}; do
+            ./scripts/check-glibc-floor.sh "gpy-agent/target/${{ matrix.target }}/release-dist/$bin" "$GPY_GLIBC_FLOOR"
+          done
+
+      - name: Upload agent binary artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.asset_name }}
+          path: gpy-agent/target/${{ matrix.target }}/release-dist/${{ matrix.artifact_name }}
+          if-no-files-found: error
+
+      - name: Upload CLI binary artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.cli_asset_name }}
+          path: gpy-agent/target/${{ matrix.target }}/release-dist/${{ matrix.cli_artifact_name }}
+          if-no-files-found: error
+
+  package:
+    name: Create Release Package
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: release-artifacts
+
+      # Only for cargo metadata (SBOM from Cargo.lock); nothing compiles here,
+      # so no check-active-toolchain.sh step.
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          rust-src-dir: gpy-agent
+          cache: false
+
+      # package-release.sh requires --sbom or an explicit --no-sbom.
+      - name: Generate SBOM
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: ./scripts/generate-sbom.sh --version "$VERSION" --output sbom.cdx.json
+
+      # Fail-closed: any missing file or mismatched checksum aborts the release.
+      - name: Build release archives
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: ./scripts/package-release.sh --version "$VERSION" --artifacts release-artifacts --out package-out --sbom sbom.cdx.json
+
+      # One already-verified payload for create-release; bin/* includes the
+      # per-binary .sha256 sidecars install-oneline.sh fetches.
+      - name: Upload release payload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gpy-release-package
+          path: |
+            package-out/gpy-release.tar.gz
+            package-out/gpy-release.zip
+            package-out/fisher-gpy.tar.gz
+            package-out/gpy-shell-files.tar.gz
+            package-out/install-oneline.sh
+            package-out/uninstall.sh
+            package-out/uninstall.fish
+            package-out/gpy-sbom.cdx.json
+            package-out/SHA256SUMS
+            package-out/*.sha256
+            package-out/gpy-release/bin/*
+          if-no-files-found: error
+
+  smoke:
+    # Run what is about to be published: install.sh from the archive,
+    # `--version`, a oneshot render and a prompt per shell on Linux/macOS
+    # (arm64 runner); `--version` and `gpy --help` on Windows (CLI-only).
+    name: Smoke-run packaged binaries (${{ matrix.os }})
+    needs: [validate, package]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Download release payload
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gpy-release-package
+          path: dist
+
+      - name: Install shells (Linux and macOS)
+        if: runner.os != 'Windows'
+        uses: ./.github/actions/install-shells
+
+      - name: Smoke-run the packaged binaries
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: ./scripts/smoke-release.sh --package dist --version "$VERSION"
+
+      # The x86_64 binaries must start on the oldest promised distro; aarch64
+      # is covered by the build job's objdump check. Taken from the archive
+      # because download-artifact drops the exec bit.
+      - name: Run the x86_64 binaries on the glibc floor (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          floor_dir="$(mktemp -d)"
+          tar -xzf dist/gpy-release.tar.gz -C "$floor_dir"
+          docker run --rm -v "$floor_dir/gpy-release/bin:/b:ro" "$GPY_GLIBC_FLOOR_IMAGE" sh -ec '
+            ldd --version | head -n 1
+            /b/gpy-agent-linux-x86_64 --version
+            /b/gpy-linux-x86_64 --version
+          '
+
+  create-release:
+    name: Create GitHub Release
+    needs: [validate, build, package, smoke]
+    # A manual dispatch is a dry run unless `publish` is set.
+    if: ${{ github.event_name == 'push' || inputs.publish }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      # id-token signs the provenance bundle; attestations stores it.
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Download release payload
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gpy-release-package
+          path: dist
+
+      # Verifiable with `gh attestation verify <file> --repo jpease/gpy`.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            dist/gpy-release.tar.gz
+            dist/gpy-release.zip
+            dist/fisher-gpy.tar.gz
+            dist/gpy-shell-files.tar.gz
+            dist/install-oneline.sh
+            dist/uninstall.sh
+            dist/uninstall.fish
+            dist/gpy-sbom.cdx.json
+            dist/gpy-release/bin/*
+            !dist/gpy-release/bin/*.sha256
+
+      # Notes from the CHANGELOG section plus the built assets; GitHub's
+      # generated summary is appended.
+      - name: Generate release notes
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: ./scripts/release-notes.sh --version "$VERSION" --assets dist/gpy-release/bin --output release_notes.md
+
+      - name: Create release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          name: GPY ${{ needs.validate.outputs.version }}
+          tag_name: ${{ needs.validate.outputs.version }}
+          body_path: release_notes.md
+          # Each binary sits next to its .sha256, the URL install-oneline.sh
+          # fetches. SHA256SUMS is for verifying a release by hand.
+          files: |
+            dist/gpy-release.tar.gz
+            dist/gpy-release.zip
+            dist/fisher-gpy.tar.gz
+            dist/gpy-shell-files.tar.gz
+            dist/install-oneline.sh
+            dist/uninstall.sh
+            dist/uninstall.fish
+            dist/gpy-sbom.cdx.json
+            dist/SHA256SUMS
+            dist/*.sha256
+            dist/gpy-release/bin/*
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          generate_release_notes: true

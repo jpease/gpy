@@ -1,0 +1,15 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy theme use
+expression: help
+---
+Switch to a theme
+
+Usage: gpy theme use [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  Theme name
+
+Options:
+      --force  Apply the theme's recommended layout/config (segment order, directory display, language icons, …), preserving any settings you've explicitly configured
+  -h, --help   Print help

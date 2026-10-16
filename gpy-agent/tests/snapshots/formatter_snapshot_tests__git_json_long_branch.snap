@@ -1,0 +1,6 @@
+---
+source: tests/formatter_snapshot_tests.rs
+description: Git status with long branch name and large counts
+expression: output
+---
+{"ahead":100,"ahead_capped":false,"behind":50,"behind_capped":false,"branch":"feature/very-long-branch-name-that-should-be-handled-gracefully","conflicts":0,"detached":false,"rebase_progress":null,"staged":999,"stash_count":0,"state":"clean","unstaged":888,"untracked":777}

@@ -1,0 +1,31 @@
+# tests/fixtures/status_icon_vectors.tsv
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Shared vectors for the exit-status icon the shell-drawn status segment uses:
+# the theme's __icon_status_ok / __icon_status_fail when set (an EMPTY icon
+# stays empty), else the nerd glyph, or the ASCII word when __prompt_icons
+# asks for anything but `nerd`. Read by:
+#   - Bash:  __gpy_status_icon  (tests/bash/status_icon_vectors.test.bash)
+#   - Zsh:   __gpy_status_icon  (tests/zsh/status_icon_vectors.test.zsh)
+# Fish applies the same fallbacks once, when it initializes its icon globals
+# (fish/core/init.fish), so it has no per-call function to feed these to.
+#
+# Format: one vector per line, tab-separated:
+#   __prompt_icons<TAB>__icon_status_ok<TAB>__icon_status_fail<TAB>ok<TAB>fail
+# Blank lines and lines starting with # are ignored. In the three input
+# columns the whole-column token \u means UNSET and \e means set-but-EMPTY; in
+# the expected columns \e means the empty string. Everything else is literal.
+# Every reader MUST fail if this file is missing or yields no vectors.
+#
+# Deliberately absent: an EMPTY __prompt_icons. Bash/Zsh treat it as `nerd`,
+# Fish (any value but `nerd`) as ASCII; the theme export never sets it empty.
+
+\u	\u	\u	✔	✖
+nerd	\u	\u	✔	✖
+ascii	\u	\u	ok	err
+text	\u	\u	ok	err
+nerd	+	x	+	x
+ascii	★	\u	★	err
+nerd	\u	!!	✔	!!
+nerd	\e	\e	\e	\e
+ascii	\e	\u	\e	err

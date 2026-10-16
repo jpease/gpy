@@ -1,0 +1,9 @@
+# GitHub Actions only: every `uses:` is SHA-pinned, and pins never move on
+# their own. Cargo version updates are deliberately off; `cargo audit` and
+# `cargo deny` run in the gate, and security updates are enabled in settings.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
