@@ -384,7 +384,7 @@ fn test_cli_start_is_unsupported_on_native_windows() {
     let (exit_code, stdout, stderr) = run_gpy_agent_with_config("", &["start"]);
     assert_eq!(exit_code, 1_i32, "start must fail on Windows: {stderr}");
     assert!(
-        stderr.contains("Background agent not supported on this platform"),
+        stderr.contains("Background agent only supported on Unix-like systems"),
         "expected the unsupported-platform notice in stderr, got '{stderr}'"
     );
     assert!(
