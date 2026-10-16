@@ -141,11 +141,6 @@ has the release tag built in and installs exactly that release (replace
 curl -fsSL https://github.com/jpease/gpy/releases/download/vX.Y.Z/install-oneline.sh | sh
 ```
 
-This works for releases that publish `install-oneline.sh` and
-`gpy-shell-files.tar.gz`; releases up to v0.3.1 do not. To install one of
-those, use the release archive and its `install.sh`
-([Manual Installation](#manual-installation)).
-
 ### What it does
 
 The installer automatically:
@@ -355,7 +350,7 @@ manual download, or for confirming what an installer did.
 **Checksum:**
 
 ```bash
-VERSION=v0.3.1   # the release you downloaded
+VERSION=v0.4.0   # the release you downloaded
 BASE=https://github.com/jpease/gpy/releases/download/$VERSION
 
 curl -fsSLO "$BASE/SHA256SUMS"
@@ -393,7 +388,7 @@ along with its checksum sidecar. Substitute the asset name for your platform:
 (Apple Silicon) or `gpy-agent-macos-x86_64` (Intel).
 
 ```bash
-VERSION=v0.3.1
+VERSION=v0.4.0
 ASSET=gpy-agent-linux-x86_64
 BASE=https://github.com/jpease/gpy/releases/download/$VERSION
 
@@ -631,9 +626,8 @@ fish scripts/uninstall.fish                 # Fish entry point (uninstalls globa
 sh scripts/uninstall.sh                     # POSIX shell entry point (uninstalls globally)
 
 # Installed with the one-liner and no local copy? Download the script from the
-# release (releases up to v0.3.1 do not publish it; take scripts/uninstall.* from
-# that release's archive instead). Piping it straight into a shell would feed
-# the confirmation prompt the script itself:
+# release. Piping it straight into a shell would feed the confirmation prompt
+# the script itself:
 curl -fsSL https://github.com/jpease/gpy/releases/latest/download/uninstall.sh -o /tmp/gpy-uninstall.sh
 sh /tmp/gpy-uninstall.sh                    # or download uninstall.fish the same way
 ```

@@ -1,6 +1,6 @@
 {
   "name": "gpy",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "High-performance Fish shell prompt with agent-based architecture for Git status and language detection",
   "homepage": "https://github.com/jpease/gpy",
   "repository": "https://github.com/jpease/gpy",
