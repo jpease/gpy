@@ -32,9 +32,13 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends fish zsh bash git curl ca-certificates python3 socat \
     && rm -rf /var/lib/apt/lists/*
 
-# The archive layout install.sh expects (bin/<asset> plus its .sha256
-# sidecar, the three shell trees, the installer and uninstallers).
+# The release layout package-release.sh produces for the native asset: the
+# archive (bin/<asset> plus its .sha256 sidecar, the three shell trees, the
+# installer and uninstallers), the stamped install-oneline.sh and
+# gpy-shell-files.tar.gz.
+ARG GPY_RELEASE_VERSION
 COPY install.sh /opt/gpy-release/install.sh
+COPY install-oneline.sh /opt/build/install-oneline.sh
 COPY fish /opt/gpy-release/fish
 COPY zsh /opt/gpy-release/zsh
 COPY bash /opt/gpy-release/bash
@@ -42,6 +46,7 @@ COPY scripts/uninstall.fish scripts/uninstall.sh /opt/gpy-release/scripts/
 COPY --from=builder /src/gpy-agent/target/release/gpy-agent /opt/build/gpy-agent
 COPY --from=builder /src/gpy-agent/target/release/gpy /opt/build/gpy
 RUN set -eu; \
+    : "${GPY_RELEASE_VERSION:?pass --build-arg GPY_RELEASE_VERSION}"; \
     case "$TARGETARCH" in \
         amd64) arch=x86_64 ;; \
         arm64) arch=aarch64 ;; \
@@ -51,6 +56,9 @@ RUN set -eu; \
     cp /opt/build/gpy-agent "/opt/gpy-release/bin/gpy-agent-linux-$arch"; \
     cp /opt/build/gpy "/opt/gpy-release/bin/gpy-linux-$arch"; \
     chmod +x /opt/gpy-release/install.sh /opt/gpy-release/bin/*; \
+    sed "s/^RELEASE_VERSION=\"\"\$/RELEASE_VERSION=\"$GPY_RELEASE_VERSION\"/" \
+        /opt/build/install-oneline.sh >/opt/payload/install-oneline.sh; \
+    tar -czf /opt/payload/gpy-shell-files.tar.gz -C /opt/gpy-release fish zsh bash; \
     cd /opt/gpy-release/bin; \
     for f in gpy-agent-linux-$arch gpy-linux-$arch; do sha256sum "$f" >"$f.sha256"; done; \
     tar -czf /opt/payload/gpy-release.tar.gz -C /opt gpy-release; \
