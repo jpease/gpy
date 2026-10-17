@@ -1,4 +1,4 @@
 # Pinned tool versions (run.sh default). KEY=value, no quoting or shell evaluation.
 # GPY: release tag; Starship: version without the leading v.
-GPY_PINNED=v0.2.0
+GPY_PINNED=v0.4.0
 STARSHIP_PINNED=1.26.0

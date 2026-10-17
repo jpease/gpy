@@ -27,20 +27,23 @@ without the segment.
 
 Time for one git-status prompt segment (median, ms; lower is better).
 
-| Repository (tracked files) | GPY 0.2.0 | Starship 1.26.0 |
+| Repository (tracked files) | GPY 0.4.0 | Starship 1.26.0 |
 |---|---:|---:|
-| tiny-express (225) | 10.5 | 10.8 |
-| small-redis (1,680) | 11.3 | 11.4 |
-| medium-kubernetes (27,597) | **54.9** | 108.6 |
-| large-tensorflow (34,570) | **52.5** | 68.7 |
+| tiny-express (225) | 10.2 | 10.7 |
+| small-redis (1,680) | 11.4 | 11.6 |
+| medium-kubernetes (27,597) | **55.8** | 113.7 |
+| large-tensorflow (34,570) | **51.8** | 71.1 |
 
 - Measured as a single process call on pinned repositories, clean working tree
 - Apple M4 Max (macOS 27.0.1, git 2.56.0)
 
-These numbers time the no-daemon `oneshot` path. GPY enables git's
-`core.untrackedCache` in repositories where it is unset, which accounts for
-most of the large-repository lead; a value you set yourself is respected. See
-[how it was measured and how to run it yourself](docs/user/performance-vs-starship.md).
+These numbers time the no-daemon `oneshot` path, the like-for-like process
+comparison. With the daemon running, the same request on the two large
+repositories takes about 3.5 ms (median, including starting `socat`). GPY
+enables git's `core.untrackedCache` in repositories where it is unset, which
+accounts for most of the large-repository lead; a value you set yourself is
+respected. See [how it was measured and how to run it
+yourself](docs/user/performance-vs-starship.md).
 
 ## Install
 
