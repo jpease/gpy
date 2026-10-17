@@ -11,20 +11,20 @@ better; a ratio below 1.00 means GPY is faster.
 
 | Repository (tracked files) | Scenario | GPY | Starship | Ratio |
 |---|---|---:|---:|---:|
-| tiny-express (225) | clean | 10.45 | 10.83 | 0.96 |
-| tiny-express (225) | dirty | 10.46 | 10.78 | 0.97 |
-| small-redis (1,680) | clean | 11.33 | 11.38 | 1.00 (tie) |
-| small-redis (1,680) | dirty | 11.47 | 11.38 | 1.01 (tie) |
-| medium-kubernetes (27,597) | clean | 54.89 | 108.59 | 0.51 |
-| medium-kubernetes (27,597) | dirty | 55.83 | 109.44 | 0.51 |
-| large-tensorflow (34,570) | clean | 52.46 | 68.71 | 0.76 |
-| large-tensorflow (34,570) | dirty | 53.12 | 68.93 | 0.77 |
+| tiny-express (225) | clean | 10.15 | 10.70 | 0.95 |
+| tiny-express (225) | dirty | 10.30 | 10.80 | 0.95 |
+| small-redis (1,680) | clean | 11.37 | 11.57 | 0.98 |
+| small-redis (1,680) | dirty | 11.51 | 11.60 | 0.99 |
+| medium-kubernetes (27,597) | clean | 55.80 | 113.66 | 0.49 |
+| medium-kubernetes (27,597) | dirty | 56.78 | 114.60 | 0.50 |
+| large-tensorflow (34,570) | clean | 51.82 | 71.13 | 0.73 |
+| large-tensorflow (34,570) | dirty | 52.51 | 71.34 | 0.74 |
 
 Each cell is 6 rounds of 100 runs per tool (600 samples), with the order of the
 two tools alternating every round. "GPY faster" is only claimed when GPY has the
-lower median in every round. That held in every cell except the two
-`small-redis` ones, where the difference is a tenth of a millisecond and the
-harness does not call a winner.
+lower median in every round. That held in every cell, but on the two small
+repositories the difference is under a millisecond and makes no practical
+difference.
 
 In short: GPY is a little faster on small repositories and about 1.3 to 2 times
 faster on large ones. On repositories of a few thousand files or fewer the two
@@ -34,8 +34,8 @@ are indistinguishable.
 
 | | |
 |---|---|
-| Date | 2026-10-15 |
-| GPY | v0.2.0 release binary (`gpy-agent 0.2.0`, sha256 `495cc9a5…e2ce5c`) |
+| Date | 2026-10-17 |
+| GPY | v0.4.0 release binary (`gpy-agent 0.4.0`, sha256 `3ae0f9f0…f9e88e`) |
 | Starship | v1.26.0 release binary (sha256 `01532ebb…b245da`) |
 | Machine | Apple M4 Max (12 performance + 4 efficiency cores, 64 GiB), macOS 27.0.1, internal SSD, on AC power |
 | git | 2.56.0 |
@@ -66,7 +66,7 @@ this setting:
 
 | Fixture setting | What happens | medium-kubernetes (GPY / Starship) |
 |---|---|---|
-| unset (the default here, and typical) | GPY enables the cache | 54.9 / 108.6 ms |
+| unset (the default here, and typical) | GPY enables the cache | 55.8 / 113.7 ms |
 | `true`, for both tools | same | about 55 / 114 ms |
 | `false` | GPY respects it and loses its fast path | about 143 / 114 ms |
 
@@ -89,6 +89,23 @@ benchmark can measure all three; see the options below.
 
 Absolute numbers depend on the machine. Treat the ratios as the result and the
 milliseconds as context.
+
+### With the agent running
+
+What a shell normally does instead: send the git request to the running agent
+over its socket and read the reply. Timed with hyperfine (`-N`, 20 warmup runs,
+500 runs) as `socat - UNIX-CONNECT:<socket>` with the request on stdin, so it
+includes starting `socat`, as Fish and Bash do on every prompt. Same machine,
+same pinned fixtures (clean), same day, GPY v0.4.0, agent already warm:
+
+| Repository | Agent, median / p95 | `oneshot`, median / p95 |
+|---|---:|---:|
+| medium-kubernetes | 3.5 / 4.4 ms | 56.2 / 57.8 ms |
+| large-tensorflow | 3.4 / 4.1 ms | 52.6 / 54.2 ms |
+
+The p99 was about 30 ms for the agent: the interleaved `oneshot` runs touch
+`.git/index`, which makes the agent rescan. This was a one-off measurement, not
+part of the harness, so it has no rounds or quiet-machine checks.
 
 ## Run it yourself
 
