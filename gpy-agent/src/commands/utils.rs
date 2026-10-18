@@ -65,10 +65,12 @@ pub fn read_config() -> Result<config::Config> {
 const NOT_RELOADED_NOTICE: &str =
     "Agent not reloaded; the new config applies the next time it starts.";
 
-/// Reload the running agent's config, warning when the reload was not
-/// confirmed. The config is already written, so there is nothing to return.
+/// Reload the running agent's config, warning when it was not applied. The
+/// config is already written, so there is nothing to return.
 #[cfg(unix)]
 pub fn reload_agent_and_notify() {
+    use crate::agent::lifecycle::ConfigReload;
+
     let outcome = tokio::runtime::Runtime::new()
         .map_err(|e| Error::process("runtime".to_owned(), e.to_string()))
         .and_then(|runtime| {
@@ -76,8 +78,11 @@ pub fn reload_agent_and_notify() {
         });
 
     match outcome {
-        Ok(true) => {}
-        Ok(false) => crate::commands::output::warn(NOT_RELOADED_NOTICE),
+        Ok(ConfigReload::Applied) => {}
+        Ok(ConfigReload::NotRunning) => crate::commands::output::warn(NOT_RELOADED_NOTICE),
+        Ok(ConfigReload::Rejected(reason)) => crate::commands::output::warn(format_args!(
+            "Agent rejected the new config and kept its previous one: {reason}"
+        )),
         Err(e) => crate::commands::output::warn(format_args!("Agent not reloaded: {e}")),
     }
 }

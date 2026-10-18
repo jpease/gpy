@@ -1148,7 +1148,7 @@ commands rather than internals:
 | `gpy-agent stop` / `gpy-agent status` | Same behaviour and exit codes as the `gpy` equivalents above. Restarting is only available as `gpy restart`. |
 | `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|hostname\|username> [--cwd <dir>] [--format json\|ansi\|fish\|fish-source\|zsh\|zsh-source]` | Render one segment once, with no daemon. The shells use it as the fallback when the agent is down; it is also the quickest way to see what a segment produces for a directory. |
 | `gpy-agent theme export --format fish\|zsh\|bash` | Print the active theme as shell variable assignments. Each shell sources this on init (cached under `$XDG_CACHE_HOME/gpy/theme-export.<shell>`). |
-| `gpy-agent config reload` | Ask the running agent to reload `config.toml` from disk. Prints `Config reload request sent (agent may not have acknowledged).` when no acknowledgement arrived in time. |
+| `gpy-agent config reload` | Ask the running agent to reload `config.toml` from disk. Exits `0` when the agent applied it, or when no agent is running (the config applies at the next start). Exits `1` with an `Error:` line when the agent rejects the config, carrying its reason (the agent keeps its previous configuration), or when a running agent does not answer. |
 
 ---
 

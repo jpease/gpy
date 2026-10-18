@@ -388,9 +388,9 @@ const fn is_ack(response: &crate::ipc::Response) -> bool {
     matches!(response, crate::ipc::Response::Ack)
 }
 
-/// Send `message` (JSON op, no trailing newline) to the agent and decode the
-/// reply. The whole exchange is bounded by `budget`; message and newline go
-/// in one write to avoid EPIPE from a server that answers and closes.
+/// Send `message` (JSON op, no trailing newline) to the agent and decode its
+/// one-line reply. The whole exchange is bounded by `budget`; message and
+/// newline go in one write to avoid EPIPE from a server that answers and closes.
 ///
 /// # Errors
 /// Returns an error if the exchange fails, the budget elapses, the agent
@@ -401,7 +401,7 @@ async fn request(
     message: &str,
     budget: std::time::Duration,
 ) -> Result<crate::ipc::Response> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
     use tokio::net::UnixStream;
 
     tokio::time::timeout(budget, async {
@@ -417,21 +417,19 @@ async fn request(
             .await
             .map_err(|e| Error::ipc(format!("Failed to send command: {e}")))?;
 
-        let mut buffer = [0u8; 1024];
-        let n = stream
-            .read(&mut buffer)
+        // A whole line: an error reply quoting a config line can be long.
+        let limit = u64::try_from(crate::security::MAX_MESSAGE_SIZE).unwrap_or(u64::MAX);
+        let mut reply = Vec::new();
+        tokio::io::BufReader::new(stream.take(limit))
+            .read_until(b'\n', &mut reply)
             .await
             .map_err(|e| Error::ipc(format!("Failed to read response: {e}")))?;
-        if n == 0 {
+        if reply.is_empty() {
             return Err(Error::ipc(
                 "Agent closed the connection without replying".to_owned(),
             ));
         }
-        let chunk = buffer
-            .get(..n)
-            .ok_or_else(|| Error::ipc("Invalid buffer slice".to_owned()))?;
-        let text = String::from_utf8_lossy(chunk);
-        crate::ipc::decode_wire_reply(&text)
+        crate::ipc::decode_wire_reply(&String::from_utf8_lossy(&reply))
     })
     .await
     .map_err(|_| Error::ipc("Timed out communicating with agent".to_owned()))?
@@ -470,35 +468,79 @@ pub async fn send_shutdown_command() -> Result<()> {
     Err(crate::ipc::native_windows_unsupported())
 }
 
-/// Send config reload command; `Ok(true)` only when acknowledged.
+/// What became of a config reload request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigReload {
+    /// The agent loaded and applied the configuration.
+    Applied,
+    /// No agent is listening, so the configuration applies at the next start.
+    NotRunning,
+    /// The agent refused the configuration and kept its previous one; holds
+    /// the agent's reason.
+    Rejected(String),
+}
+
+/// Ask the running agent to reload its configuration.
 ///
 /// # Errors
-/// Returns an error only if the socket path cannot be computed.
+/// Returns an error if the socket path cannot be computed, or a listening
+/// agent does not answer the request (timeout, closed connection, or a reply
+/// that is neither an ack nor an error).
 #[cfg(unix)]
-pub async fn send_config_reload_command() -> Result<bool> {
+pub async fn send_config_reload_command() -> Result<ConfigReload> {
     let socket_path = get_socket_path()?;
     if !socket_path.exists() {
-        return Ok(false);
+        return Ok(ConfigReload::NotRunning);
     }
 
-    let outcome = request(
+    match request(
         &socket_path,
         crate::ipc::protocol::CONFIG_RELOAD_JSON,
         std::time::Duration::from_secs(2),
     )
-    .await;
-
-    // An unconfirmed reload is never a success.
-    Ok(outcome.is_ok_and(|response| is_ack(&response)))
+    .await
+    {
+        Ok(crate::ipc::Response::Ack) => Ok(ConfigReload::Applied),
+        Ok(crate::ipc::Response::Error { message }) => {
+            Ok(ConfigReload::Rejected(message.trim_end().to_owned()))
+        }
+        Ok(other) => Err(Error::ipc(format!(
+            "Unexpected config reload response: {other:?}"
+        ))),
+        Err(_) if socket_is_stale(&socket_path) => Ok(ConfigReload::NotRunning),
+        Err(e) => Err(e),
+    }
 }
 
-/// Send config reload command (native Windows stub: always `false`).
+/// Ask the running agent to reload its configuration (native Windows stub:
+/// there is never a running agent).
 ///
 /// # Errors
 /// Never returns an error on this platform.
 #[cfg(not(unix))]
-pub async fn send_config_reload_command() -> Result<bool> {
-    Ok(false)
+pub async fn send_config_reload_command() -> Result<ConfigReload> {
+    Ok(ConfigReload::NotRunning)
+}
+
+/// Whether nothing is listening on `socket_path` (connection refused or file
+/// gone); an accepted connection means a live agent.
+#[cfg(unix)]
+#[must_use]
+pub fn socket_is_stale(socket_path: &Path) -> bool {
+    match std::os::unix::net::UnixStream::connect(socket_path) {
+        Ok(_) => false,
+        Err(e) => matches!(
+            e.kind(),
+            std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound
+        ),
+    }
+}
+
+/// Native Windows has no daemon to probe; never claim a stale socket.
+#[cfg(not(unix))]
+#[must_use]
+pub fn socket_is_stale(_socket_path: &Path) -> bool {
+    false
 }
 
 /// Agent status information from IPC query.

@@ -864,3 +864,92 @@ fn mutation_without_agent_prints_exactly_one_not_reloaded_notice() {
         "{switched:?}"
     );
 }
+
+/// The same minimal config with only the theme varying.
+fn theme_config(theme: &str) -> String {
+    format!("[ui]\ntheme = \"{theme}\"\n")
+}
+
+#[test]
+fn config_reload_applies_a_valid_config() {
+    let sandbox = AgentSandbox::new();
+    sandbox.start_and_wait();
+    sandbox
+        .env
+        .write_config(&theme_config("starship"))
+        .expect("write config");
+
+    let reloaded = sandbox.gpy_agent(&["config", "reload"]);
+    reloaded.assert_success("gpy-agent config reload");
+    assert!(reloaded.stderr.is_empty(), "{reloaded:?}");
+}
+
+#[test]
+fn config_reload_surfaces_a_toml_parse_error_and_keeps_serving() {
+    const BROKEN: &str = "not [valid";
+    let sandbox = AgentSandbox::new();
+    sandbox.start_and_wait();
+    sandbox.env.write_config(BROKEN).expect("write config");
+    let cause = toml::from_str::<toml::Table>(BROKEN)
+        .expect_err("the fixture is invalid TOML")
+        .message()
+        .to_owned();
+
+    let reloaded = sandbox.gpy_agent(&["config", "reload"]);
+    assert_eq!(reloaded.exit_code, 1_i32, "{reloaded:?}");
+    assert!(reloaded.stderr.starts_with("Error:"), "{reloaded:?}");
+    assert!(
+        reloaded.stderr.contains(&cause),
+        "the agent's parse error `{cause}` reaches the user: {reloaded:?}"
+    );
+
+    let status = sandbox.gpy_agent(&["status"]);
+    assert!(
+        status.stdout.contains(RUNNING_LINE),
+        "a rejected reload leaves the agent serving: {status:?}"
+    );
+}
+
+#[test]
+fn config_reload_rejects_an_unknown_theme() {
+    let sandbox = AgentSandbox::new();
+    sandbox.start_and_wait();
+    sandbox
+        .env
+        .write_config(&theme_config("no-such-theme"))
+        .expect("write config");
+
+    let reloaded = sandbox.gpy_agent(&["config", "reload"]);
+    assert_eq!(reloaded.exit_code, 1_i32, "{reloaded:?}");
+    assert!(
+        reloaded.stderr.contains("no-such-theme"),
+        "the rejection names the theme: {reloaded:?}"
+    );
+}
+
+/// No agent, a stale socket file, and an agent that never answers are three
+/// different outcomes: only the last is a failure.
+#[test]
+fn config_reload_distinguishes_absent_and_unanswering_agents() {
+    let sandbox = AgentSandbox::new();
+
+    let absent = sandbox.gpy_agent(&["config", "reload"]);
+    absent.assert_success("config reload with no agent");
+
+    drop(bind_silent_socket(&sandbox.socket_path));
+    let stale = sandbox.gpy_agent(&["config", "reload"]);
+    stale.assert_success("config reload on a stale socket");
+    assert_eq!(stale.stdout, absent.stdout, "a stale socket is no agent");
+    std::fs::remove_file(&sandbox.socket_path).expect("remove stale socket");
+
+    let _listener = bind_silent_socket(&sandbox.socket_path);
+    let silent = sandbox.gpy_agent(&["config", "reload"]);
+    assert_eq!(silent.exit_code, 1_i32, "{silent:?}");
+    assert!(silent.stderr.starts_with("Error:"), "{silent:?}");
+    assert!(
+        silent
+            .stderr
+            .contains(&sandbox.socket_path.display().to_string()),
+        "names the agent that did not answer: {silent:?}"
+    );
+}
