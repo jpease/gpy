@@ -54,13 +54,13 @@ while IFS=$'\t' read -r value_col abs_col _rest; do
             ;;
     esac
 
-    actual=$(unset GPY_AGENT_SOCKET_PATH XDG_CACHE_HOME; export HOME="$FAKE_HOME" XDG_RUNTIME_DIR="$value"; __gpy_runtime_root)
+    actual=$(unset GPY_AGENT_SOCKET_PATH XDG_CACHE_HOME; export HOME="$FAKE_HOME" XDG_RUNTIME_DIR="$value"; __gpy_runtime_root actual; print -r -- "$actual")
     check "vector $vector_count ($value_col) runtime root" "$expected_root" "$actual"
 
     actual=$(unset GPY_AGENT_SOCKET_PATH XDG_CACHE_HOME; export HOME="$FAKE_HOME" XDG_RUNTIME_DIR="$value"; __gpy_ipc_endpoint)
     check "vector $vector_count ($value_col) ipc endpoint" "$expected_root/gpy.sock" "$actual"
 
-    actual=$(unset XDG_RUNTIME_DIR; export HOME="$FAKE_HOME" XDG_CACHE_HOME="$value"; __gpy_instant_cache_dir)
+    actual=$(unset XDG_RUNTIME_DIR; export HOME="$FAKE_HOME" XDG_CACHE_HOME="$value"; __gpy_instant_cache_dir actual && print -r -- "$actual")
     check "vector $vector_count ($value_col) instant cache dir" "$expected_root/instant-prompts" "$actual"
 
     actual=$(unset XDG_RUNTIME_DIR; export HOME="$FAKE_HOME" XDG_CACHE_HOME="$value"; __gpy_theme_export_cache_path)

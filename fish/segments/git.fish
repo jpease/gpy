@@ -48,13 +48,13 @@ function segment_git_render --argument-names is_last is_first
     set -l prev_bg $__gpy_last_segment_bg
 
     # Exit code: 1 = miss; stale/variant bits read via __gpy_cache_status_*.
-    set -l rendered_output (__gpy_read_instant_cache $cache_suffix "$root" $prev_bg)
-    set -l cache_status $status
+    set -l rendered_output (__gpy_read_instant_cache $cache_suffix "$root" $prev_bg | string collect)
+    set -l cache_status $pipestatus[1]
 
     if test "$cache_status" -eq 1
         # Agent-free mode renders through oneshot.
         if test "$GPY_AGENT_ENABLED" = 0
-            set -l fresh (__gpy_oneshot_fallback git "$root" ansi "$is_last" "$is_first")
+            set -l fresh (__gpy_oneshot_fallback git "$root" ansi "$is_last" "$is_first" | string collect)
             if test -n "$fresh"
                 printf '%s' "$fresh"
                 set -g __gpy_last_segment_bg $__color_git_clean_bg
@@ -65,7 +65,7 @@ function segment_git_render --argument-names is_last is_first
         __gpy_register_with_agent >/dev/null 2>&1
         if test -S (__gpy_ipc_endpoint)
             set -l payload (__gpy_build_data_payload git "$root" ansi "$is_last" "$prev_bg" "$is_first")
-            set -l synced (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
+            set -l synced (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS | string collect)
             if test -n "$synced"
                 # The agent writes its own instant cache while handling this request.
                 printf '%s' "$synced"
@@ -83,7 +83,7 @@ function segment_git_render --argument-names is_last is_first
     if __gpy_cache_status_variant $cache_status
         if test -S (__gpy_ipc_endpoint)
             set -l payload (__gpy_build_data_payload git "$root" ansi "$is_last" "$prev_bg" "$is_first")
-            set -l synced (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
+            set -l synced (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS | string collect)
             if test -n "$synced"
                 printf '%s' "$synced"
                 set -g __gpy_last_segment_bg $__color_git_clean_bg
@@ -102,7 +102,7 @@ function segment_git_render --argument-names is_last is_first
             __gpy_maybe_refresh git "$root" "$cache_suffix" "$is_last" "$prev_bg" "$is_first"
         else
             # Agent down: the refresh has no listener; stale beats empty if oneshot fails.
-            set -l fresh (__gpy_oneshot_fallback git "$root" ansi "$is_last" "$is_first")
+            set -l fresh (__gpy_oneshot_fallback git "$root" ansi "$is_last" "$is_first" | string collect)
             if test -n "$fresh"
                 printf '%s' "$fresh"
             else

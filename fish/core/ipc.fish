@@ -603,7 +603,7 @@ function __gpy_request --argument-names op cwd is_last prev_bg is_first --descri
         set -l lang_suffix (__gpy_cache_variant_suffix lang $is_last $is_first)
         set -l cached_result (__gpy_read_instant_cache $lang_suffix $cwd $prev_bg)
         if test $status -ne 1
-            echo $cached_result
+            printf '%s\n' $cached_result
             return 0
         end
     end
@@ -660,11 +660,10 @@ function __gpy_maybe_refresh --argument-names op root cache_suffix is_last prev_
     set -q is_first[1]; or set is_first ""
     set -q throttle_key_extra[1]; or set throttle_key_extra ""
 
-    set -l safe_path (string replace -ra '[^a-zA-Z0-9_]' _ "$root")
-    set -l throttle_var "__gpy_"$op"_refresh_ms_$safe_path"_"$cache_suffix"
-    if test -n "$throttle_key_extra"
-        set throttle_var "__gpy_"$op"_variant_refresh_ms_$safe_path"_"$cache_suffix"_"$throttle_key_extra"
-    end
+    # One bucket per (op, suffix, token, root). The suffix and token never hold
+    # `/`, so with root last the joined key is unambiguous, and var-style
+    # escaping is injective.
+    set -l throttle_var "__gpy_"$op"_refresh_ms_"(string escape --style=var -- "$cache_suffix/$throttle_key_extra/$root")
 
     set -l now_ms (__gpy_get_time_ms)
     set -l last_ms 0

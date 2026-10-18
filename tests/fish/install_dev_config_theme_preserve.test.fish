@@ -214,6 +214,41 @@ end
 
 rm -rf "$home5" "$home6"
 
+# --- Test 7: a user prompt that merely mentions GPY (even
+# `__enabled_segments`) is the user's and is backed up byte-for-byte; a
+# regular-file copy of GPY's own prompt is replaced without a backup. ---
+set -l home7 (mktemp -d)
+mkdir -p "$home7/.config/fish/functions"
+set -l mentions_gpy "$home7/.config/fish/functions/fish_prompt.fish"
+printf '%s\n' '# Tried GPY once; kept my own. See __enabled_segments.' 'function fish_prompt' '    printf "mine> "' end >"$mentions_gpy"
+cp "$mentions_gpy" "$home7/original_prompt.fish"
+set -l out7 (__gpy_run_install_dev "$home7" "$safe_path" "")
+set -l backups7 (find "$home7/.config/fish/functions" -name 'fish_prompt.fish.backup*')
+if test (count $backups7) -eq 1; and cmp -s "$home7/original_prompt.fish" $backups7[1]
+    __gpy_test_pass "install-dev.fish: prompt mentioning GPY backed up byte-for-byte"
+else
+    __gpy_test_fail "install-dev.fish: prompt mentioning GPY not preserved: $backups7 ($out7)"
+end
+if test -L "$mentions_gpy"; and test (readlink "$mentions_gpy") = "$home7/.config/fish/gpy/functions/fish_prompt.fish"
+    __gpy_test_pass "install-dev.fish: GPY prompt installed after backing up the user's"
+else
+    __gpy_test_fail "install-dev.fish: GPY prompt symlink not installed ($out7)"
+end
+
+set -l home8 (mktemp -d)
+mkdir -p "$home8/.config/fish/functions"
+set -l copied_gpy "$home8/.config/fish/functions/fish_prompt.fish"
+cp "$repo_root/fish/functions/fish_prompt.fish" "$copied_gpy"
+set -l out8 (__gpy_run_install_dev "$home8" "$safe_path" "")
+set -l backups8 (find "$home8/.config/fish/functions" -name 'fish_prompt.fish.backup*')
+if test (count $backups8) -eq 0; and test -L "$copied_gpy"; and test (readlink "$copied_gpy") = "$home8/.config/fish/gpy/functions/fish_prompt.fish"
+    __gpy_test_pass "install-dev.fish: regular-file GPY prompt replaced without a backup"
+else
+    __gpy_test_fail "install-dev.fish: regular-file GPY prompt not replaced cleanly: $backups8 ($out8)"
+end
+
+rm -rf "$home7" "$home8"
+
 if test $failed -eq 1
     exit 1
 end

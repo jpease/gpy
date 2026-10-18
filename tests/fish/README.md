@@ -17,6 +17,10 @@ run through all three shells by `tests/bash/shell_contract.test.bash`.
 fish tests/fish/init_integration.test.fish # one file, from any directory
 ```
 
+A test that calls `init_test_env` uses this checkout's
+`gpy-agent/target/debug` build (built if missing; rebuild after Rust changes),
+never an installed `gpy-agent`.
+
 ## Writing a test
 
 - Source `tests/lib/test_helpers.fish` for the sandbox (`init_test_env`), the

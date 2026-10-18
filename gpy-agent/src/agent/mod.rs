@@ -19,6 +19,7 @@ use crate::ipc::{
     server::{EndpointDeps, EndpointHandle},
 };
 use crate::theme::ThemeManager;
+use crate::watcher::hot_reload::HOT_RELOAD_DEBOUNCE;
 use crate::watcher::{WatcherConfig, multi_repo::MultiRepoWatcher};
 use crate::{Error, Result};
 use events::SharedWatcherSlot;
@@ -291,7 +292,7 @@ impl Agent {
         let theme_manager = Self::init_theme_manager(&initial_config)?;
 
         if let Err(e) = theme_manager.start_watching_with(
-            Duration::from_secs(5),
+            HOT_RELOAD_DEBOUNCE,
             Some(Arc::clone(&client_registry)),
             &watch_registry,
         ) {
@@ -320,6 +321,7 @@ impl Agent {
             dispatch_guard: Arc::new(events::RepoRefreshCoordinator::default()),
             watch_registry,
             theme_export_dir: crate::cache::theme_export::theme_export_dir()?,
+            announce_gate: Arc::new(Mutex::new(())),
         };
 
         Self::setup_hot_reload(&ctx, &watcher_slot, watcher_config);
@@ -408,29 +410,21 @@ impl Agent {
 
         // Theme reloads must refresh export and instant caches before the doorbell.
         let ctx_for_theme_callback = ctx.clone();
-        ctx.theme_manager.set_reload_callback(Arc::new(move || {
-            let config = ctx_for_theme_callback.config_manager.get();
-            if let Err(e) = crate::cache::theme_export::write_theme_export_to_dir(
-                &ctx_for_theme_callback.theme_export_dir,
-                &ctx_for_theme_callback.theme_manager,
-                &config,
-            ) {
-                debug_log!("agent", "Failed to write theme export cache: {}", e);
-            }
-            events::regenerate_instant_caches_for_theme_change(&ctx_for_theme_callback, &config);
-            ctx_for_theme_callback.registry.notify_reload();
-        }));
+        ctx.theme_manager
+            .set_reload_callback(Arc::new(move |reload| {
+                events::handle_theme_reload(&ctx_for_theme_callback, reload);
+            }));
 
         if let Err(e) = ctx
             .config_manager
-            .start_watching_with(Duration::from_secs(1), &ctx.watch_registry)
+            .start_watching_with(HOT_RELOAD_DEBOUNCE, &ctx.watch_registry)
         {
             debug_log!(
                 "config",
                 "Warning: Failed to start config watching ({e}), config changes won't reload automatically"
             );
         } else {
-            debug_log!("config", "Config hot-reload enabled with 1-second debounce");
+            debug_log!("config", "Config hot-reload enabled");
         }
     }
 
@@ -546,16 +540,19 @@ impl Agent {
         {
             let theme_manager_for_export = Arc::clone(&self.ctx.theme_manager);
             let config_for_export = self.ctx.config_manager.get();
+            let palette_for_export = self.ctx.palette_cache.get();
             tokio::task::spawn_blocking(move || {
                 #[cfg(unix)]
                 lifecycle::start::warm_theme_export_cache(
                     &theme_manager_for_export,
                     &config_for_export,
+                    &palette_for_export,
                 );
                 #[cfg(not(unix))]
                 if let Err(e) = crate::cache::write_theme_export_cache(
                     &theme_manager_for_export,
                     &config_for_export,
+                    &palette_for_export,
                 ) {
                     debug_log!(
                         "agent",
@@ -721,6 +718,7 @@ impl Agent {
             watch_registry: Arc::clone(watcher.registry()),
             theme_export_dir: std::env::temp_dir()
                 .join(format!("gpy-test-theme-export-{}", std::process::id())),
+            announce_gate: Arc::new(Mutex::new(())),
         };
 
         Ok(Self {

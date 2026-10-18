@@ -40,7 +40,7 @@ count() { wc -l <"$calls" | tr -d ' '; }
 count_is() { [ "$(count)" -eq "$1" ]; }
 # A fixed clock: back-to-back calls are always inside the 500 ms window.
 fake_ms=1000000
-__gpy_now_ms() { print -r -- "$fake_ms"; }
+__gpy_now_ms() { printf -v "$1" '%s' "$fake_ms"; }
 
 # expect_dispatches LABEL N: N refreshes so far, and no more land in the window.
 expect_dispatches() {
@@ -100,8 +100,10 @@ expect_dispatches "a stamp of another bucket under the same name does not thrott
 
 # The memoized name follows the bucket: alternating two long buckets yields
 # each one's own name, the same as computed with no memo.
-bucket_a="lang.lang..$(__gpy_path_to_cache_key "$long_ascii")"
-bucket_b="lang.lang..$(__gpy_path_to_cache_key "$long_unicode")"
+__gpy_path_to_cache_key "$long_ascii" key_a
+__gpy_path_to_cache_key "$long_unicode" key_b
+bucket_a="lang.lang..$key_a"
+bucket_b="lang.lang..$key_b"
 __gpy_refresh_stamp_name "$bucket_a" name_a1
 __gpy_refresh_stamp_name "$bucket_b" name_b
 __gpy_refresh_stamp_name "$bucket_a" name_a2

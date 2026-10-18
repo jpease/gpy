@@ -72,15 +72,21 @@ pub fn validate_config(config: &crate::config::Config) -> Result<()> {
 /// shells, doctor, `config get`) compares against, then validate.
 ///
 /// `ui.enabled_segments` entries are trimmed and lowercased via [`SegmentName`],
-/// so `"Directory"` and `" git "` load as `directory` and `git`.
+/// so `"Directory"` and `" git "` load as `directory` and `git`. Repeats keep
+/// only their first occurrence, so `["git", "Git"]` renders git once.
 ///
 /// # Errors
 /// Returns an error if any configuration value is invalid.
 pub fn normalize_config(config: &mut crate::config::Config) -> Result<()> {
-    config.ui.enabled_segments = parse_enabled_segments(&config.ui.enabled_segments)?
-        .into_iter()
-        .map(String::from)
-        .collect();
+    let names = parse_enabled_segments(&config.ui.enabled_segments)?;
+    let mut canonical: Vec<String> = Vec::with_capacity(names.len());
+    for name in names {
+        let name = String::from(name);
+        if !canonical.contains(&name) {
+            canonical.push(name);
+        }
+    }
+    config.ui.enabled_segments = canonical;
     validate_config(config)
 }
 
@@ -132,6 +138,24 @@ mod tests {
 
         config.ui.enabled_segments = vec!["K8S-Ctx".to_owned(), " k8s_ctx".to_owned()];
         assert!(normalize_config(&mut config).is_err());
+    }
+
+    #[test]
+    fn normalize_config_keeps_the_first_of_repeated_segments() {
+        let mut config = crate::config::Config::default();
+        config.ui.enabled_segments = vec![
+            "git".to_owned(),
+            "Directory".to_owned(),
+            "Git".to_owned(),
+            " git ".to_owned(),
+            "directory".to_owned(),
+            "clock".to_owned(),
+        ];
+        normalize_config(&mut config).unwrap();
+        assert_eq!(
+            config.ui.enabled_segments,
+            vec!["git", "directory", "clock"]
+        );
     }
 
     /// Platform-neutral cases; absolute paths are tested per-`cfg` below.

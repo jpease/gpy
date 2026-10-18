@@ -32,7 +32,8 @@ fn does_not_override_explicit_untracked_cache_false() {
 fn enables_untracked_cache_when_unset() {
     let (_dir, path) = init_test_repo();
     // A user/system-level setting would (correctly) stop gpy enabling it.
-    if NativeGitBackend::is_untracked_cache_configured(&path) {
+    if NativeGitBackend::is_untracked_cache_configured(&path, NativeGitBackend::default_deadline())
+    {
         return;
     }
 
@@ -506,7 +507,7 @@ fn get_repo_state_returns_applying_for_conflicted_git_am() {
     }
 
     assert_eq!(
-        NativeGitBackend::get_repo_state(&path),
+        NativeGitBackend::get_repo_state(&path, NativeGitBackend::default_deadline()),
         Some(RepositoryState::Applying)
     );
 
@@ -569,7 +570,7 @@ fn get_repo_state_detects_cherry_pick_sequencer_after_manual_commit() {
         "first pick must conflict"
     );
     assert_eq!(
-        NativeGitBackend::get_repo_state(&path),
+        NativeGitBackend::get_repo_state(&path, NativeGitBackend::default_deadline()),
         Some(RepositoryState::CherryPicking)
     );
     fs::write(path.join("file.txt"), "resolved\n").expect("resolve conflict");
@@ -580,11 +581,14 @@ fn get_repo_state_detects_cherry_pick_sequencer_after_manual_commit() {
         "manual commit removes CHERRY_PICK_HEAD"
     );
     assert_eq!(
-        NativeGitBackend::get_repo_state(&path),
+        NativeGitBackend::get_repo_state(&path, NativeGitBackend::default_deadline()),
         Some(RepositoryState::CherryPicking)
     );
     assert!(git_status_ok(&path, &["cherry-pick", "--quit"]));
-    assert_eq!(NativeGitBackend::get_repo_state(&path), None);
+    assert_eq!(
+        NativeGitBackend::get_repo_state(&path, NativeGitBackend::default_deadline()),
+        None
+    );
 }
 
 #[test]
@@ -612,7 +616,7 @@ fn get_repo_state_detects_revert_sequencer_after_manual_commit() {
         "manual commit removes REVERT_HEAD"
     );
     assert_eq!(
-        NativeGitBackend::get_repo_state(&path),
+        NativeGitBackend::get_repo_state(&path, NativeGitBackend::default_deadline()),
         Some(RepositoryState::Reverting)
     );
 }
@@ -650,14 +654,17 @@ fn get_repo_state_detects_reftable_cherry_pick_and_revert() {
     fs::write(path.join("f"), "r\n").expect("resolve");
     assert!(git_status_ok(&path, &["add", "f"]));
     assert_eq!(
-        NativeGitBackend::get_repo_state(&path),
+        NativeGitBackend::get_repo_state(&path, NativeGitBackend::default_deadline()),
         Some(RepositoryState::CherryPicking)
     );
     assert!(git_status_ok(&path, &["cherry-pick", "--abort"]));
-    assert_eq!(NativeGitBackend::get_repo_state(&path), None);
+    assert_eq!(
+        NativeGitBackend::get_repo_state(&path, NativeGitBackend::default_deadline()),
+        None
+    );
     assert!(git_status_ok(&path, &["revert", "--no-commit", "HEAD"]));
     assert_eq!(
-        NativeGitBackend::get_repo_state(&path),
+        NativeGitBackend::get_repo_state(&path, NativeGitBackend::default_deadline()),
         Some(RepositoryState::Reverting)
     );
 }
@@ -675,7 +682,7 @@ fn get_repo_state_returns_rebasing_for_apply_backend_rebase() {
     fs::write(rebase_apply.join("last"), "3\n").expect("write last");
 
     assert_eq!(
-        NativeGitBackend::get_repo_state(&path),
+        NativeGitBackend::get_repo_state(&path, NativeGitBackend::default_deadline()),
         Some(RepositoryState::Rebasing)
     );
 }

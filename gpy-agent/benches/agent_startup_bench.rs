@@ -11,6 +11,7 @@ use gpy_agent::cache::theme_export::write_theme_export_to_dir;
 use gpy_agent::config::Config;
 use gpy_agent::config::loader::load_config_from_file;
 use gpy_agent::language::version::{ReleaseSource, execute_version_command};
+use gpy_agent::template::Palette;
 use gpy_agent::theme::ThemeManager;
 use std::fs;
 use std::hint::black_box;
@@ -118,6 +119,7 @@ fn bench_theme_manager_load(c: &mut Criterion) {
 fn bench_theme_export(c: &mut Criterion) {
     let theme_manager = ThemeManager::new("default").expect("load theme");
     let config = Config::default();
+    let palette = Palette::default();
     let dir = TempDir::new().expect("create temp dir");
     let cache_dir = dir.path().join("gpy");
 
@@ -127,6 +129,7 @@ fn bench_theme_export(c: &mut Criterion) {
                 black_box(&cache_dir),
                 black_box(&theme_manager),
                 black_box(&config),
+                black_box(&palette),
             )
             .expect("write theme export");
         });

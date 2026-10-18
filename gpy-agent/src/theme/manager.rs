@@ -7,9 +7,12 @@ use crate::config::types::is_safe_config_name;
 use crate::debug_log;
 use crate::plugin::discover_plugins;
 use crate::shell::Shell;
+use crate::template::Palette;
 use crate::theme::export;
 use crate::theme::model::ThemeConfig;
-use crate::watcher::hot_reload::{HotReloadSlot, PollTarget, bytes_fingerprint};
+use crate::watcher::hot_reload::{
+    HOT_RELOAD_DEBOUNCE, HotReloadSlot, PollTarget, bytes_fingerprint,
+};
 use crate::watcher::{WatchCoordinator, WatchRegistry};
 use crate::{Error, Result};
 use std::collections::BTreeMap;
@@ -77,8 +80,10 @@ enum Reloaded {
     Source,
 }
 
-/// Callback run after a successful hot-reload swap (see [`ThemeManager::set_reload_callback`]).
-pub type ThemeReloadCallback = Arc<dyn Fn() + Send + Sync>;
+/// Runs a watcher- or poll-triggered reload in place of the built-in doorbell
+/// (see [`ThemeManager::set_reload_callback`]). It gets the reload step, which
+/// swaps in the active theme and reports whether it changed.
+pub type ThemeReloadCallback = Arc<dyn Fn(&dyn Fn() -> bool) + Send + Sync>;
 type ReloadHookSlot = Arc<Mutex<Option<ThemeReloadCallback>>>;
 type WatcherSlot = Arc<Mutex<Option<WatchCoordinator>>>;
 
@@ -86,7 +91,8 @@ type WatcherSlot = Arc<Mutex<Option<WatchCoordinator>>>;
 pub struct ThemeManager {
     state: Arc<RwLock<Arc<ThemeState>>>,
     hot_reload: HotReloadSlot,
-    /// When set, replaces `notify_reload` so the owner can refresh caches first.
+    /// When set, runs each hot reload so the owner can serialize it and
+    /// refresh caches before its own doorbell.
     on_reload: ReloadHookSlot,
     client_registry: Arc<Mutex<Option<Arc<crate::ipc::ClientDirectory>>>>,
     watch_debounce: Arc<Mutex<Duration>>,
@@ -112,33 +118,44 @@ struct ReloadTarget {
 }
 
 impl ReloadTarget {
-    /// Reload the active name from its current source, logging failures. When
-    /// the theme changed, re-arm the source watches and run the reload hook if
-    /// registered, else `notify_reload`; an unchanged theme rings nothing.
+    /// Reload via the registered hook, else swap and ring `notify_reload` when
+    /// the theme changed.
     fn reload_and_apply(&self, context: &str) {
+        let registered = self
+            .on_reload
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let reload = || self.reload_step(context);
+        match registered {
+            // Called outside every lock: the hook reads `get()` and may re-register.
+            Some(hook) => hook(&reload),
+            None => {
+                if reload()
+                    && let Some(registry) = &self.client_registry
+                {
+                    registry.notify_reload();
+                }
+            }
+        }
+    }
+
+    /// Reload the active name from its current source, logging failures, and
+    /// re-arm the source watches if the theme changed. Returns whether it did.
+    fn reload_step(&self, context: &str) -> bool {
         match ThemeManager::reload_state(&self.state, &self.reload_gate) {
-            Ok(Reloaded::Unchanged) => return,
+            Ok(Reloaded::Unchanged) => return false,
             Ok(Reloaded::Content | Reloaded::Source) => {}
             Err(e) => {
                 debug_log!("theme", "Failed to reload theme ({context}): {e}");
-                return;
+                return false;
             }
         }
         // Only `try_lock`: `stop` holds the slot while joining the thread we run on.
         if let Ok(mut slot) = self.watcher.try_lock() {
             self.rearm(&mut slot);
         }
-        // Called outside every lock: the hook reads `get()` and may re-register.
-        let registered = self
-            .on_reload
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        if let Some(hook) = registered {
-            hook();
-        } else if let Some(registry) = &self.client_registry {
-            registry.notify_reload();
-        }
+        true
     }
 
     /// Point the source watches at the active location, leaving the user themes
@@ -201,7 +218,7 @@ impl ThemeManager {
             hot_reload: HotReloadSlot::new().reloading_on_missing(),
             on_reload: Arc::new(Mutex::new(None)),
             client_registry: Arc::new(Mutex::new(None)),
-            watch_debounce: Arc::new(Mutex::new(Duration::from_secs(5_u64))),
+            watch_debounce: Arc::new(Mutex::new(HOT_RELOAD_DEBOUNCE)),
             watch_registry: Arc::new(Mutex::new(None)),
             source_watches: Arc::new(Mutex::new(Vec::new())),
             reload_gate: Arc::new(Mutex::new(())),
@@ -245,8 +262,8 @@ impl ThemeManager {
         Arc::clone(&self.state().theme)
     }
 
-    /// Register the post-reload hook; it replaces the `notify_reload` doorbell.
-    /// Not run on [`switch_theme`](Self::switch_theme).
+    /// Register the hook that runs every watcher or poll reload; it replaces the
+    /// `notify_reload` doorbell. Not run on [`switch_theme`](Self::switch_theme).
     pub fn set_reload_callback(&self, callback: ThemeReloadCallback) {
         *self
             .on_reload
@@ -532,12 +549,20 @@ impl ThemeManager {
             .clone()
     }
 
-    /// Export the theme for `shell` from one consistent state snapshot.
+    /// Export the theme for `shell` from one consistent state snapshot, with
+    /// palette roles resolved through `palette`.
     #[must_use]
-    pub fn export(&self, shell: Shell, config: &Config) -> String {
+    pub fn export(&self, shell: Shell, config: &Config, palette: &Palette) -> String {
         let state = self.state();
         let plugin_files = Self::collect_plugin_segment_files();
-        export::theme_to_shell(&state.theme, &state.name, config, shell, &plugin_files)
+        export::theme_to_shell(
+            &state.theme,
+            &state.name,
+            config,
+            shell,
+            palette,
+            &plugin_files,
+        )
     }
 
     /// Discover third-party plugin segment file paths, keyed by segment name.
@@ -837,7 +862,11 @@ mod tests {
         theme.segments.hostname.trim_at = "$(touch /tmp/gpy_pwned)".to_owned();
         let manager = manager_with("default", theme);
 
-        let output = manager.export(Shell::Bash, &Config::default());
+        let output = manager.export(
+            Shell::Bash,
+            &Config::default(),
+            &crate::template::Palette::default(),
+        );
 
         assert!(
             output.contains("__hostname_trim_at=\"\\$(touch /tmp/gpy_pwned)\""),
@@ -857,7 +886,11 @@ mod tests {
         let theme = (*base.get()).clone();
         let manager = manager_with("weird$(touch x)", theme);
 
-        let output = manager.export(Shell::Fish, &Config::default());
+        let output = manager.export(
+            Shell::Fish,
+            &Config::default(),
+            &crate::template::Palette::default(),
+        );
 
         assert!(
             output.contains("set -g __gpy_theme_name \"weird\\$(touch x)\""),
@@ -868,7 +901,11 @@ mod tests {
     #[test]
     fn theme_export_includes_segment_bg_color_vars() {
         let manager = ThemeManager::builtin("default").expect("default theme should load");
-        let output = manager.export(Shell::Fish, &Config::default());
+        let output = manager.export(
+            Shell::Fish,
+            &Config::default(),
+            &crate::template::Palette::default(),
+        );
 
         assert!(
             output.contains("__color_directory_bg"),
@@ -899,7 +936,11 @@ mod tests {
     #[test]
     fn theme_export_includes_hostname_vars_for_default_theme() {
         let manager = ThemeManager::builtin("default").expect("default theme should load");
-        let output = manager.export(Shell::Fish, &Config::default());
+        let output = manager.export(
+            Shell::Fish,
+            &Config::default(),
+            &crate::template::Palette::default(),
+        );
 
         assert!(
             output.contains("__color_hostname_bg"),
@@ -938,7 +979,11 @@ mod tests {
     #[test]
     fn theme_export_includes_username_vars_for_default_theme() {
         let manager = ThemeManager::builtin("default").expect("default theme should load");
-        let output = manager.export(Shell::Fish, &Config::default());
+        let output = manager.export(
+            Shell::Fish,
+            &Config::default(),
+            &crate::template::Palette::default(),
+        );
 
         assert!(
             output.contains("set -g __color_username_bg \"red\""),
@@ -965,7 +1010,11 @@ mod tests {
     #[test]
     fn theme_export_username_format_presence_flag_for_starship_theme() {
         let manager = ThemeManager::builtin("starship").expect("starship theme should load");
-        let output = manager.export(Shell::Fish, &Config::default());
+        let output = manager.export(
+            Shell::Fish,
+            &Config::default(),
+            &crate::template::Palette::default(),
+        );
 
         // Presence flag only; the raw format string is never exported.
         assert!(

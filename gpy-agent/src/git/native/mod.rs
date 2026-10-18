@@ -13,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Git output parsing logic.
 pub mod parser;
@@ -81,20 +81,14 @@ impl NativeGitBackend {
         Self
     }
 
-    /// Execute a git command with the default timeout.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if git fails, exits non-zero, or times out.
-    fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
-        let timeout = Duration::from_secs(GitTimeout::DEFAULT);
-        run_git_with_timeout(repo_path, args, timeout)
+    /// Execute a git command that may fail (for optional operations).
+    fn run_git_optional(repo_path: &Path, args: &[&str], deadline: Instant) -> Option<String> {
+        run_git_until(repo_path, args, deadline).ok()
     }
 
-    /// Execute a git command that may fail (for optional operations).
-    fn run_git_optional(repo_path: &Path, args: &[&str]) -> Option<String> {
-        let timeout = Duration::from_secs(GitTimeout::DEFAULT);
-        run_git_with_timeout(repo_path, args, timeout).ok()
+    /// Deadline for a standalone git query outside a status operation.
+    fn default_deadline() -> Instant {
+        Instant::now() + Duration::from_secs(GitTimeout::DEFAULT)
     }
 
     /// Whether `core.ignorecase` is true for the repository at `repo_path`,
@@ -103,6 +97,11 @@ impl NativeGitBackend {
     /// Cached per repository; a failed read counts as `false` and is retried.
     #[must_use]
     pub fn ignores_case(repo_path: &Path) -> bool {
+        Self::ignores_case_until(repo_path, Self::default_deadline())
+    }
+
+    /// [`Self::ignores_case`], with the uncached read finishing by `deadline`.
+    fn ignores_case_until(repo_path: &Path, deadline: Instant) -> bool {
         let cached = IGNORE_CASE
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -124,6 +123,7 @@ impl NativeGitBackend {
                 "--get",
                 "core.ignorecase",
             ],
+            deadline,
         ) else {
             return false;
         };
@@ -137,9 +137,13 @@ impl NativeGitBackend {
     }
 
     /// Whether the user has set `core.untrackedCache` at any scope, to any value.
-    fn is_untracked_cache_configured(repo_path: &Path) -> bool {
-        Self::run_git_optional(repo_path, &["config", "--get", "core.untrackedCache"])
-            .is_some_and(|value| !value.trim().is_empty())
+    fn is_untracked_cache_configured(repo_path: &Path, deadline: Instant) -> bool {
+        Self::run_git_optional(
+            repo_path,
+            &["config", "--get", "core.untrackedCache"],
+            deadline,
+        )
+        .is_some_and(|value| !value.trim().is_empty())
     }
 
     /// Enable and initialize the untracked cache.
@@ -147,16 +151,20 @@ impl NativeGitBackend {
     /// # Errors
     ///
     /// Returns an error if `git config` fails.
-    fn enable_untracked_cache(repo_path: &Path) -> Result<()> {
-        Self::run_git(repo_path, &["config", "core.untrackedCache", "true"])?;
+    fn enable_untracked_cache(repo_path: &Path, deadline: Instant) -> Result<()> {
+        run_git_until(
+            repo_path,
+            &["config", "core.untrackedCache", "true"],
+            deadline,
+        )?;
 
-        let _ = Self::run_git_optional(repo_path, &["update-index", "--untracked-cache"]);
+        let _ = Self::run_git_optional(repo_path, &["update-index", "--untracked-cache"], deadline);
 
         Ok(())
     }
 
     /// Enable the untracked cache once per repo per process, unless the user set it.
-    fn ensure_untracked_cache(repo_path: &Path) {
+    fn ensure_untracked_cache(repo_path: &Path, deadline: Instant) {
         let _t = Timer::new("native_ensure_untracked_cache");
         let repo_path_buf = repo_path.to_path_buf();
 
@@ -170,8 +178,8 @@ impl NativeGitBackend {
             return;
         }
 
-        if !Self::is_untracked_cache_configured(repo_path) {
-            let _ = Self::enable_untracked_cache(repo_path);
+        if !Self::is_untracked_cache_configured(repo_path, deadline) {
+            let _ = Self::enable_untracked_cache(repo_path, deadline);
         }
 
         if let Some(set) = UNTRACKED_CACHE_CHECKED
@@ -190,6 +198,7 @@ impl NativeGitBackend {
         let Some(output) = Self::run_git_optional(
             repo_root,
             &["ls-files", "--cached", "-i", "--exclude-standard", "-z"],
+            Self::default_deadline(),
         ) else {
             return Vec::new();
         };
@@ -207,8 +216,12 @@ impl NativeGitBackend {
     /// Check if sparse checkout is enabled in the repository
     #[must_use]
     pub fn is_sparse_checkout(repo_path: &Path) -> bool {
-        Self::run_git_optional(repo_path, &["config", "--get", "core.sparseCheckout"])
-            .is_some_and(|v| v == "true")
+        Self::run_git_optional(
+            repo_path,
+            &["config", "--get", "core.sparseCheckout"],
+            Self::default_deadline(),
+        )
+        .is_some_and(|v| v == "true")
     }
 
     /// Resolve the git directory, following `.git` pointer files.
@@ -238,21 +251,20 @@ impl NativeGitBackend {
     fn resolve_branch_head(
         branch_head: BranchHead,
         repo_path: &Path,
-        timeout: Duration,
+        deadline: Instant,
     ) -> (String, bool) {
         const FALLBACK: &str = "main";
 
         match branch_head {
             BranchHead::Named(name) => (name, false),
             BranchHead::Detached => {
-                let hash =
-                    run_git_with_timeout(repo_path, &["rev-parse", "--short", "HEAD"], timeout)
-                        .unwrap_or_else(|_| FALLBACK.to_owned());
+                let hash = run_git_until(repo_path, &["rev-parse", "--short", "HEAD"], deadline)
+                    .unwrap_or_else(|_| FALLBACK.to_owned());
                 (hash, true)
             }
             BranchHead::Initial => {
                 let branch =
-                    run_git_with_timeout(repo_path, &["symbolic-ref", "--short", "HEAD"], timeout)
+                    run_git_until(repo_path, &["symbolic-ref", "--short", "HEAD"], deadline)
                         .ok()
                         .unwrap_or_else(|| FALLBACK.to_owned());
                 (branch, false)
@@ -269,10 +281,10 @@ impl NativeGitBackend {
         repo_path: &Path,
         paths: Option<&[PathBuf]>,
         max_ahead_behind: usize,
-        timeout: Duration,
+        deadline: Instant,
     ) -> Result<V2ParseResult> {
         let _t = Timer::new("native_get_status_v2");
-        Self::ensure_untracked_cache(repo_path);
+        Self::ensure_untracked_cache(repo_path, deadline);
 
         // `-z`: NUL-terminated records with unescaped paths.
         let mut args: Vec<OsString> = ["status", "--porcelain=v2", "--branch", "-z"]
@@ -283,7 +295,7 @@ impl NativeGitBackend {
         // `:(literal)` disables pathspec magic/globs in filenames; `icase`
         // matches watcher spelling against index spelling on case-insensitive repos.
         if let Some(p) = paths {
-            let magic = if Self::ignores_case(repo_path) {
+            let magic = if Self::ignores_case_until(repo_path, deadline) {
                 ":(literal,icase)"
             } else {
                 ":(literal)"
@@ -296,10 +308,10 @@ impl NativeGitBackend {
             }
         }
 
-        let output = run_git_with_timeout(repo_path, &args, timeout)?;
+        let output = run_git_until(repo_path, &args, deadline)?;
 
         let records = parser::parse_v2_records(&output, max_ahead_behind);
-        let (branch, detached) = Self::resolve_branch_head(records.branch, repo_path, timeout);
+        let (branch, detached) = Self::resolve_branch_head(records.branch, repo_path, deadline);
 
         Ok(V2ParseResult {
             branch,
@@ -316,9 +328,10 @@ impl NativeGitBackend {
         })
     }
 
-    /// Get the repository state (merging, rebasing, etc.)
+    /// Get the repository state (merging, rebasing, etc.); any git query
+    /// (reftable pseudorefs) finishes by `deadline`.
     #[must_use]
-    pub fn get_repo_state(repo_path: &Path) -> Option<RepositoryState> {
+    pub fn get_repo_state(repo_path: &Path, deadline: Instant) -> Option<RepositoryState> {
         let git_dir = Self::resolve_git_dir(repo_path);
 
         if git_dir.join("MERGE_HEAD").exists() {
@@ -337,13 +350,13 @@ impl NativeGitBackend {
 
         let reftable = git_dir.join("reftable").is_dir();
         if git_dir.join("CHERRY_PICK_HEAD").exists()
-            || (reftable && Self::pseudoref_exists(repo_path, "CHERRY_PICK_HEAD"))
+            || (reftable && Self::pseudoref_exists(repo_path, "CHERRY_PICK_HEAD", deadline))
         {
             return Some(RepositoryState::CherryPicking);
         }
 
         if git_dir.join("REVERT_HEAD").exists()
-            || (reftable && Self::pseudoref_exists(repo_path, "REVERT_HEAD"))
+            || (reftable && Self::pseudoref_exists(repo_path, "REVERT_HEAD", deadline))
         {
             return Some(RepositoryState::Reverting);
         }
@@ -367,17 +380,22 @@ impl NativeGitBackend {
 
     /// Whether a pseudoref exists, asking git because reftable repos keep
     /// them in the ref database rather than as loose files.
-    fn pseudoref_exists(repo_path: &Path, name: &str) -> bool {
-        Self::run_git_optional(repo_path, &["rev-parse", "--verify", "--quiet", name]).is_some()
+    fn pseudoref_exists(repo_path: &Path, name: &str, deadline: Instant) -> bool {
+        Self::run_git_optional(
+            repo_path,
+            &["rev-parse", "--verify", "--quiet", name],
+            deadline,
+        )
+        .is_some()
     }
 
     /// Count stash entries via `git stash list -z`; skipped when disabled.
-    fn get_stash_count(repo_path: &Path, stash_enabled: bool, timeout: Duration) -> u32 {
+    fn get_stash_count(repo_path: &Path, stash_enabled: bool, deadline: Instant) -> u32 {
         if !stash_enabled {
             return 0;
         }
 
-        run_git_with_timeout(repo_path, &["stash", "list", "-z"], timeout)
+        run_git_until(repo_path, &["stash", "list", "-z"], deadline)
             .ok()
             .map_or(0, |output| {
                 u32::try_from(output.split('\0').filter(|entry| !entry.is_empty()).count())
@@ -425,15 +443,15 @@ impl NativeGitBackend {
         paths: Option<&[PathBuf]>,
         max_ahead_behind: usize,
         stash_enabled: bool,
-        timeout: Duration,
+        deadline: Instant,
     ) -> Result<(Result<V2ParseResult>, Option<RepositoryState>, u32)> {
         let (status_v2_join_result, state_join_result, stash_join_result) =
             std::thread::scope(|s| {
                 let status_v2_handle =
-                    s.spawn(|| Self::get_status_v2(repo_root, paths, max_ahead_behind, timeout));
-                let state_handle = s.spawn(|| Self::get_repo_state(repo_root));
+                    s.spawn(|| Self::get_status_v2(repo_root, paths, max_ahead_behind, deadline));
+                let state_handle = s.spawn(|| Self::get_repo_state(repo_root, deadline));
                 let stash_handle =
-                    s.spawn(|| Self::get_stash_count(repo_root, stash_enabled, timeout));
+                    s.spawn(|| Self::get_stash_count(repo_root, stash_enabled, deadline));
 
                 let status_v2_result = status_v2_handle.join().map_err(|panic| {
                     Error::process(
@@ -466,9 +484,13 @@ impl NativeGitBackend {
 
     /// Get complete git status: branch, ahead/behind, files, state, stash, rebase progress.
     ///
+    /// `timeout` bounds the whole operation: every git subprocess it runs
+    /// shares one deadline, so a repository file that blocks git (a FIFO
+    /// `.git/HEAD`) costs one timeout, not one per command.
+    ///
     /// # Errors
     ///
-    /// Returns an error if git fails or a capture thread panics.
+    /// Returns an error if git fails, the deadline passes, or a capture thread panics.
     pub fn get_complete_status(
         path: &Path,
         paths: Option<&[PathBuf]>,
@@ -481,12 +503,13 @@ impl NativeGitBackend {
             return Ok(None);
         };
 
+        let deadline = Instant::now() + timeout;
         let (status_v2_res, state_opt, stash_count) = Self::run_parallel_captures(
             &repo_root,
             paths,
             max_ahead_behind,
             stash_enabled,
-            timeout,
+            deadline,
         )?;
 
         let v2 = status_v2_res?;
@@ -550,17 +573,25 @@ pub(crate) const fn resolve_overall_state(
     }
 }
 
-/// Execute a git command in its own process group with a hard timeout, so a
-/// hung repo or a child ignoring `SIGTERM` cannot wedge a worker.
+/// Execute a git command in its own process group, killed if it is still
+/// running at `deadline`, so a hung repo or a child ignoring `SIGTERM` cannot
+/// wedge a worker. A deadline that has already passed spawns nothing.
 ///
 /// # Errors
 ///
-/// Returns an error on spawn/I/O failure, non-zero exit, or timeout.
-fn run_git_with_timeout<S: AsRef<OsStr>>(
+/// Returns an error on spawn/I/O failure, non-zero exit, or a missed deadline.
+fn run_git_until<S: AsRef<OsStr>>(
     repo_path: &Path,
     args: &[S],
-    timeout: Duration,
+    deadline: Instant,
 ) -> Result<String> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(Error::git(
+            "git time budget spent before the command started".to_owned(),
+        ));
+    }
+
     let mut command = Command::new("git");
     for var in REPO_LOCAL_GIT_ENV {
         command.env_remove(var);
@@ -578,7 +609,7 @@ fn run_git_with_timeout<S: AsRef<OsStr>>(
         .spawn()
         .map_err(|e| Error::git(format!("Failed to execute git: {e}")))?;
 
-    let output = crate::process::wait_with_timeout(child, timeout).map_err(|e| match e {
+    let output = crate::process::wait_with_timeout(child, remaining).map_err(|e| match e {
         crate::process::WaitError::Io(io_err) => Error::git(format!("Git I/O error: {io_err}")),
         crate::process::WaitError::TimedOut(t) => {
             Error::git(format!("git command timed out after {t:?}"))

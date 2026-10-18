@@ -1,7 +1,7 @@
 //! Real-daemon checks that every Git entry point — direct requests and
 //! background work (reconcile ticks, registration scans) — honors
 //! `git.enabled` and `git.skip_paths`, including skip roots that appear or
-//! change while the agent runs.
+//! change while the agent runs, and reloads that newly exclude a repo.
 
 #![cfg(unix)]
 #![allow(clippy::unwrap_used)]
@@ -34,15 +34,34 @@ struct Daemon {
 
 impl Daemon {
     fn start(env: &CliTestEnv) -> Self {
+        Self::start_with(
+            env,
+            &[(
+                "GPY_RECONCILE_INTERVAL_SECS",
+                &RECONCILE_INTERVAL_SECS.to_string(),
+            )],
+        )
+    }
+
+    /// A daemon whose only background Git work is the registration scan: no
+    /// watcher and no reconcile tick within a test, so no scan straddles a reload.
+    fn start_quiescent(env: &CliTestEnv) -> Self {
+        Self::start_with(
+            env,
+            &[
+                ("GPY_RECONCILE_INTERVAL_SECS", "3600"),
+                ("GPY_DISABLE_WATCHER", "1"),
+            ],
+        )
+    }
+
+    fn start_with(env: &CliTestEnv, vars: &[(&str, &str)]) -> Self {
         let socket = env.root().join("s");
         // Armed before `start` so a half-started daemon is still stopped.
         let stop = AgentStopGuard::new(env.gpy_agent_command(), socket.clone());
         let started = env
             .gpy_agent_command()
-            .env(
-                "GPY_RECONCILE_INTERVAL_SECS",
-                RECONCILE_INTERVAL_SECS.to_string(),
-            )
+            .envs(vars.iter().copied())
             .args(["start", "--socket"])
             .arg(&socket)
             .output()
@@ -124,6 +143,16 @@ impl Daemon {
             _ => panic!("unexpected status response: {status}"),
         }
     }
+
+    /// Apply the on-disk config with a `config_reload` request.
+    fn reload_config(&self) {
+        let reply = self.request(&serde_json::json!({ "op": "config_reload" }));
+        assert_eq!(
+            reply.get("status").and_then(serde_json::Value::as_str),
+            Some("ok"),
+            "config reload failed: {reply}"
+        );
+    }
 }
 
 /// A committed repo named `name` under the env root; returns its canonical path.
@@ -167,6 +196,80 @@ fn write_config(env: &CliTestEnv, git_section: &str) {
         "[agent]\nlive_updates = true\n\n[git]\n{git_section}\n"
     ))
     .expect("write config");
+}
+
+/// The `.reload` doorbell flag the agent raises for `client`.
+fn reload_flag(env: &CliTestEnv, client: &KillOnDrop) -> PathBuf {
+    env.xdg_runtime_dir()
+        .join("gpy")
+        .join("shells")
+        .join(format!("{}.reload", client.id()))
+}
+
+/// Register `repo`, wait for its git caches, then reload with `excluding`:
+/// the caches of `repo_name` must be gone and open shells told to reload.
+/// Restoring the config lets the next request (a shell's cold miss) repopulate.
+fn assert_reload_drops_then_restores_git_caches(
+    env: &CliTestEnv,
+    repo: &Path,
+    repo_name: &str,
+    excluding: &str,
+) {
+    write_config(env, "");
+    let daemon = Daemon::start_quiescent(env);
+    let client = daemon.register_client(repo);
+    assert!(
+        wait_until(WAIT_TIMEOUT, POLL_INTERVAL, || !git_cache_files(
+            env, repo_name
+        )
+        .is_empty()),
+        "control: the registration scan must publish the repo's git caches"
+    );
+
+    let flag = reload_flag(env, &client);
+    let _ = std::fs::remove_file(&flag);
+    write_config(env, excluding);
+    daemon.reload_config();
+    assert_eq!(
+        git_cache_files(env, repo_name),
+        Vec::<PathBuf>::new(),
+        "a reload that newly excludes the repo must delete its git caches"
+    );
+    assert!(
+        flag.exists(),
+        "a reload that newly excludes the repo must ring the reload doorbell"
+    );
+
+    write_config(env, "");
+    daemon.reload_config();
+    assert!(
+        !daemon.git_skipped(repo),
+        "re-including the repo must serve git status again"
+    );
+    assert!(
+        !git_cache_files(env, repo_name).is_empty(),
+        "the first request after re-including the repo must republish its caches"
+    );
+}
+
+#[test]
+fn reload_disabling_git_deletes_cached_git_prompts() {
+    let env = CliTestEnv::new().expect("cli env");
+    // Deep enough that the repo's cache key is chunked into directories.
+    let repo = create_repo(&env, &format!("{}/longkeyrepo", "d".repeat(120)));
+    assert_reload_drops_then_restores_git_caches(&env, &repo, "longkeyrepo", "enabled = false");
+}
+
+#[test]
+fn reload_skipping_a_repo_deletes_its_cached_git_prompts() {
+    let env = CliTestEnv::new().expect("cli env");
+    let repo = create_repo(&env, "nowskipped");
+    assert_reload_drops_then_restores_git_caches(
+        &env,
+        &repo,
+        "nowskipped",
+        &format!("skip_paths = [\"{}\"]", repo.display()),
+    );
 }
 
 #[test]
@@ -272,5 +375,52 @@ fn skip_root_created_or_retargeted_while_running_takes_effect() {
     assert!(
         wait_until(WAIT_TIMEOUT, POLL_INTERVAL, || !daemon.git_skipped(&target)),
         "a retargeted skip root must stop matching its old target"
+    );
+}
+
+/// `skip_paths` is matched against the repository root: an entry at the root
+/// skips the repo for direct requests from a subdirectory and for background
+/// work alike, while an entry below the root skips neither.
+#[test]
+fn skip_paths_matches_the_repository_root() {
+    let env = CliTestEnv::new().expect("cli env");
+    let root_entry = create_repo(&env, "rootentry");
+    let sub_entry = create_repo(&env, "subentry");
+    for repo in [&root_entry, &sub_entry] {
+        std::fs::create_dir(repo.join("sub")).expect("create subdirectory");
+    }
+    write_config(
+        &env,
+        &format!(
+            "skip_paths = [\"{}\", \"{}\"]",
+            root_entry.display(),
+            sub_entry.join("sub").display()
+        ),
+    );
+
+    let daemon = Daemon::start(&env);
+    let _root_client = daemon.register_client(&root_entry.join("sub"));
+    let _sub_client = daemon.register_client(&sub_entry.join("sub"));
+
+    assert!(
+        wait_until(WAIT_TIMEOUT, POLL_INTERVAL, || !git_cache_files(
+            &env, "subentry"
+        )
+        .is_empty()),
+        "background work must scan a repo whose skip entry lies below its root"
+    );
+    assert!(
+        !daemon.git_skipped(&sub_entry.join("sub")),
+        "a direct request from inside a skip entry below the root must not be skipped"
+    );
+    assert!(
+        daemon.git_skipped(&root_entry.join("sub")),
+        "a direct request from a subdirectory of a skipped root must be skipped"
+    );
+    std::thread::sleep(SEVERAL_TICKS);
+    assert_eq!(
+        git_cache_files(&env, "rootentry"),
+        Vec::<PathBuf>::new(),
+        "background work must never publish a repo whose root is skipped"
     );
 }

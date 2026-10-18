@@ -31,11 +31,16 @@ check() {
 }
 
 # --- Suffix helper: matches gpy-agent's variant_suffix exactly ---
-check "not first, not last" "$(__gpy_cache_variant_suffix git false false)" "git"
-check "last only" "$(__gpy_cache_variant_suffix git true false)" "git_last"
-check "first only" "$(__gpy_cache_variant_suffix git false true)" "git_first"
-check "first and last" "$(__gpy_cache_variant_suffix git true true)" "git_first_last"
-check "lang base suffix" "$(__gpy_cache_variant_suffix lang false true)" "lang_first"
+__gpy_cache_variant_suffix git false false suffix
+check "not first, not last" "$suffix" "git"
+__gpy_cache_variant_suffix git true false suffix
+check "last only" "$suffix" "git_last"
+__gpy_cache_variant_suffix git false true suffix
+check "first only" "$suffix" "git_first"
+__gpy_cache_variant_suffix git true true suffix
+check "first and last" "$suffix" "git_first_last"
+__gpy_cache_variant_suffix lang false true suffix
+check "lang base suffix" "$suffix" "lang_first"
 
 # --- Segment-level: is_first must select the *_first cache file ---
 TMP_DIR="$(mktemp -d)"
@@ -48,7 +53,7 @@ mkdir -p "$FAKE_REPO/.git"
 cd "$FAKE_REPO" || exit 1
 
 RESOLVED_ROOT="$(realpath "$FAKE_REPO" 2>/dev/null || echo "$FAKE_REPO")"
-CACHE_KEY="$(__gpy_path_to_cache_key "$RESOLVED_ROOT")"
+__gpy_path_to_cache_key "$RESOLVED_ROOT" CACHE_KEY
 
 # Distinct sentinel bytes per variant so a mismatch is unambiguous.
 printf 'GIT-NORMAL' >"$CACHE_DIR/$CACHE_KEY.git.none.zsh"

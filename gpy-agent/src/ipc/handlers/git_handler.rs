@@ -77,7 +77,7 @@ impl GitHandler {
         let path_buf = path.as_path();
         let config = self.render.config_manager.get();
 
-        if !config.git.is_enabled_for(path_buf) {
+        if !config.git.enabled {
             return Err(HandlerError::FeatureDisabled("Git"));
         }
 
@@ -86,6 +86,11 @@ impl GitHandler {
         let Some(git_root) = git_root_opt else {
             return Err(HandlerError::NotInRepository);
         };
+
+        // `skip_paths` gates the repository root, as every background entry point does.
+        if !config.git.is_enabled_for(&git_root) {
+            return Err(HandlerError::FeatureDisabled("Git"));
+        }
 
         // `git_root` is already canonical.
         if let Some(cached_status) = self.git_cache.get_canonical(&git_root) {

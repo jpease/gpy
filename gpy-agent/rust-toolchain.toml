@@ -8,5 +8,5 @@
 # Bump when rust-version moves or a dependency's MSRV passes the pin, together
 # with `.clippy.toml` msrv and Cargo.toml rust-version.
 [toolchain]
-channel = "1.99.0"
+channel = "1.99.1"
 components = ["clippy", "rustfmt"]

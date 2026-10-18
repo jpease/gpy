@@ -70,29 +70,12 @@ The GPY agent consists of several key components:
 
 ## Configuration
 
-Create a `config.toml` file:
-
-```toml
-[agent]
-# IPC configuration
-socket_path = "/tmp/gpy-agent.sock"
-tcp_fallback_port = 0
-
-[cache]
-# Cache settings
-ttl_seconds = 300
-max_entries = 1000
-
-[git]
-# Git status settings
-max_depth = 3
-follow_symlinks = false
-
-[logging]
-# Logging configuration
-level = "info"
-format = "json"
-```
+The agent reads `$XDG_CONFIG_HOME/gpy/config.toml` (sections `[agent]`, `[git]`,
+`[language]`, `[ui]`); every key is in
+[`docs/user/configuration-reference.md`](../docs/user/configuration-reference.md).
+The socket path is not a config key: it is `<runtime root>/gpy.sock` unless
+`GPY_AGENT_SOCKET_PATH` or `--socket` overrides it (see
+[Socket Location](../docs/user/advanced-configuration.md#socket-location)).
 
 ## Performance
 

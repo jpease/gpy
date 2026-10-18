@@ -61,10 +61,12 @@ __gpy_render_prompt 0
 check "omitted middle segment: positions unchanged" true \
     "$([[ "$PS1" == *"DIR[|true]Z[true|]"* ]] && echo true || echo false)"
 
-cache_dir="$(__gpy_instant_cache_dir)"
+cache_dir=""
+__gpy_instant_cache_dir cache_dir
 key_path=""
 __gpy_instant_cache_key_path lang "$project" key_path
-cache_key="$(__gpy_path_to_cache_key "$key_path")"
+cache_key=""
+__gpy_path_to_cache_key "$key_path" cache_key
 mkdir -p "$cache_dir"
 printf LANGNONE >"$cache_dir/$cache_key.lang.none.bash"
 printf LANGWARM >"$cache_dir/$cache_key.lang_first.black.bash"
@@ -89,7 +91,8 @@ shopt -u failglob
 long_project="$TMP_ROOT/$(printf 'l%.0s' {1..80})/$(printf 'm%.0s' {1..80})/$(printf 'n%.0s' {1..60})"
 mkdir -p "$long_project"
 __gpy_instant_cache_key_path lang "$long_project" key_path
-long_key="$(__gpy_path_to_cache_key "$key_path")"
+long_key=""
+__gpy_path_to_cache_key "$key_path" long_key
 __gpy_chunk_cache_key long_key
 mkdir -p "$cache_dir/${long_key%/*}"
 printf LANG >"$cache_dir/$long_key.lang_first.magenta.bash"

@@ -72,9 +72,9 @@ check "omitted middle segment: positions unchanged" true \
     "$([[ "$PROMPT" == *"DIR[|true]Z[true|]"* ]] && echo true || echo false)"
 
 # --- Warm cache: language renders and keeps the first position ---
-cache_dir=$(__gpy_instant_cache_dir)
+__gpy_instant_cache_dir cache_dir
 __gpy_instant_cache_key_path lang "$project" key_path
-cache_key=$(__gpy_path_to_cache_key "$key_path")
+__gpy_path_to_cache_key "$key_path" cache_key
 mkdir -p "$cache_dir"
 printf LANGNONE >"$cache_dir/$cache_key.lang.none.zsh"
 printf LANGWARM >"$cache_dir/$cache_key.lang_first.black.zsh"
@@ -99,7 +99,7 @@ check "probe: a miss prints no NOMATCH error" "1" \
 long_project="$TMP_ROOT/${(l:80::l:)}/${(l:80::m:)}/${(l:60::n:)}"
 mkdir -p "$long_project"
 __gpy_instant_cache_key_path lang "$long_project" key_path
-long_key=$(__gpy_path_to_cache_key "$key_path")
+__gpy_path_to_cache_key "$key_path" long_key
 __gpy_chunk_cache_key long_key
 mkdir -p "$cache_dir/${long_key%/*}"
 printf LANG >"$cache_dir/$long_key.lang_first.magenta.zsh"

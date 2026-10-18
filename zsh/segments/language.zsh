@@ -28,11 +28,11 @@ function __gpy_segment_language() {
     local prev_bg=${2:-}
     local is_first=${3:-}
     local cache_suffix
-    cache_suffix=$(__gpy_cache_variant_suffix lang "$is_last" "$is_first")
+    __gpy_cache_variant_suffix lang "$is_last" "$is_first" cache_suffix
 
     # Exit code: 1 = miss, bit 2 = stale, bit 4 = variant fallback.
     local response
-    response=$(__gpy_read_instant_cache "$cache_suffix" "$PWD" "$prev_bg")
+    __gpy_read_instant_cache "$cache_suffix" "$PWD" "$prev_bg" response
     local cache_status=$?
 
     if [[ $cache_status -eq 1 ]]; then
@@ -45,7 +45,9 @@ function __gpy_segment_language() {
 
     # Variant fallback: background refresh only, so language never blocks.
     if __gpy_cache_status_variant "$cache_status"; then
-        __gpy_maybe_refresh "lang" "$PWD" "$cache_suffix" "$is_last" "$prev_bg" "$is_first" "$(__gpy_prev_bg_token "$prev_bg")"
+        local token
+        __gpy_prev_bg_token "$prev_bg" token
+        __gpy_maybe_refresh "lang" "$PWD" "$cache_suffix" "$is_last" "$prev_bg" "$is_first" "$token"
     fi
 
     if (( (cache_status & 2) != 0 )); then

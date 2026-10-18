@@ -76,8 +76,8 @@ fi
 # --- (d) after the interval the same key sends again ------------------------------------
 # The throttle reads time through __gpy_now_ms: move a fake clock past the
 # 500 ms interval instead of sleeping it out.
-fake_ms="$(__gpy_now_ms)"
-__gpy_now_ms() { printf '%s\n' "$fake_ms"; }
+__gpy_now_ms fake_ms
+__gpy_now_ms() { printf -v "$1" '%s' "$fake_ms"; }
 advance_clock_past_throttle() { fake_ms=$((fake_ms + 600)); }
 advance_clock_past_throttle
 __gpy_maybe_refresh git "$root" git_last true black ""
@@ -90,7 +90,7 @@ fi
 # --- (e) a stale git segment burst sends one request --------------------------------------
 cache_dir="$XDG_CACHE_HOME/gpy/instant-prompts"
 mkdir -p "$cache_dir"
-key="$(__gpy_path_to_cache_key "$(realpath "$root")")"
+__gpy_path_to_cache_key "$(realpath "$root")" key
 # `red`, not the theme's directory background: a config reload makes the agent
 # re-render the git entries for that background, which would overwrite the
 # sentinel mid-test.

@@ -12,8 +12,8 @@ function segment_duration_render --argument-names is_last is_first
 
     set -l ms $CMD_DURATION
     test -z "$ms"; and set ms 0
-    set -l dur_output (__gpy_request_duration "$ms" $is_last $__gpy_last_segment_bg $is_first)
-    printf '%s' $dur_output
+    set -l dur_output (__gpy_request_duration "$ms" $is_last $__gpy_last_segment_bg $is_first | string collect)
+    printf '%s' "$dur_output"
     if test -n "$dur_output"
         set -g __gpy_last_segment_bg $__color_duration_bg
     end

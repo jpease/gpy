@@ -103,3 +103,6 @@ disabled-two-segments	default	directory,git	0	-	-	down	repo	[agent]\nenabled = f
 disabled-git-only	default	git	0	-	-	down	repo	[agent]\nenabled = false	-	starts=0 registers=0 ipc_total=0 oneshots=git prompt~=main
 # a theme without two_line (built-in `text`) draws the character on the segments' line in every shell
 text-theme	text	directory,status	0	-	-	up	repo	-	-	starts=0 registers=1 ipc.character=1
+# a newline in a segment format is a line break in every shell, rendered by oneshot or read from the instant cache
+multiline-oneshot	golden-multiline	directory	0	-	-	down	repo	[agent]\nenabled = false	-	oneshots=directory prompt~=dir\n
+multiline-git-cached	golden-multiline	git	0	GPY_GIT_INSTANT_CACHE_TTL_SECONDS=3600	-	up	repo	-	git	ipc.git=0 prompt~=git\nmain

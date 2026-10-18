@@ -43,14 +43,15 @@ tmp="$(mktemp -d "${TMPDIR:-/tmp}/gpy-knobs.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 export XDG_CACHE_HOME="$tmp/cache"
 mkdir -p "$tmp/repo/.git" "$XDG_CACHE_HOME/gpy/instant-prompts"
-key="$(__gpy_path_to_cache_key "$(realpath "$tmp/repo")")"
+key=""
+__gpy_path_to_cache_key "$(realpath "$tmp/repo")" key
 entry="$XDG_CACHE_HOME/gpy/instant-prompts/$key.git.none.bash"
 printf 'cached' >"$entry"
 export GPY_GIT_INSTANT_CACHE_TTL_SECONDS=soon
-__gpy_read_instant_cache git "$tmp/repo" >/dev/null 2>&1
+__gpy_read_instant_cache git "$tmp/repo" "" ignored 2>/dev/null
 check "a non-numeric TTL still reads a fresh entry as fresh" "0" "$?"
 touch -t 200001010000 "$entry"
-__gpy_read_instant_cache git "$tmp/repo" >/dev/null 2>&1
+__gpy_read_instant_cache git "$tmp/repo" "" ignored 2>/dev/null
 status=$?
 check "a non-numeric TTL falls back to the default and ages an old entry to stale" "2" "$status"
 

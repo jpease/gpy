@@ -64,8 +64,8 @@ else
 fi
 
 # Move a fake __gpy_now_ms clock past the interval instead of sleeping.
-fake_ms="$(__gpy_now_ms)"
-__gpy_now_ms() { printf '%s\n' "$fake_ms"; }
+__gpy_now_ms fake_ms
+__gpy_now_ms() { printf -v "$1" '%s' "$fake_ms"; }
 advance_clock_past_throttle() { fake_ms=$((fake_ms + 600)); }
 advance_clock_past_throttle
 __gpy_maybe_refresh git "$root" git_last true black ""
@@ -77,7 +77,8 @@ fi
 
 cache_dir="$XDG_CACHE_HOME/gpy/instant-prompts"
 mkdir -p "$cache_dir"
-key="$(__gpy_path_to_cache_key "$(realpath "$root")")"
+key=""
+__gpy_path_to_cache_key "$(realpath "$root")" key
 # `red`, not the directory background: a config reload re-renders that background's git entries.
 entry="$cache_dir/$key.git_last.red.bash"
 printf '%s' "STALE" >"$entry"

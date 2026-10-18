@@ -41,9 +41,10 @@ enabled = true
 show_upstream = true
 # Git command timeout in seconds
 timeout_seconds = 10
-# Paths to skip git detection for performance (e.g., system directories)
-# Entries are matched after `~` expansion and symlink resolution.
-# Example: skip_paths = ["~/work/monorepo/vendor", "/mnt/network-share"]
+# Repositories to skip git detection for (performance). A repository is skipped
+# when its root is at or under an entry; an entry inside a repository does not
+# skip it. Entries are matched after `~` expansion and symlink resolution.
+# Example: skip_paths = ["~/work/huge-monorepo", "/mnt/network-share"]
 skip_paths = []
 # Maximum branch name length to display (0 = unlimited)
 # Long branch names will be truncated with an ellipsis (…)

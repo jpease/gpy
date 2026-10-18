@@ -43,7 +43,7 @@ backdate() {
 resolved_root="$(realpath "$SHELL_E2E_REPO" 2>/dev/null || echo "$SHELL_E2E_REPO")"
 cache_dir="$XDG_CACHE_HOME/gpy/instant-prompts"
 mkdir -p "$cache_dir"
-key="$(__gpy_path_to_cache_key "$resolved_root")"
+__gpy_path_to_cache_key "$resolved_root" key
 # `__gpy_segment_git "true" black ""`: is_last=true, prev_bg=black, is_first="".
 entry="$cache_dir/$key.git_last.black.zsh"
 sentinel="STALE-SENTINEL-DO-NOT-SHOW"

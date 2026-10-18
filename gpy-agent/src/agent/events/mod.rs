@@ -46,6 +46,9 @@ pub struct AgentContext {
     pub watch_registry: Arc<crate::watcher::WatchRegistry>,
     /// Where reloads write the shell theme exports (the gpy cache dir in production).
     pub theme_export_dir: PathBuf,
+    /// Held by each config or theme reload over its theme reload and export
+    /// write, so one theme change is seen as new, and rung for, by one path.
+    pub announce_gate: Arc<Mutex<()>>,
 }
 
 /// Serializes [`refresh_and_notify_if_changed`] per repository so a stale scan
@@ -704,31 +707,20 @@ pub(super) fn create_watcher(
         .map(Arc::new)
 }
 
-/// Apply the config's theme: switch when the name changed, else reload the
-/// active name from wherever it now resolves, so a user override added or
-/// removed, or an edit the theme watcher has not applied yet, takes effect.
-/// Returns whether the theme changed (a new name, source, or content); an edit
-/// the watcher already applied reports `false`, so it rings shells only once.
+/// Switch to the config's theme when its name changed; returns whether it did.
 ///
-/// A reload that fails keeps the current theme, as the theme watcher does,
-/// rather than rejecting unrelated config changes.
+/// Runs outside [`AgentContext::announce_gate`]: `switch_theme` joins the theme
+/// poll thread, whose reloads take that gate.
 ///
 /// # Errors
 /// Returns an error when a newly selected theme cannot be loaded.
-fn maybe_switch_theme(
-    theme_manager: &Arc<ThemeManager>,
+fn switch_renamed_theme(
+    theme_manager: &ThemeManager,
     old_config: &Config,
     new_config: &Config,
 ) -> Result<bool> {
     if old_config.ui.theme == new_config.ui.theme {
-        return Ok(theme_manager.reload().unwrap_or_else(|error| {
-            crate::debug::warn_fallback(
-                &format!("Theme '{}' reload", new_config.ui.theme),
-                "keeping the current theme",
-                &error,
-            );
-            false
-        }));
+        return Ok(false);
     }
 
     debug_log!(
@@ -745,6 +737,22 @@ fn maybe_switch_theme(
         new_config.ui.theme
     );
     Ok(true)
+}
+
+/// Reload the active name from wherever it now resolves, so a user override
+/// added or removed, or an edit the theme watcher has not applied yet, takes
+/// effect. Returns whether the theme changed; an edit the watcher already
+/// applied reports `false`. A failed reload keeps the current theme, as the
+/// theme watcher does, rather than rejecting unrelated config changes.
+fn reload_active_theme(theme_manager: &ThemeManager, config: &Config) -> bool {
+    theme_manager.reload().unwrap_or_else(|error| {
+        crate::debug::warn_fallback(
+            &format!("Theme '{}' reload", config.ui.theme),
+            "keeping the current theme",
+            &error,
+        );
+        false
+    })
 }
 
 /// Whether a config reload changes the rendered prompt and shells should redraw.
@@ -798,10 +806,9 @@ fn ui_refresh_required(old: &crate::config::UiSettings, new: &crate::config::UiS
 }
 
 /// Whether a `[git]` change needs cached git prompts re-rendered and a reload repaint.
-/// `timeout_seconds` and `watch_worktree` only affect later scans. `skip_paths` is
-/// excluded too: it is a gate, not render input. Every scan and cache publication
-/// (including the regeneration this triggers) checks it, so a change only alters
-/// what later requests and refreshes may scan or publish.
+/// `timeout_seconds` and `watch_worktree` only affect later scans. `enabled` and
+/// `skip_paths` decide which repos may show git at all: the regeneration this
+/// triggers deletes the git caches of repos they newly exclude.
 fn git_refresh_required(
     old: &crate::config::GitSettings,
     new: &crate::config::GitSettings,
@@ -810,7 +817,7 @@ fn git_refresh_required(
         enabled: old_enabled,
         show_upstream: old_show_upstream,
         timeout_seconds: _old_timeout_seconds,
-        skip_paths: _old_skip_paths,
+        skip_paths: old_skip_paths,
         max_branch_length: old_max_branch_length,
         max_ahead_behind: old_max_ahead_behind,
         watch_worktree: _old_watch_worktree,
@@ -822,7 +829,7 @@ fn git_refresh_required(
         enabled: new_enabled,
         show_upstream: new_show_upstream,
         timeout_seconds: _new_timeout_seconds,
-        skip_paths: _new_skip_paths,
+        skip_paths: new_skip_paths,
         max_branch_length: new_max_branch_length,
         max_ahead_behind: new_max_ahead_behind,
         watch_worktree: _new_watch_worktree,
@@ -832,6 +839,7 @@ fn git_refresh_required(
     } = new;
 
     old_enabled != new_enabled
+        || old_skip_paths != new_skip_paths
         || old_show_upstream != new_show_upstream
         || old_max_branch_length != new_max_branch_length
         || old_max_ahead_behind != new_max_ahead_behind
@@ -992,19 +1000,18 @@ pub(super) fn handle_config_reload(
 ) -> Result<()> {
     // Loaded before the theme switch so a rejected palette leaves nothing half-applied.
     let palette = reload_palette(old_config, new_config)?;
-    let theme_changed = maybe_switch_theme(&ctx.theme_manager, old_config, new_config)?;
+    let theme_switched = switch_renamed_theme(&ctx.theme_manager, old_config, new_config)?;
     let palette_changed = palette.is_some_and(|palette| ctx.palette_cache.replace(palette));
 
-    // Theme export must be on disk before the reload doorbell.
-    let export_changed = crate::cache::theme_export::write_theme_export_to_dir(
-        &ctx.theme_export_dir,
-        &ctx.theme_manager,
-        new_config,
-    )
-    .unwrap_or_else(|e| {
-        debug_log!("agent", "Failed to write theme export cache: {}", e);
-        false
-    });
+    let (theme_changed, export_changed) = {
+        let _announcing = ctx
+            .announce_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let theme_changed = theme_switched || reload_active_theme(&ctx.theme_manager, new_config);
+        // Theme export must be on disk before the reload doorbell.
+        (theme_changed, write_theme_export(ctx, new_config))
+    };
 
     crate::language::version::set_version_cache_ttl(new_config.language.cache_ttl_hours.get());
     ctx.watch_registry
@@ -1039,8 +1046,43 @@ pub(super) fn handle_config_reload(
     Ok(())
 }
 
+/// Write the shell theme exports; returns whether any changed. A failure is
+/// logged and reported as unchanged.
+fn write_theme_export(ctx: &AgentContext, config: &Config) -> bool {
+    crate::cache::theme_export::write_theme_export_to_dir(
+        &ctx.theme_export_dir,
+        &ctx.theme_manager,
+        config,
+        &ctx.palette_cache.get(),
+    )
+    .unwrap_or_else(|e| {
+        debug_log!("agent", "Failed to write theme export cache: {}", e);
+        false
+    })
+}
+
+/// Run a theme watcher or poll reload: `reload` swaps in the active theme and
+/// reports whether it changed. Under [`AgentContext::announce_gate`], so a
+/// change a concurrent config reload already applied, and rang for, reads as
+/// unchanged here; otherwise refresh the export and caches, then ring.
+pub(super) fn handle_theme_reload(ctx: &AgentContext, reload: &dyn Fn() -> bool) {
+    let _announcing = ctx
+        .announce_gate
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if !reload() {
+        return;
+    }
+    let config = ctx.config_manager.get();
+    write_theme_export(ctx, &config);
+    regenerate_instant_caches_for_theme_change(ctx, &config);
+    ctx.registry.notify_reload();
+}
+
 /// Re-render instant-prompt caches for every registered repo from cached data
 /// with the new theme, so the post-reload repaint is warm and flicker-free.
+/// A repo that `git.enabled`/`git.skip_paths` excludes has its git caches
+/// deleted instead, so shells stop showing a segment nothing refreshes.
 ///
 /// Renders both the context-free fallback and the new theme's `prev_bg` token the
 /// shell will send. Language rendering runs version detection, so it is deferred
@@ -1051,6 +1093,9 @@ pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, con
 
     // prev_bg for git under the new theme; mirrors `ThemeManager::export`.
     let git_prev_bg = theme.segments.directory.bg_color.as_str();
+    // Repos `config` includes again may publish git caches once more.
+    ctx.instant_cache
+        .release_git_suppression(|root| config.git.is_enabled_for(root));
 
     // Dedup: several clients may share one repo.
     let mut seen_keys = std::collections::HashSet::new();
@@ -1063,22 +1108,28 @@ pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, con
             continue;
         }
 
-        if let Some(root) = git_root.as_ref()
-            && config.git.is_enabled_for(root)
-            && let Some(status) = ctx.cache.get(root)
-        {
-            for prev_bg in [None, Some(git_prev_bg)] {
-                if let Err(e) = ctx
-                    .instant_cache
-                    .write_git(root, &status, config, &theme, prev_bg, &palette)
-                {
-                    debug_log!(
-                        "agent",
-                        "theme-change git cache regen failed for {}: {}",
-                        root.display(),
-                        e
-                    );
+        if let Some(root) = git_root.as_ref() {
+            if config.git.is_enabled_for(root) {
+                if let Some(status) = ctx.cache.get(root) {
+                    for prev_bg in [None, Some(git_prev_bg)] {
+                        if let Err(e) = ctx
+                            .instant_cache
+                            .write_git(root, &status, config, &theme, prev_bg, &palette)
+                        {
+                            debug_log!(
+                                "agent",
+                                "theme-change git cache regen failed for {}: {}",
+                                root.display(),
+                                e
+                            );
+                        }
+                    }
                 }
+            } else {
+                ctx.instant_cache.remove_git(root);
+                // Nothing refreshes an excluded repo, so its status goes stale;
+                // re-including it must rescan rather than republish this one.
+                ctx.cache.invalidate_canonical(root);
             }
         }
 

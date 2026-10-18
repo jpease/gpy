@@ -828,7 +828,7 @@ end
 **Debug**:
 ```fish
 # Test IPC directly
-printf '{"op":"k8s","cwd":"%s","format":"json"}\n' $PWD | socat - UNIX-CONNECT:~/.cache/gpy/gpy-agent.sock
+printf '{"op":"k8s","cwd":"%s","format":"json"}\n' $PWD | socat - UNIX-CONNECT:(__gpy_ipc_endpoint)
 
 # Expected: {"status":"ok","data":{"context":"...","namespace":"..."}}
 ```

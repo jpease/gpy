@@ -15,9 +15,9 @@ function segment_username_render --argument-names is_last
         # One-token local: an empty-list binding would shift prev_bg.
         set -l is_last_value ""
         test "$is_last" = true; and set is_last_value true
-        set -l result (__gpy_request_username $USER $is_last_value $__gpy_last_segment_bg)
+        set -l result (__gpy_request_username $USER $is_last_value $__gpy_last_segment_bg | string collect)
         if test -n "$result"
-            printf '%s' $result
+            printf '%s' "$result"
             # Only track bg when a pill rendered.
             set -g __gpy_last_segment_bg $__color_username_bg
         end

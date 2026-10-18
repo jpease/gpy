@@ -147,7 +147,9 @@ nounset_scenario() {
 set -u
 PATH=\$HOME/nu-stubs:\$PATH
 unset GPY_AGENT_SOCKET_PATH $unsets" 'echo "ep=[$(__gpy_ipc_endpoint)]"
-echo "ic=[$(__gpy_instant_cache_dir)]"
+ic=""
+__gpy_instant_cache_dir ic
+echo "ic=[$ic]"
 echo "te=[$(__gpy_theme_export_cache_path)]"
 cd "$HOME/nu-repo"
 true

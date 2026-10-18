@@ -374,12 +374,17 @@ function _install_fish_files
         # Function scope: a `set -l` inside the block below is invisible after it.
         set -l skip_symlink 0
 
-        # A foreign symlink (stow/yadm/chezmoi) is moved aside, never deleted.
+        # A foreign symlink (stow/yadm/chezmoi) is moved aside, never deleted. A
+        # regular file is deleted as GPY's only when it carries both segment
+        # dispatch lines every GPY prompt shipped with (the scripts/uninstall.*
+        # rule); any other prompt, even one that mentions GPY, is backed up.
         if test -e $dest_prompt -o -L $dest_prompt
             if test -L $dest_prompt; and test (readlink $dest_prompt) = "$source_prompt"
                 echo "fish_prompt symlink already correct"
                 set skip_symlink 1
-            else if test -f $dest_prompt -a ! -L $dest_prompt; and grep -q -E "(GPY|__enabled_segments)" $dest_prompt 2>/dev/null
+            else if test -f $dest_prompt -a ! -L $dest_prompt
+                and grep -Eq '^[[:space:]]*for segment in \$__enabled_segments[[:space:]]*$' $dest_prompt
+                and grep -Eq '^[[:space:]]*if functions -q segment_\{\$segment\}_render[[:space:]]*$' $dest_prompt
                 rm -f $dest_prompt
             else
                 set -l backup_file "$dest_prompt.backup."(date +%Y%m%d_%H%M%S)

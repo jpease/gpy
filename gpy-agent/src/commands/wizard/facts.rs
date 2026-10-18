@@ -28,9 +28,13 @@ pub struct PreviewFacts {
 ///
 /// Returns an error if git status collection fails; no repo is `Ok`.
 pub fn gather(cwd: &Path, config: &Config, theme: &ThemeConfig) -> crate::Result<PreviewFacts> {
-    // Canonical, like the IPC `SafePath`, so symlinked `git.skip_paths` entries match.
+    // Canonical, like the IPC `SafePath`, so symlinked `git.skip_paths` entries
+    // match; they gate the repository root, as in the agent.
     let canonical_cwd = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
-    let repository_status = if config.git.is_enabled_for(&canonical_cwd) {
+    let git_allowed = config.git.enabled
+        && crate::git::find_repo_root(&canonical_cwd)
+            .is_some_and(|root| config.git.is_enabled_for(&root));
+    let repository_status = if git_allowed {
         crate::git::status::load_repository_state(
             cwd,
             None,

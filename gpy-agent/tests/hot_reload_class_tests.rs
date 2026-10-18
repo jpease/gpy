@@ -46,10 +46,13 @@ extern "C" fn count_doorbell(_signal: i32) {
 }
 
 const SHELL_EXPORTS: [&str; 3] = ["theme-export.fish", "theme-export.bash", "theme-export.zsh"];
-/// Theme debounce is 5 s in production; allow generous headroom under load.
+/// Generous headroom over the 1 s watcher debounce under load.
 const SETTLE_DEADLINE: Duration = Duration::from_secs(25);
 /// Extra time after settling to catch a late stale overwrite.
 const QUIET_PERIOD: Duration = Duration::from_millis(2500);
+/// Doorbells are counted this long after the change, so a late ring from
+/// either 1 s watcher, whose flush tick drains a change within 2 s, lands.
+const DOORBELL_WINDOW: Duration = Duration::from_secs(5);
 
 const ACTIVE_THEME: &str = "active";
 const OTHER_THEME: &str = "other";
@@ -83,7 +86,7 @@ const EDIT_CONFIG_IN_PLACE: Mechanism = Mechanism {
     name: "edit config.toml in place",
     setup: None,
     apply: edit_config_in_place,
-    doorbells: None,
+    doorbells: Some(1),
 };
 const EDIT_SYMLINKED_CONFIG_TARGET: Mechanism = Mechanism {
     name: "edit the target of a symlinked config.toml",
@@ -416,7 +419,13 @@ impl Harness {
     fn fresh_exports(config: &Config) -> Vec<String> {
         let theme_manager = ThemeManager::new(config.ui.theme.as_str()).expect("fresh theme load");
         let scratch = TempDir::new().expect("scratch dir");
-        write_theme_export_to_dir(scratch.path(), &theme_manager, config).expect("fresh export");
+        write_theme_export_to_dir(
+            scratch.path(),
+            &theme_manager,
+            config,
+            &active_palette(config),
+        )
+        .expect("fresh export");
         SHELL_EXPORTS
             .iter()
             .map(|file| fs::read_to_string(scratch.path().join(file)).expect("read fresh export"))
@@ -468,6 +477,7 @@ fn run_mechanism(mechanism: &Mechanism) {
     DOORBELL_COUNTER.store(0, Ordering::Relaxed);
 
     (mechanism.apply)(&harness);
+    let applied_at = Instant::now();
     let expected_config = harness.fresh_config();
     let expected = (
         Harness::fresh_exports(&expected_config),
@@ -503,6 +513,7 @@ fn run_mechanism(mechanism: &Mechanism) {
     );
 
     if let Some(rings) = mechanism.doorbells {
+        std::thread::sleep(DOORBELL_WINDOW.saturating_sub(applied_at.elapsed()));
         assert_eq!(
             DOORBELL_COUNTER.load(Ordering::Relaxed),
             rings,

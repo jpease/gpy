@@ -1,6 +1,7 @@
 function __gpy_segment_git_detect() {
     [[ "${GPY_GIT_ENABLED:-1}" != "0" ]] || return 1
-    __gpy_find_git_root "$PWD" >/dev/null
+    local root
+    __gpy_find_git_root "$PWD" root
 }
 
 # Returns 0 when the render must print nothing (agent down, cold miss), so git takes no position.
@@ -15,13 +16,13 @@ function __gpy_segment_git() {
     local prev_bg=${2:-}
     local is_first=${3:-}
     local cache_suffix
-    cache_suffix=$(__gpy_cache_variant_suffix git "$is_last" "$is_first")
+    __gpy_cache_variant_suffix git "$is_last" "$is_first" cache_suffix
 
     local root="$PWD"
 
 # Exit code: 1 = miss, bit 2 = stale, bit 4 = variant fallback.
     local rendered_output
-    rendered_output=$(__gpy_read_instant_cache "$cache_suffix" "$root" "$prev_bg")
+    __gpy_read_instant_cache "$cache_suffix" "$root" "$prev_bg" rendered_output
     local cache_status=$?
 
     if [[ $cache_status -eq 1 ]]; then

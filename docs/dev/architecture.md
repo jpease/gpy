@@ -818,9 +818,11 @@ GPY uses a **JSON-based request/response protocol** over Unix domain sockets. Th
 
 ### Transport Layer
 
-**Socket Location**:
-- Default: `$XDG_RUNTIME_DIR/gpy-agent.sock` or `/tmp/gpy-agent-$UID.sock`
-- Configurable via: `$GPY_AGENT_SOCKET_PATH` or `config.toml`
+**Socket Location** (`agent::lifecycle::resolve_socket_path`, `paths::runtime_root_for`):
+- Override: `--socket <path>` on `gpy-agent start`/`stop`/`status`, or `$GPY_AGENT_SOCKET_PATH` (empty counts as unset)
+- Default: `<runtime root>/gpy.sock`, where the runtime root is the first of `$XDG_RUNTIME_DIR/gpy`, `$XDG_CACHE_HOME/gpy`, `$HOME/.cache/gpy` and `/tmp/gpy`; relative `XDG_*` values are ignored
+- There is no `config.toml` key. Fish, Bash and Zsh resolve the same path in `__gpy_ipc_endpoint`; `gpy debug paths` prints it
+- The path must fit the Unix socket limit (103 bytes on macOS, 107 on Linux); `gpy-agent` refuses a longer one
 
 **Connection Type**: SOCK_STREAM (stream socket, not datagram)
 
@@ -830,9 +832,9 @@ GPY uses a **JSON-based request/response protocol** over Unix domain sockets. Th
 - Multiple requests can be sent over the same connection (connection pooling)
 
 **Security**:
-- Socket permissions: `0600` (owner read/write only)
-- OS enforces UID matching (only same user can connect)
-- No authentication needed (filesystem permissions sufficient)
+- The socket is chmod'ed to `0600` right after bind
+- The socket's directory is trusted only if it is a real directory (not a symlink) owned by the user. An owned group- or world-writable directory is set to `0700` when it is the default runtime root and refused when it comes from `--socket` or `$GPY_AGENT_SOCKET_PATH`. `gpy-agent start` checks before it touches the directory, and the daemon checks again immediately before bind (`secure_socket_dir` in `ipc/server/handle.rs`)
+- No handshake or peer-credential check: any process running as the user can connect. See [SECURITY.md](../../SECURITY.md#trust-boundaries) for the full trust policy
 
 ### Message Format
 
@@ -1057,8 +1059,8 @@ Responses are operation-specific, but always valid JSON:
 
 ```fish
 function __gpy_request -a operation cwd format is_last
-    # Build JSON request
-    set -l socket "$XDG_RUNTIME_DIR/gpy-agent.sock"
+    # Build JSON request; __gpy_ipc_endpoint resolves the socket path
+    set -l socket (__gpy_ipc_endpoint)
     set -l request "{\"op\":\"$operation\",\"cwd\":\"$cwd\",\"format\":\"$format\",\"is_last\":$is_last}"
 
     # Send request, read response
@@ -1074,7 +1076,7 @@ set -l git_status (__gpy_request "git" (pwd) "json" false)
 ```zsh
 __gpy_request() {
     local op=$1 cwd=$2 format=$3 is_last=$4
-    local socket="${XDG_RUNTIME_DIR:-/tmp}/gpy-agent.sock"
+    local socket=$(__gpy_ipc_endpoint)
     local request="{\"op\":\"$op\",\"cwd\":\"$cwd\",\"format\":\"$format\",\"is_last\":$is_last}"
 
     # Prefer the zsh/net/socket builtin (no external tool needed); fall back
@@ -1097,7 +1099,7 @@ __gpy_request() {
 ```bash
 __gpy_request() {
     local op=$1 cwd=$2 format=$3 is_last=$4
-    local socket="${XDG_RUNTIME_DIR:-/tmp}/gpy-agent.sock"
+    local socket=$(__gpy_ipc_endpoint)
     local request="{\"op\":\"$op\",\"cwd\":\"$cwd\",\"format\":\"$format\",\"is_last\":$is_last}"
 
     # Bash has no /dev/tcp-to-Unix-socket path; use socat, then nc -U.
@@ -1322,21 +1324,21 @@ Process request
 
 ```toml
 [agent]
-socket_path = "/tmp/gpy.sock"  # Override default
+enabled = true
+timeout_seconds = 5
 
 [git]
-timeout_seconds = 5
+timeout_seconds = 10
 skip_paths = ["/mnt/slow-drive"]
 
 [language]
-cache_ttl_seconds = 300
+cache_ttl_hours = 24
 
 [ui]
 show_icons = true
-
-[clock]
-show_seconds = false  # false = 60s updates, true = 1s updates
 ```
+
+Every key is in the [Configuration Reference](../user/configuration-reference.md). The socket path is not configurable here; see [Transport Layer](#transport-layer).
 
 ### Hot-Reload Status
 
@@ -1501,8 +1503,8 @@ gpy status
 # Run diagnostics
 gpy doctor
 
-# IPC latency
-socat -T 1 - UNIX-CONNECT:/tmp/gpy.sock <<< '{"op":"ping"}'
+# IPC latency (socket path from `gpy debug paths`)
+socat -T 1 - UNIX-CONNECT:"$XDG_RUNTIME_DIR/gpy/gpy.sock" <<< '{"op":"ping"}'
 
 # Git query timing
 time git status --porcelain

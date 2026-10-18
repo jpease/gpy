@@ -7,6 +7,7 @@
 use super::{SEGMENT_BG_VARS, escape_shell_value, theme_to_shell};
 use crate::config::Config;
 use crate::shell::Shell;
+use crate::template::Palette;
 use crate::theme::model::ThemeConfig;
 use std::collections::BTreeMap;
 use std::process::Command;
@@ -179,6 +180,7 @@ fn golden_export(shell: Shell) -> String {
         GOLDEN_THEME_NAME,
         &golden_config(),
         shell,
+        &Palette::default(),
         &golden_plugin_segment_files(),
     )
 }
@@ -235,6 +237,7 @@ fn export_drops_private_use_delimiters_when_icons_are_off() {
                 GOLDEN_THEME_NAME,
                 config,
                 shell,
+                &Palette::default(),
                 &golden_plugin_segment_files(),
             )
         };
@@ -354,6 +357,7 @@ fn default_theme_export_matches_golden() {
         "default",
         &Config::default(),
         Shell::Fish,
+        &Palette::default(),
         &BTreeMap::new(),
     );
     insta::assert_snapshot!("default_theme_fish_export", export);
@@ -614,8 +618,16 @@ fn optional_shell_vars_reset_on_resource() {
             skip_shell_or_fail_under_ci(shell);
             continue;
         }
-        let export =
-            |theme: &ThemeConfig| theme_to_shell(theme, "t", &config, shell, &BTreeMap::new());
+        let export = |theme: &ThemeConfig| {
+            theme_to_shell(
+                theme,
+                "t",
+                &config,
+                shell,
+                &Palette::default(),
+                &BTreeMap::new(),
+            )
+        };
         let path_a = dir
             .path()
             .join(format!("a.{shell_bin}", shell_bin = shell_bin(shell)));
@@ -637,5 +649,88 @@ fn optional_shell_vars_reset_on_resource() {
             reloaded.contains(&"__time_format=12".to_owned()),
             "{shell:?}: B must reset the clock to 12h, got {reloaded:?}"
         );
+    }
+}
+
+/// Fish's `set_color` rejects bare ANSI indices and palette roles, so the Fish
+/// export carries names/hex for them; Bash/Zsh keep the index their renderers
+/// draw as a 256-color SGR, and get the role's palette value.
+#[test]
+fn exported_index_and_role_colors_reach_real_set_color() {
+    use crate::config::types::ColorSpec;
+    use crate::template::Color;
+    use std::collections::HashMap;
+
+    let mut theme = ThemeConfig::default();
+    theme.segments.clock.bg_color = ColorSpec::new("42").expect("index color");
+    theme.segments.clock.text_color = ColorSpec::new("3").expect("index color");
+    theme.segments.status.ok_bg_color = ColorSpec::new("orange").expect("role color");
+    let palette = Palette::new(HashMap::from([(
+        "orange".to_owned(),
+        Color::Rgb {
+            r: 0xfa,
+            g: 0xb3,
+            b: 0x87,
+        },
+    )]));
+    let export = |shell| {
+        theme_to_shell(
+            &theme,
+            "t",
+            &Config::default(),
+            shell,
+            &palette,
+            &BTreeMap::new(),
+        )
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    if shell_available(Shell::Fish) {
+        let path = dir.path().join("export.fish");
+        std::fs::write(&path, export(Shell::Fish)).expect("write fish export");
+        let output = Command::new("fish")
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .args([
+                "--no-config",
+                "-c",
+                "source $argv[1]; set -g fish_term24bit 1
+                 set_color $__color_clock_bg; set_color $__color_clock_fg
+                 set_color -b $__color_status_ok_bg",
+                "--",
+            ])
+            .arg(&path)
+            .output()
+            .expect("spawning fish");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            "",
+            "set_color must accept every exported color"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "\x1b[38;2;0;215;135m\x1b[33m\x1b[48;2;250;179;135m",
+            "42 is xterm #00d787, 3 is yellow, orange is the palette's #fab387"
+        );
+    } else {
+        skip_shell_or_fail_under_ci(Shell::Fish);
+    }
+
+    if shell_available(Shell::Bash) {
+        let path = dir.path().join("export.bash");
+        std::fs::write(&path, export(Shell::Bash)).expect("write bash export");
+        let vars = sourced_vars(Shell::Bash, &[&path]);
+        for expected in [
+            "__color_clock_bg=42",
+            "__color_clock_fg=3",
+            "__color_status_ok_bg=#fab387",
+        ] {
+            assert!(
+                vars.contains(&expected.to_owned()),
+                "bash export lacks {expected}"
+            );
+        }
+    } else {
+        skip_shell_or_fail_under_ci(Shell::Bash);
     }
 }
