@@ -1,9 +1,11 @@
 //! Matcher for `git.skip_paths`: `~` expanded, entries matched literally and
 //! canonically, component-wise (`/tmp/foo` doesn't skip `/tmp/foobar`).
-//! Resolution hits the filesystem, so it's cached per distinct list.
+//! Resolution hits the filesystem, so it's cached per distinct list and
+//! redone after [`RESOLVE_TTL`].
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use super::GitSettings;
 
@@ -53,14 +55,61 @@ impl SkipMatcher {
     }
 }
 
-/// The matcher for the most recent `(skip_paths, home)` pair.
+/// How long a resolved matcher is reused before its entries are canonicalized
+/// again. Bounds how long a root created, removed, or retargeted after first
+/// use stays stale, while lookups inside the window touch no filesystem.
+const RESOLVE_TTL: Duration = Duration::from_secs(2);
+
+/// The matcher for one `(skip_paths, home)` pair and when it was resolved.
 struct Cached {
     entries: Vec<String>,
     home: Option<String>,
+    resolved_at: Instant,
     matcher: Arc<SkipMatcher>,
 }
 
-static CACHE: Mutex<Option<Cached>> = Mutex::new(None);
+/// Holds the matcher for the most recent `(skip_paths, home)` pair.
+struct MatcherCache(Mutex<Option<Cached>>);
+
+impl MatcherCache {
+    const fn new() -> Self {
+        Self(Mutex::new(None))
+    }
+
+    /// The matcher for `entries`/`home`, re-resolved when the pair changed or
+    /// the cached one is at least [`RESOLVE_TTL`] old at `now`. Resolution
+    /// runs outside the lock: `canonicalize` on a slow mount must not stall
+    /// every other Git gate check.
+    fn matcher(&self, entries: &[String], home: Option<&str>, now: Instant) -> Arc<SkipMatcher> {
+        {
+            let guard = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(cached) = guard.as_ref().filter(|c| {
+                c.entries == entries
+                    && c.home.as_deref() == home
+                    && now.saturating_duration_since(c.resolved_at) < RESOLVE_TTL
+            }) {
+                return Arc::clone(&cached.matcher);
+            }
+        }
+        let matcher = Arc::new(SkipMatcher::new(entries, home.map(Path::new)));
+        let mut guard = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        // A concurrent resolver may have stored a newer result meanwhile; keep it.
+        let newer_stored = guard.as_ref().is_some_and(|c| {
+            c.entries == entries && c.home.as_deref() == home && c.resolved_at > now
+        });
+        if !newer_stored {
+            *guard = Some(Cached {
+                entries: entries.to_vec(),
+                home: home.map(str::to_owned),
+                resolved_at: now,
+                matcher: Arc::clone(&matcher),
+            });
+        }
+        matcher
+    }
+}
+
+static CACHE: MatcherCache = MatcherCache::new();
 
 impl GitSettings {
     /// Whether Git detection may run for `path` (pass a canonical path):
@@ -77,27 +126,10 @@ impl GitSettings {
             return false;
         }
         let home = crate::paths::home_dir();
-        let mut guard = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
-        let hit = guard
-            .as_ref()
-            .filter(|c| c.entries == self.skip_paths && c.home == home)
-            .map(|c| Arc::clone(&c.matcher));
-        let matcher = hit.unwrap_or_else(|| {
-            let built = Arc::new(resolve(&self.skip_paths, home.as_deref()));
-            *guard = Some(Cached {
-                entries: self.skip_paths.clone(),
-                home: home.clone(),
-                matcher: Arc::clone(&built),
-            });
-            built
-        });
-        drop(guard);
-        matcher.is_skipped(path)
+        CACHE
+            .matcher(&self.skip_paths, home.as_deref(), Instant::now())
+            .is_skipped(path)
     }
-}
-
-fn resolve(entries: &[String], home: Option<&str>) -> SkipMatcher {
-    SkipMatcher::new(entries, home.map(Path::new))
 }
 
 #[cfg(test)]
@@ -166,5 +198,43 @@ mod tests {
         };
         assert!(settings.is_path_skipped(&canonical_repo));
         assert!(!GitSettings::default().is_path_skipped(&canonical_repo));
+    }
+
+    /// Lookups inside the TTL reuse the resolution; after it, a root created
+    /// late starts matching and a retargeted symlink drops its old target.
+    #[cfg(unix)]
+    #[test]
+    fn matcher_cache_re_resolves_created_and_retargeted_roots_after_ttl() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let first = tmp.path().join("first");
+        let second = tmp.path().join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let first = std::fs::canonicalize(first).unwrap();
+        let second = std::fs::canonicalize(second).unwrap();
+        let link = tmp.path().join("link");
+        let entries = vec![link.to_string_lossy().into_owned()];
+        let cache = MatcherCache::new();
+        let start = Instant::now();
+        let after_ttl = |ttls: u32| start.checked_add(RESOLVE_TTL * ttls).unwrap();
+
+        assert!(!cache.matcher(&entries, None, start).is_skipped(&first));
+
+        std::os::unix::fs::symlink(&first, &link).unwrap();
+        assert!(
+            !cache.matcher(&entries, None, start).is_skipped(&first),
+            "inside the TTL the earlier resolution is reused"
+        );
+        assert!(
+            cache
+                .matcher(&entries, None, after_ttl(1))
+                .is_skipped(&first)
+        );
+
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&second, &link).unwrap();
+        let retargeted = cache.matcher(&entries, None, after_ttl(2));
+        assert!(!retargeted.is_skipped(&first));
+        assert!(retargeted.is_skipped(&second));
     }
 }

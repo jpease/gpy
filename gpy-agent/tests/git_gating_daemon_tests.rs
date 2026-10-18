@@ -1,5 +1,7 @@
-//! Real-daemon checks that background Git work (reconcile ticks, registration
-//! scans) honors `git.enabled` and `git.skip_paths` exactly like direct requests.
+//! Real-daemon checks that every Git entry point — direct requests and
+//! background work (reconcile ticks, registration scans) — honors
+//! `git.enabled` and `git.skip_paths`, including skip roots that appear or
+//! change while the agent runs.
 
 #![cfg(unix)]
 #![allow(clippy::unwrap_used)]
@@ -94,6 +96,20 @@ impl Daemon {
             "registration failed: {response}"
         );
         client
+    }
+
+    /// Whether the agent reports Git disabled for `repo`, as opposed to a status reply.
+    fn git_skipped(&self, repo: &Path) -> bool {
+        let reply = self.request(&serde_json::json!({
+            "op": "git",
+            "cwd": repo,
+            "format": "json",
+        }));
+        match reply.get("error").and_then(serde_json::Value::as_str) {
+            Some(message) if message.contains("disabled") => true,
+            None if reply.get("branch").is_some() => false,
+            _ => panic!("unexpected git reply: {reply}"),
+        }
     }
 
     /// `(watched_repos, git cache entries)` from the agent's status report.
@@ -217,5 +233,44 @@ fn reconcile_never_scans_or_publishes_when_git_disabled() {
         daemon.watched_and_cached(),
         (1, 0),
         "the repo is watched (for language), but git must never scan it"
+    );
+}
+
+/// A skip root created after the agent first resolved `skip_paths` takes
+/// effect without a restart and agrees with a freshly started agent; moving
+/// the symlink elsewhere stops it matching the old target.
+#[test]
+fn skip_root_created_or_retargeted_while_running_takes_effect() {
+    let env = CliTestEnv::new().expect("cli env");
+    let target = create_repo(&env, "targetrepo");
+    let elsewhere = env.root().join("elsewhere");
+    std::fs::create_dir(&elsewhere).expect("create retarget dir");
+    let link = env.root().join("skiplink");
+    write_config(&env, &format!("skip_paths = [\"{}\"]", link.display()));
+
+    let daemon = Daemon::start(&env);
+    assert!(
+        !daemon.git_skipped(&target),
+        "the skip root does not exist yet"
+    );
+
+    std::os::unix::fs::symlink(&target, &link).expect("create skip root");
+    assert!(
+        wait_until(WAIT_TIMEOUT, POLL_INTERVAL, || daemon.git_skipped(&target)),
+        "a skip root created after first use must take effect without a restart"
+    );
+
+    drop(daemon);
+    let daemon = Daemon::start(&env);
+    assert!(
+        daemon.git_skipped(&target),
+        "control: a fresh agent with identical config skips the repo too"
+    );
+
+    std::fs::remove_file(&link).expect("remove skip root");
+    std::os::unix::fs::symlink(&elsewhere, &link).expect("retarget skip root");
+    assert!(
+        wait_until(WAIT_TIMEOUT, POLL_INTERVAL, || !daemon.git_skipped(&target)),
+        "a retargeted skip root must stop matching its old target"
     );
 }
