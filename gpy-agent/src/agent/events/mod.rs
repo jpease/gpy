@@ -1053,6 +1053,7 @@ fn write_theme_export(ctx: &AgentContext, config: &Config) -> bool {
         &ctx.theme_export_dir,
         &ctx.theme_manager,
         config,
+        &ctx.palette_cache.get(),
     )
     .unwrap_or_else(|e| {
         debug_log!("agent", "Failed to write theme export cache: {}", e);

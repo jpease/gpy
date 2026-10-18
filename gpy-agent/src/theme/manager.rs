@@ -7,6 +7,7 @@ use crate::config::types::is_safe_config_name;
 use crate::debug_log;
 use crate::plugin::discover_plugins;
 use crate::shell::Shell;
+use crate::template::Palette;
 use crate::theme::export;
 use crate::theme::model::ThemeConfig;
 use crate::watcher::hot_reload::{
@@ -548,12 +549,20 @@ impl ThemeManager {
             .clone()
     }
 
-    /// Export the theme for `shell` from one consistent state snapshot.
+    /// Export the theme for `shell` from one consistent state snapshot, with
+    /// palette roles resolved through `palette`.
     #[must_use]
-    pub fn export(&self, shell: Shell, config: &Config) -> String {
+    pub fn export(&self, shell: Shell, config: &Config, palette: &Palette) -> String {
         let state = self.state();
         let plugin_files = Self::collect_plugin_segment_files();
-        export::theme_to_shell(&state.theme, &state.name, config, shell, &plugin_files)
+        export::theme_to_shell(
+            &state.theme,
+            &state.name,
+            config,
+            shell,
+            palette,
+            &plugin_files,
+        )
     }
 
     /// Discover third-party plugin segment file paths, keyed by segment name.
@@ -853,7 +862,11 @@ mod tests {
         theme.segments.hostname.trim_at = "$(touch /tmp/gpy_pwned)".to_owned();
         let manager = manager_with("default", theme);
 
-        let output = manager.export(Shell::Bash, &Config::default());
+        let output = manager.export(
+            Shell::Bash,
+            &Config::default(),
+            &crate::template::Palette::default(),
+        );
 
         assert!(
             output.contains("__hostname_trim_at=\"\\$(touch /tmp/gpy_pwned)\""),
@@ -873,7 +886,11 @@ mod tests {
         let theme = (*base.get()).clone();
         let manager = manager_with("weird$(touch x)", theme);
 
-        let output = manager.export(Shell::Fish, &Config::default());
+        let output = manager.export(
+            Shell::Fish,
+            &Config::default(),
+            &crate::template::Palette::default(),
+        );
 
         assert!(
             output.contains("set -g __gpy_theme_name \"weird\\$(touch x)\""),
@@ -884,7 +901,11 @@ mod tests {
     #[test]
     fn theme_export_includes_segment_bg_color_vars() {
         let manager = ThemeManager::builtin("default").expect("default theme should load");
-        let output = manager.export(Shell::Fish, &Config::default());
+        let output = manager.export(
+            Shell::Fish,
+            &Config::default(),
+            &crate::template::Palette::default(),
+        );
 
         assert!(
             output.contains("__color_directory_bg"),
@@ -915,7 +936,11 @@ mod tests {
     #[test]
     fn theme_export_includes_hostname_vars_for_default_theme() {
         let manager = ThemeManager::builtin("default").expect("default theme should load");
-        let output = manager.export(Shell::Fish, &Config::default());
+        let output = manager.export(
+            Shell::Fish,
+            &Config::default(),
+            &crate::template::Palette::default(),
+        );
 
         assert!(
             output.contains("__color_hostname_bg"),
@@ -954,7 +979,11 @@ mod tests {
     #[test]
     fn theme_export_includes_username_vars_for_default_theme() {
         let manager = ThemeManager::builtin("default").expect("default theme should load");
-        let output = manager.export(Shell::Fish, &Config::default());
+        let output = manager.export(
+            Shell::Fish,
+            &Config::default(),
+            &crate::template::Palette::default(),
+        );
 
         assert!(
             output.contains("set -g __color_username_bg \"red\""),
@@ -981,7 +1010,11 @@ mod tests {
     #[test]
     fn theme_export_username_format_presence_flag_for_starship_theme() {
         let manager = ThemeManager::builtin("starship").expect("starship theme should load");
-        let output = manager.export(Shell::Fish, &Config::default());
+        let output = manager.export(
+            Shell::Fish,
+            &Config::default(),
+            &crate::template::Palette::default(),
+        );
 
         // Presence flag only; the raw format string is never exported.
         assert!(

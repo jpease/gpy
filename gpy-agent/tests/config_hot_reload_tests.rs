@@ -209,7 +209,11 @@ fn test_theme_export_updates_enabled_segments_when_git_disabled() {
     ];
 
     let theme_manager = ThemeManager::builtin("default").expect("load default theme");
-    let fish_output = theme_manager.export(Shell::Fish, &config);
+    let fish_output = theme_manager.export(
+        Shell::Fish,
+        &config,
+        &gpy_agent::template::Palette::default(),
+    );
 
     assert!(
         fish_output.contains("set -g __enabled_segments clock directory"),
@@ -241,7 +245,11 @@ fn test_theme_export_includes_git_when_enabled() {
     ];
 
     let theme_manager = ThemeManager::builtin("default").expect("load default theme");
-    let fish_output = theme_manager.export(Shell::Fish, &config);
+    let fish_output = theme_manager.export(
+        Shell::Fish,
+        &config,
+        &gpy_agent::template::Palette::default(),
+    );
 
     assert!(
         fish_output.contains("set -g __enabled_segments clock directory git"),
@@ -270,7 +278,11 @@ fn test_theme_export_updates_enabled_segments_when_language_disabled() {
     ];
 
     let theme_manager = ThemeManager::builtin("default").expect("load default theme");
-    let fish_output = theme_manager.export(Shell::Fish, &config);
+    let fish_output = theme_manager.export(
+        Shell::Fish,
+        &config,
+        &gpy_agent::template::Palette::default(),
+    );
 
     assert!(
         fish_output.contains("set -g __enabled_segments clock directory git"),
@@ -301,7 +313,11 @@ fn test_theme_export_updates_enabled_segments_when_both_disabled() {
     ];
 
     let theme_manager = ThemeManager::builtin("default").expect("load default theme");
-    let fish_output = theme_manager.export(Shell::Fish, &config);
+    let fish_output = theme_manager.export(
+        Shell::Fish,
+        &config,
+        &gpy_agent::template::Palette::default(),
+    );
 
     assert!(
         fish_output.contains("set -g __enabled_segments clock directory"),

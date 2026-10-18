@@ -419,7 +419,13 @@ impl Harness {
     fn fresh_exports(config: &Config) -> Vec<String> {
         let theme_manager = ThemeManager::new(config.ui.theme.as_str()).expect("fresh theme load");
         let scratch = TempDir::new().expect("scratch dir");
-        write_theme_export_to_dir(scratch.path(), &theme_manager, config).expect("fresh export");
+        write_theme_export_to_dir(
+            scratch.path(),
+            &theme_manager,
+            config,
+            &active_palette(config),
+        )
+        .expect("fresh export");
         SHELL_EXPORTS
             .iter()
             .map(|file| fs::read_to_string(scratch.path().join(file)).expect("read fresh export"))

@@ -519,7 +519,8 @@ fn export_theme(shell: gpy_agent::shell::Shell) -> Result<()> {
         e
     })?;
 
-    let output = manager.export(shell, &config);
+    let palette = gpy_agent::palette::active_palette(&config);
+    let output = manager.export(shell, &config, &palette);
     print!("{output}");
 
     Ok(())

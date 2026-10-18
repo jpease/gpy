@@ -540,16 +540,19 @@ impl Agent {
         {
             let theme_manager_for_export = Arc::clone(&self.ctx.theme_manager);
             let config_for_export = self.ctx.config_manager.get();
+            let palette_for_export = self.ctx.palette_cache.get();
             tokio::task::spawn_blocking(move || {
                 #[cfg(unix)]
                 lifecycle::start::warm_theme_export_cache(
                     &theme_manager_for_export,
                     &config_for_export,
+                    &palette_for_export,
                 );
                 #[cfg(not(unix))]
                 if let Err(e) = crate::cache::write_theme_export_cache(
                     &theme_manager_for_export,
                     &config_for_export,
+                    &palette_for_export,
                 ) {
                     debug_log!(
                         "agent",

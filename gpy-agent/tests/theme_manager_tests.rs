@@ -281,7 +281,11 @@ fn test_theme_manager_export_fish_format() {
         "directory".to_string(),
         "git".to_string(),
     ];
-    let fish_output = manager.export(Shell::Fish, &config);
+    let fish_output = manager.export(
+        Shell::Fish,
+        &config,
+        &gpy_agent::template::Palette::default(),
+    );
 
     // Verify Fish output contains expected variables
     assert!(fish_output.contains("# GPY Theme: export_test"));
@@ -316,7 +320,11 @@ fn test_theme_manager_export_hostname_format_and_icon_when_set() {
 
     let manager = ThemeManager::new("hostname_export").unwrap();
     let config = gpy_agent::config::Config::default();
-    let fish_output = manager.export(Shell::Fish, &config);
+    let fish_output = manager.export(
+        Shell::Fish,
+        &config,
+        &gpy_agent::template::Palette::default(),
+    );
 
     assert!(fish_output.contains("set -g __color_hostname_bg \"blue\""));
     assert!(fish_output.contains("set -g __color_hostname_fg \"white\""));
@@ -386,7 +394,11 @@ fn test_disabled_git_removed_from_segment_list() {
         "git".to_string(),
     ];
 
-    let fish_output = manager.export(Shell::Fish, &config);
+    let fish_output = manager.export(
+        Shell::Fish,
+        &config,
+        &gpy_agent::template::Palette::default(),
+    );
 
     assert!(!fish_output.contains("clock directory git"));
     assert!(fish_output.contains("set -g __enabled_segments clock directory"));
@@ -571,7 +583,11 @@ fn test_theme_manager_export_includes_all_segments() {
     ];
     let mut config = gpy_agent::config::Config::default();
     config.ui.enabled_segments = all_segments;
-    let fish_output = manager.export(Shell::Fish, &config);
+    let fish_output = manager.export(
+        Shell::Fish,
+        &config,
+        &gpy_agent::template::Palette::default(),
+    );
 
     // Clock and status still render shell-side and keep their color exports.
     // Directory/duration colors are agent-rendered and not exported here.
@@ -605,7 +621,11 @@ fn export_omits_migrated_color_vars() {
 
     let manager = ThemeManager::builtin("default").expect("builtin theme manager");
     let config = gpy_agent::config::Config::default();
-    let exported = manager.export(Shell::Fish, &config);
+    let exported = manager.export(
+        Shell::Fish,
+        &config,
+        &gpy_agent::template::Palette::default(),
+    );
 
     // No fg/text color exports for agent-rendered segments.
     for still_migrated in [
@@ -836,7 +856,11 @@ fn test_theme_export_fish_includes_plugin_segment_vars() {
     let manager = ThemeManager::new("plugin_export_fish").unwrap();
     let mut config = gpy_agent::config::Config::default();
     config.ui.enabled_segments = vec!["clock".to_owned(), "k8s".to_owned()];
-    let output = manager.export(Shell::Fish, &config);
+    let output = manager.export(
+        Shell::Fish,
+        &config,
+        &gpy_agent::template::Palette::default(),
+    );
 
     assert!(output.contains("set -gx GPY_UI_DIRECTORY_DISPLAY \"basename\""));
     assert!(output.contains("set -g __gpy_segment_k8s_id \"k8s\""));
@@ -869,14 +893,22 @@ fn test_theme_export_zsh_bash_include_plugin_segment_vars() {
     let mut config = gpy_agent::config::Config::default();
     config.ui.enabled_segments = vec!["clock".to_owned(), "k8s".to_owned()];
 
-    let zsh_output = manager.export(Shell::Zsh, &config);
+    let zsh_output = manager.export(
+        Shell::Zsh,
+        &config,
+        &gpy_agent::template::Palette::default(),
+    );
     assert!(zsh_output.contains("export GPY_UI_DIRECTORY_DISPLAY=\"basename\""));
     assert!(zsh_output.contains("typeset -g __gpy_segment_k8s_id=\"k8s\""));
     assert!(zsh_output.contains("typeset -g __gpy_segment_k8s_bg_color=\"#073642\""));
     assert!(zsh_output.contains("typeset -g __color_k8s_context=\"#326ce5\""));
     assert!(zsh_output.contains("typeset -g __icon_k8s_secondary=\"•\""));
 
-    let bash_output = manager.export(Shell::Bash, &config);
+    let bash_output = manager.export(
+        Shell::Bash,
+        &config,
+        &gpy_agent::template::Palette::default(),
+    );
     assert!(bash_output.contains("export GPY_UI_DIRECTORY_DISPLAY=\"basename\""));
     assert!(bash_output.contains("export __gpy_segment_k8s_id=\"k8s\""));
     assert!(bash_output.contains("export __gpy_segment_k8s_bg_color=\"#073642\""));
@@ -1001,7 +1033,11 @@ provided_segments = ["k8s-tools"]
     let manager = ThemeManager::new("plugin_files").unwrap();
     let mut config = gpy_agent::config::Config::default();
     config.ui.enabled_segments = vec!["clock".to_owned(), "k8s-tools".to_owned()];
-    let output = manager.export(Shell::Fish, &config);
+    let output = manager.export(
+        Shell::Fish,
+        &config,
+        &gpy_agent::template::Palette::default(),
+    );
 
     let expected_path = plugin_segments_dir.join("k8s-tools.fish");
     let expected_line = format!(
@@ -1336,11 +1372,11 @@ fn concurrent_export_never_pairs_one_themes_name_with_anothers_colors() {
         )
     };
     let pair_of = |name: &str| -> (String, String) {
-        observed_pair(
-            &ThemeManager::new(name)
-                .unwrap()
-                .export(Shell::Fish, &config),
-        )
+        observed_pair(&ThemeManager::new(name).unwrap().export(
+            Shell::Fish,
+            &config,
+            &gpy_agent::template::Palette::default(),
+        ))
     };
     let pair_a = pair_of("race_a");
     let pair_b = pair_of("race_b");
@@ -1378,7 +1414,11 @@ fn concurrent_export_never_pairs_one_themes_name_with_anothers_colors() {
             let deadline = Instant::now() + READER_DEADLINE;
             let mut torn: Option<(String, String)> = None;
             while !reader_stop.load(Ordering::Relaxed) && Instant::now() < deadline {
-                let export = reader_manager.export(Shell::Fish, &reader_config);
+                let export = reader_manager.export(
+                    Shell::Fish,
+                    &reader_config,
+                    &gpy_agent::template::Palette::default(),
+                );
                 let seen = (
                     exported_value(&export, "__gpy_theme_name").unwrap_or_default(),
                     exported_value(&export, "__color_clock_bg").unwrap_or_default(),

@@ -31,8 +31,9 @@ pub fn get_theme_export_cache_path() -> Result<PathBuf> {
 pub fn write_theme_export_cache(
     theme_manager: &crate::theme::ThemeManager,
     config: &crate::config::Config,
+    palette: &crate::template::Palette,
 ) -> Result<bool> {
-    write_theme_export_to_dir(&theme_export_dir()?, theme_manager, config)
+    write_theme_export_to_dir(&theme_export_dir()?, theme_manager, config, palette)
 }
 
 /// Write fish/bash/zsh theme exports atomically into `cache_dir`.
@@ -48,6 +49,7 @@ pub fn write_theme_export_to_dir(
     cache_dir: &std::path::Path,
     theme_manager: &crate::theme::ThemeManager,
     config: &crate::config::Config,
+    palette: &crate::template::Palette,
 ) -> Result<bool> {
     std::fs::create_dir_all(cache_dir)?;
 
@@ -57,7 +59,7 @@ pub fn write_theme_export_to_dir(
         (crate::shell::Shell::Bash, "theme-export.bash"),
         (crate::shell::Shell::Zsh, "theme-export.zsh"),
     ] {
-        let content = theme_manager.export(shell, config);
+        let content = theme_manager.export(shell, config, palette);
         // Any read failure (typically: no file yet) means "write it".
         if std::fs::read(cache_dir.join(file_name))
             .is_ok_and(|current| current == content.as_bytes())
@@ -84,8 +86,13 @@ mod tests {
         let theme_manager = crate::theme::ThemeManager::builtin("default").expect("theme manager");
         let config = crate::config::Config::default();
 
-        write_theme_export_to_dir(&cache_dir, &theme_manager, &config)
-            .expect("write theme export cache");
+        write_theme_export_to_dir(
+            &cache_dir,
+            &theme_manager,
+            &config,
+            &crate::template::Palette::default(),
+        )
+        .expect("write theme export cache");
 
         let cache_path = cache_dir.join("theme-export.fish");
         assert!(cache_path.exists(), "theme-export.fish must be created");
@@ -105,7 +112,13 @@ mod tests {
         let theme_manager = crate::theme::ThemeManager::builtin("default").expect("theme manager");
         let config = crate::config::Config::default();
 
-        write_theme_export_to_dir(&cache_dir, &theme_manager, &config).expect("write");
+        write_theme_export_to_dir(
+            &cache_dir,
+            &theme_manager,
+            &config,
+            &crate::template::Palette::default(),
+        )
+        .expect("write");
 
         let leftovers: Vec<_> = std::fs::read_dir(&cache_dir)
             .expect("read dir")
@@ -124,8 +137,13 @@ mod tests {
         let theme_manager = crate::theme::ThemeManager::builtin("default").expect("theme manager");
         let config = crate::config::Config::default();
 
-        write_theme_export_to_dir(&cache_dir, &theme_manager, &config)
-            .expect("write theme export cache");
+        write_theme_export_to_dir(
+            &cache_dir,
+            &theme_manager,
+            &config,
+            &crate::template::Palette::default(),
+        )
+        .expect("write theme export cache");
 
         for (file_name, needle) in [
             ("theme-export.fish", "set -g"),
@@ -161,9 +179,11 @@ mod tests {
         let config = crate::config::Config::default();
         let default_theme = crate::theme::ThemeManager::builtin("default").expect("default theme");
         let text_theme = crate::theme::ThemeManager::builtin("text").expect("text theme");
+        let palette = crate::template::Palette::default();
 
         assert!(
-            write_theme_export_to_dir(&cache_dir, &default_theme, &config).expect("first write"),
+            write_theme_export_to_dir(&cache_dir, &default_theme, &config, &palette)
+                .expect("first write"),
             "a first write (no files yet) is a change"
         );
 
@@ -177,7 +197,7 @@ mod tests {
         }
 
         assert!(
-            !write_theme_export_to_dir(&cache_dir, &default_theme, &config)
+            !write_theme_export_to_dir(&cache_dir, &default_theme, &config, &palette)
                 .expect("identical write"),
             "rewriting identical export bytes must report unchanged"
         );
@@ -192,7 +212,8 @@ mod tests {
         }
 
         assert!(
-            write_theme_export_to_dir(&cache_dir, &text_theme, &config).expect("different write"),
+            write_theme_export_to_dir(&cache_dir, &text_theme, &config, &palette)
+                .expect("different write"),
             "a different export must report changed"
         );
         let fish = std::fs::read_to_string(cache_dir.join("theme-export.fish")).expect("read fish");

@@ -20,7 +20,8 @@ fn main() -> Result<()> {
     println!("  Git background color: {}", theme.segments.git.bg_color);
 
     let config = Config::default();
-    let fish_vars = theme_manager.export(Shell::Fish, &config);
+    let palette = gpy_agent::palette::active_palette(&config);
+    let fish_vars = theme_manager.export(Shell::Fish, &config, &palette);
     println!("\nFish shell theme variables:");
     for line in fish_vars.lines().take(5) {
         println!("  {line}");

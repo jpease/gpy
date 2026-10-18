@@ -238,7 +238,11 @@ fn e2e_plugin_segment_and_theme_discovery_and_export() {
     let manager = ThemeManager::new("community").expect("load plugin theme");
     let mut config = Config::default();
     config.ui.enabled_segments = vec!["clock".to_owned(), "k8s_tools".to_owned()];
-    let fish_export = manager.export(Shell::Fish, &config);
+    let fish_export = manager.export(
+        Shell::Fish,
+        &config,
+        &gpy_agent::template::Palette::default(),
+    );
 
     assert!(fish_export.contains("set -g __enabled_segments clock k8s_tools"));
     assert!(fish_export.contains("set -g __gpy_segment_k8s_tools_bg_color \"#073642\""));

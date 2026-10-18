@@ -387,9 +387,10 @@ pub(crate) fn notify_existing_shells_of_restart() {
 pub(crate) fn warm_theme_export_cache(
     theme_manager: &crate::theme::ThemeManager,
     config: &crate::config::Config,
+    palette: &crate::template::Palette,
 ) {
     warm_theme_export_cache_with(&default_shell_dir(), || {
-        crate::cache::write_theme_export_cache(theme_manager, config)
+        crate::cache::write_theme_export_cache(theme_manager, config, palette)
     });
 }
 
@@ -916,6 +917,7 @@ mod tests {
             cache.path(),
             &default_theme,
             &config,
+            &crate::template::Palette::default(),
         )
         .expect("seed export");
 
@@ -932,6 +934,7 @@ mod tests {
                 cache.path(),
                 &default_theme,
                 &config,
+                &crate::template::Palette::default(),
             )
         });
         let flagged_on_unchanged = reload_flag.exists();
@@ -941,6 +944,7 @@ mod tests {
                 cache.path(),
                 &text_theme,
                 &config,
+                &crate::template::Palette::default(),
             )
         });
         let flagged_on_changed = reload_flag.exists();

@@ -6,6 +6,7 @@
 
 use gpy_agent::config::Config;
 use gpy_agent::shell::Shell;
+use gpy_agent::template::Palette;
 use gpy_agent::theme::ThemeManager;
 use proptest::prelude::*;
 
@@ -109,7 +110,7 @@ proptest! {
         let config = Config::default();
 
         let theme_mgr = ThemeManager::builtin("default").expect("create theme manager");
-        let export = theme_mgr.export(Shell::Fish, &config);
+        let export = theme_mgr.export(Shell::Fish, &config, &Palette::default());
 
         prop_assert!(!export.is_empty());
         prop_assert!(export.contains("set -gx") || export.contains("set -g"));
@@ -156,7 +157,7 @@ proptest! {
         let config = Config::default();
         let theme_mgr = ThemeManager::builtin("default").expect("create theme manager");
 
-        let export = theme_mgr.export(Shell::Fish, &config);
+        let export = theme_mgr.export(Shell::Fish, &config, &Palette::default());
         prop_assert!(!export.is_empty());
     }
 
@@ -190,8 +191,8 @@ proptest! {
         let config = Config::default();
         let theme_mgr = ThemeManager::builtin("default").expect("create theme manager");
 
-        let export1 = theme_mgr.export(Shell::Fish, &config);
-        let export2 = theme_mgr.export(Shell::Fish, &config);
+        let export1 = theme_mgr.export(Shell::Fish, &config, &Palette::default());
+        let export2 = theme_mgr.export(Shell::Fish, &config, &Palette::default());
 
         prop_assert_eq!(export1, export2);
     }
@@ -216,7 +217,7 @@ proptest! {
         let config = Config::default();
         let theme_mgr = ThemeManager::builtin("default").expect("create theme manager");
 
-        let export = theme_mgr.export(Shell::Fish, &config);
+        let export = theme_mgr.export(Shell::Fish, &config, &Palette::default());
 
         prop_assert!(!export.contains('\x1b'));
     }
