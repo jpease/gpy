@@ -39,6 +39,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `a_b`) are rejected with an error naming both.
 - `ui.enabled_segments` entries are trimmed and lowercased when the config is
   loaded or saved.
+- `ui.enabled_segments` keeps only the first occurrence of a segment, in any
+  spelling, so a repeated entry renders once.
+- `git.skip_paths` always applies to whole repositories: a repository is
+  skipped when its root is at or under an entry, for prompt requests and
+  background refreshes alike. An entry inside a repository no longer hides git
+  only for prompts in that subdirectory.
+- `git.timeout_seconds` is the budget for a whole git status: every git
+  command it runs shares it, so a blocking file under `.git` costs one timeout
+  instead of one per command.
+- Bash and Zsh: throttled background-refresh checks and cache-hit renders no
+  longer fork subshells; Zsh forks nothing, Bash only for `realpath` and
+  `stat`.
+- The toolchain pin is Rust 1.99.1 (the minimum supported version stays 1.99).
 
 ### Fixed
 
@@ -77,6 +90,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gpy-agent start` prints the daemon's own startup error, such as an
   uncreatable cache directory and why, instead of a generic "exited before it
   was ready".
+- `install-dev.fish` no longer deletes a custom `fish_prompt.fish` that merely
+  mentions GPY; it backs it up and replaces only GPY's own prompt.
+- Disabling git or adding a `git.skip_paths` entry, then reloading, removes
+  that repository's cached git prompts and repaints open shells.
+- Fish background refreshes for paths that differ only in punctuation no
+  longer share one throttle.
+- Fish draws a newline inside an agent-rendered segment format as a line break
+  on the oneshot and cached paths, as Bash and Zsh do.
+- Fish-drawn segments (clock, hostname, status, delimiters) show ANSI index
+  colors and the `orange`/`brown` palette roles; Bash and Zsh shell-drawn
+  segments resolve those roles too.
+- An error creating the runtime directory names the directory and the cause.
+- A theme file edit reloads once, within about a second, and rings shells
+  exactly once.
 
 ## [0.4.0] - 2026-10-16
 
