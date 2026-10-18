@@ -5,7 +5,7 @@ use crate::config::{Config, DelimiterConfig};
 use crate::formatter::separator::Glyphs;
 use crate::plugin::SegmentName;
 use crate::shell::{Shell, VariableSyntax};
-use crate::template::{Color, Palette};
+use crate::template::{Color, Palette, canonical_ansi_name};
 use crate::theme::model::{PluginSegmentTheme, ThemeConfig};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -165,9 +165,10 @@ fn fish_ansi256_color(index: u8) -> String {
     }
 }
 
-/// Theme colors in the spelling the shell's own renderer draws. Palette roles
-/// (`orange`, `brown`) resolve through the active palette, as they do for
-/// agent-rendered segments; for Fish, ANSI indices become `set_color` values.
+/// Theme colors in the spelling the shell's own renderer draws. ANSI names and
+/// palette roles (`orange`, `brown`) resolve through the active palette, as they
+/// do for agent-rendered segments; ANSI indices keep the terminal's palette, and
+/// for Fish become `set_color` values.
 #[derive(Clone, Copy)]
 struct ShellColors<'a> {
     shell: Shell,
@@ -177,18 +178,19 @@ struct ShellColors<'a> {
 impl ShellColors<'_> {
     /// `value` is a canonical theme color (see [`canonical_color`]).
     fn resolve(self, value: &str) -> Cow<'_, str> {
-        let resolved = if PALETTE_ROLE_COLORS.contains(&value) {
-            match self
-                .palette
-                .get(value)
-                .and_then(|color| palette_color_value(&color))
-            {
-                Some(color) => Cow::Owned(color),
-                None => Cow::Borrowed(value),
-            }
-        } else {
-            Cow::Borrowed(value)
-        };
+        let resolved =
+            if PALETTE_ROLE_COLORS.contains(&value) || canonical_ansi_name(value).is_some() {
+                match self
+                    .palette
+                    .get(value)
+                    .and_then(|color| palette_color_value(&color))
+                {
+                    Some(color) => Cow::Owned(color),
+                    None => Cow::Borrowed(value),
+                }
+            } else {
+                Cow::Borrowed(value)
+            };
         match resolved.parse::<u8>() {
             Ok(index) if self.shell == Shell::Fish => Cow::Owned(fish_ansi256_color(index)),
             _ => resolved,

@@ -55,6 +55,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bash and Zsh keep a newline in a segment `format` when the agent answers
+  live, instead of cutting the segment at it. Agent replies now carry an
+  embedded newline as the RS byte (`\x1e`) so each reply stays one line;
+  an older shell shows that byte instead of the line break until it reloads.
+- Colors the shells draw themselves (clock, hostname, status, delimiters)
+  follow the active palette's value for an ANSI name such as `red`, as
+  agent-rendered segments already did. An ANSI index (`1`) still uses the
+  terminal's own color.
 - The uninstallers remove `fish_prompt.fish` only when it is GPY's own prompt,
   not whenever the file mentions gpy.
 - `gpy setup --shell bash` adds the login-shell loader even when the login
