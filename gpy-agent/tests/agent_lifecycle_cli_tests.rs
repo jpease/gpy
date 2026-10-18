@@ -557,6 +557,128 @@ fn relative_socket_is_resolved_against_the_launch_directory() {
     assert!(reported.stdout.contains(RUNNING_LINE), "{reported:?}");
 }
 
+/// The default endpoint `$XDG_RUNTIME_DIR/gpy/gpy.sock`, with any inherited
+/// `GPY_AGENT_SOCKET_PATH` blanked (empty means unset).
+fn start_on_default_socket(env: &CliTestEnv) -> CliCommandResult {
+    env.run_gpy_agent_with_env(&["start"], &[("GPY_AGENT_SOCKET_PATH", "")])
+        .expect("spawn gpy-agent start")
+}
+
+fn mode_of(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .expect("metadata")
+        .permissions()
+        .mode()
+        & 0o7777
+}
+
+#[test]
+fn start_tightens_an_owned_world_writable_runtime_dir() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let runtime = env.xdg_runtime_dir().join("gpy");
+    std::fs::create_dir_all(&runtime).expect("create runtime dir");
+    std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o777)).expect("chmod");
+    let _stopper = SocketStopper(&env, runtime.join("gpy.sock"));
+
+    start_on_default_socket(&env).assert_success("gpy-agent start");
+    assert_eq!(mode_of(&runtime), 0o700, "the runtime dir is repaired");
+    assert!(
+        std::os::unix::net::UnixStream::connect(runtime.join("gpy.sock")).is_ok(),
+        "the agent serves from the repaired dir"
+    );
+}
+
+#[test]
+fn start_refuses_a_symlinked_runtime_dir() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let target = tempfile::tempdir_in(gpy_test_root().expect("GPY test root")).expect("tempdir");
+    let runtime = env.xdg_runtime_dir().join("gpy");
+    std::os::unix::fs::symlink(target.path(), &runtime).expect("symlink runtime dir");
+    let _stopper = SocketStopper(&env, runtime.join("gpy.sock"));
+
+    let result = start_on_default_socket(&env);
+    assert_eq!(result.exit_code, 1_i32, "{result:?}");
+    assert!(
+        result.stderr.contains(&runtime.display().to_string()),
+        "the refusal names the directory: {result:?}"
+    );
+    assert_eq!(
+        std::fs::read_dir(target.path())
+            .expect("read target")
+            .count(),
+        0,
+        "nothing is created through the symlink"
+    );
+}
+
+#[test]
+fn start_refuses_an_explicit_socket_whose_directory_is_a_symlink() {
+    let sandbox = AgentSandbox::new();
+    let target = tempfile::tempdir_in(gpy_test_root().expect("GPY test root")).expect("tempdir");
+    let link = sandbox
+        .socket_path
+        .parent()
+        .expect("socket dir")
+        .join("link");
+    std::os::unix::fs::symlink(target.path(), &link).expect("symlink socket dir");
+    let socket = link.join("gpy.sock");
+    let _stopper = SocketStopper(&sandbox.env, socket.clone());
+
+    let result = sandbox
+        .env
+        .run_gpy_agent_with_env(&["start"], &[("GPY_AGENT_SOCKET_PATH", &socket)])
+        .expect("spawn gpy-agent");
+    assert_eq!(result.exit_code, 1_i32, "{result:?}");
+    assert!(
+        result.stderr.contains(&link.display().to_string()),
+        "the refusal names the directory: {result:?}"
+    );
+    assert_eq!(
+        std::fs::read_dir(target.path())
+            .expect("read target")
+            .count(),
+        0,
+        "nothing is created through the symlink"
+    );
+}
+
+/// A directory the user chose is never chmod'ed, through either override.
+#[test]
+fn start_refuses_an_explicit_socket_in_an_owned_world_writable_dir() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let dir = tempfile::tempdir_in(gpy_test_root().expect("GPY test root")).expect("tempdir");
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o777)).expect("chmod");
+    let socket = dir.path().join("gpy.sock");
+    let socket_arg = socket.to_string_lossy().into_owned();
+    let _stopper = SocketStopper(&env, socket.clone());
+
+    for result in [
+        env.run_gpy_agent_with_env(&["start"], &[("GPY_AGENT_SOCKET_PATH", &socket)]),
+        env.run_gpy_agent_with_env(
+            &["start", "--socket", &socket_arg],
+            &[("GPY_AGENT_SOCKET_PATH", "")],
+        ),
+    ] {
+        let result = result.expect("spawn gpy-agent");
+        assert_eq!(result.exit_code, 1_i32, "{result:?}");
+        assert!(
+            result.stderr.contains(&dir.path().display().to_string()),
+            "the refusal names the directory: {result:?}"
+        );
+        assert_eq!(mode_of(dir.path()), 0o777, "the mode is left unchanged");
+        assert_eq!(
+            std::fs::read_dir(dir.path()).expect("read dir").count(),
+            0,
+            "nothing is created in the refused directory"
+        );
+    }
+}
+
 #[test]
 fn gpy_stop_when_not_running_is_a_noop() {
     let sandbox = AgentSandbox::new();

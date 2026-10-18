@@ -72,6 +72,19 @@ pub fn socket_path_override() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+/// How the socket's directory may be repaired, by where [`resolve_socket_path`]
+/// takes the path from: GPY's own runtime directory is tightened, while a
+/// user-chosen `--socket` or `GPY_AGENT_SOCKET_PATH` directory is never chmod'ed.
+#[cfg(unix)]
+#[must_use]
+pub fn socket_dir_repair() -> crate::ipc::server::DirRepair {
+    if SOCKET_OVERRIDE.get().is_some() || socket_path_override().is_some() {
+        crate::ipc::server::DirRepair::Refuse
+    } else {
+        crate::ipc::server::DirRepair::Tighten
+    }
+}
+
 /// Version marker path: `<runtime>/agent.version` for the default socket,
 /// `<socket>.version` for an overridden one so agents never share a marker.
 ///

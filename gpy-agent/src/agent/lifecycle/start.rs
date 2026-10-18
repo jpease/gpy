@@ -477,6 +477,9 @@ pub fn start_background_agent() -> Result<()> {
             let _ = super::SOCKET_OVERRIDE.set(socket_path.clone());
         }
 
+        // Vet the directory before the lock file, stale-socket eviction, or
+        // liveness ping relies on it; the daemon checks again at bind.
+        crate::ipc::server::handle::secure_socket_dir(&socket_path, super::socket_dir_repair())?;
         let start_lock = acquire_start_lock(&socket_path)?;
 
         if super::check_and_cleanup_socket(&socket_path) {

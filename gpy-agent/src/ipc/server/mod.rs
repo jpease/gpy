@@ -11,4 +11,6 @@ pub mod handle;
 mod tests;
 
 pub use builder::{EndpointDeps, EndpointHandleBuilder};
+#[cfg(unix)]
+pub use handle::DirRepair;
 pub use handle::{EndpointHandle, WatcherRef};

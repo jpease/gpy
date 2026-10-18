@@ -477,7 +477,7 @@ impl Agent {
         language_cache: crate::language::DetectionCache,
         socket_path: std::path::PathBuf,
     ) -> Result<EndpointHandle> {
-        EndpointHandle::builder(EndpointDeps {
+        let builder = EndpointHandle::builder(EndpointDeps {
             client_registry: Arc::clone(&ctx.registry),
             git_cache: Arc::clone(&ctx.cache),
             config_manager: Arc::clone(&ctx.config_manager),
@@ -488,8 +488,10 @@ impl Agent {
         })
         .socket_path(socket_path)
         .watcher_slot(Arc::clone(watcher_slot))
-        .palette_cache(Arc::clone(&ctx.palette_cache))
-        .build()
+        .palette_cache(Arc::clone(&ctx.palette_cache));
+        #[cfg(unix)]
+        let builder = builder.socket_dir_repair(crate::agent::lifecycle::socket_dir_repair());
+        builder.build()
     }
 
     /// Prune dead clients from the registry and clean up the watcher.

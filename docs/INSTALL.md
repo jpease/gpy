@@ -108,7 +108,9 @@ including the NUL) and 107 on Linux. A long `$HOME`, `XDG_RUNTIME_DIR` or
 `GPY_AGENT_SOCKET_PATH` therefore fails on macOS first; `gpy-agent start`,
 `stop` and `status` refuse such a path with an error naming its length and
 the limit. Point `XDG_RUNTIME_DIR` at a shorter directory or set
-`GPY_AGENT_SOCKET_PATH` to a short path such as `/tmp/gpy-$USER.sock`.
+`GPY_AGENT_SOCKET_PATH` to a short path in a directory only you can write,
+such as `/tmp/gpy-$USER/gpy.sock` after `mkdir -m 700 /tmp/gpy-$USER`. A
+socket directly in `/tmp` is refused.
 
 ### Degraded (oneshot) behavior
 
