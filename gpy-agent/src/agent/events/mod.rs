@@ -44,6 +44,8 @@ pub struct AgentContext {
     pub dispatch_guard: Arc<RepoRefreshCoordinator>,
     /// Registry shared by the repo, config, and theme watchers; `create_watcher` needs it.
     pub watch_registry: Arc<crate::watcher::WatchRegistry>,
+    /// Where reloads write the shell theme exports (the gpy cache dir in production).
+    pub theme_export_dir: PathBuf,
 }
 
 /// Serializes [`refresh_and_notify_if_changed`] per repository so a stale scan
@@ -874,7 +876,9 @@ fn language_refresh_required(
         || old_icons != new_icons
 }
 
-/// Process-management fields (`timeout_seconds`, `supervisor`) are excluded.
+/// Process-management fields (`timeout_seconds`, `supervisor`) are excluded: they
+/// render nothing, and shells get them from the theme export, whose change rings
+/// the reload doorbell on its own.
 fn agent_refresh_required(
     old: &crate::config::AgentSettings,
     new: &crate::config::AgentSettings,
@@ -900,7 +904,7 @@ fn sync_watcher_state(
     ctx: &AgentContext,
     watcher_config: WatcherConfig,
     new_config: &Config,
-    refresh_required: bool,
+    reload_required: bool,
 ) {
     let mut watcher_guard = watcher_slot.lock().unwrap_or_else(PoisonError::into_inner);
 
@@ -909,7 +913,7 @@ fn sync_watcher_state(
             watcher.stop();
         }
         drop(watcher_guard);
-        if refresh_required {
+        if reload_required {
             ctx.registry.notify_reload();
         }
         return;
@@ -938,7 +942,7 @@ fn sync_watcher_state(
     }
     drop(watcher_guard);
 
-    if refresh_required {
+    if reload_required {
         ctx.registry.notify_reload();
     }
 }
@@ -992,9 +996,15 @@ pub(super) fn handle_config_reload(
     let palette_changed = palette.is_some_and(|palette| ctx.palette_cache.replace(palette));
 
     // Theme export must be on disk before the reload doorbell.
-    if let Err(e) = crate::cache::write_theme_export_cache(&ctx.theme_manager, new_config) {
+    let export_changed = crate::cache::theme_export::write_theme_export_to_dir(
+        &ctx.theme_export_dir,
+        &ctx.theme_manager,
+        new_config,
+    )
+    .unwrap_or_else(|e| {
         debug_log!("agent", "Failed to write theme export cache: {}", e);
-    }
+        false
+    });
 
     crate::language::version::set_version_cache_ttl(new_config.language.cache_ttl_hours.get());
     ctx.watch_registry
@@ -1008,9 +1018,12 @@ pub(super) fn handle_config_reload(
     if refresh_required {
         regenerate_instant_caches_for_theme_change(ctx, new_config);
     }
+    // Shells re-read a changed export only on the doorbell, including settings
+    // that render nothing (e.g. `agent.supervisor`), so it rings for those too.
+    let reload_required = refresh_required || export_changed;
 
     if disable_watcher {
-        if refresh_required {
+        if reload_required {
             ctx.registry.notify_reload();
         }
         return Ok(());
@@ -1021,7 +1034,7 @@ pub(super) fn handle_config_reload(
         ctx,
         watcher_config,
         new_config,
-        refresh_required,
+        reload_required,
     );
     Ok(())
 }

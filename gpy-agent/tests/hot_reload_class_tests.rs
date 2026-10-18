@@ -136,6 +136,39 @@ const DELETE_CONFIG_WITH_LOCAL_GPY_TOML: Mechanism = Mechanism {
     doorbells: None,
 };
 
+// Supervisor settings render nothing; shells learn them only from the export,
+// so changing just one must still ring the reload doorbell exactly once.
+const DISABLE_SUPERVISOR: Mechanism = Mechanism {
+    name: "disable the supervisor in config.toml",
+    setup: None,
+    apply: disable_supervisor,
+    doorbells: Some(1),
+};
+const CHANGE_SUPERVISOR_INTERVAL: Mechanism = Mechanism {
+    name: "change the supervisor check interval in config.toml",
+    setup: None,
+    apply: change_supervisor_interval,
+    doorbells: Some(1),
+};
+const CHANGE_SUPERVISOR_ATTEMPTS: Mechanism = Mechanism {
+    name: "change the supervisor restart-attempt limit in config.toml",
+    setup: None,
+    apply: change_supervisor_attempts,
+    doorbells: Some(1),
+};
+
+fn disable_supervisor(h: &Harness) {
+    h.write_config_with("\n[agent.supervisor]\nenabled = false\n");
+}
+
+fn change_supervisor_interval(h: &Harness) {
+    h.write_config_with("\n[agent.supervisor]\ncheck_interval_seconds = 45\n");
+}
+
+fn change_supervisor_attempts(h: &Harness) {
+    h.write_config_with("\n[agent.supervisor]\nmax_restart_attempts = 2\n");
+}
+
 fn invalid_home_config_only(h: &Harness) {
     fs::remove_file(h.config_path()).expect("remove xdg config");
     let home_config = h.home_config_path();
@@ -335,13 +368,22 @@ impl Harness {
     }
 
     fn write_config_at(path: &Path, theme: &str, git_enabled: bool) {
+        fs::write(path, Self::config_toml(theme, git_enabled)).expect("write config");
+    }
+
+    /// The active config (theme `active`, git on) followed by `extra` TOML.
+    fn write_config_with(&self, extra: &str) {
         fs::write(
-            path,
-            format!(
-                "[ui]\ntheme = \"{theme}\"\npalette = \"{ACTIVE_PALETTE}\"\n\n[git]\nenabled = {git_enabled}\n"
-            ),
+            self.config_path(),
+            format!("{}{extra}", Self::config_toml(ACTIVE_THEME, true)),
         )
         .expect("write config");
+    }
+
+    fn config_toml(theme: &str, git_enabled: bool) -> String {
+        format!(
+            "[ui]\ntheme = \"{theme}\"\npalette = \"{ACTIVE_PALETTE}\"\n\n[git]\nenabled = {git_enabled}\n"
+        )
     }
 
     /// The config file the agent resolves: the highest-priority existing
@@ -412,6 +454,12 @@ fn run_mechanism(mechanism: &Mechanism) {
         Harness::fresh_exports(&startup_config),
         active_palette(&startup_config),
     );
+    // `Agent::start_background` warms the export at startup; the harness only
+    // runs `Agent::new`, so warm it here, or the first reload would create it
+    // and ring for that alone.
+    for (file, content) in SHELL_EXPORTS.iter().zip(&before.0) {
+        fs::write(harness.cache_home.join("gpy").join(file), content).expect("warm export");
+    }
 
     let agent = Agent::new().expect("agent starts");
     agent.register_test_client(std::process::id(), harness.config_home.as_path());
@@ -568,4 +616,22 @@ fn hot_reload_higher_priority_config_appears() {
 #[serial]
 fn hot_reload_delete_config_ignores_local_gpy_toml() {
     run_mechanism(&DELETE_CONFIG_WITH_LOCAL_GPY_TOML);
+}
+
+#[test]
+#[serial]
+fn hot_reload_disable_supervisor() {
+    run_mechanism(&DISABLE_SUPERVISOR);
+}
+
+#[test]
+#[serial]
+fn hot_reload_change_supervisor_interval() {
+    run_mechanism(&CHANGE_SUPERVISOR_INTERVAL);
+}
+
+#[test]
+#[serial]
+fn hot_reload_change_supervisor_attempts() {
+    run_mechanism(&CHANGE_SUPERVISOR_ATTEMPTS);
 }

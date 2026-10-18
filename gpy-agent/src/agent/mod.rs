@@ -319,6 +319,7 @@ impl Agent {
             palette_cache: Arc::clone(&palette_cache),
             dispatch_guard: Arc::new(events::RepoRefreshCoordinator::default()),
             watch_registry,
+            theme_export_dir: crate::cache::theme_export::theme_export_dir()?,
         };
 
         Self::setup_hot_reload(&ctx, &watcher_slot, watcher_config);
@@ -409,7 +410,8 @@ impl Agent {
         let ctx_for_theme_callback = ctx.clone();
         ctx.theme_manager.set_reload_callback(Arc::new(move || {
             let config = ctx_for_theme_callback.config_manager.get();
-            if let Err(e) = crate::cache::write_theme_export_cache(
+            if let Err(e) = crate::cache::theme_export::write_theme_export_to_dir(
+                &ctx_for_theme_callback.theme_export_dir,
                 &ctx_for_theme_callback.theme_manager,
                 &config,
             ) {
@@ -717,6 +719,8 @@ impl Agent {
             )),
             dispatch_guard: Arc::new(events::RepoRefreshCoordinator::default()),
             watch_registry: Arc::clone(watcher.registry()),
+            theme_export_dir: std::env::temp_dir()
+                .join(format!("gpy-test-theme-export-{}", std::process::id())),
         };
 
         Ok(Self {
