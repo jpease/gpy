@@ -13,7 +13,9 @@ use env_guard::EnvGuard;
 use gpy_agent::config::Config;
 use gpy_agent::config::types::PaletteName;
 use gpy_agent::palette::resolve::palette_by_name;
-use gpy_agent::palette::{PaletteCache, PaletteManager, PaletteSource, active_palette};
+use gpy_agent::palette::{
+    PaletteCache, PaletteManager, PaletteSource, active_palette, load_active_palette,
+};
 use serial_test::serial;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -162,24 +164,33 @@ fn palette_cache_starts_on_the_configured_palette() {
     );
 }
 
+/// Every way a user palette can be unusable is reported, not degraded.
 #[test]
 #[serial]
-fn palette_cache_refresh_replaces_the_cached_palette() {
-    with_empty_config_home(|| {
-        let cache = PaletteCache::from_config(&Config::default());
-        assert!(cache.get().get("green").is_some());
+fn load_active_palette_reports_unusable_user_palettes() {
+    let temp_dir = TempDir::new().unwrap();
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
+    let palettes_dir = temp_dir.path().join("gpy").join("palettes");
+    std::fs::create_dir_all(&palettes_dir).unwrap();
+    let mut config = Config::default();
+    config.ui.palette = PaletteName::new("mine".to_owned()).expect("valid name");
 
-        // Unknown palette names degrade to an empty palette, which refresh caches.
-        let mut new_config = Config::default();
-        new_config.ui.palette =
-            PaletteName::new("__nonexistent_palette__".to_owned()).expect("valid name");
-        cache.refresh(&new_config);
+    for (case, content) in [
+        ("malformed TOML", "[colors\nsignal = "),
+        (
+            "reference cycle",
+            "[colors]\nsignal = \"loop\"\nloop = \"signal\"\n",
+        ),
+    ] {
+        std::fs::write(palettes_dir.join("mine.toml"), content).unwrap();
+        assert!(load_active_palette(&config).is_err(), "{case} must error");
+    }
 
-        assert!(
-            cache.get().get("green").is_none(),
-            "refreshed empty palette should not define green"
-        );
-    });
+    std::fs::remove_file(palettes_dir.join("mine.toml")).unwrap();
+    assert!(
+        load_active_palette(&config).is_err(),
+        "a missing palette must error"
+    );
 }
 
 #[test]

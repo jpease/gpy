@@ -1,10 +1,29 @@
 //! Resolve the active color palette for a render request.
 //!
-//! Load failures degrade to an empty palette so a bad `ui.palette` never breaks the prompt.
+//! [`load_palette`] reports read/parse/validation failures so a long-lived owner
+//! (the daemon's reload) can keep its last good palette. The render-path helpers
+//! degrade to an empty palette so a bad `ui.palette` never breaks the prompt.
 
+use crate::Result;
 use crate::config::Config;
 use crate::palette::PaletteManager;
 use crate::template::Palette;
+
+/// Load the [`Palette`] named by `config.ui.palette`.
+///
+/// # Errors
+/// Returns an error if the palette cannot be found, read, parsed, or validated.
+pub fn load_active_palette(config: &Config) -> Result<Palette> {
+    load_palette(config.ui.palette.as_str())
+}
+
+/// Load the [`Palette`] named `name` (user file, then builtin).
+///
+/// # Errors
+/// Returns an error if the palette cannot be found, read, parsed, or validated.
+pub fn load_palette(name: &str) -> Result<Palette> {
+    Ok(PaletteManager::new(name)?.get().to_template_palette())
+}
 
 /// Build the active [`Palette`] from `config.ui.palette`; empty on load failure.
 #[must_use]
@@ -15,17 +34,14 @@ pub fn active_palette(config: &Config) -> Palette {
 /// Build a [`Palette`] for an arbitrary `name` (e.g. wizard preview); empty on load failure.
 #[must_use]
 pub fn palette_by_name(name: &str) -> Palette {
-    match PaletteManager::new(name) {
-        Ok(manager) => manager.get().to_template_palette(),
-        Err(error) => {
-            crate::debug::warn_fallback(
-                &format!("Palette '{name}' loading"),
-                "using empty palette",
-                &error,
-            );
-            Palette::default()
-        }
-    }
+    load_palette(name).unwrap_or_else(|error| {
+        crate::debug::warn_fallback(
+            &format!("Palette '{name}' loading"),
+            "using empty palette",
+            &error,
+        );
+        Palette::default()
+    })
 }
 
 // Builtin default resolution is tested in `tests/palette_manager_tests.rs`.
@@ -36,7 +52,7 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::missing_panics_doc)]
 
-    use super::{active_palette, palette_by_name};
+    use super::{active_palette, load_palette, palette_by_name};
     use crate::config::Config;
 
     #[test]
@@ -46,6 +62,11 @@ mod tests {
             palette.get("green").is_none(),
             "unknown palette name should fall back to an empty palette, not error"
         );
+    }
+
+    #[test]
+    fn load_palette_reports_unknown_name() {
+        assert!(load_palette("definitely-not-a-real-palette-name").is_err());
     }
 
     #[test]

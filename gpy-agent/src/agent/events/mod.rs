@@ -1,6 +1,5 @@
 //! Event handlers for git, config, and theme file changes.
 
-use crate::Result;
 use crate::cache::InstantPromptCache;
 use crate::config::Config;
 use crate::debug_log;
@@ -15,6 +14,7 @@ use crate::theme::{ThemeConfig, ThemeManager};
 use crate::watcher::{
     DebouncedEvent, FileEvent, GitPaths, WatcherConfig, multi_repo::MultiRepoWatcher,
 };
+use crate::{Error, Result};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -929,10 +929,41 @@ fn sync_watcher_state(
     }
 }
 
+/// Load the palette a config reload selects, re-reading it even when `ui.palette`
+/// is unchanged because palette file edits leave the name alone.
+///
+/// A newly selected palette that fails to load rejects the reload, like an unknown
+/// theme. A failed re-read of the same palette keeps the last good one (`None`),
+/// so a broken palette file neither blanks segments nor blocks unrelated changes.
+///
+/// # Errors
+/// Returns an error when a newly selected palette cannot be loaded.
+fn reload_palette(
+    old_config: &Config,
+    new_config: &Config,
+) -> Result<Option<crate::template::Palette>> {
+    let name = &new_config.ui.palette;
+    match crate::palette::load_active_palette(new_config) {
+        Ok(palette) => Ok(Some(palette)),
+        Err(error) if old_config.ui.palette != *name => Err(Error::config(format!(
+            "palette '{name}' could not be loaded: {error}"
+        ))),
+        Err(error) => {
+            crate::debug::warn_fallback(
+                &format!("Palette '{name}' reload"),
+                "keeping the last good palette",
+                &error,
+            );
+            Ok(None)
+        }
+    }
+}
+
 /// Apply non-filesystem runtime side effects for a validated config reload.
 ///
 /// # Errors
-/// Returns an error when a runtime subsystem rejects the config (e.g. unknown theme).
+/// Returns an error when a runtime subsystem rejects the config (e.g. unknown theme
+/// or palette); nothing is applied in that case.
 pub(super) fn handle_config_reload(
     ctx: &AgentContext,
     watcher_slot: &SharedWatcherSlot,
@@ -941,12 +972,10 @@ pub(super) fn handle_config_reload(
     old_config: &Config,
     new_config: &Config,
 ) -> Result<()> {
+    // Loaded before the theme switch so a rejected palette leaves nothing half-applied.
+    let palette = reload_palette(old_config, new_config)?;
     maybe_switch_theme(&ctx.theme_manager, old_config, new_config)?;
-
-    // Always re-resolve: palette file edits leave `ui.palette` unchanged.
-    let palette_changed = ctx
-        .palette_cache
-        .replace(crate::palette::active_palette(new_config));
+    let palette_changed = palette.is_some_and(|palette| ctx.palette_cache.replace(palette));
 
     // Theme export must be on disk before the reload doorbell.
     if let Err(e) = crate::cache::write_theme_export_cache(&ctx.theme_manager, new_config) {
