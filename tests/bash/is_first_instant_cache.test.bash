@@ -29,11 +29,17 @@ check() {
     fi
 }
 
-check "not first, not last" "$(__gpy_cache_variant_suffix git false false)" "git"
-check "last only" "$(__gpy_cache_variant_suffix git true false)" "git_last"
-check "first only" "$(__gpy_cache_variant_suffix git false true)" "git_first"
-check "first and last" "$(__gpy_cache_variant_suffix git true true)" "git_first_last"
-check "lang base suffix" "$(__gpy_cache_variant_suffix lang false true)" "lang_first"
+suffix=""
+__gpy_cache_variant_suffix git false false suffix
+check "not first, not last" "$suffix" "git"
+__gpy_cache_variant_suffix git true false suffix
+check "last only" "$suffix" "git_last"
+__gpy_cache_variant_suffix git false true suffix
+check "first only" "$suffix" "git_first"
+__gpy_cache_variant_suffix git true true suffix
+check "first and last" "$suffix" "git_first_last"
+__gpy_cache_variant_suffix lang false true suffix
+check "lang base suffix" "$suffix" "lang_first"
 
 TMP_DIR="$(mktemp -d)"
 export XDG_CACHE_HOME="$TMP_DIR/cache"

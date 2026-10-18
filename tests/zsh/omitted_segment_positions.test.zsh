@@ -72,7 +72,7 @@ check "omitted middle segment: positions unchanged" true \
     "$([[ "$PROMPT" == *"DIR[|true]Z[true|]"* ]] && echo true || echo false)"
 
 # --- Warm cache: language renders and keeps the first position ---
-cache_dir=$(__gpy_instant_cache_dir)
+__gpy_instant_cache_dir cache_dir
 __gpy_instant_cache_key_path lang "$project" key_path
 __gpy_path_to_cache_key "$key_path" cache_key
 mkdir -p "$cache_dir"

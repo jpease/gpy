@@ -85,7 +85,8 @@ repo_dir="$test_tmp_dir/a\\b"
 mkdir -p "$repo_dir"
 git -C "$repo_dir" init -q
 expected_root=$(cd "$repo_dir" && pwd -P)
-actual_root=$(__gpy_find_git_root "$expected_root")
+actual_root=""
+__gpy_find_git_root "$expected_root" actual_root
 if [[ "$actual_root" == "$expected_root" ]]; then
     pass "__gpy_find_git_root returns the byte-exact root"
 else

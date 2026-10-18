@@ -83,7 +83,9 @@ cache_file="$cache_dir/$cache_key.git.none.zsh"
 sentinel="cached-git-output-sentinel"
 echo "$sentinel" > "$cache_file"
 
-result="$(__gpy_read_instant_cache "git" "$tmpdir")"
+result=""
+
+__gpy_read_instant_cache "git" "$tmpdir" "" result
 if [[ "$result" != "$sentinel" ]]; then
     echo "FAIL: warm cache read returned wrong value"
     echo "  expected: $sentinel"
@@ -102,7 +104,9 @@ python3 -c "import os, time; os.utime('$cache_file', (time.time()-10, time.time(
     || touch -t "$(date -v-10S '+%Y%m%d%H%M.%S' 2>/dev/null)" "$cache_file" 2>/dev/null \
     || true
 
-stale_result="$(__gpy_read_instant_cache "git" "$tmpdir")"
+stale_result=""
+
+__gpy_read_instant_cache "git" "$tmpdir" "" stale_result
 stale_status=$?
 if [[ "$stale_result" != "$sentinel" ]]; then
     echo "FAIL: stale cache was not served (expected sentinel, got '$stale_result')"
@@ -181,7 +185,9 @@ lang_file="$cache_dir/$nongit_key.lang.none.zsh"
 lang_sentinel="cached-lang-output-sentinel"
 echo "$lang_sentinel" > "$lang_file"
 
-lang_result="$(__gpy_read_instant_cache "lang" "$nongit")"
+lang_result=""
+
+__gpy_read_instant_cache "lang" "$nongit" "" lang_result
 if [[ "$lang_result" != "$lang_sentinel" ]]; then
     echo "FAIL: non-git lang cache not served (expected '$lang_sentinel', got '$lang_result')"
     rm -rf "$nongit"; rm -f "$lang_file"
@@ -192,7 +198,8 @@ echo "✓ language cache served in non-git project"
 # Git cache must NOT use the path fallback (requires a real Git root).
 git_nongit_file="$cache_dir/$nongit_key.git.none.zsh"
 echo "should-not-be-served" > "$git_nongit_file"
-git_nongit_result="$(__gpy_read_instant_cache "git" "$nongit")"
+git_nongit_result=""
+__gpy_read_instant_cache "git" "$nongit" "" git_nongit_result
 if [[ -n "$git_nongit_result" ]]; then
     echo "FAIL: git cache wrongly served in non-git project (got '$git_nongit_result')"
     rm -rf "$nongit"; rm -f "$lang_file" "$git_nongit_file"
@@ -236,9 +243,12 @@ echo "✓ two-line prompt inserts newline before character"
 echo "=== prev_bg Powerline Parity Tests ==="
 
 # Token derivation must match the Rust prev_bg_token contract.
-[[ "$(__gpy_prev_bg_token "")" == "none" ]] || { echo "FAIL: empty prev_bg token"; exit 1; }
-[[ "$(__gpy_prev_bg_token "blue")" == "blue" ]] || { echo "FAIL: plain prev_bg token"; exit 1; }
-[[ "$(__gpy_prev_bg_token "#5277C3")" == "_5277C3" ]] || { echo "FAIL: hex prev_bg token"; exit 1; }
+__gpy_prev_bg_token "" token
+[[ "$token" == "none" ]] || { echo "FAIL: empty prev_bg token"; exit 1; }
+__gpy_prev_bg_token "blue" token
+[[ "$token" == "blue" ]] || { echo "FAIL: plain prev_bg token"; exit 1; }
+__gpy_prev_bg_token "#5277C3" token
+[[ "$token" == "_5277C3" ]] || { echo "FAIL: hex prev_bg token"; exit 1; }
 echo "✓ prev_bg token derivation matches Rust"
 
 # Cache read selects the prev_bg-specific file, with a fallback to the none file.
@@ -249,12 +259,15 @@ __gpy_path_to_cache_key "$pb_real" pb_key
 echo "blue-render" > "$cache_dir/$pb_key.git.blue.zsh"
 echo "none-render" > "$cache_dir/$pb_key.git.none.zsh"
 
-got_blue="$(__gpy_read_instant_cache "git" "$pb_repo" "blue")"
+got_blue=""
+
+__gpy_read_instant_cache "git" "$pb_repo" "blue" got_blue
 [[ "$got_blue" == "blue-render" ]] || { echo "FAIL: prev_bg=blue did not read .git.blue.zsh (got '$got_blue')"; rm -rf "$pb_repo"; exit 1; }
 echo "✓ cache read selects prev_bg-specific file"
 
 rm -f "$cache_dir/$pb_key.git.blue.zsh"
-got_fallback="$(__gpy_read_instant_cache "git" "$pb_repo" "blue")"
+got_fallback=""
+__gpy_read_instant_cache "git" "$pb_repo" "blue" got_fallback
 [[ "$got_fallback" == "none-render" ]] || { echo "FAIL: missing context file did not fall back to none (got '$got_fallback')"; rm -rf "$pb_repo"; exit 1; }
 echo "✓ cache read falls back to none render when context file absent"
 

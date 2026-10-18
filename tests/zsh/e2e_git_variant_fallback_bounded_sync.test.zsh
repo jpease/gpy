@@ -58,7 +58,7 @@ fi
 [ -z "$(token_files)" ] && pass "no token-specific file exists for prev_bg $PREV_BG yet" \
     || fail "a token-specific file already exists; no genuine variant gap"
 
-__gpy_read_instant_cache git_last "$SHELL_E2E_REPO" "$PREV_BG" >/dev/null
+__gpy_read_instant_cache git_last "$SHELL_E2E_REPO" "$PREV_BG" ignored
 cache_rc=$?
 if [ "$cache_rc" -eq 4 ]; then
     pass "the cache read reports the variant fallback (status $cache_rc)"
@@ -100,7 +100,10 @@ fallback_bytes="$(<"$fallback_cache_dir/${none_file:t}")"
 # recovery. Keep the copied entry fresh even when the gate heavily loads the host.
 fallback_read="$(
     export XDG_CACHE_HOME="$fallback_cache_home" GPY_GIT_INSTANT_CACHE_TTL_SECONDS=3600
-    __gpy_read_instant_cache git_last "$SHELL_E2E_REPO" "$PREV_BG"
+    __gpy_read_instant_cache git_last "$SHELL_E2E_REPO" "$PREV_BG" fallback_text
+    rc=$?
+    print -rn -- "$fallback_text"
+    exit $rc
 )"
 fallback_cache_rc=$?
 if [ "$fallback_cache_rc" -eq 4 ]; then

@@ -49,7 +49,7 @@ fi
 [ -z "$(token_files)" ] && pass "no token-specific file exists for prev_bg $PREV_BG yet" \
     || fail "a token-specific file already exists; no genuine variant gap"
 
-__gpy_read_instant_cache git_last "$SHELL_E2E_REPO" "$PREV_BG" >/dev/null
+__gpy_read_instant_cache git_last "$SHELL_E2E_REPO" "$PREV_BG" ignored
 cache_rc=$?
 if [ "$cache_rc" -eq 4 ]; then
     pass "the cache read reports the variant fallback (status $cache_rc)"

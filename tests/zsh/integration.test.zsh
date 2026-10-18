@@ -277,7 +277,8 @@ worktree_commit=$(printf 'init\n' | git -C "$worktree_repo" commit-tree "$worktr
 git -C "$worktree_repo" update-ref refs/heads/main "$worktree_commit"
 git -c core.hooksPath="$worktree_hooks" -C "$worktree_repo" worktree add -q "$worktree_checkout"
 exec 2>>"$stderr_file"
-detected_root=$(__gpy_find_git_root "$worktree_checkout")
+detected_root=""
+__gpy_find_git_root "$worktree_checkout" detected_root
 expected_root=$(realpath "$worktree_checkout")
 if [[ "$detected_root" != "$expected_root" ]]; then
     echo "FAIL: Worktree root detection returned '$detected_root'"

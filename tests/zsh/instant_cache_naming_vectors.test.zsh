@@ -52,10 +52,12 @@ while IFS=$'\t' read -r kind c2 c3 c4 c5 _rest; do
     case "$kind" in
         token)
             value=$(unescape_value "$c2"; printf x)
-            check "$label" "$c3" "$(__gpy_prev_bg_token "${value%x}")"
+            __gpy_prev_bg_token "${value%x}" actual
+            check "$label" "$c3" "$actual"
             ;;
         suffix)
-            check "$label" "$c5" "$(__gpy_cache_variant_suffix "$c2" "$(unescape_value "$c3")" "$(unescape_value "$c4")")"
+            __gpy_cache_variant_suffix "$c2" "$(unescape_value "$c3")" "$(unescape_value "$c4")" actual
+            check "$label" "$c5" "$actual"
             ;;
         status)
             check "$label stale" "$c3" "$(yes_no __gpy_cache_status_stale "$c2")"

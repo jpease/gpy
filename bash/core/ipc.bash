@@ -119,21 +119,17 @@ __gpy_untrack_shell_for_agent_recovery() {
     rm -f "$root/refresh-throttle/$$".* 2>/dev/null || true
 }
 
-# No output and non-zero status when there is no cache directory.
+# Instant-prompt cache dir into variable $1; non-zero status when there is
+# no cache directory.
 __gpy_instant_cache_dir() {
-    local home
-
+    local __gpy_icd_home
     if [[ -n "${XDG_CACHE_HOME:-}" && "${XDG_CACHE_HOME:-}" == /* ]]; then
-        echo "$XDG_CACHE_HOME/gpy/instant-prompts"
-        return 0
+        printf -v "$1" '%s' "$XDG_CACHE_HOME/gpy/instant-prompts"
+    elif __gpy_home __gpy_icd_home; then
+        printf -v "$1" '%s' "$__gpy_icd_home/.cache/gpy/instant-prompts"
+    else
+        return 1
     fi
-
-    if __gpy_home home; then
-        echo "$home/.cache/gpy/instant-prompts"
-        return 0
-    fi
-
-    return 1
 }
 
 # Cached Bash theme export, written atomically by the agent.
@@ -268,23 +264,23 @@ __gpy_check_protocol_version() {
     return 0
 }
 
+# Git root above $1 into variable $2; status 1 when there is none.
 __gpy_find_git_root() {
-    local start_dir="${1:-$PWD}"
-
     # Keep the realpath fork: the cache key must match the Rust writer's
-    # `path_to_cache_key` byte for byte, including symlink resolution.
-    local dir
-    dir=$(realpath "$start_dir" 2>/dev/null)
-    [[ -z "$dir" ]] && return 1
+    # `path_to_cache_key` byte for byte, including symlink resolution, and
+    # bash has no builtin that resolves a path without changing directory.
+    local __gpy_fgr_dir
+    __gpy_fgr_dir=$(realpath "${1:-$PWD}" 2>/dev/null)
+    [[ -z "$__gpy_fgr_dir" ]] && return 1
 
-    while [[ "$dir" != "/" ]]; do
-        if [[ -e "$dir/.git" ]]; then
-            echo "$dir"
+    while [[ "$__gpy_fgr_dir" != "/" ]]; do
+        if [[ -e "$__gpy_fgr_dir/.git" ]]; then
+            printf -v "$2" '%s' "$__gpy_fgr_dir"
             return 0
         fi
         # `${dir%/*}` avoids a dirname fork per level; "" means "/".
-        dir="${dir%/*}"
-        [[ -z "$dir" ]] && dir="/"
+        __gpy_fgr_dir="${__gpy_fgr_dir%/*}"
+        [[ -z "$__gpy_fgr_dir" ]] && __gpy_fgr_dir="/"
     done
 
     return 1
@@ -314,30 +310,30 @@ __gpy_chunk_cache_key() {
     printf -v "$1" '%s' "$__gpy_ck_stem"
 }
 
-# MUST match `prev_bg_token` in the agent. Empty -> "none".
+# Token for prev_bg $1 into variable $2. MUST match `prev_bg_token` in the
+# agent. Empty -> "none".
 __gpy_prev_bg_token() {
-    local prev_bg="$1"
-    [[ -z "$prev_bg" ]] && {
-        echo "none"
-        return
-    }
-    echo "${prev_bg//[^a-zA-Z0-9]/_}"
+    if [[ -z "$1" ]]; then
+        printf -v "$2" '%s' "none"
+    else
+        printf -v "$2" '%s' "${1//[^a-zA-Z0-9]/_}"
+    fi
 }
 
-# MUST match `variant_suffix` in the agent, e.g. git true false -> "git_last".
+# Suffix for base $1, is_last $2, is_first $3 into variable $4. MUST match
+# `variant_suffix` in the agent, e.g. git true false -> "git_last".
 __gpy_cache_variant_suffix() {
-    local base="$1" is_last="$2" is_first="$3"
-    local suffix="$base"
-    [[ "$is_first" == "true" ]] && suffix="${suffix}_first"
-    [[ "$is_last" == "true" ]] && suffix="${suffix}_last"
-    echo "$suffix"
+    local __gpy_cvs_suffix="$1"
+    [[ "$3" == "true" ]] && __gpy_cvs_suffix+="_first"
+    [[ "$2" == "true" ]] && __gpy_cvs_suffix+="_last"
+    printf -v "$4" '%s' "$__gpy_cvs_suffix"
 }
 
 # Cache key path into $3: the git root, or for language caches outside Git the
 # canonical request path, matching how the agent keys them.
 __gpy_instant_cache_key_path() {
-    local suffix="$1" cwd="$2" __gpy_kp
-    __gpy_kp="$(__gpy_find_git_root "$cwd")"
+    local suffix="$1" cwd="$2" __gpy_kp=""
+    __gpy_find_git_root "$cwd" __gpy_kp
     if [[ -z "$__gpy_kp" && "$suffix" == lang* ]]; then
         __gpy_kp="$(realpath "$cwd" 2>/dev/null)"
     fi
@@ -350,7 +346,7 @@ __gpy_instant_cache_key_path() {
 __gpy_instant_cache_present() {
     local base="$1" cwd="${2:-$PWD}" key_path cache_dir cache_key hit found=1 had_failglob=0
     __gpy_instant_cache_key_path "$base" "$cwd" key_path || return 1
-    cache_dir="$(__gpy_instant_cache_dir)" || return 1
+    __gpy_instant_cache_dir cache_dir || return 1
     __gpy_path_to_cache_key "$key_path" cache_key
     __gpy_chunk_cache_key cache_key
     # An unmatched glob stays literal and fails -e; failglob would abort, so lift it.
@@ -365,69 +361,56 @@ __gpy_instant_cache_present() {
     return "$found"
 }
 
-# Serve-stale read. Exit code: 0 fresh, 1 miss, 2 stale, 4 fresh `.none`
-# fallback, 6 stale `.none` fallback (bit 2 = stale, bit 4 = fallback).
+# Serve-stale read of the entry for suffix $1, cwd $2, prev_bg $3 into
+# variable $4 ("" on a miss). Exit code: 0 fresh, 1 miss, 2 stale, 4 fresh
+# `.none` fallback, 6 stale `.none` fallback (bit 2 = stale, bit 4 = fallback).
 __gpy_read_instant_cache() {
-    local suffix="${1:-git}"
-    local cwd="${2:-$PWD}"
-    local prev_bg="${3:-}"
-
-    local key_path
-    __gpy_instant_cache_key_path "$suffix" "$cwd" key_path || return 1
-
-    local cache_dir
-    cache_dir="$(__gpy_instant_cache_dir)" || return 1
+    local __gpy_ric_suffix="${1:-git}" __gpy_ric_cwd="${2:-$PWD}" __gpy_ric_prev_bg="${3:-}"
+    local __gpy_ric_key_path __gpy_ric_dir __gpy_ric_key __gpy_ric_token __gpy_ric_file __gpy_ric_text=""
+    local __gpy_ric_now __gpy_ric_mtime __gpy_ric_status=0 __gpy_ric_ttl=5 __gpy_ric_default_ttl=5
+    printf -v "$4" '%s' ""
+    __gpy_instant_cache_key_path "$__gpy_ric_suffix" "$__gpy_ric_cwd" __gpy_ric_key_path || return 1
+    __gpy_instant_cache_dir __gpy_ric_dir || return 1
 
     # The ANSI bakes in the fg:prev_bg chevron, so the key includes prev_bg.
     # Fall back to `.none`; the caller's refresh fills the right token file.
-    local cache_key token
-    __gpy_path_to_cache_key "$key_path" cache_key
-    __gpy_chunk_cache_key cache_key
-    token="$(__gpy_prev_bg_token "$prev_bg")"
+    __gpy_path_to_cache_key "$__gpy_ric_key_path" __gpy_ric_key
+    __gpy_chunk_cache_key __gpy_ric_key
+    __gpy_prev_bg_token "$__gpy_ric_prev_bg" __gpy_ric_token
     # `.bash` only: the `.ansi` files are fish's and must never reach PS1.
-    local cache_file="$cache_dir/$cache_key.$suffix.$token.bash"
-    local used_variant_fallback=0
-    if [[ ! -f "$cache_file" && "$token" != "none" ]]; then
-        cache_file="$cache_dir/$cache_key.$suffix.none.bash"
-        used_variant_fallback=1
+    __gpy_ric_file="$__gpy_ric_dir/$__gpy_ric_key.$__gpy_ric_suffix.$__gpy_ric_token.bash"
+    if [[ ! -f "$__gpy_ric_file" && "$__gpy_ric_token" != "none" ]]; then
+        __gpy_ric_file="$__gpy_ric_dir/$__gpy_ric_key.$__gpy_ric_suffix.none.bash"
+        __gpy_ric_status=4
+    fi
+    [[ -f "$__gpy_ric_file" ]] || return 1
+
+    if [[ "${__gpy_have_printf_epoch:-0}" == "1" ]]; then
+        printf -v __gpy_ric_now '%(%s)T' -1
+    else
+        __gpy_ric_now=$(date +%s 2>/dev/null)
+    fi
+    # No builtin reads an mtime. GNU stat -c first: on Linux `stat -f` means
+    # --file-system and succeeds with non-numeric text, so the BSD fallback
+    # would never run.
+    __gpy_ric_mtime=$(stat -c %Y "$__gpy_ric_file" 2>/dev/null || stat -f %m "$__gpy_ric_file" 2>/dev/null)
+    if [[ "$__gpy_ric_now" =~ ^[0-9]+$ && "$__gpy_ric_mtime" =~ ^[0-9]+$ ]]; then
+        if [[ "$__gpy_ric_suffix" == git* ]]; then
+            __gpy_ric_ttl="${GPY_GIT_INSTANT_CACHE_TTL_SECONDS:-5}"
+        elif [[ "$__gpy_ric_suffix" == lang* ]]; then
+            __gpy_ric_default_ttl=30
+            __gpy_ric_ttl="${GPY_LANGUAGE_CACHE_TTL_SECONDS:-30}"
+        fi
+        [[ "$__gpy_ric_ttl" =~ ^[0-9]+$ ]] || __gpy_ric_ttl="$__gpy_ric_default_ttl"
+        (( __gpy_ric_now - __gpy_ric_mtime >= __gpy_ric_ttl )) && __gpy_ric_status=$((__gpy_ric_status + 2))
     fi
 
-    if [[ -f "$cache_file" ]]; then
-        local now mtime age
-        if [[ "${__gpy_have_printf_epoch:-0}" == "1" ]]; then
-            printf -v now '%(%s)T' -1
-        else
-            now=$(date +%s 2>/dev/null)
-        fi
-        # GNU stat -c first: on Linux `stat -f` means --file-system and
-        # succeeds with non-numeric text, so the BSD fallback would never run.
-        mtime=$(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null)
-
-        local exit_code=0
-        if [[ "$now" =~ ^[0-9]+$ && "$mtime" =~ ^[0-9]+$ ]]; then
-            age=$((now - mtime))
-            local ttl=5 default_ttl=5
-            if [[ "$suffix" == git* ]]; then
-                ttl="${GPY_GIT_INSTANT_CACHE_TTL_SECONDS:-5}"
-            elif [[ "$suffix" == lang* ]]; then
-                default_ttl=30
-                ttl="${GPY_LANGUAGE_CACHE_TTL_SECONDS:-30}"
-            fi
-            [[ "$ttl" =~ ^[0-9]+$ ]] || ttl="$default_ttl"
-            if (( age >= ttl )); then
-                exit_code=$((exit_code + 2))
-            fi
-        fi
-        if [[ "$used_variant_fallback" -eq 1 ]]; then
-            exit_code=$((exit_code + 4))
-        fi
-
-        # `$(<file)` reads without forking `cat`.
-        printf '%s' "$(<"$cache_file")"
-        return "$exit_code"
-    fi
-
-    return 1
+    # `read` in this shell, not `$(<file)` in a subshell; trailing newlines
+    # are dropped as command substitution would.
+    IFS= read -r -d '' __gpy_ric_text <"$__gpy_ric_file"
+    while [[ "$__gpy_ric_text" == *$'\n' ]]; do __gpy_ric_text="${__gpy_ric_text%$'\n'}"; done
+    printf -v "$4" '%s' "$__gpy_ric_text"
+    return "$__gpy_ric_status"
 }
 
 # Shared is_last/is_first/prev_bg JSON tail. Flags are "true" or ""; absent
@@ -563,18 +546,18 @@ __gpy_request() {
     # For git/lang operations, try instant cache first (0ms latency)
     if [[ "$op" == "git" ]]; then
         local cache_suffix
-        cache_suffix="$(__gpy_cache_variant_suffix git "$is_last" "$is_first")"
+        __gpy_cache_variant_suffix git "$is_last" "$is_first" cache_suffix
         local cached_result
-        cached_result="$(__gpy_read_instant_cache "$cache_suffix" "$context_path" "$prev_bg")"
+        __gpy_read_instant_cache "$cache_suffix" "$context_path" "$prev_bg" cached_result
         if [[ -n "$cached_result" ]]; then
             echo "$cached_result"
             return 0
         fi
     elif [[ "$op" == "lang" ]]; then
         local cache_suffix
-        cache_suffix="$(__gpy_cache_variant_suffix lang "$is_last" "$is_first")"
+        __gpy_cache_variant_suffix lang "$is_last" "$is_first" cache_suffix
         local cached_result
-        cached_result="$(__gpy_read_instant_cache "$cache_suffix" "$context_path" "$prev_bg")"
+        __gpy_read_instant_cache "$cache_suffix" "$context_path" "$prev_bg" cached_result
         if [[ -n "$cached_result" ]]; then
             echo "$cached_result"
             return 0
@@ -773,7 +756,7 @@ __gpy_debug_paths() {
     socket="$(__gpy_ipc_endpoint)"
     [[ -n "$socket" ]] || socket="<unresolved>"
 
-    if instant_dir="$(__gpy_instant_cache_dir)" && [[ -n "$instant_dir" ]]; then
+    if __gpy_instant_cache_dir instant_dir && [[ -n "$instant_dir" ]]; then
         cache_root="${instant_dir%/*}"
     else
         instant_dir="<unresolved>"

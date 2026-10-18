@@ -55,11 +55,16 @@ export GPY_GIT_INSTANT_CACHE_TTL_SECONDS=5
 export GPY_LANGUAGE_CACHE_TTL_SECONDS=30
 
 
-out="$(__gpy_read_instant_cache git "$REPO" mytoken)"; status=$?
+out=""
+
+
+__gpy_read_instant_cache git "$REPO" mytoken out; status=$?
 check "git: miss status" 1 "$status"
 check "git: miss prints nothing" "" "$out"
 
-out="$(__gpy_read_instant_cache lang "$REPO" mytoken)"; status=$?
+out=""
+
+__gpy_read_instant_cache lang "$REPO" mytoken out; status=$?
 check "lang: miss status" 1 "$status"
 check "lang: miss prints nothing" "" "$out"
 
@@ -68,12 +73,14 @@ for row in "git 5" "lang 30"; do
 
     token_file="$CACHE_DIR/$CACHE_KEY.$suffix.mytoken.bash"
     printf '%s content' "$suffix" >"$token_file"
-    out="$(__gpy_read_instant_cache "$suffix" "$REPO" mytoken)"; status=$?
+    out=""
+    __gpy_read_instant_cache "$suffix" "$REPO" mytoken out; status=$?
     check "$suffix: fresh exact-token hit status" 0 "$status"
     check "$suffix: fresh exact-token hit content" "$suffix content" "$out"
 
     backdate "$token_file" "$ttl"
-    out="$(__gpy_read_instant_cache "$suffix" "$REPO" mytoken)"; status=$?
+    out=""
+    __gpy_read_instant_cache "$suffix" "$REPO" mytoken out; status=$?
     check "$suffix: stale exact-token hit status" 2 "$status"
     check "$suffix: stale exact-token hit content preserved" "$suffix content" "$out"
     file_still_exists=1
@@ -84,12 +91,14 @@ for row in "git 5" "lang 30"; do
 
     none_file="$CACHE_DIR/$CACHE_KEY.$suffix.none.bash"
     printf '%s none-content' "$suffix" >"$none_file"
-    out="$(__gpy_read_instant_cache "$suffix" "$REPO" mytoken)"; status=$?
+    out=""
+    __gpy_read_instant_cache "$suffix" "$REPO" mytoken out; status=$?
     check "$suffix: fresh variant-fallback status" 4 "$status"
     check "$suffix: fresh variant-fallback content" "$suffix none-content" "$out"
 
     backdate "$none_file" "$ttl"
-    out="$(__gpy_read_instant_cache "$suffix" "$REPO" mytoken)"; status=$?
+    out=""
+    __gpy_read_instant_cache "$suffix" "$REPO" mytoken out; status=$?
     check "$suffix: stale variant-fallback status" 6 "$status"
     check "$suffix: stale variant-fallback content" "$suffix none-content" "$out"
 

@@ -56,11 +56,15 @@ export GPY_LANGUAGE_CACHE_TTL_SECONDS=30
 
 # --- Miss: no cache file at all, for either suffix ---
 
-out=$(__gpy_read_instant_cache git "$REPO" mytoken); rc=$?
+out=""
+
+__gpy_read_instant_cache git "$REPO" mytoken out; rc=$?
 check "git: miss status" 1 "$rc"
 check "git: miss prints nothing" "" "$out"
 
-out=$(__gpy_read_instant_cache lang "$REPO" mytoken); rc=$?
+out=""
+
+__gpy_read_instant_cache lang "$REPO" mytoken out; rc=$?
 check "lang: miss status" 1 "$rc"
 check "lang: miss prints nothing" "" "$out"
 
@@ -71,13 +75,15 @@ for row in "git 5" "lang 30"; do
     # --- Fresh, exact-token hit (status 0) ---
     token_file="$CACHE_DIR/$CACHE_KEY.$suffix.mytoken.zsh"
     printf '%s content' "$suffix" >"$token_file"
-    out=$(__gpy_read_instant_cache "$suffix" "$REPO" mytoken); rc=$?
+    out=""
+    __gpy_read_instant_cache "$suffix" "$REPO" mytoken out; rc=$?
     check "$suffix: fresh exact-token hit status" 0 "$rc"
     check "$suffix: fresh exact-token hit content" "$suffix content" "$out"
 
     # --- Stale, exact-token hit (status 2): age >= ttl ---
     backdate "$token_file" "$ttl"
-    out=$(__gpy_read_instant_cache "$suffix" "$REPO" mytoken); rc=$?
+    out=""
+    __gpy_read_instant_cache "$suffix" "$REPO" mytoken out; rc=$?
     check "$suffix: stale exact-token hit status" 2 "$rc"
     check "$suffix: stale exact-token hit content preserved" "$suffix content" "$out"
     file_still_exists=1
@@ -89,13 +95,15 @@ for row in "git 5" "lang 30"; do
     # --- Fresh via .none variant fallback (status 4) ---
     none_file="$CACHE_DIR/$CACHE_KEY.$suffix.none.zsh"
     printf '%s none-content' "$suffix" >"$none_file"
-    out=$(__gpy_read_instant_cache "$suffix" "$REPO" mytoken); rc=$?
+    out=""
+    __gpy_read_instant_cache "$suffix" "$REPO" mytoken out; rc=$?
     check "$suffix: fresh variant-fallback status" 4 "$rc"
     check "$suffix: fresh variant-fallback content" "$suffix none-content" "$out"
 
     # --- Stale via .none variant fallback (status 6) ---
     backdate "$none_file" "$ttl"
-    out=$(__gpy_read_instant_cache "$suffix" "$REPO" mytoken); rc=$?
+    out=""
+    __gpy_read_instant_cache "$suffix" "$REPO" mytoken out; rc=$?
     check "$suffix: stale variant-fallback status" 6 "$rc"
     check "$suffix: stale variant-fallback content" "$suffix none-content" "$out"
 

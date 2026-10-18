@@ -149,7 +149,7 @@ git -C "$long_repo" add tracked.txt
 git -C "$long_repo" commit -qm init
 __gpy_request git "$long_repo" ansi true "" true >/dev/null
 long_cached() {
-    __gpy_read_instant_cache git "$long_repo" >/dev/null
+    __gpy_read_instant_cache git "$long_repo" "" ignored
     [ "$?" -ne 1 ]
 }
 if shell_e2e_poll 5 long_cached; then

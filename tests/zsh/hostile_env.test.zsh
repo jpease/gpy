@@ -62,7 +62,9 @@ nounset_scenario() {
     GPY_TEST_STUBS=$stubs run_child "
 setopt nounset
 unset GPY_AGENT_SOCKET_PATH $unsets" 'print -r -- "ep=[$(__gpy_ipc_endpoint)]"
-print -r -- "ic=[$(__gpy_instant_cache_dir)]"
+ic=""
+__gpy_instant_cache_dir ic
+print -r -- "ic=[$ic]"
 cd "$HOME/nu-repo"
 true
 false

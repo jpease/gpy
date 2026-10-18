@@ -61,7 +61,8 @@ __gpy_render_prompt 0
 check "omitted middle segment: positions unchanged" true \
     "$([[ "$PS1" == *"DIR[|true]Z[true|]"* ]] && echo true || echo false)"
 
-cache_dir="$(__gpy_instant_cache_dir)"
+cache_dir=""
+__gpy_instant_cache_dir cache_dir
 key_path=""
 __gpy_instant_cache_key_path lang "$project" key_path
 cache_key=""

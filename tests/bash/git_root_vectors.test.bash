@@ -53,7 +53,8 @@ while IFS=$'\t' read -r kind c2 c3 c4 _rest; do
         root)
             vector_count=$((vector_count + 1))
             expected="$(abs "$c3")"
-            actual="$(__gpy_find_git_root "$S/$c2")"
+            actual=""
+            __gpy_find_git_root "$S/$c2" actual
             status=$?
             [[ -n "$expected" || $status -ne 0 ]] || fail "root $c2: found nothing but returned 0"
             check "root vector $vector_count ($c2)" "$expected" "$actual"

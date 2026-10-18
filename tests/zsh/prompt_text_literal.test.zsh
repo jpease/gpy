@@ -77,12 +77,13 @@ ipc_git_shows_branch() {
 shell_e2e_poll 5 ipc_git_shows_branch
 check "IPC git render" "$ipc_git" "$branch"
 
-suffix=$(__gpy_cache_variant_suffix git true true)
+__gpy_cache_variant_suffix git true true suffix
 resolved_root=${SHELL_E2E_REPO:A}
 __gpy_path_to_cache_key "$resolved_root" resolved_key
 cache_file="$cache_dir/$resolved_key.$suffix.none.zsh"
 if shell_e2e_poll 3 test -f "$cache_file"; then
-    cached=$(__gpy_read_instant_cache "$suffix" "$SHELL_E2E_REPO" "")
+    cached=""
+    __gpy_read_instant_cache "$suffix" "$SHELL_E2E_REPO" "" cached
     check "instant-cache git hit" "$cached" "$branch"
     __enabled_segments=(git)
     PROMPT=$(__gpy_render_prompt 0)
