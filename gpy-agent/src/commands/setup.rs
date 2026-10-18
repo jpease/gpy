@@ -473,8 +473,8 @@ fn wire_bash(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, bool)> {
         .map(|name| home.join(name))
         .find(|path| path.exists())
         .unwrap_or_else(|| home.join(".profile"));
-    let mentions_bashrc = fs::read_to_string(&login).is_ok_and(|text| text.contains(".bashrc"));
-    if !mentions_bashrc
+    let loads_bashrc = fs::read_to_string(&login).is_ok_and(|text| sources_bashrc(&text));
+    if !loads_bashrc
         && append_block(
             &login,
             "GPY: load ~/.bashrc in login shells",
@@ -484,6 +484,53 @@ fn wire_bash(env: &Environment, shell_dir: &Path) -> Result<(PathBuf, bool)> {
         println!("Added ~/.bashrc loader to {}", login.display());
     }
     Ok((rc, added))
+}
+
+/// Whether a startup file runs `~/.bashrc`: a `.`/`source` command, outside a
+/// comment, whose argument is a `.bashrc` path. A mention alone (a comment, a
+/// commented-out loader, `echo ~/.bashrc`) does not load it.
+fn sources_bashrc(text: &str) -> bool {
+    text.lines().any(|line| {
+        let words = shell_words(line);
+        words.windows(2).enumerate().any(|(index, pair)| {
+            let in_command_position = index == 0
+                || matches!(
+                    words[index - 1],
+                    ";" | "&" | "|" | "(" | ")" | "{" | "then" | "else" | "do"
+                );
+            let path = pair[1].trim_matches(['"', '\'']);
+            in_command_position
+                && matches!(pair[0], "." | "source")
+                && (path == ".bashrc" || path.ends_with("/.bashrc"))
+        })
+    })
+}
+
+/// Splits one shell line into words, with each of `;&|()` as its own word,
+/// and drops a trailing `#` comment. Quoting is not interpreted.
+fn shell_words(line: &str) -> Vec<&str> {
+    let mut words = Vec::new();
+    let mut word_start = None;
+    for (index, ch) in line.char_indices() {
+        let separator = matches!(ch, ';' | '&' | '|' | '(' | ')');
+        if ch.is_whitespace() || separator {
+            if let Some(start) = word_start.take() {
+                words.push(&line[start..index]);
+            }
+            if separator {
+                words.push(&line[index..=index]);
+            }
+        } else if word_start.is_none() {
+            if ch == '#' {
+                return words;
+            }
+            word_start = Some(index);
+        }
+    }
+    if let Some(start) = word_start {
+        words.push(&line[start..]);
+    }
+    words
 }
 
 /// Whether this is Apple's frozen `/bin/bash` 3.2 (decided from the path alone).
@@ -601,6 +648,30 @@ mod tests {
         assert!(!is_stock_macos_bash(Shell::Bash, Some("/bin/zsh"), true));
         assert!(!is_stock_macos_bash(Shell::Zsh, Some("/bin/bash"), true));
         assert!(!is_stock_macos_bash(Shell::Bash, Some("/bin/bash"), false));
+    }
+
+    #[test]
+    fn only_an_uncommented_source_command_counts_as_a_bashrc_loader() {
+        for loader in [
+            "[ -f ~/.bashrc ] && . ~/.bashrc",
+            "[ -r \"$HOME/.bashrc\" ] && source \"$HOME/.bashrc\" # login",
+            "if [ -f \"$HOME/.bashrc\" ]; then . \"$HOME/.bashrc\"; fi",
+            "if [ -f ~/.bashrc ]; then\n    . ~/.bashrc\nfi",
+            "test -f ${HOME}/.bashrc&&. ${HOME}/.bashrc",
+            "case $- in *i*) . ~/.bashrc;; esac",
+        ] {
+            assert!(sources_bashrc(loader), "{loader}");
+        }
+        for mention in [
+            "# .bashrc is intentionally not sourced here yet",
+            "# [ -f ~/.bashrc ] && . ~/.bashrc",
+            "    #. \"$HOME/.bashrc\"",
+            "export PATH=$PATH:~/bin # then . ~/.bashrc",
+            "echo . ~/.bashrc",
+            "[ -f ~/.bashrc ] && . ~/.bashrc.local",
+        ] {
+            assert!(!sources_bashrc(mention), "{mention}");
+        }
     }
 
     #[test]

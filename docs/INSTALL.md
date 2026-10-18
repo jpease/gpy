@@ -167,7 +167,7 @@ The installer automatically:
    and configures your shell by adding a marked block to:
    - Fish: `~/.config/fish/config.fish`
    - Zsh: `${ZDOTDIR:-~}/.zshrc`
-   - Bash: `~/.bashrc` (created if missing). If your login file (the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile`) does not already load `~/.bashrc`, a small loader block is added to it; if none exists, `~/.profile` is created
+   - Bash: `~/.bashrc` (created if missing). If your login file (the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile`) does not already load `~/.bashrc` with an uncommented `.` or `source` line, a small loader block is added to it; if none exists, `~/.profile` is created
 5. **Starts the agent** (if not already running)
 
 ### What the checksums do and do not prove
