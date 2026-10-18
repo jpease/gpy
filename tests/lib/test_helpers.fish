@@ -225,6 +225,24 @@ function init_test_env
     set -e XDG_RUNTIME_DIR
     mkdir -p $XDG_CONFIG_HOME $XDG_CACHE_HOME
 
+    # Test this checkout's gpy-agent, never an installed one: a standalone
+    # `fish tests/fish/<file>` otherwise resolves whatever the caller's PATH
+    # (or fish_user_paths) holds. Same rule as scripts/test_fish.sh and
+    # tests/lib/shell_e2e.sh.
+    set -l target_dir $__gpy_root/gpy-agent/target
+    test -n "$CARGO_TARGET_DIR"; and set target_dir $CARGO_TARGET_DIR
+    if not test -x $target_dir/debug/gpy-agent
+        echo "Building debug gpy-agent for the Fish tests..."
+        # Build from gpy-agent/ so rustup honours its rust-toolchain.toml pin.
+        set -l prev_dir $PWD
+        cd $__gpy_root/gpy-agent; or return 1
+        cargo build --quiet --bin gpy --bin gpy-agent
+        set -l build_status $status
+        cd $prev_dir
+        test $build_status -eq 0; or return 1
+    end
+    set -gx PATH $target_dir/debug $PATH
+
     # Belt-and-braces guard: refuse to proceed if the test socket doesn't look
     # like it lives under a throwaway temp dir. Everything below (leftover-
     # process cleanup, and stop_test_agent's force-kill) trusts that scoping
