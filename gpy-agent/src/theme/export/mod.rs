@@ -1,9 +1,11 @@
 //! Shell-export serialization: [`ThemeConfig`] → Fish/Bash/Zsh variable assignments.
 
+use crate::config::validation::colors::canonical_color;
 use crate::config::{Config, DelimiterConfig};
 use crate::formatter::separator::Glyphs;
 use crate::shell::{Shell, VariableSyntax};
 use crate::theme::model::{PluginSegmentTheme, ThemeConfig};
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy)]
@@ -690,7 +692,7 @@ fn plugin_segment_property_assignments(
     let mut property_names: Vec<_> = segment_theme.properties.keys().collect();
     property_names.sort_unstable();
     for property_name in property_names {
-        let Some(value) = segment_theme
+        let Some(raw_value) = segment_theme
             .properties
             .get(property_name)
             .map(String::as_str)
@@ -701,19 +703,26 @@ fn plugin_segment_property_assignments(
         if property_token.is_empty() {
             continue;
         }
+        let is_color = property_name.ends_with("_color");
+        // Theme validation accepted `*_color` values; export them in the spelling typed colors use.
+        let value = if is_color {
+            canonical_color(raw_value).map_or(Cow::Borrowed(raw_value), Cow::Owned)
+        } else {
+            Cow::Borrowed(raw_value)
+        };
 
         assignments.push(ShellAssignment::local(
             format!("{gpy_prefix}_{property_token}"),
-            escape(value),
+            escape(&value),
         ));
 
-        if property_name.ends_with("_color") {
+        if is_color {
             let base = property_name.trim_end_matches("_color");
             let base_token = normalize_variable_token(base);
             if !base_token.is_empty() {
                 assignments.push(ShellAssignment::local(
                     format!("__color_{segment_token}_{base_token}"),
-                    value,
+                    value.as_ref(),
                 ));
             }
         }
@@ -723,7 +732,7 @@ fn plugin_segment_property_assignments(
             if !base_token.is_empty() {
                 assignments.push(ShellAssignment::local(
                     format!("__icon_{segment_token}_{base_token}"),
-                    escape(value),
+                    escape(&value),
                 ));
             }
         }
