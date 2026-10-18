@@ -1,6 +1,8 @@
 //! Plugin manifest (`plugin.toml`) schema and validated plugin identifiers.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fmt;
 
 /// A validated, normalized plugin identifier
@@ -83,6 +85,62 @@ impl SegmentName {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// The token naming this segment's shell variables (`__gpy_plugin_segment_file_<token>`,
+    /// `__gpy_segment_<token>_*`): `-` becomes `_`, nothing else changes.
+    ///
+    /// Fish (`__gpy_plugin_segment_file_var`) and the plugin scaffold apply the
+    /// same mapping. Distinct names can share a token (`a-b`, `a_b`); see
+    /// [`first_token_collision`].
+    #[must_use]
+    pub fn variable_token(&self) -> String {
+        self.0.replace('-', "_")
+    }
+}
+
+/// Two distinct segment names that map to the same shell variable token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SegmentTokenCollision {
+    /// The name seen first.
+    pub first: SegmentName,
+    /// The later name that collides with `first`.
+    pub second: SegmentName,
+}
+
+impl fmt::Display for SegmentTokenCollision {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "segments '{}' and '{}' both map to the shell variable token '{}'; rename one of them",
+            self.first,
+            self.second,
+            self.first.variable_token()
+        )
+    }
+}
+
+/// The first pair of distinct names in `names` sharing a [`SegmentName::variable_token`].
+///
+/// Repeats of one name are not collisions.
+pub fn first_token_collision<'a>(
+    names: impl IntoIterator<Item = &'a SegmentName>,
+) -> Option<SegmentTokenCollision> {
+    let mut seen: HashMap<String, &SegmentName> = HashMap::new();
+    for name in names {
+        match seen.entry(name.variable_token()) {
+            Entry::Occupied(entry) if *entry.get() != name => {
+                return Some(SegmentTokenCollision {
+                    first: (*entry.get()).clone(),
+                    second: name.clone(),
+                });
+            }
+            Entry::Occupied(_) => {}
+            Entry::Vacant(entry) => {
+                entry.insert(name);
+            }
+        }
+    }
+    None
 }
 
 impl<'de> Deserialize<'de> for SegmentName {
@@ -280,6 +338,11 @@ impl PluginManifest {
                 )));
             }
         }
+        if let Some(collision) = first_token_collision(&manifest.provided_segments) {
+            return Err(crate::Error::invalid(format!(
+                "provided_segments: {collision}"
+            )));
+        }
 
         Ok(manifest)
     }
@@ -316,6 +379,48 @@ mod tests {
         assert!(SegmentName::new("").is_err());
         assert!(SegmentName::new("my seg").is_err());
         assert!(SegmentName::new("my@seg").is_err());
+    }
+
+    #[test]
+    fn variable_token_maps_only_hyphens() {
+        for (name, token) in [
+            ("my-seg", "my_seg"),
+            ("my--seg", "my__seg"),
+            ("my__seg", "my__seg"),
+            ("seg_", "seg_"),
+            ("-seg", "_seg"),
+        ] {
+            assert_eq!(SegmentName::new(name).unwrap().variable_token(), token);
+        }
+    }
+
+    #[test]
+    fn token_collision_reports_distinct_names_only() {
+        let names: Vec<SegmentName> = ["a-b", "c", "a-b", "a_b"]
+            .iter()
+            .map(|name| SegmentName::new(name).unwrap())
+            .collect();
+        let collision = first_token_collision(&names).unwrap();
+        assert_eq!(collision.first.as_str(), "a-b");
+        assert_eq!(collision.second.as_str(), "a_b");
+        assert!(first_token_collision(names.get(..3).unwrap()).is_none());
+    }
+
+    #[test]
+    fn test_parse_rejects_colliding_segment_tokens() {
+        let toml = r#"
+            id = "my-test-plugin"
+            name = "My Test Plugin"
+            version = "1.0.0"
+            api_version = "v1"
+            provided_segments = ["k8s-ctx", "k8s_ctx"]
+            entry_type = "file"
+        "#;
+        let err = PluginManifest::parse(toml).unwrap_err().to_string();
+        assert!(
+            err.contains("k8s-ctx") && err.contains("k8s_ctx"),
+            "error must name both segments: {err}"
+        );
     }
 
     #[test]

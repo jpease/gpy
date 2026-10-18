@@ -32,6 +32,12 @@ Optional fields:
 Identifier normalization/validation:
 - `id`: lowercase, `[a-z0-9-]+`
 - `provided_segments`: lowercase, `[a-z0-9_-]+`
+- Each segment name maps to one shell variable token: the name with `-` turned
+  into `_` (no other change, so `my--seg` → `my__seg`, `seg_` → `seg_`). Two
+  distinct names with the same token (`a-b` and `a_b`) are rejected: in one
+  manifest, across discovered plugins (the later plugin by id is dropped with a
+  diagnostic), in `ui.enabled_segments`, and among a theme's `[segments.<name>]`
+  sections.
 
 Implementation: `gpy-agent/src/plugin/manifest.rs`.
 
@@ -80,7 +86,10 @@ Plugin segments use the same Fish detect/render contract as built-ins:
 By convention, segment files live at:
 - `<plugin-root>/segments/<segment-id>.fish`
 
-Theme export emits `__gpy_plugin_segment_file_<segment_token>` variables.
+Theme export emits `__gpy_plugin_segment_file_<segment_token>` variables, where
+`<segment_token>` is the segment name lowercased with every `-` turned into `_`
+and nothing else changed (`my--seg` → `my__seg`, `seg_` → `seg_`); names whose
+tokens collide are rejected (see Identifier normalization above).
 `fish/core/init.fish` uses these variables to source plugin segment files when a segment is enabled.
 
 That export variable naming is an implementation detail, not a plugin-author API. Plugin authors should rely on the manifest + segment-file contract, not on private shell variables.

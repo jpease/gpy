@@ -132,6 +132,13 @@ function __gpy_load_theme
     return 1
 end
 
+# Variable `theme export` sets to a plugin segment's file. The token is the
+# segment name lowercased with `-` turned into `_`, nothing else; it must match
+# `SegmentName::variable_token` in gpy-agent/src/plugin/manifest.rs.
+function __gpy_plugin_segment_file_var --argument-names segment
+    printf '__gpy_plugin_segment_file_%s\n' (string replace -a -- - _ "$segment" | string lower)
+end
+
 function __gpy_load_segments --argument-names prompt_dir
     set -l enabled_segments $argv[2..-1]
     for segment in $enabled_segments
@@ -139,8 +146,7 @@ function __gpy_load_segments --argument-names prompt_dir
         if test -f $segment_file
             source $segment_file
         else
-            set -l token (string lower (string replace -a '-' '_' -- $segment))
-            set -l plugin_file_var "__gpy_plugin_segment_file_$token"
+            set -l plugin_file_var (__gpy_plugin_segment_file_var "$segment")
             if set -q $plugin_file_var
                 set -l plugin_file $$plugin_file_var
                 if test -f $plugin_file
@@ -164,8 +170,7 @@ function __gpy_ensure_segments_loaded --description 'source segment files newly 
         if test -f $segment_file
             source $segment_file
         else
-            set -l token (string lower (string replace -a '-' '_' -- $segment))
-            set -l plugin_file_var "__gpy_plugin_segment_file_$token"
+            set -l plugin_file_var (__gpy_plugin_segment_file_var "$segment")
             if set -q $plugin_file_var; and test -f $$plugin_file_var
                 source $$plugin_file_var
             else

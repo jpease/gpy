@@ -207,7 +207,7 @@ min_gpy_version = "{min_gpy_version}"
 }
 
 fn scaffold_segment(segment: &SegmentName) -> String {
-    let segment_token = segment.as_str().replace('-', "_");
+    let segment_token = segment.variable_token();
     format!(
         r#"# SPDX-License-Identifier: GPL-3.0-or-later
 

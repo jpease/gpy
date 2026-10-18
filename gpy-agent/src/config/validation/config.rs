@@ -2,20 +2,29 @@
 
 use super::{ValidationError, ValidationErrorKind};
 use crate::Result;
-use crate::plugin::SegmentName;
+use crate::plugin::{SegmentName, first_token_collision};
 
 /// Validate enabled segments list.
 ///
 /// # Errors
-/// Returns an error if any segment name is invalid.
+/// Returns an error if any segment name is invalid or two names share a shell
+/// variable token (e.g. `a-b` and `a_b`).
 fn validate_enabled_segments(segments: &[String]) -> Result<()> {
+    let mut names = Vec::with_capacity(segments.len());
     for (i, segment) in segments.iter().enumerate() {
-        SegmentName::new(segment).map_err(|_| ValidationError {
+        names.push(SegmentName::new(segment).map_err(|_| ValidationError {
             field_path: format!("segments[{i}]"),
             kind: ValidationErrorKind::InvalidSegmentName {
                 value: segment.clone(),
             },
-        })?;
+        })?);
+    }
+    if let Some(collision) = first_token_collision(&names) {
+        return Err(ValidationError {
+            field_path: "ui.enabled_segments".to_owned(),
+            kind: ValidationErrorKind::SegmentTokenCollision { collision },
+        }
+        .into());
     }
     Ok(())
 }
@@ -69,6 +78,18 @@ mod tests {
         );
         assert!(validate_enabled_segments(&["bad segment".to_owned()]).is_err());
         assert!(validate_enabled_segments(&["clock".to_owned(), "bad@seg".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn enabled_segments_with_colliding_tokens_are_rejected() {
+        let err = validate_enabled_segments(&["k8s-ctx".to_owned(), "k8s_ctx".to_owned()])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("k8s-ctx") && err.contains("k8s_ctx"),
+            "error must name both segments: {err}"
+        );
+        assert!(validate_enabled_segments(&["my--seg".to_owned(), "my-seg".to_owned()]).is_ok());
     }
 
     /// Platform-neutral cases; absolute paths are tested per-`cfg` below.

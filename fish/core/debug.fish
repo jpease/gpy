@@ -23,7 +23,7 @@ function __prompt_validate_installation
     echo "Segments:"
     for segment in $__enabled_segments
         set -l file $install_dir/segments/$segment.fish
-        set -l plugin_file_var __gpy_plugin_segment_file_(string lower (string replace -a '-' '_' -- $segment))
+        set -l plugin_file_var (__gpy_plugin_segment_file_var "$segment")
         if test -f $file; or begin
                 set -q $plugin_file_var; and test -f $$plugin_file_var
             end
