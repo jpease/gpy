@@ -798,10 +798,9 @@ fn ui_refresh_required(old: &crate::config::UiSettings, new: &crate::config::UiS
 }
 
 /// Whether a `[git]` change needs cached git prompts re-rendered and a reload repaint.
-/// `timeout_seconds` and `watch_worktree` only affect later scans. `skip_paths` is
-/// excluded too: it is a gate, not render input. Every scan and cache publication
-/// (including the regeneration this triggers) checks it, so a change only alters
-/// what later requests and refreshes may scan or publish.
+/// `timeout_seconds` and `watch_worktree` only affect later scans. `enabled` and
+/// `skip_paths` decide which repos may show git at all: the regeneration this
+/// triggers deletes the git caches of repos they newly exclude.
 fn git_refresh_required(
     old: &crate::config::GitSettings,
     new: &crate::config::GitSettings,
@@ -810,7 +809,7 @@ fn git_refresh_required(
         enabled: old_enabled,
         show_upstream: old_show_upstream,
         timeout_seconds: _old_timeout_seconds,
-        skip_paths: _old_skip_paths,
+        skip_paths: old_skip_paths,
         max_branch_length: old_max_branch_length,
         max_ahead_behind: old_max_ahead_behind,
         watch_worktree: _old_watch_worktree,
@@ -822,7 +821,7 @@ fn git_refresh_required(
         enabled: new_enabled,
         show_upstream: new_show_upstream,
         timeout_seconds: _new_timeout_seconds,
-        skip_paths: _new_skip_paths,
+        skip_paths: new_skip_paths,
         max_branch_length: new_max_branch_length,
         max_ahead_behind: new_max_ahead_behind,
         watch_worktree: _new_watch_worktree,
@@ -832,6 +831,7 @@ fn git_refresh_required(
     } = new;
 
     old_enabled != new_enabled
+        || old_skip_paths != new_skip_paths
         || old_show_upstream != new_show_upstream
         || old_max_branch_length != new_max_branch_length
         || old_max_ahead_behind != new_max_ahead_behind
@@ -1041,6 +1041,8 @@ pub(super) fn handle_config_reload(
 
 /// Re-render instant-prompt caches for every registered repo from cached data
 /// with the new theme, so the post-reload repaint is warm and flicker-free.
+/// A repo that `git.enabled`/`git.skip_paths` excludes has its git caches
+/// deleted instead, so shells stop showing a segment nothing refreshes.
 ///
 /// Renders both the context-free fallback and the new theme's `prev_bg` token the
 /// shell will send. Language rendering runs version detection, so it is deferred
@@ -1051,6 +1053,9 @@ pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, con
 
     // prev_bg for git under the new theme; mirrors `ThemeManager::export`.
     let git_prev_bg = theme.segments.directory.bg_color.as_str();
+    // Repos `config` includes again may publish git caches once more.
+    ctx.instant_cache
+        .release_git_suppression(|root| config.git.is_enabled_for(root));
 
     // Dedup: several clients may share one repo.
     let mut seen_keys = std::collections::HashSet::new();
@@ -1063,22 +1068,28 @@ pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, con
             continue;
         }
 
-        if let Some(root) = git_root.as_ref()
-            && config.git.is_enabled_for(root)
-            && let Some(status) = ctx.cache.get(root)
-        {
-            for prev_bg in [None, Some(git_prev_bg)] {
-                if let Err(e) = ctx
-                    .instant_cache
-                    .write_git(root, &status, config, &theme, prev_bg, &palette)
-                {
-                    debug_log!(
-                        "agent",
-                        "theme-change git cache regen failed for {}: {}",
-                        root.display(),
-                        e
-                    );
+        if let Some(root) = git_root.as_ref() {
+            if config.git.is_enabled_for(root) {
+                if let Some(status) = ctx.cache.get(root) {
+                    for prev_bg in [None, Some(git_prev_bg)] {
+                        if let Err(e) = ctx
+                            .instant_cache
+                            .write_git(root, &status, config, &theme, prev_bg, &palette)
+                        {
+                            debug_log!(
+                                "agent",
+                                "theme-change git cache regen failed for {}: {}",
+                                root.display(),
+                                e
+                            );
+                        }
+                    }
                 }
+            } else {
+                ctx.instant_cache.remove_git(root);
+                // Nothing refreshes an excluded repo, so its status goes stale;
+                // re-including it must rescan rather than republish this one.
+                ctx.cache.invalidate_canonical(root);
             }
         }
 

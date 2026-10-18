@@ -78,6 +78,12 @@ pub struct InstantPromptCache {
     seen_contexts: RwLock<SeenContexts>,
     /// Keys whose filename cannot fit `NAME_MAX` even chunked; logged once each.
     unwritable_keys: Mutex<HashSet<String>>,
+    /// Repos whose git caches [`Self::remove_git`] dropped, by cache key, with
+    /// the root each key names. Git writes for these keys are skipped until
+    /// [`Self::release_git_suppression`] lets them through again, so a write
+    /// already in flight when a reload excluded the repo cannot republish it.
+    /// Locked only while `last_written` is held.
+    suppressed_git: Mutex<HashMap<String, PathBuf>>,
     /// Test-only count of [`Self::write_cache_file`] invocations.
     #[cfg(test)]
     write_calls: AtomicU64,
@@ -103,6 +109,7 @@ impl InstantPromptCache {
             last_written: Mutex::new(HashMap::new()),
             seen_contexts: RwLock::new(HashMap::new()),
             unwritable_keys: Mutex::new(HashSet::new()),
+            suppressed_git: Mutex::new(HashMap::new()),
             #[cfg(test)]
             write_calls: AtomicU64::new(0),
         })
@@ -140,6 +147,7 @@ impl InstantPromptCache {
             last_written: Mutex::new(HashMap::new()),
             seen_contexts: RwLock::new(HashMap::new()),
             unwritable_keys: Mutex::new(HashSet::new()),
+            suppressed_git: Mutex::new(HashMap::new()),
             #[cfg(test)]
             write_calls: AtomicU64::new(0),
         })
@@ -346,6 +354,49 @@ impl InstantPromptCache {
             });
     }
 
+    /// Delete every git cache file of the repository at `path` (each variant,
+    /// `prev_bg` token and dialect, including contexts no longer tracked) so
+    /// shells stop serving its git segment. Best-effort.
+    pub fn remove_git(&self, path: &Path) {
+        let key = path_to_cache_key(&find_project_root(path));
+        let bases = SEGMENT_POSITIONS.map(|pos| variant_suffix("git", pos.is_last, pos.is_first));
+        let (dir, prefix) = cache_file_parts(&self.cache_dir, &key, "");
+
+        // Held across the deletion so the record keeps matching the disk.
+        let mut last_written = self
+            .last_written
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        last_written.retain(|map_key, _content| {
+            // `{key}:{base}.{token}.{ext}`; the cache key has no colon.
+            !map_key.split_once(':').is_some_and(|(entry_key, tail)| {
+                entry_key == key
+                    && tail
+                        .split_once('.')
+                        .is_some_and(|(base, _rest)| bases.iter().any(|b| b == base))
+            })
+        });
+        remove_git_files_in(&dir, &prefix, &bases);
+        self.suppressed_git
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, find_project_root(path));
+        drop(last_written);
+    }
+
+    /// Let git writes through again for every repo [`Self::remove_git`]
+    /// suppressed that `enabled` now accepts (given the repo root).
+    pub fn release_git_suppression(&self, enabled: impl Fn(&Path) -> bool) {
+        let _last_written = self
+            .last_written
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        self.suppressed_git
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|_key, root| !enabled(root));
+    }
+
     /// Atomically write a cache file unless already current; returns `true` if written.
     /// # Errors
     /// Returns an error if the cache file cannot be written.
@@ -373,6 +424,15 @@ impl InstantPromptCache {
             .last_written
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        if suffix.starts_with("git")
+            && self
+                .suppressed_git
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains_key(key)
+        {
+            return Ok(false);
+        }
         if let Some(cached_content) = cache.get(&map_key)
             && cached_content == content
         {
@@ -689,6 +749,50 @@ fn clear_unrefreshable_files_in(dir: &Path, bases: &[String]) {
             debug_log!(
                 "cache",
                 "Could not remove unrefreshable cache {}: {e}",
+                path.display()
+            );
+        }
+    }
+}
+
+/// Delete the `{prefix}{base}.{token}.{ext}` files in `dir` whose `base` is one
+/// of `bases`. Base, token and ext contain no dot, so a longer key sharing
+/// `prefix` leaves extra components and never matches.
+fn remove_git_files_in(dir: &Path, prefix: &str, bases: &[String]) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        // Nothing was ever cached under this (chunked) key.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => {
+            debug_log!(
+                "cache",
+                "Could not scan {} to remove git caches: {e}",
+                dir.display()
+            );
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(tail) = path
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .and_then(|name| name.strip_prefix(prefix))
+        else {
+            continue;
+        };
+        let mut parts = tail.split('.');
+        if let (Some(base), Some(_token), Some(ext), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+            && bases.iter().any(|git_base| git_base == base)
+            && PromptDialect::ALL
+                .iter()
+                .any(|dialect| dialect.cache_ext() == ext)
+            && let Err(e) = std::fs::remove_file(&path)
+        {
+            debug_log!(
+                "cache",
+                "Could not remove git cache {}: {e}",
                 path.display()
             );
         }

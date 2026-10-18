@@ -1546,6 +1546,102 @@ fn write_git_caches_repo_with_very_long_path() {
     }
 }
 
+/// `remove_git` deletes a repo's git caches in every variant, context and
+/// dialect, for flat and chunked keys alike, but keeps its language cache and
+/// the caches of a repo whose key merely extends it.
+#[test]
+fn remove_git_deletes_only_that_repos_git_caches() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let cache = InstantPromptCache::new_in_dir(temp_dir.path().join("ip")).expect("cache");
+    let config = Config::default();
+    let palette = crate::palette::active_palette(&config);
+    let write = |repo: &Path, prev_bg: Option<&str>| {
+        cache
+            .write_git(
+                repo,
+                &clean_status("main"),
+                &config,
+                &ThemeConfig::default(),
+                prev_bg,
+                &palette,
+            )
+            .expect("write git");
+    };
+    let git_files = |key: &str| {
+        let mut files = Vec::new();
+        for base in ["git", "git_last", "git_first", "git_first_last"] {
+            for token in ["none", "_112233"] {
+                for dialect in PromptDialect::ALL {
+                    files.push(cache.cache_file_path(key, &format!("{base}.{token}"), dialect));
+                }
+            }
+        }
+        files
+    };
+
+    for parent in [
+        temp_dir.path().join("flat"),
+        temp_dir.path().join("d".repeat(160)),
+    ] {
+        let repo = parent.join("repo");
+        let extended = parent.join("repo.x");
+        for root in [&repo, &extended] {
+            std::fs::create_dir_all(root.join(".git")).expect("git dir");
+            write(root, None);
+            write(root, Some("#112233"));
+        }
+        let key = path_to_cache_key(&std::fs::canonicalize(&repo).expect("canonicalize"));
+        let extended_key =
+            path_to_cache_key(&std::fs::canonicalize(&extended).expect("canonicalize"));
+        let lang = cache.cache_file_path(&key, "lang.none", PromptDialect::Ansi);
+        std::fs::write(&lang, "lang").expect("write language cache");
+        assert!(
+            git_files(&key).iter().all(|file| file.is_file()),
+            "control: every git cache of {} is written",
+            repo.display()
+        );
+
+        cache.remove_git(&repo);
+
+        let left: Vec<_> = git_files(&key).into_iter().filter(|f| f.exists()).collect();
+        assert!(
+            left.is_empty(),
+            "git caches must be deleted, left: {left:?}"
+        );
+        assert!(lang.is_file(), "the repo's language cache must be kept");
+        assert!(
+            git_files(&extended_key).iter().all(|file| file.is_file()),
+            "a repo whose key extends the removed one must keep its git caches"
+        );
+
+        // A write already in flight when the repo was excluded must not
+        // republish it; only releasing the suppression lets writes through.
+        write(&repo, None);
+        assert!(
+            git_files(&key).iter().all(|file| !file.exists()),
+            "a git write after removal must be skipped while suppressed"
+        );
+        let lang_before = std::fs::read_to_string(&lang).expect("read language cache");
+        cache.release_git_suppression(|root| root != repo.canonicalize().expect("canonicalize"));
+        write(&repo, None);
+        assert!(
+            git_files(&key).iter().all(|file| !file.exists()),
+            "a release that still excludes the repo keeps suppressing it"
+        );
+        cache.release_git_suppression(|_root| true);
+        write(&repo, None);
+        assert!(
+            git_files(&key).first().is_some_and(|file| file.is_file()),
+            "a write after the suppression is released must recreate the cache"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&lang).expect("read language cache"),
+            lang_before,
+            "suppression never touches the language cache"
+        );
+    }
+}
+
 #[test]
 fn write_git_writes_every_variant_when_one_fails() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
