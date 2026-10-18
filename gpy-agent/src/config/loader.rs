@@ -27,15 +27,15 @@ pub fn load_config_from_file(path: &str) -> Result<Config> {
     parse_config_toml(&contents)
 }
 
-/// Parse TOML configuration content.
+/// Parse TOML configuration content, normalizing user-spelled names.
 ///
 /// # Errors
-/// Returns an error if the TOML is malformed or doesn't deserialize.
+/// Returns an error if the TOML is malformed, doesn't deserialize, or is invalid.
 pub fn parse_config_toml(toml_content: &str) -> Result<Config> {
-    let config: Config = toml::from_str(toml_content)
+    let mut config: Config = toml::from_str(toml_content)
         .map_err(|e| Error::config(format!("Failed to parse TOML: {e}")))?;
 
-    validation::validate_config(&config)?;
+    validation::normalize_config(&mut config)?;
 
     Ok(config)
 }
@@ -49,7 +49,8 @@ pub fn write_new_config(path: &str, contents: &str) -> Result<()> {
 }
 
 /// Write only changed leaves (plus `explicit_keys`) into the file in place,
-/// preserving comments and layout; symlinks are written through.
+/// preserving comments and layout; symlinks are written through. `updated` is
+/// normalized first, so the file holds what the next load would produce.
 ///
 /// # Errors
 /// Returns an error if `updated` is invalid or the file can't be read, parsed, or written.
@@ -59,10 +60,11 @@ pub fn save_config(
     updated: &Config,
     explicit_keys: &[&str],
 ) -> Result<()> {
-    validation::validate_config(updated)?;
+    let mut updated = updated.clone();
+    validation::normalize_config(&mut updated)?;
 
     let original_leaves = config_leaves(original)?;
-    let updated_leaves = config_leaves(updated)?;
+    let updated_leaves = config_leaves(&updated)?;
 
     let target = resolve_write_target(Path::new(path))?;
     let existing = read_existing(&target)?;

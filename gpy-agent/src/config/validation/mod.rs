@@ -10,7 +10,7 @@ pub mod templates;
 pub mod theme;
 
 pub use colors::is_valid_color;
-pub use config::validate_config;
+pub use config::{normalize_config, validate_config};
 pub use theme::validate_theme_config;
 
 use crate::Error;

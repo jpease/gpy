@@ -4,12 +4,12 @@ use super::{ValidationError, ValidationErrorKind};
 use crate::Result;
 use crate::plugin::{SegmentName, first_token_collision};
 
-/// Validate enabled segments list.
+/// Parse every enabled segment into its normalized [`SegmentName`].
 ///
 /// # Errors
 /// Returns an error if any segment name is invalid or two names share a shell
 /// variable token (e.g. `a-b` and `a_b`).
-fn validate_enabled_segments(segments: &[String]) -> Result<()> {
+fn parse_enabled_segments(segments: &[String]) -> Result<Vec<SegmentName>> {
     let mut names = Vec::with_capacity(segments.len());
     for (i, segment) in segments.iter().enumerate() {
         names.push(SegmentName::new(segment).map_err(|_| ValidationError {
@@ -26,7 +26,15 @@ fn validate_enabled_segments(segments: &[String]) -> Result<()> {
         }
         .into());
     }
-    Ok(())
+    Ok(names)
+}
+
+/// Validate enabled segments list.
+///
+/// # Errors
+/// Returns an error if any segment name is invalid or two names collide.
+fn validate_enabled_segments(segments: &[String]) -> Result<()> {
+    parse_enabled_segments(segments).map(drop)
 }
 
 /// Validate that skip paths are absolute paths.
@@ -60,6 +68,22 @@ pub fn validate_config(config: &crate::config::Config) -> Result<()> {
     Ok(())
 }
 
+/// Rewrite user-spelled names into the canonical form every consumer (export,
+/// shells, doctor, `config get`) compares against, then validate.
+///
+/// `ui.enabled_segments` entries are trimmed and lowercased via [`SegmentName`],
+/// so `"Directory"` and `" git "` load as `directory` and `git`.
+///
+/// # Errors
+/// Returns an error if any configuration value is invalid.
+pub fn normalize_config(config: &mut crate::config::Config) -> Result<()> {
+    config.ui.enabled_segments = parse_enabled_segments(&config.ui.enabled_segments)?
+        .into_iter()
+        .map(String::from)
+        .collect();
+    validate_config(config)
+}
+
 #[cfg(test)]
 #[allow(clippy::missing_panics_doc)]
 mod tests {
@@ -90,6 +114,24 @@ mod tests {
             "error must name both segments: {err}"
         );
         assert!(validate_enabled_segments(&["my--seg".to_owned(), "my-seg".to_owned()]).is_ok());
+    }
+
+    #[test]
+    fn normalize_config_stores_canonical_names_and_then_checks_collisions() {
+        let mut config = crate::config::Config::default();
+        config.ui.enabled_segments = vec![
+            "Directory".to_owned(),
+            " git ".to_owned(),
+            "My-Plugin".to_owned(),
+        ];
+        normalize_config(&mut config).unwrap();
+        assert_eq!(
+            config.ui.enabled_segments,
+            vec!["directory", "git", "my-plugin"]
+        );
+
+        config.ui.enabled_segments = vec!["K8S-Ctx".to_owned(), " k8s_ctx".to_owned()];
+        assert!(normalize_config(&mut config).is_err());
     }
 
     /// Platform-neutral cases; absolute paths are tested per-`cfg` below.

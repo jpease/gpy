@@ -98,6 +98,12 @@ impl SegmentName {
     }
 }
 
+impl From<SegmentName> for String {
+    fn from(name: SegmentName) -> Self {
+        name.0
+    }
+}
+
 /// Two distinct segment names that map to the same shell variable token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SegmentTokenCollision {
