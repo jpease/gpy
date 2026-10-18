@@ -352,6 +352,7 @@ __gpy_instant_cache_present() {
     __gpy_instant_cache_key_path "$base" "$cwd" key_path || return 1
     cache_dir="$(__gpy_instant_cache_dir)" || return 1
     cache_key="$(__gpy_path_to_cache_key "$key_path")"
+    __gpy_chunk_cache_key cache_key
     # An unmatched glob stays literal and fails -e; failglob would abort, so lift it.
     shopt -q failglob && had_failglob=1 && shopt -u failglob
     for hit in "$cache_dir/$cache_key.$base."*.bash "$cache_dir/$cache_key.${base}_"*.bash; do

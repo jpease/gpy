@@ -95,6 +95,17 @@ rm -f "$cache_dir/$cache_key".lang*
 check "probe: a miss prints no NOMATCH error" "1" \
     "$(__gpy_instant_cache_present lang "$project" 2>&1; echo $?)"
 
+# --- A key over 200 characters is stored under chunk directories; the probe looks there ---
+long_project="$TMP_ROOT/${(l:80::l:)}/${(l:80::m:)}/${(l:60::n:)}"
+mkdir -p "$long_project"
+__gpy_instant_cache_key_path lang "$long_project" key_path
+long_key=$(__gpy_path_to_cache_key "$key_path")
+__gpy_chunk_cache_key long_key
+mkdir -p "$cache_dir/${long_key%/*}"
+printf LANG >"$cache_dir/$long_key.lang_first.magenta.zsh"
+check "probe: a contextual-only entry under a chunked key counts as present" "chunked 0" \
+    "$([[ "$long_key" == */* ]] && printf 'chunked '; __gpy_instant_cache_present lang "$long_project"; echo $?)"
+
 if [[ $FAILED -ne 0 ]]; then
     echo "=== FAILED ==="
     exit 1

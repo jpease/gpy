@@ -85,6 +85,17 @@ check "probe: failglob neither errors on a miss nor stays lifted" "1|on" \
     "$(__gpy_instant_cache_present lang "$project" 2>&1; echo "$?|$(shopt -q failglob && echo on || echo off)")"
 shopt -u failglob
 
+# A key over 200 characters is stored under chunk directories; the probe looks there.
+long_project="$TMP_ROOT/$(printf 'l%.0s' {1..80})/$(printf 'm%.0s' {1..80})/$(printf 'n%.0s' {1..60})"
+mkdir -p "$long_project"
+__gpy_instant_cache_key_path lang "$long_project" key_path
+long_key="$(__gpy_path_to_cache_key "$key_path")"
+__gpy_chunk_cache_key long_key
+mkdir -p "$cache_dir/${long_key%/*}"
+printf LANG >"$cache_dir/$long_key.lang_first.magenta.bash"
+check "probe: a contextual-only entry under a chunked key counts as present" "chunked 0" \
+    "$([[ "$long_key" == */* ]] && printf 'chunked '; __gpy_instant_cache_present lang "$long_project"; echo $?)"
+
 if [[ $FAILED -ne 0 ]]; then
     echo "=== FAILED ==="
     exit 1

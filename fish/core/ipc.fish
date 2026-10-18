@@ -529,7 +529,7 @@ function __gpy_instant_cache_present --argument-names base cwd --description 'Wh
     set -l key_path (__gpy_instant_cache_key_path $base $cwd); or return 1
     set -l cache_dir (__gpy_instant_cache_dir)
     test -n "$cache_dir"; or return 1
-    set -l cache_key (__gpy_path_to_cache_key $key_path)
+    set -l cache_key (__gpy_chunk_cache_key (__gpy_path_to_cache_key $key_path))
     set -l hits $cache_dir/$cache_key.$base.*.ansi $cache_dir/$cache_key.$base"_"*.ansi
     set -q hits[1]
 end
