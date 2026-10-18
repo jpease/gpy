@@ -77,8 +77,9 @@ __gpy_supervisor_check() {
     local rate_limit="${GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS:-${GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS:-30}}"
     [[ "$rate_limit" =~ ^[0-9]+$ ]] || rate_limit=30
 
+    # Builtin epoch on bash 4.2+: no fork for the checks the limiter rejects.
     local now
-    now=$(date +%s 2>/dev/null)
+    __gpy_now_seconds now 2>/dev/null
     [[ "$now" =~ ^[0-9]+$ ]] || return
 
     if [[ $((now - __gpy_supervisor_last_check_time)) -lt $rate_limit ]]; then

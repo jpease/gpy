@@ -324,15 +324,39 @@ fn print_suspect_patterns(segment: &str, content: &str) {
 fn check_binaries() -> bool {
     println!("[System]");
     print!("  Checking gpy-agent binary... ");
-    if Command::new("gpy-agent").arg("--version").output().is_ok() {
-        output::ok("Found in PATH");
-        true
-    } else {
-        output::fail("Not found in PATH");
-        println!(
-            "  Remediation: Ensure gpy-agent is installed and your PATH includes its location."
-        );
-        false
+    match Command::new("gpy-agent").arg("--version").output() {
+        Ok(probe) if probe.status.success() => {
+            output::ok("Found in PATH");
+            true
+        }
+        Ok(probe) => {
+            output::fail(format_args!(
+                "Found in PATH, but `gpy-agent --version` failed ({})",
+                probe.status
+            ));
+            let stderr = String::from_utf8_lossy(&probe.stderr);
+            if let Some(line) = stderr.lines().map(str::trim).find(|line| !line.is_empty()) {
+                println!("  Diagnostic: {line}");
+            }
+            println!(
+                "  Remediation: Reinstall gpy-agent, and check that the first gpy-agent in your PATH (`command -v gpy-agent`) is GPY's agent."
+            );
+            false
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            output::fail("Not found in PATH");
+            println!(
+                "  Remediation: Ensure gpy-agent is installed and your PATH includes its location."
+            );
+            false
+        }
+        Err(err) => {
+            output::fail(format_args!("Could not run gpy-agent: {err}"));
+            println!(
+                "  Remediation: Reinstall gpy-agent, and check that the first gpy-agent in your PATH (`command -v gpy-agent`) is executable."
+            );
+            false
+        }
     }
 }
 

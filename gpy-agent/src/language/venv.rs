@@ -2,6 +2,9 @@
 //!
 //! The daemon never inherits a shell's activated `VIRTUAL_ENV`, so the Python
 //! segment prefers a forwarded venv, else a project `.venv`/`venv`.
+//!
+//! Only a forwarded venv's interpreter may be executed: a project venv is
+//! repository content, so its version comes from `pyvenv.cfg` alone.
 
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -11,19 +14,48 @@ use crate::cache::ttl_map::TtlMap;
 /// Candidate venv directory names probed under a project root, in order.
 const VENV_DIR_NAMES: [&str; 2] = [".venv", "venv"];
 
+/// A resolved venv, tagged with where it came from because that decides
+/// whether its interpreter may run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PythonVenv {
+    /// The shell's activated `VIRTUAL_ENV`, forwarded over IPC.
+    Forwarded(PathBuf),
+    /// A `.venv`/`venv` found under the project; never executed.
+    Discovered(PathBuf),
+}
+
+impl PythonVenv {
+    /// The venv's Python version: `pyvenv.cfg`, then, for a forwarded venv
+    /// only, a memoized interpreter probe.
+    #[must_use]
+    pub fn version(&self) -> Option<String> {
+        match self {
+            Self::Forwarded(dir) => read_pyvenv_cfg_version(dir).or_else(|| {
+                let python = venv_python_binary(dir);
+                python
+                    .is_file()
+                    .then(|| memoized_binary_version(&python))
+                    .flatten()
+            }),
+            Self::Discovered(dir) => read_pyvenv_cfg_version(dir),
+        }
+    }
+}
+
 /// Resolve the venv for Python version detection: forwarded `virtual_env`,
 /// then `<cwd>/.venv`, then `<cwd>/venv`.
 #[must_use]
-pub fn resolve_python_venv(cwd: &Path, virtual_env: Option<&Path>) -> Option<PathBuf> {
+pub fn resolve_python_venv(cwd: &Path, virtual_env: Option<&Path>) -> Option<PythonVenv> {
     if let Some(forwarded) = virtual_env
         && is_venv_dir(forwarded)
     {
-        return Some(forwarded.to_path_buf());
+        return Some(PythonVenv::Forwarded(forwarded.to_path_buf()));
     }
     VENV_DIR_NAMES
         .iter()
         .map(|name| cwd.join(name))
         .find(|candidate| is_venv_dir(candidate))
+        .map(PythonVenv::Discovered)
 }
 
 /// A venv holds a `pyvenv.cfg` or a bin-dir Python interpreter.
@@ -48,8 +80,7 @@ pub fn venv_python_binary(venv_dir: &Path) -> PathBuf {
 const PYVENV_CFG_READ_CAP: usize = 4_096;
 
 /// Read the venv's Python version from `<venv_dir>/pyvenv.cfg`.
-#[must_use]
-pub fn read_pyvenv_cfg_version(venv_dir: &Path) -> Option<String> {
+fn read_pyvenv_cfg_version(venv_dir: &Path) -> Option<String> {
     let contents =
         crate::fs_util::read_small_file(&venv_dir.join("pyvenv.cfg"), PYVENV_CFG_READ_CAP).ok()?;
     parse_pyvenv_cfg_version(&contents)
@@ -113,19 +144,6 @@ fn memoized_binary_version(python: &Path) -> Option<String> {
     }
 }
 
-/// Read a venv's version: `pyvenv.cfg` first, then a memoized interpreter probe.
-#[must_use]
-pub fn read_venv_version(venv_dir: &Path) -> Option<String> {
-    if let Some(version) = read_pyvenv_cfg_version(venv_dir) {
-        return Some(version);
-    }
-    let python = venv_python_binary(venv_dir);
-    python
-        .is_file()
-        .then(|| memoized_binary_version(&python))
-        .flatten()
-}
-
 /// Max repos tracked by the forwarded-venv stash.
 const VENV_STASH_CAPACITY: usize = 256;
 
@@ -151,8 +169,10 @@ pub fn clear_project_venv(repo_root: &Path) {
 
 /// Fetch a repo's stashed forwarded venv, dropping it if the TTL lapsed.
 #[must_use]
-pub fn stashed_project_venv(repo_root: &Path) -> Option<PathBuf> {
-    VENV_STASH.get(&stash_key(repo_root))
+pub fn stashed_project_venv(repo_root: &Path) -> Option<PythonVenv> {
+    VENV_STASH
+        .get(&stash_key(repo_root))
+        .map(PythonVenv::Forwarded)
 }
 
 #[cfg(test)]
@@ -221,7 +241,7 @@ mod tests {
         write_pyvenv(&tmp.path().join(".venv"), "3.11.9");
         assert_eq!(
             resolve_python_venv(tmp.path(), None),
-            Some(tmp.path().join(".venv"))
+            Some(PythonVenv::Discovered(tmp.path().join(".venv")))
         );
     }
 
@@ -232,7 +252,7 @@ mod tests {
         write_pyvenv(&tmp.path().join("venv"), "3.9.0");
         assert_eq!(
             resolve_python_venv(tmp.path(), None),
-            Some(tmp.path().join(".venv"))
+            Some(PythonVenv::Discovered(tmp.path().join(".venv")))
         );
     }
 
@@ -244,7 +264,7 @@ mod tests {
         write_pyvenv(external.path(), "3.12.4");
         assert_eq!(
             resolve_python_venv(project.path(), Some(external.path())),
-            Some(external.path().to_path_buf())
+            Some(PythonVenv::Forwarded(external.path().to_path_buf()))
         );
     }
 
@@ -269,14 +289,14 @@ mod tests {
             let project = tmp.path().join("project");
             write_pyvenv(&project.join(".venv"), "3.11.9");
             let (forwarded, want) = if expected == "\\e" {
-                (None, project.join(".venv"))
+                (None, PythonVenv::Discovered(project.join(".venv")))
             } else {
                 // Re-root the fixture path in the tempdir as a conda-style env.
                 let env_dir = tmp.path().join(expected.trim_start_matches('/'));
                 let python = venv_python_binary(&env_dir);
                 std::fs::create_dir_all(python.parent().unwrap()).unwrap();
                 std::fs::write(&python, "").unwrap();
-                (Some(env_dir.clone()), env_dir)
+                (Some(env_dir.clone()), PythonVenv::Forwarded(env_dir))
             };
             assert_eq!(
                 resolve_python_venv(&project, forwarded.as_deref()),
@@ -294,7 +314,7 @@ mod tests {
         let missing = project.path().join("does-not-exist");
         assert_eq!(
             resolve_python_venv(project.path(), Some(&missing)),
-            Some(project.path().join(".venv"))
+            Some(PythonVenv::Discovered(project.path().join(".venv")))
         );
     }
 
@@ -305,21 +325,28 @@ mod tests {
     }
 
     #[test]
-    fn read_venv_version_uses_pyvenv_cfg_when_present() {
+    fn venv_version_uses_pyvenv_cfg_when_present() {
         let tmp = tempfile::tempdir().unwrap();
         write_pyvenv(tmp.path(), "3.11.9");
-        assert_eq!(read_venv_version(tmp.path()).as_deref(), Some("3.11.9"));
+        let dir = tmp.path().to_path_buf();
+        for venv in [
+            PythonVenv::Forwarded(dir.clone()),
+            PythonVenv::Discovered(dir),
+        ] {
+            assert_eq!(venv.version().as_deref(), Some("3.11.9"), "{venv:?}");
+        }
     }
 
     #[test]
-    fn read_venv_version_uses_version_info_without_spawning() {
+    fn venv_version_uses_version_info_without_spawning() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("pyvenv.cfg"),
             "home = /x\nuv = 0.9.16\nversion_info = 3.12.13\n",
         )
         .unwrap();
-        assert_eq!(read_venv_version(tmp.path()).as_deref(), Some("3.12.13"));
+        let venv = PythonVenv::Discovered(tmp.path().to_path_buf());
+        assert_eq!(venv.version().as_deref(), Some("3.12.13"));
     }
 
     /// Write an executable `bin/python` that appends to `counter` per spawn
@@ -352,8 +379,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let counter = tmp.path().join("spawns.log");
         write_counting_python(tmp.path(), &counter, "Python 3.9.1", 0);
-        assert_eq!(read_venv_version(tmp.path()).as_deref(), Some("3.9.1"));
-        assert_eq!(read_venv_version(tmp.path()).as_deref(), Some("3.9.1"));
+        let venv = PythonVenv::Forwarded(tmp.path().to_path_buf());
+        assert_eq!(venv.version().as_deref(), Some("3.9.1"));
+        assert_eq!(venv.version().as_deref(), Some("3.9.1"));
         assert_eq!(spawn_count(&counter), 1, "second call must hit the memo");
     }
 
@@ -363,8 +391,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let counter = tmp.path().join("spawns.log");
         write_counting_python(tmp.path(), &counter, "broken", 1);
-        assert_eq!(read_venv_version(tmp.path()), None);
-        assert_eq!(read_venv_version(tmp.path()), None);
+        let venv = PythonVenv::Forwarded(tmp.path().to_path_buf());
+        assert_eq!(venv.version(), None);
+        assert_eq!(venv.version(), None);
         assert_eq!(
             spawn_count(&counter),
             1,
@@ -377,8 +406,34 @@ mod tests {
             (python, modified),
             SystemTime::now() - crate::language::version::VERSION_FAILURE_TTL * 2,
         );
-        assert_eq!(read_venv_version(tmp.path()), None);
+        assert_eq!(venv.version(), None);
         assert_eq!(spawn_count(&counter), 2, "an aged failure is re-probed");
+    }
+
+    /// A discovered venv's interpreter is repository content: whatever state
+    /// `pyvenv.cfg` is in, it is never run.
+    #[cfg(unix)]
+    #[test]
+    fn discovered_venv_interpreter_is_never_executed() {
+        let cfgs: [Option<&str>; 3] = [
+            None,
+            Some("home = /x\nversion_info = final\n"),
+            Some("home = /x\ninclude-system-site-packages = false\n"),
+        ];
+        for cfg in cfgs {
+            let tmp = tempfile::tempdir().unwrap();
+            let venv_dir = tmp.path().join(".venv");
+            let counter = tmp.path().join("spawns.log");
+            write_counting_python(&venv_dir, &counter, "Python 3.9.1", 0);
+            if let Some(contents) = cfg {
+                std::fs::write(venv_dir.join("pyvenv.cfg"), contents).unwrap();
+            }
+
+            let venv = resolve_python_venv(tmp.path(), None).unwrap();
+            assert_eq!(venv, PythonVenv::Discovered(venv_dir), "cfg {cfg:?}");
+            assert_eq!(venv.version(), None, "cfg {cfg:?}");
+            assert_eq!(spawn_count(&counter), 0, "cfg {cfg:?}");
+        }
     }
 
     #[test]
@@ -388,7 +443,10 @@ mod tests {
         assert_eq!(stashed_project_venv(repo.path()), None);
         stash_project_venv(repo.path(), &venv);
         let expected = repo.path().canonicalize().unwrap().join(".venv");
-        assert_eq!(stashed_project_venv(repo.path()), Some(venv));
+        assert_eq!(
+            stashed_project_venv(repo.path()),
+            Some(PythonVenv::Forwarded(venv))
+        );
         assert!(expected.ends_with(".venv"));
     }
 
@@ -397,7 +455,10 @@ mod tests {
         let repo = tempfile::tempdir().unwrap();
         let venv = repo.path().join(".venv");
         stash_project_venv(repo.path(), &venv);
-        assert_eq!(stashed_project_venv(repo.path()), Some(venv));
+        assert_eq!(
+            stashed_project_venv(repo.path()),
+            Some(PythonVenv::Forwarded(venv))
+        );
         clear_project_venv(repo.path());
         assert_eq!(stashed_project_venv(repo.path()), None);
     }
@@ -425,7 +486,7 @@ mod tests {
         crate::language::version::set_version_cache_ttl(24);
         assert_eq!(
             stashed_project_venv(repo.path()),
-            Some(venv),
+            Some(PythonVenv::Forwarded(venv)),
             "the same entry should read as fresh once the shared TTL widens to 24h"
         );
     }

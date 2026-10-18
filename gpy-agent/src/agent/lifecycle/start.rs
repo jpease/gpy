@@ -255,24 +255,33 @@ const READY_WAIT_MAX: Duration = Duration::from_secs(5);
 #[cfg(unix)]
 const READY_WAIT_POLL: Duration = Duration::from_millis(10);
 
-/// Wait until daemon `agent_pid` answers a ping, stopping early if it exits.
+/// Wait until daemon `agent_pid` answers a ping, stopping early if it reports
+/// a startup failure or exits.
 ///
 /// # Errors
-/// Returns an error if the daemon dies or does not answer within [`READY_WAIT_MAX`].
+/// Returns an error, with the daemon's reported reason when it sent one, if
+/// the daemon fails or does not answer within [`READY_WAIT_MAX`].
 #[cfg(unix)]
-fn wait_for_agent_ready(socket_path: &PathBuf, agent_pid: i32) -> Result<()> {
+fn wait_for_agent_ready(
+    socket_path: &PathBuf,
+    agent_pid: i32,
+    mut report: StartupReport,
+) -> Result<()> {
     let deadline = std::time::Instant::now()
         .checked_add(READY_WAIT_MAX)
         .unwrap_or_else(std::time::Instant::now);
     loop {
+        report.poll();
+        if let Some(reason) = report.failure() {
+            return Err(startup_failed(Some(&reason)));
+        }
         if super::ping_agent_blocking(socket_path)? {
             return Ok(());
         }
         if kill(Pid::from_raw(agent_pid), None).is_err() {
-            return Err(Error::process(
-                "startup_failed".to_owned(),
-                "Agent process exited before it was ready".to_owned(),
-            ));
+            // Gone, so every write end is closed and this drains to EOF.
+            report.poll();
+            return Err(startup_failed(report.failure().as_deref()));
         }
         if std::time::Instant::now() >= deadline {
             return Err(Error::process(
@@ -281,6 +290,86 @@ fn wait_for_agent_ready(socket_path: &PathBuf, agent_pid: i32) -> Result<()> {
             ));
         }
         std::thread::sleep(READY_WAIT_POLL);
+    }
+}
+
+/// The daemon died before it was ready, with its reported `reason` if any.
+#[cfg(unix)]
+fn startup_failed(reason: Option<&str>) -> Error {
+    let message = reason.map_or_else(
+        || "Agent process exited before it was ready".to_owned(),
+        |reason| format!("Agent process failed before it was ready: {reason}"),
+    );
+    Error::process("startup_failed".to_owned(), message)
+}
+
+/// Daemon half of the startup handshake with the waiting `gpy-agent start`:
+/// holds the start lock and the write end of the startup pipe until the
+/// socket is bound. The daemon's stderr is `/dev/null`, so a fatal error
+/// before then goes down the pipe for `start` to print.
+#[cfg(unix)]
+pub(crate) struct StartupHandoff {
+    _start_lock: Flock<std::fs::File>,
+    report: std::io::PipeWriter,
+}
+
+#[cfg(unix)]
+impl StartupHandoff {
+    /// Report `err` to the waiting `start`, then release the lock and close the pipe.
+    pub(crate) fn fail(mut self, err: &Error) {
+        use std::io::Write;
+
+        let reason = crate::error::user_message(err);
+        crate::debug::write_debug_log("agent", &format!("Fatal startup error: {reason}"));
+        let _ = self.report.write_all(reason.as_bytes());
+    }
+}
+
+/// Parent half of the startup handshake. The daemon writes only a fatal
+/// error, then closes its end; it also closes it, silently, once bound.
+#[cfg(unix)]
+struct StartupReport {
+    pipe: std::io::PipeReader,
+    text: Vec<u8>,
+    closed: bool,
+}
+
+#[cfg(unix)]
+impl StartupReport {
+    /// Make `pipe` non-blocking so polling it never stalls the readiness wait.
+    ///
+    /// # Errors
+    /// Returns an error if the pipe's flags cannot be set.
+    fn new(pipe: std::io::PipeReader) -> Result<Self> {
+        use nix::fcntl::{FcntlArg, OFlag, fcntl};
+
+        fcntl(&pipe, FcntlArg::F_SETFL(OFlag::O_NONBLOCK))
+            .map_err(|e| Error::process("pipe".to_owned(), e.to_string()))?;
+        Ok(Self {
+            pipe,
+            text: Vec::new(),
+            closed: false,
+        })
+    }
+
+    /// Collect what the daemon has written so far.
+    fn poll(&mut self) {
+        use std::io::Read;
+
+        if self.closed {
+            return;
+        }
+        // On `WouldBlock`, `read_to_end` has still appended what it read.
+        match self.pipe.read_to_end(&mut self.text) {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            _ => self.closed = true,
+        }
+    }
+
+    /// The daemon's complete error, once it has written one and closed the pipe.
+    fn failure(&self) -> Option<String> {
+        (self.closed && !self.text.is_empty())
+            .then(|| String::from_utf8_lossy(&self.text).trim().to_owned())
     }
 }
 
@@ -351,24 +440,25 @@ fn flag_all_tracked_shells_in(shell_dir: &std::path::Path, flag: ShellFlag) {
 ///
 /// Explicit double fork rather than `fork::daemon()`, whose processes exit
 /// before anything can be awaited: the original waits for readiness holding
-/// `start_lock`; the intermediate `setsid`s, forks the daemon, and pipes back
-/// its PID; the daemon `chdir`s to `/`, binds, then drops the inherited lock.
+/// `start_lock`; the intermediate `setsid`s and forks the daemon; the daemon
+/// pipes back its PID, `chdir`s to `/`, binds, then drops the inherited lock
+/// and closes the pipe ([`StartupHandoff`]).
 ///
 /// # Errors
 /// Returns an error if the pipe or fork fails, the daemon never reports its
-/// PID, or it dies or is not ready in time. In the daemon, the agent's result.
+/// PID, or it fails or is not ready in time. In the daemon, the agent's result.
 #[cfg(unix)]
 fn fork_agent(socket_path: &PathBuf, start_lock: Flock<std::fs::File>) -> Result<()> {
     use std::io::Read;
 
-    let (mut pid_reader, pid_writer) =
+    let (mut reader, writer) =
         std::io::pipe().map_err(|e| Error::process("pipe".to_owned(), e.to_string()))?;
 
     match fork::fork() {
         Ok(Fork::Parent(intermediate_pid)) => {
-            drop(pid_writer);
+            drop(writer);
             let mut pid_bytes = [0_u8; 4];
-            let read = pid_reader.read_exact(&mut pid_bytes);
+            let read = reader.read_exact(&mut pid_bytes);
             let _ = fork::waitpid(intermediate_pid);
             read.map_err(|e| {
                 Error::process(
@@ -376,75 +466,103 @@ fn fork_agent(socket_path: &PathBuf, start_lock: Flock<std::fs::File>) -> Result
                     format!("Agent process did not start: {e}"),
                 )
             })?;
-            let ready = wait_for_agent_ready(socket_path, i32::from_ne_bytes(pid_bytes));
+            let ready = StartupReport::new(reader).and_then(|report| {
+                wait_for_agent_ready(socket_path, i32::from_ne_bytes(pid_bytes), report)
+            });
             // Held until now so a daemon that never binds cannot let another start in.
             drop(start_lock);
             ready
         }
         Ok(Fork::Child) => {
-            drop(pid_reader);
-            fork_daemon_from_intermediate(pid_writer);
-            run_daemon(start_lock)
+            drop(reader);
+            fork_daemon_from_intermediate();
+            run_daemon(announce_daemon(start_lock, writer)?)
         }
         Err(e) => Err(Error::process("fork".to_owned(), e.to_string())),
     }
 }
 
-/// Intermediate child: new session, detached stdio, fork daemon, report PID.
-/// Returns only in the daemon; the intermediate exits without running
-/// destructors that could unlock the inherited start lock.
+/// Intermediate child: new session, detached stdio, fork daemon. Returns only
+/// in the daemon; the intermediate exits without running destructors that
+/// could unlock the inherited start lock.
 #[cfg(unix)]
 #[expect(clippy::exit, reason = "intermediate must not return into caller code")]
-fn fork_daemon_from_intermediate(mut pid_writer: std::io::PipeWriter) {
-    use std::io::Write;
-
+fn fork_daemon_from_intermediate() {
     if fork::setsid().is_err() || fork::redirect_stdio().is_err() {
         std::process::exit(1);
     }
     match fork::fork() {
-        Ok(Fork::Parent(daemon_pid)) => {
-            let code = i32::from(pid_writer.write_all(&daemon_pid.to_ne_bytes()).is_err());
-            std::process::exit(code);
-        }
-        Ok(Fork::Child) => drop(pid_writer),
+        Ok(Fork::Parent(_)) => std::process::exit(0),
+        Ok(Fork::Child) => {}
         Err(_) => std::process::exit(1),
     }
 }
 
-/// Daemon body: leave the launch directory, then run the agent.
+/// Daemon: send `start` our PID, the first thing on the startup pipe.
+///
+/// # Errors
+/// Returns an error if the PID cannot be written.
+#[cfg(unix)]
+fn announce_daemon(
+    start_lock: Flock<std::fs::File>,
+    mut report: std::io::PipeWriter,
+) -> Result<StartupHandoff> {
+    use std::io::Write;
+
+    report
+        .write_all(&nix::unistd::getpid().as_raw().to_ne_bytes())
+        .map_err(|e| Error::process("pipe".to_owned(), e.to_string()))?;
+    Ok(StartupHandoff {
+        _start_lock: start_lock,
+        report,
+    })
+}
+
+/// Daemon body: leave the launch directory, then run the agent; a failure
+/// before the socket is bound is reported through `startup`.
 ///
 /// # Errors
 /// Returns an error if `chdir`, runtime construction, or the agent fails.
 #[cfg(unix)]
-fn run_daemon(start_lock: Flock<std::fs::File>) -> Result<()> {
-    use super::write_agent_version;
+fn run_daemon(startup: StartupHandoff) -> Result<()> {
+    let rt = match enter_daemon() {
+        Ok(rt) => rt,
+        Err(e) => {
+            startup.fail(&e);
+            return Err(e);
+        }
+    };
+    let result = rt.block_on(async move {
+        let mut agent = match Agent::new() {
+            Ok(agent) => agent,
+            Err(e) => {
+                startup.fail(&e);
+                return Err(e);
+            }
+        };
+        agent.server.hold_startup_until_bound(startup);
+        agent.start_background().await
+    });
+    // Bounded: an uncancellable spawn_blocking scan must not hang exit.
+    rt.shutdown_timeout(std::time::Duration::from_secs(5));
+    result
+}
 
+/// Leave the launch directory, write the version marker, build the runtime.
+///
+/// # Errors
+/// Returns an error if `chdir` or runtime construction fails.
+#[cfg(unix)]
+fn enter_daemon() -> Result<tokio::runtime::Runtime> {
     // Inputs were absolutized pre-fork; don't keep the launch dir busy.
     if let Err(e) = fork::chdir() {
         crate::warn_log!("agent", "Failed to chdir to /: {e}");
         return Err(Error::process("chdir".to_owned(), e.to_string()));
     }
 
-    let _ = write_agent_version();
+    let _ = super::write_agent_version();
 
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| Error::process("runtime".to_owned(), e.to_string()))?;
-    let result = rt.block_on(async {
-        match Agent::new() {
-            Ok(mut agent) => {
-                agent.server.hold_start_lock_until_bound(start_lock);
-                agent.start_background().await
-            }
-            Err(e) => {
-                crate::debug::write_debug_log("agent", &format!("Fatal initialization error: {e}"));
-                #[expect(clippy::exit, reason = "daemonized child; init failed fatally")]
-                std::process::exit(1);
-            }
-        }
-    });
-    // Bounded: an uncancellable spawn_blocking scan must not hang exit.
-    rt.shutdown_timeout(std::time::Duration::from_secs(5));
-    result
+    tokio::runtime::Runtime::new().map_err(|e| Error::process("runtime".to_owned(), e.to_string()))
 }
 
 /// Start the agent in background with race-free socket coordination.
@@ -477,6 +595,9 @@ pub fn start_background_agent() -> Result<()> {
             let _ = super::SOCKET_OVERRIDE.set(socket_path.clone());
         }
 
+        // Vet the directory before the lock file, stale-socket eviction, or
+        // liveness ping relies on it; the daemon checks again at bind.
+        crate::ipc::server::handle::secure_socket_dir(&socket_path, super::socket_dir_repair())?;
         let start_lock = acquire_start_lock(&socket_path)?;
 
         if super::check_and_cleanup_socket(&socket_path) {

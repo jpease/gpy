@@ -1,6 +1,5 @@
 //! Event handlers for git, config, and theme file changes.
 
-use crate::Result;
 use crate::cache::InstantPromptCache;
 use crate::config::Config;
 use crate::debug_log;
@@ -15,6 +14,7 @@ use crate::theme::{ThemeConfig, ThemeManager};
 use crate::watcher::{
     DebouncedEvent, FileEvent, GitPaths, WatcherConfig, multi_repo::MultiRepoWatcher,
 };
+use crate::{Error, Result};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -44,6 +44,8 @@ pub struct AgentContext {
     pub dispatch_guard: Arc<RepoRefreshCoordinator>,
     /// Registry shared by the repo, config, and theme watchers; `create_watcher` needs it.
     pub watch_registry: Arc<crate::watcher::WatchRegistry>,
+    /// Where reloads write the shell theme exports (the gpy cache dir in production).
+    pub theme_export_dir: PathBuf,
 }
 
 /// Serializes [`refresh_and_notify_if_changed`] per repository so a stale scan
@@ -105,30 +107,17 @@ pub fn handle_file_event(ctx: &AgentContext, event: &DebouncedEvent, config: &Co
     debug_log!("agent", "handle_file_event called: {:?}", event);
     match &event.event {
         FileEvent::Git { paths } => {
-            if !config.agent.live_updates || !config.git.enabled {
-                debug_log!(
-                    "agent",
-                    "Skipping git event (live_updates={}, git.enabled={})",
-                    config.agent.live_updates,
-                    config.git.enabled
-                );
+            if !config.agent.live_updates {
+                debug_log!("agent", "Skipping git event (live_updates=false)");
                 return;
             }
 
             debug_log!("agent", "Git event for: {paths:?}");
 
             // `event.repo` is canonical, so the cache `*_canonical` fast paths apply.
-            let git_root = event.repo.clone();
-            if config.git.is_path_skipped(&git_root) {
-                debug_log!(
-                    "agent",
-                    "Skipping git event for {} (git.skip_paths)",
-                    git_root.display()
-                );
-                return;
-            }
-            let paths_hint = git_paths_hint(paths, &git_root);
-            refresh_and_notify_coalesced(ctx, &git_root, config, paths_hint.as_deref());
+            let git_root = &event.repo;
+            let paths_hint = git_paths_hint(paths, git_root);
+            refresh_and_notify_coalesced(ctx, git_root, config, paths_hint.as_deref());
         }
         FileEvent::Language { path } => {
             debug_log!("agent", "Language event for: {}", path.display());
@@ -246,7 +235,7 @@ fn refresh_language_for(
             theme,
             prev_bg,
             &palette,
-            stashed_venv.as_deref(),
+            stashed_venv.as_ref(),
         ) {
             Ok(changed) => wrote |= changed,
             Err(e) => {
@@ -371,14 +360,24 @@ pub(super) fn refresh_and_notify_if_changed(
     }
 }
 
-/// Per-repo-serialized [`refresh_and_notify_if_changed`]; production callers must
-/// use this. Follow-up passes force a full scan since the original hint is stale.
+/// Per-repo-serialized [`refresh_and_notify_if_changed`]; production callers
+/// (watcher events, reconcile ticks) must use this, as it applies the
+/// [`GitSettings::is_enabled_for`](crate::config::GitSettings::is_enabled_for)
+/// gate. Follow-up passes force a full scan since the original hint is stale.
 pub(super) fn refresh_and_notify_coalesced(
     ctx: &AgentContext,
     git_root: &Path,
     config: &Config,
     paths_hint: Option<&[PathBuf]>,
 ) {
+    if !config.git.is_enabled_for(git_root) {
+        debug_log!(
+            "agent",
+            "Skipping git refresh for {} (git.enabled/git.skip_paths)",
+            git_root.display()
+        );
+        return;
+    }
     run_coalesced(&ctx.dispatch_guard, git_root, |is_follow_up| {
         let hint = if is_follow_up { None } else { paths_hint };
         refresh_and_notify_if_changed(ctx, git_root, config, hint);
@@ -705,17 +704,31 @@ pub(super) fn create_watcher(
         .map(Arc::new)
 }
 
-/// Switch the active theme when the config selects a different one.
+/// Apply the config's theme: switch when the name changed, else reload the
+/// active name from wherever it now resolves, so a user override added or
+/// removed, or an edit the theme watcher has not applied yet, takes effect.
+/// Returns whether the theme changed (a new name, source, or content); an edit
+/// the watcher already applied reports `false`, so it rings shells only once.
+///
+/// A reload that fails keeps the current theme, as the theme watcher does,
+/// rather than rejecting unrelated config changes.
 ///
 /// # Errors
-/// Returns an error when the requested theme cannot be loaded.
+/// Returns an error when a newly selected theme cannot be loaded.
 fn maybe_switch_theme(
     theme_manager: &Arc<ThemeManager>,
     old_config: &Config,
     new_config: &Config,
-) -> Result<()> {
+) -> Result<bool> {
     if old_config.ui.theme == new_config.ui.theme {
-        return Ok(());
+        return Ok(theme_manager.reload().unwrap_or_else(|error| {
+            crate::debug::warn_fallback(
+                &format!("Theme '{}' reload", new_config.ui.theme),
+                "keeping the current theme",
+                &error,
+            );
+            false
+        }));
     }
 
     debug_log!(
@@ -731,7 +744,7 @@ fn maybe_switch_theme(
         "Successfully switched to theme: {}",
         new_config.ui.theme
     );
-    Ok(())
+    Ok(true)
 }
 
 /// Whether a config reload changes the rendered prompt and shells should redraw.
@@ -784,7 +797,11 @@ fn ui_refresh_required(old: &crate::config::UiSettings, new: &crate::config::UiS
         || old_transient_prompt != new_transient_prompt
 }
 
-/// Subprocess/watcher fields (`timeout_seconds`, `skip_paths`, `watch_worktree`) are excluded.
+/// Whether a `[git]` change needs cached git prompts re-rendered and a reload repaint.
+/// `timeout_seconds` and `watch_worktree` only affect later scans. `skip_paths` is
+/// excluded too: it is a gate, not render input. Every scan and cache publication
+/// (including the regeneration this triggers) checks it, so a change only alters
+/// what later requests and refreshes may scan or publish.
 fn git_refresh_required(
     old: &crate::config::GitSettings,
     new: &crate::config::GitSettings,
@@ -859,7 +876,9 @@ fn language_refresh_required(
         || old_icons != new_icons
 }
 
-/// Process-management fields (`timeout_seconds`, `supervisor`) are excluded.
+/// Process-management fields (`timeout_seconds`, `supervisor`) are excluded: they
+/// render nothing, and shells get them from the theme export, whose change rings
+/// the reload doorbell on its own.
 fn agent_refresh_required(
     old: &crate::config::AgentSettings,
     new: &crate::config::AgentSettings,
@@ -885,7 +904,7 @@ fn sync_watcher_state(
     ctx: &AgentContext,
     watcher_config: WatcherConfig,
     new_config: &Config,
-    refresh_required: bool,
+    reload_required: bool,
 ) {
     let mut watcher_guard = watcher_slot.lock().unwrap_or_else(PoisonError::into_inner);
 
@@ -894,7 +913,7 @@ fn sync_watcher_state(
             watcher.stop();
         }
         drop(watcher_guard);
-        if refresh_required {
+        if reload_required {
             ctx.registry.notify_reload();
         }
         return;
@@ -923,15 +942,46 @@ fn sync_watcher_state(
     }
     drop(watcher_guard);
 
-    if refresh_required {
+    if reload_required {
         ctx.registry.notify_reload();
+    }
+}
+
+/// Load the palette a config reload selects, re-reading it even when `ui.palette`
+/// is unchanged because palette file edits leave the name alone.
+///
+/// A newly selected palette that fails to load rejects the reload, like an unknown
+/// theme. A failed re-read of the same palette keeps the last good one (`None`),
+/// so a broken palette file neither blanks segments nor blocks unrelated changes.
+///
+/// # Errors
+/// Returns an error when a newly selected palette cannot be loaded.
+fn reload_palette(
+    old_config: &Config,
+    new_config: &Config,
+) -> Result<Option<crate::template::Palette>> {
+    let name = &new_config.ui.palette;
+    match crate::palette::load_active_palette(new_config) {
+        Ok(palette) => Ok(Some(palette)),
+        Err(error) if old_config.ui.palette != *name => Err(Error::config(format!(
+            "palette '{name}' could not be loaded: {error}"
+        ))),
+        Err(error) => {
+            crate::debug::warn_fallback(
+                &format!("Palette '{name}' reload"),
+                "keeping the last good palette",
+                &error,
+            );
+            Ok(None)
+        }
     }
 }
 
 /// Apply non-filesystem runtime side effects for a validated config reload.
 ///
 /// # Errors
-/// Returns an error when a runtime subsystem rejects the config (e.g. unknown theme).
+/// Returns an error when a runtime subsystem rejects the config (e.g. unknown theme
+/// or palette); nothing is applied in that case.
 pub(super) fn handle_config_reload(
     ctx: &AgentContext,
     watcher_slot: &SharedWatcherSlot,
@@ -940,32 +990,40 @@ pub(super) fn handle_config_reload(
     old_config: &Config,
     new_config: &Config,
 ) -> Result<()> {
-    maybe_switch_theme(&ctx.theme_manager, old_config, new_config)?;
-
-    // Always re-resolve: palette file edits leave `ui.palette` unchanged.
-    let palette_changed = ctx
-        .palette_cache
-        .replace(crate::palette::active_palette(new_config));
+    // Loaded before the theme switch so a rejected palette leaves nothing half-applied.
+    let palette = reload_palette(old_config, new_config)?;
+    let theme_changed = maybe_switch_theme(&ctx.theme_manager, old_config, new_config)?;
+    let palette_changed = palette.is_some_and(|palette| ctx.palette_cache.replace(palette));
 
     // Theme export must be on disk before the reload doorbell.
-    if let Err(e) = crate::cache::write_theme_export_cache(&ctx.theme_manager, new_config) {
+    let export_changed = crate::cache::theme_export::write_theme_export_to_dir(
+        &ctx.theme_export_dir,
+        &ctx.theme_manager,
+        new_config,
+    )
+    .unwrap_or_else(|e| {
         debug_log!("agent", "Failed to write theme export cache: {}", e);
-    }
+        false
+    });
 
     crate::language::version::set_version_cache_ttl(new_config.language.cache_ttl_hours.get());
     ctx.watch_registry
         .set_worktree_enabled(new_config.git.watch_worktree);
 
-    let refresh_required = palette_changed || config_refresh_required(old_config, new_config);
+    let refresh_required =
+        theme_changed || palette_changed || config_refresh_required(old_config, new_config);
 
     // Re-render cached data with the new theme before the doorbell to avoid flicker.
     // No synchronous detection on this path.
     if refresh_required {
         regenerate_instant_caches_for_theme_change(ctx, new_config);
     }
+    // Shells re-read a changed export only on the doorbell, including settings
+    // that render nothing (e.g. `agent.supervisor`), so it rings for those too.
+    let reload_required = refresh_required || export_changed;
 
     if disable_watcher {
-        if refresh_required {
+        if reload_required {
             ctx.registry.notify_reload();
         }
         return Ok(());
@@ -976,7 +1034,7 @@ pub(super) fn handle_config_reload(
         ctx,
         watcher_config,
         new_config,
-        refresh_required,
+        reload_required,
     );
     Ok(())
 }
@@ -1005,8 +1063,8 @@ pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, con
             continue;
         }
 
-        if config.git.enabled
-            && let Some(root) = git_root.as_ref()
+        if let Some(root) = git_root.as_ref()
+            && config.git.is_enabled_for(root)
             && let Some(status) = ctx.cache.get(root)
         {
             for prev_bg in [None, Some(git_prev_bg)] {

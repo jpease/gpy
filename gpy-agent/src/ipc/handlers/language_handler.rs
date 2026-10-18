@@ -8,6 +8,7 @@ use crate::ipc::{Message, Response};
 use crate::language::DetectionCache;
 use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
 use crate::language::display::build_language_display_info_at;
+use crate::language::venv::PythonVenv;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -66,18 +67,17 @@ impl LanguageHandler {
 
         // Stash the forwarded venv so background refreshes render the same
         // interpreter; a request without one clears it. Instant-cache files are
-        // keyed by repo, not venv, so the most recent request wins.
-        let forwarded_venv = virtual_env
-            .map(std::path::Path::new)
-            .and_then(|env| crate::language::venv::resolve_python_venv(&repo_root, Some(env)));
-        match forwarded_venv.as_deref() {
-            Some(venv) => crate::language::venv::stash_project_venv(&repo_root, venv),
-            None => crate::language::venv::clear_project_venv(&repo_root),
-        }
-        // Resolved against the project root: outside git, `cache_path` may be a
+        // keyed by repo, not venv, so the most recent request wins. Resolved
+        // against the project root: outside git, `cache_path` may be a
         // subdirectory without the project's `.venv`.
-        let project_venv =
-            forwarded_venv.or_else(|| crate::language::venv::resolve_python_venv(&repo_root, None));
+        let python_venv =
+            crate::language::venv::resolve_python_venv(&repo_root, virtual_env.map(Path::new));
+        match &python_venv {
+            Some(PythonVenv::Forwarded(venv)) => {
+                crate::language::venv::stash_project_venv(&repo_root, venv);
+            }
+            _ => crate::language::venv::clear_project_venv(&repo_root),
+        }
 
         // On a cold miss, wait on the single-flight job only up to a bounded budget.
         let detected_languages =
@@ -106,7 +106,7 @@ impl LanguageHandler {
             &theme,
             prev_bg,
             &palette,
-            project_venv.as_deref(),
+            python_venv.as_ref(),
         );
         notify_if_changed(&self.render.client_registry, cache_path, result, "language");
 
@@ -119,7 +119,7 @@ impl LanguageHandler {
             &theme,
             &config.language,
             Some(&repo_root),
-            project_venv.as_deref(),
+            python_venv.as_ref(),
         );
 
         Ok(Response::Language { languages })
@@ -191,7 +191,7 @@ impl LanguageHandler {
             &theme,
             None,
             &palette,
-            stashed_venv.as_deref(),
+            stashed_venv.as_ref(),
         );
         notify_if_changed(&deps.client_registry, repo_root, result, "language");
     }
@@ -334,6 +334,86 @@ mod tests {
                 "a request without a usable virtual_env must clear the stash"
             );
         }
+    }
+
+    /// Python version a `LanguageDetect` response reports, if any.
+    #[cfg(unix)]
+    fn python_version(response: &Response) -> Option<String> {
+        let Response::Language { languages } = response else {
+            return None;
+        };
+        languages
+            .iter()
+            .find(|lang| lang.name == "python")
+            .and_then(|lang| lang.version.clone())
+    }
+
+    /// Write an executable `<venv>/bin/python` that records each run in `log`.
+    #[cfg(unix)]
+    fn write_logging_python(venv: &Path, log: &Path, version: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let python = crate::language::venv::venv_python_binary(venv);
+        std::fs::create_dir_all(python.parent().expect("bin dir")).expect("bin dir");
+        std::fs::write(
+            &python,
+            format!(
+                "#!/bin/sh\necho x >> '{}'\necho 'Python {version}'\n",
+                log.display()
+            ),
+        )
+        .expect("python script");
+        std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod python");
+    }
+
+    /// The project `.venv` interpreter never runs; a forwarded venv's does.
+    #[cfg(unix)]
+    #[test]
+    fn only_a_forwarded_venv_interpreter_is_probed() {
+        let (handler, _registry) = make_handler();
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let repo_dir = temp_dir.path().join("repo");
+        std::fs::create_dir_all(repo_dir.join(".git")).expect("git dir");
+        let repo_root = std::fs::canonicalize(&repo_dir).expect("canonicalize repo root");
+        let project_log = temp_dir.path().join("project.log");
+        write_logging_python(&repo_root.join(".venv"), &project_log, "3.11.9");
+        let forwarded = temp_dir.path().join("activated");
+        let forwarded_log = temp_dir.path().join("forwarded.log");
+        write_logging_python(&forwarded, &forwarded_log, "3.8.2");
+        handler.language_cache.set(
+            &repo_root,
+            vec![DetectedLanguage {
+                name: "python".to_owned(),
+                confidence: 1.0,
+                file_count: 1,
+                total_bytes: 6,
+            }],
+        );
+
+        let response = handler
+            .handle(&language_detect_request(&repo_root))
+            .expect("request without venv");
+        assert_eq!(python_version(&response), None);
+        assert!(
+            !project_log.exists(),
+            "the project interpreter must not run"
+        );
+
+        let response = handler
+            .handle(&language_detect_request_with_venv(
+                &repo_root,
+                Some(&forwarded),
+            ))
+            .expect("request with forwarded venv");
+        assert_eq!(python_version(&response).as_deref(), Some("3.8.2"));
+        assert!(
+            forwarded_log.exists(),
+            "the forwarded interpreter is probed"
+        );
+        assert!(
+            !project_log.exists(),
+            "the project interpreter must not run"
+        );
     }
 
     /// A synchronous request repaints other live shells only on change.
@@ -502,6 +582,55 @@ mod tests {
         assert!(
             docs_entry_rendered,
             "the instant cache must stay keyed by the request path"
+        );
+    }
+
+    /// A marker-less non-git subdirectory follows an ancestor marker appearing
+    /// and disappearing once its cached root and detection go stale.
+    #[test]
+    fn non_git_subdirectory_follows_ancestor_marker_changes() {
+        let (handler, _registry) = make_handler();
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let project = std::fs::canonicalize(temp_dir.path()).expect("canonicalize");
+        let docs = project.join("docs");
+        std::fs::create_dir_all(&docs).expect("docs dir");
+        std::fs::write(docs.join("README.md"), "# d\n").expect("README.md");
+        let names = |response: Response| match response {
+            Response::Language { languages } => languages
+                .into_iter()
+                .map(|lang| lang.name)
+                .collect::<Vec<_>>(),
+            other => panic!("unexpected response: {other:?}"),
+        };
+        let request = || {
+            handler
+                .handle(&language_detect_request(&docs))
+                .expect("docs request")
+        };
+        let go_stale = || {
+            crate::language::age_non_git_root_for_test(&docs, LANGUAGE_REFRESH_INTERVAL);
+            handler.language_cache.age_entry_for_test(
+                &docs,
+                LANGUAGE_REFRESH_INTERVAL.saturating_add(Duration::from_secs(1)),
+            );
+        };
+
+        assert_eq!(names(request()), Vec::<String>::new());
+
+        write_rust_project(&project);
+        go_stale();
+        assert_eq!(
+            names(request()),
+            ["rust"],
+            "a new ancestor marker is honored"
+        );
+
+        std::fs::remove_file(project.join("Cargo.toml")).expect("remove marker");
+        go_stale();
+        assert_eq!(
+            names(request()),
+            Vec::<String>::new(),
+            "a removed ancestor marker is dropped"
         );
     }
 }

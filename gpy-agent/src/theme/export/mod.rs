@@ -1,9 +1,12 @@
 //! Shell-export serialization: [`ThemeConfig`] → Fish/Bash/Zsh variable assignments.
 
+use crate::config::validation::colors::canonical_color;
 use crate::config::{Config, DelimiterConfig};
 use crate::formatter::separator::Glyphs;
+use crate::plugin::SegmentName;
 use crate::shell::{Shell, VariableSyntax};
 use crate::theme::model::{PluginSegmentTheme, ThemeConfig};
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy)]
@@ -54,7 +57,11 @@ impl ShellAssignment {
     }
 }
 
-fn normalize_variable_token(raw: &str) -> String {
+/// Sanitize a free-form theme property key into a shell variable-name fragment.
+///
+/// Segment names use [`SegmentName::variable_token`] instead: Fish recomputes
+/// that token, so it must stay the documented `-`→`_` mapping.
+fn sanitize_property_token(raw: &str) -> String {
     let mut normalized = String::new();
     let mut prev_was_underscore = false;
 
@@ -690,40 +697,47 @@ fn plugin_segment_property_assignments(
     let mut property_names: Vec<_> = segment_theme.properties.keys().collect();
     property_names.sort_unstable();
     for property_name in property_names {
-        let Some(value) = segment_theme
+        let Some(raw_value) = segment_theme
             .properties
             .get(property_name)
             .map(String::as_str)
         else {
             continue;
         };
-        let property_token = normalize_variable_token(property_name);
+        let property_token = sanitize_property_token(property_name);
         if property_token.is_empty() {
             continue;
         }
+        let is_color = property_name.ends_with("_color");
+        // Theme validation accepted `*_color` values; export them in the spelling typed colors use.
+        let value = if is_color {
+            canonical_color(raw_value).map_or(Cow::Borrowed(raw_value), Cow::Owned)
+        } else {
+            Cow::Borrowed(raw_value)
+        };
 
         assignments.push(ShellAssignment::local(
             format!("{gpy_prefix}_{property_token}"),
-            escape(value),
+            escape(&value),
         ));
 
-        if property_name.ends_with("_color") {
+        if is_color {
             let base = property_name.trim_end_matches("_color");
-            let base_token = normalize_variable_token(base);
+            let base_token = sanitize_property_token(base);
             if !base_token.is_empty() {
                 assignments.push(ShellAssignment::local(
                     format!("__color_{segment_token}_{base_token}"),
-                    value,
+                    value.as_ref(),
                 ));
             }
         }
         if property_name.ends_with("_icon") {
             let base = property_name.trim_end_matches("_icon");
-            let base_token = normalize_variable_token(base);
+            let base_token = sanitize_property_token(base);
             if !base_token.is_empty() {
                 assignments.push(ShellAssignment::local(
                     format!("__icon_{segment_token}_{base_token}"),
-                    escape(value),
+                    escape(&value),
                 ));
             }
         }
@@ -739,16 +753,22 @@ fn append_plugin_segment_assignments(output: &mut String, shell: Shell, theme: &
     let mut plugin_segments: Vec<_> = theme.segments.plugin.iter().collect();
     plugin_segments.sort_unstable_by_key(|(left_name, _)| *left_name);
 
-    for (segment_name, segment_theme) in plugin_segments {
-        let segment_token = normalize_variable_token(segment_name);
-        if segment_token.is_empty() {
+    for (raw_name, segment_theme) in plugin_segments {
+        // Theme validation rejects keys that are not segment names.
+        let Ok(segment_name) = SegmentName::new(raw_name) else {
             continue;
-        }
+        };
+        let segment_token = segment_name.variable_token();
 
         append_shell_assignments(
             output,
             syntax,
-            plugin_segment_style_assignments(shell, segment_name, &segment_token, segment_theme),
+            plugin_segment_style_assignments(
+                shell,
+                segment_name.as_str(),
+                &segment_token,
+                segment_theme,
+            ),
         );
         append_shell_assignments(
             output,
@@ -768,15 +788,17 @@ fn append_plugin_segment_file_assignments(
     let escape = |text: &str| escape_shell_value(text, shell);
 
     for (segment_name, segment_file) in plugin_segment_files {
-        let segment_token = normalize_variable_token(segment_name);
-        if segment_token.is_empty() {
+        let Ok(segment_name) = SegmentName::new(segment_name) else {
             continue;
-        }
+        };
         append_shell_assignment(
             output,
             syntax,
             ShellAssignment::local(
-                format!("__gpy_plugin_segment_file_{segment_token}"),
+                format!(
+                    "__gpy_plugin_segment_file_{}",
+                    segment_name.variable_token()
+                ),
                 escape(segment_file),
             ),
         );

@@ -21,6 +21,8 @@ use crate::theme::ThemeManager;
 #[cfg(unix)]
 use crate::warn_log;
 use crate::{Error, Result};
+#[cfg(unix)]
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 #[cfg(unix)]
@@ -93,6 +95,108 @@ fn accept_error_is_fd_exhaustion(err: &std::io::Error) -> bool {
     matches!(err.raw_os_error(), Some(libc::EMFILE | libc::ENFILE))
 }
 
+/// What [`secure_socket_dir`] does with a directory we own that is group- or
+/// world-writable. Decided by where the socket path came from.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirRepair {
+    /// GPY's own runtime directory: set it to `0700` and use it.
+    Tighten,
+    /// A directory the user chose (`GPY_AGENT_SOCKET_PATH`, `--socket`): refuse
+    /// it rather than change the mode of a directory GPY does not own.
+    Refuse,
+}
+
+/// Make the directory `socket_path` is published in safe for it. Socket mode
+/// `0600` does not stop anyone who can write the directory from replacing the
+/// socket, so refuse a symlink, a non-directory, or a directory owned by
+/// another user; one we own that is group/world-writable is handled by `repair`.
+///
+/// # Errors
+/// Fails if the directory cannot be opened or fails a trust check.
+#[cfg(unix)]
+pub(crate) fn secure_socket_dir(socket_path: &Path, repair: DirRepair) -> Result<()> {
+    let dir = socket_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    secure_dir_for_uid(dir, nix::unistd::getuid().as_raw(), repair)
+}
+
+/// [`secure_socket_dir`] against an explicit owner `uid`.
+///
+/// # Errors
+/// Fails if `dir` cannot be opened or fails a trust check.
+#[cfg(unix)]
+fn secure_dir_for_uid(dir: &Path, uid: u32, repair: DirRepair) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    let refuse = |problem: &str| {
+        Error::ipc(format!(
+            "refusing socket directory {}: {problem}. Use a directory you own that \
+             only you can write (via XDG_RUNTIME_DIR or GPY_AGENT_SOCKET_PATH)",
+            dir.display()
+        ))
+    };
+    let unreadable = |e: std::io::Error| {
+        Error::ipc(format!(
+            "cannot inspect socket directory {}: {e}",
+            dir.display()
+        ))
+    };
+
+    // O_NOFOLLOW fails on a final-component symlink instead of following it,
+    // and every check below acts on this one inode (fstat/fchmod), so the
+    // path cannot be swapped between check and repair.
+    let handle = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(dir)
+        .map_err(|e| match e.raw_os_error() {
+            Some(libc::ELOOP | libc::ENOTDIR) if dir.is_symlink() => refuse("it is a symlink"),
+            Some(libc::ENOTDIR) => refuse("it is not a directory"),
+            _ => unreadable(e),
+        })?;
+    let meta = handle.metadata().map_err(unreadable)?;
+    if meta.uid() != uid {
+        return Err(refuse(&format!(
+            "it is owned by uid {}, not the current user (uid {uid})",
+            meta.uid()
+        )));
+    }
+    if meta.mode() & 0o022 == 0 {
+        return Ok(());
+    }
+    if repair == DirRepair::Refuse {
+        return Err(refuse(&format!(
+            "it is group/world-writable (mode {:o}); run `chmod 700 {}`",
+            meta.mode() & 0o7777,
+            dir.display()
+        )));
+    }
+
+    handle
+        .set_permissions(std::fs::Permissions::from_mode(0o700))
+        .map_err(|e| {
+            refuse(&format!(
+                "it is group/world-writable and chmod 0700 failed: {e}"
+            ))
+        })?;
+    let mode = handle.metadata().map_err(unreadable)?.mode();
+    if mode & 0o022 != 0 {
+        return Err(refuse(&format!(
+            "it is still group/world-writable (mode {:o}) after chmod 0700",
+            mode & 0o7777
+        )));
+    }
+    warn_log!(
+        "server",
+        "Socket directory {} was group/world-writable; set it to 0700",
+        dir.display()
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 use crate::ipc::socket_identity::SocketIdentity;
 
@@ -128,10 +232,12 @@ pub struct EndpointHandle {
     /// Identity of the socket this handle bound; `None` means it never unlinks anything.
     #[cfg(unix)]
     bound_socket: Option<SocketIdentity>,
-    /// Inherited per-socket start lock, held until [`Self::bind_socket`] returns so a
-    /// concurrent start cannot evict or fork between our fork and bind.
+    /// Startup handshake with the waiting `gpy-agent start`, held until
+    /// [`Self::bind_socket`] returns: its start lock stops a concurrent start
+    /// evicting or forking between our fork and bind, and a bind failure is
+    /// reported through it.
     #[cfg(unix)]
-    start_lock: Option<nix::fcntl::Flock<std::fs::File>>,
+    startup: Option<crate::agent::lifecycle::start::StartupHandoff>,
     /// Ownership check period ([`SOCKET_OWNERSHIP_CHECK`] outside tests).
     #[cfg(unix)]
     pub(super) socket_ownership_check: Duration,
@@ -139,6 +245,10 @@ pub struct EndpointHandle {
     rate_limiter: RateLimiter,
     client_registry: Arc<ClientDirectory>,
     config_manager: Arc<crate::config::manager::ConfigManager>,
+    /// How [`Self::bind_socket`] treats a socket directory we own that others
+    /// can write; the builder's caller knows whether GPY owns the directory.
+    #[cfg(unix)]
+    pub(super) socket_dir_repair: DirRepair,
     #[cfg_attr(
         not(test),
         expect(
@@ -255,13 +365,15 @@ impl EndpointHandle {
             #[cfg(unix)]
             bound_socket: None,
             #[cfg(unix)]
-            start_lock: None,
+            startup: None,
             #[cfg(unix)]
             socket_ownership_check: SOCKET_OWNERSHIP_CHECK,
             security_config,
             rate_limiter,
             client_registry: deps.client_registry,
             config_manager: deps.config_manager,
+            #[cfg(unix)]
+            socket_dir_repair: DirRepair::Refuse,
             watcher,
             theme_manager: deps.theme_manager,
             latency_tracker: deps.latency_tracker,
@@ -279,119 +391,14 @@ impl EndpointHandle {
         EndpointHandleBuilder::new(deps)
     }
 
-    /// Get the default socket path for this system.
-    ///
-    /// # Errors
-    /// Fails if the runtime directory cannot be determined or prepared.
-    pub(crate) fn default_socket_path() -> Result<PathBuf> {
-        // Matches shell logic: empty means unset.
-        if let Some(custom_path) = crate::agent::lifecycle::socket_path_override() {
-            return Ok(custom_path);
-        }
-
-        let runtime_root = Self::get_runtime_root()?;
-        Ok(runtime_root.join("gpy.sock"))
-    }
-
-    /// Get the GPY runtime root directory (same precedence as the shells).
-    ///
-    /// # Errors
-    /// Fails if a candidate runtime directory cannot be created or accessed.
-    fn get_runtime_root() -> Result<PathBuf> {
-        // Empty or relative `XDG_*` counts as unset (XDG spec), matching `paths::runtime_root_for`.
-        let xdg_runtime_raw = crate::paths::root_var("XDG_RUNTIME_DIR");
-        let xdg_cache_raw = crate::paths::root_var("XDG_CACHE_HOME");
-        let xdg_runtime =
-            crate::paths::xdg_value(xdg_runtime_raw.as_deref(), crate::paths::Os::Unix);
-        let xdg_cache = crate::paths::xdg_value(xdg_cache_raw.as_deref(), crate::paths::Os::Unix);
-        let home = crate::paths::home_dir();
-
-        // Last resort: /tmp is shared with other users, so validate before trusting it.
-        if xdg_runtime.is_none() && xdg_cache.is_none() && home.is_none() {
-            return Self::prepare_tmp_runtime_root();
-        }
-
-        let path = crate::paths::runtime_root_for(xdg_runtime, xdg_cache, home.as_deref());
-        let context = if xdg_runtime.is_some() {
-            "XDG runtime dir"
-        } else if xdg_cache.is_some() {
-            "XDG cache dir"
-        } else {
-            "cache dir"
-        };
-        std::fs::create_dir_all(&path)
-            .map_err(|e| Error::ipc(format!("Failed to create {context}: {e}")))?;
-        Ok(path)
-    }
-
-    /// Prepare the last-resort `/tmp` runtime dir. Another user could pre-create
-    /// or symlink it, so fail closed unless it's a real dir we own, not group/other-writable.
-    ///
-    /// # Errors
-    /// Fails if the directory cannot be created or fails a trust check.
+    /// Hold the startup handshake until this handle's socket is bound (see the
+    /// `startup` field).
     #[cfg(unix)]
-    fn prepare_tmp_runtime_root() -> Result<PathBuf> {
-        let uid = nix::unistd::getuid().as_raw();
-        // uid-scoped to avoid cross-user collisions; validation still catches squatting.
-        let path = PathBuf::from(format!("/tmp/gpy-{uid}"));
-        std::fs::create_dir_all(&path)
-            .map_err(|e| Error::ipc(format!("Failed to create tmp dir: {e}")))?;
-        Self::validate_runtime_dir(&path, uid)?;
-        Ok(path)
-    }
-
-    /// Fail closed unless `path` is a real directory owned by `uid` and not group/other-writable.
-    ///
-    /// # Errors
-    /// Fails if `path` cannot be stat-ed or fails a trust check.
-    #[cfg(unix)]
-    fn validate_runtime_dir(path: &std::path::Path, uid: u32) -> Result<()> {
-        use std::os::unix::fs::MetadataExt;
-
-        // `symlink_metadata` doesn't follow a final symlink.
-        let meta = std::fs::symlink_metadata(path)
-            .map_err(|e| Error::ipc(format!("Failed to stat runtime dir: {e}")))?;
-
-        if !meta.file_type().is_dir() {
-            return Err(Error::ipc(format!(
-                "Runtime dir {} is not a directory (possible symlink attack)",
-                path.display()
-            )));
-        }
-        if meta.uid() != uid {
-            return Err(Error::ipc(format!(
-                "Runtime dir {} is not owned by the current user (uid {uid})",
-                path.display()
-            )));
-        }
-        // Group/world-writable: another user could swap the socket.
-        if meta.mode() & 0o022 != 0 {
-            return Err(Error::ipc(format!(
-                "Runtime dir {} is group/other-writable",
-                path.display()
-            )));
-        }
-
-        Ok(())
-    }
-
-    /// Non-Unix fallback: no ownership semantics to validate.
-    ///
-    /// # Errors
-    /// Fails if the directory cannot be created.
-    #[cfg(not(unix))]
-    fn prepare_tmp_runtime_root() -> Result<PathBuf> {
-        let path = PathBuf::from("/tmp/gpy");
-        std::fs::create_dir_all(&path)
-            .map_err(|e| Error::ipc(format!("Failed to create tmp dir: {e}")))?;
-        Ok(path)
-    }
-
-    /// Hold the per-socket start lock until this handle's socket is bound
-    /// (see the `start_lock` field).
-    #[cfg(unix)]
-    pub(crate) fn hold_start_lock_until_bound(&mut self, lock: nix::fcntl::Flock<std::fs::File>) {
-        self.start_lock = Some(lock);
+    pub(crate) fn hold_startup_until_bound(
+        &mut self,
+        startup: crate::agent::lifecycle::start::StartupHandoff,
+    ) {
+        self.startup = Some(startup);
     }
 
     /// Start accepting client connections.
@@ -403,8 +410,10 @@ impl EndpointHandle {
         use crate::debug_log;
 
         let bound = self.bind_socket();
-        // Release the start lock regardless, so the next start sees the real outcome.
-        self.start_lock = None;
+        // End the handshake either way, so the next start sees the real outcome.
+        if let (Err(e), Some(startup)) = (&bound, self.startup.take()) {
+            startup.fail(e);
+        }
         bound?;
         debug_log!("server", "Listener stored, starting accept loop...");
 
@@ -414,11 +423,13 @@ impl EndpointHandle {
         result
     }
 
-    /// Bind the socket, set 0600 permissions, and record its identity so cleanup
-    /// never removes a socket another agent rebound.
+    /// Bind the socket in a trusted directory (see [`secure_socket_dir`]), set
+    /// 0600 permissions, and record its identity so cleanup never removes a
+    /// socket another agent rebound.
     ///
     /// # Errors
-    /// Fails if binding, reading metadata, or setting permissions fails.
+    /// Fails if the directory is untrusted, or binding, reading metadata, or
+    /// setting permissions fails.
     #[cfg(unix)]
     fn bind_socket(&mut self) -> Result<()> {
         use crate::debug_log;
@@ -426,6 +437,7 @@ impl EndpointHandle {
 
         // Explain over-long paths instead of the kernel's bare SUN_LEN error.
         crate::paths::check_socket_path_len(&self.socket_path)?;
+        secure_socket_dir(&self.socket_path, self.socket_dir_repair)?;
 
         debug_log!("server", "Attempting to bind socket...");
         let listener = UnixListener::bind(&self.socket_path).map_err(|e| {
@@ -986,7 +998,7 @@ mod socket_ownership_tests {
     }
 
     /// Build an unbound `EndpointHandle` targeting `socket_path` (no accept loop).
-    fn build_handle(socket_path: &Path) -> EndpointHandle {
+    pub(super) fn build_handle(socket_path: &Path) -> EndpointHandle {
         EndpointHandle::builder(test_deps())
             .socket_path(socket_path.to_path_buf())
             .watcher_slot(Arc::new(Mutex::new(None)))
@@ -1198,67 +1210,133 @@ mod accept_error_tests {
 }
 
 #[cfg(all(test, unix))]
-mod runtime_dir_validation_tests {
+mod socket_dir_trust_tests {
     #![allow(clippy::unwrap_used)]
     #![allow(clippy::expect_used)]
     #![allow(clippy::missing_panics_doc)]
     #![allow(missing_docs)]
 
-    use super::EndpointHandle;
+    use super::{DirRepair, secure_dir_for_uid};
     use std::fs;
     use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 
-    #[test]
-    fn accepts_owned_non_writable_directory() {
-        let tmp = tempfile::tempdir().expect("temp dir");
-        let dir = tmp.path().join("gpy-rt");
-        fs::create_dir_all(&dir).expect("mkdir");
-        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("chmod");
+    const BOTH: [DirRepair; 2] = [DirRepair::Tighten, DirRepair::Refuse];
 
-        let uid = fs::metadata(&dir).expect("meta").uid();
-        EndpointHandle::validate_runtime_dir(&dir, uid).expect("owned 0700 dir must pass");
+    #[test]
+    fn accepts_owned_private_directory() {
+        for repair in BOTH {
+            let tmp = tempfile::tempdir().expect("temp dir");
+            let dir = tmp.path().join("gpy-rt");
+            fs::create_dir_all(&dir).expect("mkdir");
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).expect("chmod");
+
+            let uid = fs::metadata(&dir).expect("meta").uid();
+            secure_dir_for_uid(&dir, uid, repair)
+                .expect("an owned, not-writable-by-others dir must pass");
+            assert_eq!(mode_of(&dir), 0o755, "a trusted dir is left as it was");
+        }
     }
 
     #[test]
     fn rejects_symlinked_directory() {
-        // Attacker symlinks the runtime path to a directory they control.
+        for repair in BOTH {
+            let tmp = tempfile::tempdir().expect("temp dir");
+            let real = tmp.path().join("real");
+            fs::create_dir_all(&real).expect("mkdir real");
+            let link = tmp.path().join("gpy-rt");
+            symlink(&real, &link).expect("symlink");
+
+            let uid = fs::metadata(&real).expect("meta").uid();
+            let err = secure_dir_for_uid(&link, uid, repair)
+                .expect_err("a symlink must be rejected even when it points to a dir we own");
+            assert!(
+                err.to_string().contains(&link.display().to_string()),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_a_regular_file() {
+        for repair in BOTH {
+            let tmp = tempfile::tempdir().expect("temp dir");
+            let file = tmp.path().join("gpy-rt");
+            fs::write(&file, "").expect("write file");
+
+            let uid = fs::metadata(&file).expect("meta").uid();
+            secure_dir_for_uid(&file, uid, repair).expect_err("a non-directory must be rejected");
+        }
+    }
+
+    #[test]
+    fn tightens_owned_group_or_world_writable_directory_to_0700() {
+        for mode in [0o777, 0o775, 0o1777] {
+            let tmp = tempfile::tempdir().expect("temp dir");
+            let dir = tmp.path().join("gpy-rt");
+            fs::create_dir_all(&dir).expect("mkdir");
+            fs::set_permissions(&dir, fs::Permissions::from_mode(mode)).expect("chmod");
+
+            let uid = fs::metadata(&dir).expect("meta").uid();
+            secure_dir_for_uid(&dir, uid, DirRepair::Tighten)
+                .expect("an owned writable dir is repaired, not refused");
+            assert_eq!(mode_of(&dir), 0o700, "mode {mode:o} must be tightened");
+        }
+    }
+
+    #[test]
+    fn refuses_owned_group_or_world_writable_directory_without_touching_it() {
+        for mode in [0o777, 0o775, 0o1777] {
+            let tmp = tempfile::tempdir().expect("temp dir");
+            let dir = tmp.path().join("gpy-rt");
+            fs::create_dir_all(&dir).expect("mkdir");
+            fs::set_permissions(&dir, fs::Permissions::from_mode(mode)).expect("chmod");
+
+            let uid = fs::metadata(&dir).expect("meta").uid();
+            let err = secure_dir_for_uid(&dir, uid, DirRepair::Refuse)
+                .expect_err("a user-chosen writable dir is refused, not repaired");
+            assert!(
+                err.to_string().contains(&dir.display().to_string()),
+                "{err}"
+            );
+            assert_eq!(mode_of(&dir), mode, "mode {mode:o} must be left alone");
+        }
+    }
+
+    #[test]
+    fn rejects_directory_owned_by_another_uid_without_touching_it() {
+        for repair in BOTH {
+            // Can't chown without privilege; claim a non-owner uid instead.
+            let tmp = tempfile::tempdir().expect("temp dir");
+            let dir = tmp.path().join("gpy-rt");
+            fs::create_dir_all(&dir).expect("mkdir");
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).expect("chmod");
+
+            let foreign_uid = fs::metadata(&dir).expect("meta").uid().wrapping_add(1);
+            secure_dir_for_uid(&dir, foreign_uid, repair)
+                .expect_err("a dir not owned by the expected uid must be rejected");
+            assert_eq!(mode_of(&dir), 0o777, "a foreign dir is never chmod'ed");
+        }
+    }
+
+    #[test]
+    fn socket_in_an_untrusted_directory_is_never_bound() {
         let tmp = tempfile::tempdir().expect("temp dir");
         let real = tmp.path().join("real");
         fs::create_dir_all(&real).expect("mkdir real");
-        let link = tmp.path().join("gpy-rt");
+        let link = tmp.path().join("rt");
         symlink(&real, &link).expect("symlink");
 
-        let uid = fs::symlink_metadata(&link).expect("meta").uid();
-        let err = EndpointHandle::validate_runtime_dir(&link, uid)
-            .expect_err("a symlink must be rejected even when it points to a dir we own");
-        assert!(err.to_string().contains("not a directory"), "{err}");
+        let mut handle = super::socket_ownership_tests::build_handle(&link.join("gpy.sock"));
+        handle
+            .bind_socket()
+            .expect_err("bind must refuse a symlinked directory");
+        assert!(
+            !real.join("gpy.sock").exists(),
+            "nothing may be bound through the symlink"
+        );
     }
 
-    #[test]
-    fn rejects_group_or_world_writable_directory() {
-        let tmp = tempfile::tempdir().expect("temp dir");
-        let dir = tmp.path().join("gpy-rt");
-        fs::create_dir_all(&dir).expect("mkdir");
-        fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).expect("chmod");
-
-        let uid = fs::metadata(&dir).expect("meta").uid();
-        let err = EndpointHandle::validate_runtime_dir(&dir, uid)
-            .expect_err("a world-writable dir must be rejected");
-        assert!(err.to_string().contains("writable"), "{err}");
-    }
-
-    #[test]
-    fn rejects_directory_owned_by_another_uid() {
-        // Can't chown without privilege; claim a non-owner uid instead.
-        let tmp = tempfile::tempdir().expect("temp dir");
-        let dir = tmp.path().join("gpy-rt");
-        fs::create_dir_all(&dir).expect("mkdir");
-        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("chmod");
-
-        let real_uid = fs::metadata(&dir).expect("meta").uid();
-        let foreign_uid = real_uid.wrapping_add(1);
-        let err = EndpointHandle::validate_runtime_dir(&dir, foreign_uid)
-            .expect_err("a dir not owned by the expected uid must be rejected");
-        assert!(err.to_string().contains("not owned"), "{err}");
+    fn mode_of(path: &std::path::Path) -> u32 {
+        fs::metadata(path).expect("meta").mode() & 0o7777
     }
 }

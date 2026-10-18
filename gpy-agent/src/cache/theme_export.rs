@@ -5,13 +5,22 @@ use super::instant_prompt::{get_gpy_cache_dir, write_atomic};
 use crate::Result;
 use std::path::PathBuf;
 
+/// Return the directory the theme exports are cached in.
+///
+/// # Errors
+///
+/// Returns an error if neither `XDG_CACHE_HOME` nor `HOME` is set.
+pub fn theme_export_dir() -> Result<PathBuf> {
+    get_gpy_cache_dir()
+}
+
 /// Return the path used to cache the Fish-format theme export.
 ///
 /// # Errors
 ///
 /// Returns an error if neither `XDG_CACHE_HOME` nor `HOME` is set.
 pub fn get_theme_export_cache_path() -> Result<PathBuf> {
-    get_gpy_cache_dir().map(|d| d.join("theme-export.fish"))
+    theme_export_dir().map(|d| d.join("theme-export.fish"))
 }
 
 /// Write the theme exports atomically (temp-file + rename); returns whether any file changed.
@@ -23,8 +32,7 @@ pub fn write_theme_export_cache(
     theme_manager: &crate::theme::ThemeManager,
     config: &crate::config::Config,
 ) -> Result<bool> {
-    let cache_dir = get_gpy_cache_dir()?;
-    write_theme_export_to_dir(&cache_dir, theme_manager, config)
+    write_theme_export_to_dir(&theme_export_dir()?, theme_manager, config)
 }
 
 /// Write fish/bash/zsh theme exports atomically into `cache_dir`.

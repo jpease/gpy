@@ -100,17 +100,17 @@ context_color = "bright-blue"
 namespace_icon = "ns`n`"
 plain_property = "value\\"
 
-[segments."aws profile"]
+[segments.AWS-Profile]
 icon = "aws"
 bg_color = "yellow"
 text_color = "black"
 
-[segments."aws profile".open]
+[segments.AWS-Profile.open]
 icon = "<"
 icon_color = "white"
 bg_color = "black"
 
-[segments."aws profile".close]
+[segments.AWS-Profile.close]
 icon = ">"
 icon_color = "black"
 bg_color = "white"
@@ -155,7 +155,7 @@ fn golden_config() -> Config {
     toml::from_str(GOLDEN_CONFIG_TOML).expect("golden config fixture should parse")
 }
 
-/// Plugin segment files: one normalizing to an empty token (skipped), one with a metacharacter path.
+/// Plugin segment files: one that is not a segment name (skipped), one with a metacharacter path.
 fn golden_plugin_segment_files() -> BTreeMap<String, String> {
     BTreeMap::from([
         (
@@ -163,10 +163,13 @@ fn golden_plugin_segment_files() -> BTreeMap<String, String> {
             "/usr/share/gpy/segments/kubernetes.fish".to_owned(),
         ),
         (
-            "aws profile".to_owned(),
+            "aws-profile".to_owned(),
             "/usr/share/gpy/segments/aws$profile.fish".to_owned(),
         ),
-        ("---".to_owned(), "/skipped/empty-token.fish".to_owned()),
+        (
+            "aws profile".to_owned(),
+            "/skipped/invalid-name.fish".to_owned(),
+        ),
     ])
 }
 

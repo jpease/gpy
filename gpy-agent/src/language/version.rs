@@ -112,7 +112,7 @@ fn spawn_direct_version_command(
     command.spawn()
 }
 
-/// Version of a specific Python binary (venvs without a readable `pyvenv.cfg`).
+/// Version of a forwarded venv's Python binary when its `pyvenv.cfg` has none.
 pub(crate) fn detect_python_binary_version(python: &Path) -> Option<String> {
     let mut command = Command::new(python);
     command.arg("--version");

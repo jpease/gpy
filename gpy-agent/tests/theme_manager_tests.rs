@@ -1450,3 +1450,198 @@ fn theme_source_content_returns_raw_builtin_content() {
         "should return the exact embedded builtin content, not a re-serialized copy"
     );
 }
+
+/// The reload hook runs after the swap and outside the state lock, so it may
+/// read the manager (a hook under the lock would deadlock here).
+#[test]
+#[serial]
+fn reload_hook_runs_after_swap_and_may_read_the_manager() {
+    use std::sync::{Arc, Mutex, PoisonError};
+
+    let temp_dir = TempDir::new().unwrap();
+    let theme_path = create_test_theme_toml(&temp_dir.path().join("gpy"), "hooked", MINIMAL_THEME);
+    let mut env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
+
+    let manager = Arc::new(ThemeManager::new("hooked").unwrap());
+    let observed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let observed_in_hook = Arc::clone(&observed);
+    let manager_in_hook = Arc::clone(&manager);
+    manager.set_reload_callback(Arc::new(move || {
+        let icon = manager_in_hook.get().ui.prompt_icon.to_string();
+        observed_in_hook
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(icon);
+    }));
+
+    env.set("GPY_THEME_WATCH_POLL_MS", "25");
+    manager
+        .start_watching(Duration::from_millis(50), None)
+        .unwrap();
+    let seen = wait_until(Duration::from_secs(5), Duration::from_millis(100), || {
+        fs::write(&theme_path, CUSTOM_THEME).unwrap();
+        observed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .any(|icon| icon == "→")
+    });
+    manager.stop_watching();
+    assert!(
+        seen,
+        "the hook must run after the swap and see the new theme"
+    );
+}
+
+/// A minimal valid theme told apart by its prompt icon.
+fn icon_theme(icon: &str) -> String {
+    format!("[ui]\nprompt_icon = \"{icon}\"\n\n[segments]\n")
+}
+
+/// Install plugin `acme` providing theme `community`; returns the user
+/// override path that outranks it.
+fn install_plugin_theme(config_home: &Path) -> PathBuf {
+    let plugin_dir = config_home.join("gpy").join("plugins").join("acme");
+    fs::create_dir_all(plugin_dir.join("themes")).unwrap();
+    fs::write(
+        plugin_dir.join("plugin.toml"),
+        "id = \"acme\"\nname = \"Acme\"\nversion = \"0.1.0\"\napi_version = \"v1\"\n\
+         entry_type = \"file\"\nprovided_segments = [\"acme_seg\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        plugin_dir.join("themes").join("community.toml"),
+        icon_theme("P"),
+    )
+    .unwrap();
+    let user_themes = config_home.join("gpy").join("themes");
+    fs::create_dir_all(&user_themes).unwrap();
+    user_themes.join("community.toml")
+}
+
+fn prompt_icon(manager: &ThemeManager) -> String {
+    manager.get().ui.prompt_icon.to_string()
+}
+
+/// `reload` follows the active name when a user override is added above a
+/// plugin or builtin theme, edited in place, or removed, and reports a change
+/// only when the loaded theme actually differs.
+#[test]
+#[serial]
+fn reload_follows_a_user_override_above_plugin_and_builtin_themes() {
+    let temp_dir = TempDir::new().unwrap();
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
+    let override_path = install_plugin_theme(temp_dir.path());
+
+    let plugin = ThemeManager::new("community").unwrap();
+    assert_eq!(prompt_icon(&plugin), "P");
+    assert!(!plugin.reload().unwrap(), "nothing changed on disk");
+    fs::write(&override_path, icon_theme("U")).unwrap();
+    assert!(plugin.reload().unwrap(), "the override replaces the plugin");
+    assert_eq!(prompt_icon(&plugin), "U");
+    fs::write(&override_path, icon_theme("E")).unwrap();
+    assert!(plugin.reload().unwrap(), "an in-place edit is a change");
+    assert_eq!(prompt_icon(&plugin), "E");
+    assert!(
+        !plugin.reload().unwrap(),
+        "reloading an applied edit is not a change"
+    );
+    fs::remove_file(&override_path).unwrap();
+    assert!(plugin.reload().unwrap(), "removal falls back to the plugin");
+    assert_eq!(prompt_icon(&plugin), "P");
+
+    let builtin = ThemeManager::new("default").unwrap();
+    let builtin_icon = prompt_icon(&builtin);
+    assert!(!builtin.reload().unwrap(), "the builtin never changes");
+    let builtin_override = override_path.with_file_name("default.toml");
+    fs::write(&builtin_override, icon_theme("U")).unwrap();
+    assert!(
+        builtin.reload().unwrap(),
+        "the override replaces the builtin"
+    );
+    assert_eq!(prompt_icon(&builtin), "U");
+    fs::remove_file(&builtin_override).unwrap();
+    assert!(
+        builtin.reload().unwrap(),
+        "removal falls back to the builtin"
+    );
+    assert_eq!(prompt_icon(&builtin), builtin_icon);
+}
+
+/// A read-only config tree (no user themes dir, none creatable) costs only
+/// override detection: watching still starts and follows the active source.
+#[cfg(unix)]
+#[test]
+#[serial]
+#[serial_test::file_serial(watcher_fsevents_bootstrap)]
+fn watching_survives_an_uncreatable_user_themes_dir() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp_dir = TempDir::new().unwrap();
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
+    install_plugin_theme(temp_dir.path());
+    let gpy_dir = temp_dir.path().join("gpy");
+    fs::remove_dir(gpy_dir.join("themes")).unwrap();
+    let plugin_path = gpy_dir.join("plugins/acme/themes/community.toml");
+
+    let manager = ThemeManager::new("community").unwrap();
+    fs::set_permissions(&gpy_dir, fs::Permissions::from_mode(0o500)).unwrap();
+    let started = manager.start_watching(Duration::from_millis(50), None);
+    let followed = started.is_ok()
+        && wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
+            fs::write(&plugin_path, icon_theme("Q")).unwrap();
+            prompt_icon(&manager) == "Q"
+        });
+    manager.stop_watching();
+    fs::set_permissions(&gpy_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    started.expect("watching must start without a user themes dir");
+    assert!(
+        followed,
+        "edits to the active plugin theme must still reload"
+    );
+}
+
+/// The watcher sees a user override created above an active plugin theme,
+/// re-arms on the plugin source when the override is removed, and keeps
+/// following later edits there.
+#[test]
+#[serial]
+#[serial_test::file_serial(watcher_fsevents_bootstrap)]
+fn watcher_follows_a_user_override_above_a_plugin_theme() {
+    let temp_dir = TempDir::new().unwrap();
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
+    let override_path = install_plugin_theme(temp_dir.path());
+    let plugin_path = temp_dir
+        .path()
+        .join("gpy/plugins/acme/themes/community.toml");
+
+    let manager = ThemeManager::new("community").unwrap();
+    manager
+        .start_watching(Duration::from_millis(50), None)
+        .unwrap();
+
+    // A watch has no "armed" signal: re-apply each idempotent change until seen.
+    let wait_for_icon = |icon: &str, apply: &dyn Fn()| {
+        wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
+            apply();
+            prompt_icon(&manager) == icon
+        })
+    };
+    assert!(
+        wait_for_icon("U", &|| fs::write(&override_path, icon_theme("U")).unwrap()),
+        "a new user override must replace the plugin theme"
+    );
+    assert!(
+        wait_for_icon("P", &|| {
+            let _ = fs::remove_file(&override_path);
+        }),
+        "removing the override must fall back to the plugin theme"
+    );
+    assert!(
+        wait_for_icon("Q", &|| {
+            fs::write(&plugin_path, icon_theme("Q")).unwrap();
+        }),
+        "edits to the plugin theme must reload after the fallback"
+    );
+    manager.stop_watching();
+}

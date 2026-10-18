@@ -33,6 +33,11 @@ pub fn selected_palette<'a>(
 
 /// Build a [`PaletteConfig`] from the selected Starship palette plus colors
 /// discovered during module translation. Invalid colors are dropped with a warning.
+///
+/// Keys naming one ANSI color (`magenta`, `purple`) are all kept, because
+/// templates look each up by its exact spelling as Starship does; typed theme
+/// colors, stored in one canonical spelling, may resolve to a different key,
+/// so each such group gets a lossy-mapping warning.
 #[must_use]
 pub fn translate_palette<S: ::std::hash::BuildHasher>(
     name: &str,
@@ -61,11 +66,15 @@ pub fn translate_palette<S: ::std::hash::BuildHasher>(
     for (color_name, value) in discovered {
         insert(color_name, value, warnings);
     }
-    PaletteConfig {
+    let palette = PaletteConfig {
         name: name.to_owned(),
         description: "Imported from Starship".to_owned(),
         colors,
+    };
+    for warning in palette.alias_warnings() {
+        warnings.push(WarningKind::LossyMapping, format!("palette {warning}"));
     }
+    palette
 }
 
 #[cfg(test)]
@@ -125,5 +134,24 @@ mod tests {
         );
         assert!(!palette.colors.contains_key("broken"));
         assert!(warnings.iter().any(|w| w.kind == WarningKind::InvalidColor));
+    }
+
+    #[test]
+    fn aliased_palette_keys_are_kept_with_a_warning_and_the_palette_loads() {
+        let mut selected = HashMap::new();
+        selected.insert("magenta".to_owned(), "#111111".to_owned());
+        selected.insert("purple".to_owned(), "#222222".to_owned());
+        let mut warnings = Warnings::new();
+
+        let palette = translate_palette("demo", Some(&selected), &BTreeMap::new(), &mut warnings);
+
+        assert!(palette.colors.contains_key("magenta") && palette.colors.contains_key("purple"));
+        palette.validate().expect("imported palette loads");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.kind == WarningKind::LossyMapping && w.message.contains("'purple'")),
+            "expected an alias warning"
+        );
     }
 }

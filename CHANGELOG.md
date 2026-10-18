@@ -5,6 +5,79 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- Rendering the language segment no longer runs a project's `.venv`/`venv`
+  Python interpreter to read its version. Only a virtualenv the shell
+  activated is probed; a project venv's version comes from `pyvenv.cfg`, or is
+  omitted.
+- `gpy-agent start` refuses a symlinked or foreign-owned socket directory,
+  for both the default runtime directory and `GPY_AGENT_SOCKET_PATH`/`--socket`.
+  A group/world-writable directory is tightened to `0700` if it is GPY's
+  default runtime directory, and refused unchanged if you chose it.
+- Theme format templates can no longer emit terminal escape sequences:
+  `gpy theme validate` rejects control characters other than newline, and
+  rendering strips them from literal text.
+- FIFOs and other special files in a project no longer hang language
+  detection or version reading; they are refused when opened, not read.
+
+### Changed
+
+- A socket directory set through `GPY_AGENT_SOCKET_PATH` must be private: a
+  socket placed directly in a shared directory such as `/tmp` is refused.
+- Theme colors are stored in one canonical spelling (`bright-magenta` becomes
+  `brmagenta`).
+- Template colors follow the active palette under every spelling: `purple`,
+  `gray`/`grey`, `brblack` and `bright-purple` take the palette's
+  `magenta`/`bright_black`/`bright_magenta` entry. A key spelled exactly as
+  written still wins, and a palette defining several keys for one color loads
+  with a warning from `gpy palette validate` and `gpy doctor`.
+- Theme `[segments.<name>]` sections and plugin segment names must be valid
+  segment names, and two names that would share shell variables (`a-b` and
+  `a_b`) are rejected with an error naming both.
+- `ui.enabled_segments` entries are trimmed and lowercased when the config is
+  loaded or saved.
+
+### Fixed
+
+- The uninstallers remove `fish_prompt.fish` only when it is GPY's own prompt,
+  not whenever the file mentions gpy.
+- `gpy setup --shell bash` adds the login-shell loader even when the login
+  file mentions `.bashrc` only in a comment.
+- `gpy doctor` fails when the `gpy-agent` it finds exits with an error, and
+  shows the exit status and the error output.
+- Language and git segments appear in projects whose encoded cache key is
+  longer than 200 characters, instead of staying hidden.
+- Bash and Zsh background-refresh throttling works for long or non-ASCII
+  project paths, with no "file name too long" errors.
+- On Bash 4.2+, the per-prompt agent health check no longer launches `date`.
+- A palette file that fails to load no longer blanks prompt segments on
+  reload; the agent keeps the last good palette until the file is fixed.
+- Outside Git, a running agent notices project markers added or removed above
+  the current directory within the language refresh interval.
+- `git.skip_paths` entries created or retargeted (symlinks) while the agent
+  runs take effect within seconds, without a restart.
+- Plugin segments whose names repeat separators or end in `_` (`my--seg`,
+  `seg_`) load in Fish.
+- Theme colors accept exactly the spellings format styles accept
+  (`bright-magenta`, `brpurple`) and reject malformed values such as
+  `##112233`, which used to render an empty segment.
+- A config spelling `"Directory"` or `" git "` in `ui.enabled_segments` renders
+  those segments.
+- Adding or removing a user theme that overrides the active plugin or builtin
+  theme takes effect in the running agent, matching a fresh render.
+- The agent's periodic reconcile no longer scans or writes prompt caches for
+  repositories where git is disabled or under `git.skip_paths`.
+- Changing `agent.supervisor` settings reaches already-open shells at their
+  next prompt.
+- `gpy-agent config reload` prints the agent's reason and exits 1 when the
+  agent rejects the new config (it keeps the previous one) or does not answer.
+- `gpy-agent start` prints the daemon's own startup error, such as an
+  uncreatable cache directory and why, instead of a generic "exited before it
+  was ready".
+
 ## [0.4.0] - 2026-10-16
 
 First public release. Versions 0.1.0–0.3.1 were released before the
@@ -83,4 +156,5 @@ repository was public; their notes are not carried over.
 - `install-oneline.sh` installs the Fish, Zsh and Bash scripts from one archive, `gpy-shell-files.tar.gz`, after checking its published SHA-256, instead of downloading each script from a branch or tag unverified. `GPY_VERSION` can therefore only name 0.4.0 or later.
 - Releases also publish `install-oneline.sh`, `uninstall.sh` and `uninstall.fish` (checksummed and attested like every other asset); the installer's uninstall hint points at them.
 
+[Unreleased]: https://github.com/jpease/gpy/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/jpease/gpy/releases/tag/v0.4.0

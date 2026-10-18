@@ -1,7 +1,7 @@
 //! Palette configuration type and TOML model.
 
 use crate::config::types::ColorSpec;
-use crate::template::{Color, Palette, parse_style};
+use crate::template::{Color, Palette, alias_owner, canonical_ansi_name, parse_style};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
@@ -41,6 +41,34 @@ impl PaletteConfig {
                     self.name
                 )))
             })
+    }
+
+    /// One message per ANSI color defined under several keys (`magenta` and
+    /// `purple`): each key still answers its own spelling, and every other
+    /// spelling of that color uses the key `alias_owner` picks.
+    #[must_use]
+    pub fn alias_warnings(&self) -> Vec<String> {
+        let mut groups: BTreeMap<&'static str, Vec<&str>> = BTreeMap::new();
+        for key in self.colors.keys() {
+            if let Some(canonical) = canonical_ansi_name(key) {
+                groups.entry(canonical).or_default().push(key);
+            }
+        }
+        groups
+            .into_iter()
+            .filter(|(_, keys)| keys.len() > 1)
+            .filter_map(|(canonical, keys)| {
+                let owner = alias_owner(canonical, keys.iter().copied())?;
+                Some(format!(
+                    "colors {} all name the ANSI color {canonical}; each key keeps its own \
+                     spelling, and other spellings of {canonical} use '{owner}'",
+                    keys.iter()
+                        .map(|key| format!("'{key}'"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })
+            .collect()
     }
 
     /// Resolve every entry; returns resolved colors plus one message per failure.
@@ -105,15 +133,13 @@ mod tests {
     #![allow(missing_docs)]
 
     use super::PaletteConfig;
-    use crate::config::validation::colors::NAMED_COLORS;
+    use crate::config::validation::colors::PALETTE_ROLE_COLORS;
     use crate::formatter::encode_ansi;
     use crate::palette::manager::BUILTIN_PALETTES;
     use crate::template::{
-        ANSI_BASE_WORDS, BRIGHT_PREFIXES, Color, MapResolver, RenderContext, is_named_color, render,
+        ANSI_BASE_WORDS, BRIGHT_PREFIXES, Color, MapResolver, RenderContext, canonical_ansi_name,
+        is_named_color, render,
     };
-
-    /// Config-vocabulary names that a palette (not the template engine) defines.
-    const PALETTE_DEFINED_NAMES: [&str; 2] = ["orange", "brown"];
 
     #[test]
     fn parses_colors_table_and_ignores_unknown_keys() {
@@ -222,10 +248,11 @@ idx = \"42\"
         names
     }
 
-    /// Builtin named colors render under every shipped palette, and palette keys
-    /// shadowing builtin names are on the named-color list.
+    /// Every ANSI spelling renders under every shipped palette, all aliases of one
+    /// ANSI color resolve to the same palette entry, and every palette defines the
+    /// role names theme colors may use.
     #[test]
-    fn named_color_list_and_shipped_palettes_agree() {
+    fn named_spellings_and_shipped_palettes_agree() {
         let resolver = MapResolver::from_pairs([("k", "v")]);
         for (palette_name, cfg) in builtin_configs() {
             let palette = cfg.to_template_palette();
@@ -239,28 +266,71 @@ idx = \"42\"
                     sgr.starts_with("\x1b["),
                     "'{name}' renders no color under palette '{palette_name}': {sgr:?}"
                 );
+                let canonical = canonical_ansi_name(&name).expect("named spelling");
+                assert_eq!(
+                    palette.get(&name),
+                    palette.get(canonical),
+                    "palette '{palette_name}': alias '{name}' and '{canonical}' disagree"
+                );
             }
-            for key in cfg.colors.keys() {
-                let shadows_builtin = NAMED_COLORS.contains(&key.as_str())
-                    && !PALETTE_DEFINED_NAMES.contains(&key.as_str());
-                if shadows_builtin || named_spellings().contains(key) {
-                    assert!(
-                        is_named_color(key),
-                        "palette '{palette_name}' key '{key}' shadows a builtin color name \
-                         but is missing from the named-color list"
-                    );
-                }
+            for role in PALETTE_ROLE_COLORS {
+                assert!(
+                    palette.get(role).is_some(),
+                    "palette '{palette_name}' must define role color '{role}'"
+                );
             }
         }
-        for name in NAMED_COLORS {
+    }
+
+    #[test]
+    fn palette_with_aliased_keys_loads_and_keeps_each_exact_spelling() {
+        let cfg: PaletteConfig = toml::from_str(
+            "name = \"dup\"\n[colors]\nmagenta = \"#111111\"\npurple = \"#222222\"\n\
+             bright_magenta = \"#333333\"\nbrmagenta = \"#444444\"\n",
+        )
+        .expect("parse");
+        cfg.validate()
+            .expect("aliased keys must not fail palette loading");
+
+        let resolver = MapResolver::from_pairs([("x", "x")]);
+        let ctx = RenderContext::new(&resolver).with_palette(cfg.to_template_palette());
+        let fg = |spelling: &str| {
+            render(&format!("[$x](fg:{spelling})"), &ctx)
+                .unwrap()
+                .first()
+                .and_then(|span| span.style.fg.clone())
+        };
+        let rgb = |v: u8| Some(Color::Rgb { r: v, g: v, b: v });
+        // Exact keys render as they did before aliasing existed.
+        assert_eq!(fg("magenta"), rgb(0x11));
+        assert_eq!(fg("purple"), rgb(0x22));
+        assert_eq!(fg("bright_magenta"), rgb(0x33));
+        assert_eq!(fg("brmagenta"), rgb(0x44));
+        // Other spellings: the canonical-spelled key, else the lexically smallest.
+        assert_eq!(fg("bright-purple"), rgb(0x33));
+        assert_eq!(fg("bright_purple"), rgb(0x33));
+
+        let warnings = cfg.alias_warnings();
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("'magenta'") && w.contains("use 'purple'")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn typed_alias_spelling_reaches_palette_entry_for_any_spelling() {
+        let cfg: PaletteConfig =
+            toml::from_str("[colors]\nbright_green = \"#00ff00\"\n").expect("parse");
+        let palette = cfg.to_template_palette();
+        for spelling in ["bright_green", "brgreen", "bright-green"] {
             assert_eq!(
-                is_named_color(name),
-                !PALETTE_DEFINED_NAMES.contains(name),
-                "config color name '{name}' and the named-color list disagree"
+                palette.get(spelling),
+                Some(Color::Rgb { r: 0, g: 255, b: 0 }),
+                "'{spelling}' must reach the palette's bright_green entry"
             );
-        }
-        for name in PALETTE_DEFINED_NAMES {
-            assert!(NAMED_COLORS.contains(&name));
         }
     }
 }

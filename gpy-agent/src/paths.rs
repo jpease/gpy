@@ -66,8 +66,9 @@ pub fn socket_path_problem(path: &Path, capacity: usize) -> Option<String> {
         "socket path '{}' is {len} bytes, but a Unix socket path holds at most {max} \
          ({capacity} with the terminating NUL; the limit is 104 on macOS and the BSDs, \
          108 on Linux). Shorten it: point XDG_RUNTIME_DIR (or XDG_CACHE_HOME / HOME) at a \
-         shorter directory, or set GPY_AGENT_SOCKET_PATH to a short path such as \
-         /tmp/gpy-$USER.sock",
+         shorter directory, or set GPY_AGENT_SOCKET_PATH to a short path in a directory \
+         only you can write, such as /tmp/gpy-$USER/gpy.sock after \
+         `mkdir -m 700 /tmp/gpy-$USER`",
         path.display()
     ))
 }

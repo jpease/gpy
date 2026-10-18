@@ -1,6 +1,8 @@
 //! Builder for the IPC server endpoint; required collaborators come in
 //! [`EndpointDeps`] so a missing one is a compile error.
 
+#[cfg(unix)]
+use super::handle::DirRepair;
 use super::handle::{EndpointHandle, ServerDeps, WatcherRef};
 use crate::{
     Result, config::manager::ConfigManager, git::cache::GitStatusCache, ipc::ClientDirectory,
@@ -35,6 +37,8 @@ pub struct EndpointHandleBuilder {
     security_config: GuardSettings,
     palette_cache: Option<Arc<PaletteCache>>,
     #[cfg(unix)]
+    socket_dir_repair: DirRepair,
+    #[cfg(unix)]
     socket_ownership_check: Option<std::time::Duration>,
 }
 
@@ -49,14 +53,26 @@ impl EndpointHandleBuilder {
             security_config: GuardSettings::default(),
             palette_cache: None,
             #[cfg(unix)]
+            socket_dir_repair: DirRepair::Refuse,
+            #[cfg(unix)]
             socket_ownership_check: None,
         }
     }
 
-    /// Set the socket path (defaults to the platform-specific path).
+    /// Set the socket path (defaults to [`crate::agent::lifecycle::get_socket_path`]).
     #[must_use]
     pub fn socket_path(mut self, path: PathBuf) -> Self {
         self.socket_path = Some(path);
+        self
+    }
+
+    /// Set how a socket directory we own but others can write is treated
+    /// (defaults to [`DirRepair::Refuse`]: never change a directory's mode
+    /// unless the caller knows GPY owns it).
+    #[cfg(unix)]
+    #[must_use]
+    pub const fn socket_dir_repair(mut self, repair: DirRepair) -> Self {
+        self.socket_dir_repair = repair;
         self
     }
 
@@ -92,11 +108,11 @@ impl EndpointHandleBuilder {
     /// Build the `EndpointHandle`.
     ///
     /// # Errors
-    /// Fails if no socket path was set and the platform default is unavailable.
+    /// Fails if no socket path was set and the default is unavailable.
     pub fn build(self) -> Result<EndpointHandle> {
         let socket_path = match self.socket_path {
             Some(path) => path,
-            None => EndpointHandle::default_socket_path()?,
+            None => crate::agent::lifecycle::get_socket_path()?,
         };
 
         let EndpointDeps {
@@ -116,7 +132,7 @@ impl EndpointHandleBuilder {
 
         #[cfg_attr(
             not(unix),
-            expect(unused_mut, reason = "only unix applies the ownership-check override")
+            expect(unused_mut, reason = "only unix applies the socket overrides")
         )]
         let mut handle = EndpointHandle::with_path_and_state(
             socket_path,
@@ -134,8 +150,11 @@ impl EndpointHandleBuilder {
             self.security_config,
         );
         #[cfg(unix)]
-        if let Some(period) = self.socket_ownership_check {
-            handle.socket_ownership_check = period;
+        {
+            handle.socket_dir_repair = self.socket_dir_repair;
+            if let Some(period) = self.socket_ownership_check {
+                handle.socket_ownership_check = period;
+            }
         }
         Ok(handle)
     }

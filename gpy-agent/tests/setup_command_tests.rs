@@ -84,19 +84,92 @@ fn bash_setup_wires_bashrc_and_a_login_loader() {
     assert!(profile.contains(". \"$HOME/.bashrc\""), "{profile}");
 }
 
+/// A `.bashrc` that counts its runs, then stops (as most do) in a
+/// non-interactive shell, before GPY's block.
+const COUNTING_BASHRC: &str = "GPY_TEST_BASHRC_RUNS=$((${GPY_TEST_BASHRC_RUNS:-0} + 1))\ncase $- in *i*) ;; *) return ;; esac\n";
+
+/// How many times a real Bash login shell in `home` ran `~/.bashrc`.
+fn bashrc_runs_in_login_shell(home: &Path) -> String {
+    let output = Command::new("bash")
+        .args(["--login", "-c", "printf %s \"${GPY_TEST_BASHRC_RUNS:-0}\""])
+        .current_dir(home)
+        .env_clear()
+        .env("HOME", home)
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .output()
+        .expect("failed to spawn bash");
+    assert!(
+        output.status.success(),
+        "bash --login failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
 #[test]
-fn bash_setup_leaves_a_login_file_that_already_loads_bashrc() {
+fn bash_setup_wires_a_login_file_that_only_mentions_bashrc_in_comments() {
+    for (name, text) in [
+        (
+            ".profile",
+            "# .bashrc is intentionally not sourced here yet\n",
+        ),
+        (".bash_profile", "# [ -f ~/.bashrc ] && . ~/.bashrc\n"),
+    ] {
+        let home = TempDir::new().unwrap();
+        fs::write(home.path().join(".bashrc"), COUNTING_BASHRC).unwrap();
+        let login = home.path().join(name);
+        fs::write(&login, text).unwrap();
+
+        assert_ok(&setup(home.path(), &["--shell", "bash"]));
+        assert_ok(&setup(home.path(), &["--shell", "bash"]));
+
+        assert!(fs::read_to_string(&login).unwrap().starts_with(text));
+        assert_eq!(
+            block_count(&login),
+            1,
+            "{name}: re-running must not stack loaders"
+        );
+        assert_eq!(bashrc_runs_in_login_shell(home.path()), "1", "{name}");
+    }
+}
+
+#[test]
+fn bash_setup_wires_the_login_file_bash_reads_first() {
     let home = TempDir::new().unwrap();
-    let login = home.path().join(".bash_profile");
-    fs::write(&login, "[ -r ~/.bashrc ] && . ~/.bashrc\n").unwrap();
+    fs::write(home.path().join(".bashrc"), COUNTING_BASHRC).unwrap();
+    let bash_login = home.path().join(".bash_login");
+    fs::write(&bash_login, "# [ -f ~/.bashrc ] && . ~/.bashrc\n").unwrap();
+    let profile = home.path().join(".profile");
+    fs::write(&profile, "[ -f ~/.bashrc ] && . ~/.bashrc\n").unwrap();
 
     assert_ok(&setup(home.path(), &["--shell", "bash"]));
 
+    assert_eq!(block_count(&bash_login), 1);
     assert_eq!(
-        fs::read_to_string(&login).unwrap(),
-        "[ -r ~/.bashrc ] && . ~/.bashrc\n"
+        fs::read_to_string(&profile).unwrap(),
+        "[ -f ~/.bashrc ] && . ~/.bashrc\n"
     );
-    assert!(!home.path().join(".profile").exists());
+    assert_eq!(bashrc_runs_in_login_shell(home.path()), "1");
+}
+
+#[test]
+fn bash_setup_leaves_a_login_file_that_already_loads_bashrc() {
+    for loader in [
+        "[ -r ~/.bashrc ] && . ~/.bashrc\n",
+        "if [ -f \"$HOME/.bashrc\" ]; then\n    . \"$HOME/.bashrc\"\nfi\n",
+        "# Load the interactive config.\ntest -f ~/.bashrc && source ~/.bashrc\n",
+    ] {
+        let home = TempDir::new().unwrap();
+        fs::write(home.path().join(".bashrc"), COUNTING_BASHRC).unwrap();
+        let login = home.path().join(".bash_profile");
+        fs::write(&login, loader).unwrap();
+
+        assert_ok(&setup(home.path(), &["--shell", "bash"]));
+
+        assert_eq!(fs::read_to_string(&login).unwrap(), loader);
+        assert!(!home.path().join(".profile").exists());
+        assert_eq!(bashrc_runs_in_login_shell(home.path()), "1", "{loader}");
+    }
 }
 
 #[test]

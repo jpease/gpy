@@ -108,7 +108,9 @@ including the NUL) and 107 on Linux. A long `$HOME`, `XDG_RUNTIME_DIR` or
 `GPY_AGENT_SOCKET_PATH` therefore fails on macOS first; `gpy-agent start`,
 `stop` and `status` refuse such a path with an error naming its length and
 the limit. Point `XDG_RUNTIME_DIR` at a shorter directory or set
-`GPY_AGENT_SOCKET_PATH` to a short path such as `/tmp/gpy-$USER.sock`.
+`GPY_AGENT_SOCKET_PATH` to a short path in a directory only you can write,
+such as `/tmp/gpy-$USER/gpy.sock` after `mkdir -m 700 /tmp/gpy-$USER`. A
+socket directly in `/tmp` is refused.
 
 ### Degraded (oneshot) behavior
 
@@ -167,7 +169,7 @@ The installer automatically:
    and configures your shell by adding a marked block to:
    - Fish: `~/.config/fish/config.fish`
    - Zsh: `${ZDOTDIR:-~}/.zshrc`
-   - Bash: `~/.bashrc` (created if missing). If your login file (the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile`) does not already load `~/.bashrc`, a small loader block is added to it; if none exists, `~/.profile` is created
+   - Bash: `~/.bashrc` (created if missing). If your login file (the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile`) does not already load `~/.bashrc` with an uncommented `.` or `source` line, a small loader block is added to it; if none exists, `~/.profile` is created
 5. **Starts the agent** (if not already running)
 
 ### What the checksums do and do not prove
@@ -635,7 +637,10 @@ sh /tmp/gpy-uninstall.sh                    # or download uninstall.fish the sam
 ### Fish Prompt Restoration
 
 If your `fish_prompt.fish` is an unrelated custom prompt or symlink, the uninstaller
-preserves it byte-for-byte and leaves all backups untouched.
+preserves it byte-for-byte and leaves all backups untouched. The uninstaller removes
+only GPY's prompt symlink or a regular-file copy of GPY's own prompt (one that runs
+GPY's `for segment in $__enabled_segments` dispatch); a prompt that merely mentions
+GPY is yours and stays.
 
 When the prompt destination is absent (or becomes absent after removing the GPY
 symlink/implementation), the uninstaller restores the newest backup by comparing the

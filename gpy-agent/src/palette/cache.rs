@@ -1,17 +1,18 @@
-//! Cached active palette, refreshed on config change.
+//! Cached active palette, replaced only by a successfully loaded palette.
 
 use crate::config::Config;
 use crate::template::Palette;
 use std::sync::{Arc, RwLock};
 
-/// Thread-safe cached copy of the active palette, refreshed when `ui.palette` changes.
+/// Thread-safe cached copy of the active palette.
 #[derive(Clone)]
 pub struct PaletteCache {
     inner: Arc<RwLock<Palette>>,
 }
 
 impl PaletteCache {
-    /// Build the initial cache from the active config.
+    /// Build the initial cache from the active config. With no earlier palette
+    /// to keep, an unusable one starts empty (warned) rather than failing startup.
     #[must_use]
     pub fn from_config(config: &Config) -> Self {
         let palette = crate::palette::active_palette(config);
@@ -27,11 +28,6 @@ impl PaletteCache {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
-    }
-
-    /// Replace the cached palette with one derived from `config`.
-    pub fn refresh(&self, config: &Config) {
-        self.replace(crate::palette::active_palette(config));
     }
 
     /// Store `palette` and report whether its contents differ from the cached one.

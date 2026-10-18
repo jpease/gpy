@@ -275,3 +275,149 @@ fn e2e_plugin_runtime_loading_and_missing_file_graceful() {
     write_config(broken_xdg.path(), "default", &["clock", "k8s_tools"]);
     verify_missing_plugin_file_is_graceful(&repo, &path, broken_xdg.path());
 }
+
+/// Isolated `HOME`/XDG roots plus a `PATH` whose `gpy-agent` is this build.
+struct FishSandbox {
+    root: TempDir,
+    _bin_dir: TempDir,
+    path: String,
+}
+
+impl FishSandbox {
+    fn new() -> Self {
+        let (bin_dir, _) = prepare_gpy_agent_command_path();
+        let path = build_path_with_bin(bin_dir.path());
+        Self {
+            root: TempDir::new().expect("sandbox tempdir"),
+            _bin_dir: bin_dir,
+            path,
+        }
+    }
+
+    fn xdg_config(&self) -> PathBuf {
+        self.root.path().join("config")
+    }
+
+    fn apply_env<'a>(&self, command: &'a mut Command) -> &'a mut Command {
+        let root = self.root.path();
+        command
+            .env("HOME", root)
+            .env("XDG_CONFIG_HOME", self.xdg_config())
+            .env("XDG_CACHE_HOME", root.join("cache"))
+            .env("XDG_RUNTIME_DIR", root.join("runtime"))
+            .env("PATH", &self.path)
+    }
+
+    /// Run the real `gpy` CLI in the sandbox.
+    fn gpy(&self, args: &[&str]) -> std::process::Output {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_gpy"));
+        self.apply_env(&mut command)
+            .args(args)
+            .output()
+            .expect("run gpy")
+    }
+
+    /// Run `script` in Fish from the repo root after sourcing the real `init.fish`.
+    fn fish(&self, script: &str, segment: &str) -> std::process::Output {
+        let mut command = Command::new("fish");
+        self.apply_env(&mut command)
+            .args([
+                "--no-config",
+                "-c",
+                &format!("source fish/core/init.fish; {script}"),
+            ])
+            .env("SEGMENT", segment)
+            .current_dir(repo_root())
+            .output()
+            .expect("run fish")
+    }
+}
+
+fn assert_success(output: &std::process::Output, context: &str) {
+    assert!(
+        output.status.success(),
+        "{context} failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// After init (and, for `reload`, after `__gpy_reload_theme` picks up the
+/// segment), the scaffolded render function exists and draws the segment.
+const FISH_RENDER_PROBE: &str = "if functions -q segment_{$SEGMENT}_render; \
+     echo LOADED; segment_{$SEGMENT}_render last; echo; else; echo MISSING; end";
+
+#[test]
+fn e2e_scaffolded_segments_with_repeated_or_edge_separators_load_in_fish() {
+    if !has_fish_4() {
+        skip::skip_test("fish 4 is not installed; init.fish sourcing needs Fish 4");
+        return;
+    }
+    for segment in ["my-seg", "my--seg", "my__seg", "seg_"] {
+        let sandbox = FishSandbox::new();
+        assert_success(
+            &sandbox.gpy(&["plugin", "new", "audit-plugin", "--segment", segment]),
+            &format!("gpy plugin new --segment {segment}"),
+        );
+
+        write_config(&sandbox.xdg_config(), "default", &[segment]);
+        let initial = sandbox.fish(FISH_RENDER_PROBE, segment);
+        let stdout = String::from_utf8_lossy(&initial.stdout);
+        assert!(
+            stdout.contains("LOADED") && stdout.contains(&format!("* {segment}")),
+            "'{segment}' not loaded at init.\nstdout:\n{stdout}\nstderr:\n{}",
+            String::from_utf8_lossy(&initial.stderr)
+        );
+
+        write_config(&sandbox.xdg_config(), "default", &["clock"]);
+        let reload_script = format!(
+            "printf '[ui]\\ntheme = \"default\"\\nenabled_segments = [\"%s\"]\\n' $SEGMENT \
+             > $XDG_CONFIG_HOME/gpy/config.toml; __gpy_reload_theme; {FISH_RENDER_PROBE}"
+        );
+        let reloaded = sandbox.fish(&reload_script, segment);
+        let stdout = String::from_utf8_lossy(&reloaded.stdout);
+        assert!(
+            stdout.contains("LOADED") && stdout.contains(&format!("* {segment}")),
+            "'{segment}' not loaded on reload.\nstdout:\n{stdout}\nstderr:\n{}",
+            String::from_utf8_lossy(&reloaded.stderr)
+        );
+    }
+}
+
+#[test]
+fn e2e_colliding_segment_tokens_are_rejected_not_redirected() {
+    let sandbox = FishSandbox::new();
+    assert_success(
+        &sandbox.gpy(&["plugin", "new", "ctx-a", "--segment", "k8s-ctx"]),
+        "gpy plugin new ctx-a",
+    );
+    assert_success(
+        &sandbox.gpy(&["plugin", "new", "ctx-b", "--segment", "k8s_ctx"]),
+        "gpy plugin new ctx-b",
+    );
+
+    let list = sandbox.gpy(&["plugin", "list"]);
+    assert_success(&list, "gpy plugin list");
+    let listing = String::from_utf8_lossy(&list.stdout);
+    assert!(
+        listing.contains("- ctx-a") && !listing.contains("- ctx-b"),
+        "the later colliding plugin must not be registered:\n{listing}"
+    );
+    assert!(
+        listing.contains("k8s-ctx") && listing.contains("k8s_ctx"),
+        "a diagnostic must name both colliding segments:\n{listing}"
+    );
+
+    write_config(&sandbox.xdg_config(), "default", &["k8s-ctx", "k8s_ctx"]);
+    let get = sandbox.gpy(&["config", "get", "ui.enabled_segments"]);
+    assert!(
+        !get.status.success(),
+        "config enabling both colliding names must not load:\nstdout:\n{}",
+        String::from_utf8_lossy(&get.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&get.stderr);
+    assert!(
+        stderr.contains("k8s-ctx") && stderr.contains("k8s_ctx"),
+        "error must name both segments:\n{stderr}"
+    );
+}

@@ -107,24 +107,22 @@ impl fmt::Display for ShellVariant {
     }
 }
 
-/// A validated color specification (Hex, ANSI code, named color, or magic keyword).
+/// A validated color specification (Hex, ANSI code, named color, or magic keyword),
+/// stored in its canonical spelling so every shell and the template engine read
+/// the same value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct ColorSpec(String);
 
 impl ColorSpec {
-    /// Create a new `ColorSpec` after validation.
+    /// Create a new `ColorSpec` from any accepted spelling.
     ///
     /// # Errors
     /// Returns an error if the string is not a valid color specification.
     pub fn new(value: &str) -> crate::Result<Self> {
-        if crate::config::validation::colors::is_valid_color(value) {
-            Ok(Self(value.to_lowercase()))
-        } else {
-            Err(crate::Error::invalid(format!(
-                "Invalid color specification: '{value}'"
-            )))
-        }
+        crate::config::validation::colors::canonical_color(value)
+            .map(Self)
+            .ok_or_else(|| crate::Error::invalid(format!("Invalid color specification: '{value}'")))
     }
 
     /// Get the color string.

@@ -1,4 +1,5 @@
-//! A bounded, TTL-expiring cache primitive sharing one runtime-adjustable TTL.
+//! A bounded, TTL-expiring cache primitive. Instances share one
+//! runtime-adjustable TTL unless built with their own fixed TTL.
 
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -8,7 +9,7 @@ use std::time::{Duration, SystemTime};
 
 use super::bounded::evict_to_capacity;
 
-/// Shared TTL (seconds) governing every [`TtlMap`] instance.
+/// Shared TTL (seconds) governing every [`TtlMap`] built with [`TtlMap::new`].
 static SHARED_CACHE_TTL_SECONDS: AtomicU64 = AtomicU64::new(24 * 60 * 60);
 
 /// Update the shared cache TTL (in hours), clamped to `[1, 720]`.
@@ -43,6 +44,8 @@ type Entries<K, V> = OnceLock<Mutex<HashMap<K, Entry<V>>>>;
 pub struct TtlMap<K, V> {
     entries: Entries<K, V>,
     capacity: usize,
+    /// Fixed TTL; `None` follows the shared knob.
+    ttl: Option<Duration>,
 }
 
 impl<K, V> TtlMap<K, V>
@@ -50,17 +53,35 @@ where
     K: Eq + Hash + Clone,
     V: Clone,
 {
-    /// Create an empty cache bounded to `capacity` entries (`0` = unbounded).
+    /// Create an empty cache bounded to `capacity` entries (`0` = unbounded),
+    /// following the shared TTL.
     #[must_use]
     pub const fn new(capacity: usize) -> Self {
         Self {
             entries: OnceLock::new(),
             capacity,
+            ttl: None,
+        }
+    }
+
+    /// Like [`TtlMap::new`], but entries expire after `ttl` regardless of the
+    /// shared knob.
+    #[must_use]
+    pub const fn with_ttl(capacity: usize, ttl: Duration) -> Self {
+        Self {
+            entries: OnceLock::new(),
+            capacity,
+            ttl: Some(ttl),
         }
     }
 
     fn map(&self) -> &Mutex<HashMap<K, Entry<V>>> {
         self.entries.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    fn ttl(&self) -> Duration {
+        self.ttl
+            .unwrap_or_else(|| Duration::from_secs(shared_cache_ttl_seconds()))
     }
 
     /// Return a clone of a fresh value for `key`; a stale entry is removed.
@@ -70,7 +91,7 @@ where
         K: std::borrow::Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        let ttl = Duration::from_secs(shared_cache_ttl_seconds());
+        let ttl = self.ttl();
         let now = SystemTime::now();
         let mut map = self.map().lock().unwrap_or_else(PoisonError::into_inner);
         let entry = map.get(key)?;
@@ -199,6 +220,22 @@ mod tests {
         assert_eq!(map.len(), 0, "stale entry should be evicted on read");
 
         set_shared_cache_ttl(24);
+    }
+
+    #[test]
+    fn fixed_ttl_expires_independently_of_the_shared_knob() {
+        let map: TtlMap<&str, u32> = TtlMap::with_ttl(0, Duration::from_secs(60));
+        let now = SystemTime::now();
+
+        map.insert_at("young", 1, now - Duration::from_secs(30));
+        map.insert_at("old", 2, now - Duration::from_secs(61));
+
+        assert_eq!(map.get("young"), Some(1));
+        assert_eq!(
+            map.get("old"),
+            None,
+            "past the fixed TTL despite a 1h+ knob"
+        );
     }
 
     #[test]

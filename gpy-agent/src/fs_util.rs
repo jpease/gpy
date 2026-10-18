@@ -7,14 +7,40 @@ use std::path::Path;
 /// files cannot force an unbounded read.
 ///
 /// # Errors
-/// Returns an error if the file cannot be opened or read.
+/// Returns an error if `path` is not a regular file or cannot be opened or read.
 pub fn read_small_file(path: &Path, cap: usize) -> std::io::Result<String> {
+    let bytes = read_regular_file_capped(path, cap)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Read at most `cap` bytes of `path`, refusing anything but a regular file.
+///
+/// The open is non-blocking, so a FIFO without a writer cannot stall it, and
+/// the type check runs on the opened descriptor, so swapping a special file in
+/// after any earlier check still fails here.
+///
+/// # Errors
+/// Returns an error if `path` is not a regular file or cannot be opened or read.
+pub fn read_regular_file_capped(path: &Path, cap: usize) -> std::io::Result<Vec<u8>> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        // O_NOCTTY: a symlink to a terminal must not become the daemon's controlling tty.
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("not a regular file: {}", path.display()),
+        ));
+    }
     let limit = u64::try_from(cap).unwrap_or(u64::MAX);
     let mut buf = Vec::new();
-    std::fs::File::open(path)?
-        .take(limit)
-        .read_to_end(&mut buf)?;
-    Ok(String::from_utf8_lossy(&buf).into_owned())
+    file.take(limit).read_to_end(&mut buf)?;
+    Ok(buf)
 }
 
 /// Whether the current user cannot write `path`. Uses `access(2)`, not mode
@@ -68,6 +94,28 @@ mod tests {
         let path = tmp.path().join("does-not-exist.txt");
 
         assert!(read_small_file(&path, 4_096).is_err());
+    }
+
+    #[test]
+    fn read_small_file_rejects_a_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(read_small_file(tmp.path(), 4_096).is_err());
+    }
+
+    /// A writer-less FIFO would block a plain `open` forever; it must fail fast.
+    #[cfg(unix)]
+    #[test]
+    fn read_small_file_rejects_a_fifo_without_blocking() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("pipe");
+        nix::unistd::mkfifo(&path, nix::sys::stat::Mode::S_IRWXU).unwrap();
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || sender.send(read_small_file(&path, 4_096).is_err()));
+        let rejected = receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap_or_else(|_| panic!("reading a FIFO blocked"));
+        assert!(rejected, "a FIFO is not a regular file");
     }
 
     /// Mode bits say root-owned 755 `/usr` is writable; `access(2)` knows better.

@@ -7,6 +7,7 @@ use crate::template::TemplateError;
 use crate::template::ast::Node;
 use crate::template::parse::parse_cached;
 use crate::template::style::{Color, Palette, Style, parse_style};
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 /// Resolves template variable names to their string values.
@@ -184,7 +185,9 @@ fn eval_nodes(
     for node in nodes {
         let mut buf: Vec<Span> = Vec::new();
         match node {
-            Node::Literal(text) => push_text(&mut buf, text, inherited, SpanKind::Text),
+            Node::Literal(text) => {
+                push_text(&mut buf, &sanitize_literal(text), inherited, SpanKind::Text);
+            }
             Node::Var(name) => {
                 if let Some(value) = ctx.resolver.resolve(name) {
                     let kind = if ctx.resolver.is_prompt_token(name) {
@@ -237,16 +240,52 @@ fn eval_nodes(
     Ok(())
 }
 
-/// Strip C0/C1 control characters from a data-derived variable value.
+/// Strip every C0/C1 control character from a data-derived variable value.
 ///
 /// Security: directory/branch names may contain ESC/OSC sequences that would
 /// inject terminal escapes into the prompt. Stripped (not escaped) so prompt
-/// width stays aligned. Theme literals and style ANSI don't pass through here.
-fn sanitize_control_chars(value: &str) -> String {
-    if value.chars().any(char::is_control) {
-        value.chars().filter(|c| !c.is_control()).collect()
+/// width stays aligned. Style ANSI is produced by the encoders and never passes through here.
+fn sanitize_control_chars(value: &str) -> Cow<'_, str> {
+    strip_controls(value, |_| false)
+}
+
+/// Strip terminal controls from theme literal text, keeping layout characters.
+///
+/// Validation rejects these themes; this keeps a theme that bypassed it (hot
+/// reload, direct render) from emitting ESC/BEL/OSC payloads.
+fn sanitize_literal(text: &str) -> Cow<'_, str> {
+    strip_controls(text, is_template_layout_char)
+}
+
+/// The only control character theme template text may carry: newline, for multi-line layouts.
+const fn is_template_layout_char(ch: char) -> bool {
+    ch == '\n'
+}
+
+fn strip_controls(text: &str, keep: fn(char) -> bool) -> Cow<'_, str> {
+    let forbidden = |ch: char| ch.is_control() && !keep(ch);
+    if text.chars().any(forbidden) {
+        Cow::Owned(text.chars().filter(|&ch| !forbidden(ch)).collect())
     } else {
-        value.to_owned()
+        Cow::Borrowed(text)
+    }
+}
+
+/// Reject terminal control characters (anything but newline) in a template.
+///
+/// # Errors
+/// Returns [`TemplateError::ControlCharacter`] for the first offending character.
+pub fn check_template_controls(template: &str) -> Result<()> {
+    match template
+        .chars()
+        .enumerate()
+        .find(|&(_, ch)| ch.is_control() && !is_template_layout_char(ch))
+    {
+        Some((position, ch)) => Err(TemplateError::ControlCharacter {
+            code: u32::from(ch),
+            position,
+        }),
+        None => Ok(()),
     }
 }
 
@@ -307,7 +346,9 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::missing_panics_doc)]
 
-    use super::{MapResolver, RenderContext, Span, VariableResolver, render};
+    use super::{
+        MapResolver, RenderContext, Span, VariableResolver, check_template_controls, render,
+    };
     use crate::template::style::{Attr, Color, Style};
 
     struct EmptyResolver;
@@ -636,6 +677,30 @@ mod tests {
         let ctx = RenderContext::new(&resolver);
         let spans = render("($path)", &ctx).unwrap();
         assert!(spans.is_empty(), "expected no spans, got {spans:?}");
+    }
+
+    #[test]
+    fn control_chars_in_literal_text_are_stripped_but_newline_kept() {
+        let resolver = MapResolver::from_pairs([("path", "~")]);
+        let ctx = RenderContext::new(&resolver);
+        let spans = render("\u{1b}]0;title\u{7}[$path\r\n](bold red)>", &ctx).unwrap();
+        assert_eq!(text_of(&spans), "]0;title~\n>");
+        let styled = spans.get(1_usize).unwrap();
+        assert_eq!(styled.style.fg, Some(Color::Named("red".to_owned())));
+        assert_eq!(styled.style.attrs, vec![Attr::Bold]);
+    }
+
+    #[test]
+    fn check_template_controls_allows_newline_and_reports_first_control() {
+        assert_eq!(check_template_controls("$path\n$branch"), Ok(()));
+        assert_eq!(
+            check_template_controls("ab\u{1b}]0;x\u{7}$path"),
+            Err(crate::template::TemplateError::ControlCharacter {
+                code: 0x1b,
+                position: 2,
+            })
+        );
+        assert!(check_template_controls("[x](fg:red\u{9b})").is_err());
     }
 
     #[test]

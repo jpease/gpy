@@ -2,6 +2,7 @@
 
 use super::manifest::{
     EntryType, GpyVersion, PluginApiVersion, PluginId, PluginManifest, SegmentName,
+    first_token_collision,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -256,6 +257,7 @@ fn discover_plugins_in_roots(roots: &[(PluginSource, PathBuf)]) -> PluginDiscove
 
     let mut plugins: Vec<DiscoveredPlugin> = winners.into_values().collect();
     plugins.sort_by(|a, b| a.manifest.id.as_str().cmp(b.manifest.id.as_str()));
+    let plugins = reject_token_collisions(plugins, &mut diagnostics);
 
     PluginDiscovery {
         plugins,
@@ -263,10 +265,51 @@ fn discover_plugins_in_roots(roots: &[(PluginSource, PathBuf)]) -> PluginDiscove
     }
 }
 
+/// Drop each plugin (visited in id order) that provides a segment whose shell
+/// variable token an earlier plugin's differently named segment already uses;
+/// loading both would let one segment's file and styles shadow the other's.
+fn reject_token_collisions(
+    plugins: Vec<DiscoveredPlugin>,
+    diagnostics: &mut Vec<PluginDiagnostic>,
+) -> Vec<DiscoveredPlugin> {
+    let mut accepted: Vec<DiscoveredPlugin> = Vec::with_capacity(plugins.len());
+    for plugin in plugins {
+        let claimed = accepted
+            .iter()
+            .flat_map(|earlier| earlier.manifest.provided_segments.iter());
+        let Some(collision) =
+            first_token_collision(claimed.chain(&plugin.manifest.provided_segments))
+        else {
+            accepted.push(plugin);
+            continue;
+        };
+        let owner = accepted
+            .iter()
+            .find(|earlier| {
+                earlier
+                    .manifest
+                    .provided_segments
+                    .contains(&collision.first)
+            })
+            .map_or("another plugin", |earlier| earlier.manifest.id.as_str());
+        let message = format!(
+            "Plugin '{}' ignored: {collision} (segment '{}' comes from plugin '{owner}')",
+            plugin.manifest.id, collision.first
+        );
+        diagnostics.push(PluginDiagnostic {
+            plugin_dir: plugin.root,
+            source: plugin.source,
+            message,
+        });
+    }
+    accepted
+}
+
 /// Discover plugins from bundled and user plugin roots.
 ///
 /// Deterministic: precedence user > bundled > first-party, same-source
-/// duplicates resolve lexically, and output is sorted by id.
+/// duplicates resolve lexically, output is sorted by id, and a plugin whose
+/// segment token collides with an earlier plugin's is dropped with a diagnostic.
 #[must_use]
 pub fn discover_plugins() -> PluginDiscovery {
     discover_plugins_in_roots(&plugin_roots())
@@ -362,6 +405,42 @@ entry_type = "command"
                 .message
                 .contains("Unsupported entry_type 'command'")),
             "expected an unsupported-entry-type diagnostic"
+        );
+    }
+
+    #[test]
+    fn discover_plugins_drops_later_plugin_with_colliding_segment_token() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = temp.path().join("gpy").join("plugins");
+        let manifest = |id: &str, segment: &str| {
+            valid_manifest(id).replace(
+                &format!("provided_segments = [\"{id}\"]"),
+                &format!("provided_segments = [\"{segment}\"]"),
+            )
+        };
+        write_plugin(&root, "first", &manifest("aaa-ctx", "k8s-ctx"));
+        write_plugin(&root, "second", &manifest("zzz-ctx", "k8s_ctx"));
+
+        let discovery = discover_plugins_in_roots(&[(PluginSource::User, root)]);
+
+        let ids: Vec<&str> = discovery
+            .plugins
+            .iter()
+            .map(|plugin| plugin.manifest.id.as_str())
+            .collect();
+        assert!(ids.contains(&"aaa-ctx"), "earlier plugin kept: {ids:?}");
+        assert!(
+            !ids.contains(&"zzz-ctx"),
+            "colliding plugin dropped: {ids:?}"
+        );
+        assert!(
+            discovery.diagnostics.iter().any(|diagnostic| {
+                diagnostic.plugin_dir.ends_with("second")
+                    && diagnostic.message.contains("k8s-ctx")
+                    && diagnostic.message.contains("k8s_ctx")
+            }),
+            "expected a collision diagnostic naming both segments: {:?}",
+            discovery.diagnostics
         );
     }
 

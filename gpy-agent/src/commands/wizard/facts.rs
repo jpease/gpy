@@ -9,7 +9,7 @@ use std::path::Path;
 
 /// Live and sample facts for the wizard preview.
 pub struct PreviewFacts {
-    /// `None` outside a repo or when git is disabled.
+    /// `None` outside a repo or when git is disabled or skipped for `cwd`.
     pub(crate) repository_status: Option<RepositoryStatus>,
     pub(crate) languages: Vec<LanguageInfo>,
     pub(crate) hostname: String,
@@ -28,7 +28,9 @@ pub struct PreviewFacts {
 ///
 /// Returns an error if git status collection fails; no repo is `Ok`.
 pub fn gather(cwd: &Path, config: &Config, theme: &ThemeConfig) -> crate::Result<PreviewFacts> {
-    let repository_status = if config.git.enabled {
+    // Canonical, like the IPC `SafePath`, so symlinked `git.skip_paths` entries match.
+    let canonical_cwd = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    let repository_status = if config.git.is_enabled_for(&canonical_cwd) {
         crate::git::status::load_repository_state(
             cwd,
             None,
@@ -165,6 +167,18 @@ mod tests {
             facts.repository_status.is_none(),
             "config gate should win over repo presence"
         );
+    }
+
+    #[test]
+    fn gather_respects_git_skip_paths() {
+        let repo = init_temp_repo();
+        let mut config = Config::default();
+        config.git.skip_paths = vec![repo.path().to_string_lossy().into_owned()];
+        let theme = ThemeConfig::default();
+
+        let facts = gather(repo.path(), &config, &theme).expect("gather should not error");
+
+        assert!(facts.repository_status.is_none());
     }
 
     #[test]

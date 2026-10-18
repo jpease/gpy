@@ -65,16 +65,6 @@ impl GitHandler {
         }
     }
 
-    /// Whether git detection is enabled for `path` (honors `git.skip_paths`).
-    fn is_git_enabled(&self, path: &Path) -> bool {
-        let config = self.render.config_manager.get();
-        if !config.git.enabled {
-            return false;
-        }
-
-        !config.git.is_path_skipped(path)
-    }
-
     /// Get git status for a path, checking cache first.
     ///
     /// # Errors
@@ -85,12 +75,11 @@ impl GitHandler {
         prev_bg: Option<&str>,
     ) -> Result<Response, HandlerError> {
         let path_buf = path.as_path();
+        let config = self.render.config_manager.get();
 
-        if !self.is_git_enabled(path_buf) {
+        if !config.git.is_enabled_for(path_buf) {
             return Err(HandlerError::FeatureDisabled("Git"));
         }
-
-        let config = self.render.config_manager.get();
 
         // `find_repo_root` also detects bare repos, matching the oneshot path.
         let git_root_opt = git::find_repo_root(path_buf);

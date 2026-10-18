@@ -199,9 +199,16 @@ if [ -L "$fish_prompt_file" ]; then
         echo "fish_prompt.fish is a symlink to $linked_target; leaving untouched"
     fi
 elif [ -f "$fish_prompt_file" ]; then
-    if grep -q gpy "$fish_prompt_file" 2>/dev/null; then
+    # Early installers copied the GPY prompt in as a regular file. Every GPY
+    # prompt ever shipped dispatches segments with these two lines; anything
+    # else (including a prompt that merely mentions gpy) is the user's.
+    # shellcheck disable=SC2016 # literal $ in the regexes
+    if grep -Eq '^[[:space:]]*for segment in \$__enabled_segments[[:space:]]*$' "$fish_prompt_file" 2>/dev/null &&
+        grep -Eq '^[[:space:]]*if functions -q segment_\{\$segment\}_render[[:space:]]*$' "$fish_prompt_file" 2>/dev/null; then
         rm -f "$fish_prompt_file"
         echo "Removed GPY fish_prompt implementation"
+    else
+        echo "fish_prompt.fish is not a GPY prompt; leaving untouched"
     fi
 fi
 

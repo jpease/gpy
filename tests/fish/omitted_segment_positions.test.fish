@@ -140,6 +140,15 @@ check "probe: no language entry before the cache is written" (__gpy_instant_cach
 printf LANG >$cache_dir/$project_key.lang_first.magenta.ansi
 check "probe: a contextual-only language entry counts as present" (__gpy_instant_cache_present lang $project; and echo pass; or echo fail)
 
+# A key over 200 characters is stored under chunk directories; the probe looks there.
+set -l long_project $temp_home/(string repeat -n 80 l)/(string repeat -n 80 m)/(string repeat -n 60 n)
+mkdir -p $long_project
+set -l long_key (__gpy_chunk_cache_key (__gpy_path_to_cache_key (path resolve -- $long_project)))
+mkdir -p $cache_dir/(path dirname -- $long_key)
+printf LANG >$cache_dir/$long_key.lang_first.magenta.ansi
+check "probe: a key over 200 characters is chunked" (string match -q '*/*' -- $long_key; and echo pass; or echo fail)
+check "probe: a contextual-only entry under a chunked key counts as present" (__gpy_instant_cache_present lang $long_project; and echo pass; or echo fail)
+
 cd "$repo_root"
 rm -rf $temp_home $repo $project
 set -gx HOME $saved_home

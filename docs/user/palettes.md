@@ -34,10 +34,10 @@ base24 standard slot (tinted-theming `base24/styling.md`):
 standard ANSI names. Every other role is already familiar from terminal color
 configuration.
 
-`purple` is also accepted in a template as a literal color — it renders the
-terminal's ANSI magenta (SGR 35) — but, unlike the `magenta` role, it does **not**
-track the active palette. Only `magenta` recolors on a palette swap; use it (not
-`purple`) when you want a scheme to control the color.
+Every spelling of an ANSI color follows the palette role for it: `purple` (SGR 35
+when no palette defines it) recolors with the `magenta` role, and `gray`/`grey`,
+`brblack` and `bright-black` with `bright_black`. See
+[Palette file format](#palette-file-format) for how a key answers its aliases.
 
 **base16 vs base24.** base16 schemes define slots base00–0F only; the bright slots
 (base12–17) are absent. When importing a base16 scheme the importer derives the
@@ -90,10 +90,21 @@ bright_magenta = "#b48ead"
 
 Color values may be:
 
-- Hex strings (`"#rrggbb"`; the leading `#` is required)
-- Standard ANSI names (`"red"`, `"bright_cyan"`, …) — useful in the `starship`
+- Hex strings (`"#rrggbb"`; exactly one leading `#`)
+- Standard ANSI names (`"red"`, `"bright_cyan"`, `"brcyan"`, …) — useful in the `starship`
   palette where several slots map to the terminal's own ANSI colors
 - 256-color indices (`"202"`, `"147"`, …) — preserved for vanilla Starship parity
+
+These are the same values theme color fields accept. A key that names an ANSI
+color answers every spelling of it: `bright_magenta = "#b48ead"` also recolors
+`brmagenta`, `bright-magenta` and `bright-purple`.
+
+A palette may define several keys for one ANSI color (say `magenta` and
+`purple`); it still loads. Each key answers its own exact spelling, and every
+other spelling of that color uses one of them: the key spelled the way GPY
+names the color internally (`purple`, `bright-purple`, …) if present, otherwise
+the alphabetically first key. `gpy palette validate` and `gpy doctor` warn about
+such keys, and `gpy theme import` warns when a Starship palette has them.
 
 ## The dedicated `starship` palette
 

@@ -352,6 +352,7 @@ __gpy_instant_cache_present() {
     __gpy_instant_cache_key_path "$base" "$cwd" key_path || return 1
     cache_dir="$(__gpy_instant_cache_dir)" || return 1
     cache_key="$(__gpy_path_to_cache_key "$key_path")"
+    __gpy_chunk_cache_key cache_key
     # An unmatched glob stays literal and fails -e; failglob would abort, so lift it.
     shopt -q failglob && had_failglob=1 && shopt -u failglob
     for hit in "$cache_dir/$cache_key.$base."*.bash "$cache_dir/$cache_key.${base}_"*.bash; do
@@ -497,20 +498,55 @@ __gpy_refresh_throttle_dir() {
     echo "$(__gpy_runtime_root)/refresh-throttle"
 }
 
+# Stamp filename for throttle bucket $1 into $2. A bucket of up to 200 bytes
+# names the stamp itself; a longer one gets its 32-bit FNV-1a hash, which
+# keeps the name under NAME_MAX for any path. The stamp stores the bucket, so
+# a hash collision reads as no stamp rather than throttling another bucket.
+# The last long bucket's name is memoized: the byte loop costs ~1 ms.
+__gpy_refresh_stamp_memo_bucket=""
+__gpy_refresh_stamp_memo_name=""
+__gpy_refresh_stamp_name() {
+    # Byte semantics: NAME_MAX counts bytes, and so does the hash.
+    local LC_ALL=C __gpy_rs_bucket="$1" __gpy_rs_i __gpy_rs_byte __gpy_rs_hash=2166136261
+    if (( ${#__gpy_rs_bucket} <= 200 )); then
+        printf -v "$2" '%s.%s' "$$" "$__gpy_rs_bucket"
+        return
+    fi
+    if [[ "$__gpy_rs_bucket" != "$__gpy_refresh_stamp_memo_bucket" ]]; then
+        for (( __gpy_rs_i = 0; __gpy_rs_i < ${#__gpy_rs_bucket}; __gpy_rs_i++ )); do
+            # bash 3.2 reports bytes over 0x7f as negative; the mask fixes that.
+            printf -v __gpy_rs_byte '%d' "'${__gpy_rs_bucket:__gpy_rs_i:1}"
+            (( __gpy_rs_hash = ((__gpy_rs_hash ^ (__gpy_rs_byte & 255)) * 16777619) & 0xffffffff ))
+        done
+        printf -v __gpy_refresh_stamp_memo_name '%s.#%08x' "$$" "$__gpy_rs_hash"
+        __gpy_refresh_stamp_memo_bucket="$__gpy_rs_bucket"
+    fi
+    printf -v "$2" '%s' "$__gpy_refresh_stamp_memo_name"
+}
+
 # Throttled background refresh: at most one per 500ms per op+suffix+path
 # (+prev_bg token, so another context cannot starve this one). Never blocks.
 __gpy_maybe_refresh() {
     local op="$1" root="$2" cache_suffix="$3" is_last="${4:-}" prev_bg="${5:-}" is_first="${6:-}" throttle_key_extra="${7:-}"
     __gpy_agent_enabled || return 0
 
-    local dir stamp last_ms=0 now_ms
+    local dir bucket stamp_name stamp stamped="" last_ms=0 now_ms
     dir="$(__gpy_refresh_throttle_dir)"
-    stamp="$dir/$$.$op.$cache_suffix.$(__gpy_path_to_cache_key "$root")${throttle_key_extra:+.$throttle_key_extra}"
+    # The dot-free fields lead, so the bucket stays injective; the encoded
+    # path has no spaces, so it is everything after the stamp's first space.
+    bucket="$op.$cache_suffix.$throttle_key_extra.$(__gpy_path_to_cache_key "$root")"
+    __gpy_refresh_stamp_name "$bucket" stamp_name
+    stamp="$dir/$stamp_name"
     now_ms="$(__gpy_now_ms)"
-    [[ -r "$stamp" ]] && last_ms="$(<"$stamp")"
+    [[ -r "$stamp" ]] && IFS= read -r -d '' stamped <"$stamp"
+    [[ "${stamped#* }" == "$bucket" ]] && last_ms="${stamped%% *}"
     [[ "$last_ms" =~ ^[0-9]+$ ]] || last_ms=0
     (( now_ms - last_ms >= 500 )) || return 0
-    mkdir -p "$dir" 2>/dev/null && echo "$now_ms" >"$stamp" 2>/dev/null
+    # The stamp is the only limit across renders: without one, skip this
+    # refresh rather than send one per render. `>|` overrides noclobber.
+    if ! { printf '%s' "$now_ms $bucket" >|"$stamp"; } 2>/dev/null; then
+        mkdir -p "$dir" 2>/dev/null && { printf '%s' "$now_ms $bucket" >|"$stamp"; } 2>/dev/null || return 0
+    fi
 
     # Before the fork: a backgrounded child cannot propagate __gpy_registered.
     __gpy_register_with_agent >/dev/null 2>&1

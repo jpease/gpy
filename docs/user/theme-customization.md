@@ -80,11 +80,14 @@ gpy theme use starship --force   # adopt starship's recommended layout + palette
 
 ### What a palette actually does
 
-A theme file's color fields (`bg_color`, `text_color`, `clean_bg_color`, and so on) accept three kinds of value:
+A theme file's color fields (`bg_color`, `text_color`, `clean_bg_color`, and so on) accept the same colors as a format template's style string, plus a few theme-only keywords:
 
-- a **bare name** (`"black"`, `"red"`, `"green"`) — looked up by name in the *active palette*
+- a **bare name** (`"black"`, `"red"`, `"green"`) — looked up by name in the *active palette*. Every ANSI spelling a style string accepts works here: `magenta`/`purple`, bright variants as `bright_cyan`, `bright-cyan` or `brcyan`, and `gray`/`grey` for bright black. The palette role names `orange` and `brown` are accepted too.
 - an ANSI index (`0`–`255`)
-- a literal **hex** value (`"#RRGGBB"`)
+- a literal **hex** value (`"#RRGGBB"`, exactly one `#`)
+- `transparent` (or `default`) for the terminal default color, and `match_bg`/`match_text` to borrow the neighbouring segment's background or text color in delimiter colors
+
+GPY stores each color in one canonical spelling (for example `bright-magenta` becomes `brmagenta`), so every shell and the agent read the same value; `gpy theme validate` rejects anything else, such as `##112233`.
 
 The built-in `default` theme uses bare names throughout. Selecting a different palette remaps every name the theme already uses — no theme-file edits required. A hex value in a theme always wins as a literal; palettes can't override it. This is the same mechanism documented in [Configuration Examples: Apply a color palette to a theme](configuration-examples.md#goal-apply-a-color-palette-to-a-theme) — see that recipe for the exact `config.toml` snippet.
 
@@ -195,7 +198,7 @@ After editing, validate before activating:
 gpy theme validate mytheme
 gpy theme use mytheme
 ```
-`gpy theme validate` checks theme schema fields, icon glyphs, and segment format templates across all eight supported agent-rendered segments (`git`, `language`, `directory`, `duration`, `character`, `clock`, `hostname`, `username`), reporting the failing field, the invalid value, and remediation guidance if something's wrong (bad color name, empty icon glyph, malformed TOML). It also checks the free-form style strings (`<lang>_style` overrides and `[segments.git.git_style]` values), naming the offending field (e.g. `segments.language.rust_style`) when one cannot be parsed or uses a color the palette cannot resolve. Both `theme validate` and `theme use` share this validator.
+`gpy theme validate` checks theme schema fields, icon glyphs, and segment format templates across all eight supported agent-rendered segments (`git`, `language`, `directory`, `duration`, `character`, `clock`, `hostname`, `username`), reporting the failing field, the invalid value, and remediation guidance if something's wrong (bad color name, empty icon glyph, malformed TOML). It also checks the free-form style strings (`<lang>_style` overrides and `[segments.git.git_style]` values), naming the offending field (e.g. `segments.language.rust_style`) when one cannot be parsed or uses a color the palette cannot resolve. Format templates and style strings may not contain terminal control characters (ESC, BEL, carriage return, …); newline is the only control character a format may carry, and the agent strips any other control character from template text at render time. Both `theme validate` and `theme use` share this validator.
 ### Already using Starship?
 
 If you're migrating from [Starship](https://starship.rs/) and want to start from your existing look rather than the GPY default theme, `gpy theme import` converts a `starship.toml` into a matching GPY palette + theme pair in one step:

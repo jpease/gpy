@@ -61,23 +61,55 @@ pub struct Style {
 }
 
 /// A named-color palette resolved at evaluation time; `Arc` makes per-segment clones cheap.
+///
+/// A name defined as a key resolves to that key, exactly as before aliasing
+/// existed. Any other spelling of an ANSI color (`brgreen` for a `bright_green`
+/// key) resolves to the key `alias_owner` picks among the palette's keys for
+/// that color.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Palette {
     map: Arc<HashMap<String, Color>>,
+    aliases: Arc<HashMap<&'static str, Color>>,
 }
 
 impl Palette {
     /// Build a palette from a name→color map.
     #[must_use]
     pub fn new(map: HashMap<String, Color>) -> Self {
-        Self { map: Arc::new(map) }
+        let mut aliases: HashMap<&'static str, Color> = HashMap::new();
+        for canonical in map.keys().filter_map(|key| canonical_ansi_name(key)) {
+            if aliases.contains_key(canonical) {
+                continue;
+            }
+            if let Some(color) = alias_owner(canonical, map.keys().map(String::as_str))
+                .and_then(|owner| map.get(owner))
+            {
+                aliases.insert(canonical, color.clone());
+            }
+        }
+        Self {
+            map: Arc::new(map),
+            aliases: Arc::new(aliases),
+        }
     }
 
-    /// Look up a palette color by name.
+    /// Look up a palette color by name: the exact key first, then the ANSI alias.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<Color> {
-        self.map.get(name).cloned()
+        self.map
+            .get(name)
+            .or_else(|| self.aliases.get(canonical_ansi_name(name)?))
+            .cloned()
     }
+}
+
+/// Among `keys`, the one answering every non-key spelling of the ANSI color
+/// `canonical`: the key spelled exactly `canonical` (`purple`, `bright-purple`)
+/// if present, otherwise the lexically smallest key naming that color.
+#[must_use]
+pub fn alias_owner<'a>(canonical: &str, keys: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    keys.filter(|key| canonical_ansi_name(key) == Some(canonical))
+        .min_by_key(|key| (*key != canonical, *key))
 }
 
 /// Parse a space-separated style spec into a [`Style`], following Starship's
@@ -211,6 +243,25 @@ pub fn canonical_ansi_name(name: &str) -> Option<&'static str> {
         (true, "cyan") => "bright-cyan",
         (true, "white") => "bright-white",
         _ => return None,
+    })
+}
+
+/// The spelling typed theme colors store for an ANSI color name: Fish's
+/// `set_color` vocabulary (`magenta`, `br<color>`), which the Bash/Zsh
+/// renderers and [`canonical_ansi_name`] also accept.
+#[must_use]
+pub fn config_color_name(name: &str) -> Option<&'static str> {
+    Some(match canonical_ansi_name(name)? {
+        "purple" => "magenta",
+        "bright-black" => "brblack",
+        "bright-red" => "brred",
+        "bright-green" => "brgreen",
+        "bright-yellow" => "bryellow",
+        "bright-blue" => "brblue",
+        "bright-purple" => "brmagenta",
+        "bright-cyan" => "brcyan",
+        "bright-white" => "brwhite",
+        base => base,
     })
 }
 

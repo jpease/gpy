@@ -1,72 +1,45 @@
 //! Color and icon validation helpers for themes.
+//!
+//! Typed theme colors and palette values accept exactly what the template style
+//! parser (`parse_color`) resolves to a concrete color, plus the keywords below.
 
 use super::{ValidationError, ValidationErrorKind};
 use crate::Result;
+use crate::template::{Color, config_color_name, parse_color};
 
-pub(crate) const NAMED_COLORS: &[&str] = &[
-    "black",
-    "red",
-    "green",
-    "yellow",
-    "blue",
-    "magenta",
-    "cyan",
-    "white",
-    "bright_black",
-    "brblack",
-    "gray",
-    "grey",
-    "bright_red",
-    "brred",
-    "bright_green",
-    "brgreen",
-    "bright_yellow",
-    "bryellow",
-    "bright_blue",
-    "brblue",
-    "bright_magenta",
-    "brmagenta",
-    "bright_cyan",
-    "brcyan",
-    "bright_white",
-    "brwhite",
-    "orange",
-    "brown",
-    // Starship hyphenated literals map straight to ANSI in `named_code`, so accept them.
-    "purple",
-    "bright-black",
-    "bright-red",
-    "bright-green",
-    "bright-yellow",
-    "bright-blue",
-    "bright-purple",
-    "bright-cyan",
-    "bright-white",
-];
+/// Theme-only keywords: the shell renderers resolve them against the
+/// neighbouring segment's colors; templates never see them.
+const THEME_ONLY_COLORS: [&str; 2] = ["match_bg", "match_text"];
 
-const MAGIC_COLORS_REF: &[&str] = &["match_bg", "match_text", "transparent"];
+/// Accent role names every shipped palette defines; they resolve through the
+/// active palette, not the ANSI table.
+pub(crate) const PALETTE_ROLE_COLORS: [&str; 2] = ["orange", "brown"];
 
-/// Check if a color value is valid.
-/// Valid: `#RRGGBB`, `0`–`255`, named colors, `match_bg`/`match_text`/`transparent`.
+/// Canonical spelling of a theme color, or `None` if `value` is not one.
+///
+/// Hex becomes lowercase `#rrggbb`, an ANSI index its decimal form, an ANSI name
+/// the Fish `set_color` spelling (`config_color_name`), and `default`/`transparent`
+/// become `transparent`.
+#[must_use]
+pub fn canonical_color(value: &str) -> Option<String> {
+    let lower = value.to_ascii_lowercase();
+    if THEME_ONLY_COLORS.contains(&lower.as_str()) || PALETTE_ROLE_COLORS.contains(&lower.as_str())
+    {
+        return Some(lower);
+    }
+    match parse_color(&lower).ok()? {
+        Color::Named(name) if name == "default" => Some("transparent".to_owned()),
+        Color::Named(name) => config_color_name(&name).map(str::to_owned),
+        Color::Rgb { r, g, b } => Some(format!("#{r:02x}{g:02x}{b:02x}")),
+        Color::Ansi256(index) => Some(index.to_string()),
+        Color::Palette(_) | Color::PrevFg | Color::PrevBg => None,
+    }
+}
+
+/// Whether `value` is a valid theme color (see [`canonical_color`]).
 #[must_use]
 pub fn is_valid_color(value: &str) -> bool {
-    if value.is_empty() {
-        return false;
-    }
-    let lower = value.to_lowercase();
-    if MAGIC_COLORS_REF.contains(&lower.as_str()) {
-        return true;
-    }
-    if value.starts_with('#') {
-        let trimmed = value.trim_start_matches('#');
-        if trimmed.len() == 6 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
-            return true;
-        }
-    }
-    if value.parse::<u8>().is_ok() {
-        return true;
-    }
-    NAMED_COLORS.contains(&lower.as_str())
+    canonical_color(value).is_some()
 }
 
 /// Validate a single color value.
@@ -110,7 +83,8 @@ mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::missing_panics_doc)]
-    use super::is_valid_color;
+    use super::{canonical_color, is_valid_color};
+    use crate::template::{ANSI_BASE_WORDS, BRIGHT_PREFIXES, canonical_ansi_name};
 
     #[test]
     fn accepts_orange_and_brown_role_names() {
@@ -121,21 +95,40 @@ mod tests {
         assert!(is_valid_color("brown"), "brown must be a valid color name");
     }
 
+    /// Every ANSI spelling the style parser knows is a valid theme color whose
+    /// canonical form names the same encoder color.
     #[test]
-    fn accepts_hyphenated_ansi_names_the_renderer_already_understands() {
-        // Must match the spellings `template::style::named_code` accepts.
-        for name in [
-            "purple",
-            "bright-black",
-            "bright-red",
-            "bright-green",
-            "bright-yellow",
-            "bright-blue",
-            "bright-purple",
-            "bright-cyan",
-            "bright-white",
+    fn every_parser_ansi_spelling_is_accepted_and_keeps_its_color() {
+        let mut spellings: Vec<String> = vec!["gray".to_owned(), "grey".to_owned()];
+        for word in ANSI_BASE_WORDS {
+            spellings.push(word.to_owned());
+            spellings.extend(
+                BRIGHT_PREFIXES
+                    .iter()
+                    .map(|prefix| format!("{prefix}{word}")),
+            );
+        }
+        for spelling in spellings {
+            let canonical = canonical_color(&spelling.to_uppercase())
+                .unwrap_or_else(|| panic!("'{spelling}' must be a valid theme color"));
+            assert_eq!(
+                canonical_ansi_name(&canonical),
+                canonical_ansi_name(&spelling),
+                "'{spelling}' canonicalized to '{canonical}', a different color"
+            );
+        }
+    }
+
+    #[test]
+    fn hex_and_index_canonicalize_and_malformed_values_are_rejected() {
+        assert_eq!(canonical_color("#A0B1C2").as_deref(), Some("#a0b1c2"));
+        assert_eq!(canonical_color("042").as_deref(), Some("42"));
+        assert_eq!(canonical_color("default").as_deref(), Some("transparent"));
+        assert_eq!(canonical_color("Match_Bg").as_deref(), Some("match_bg"));
+        for bad in [
+            "##112233", "#12345", "112233", "256", "prev_fg", "nonsuch", "",
         ] {
-            assert!(is_valid_color(name), "{name} must be a valid color name");
+            assert!(!is_valid_color(bad), "'{bad}' must be rejected");
         }
     }
 }

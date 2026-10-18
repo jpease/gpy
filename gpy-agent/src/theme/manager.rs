@@ -9,7 +9,7 @@ use crate::plugin::discover_plugins;
 use crate::shell::Shell;
 use crate::theme::export;
 use crate::theme::model::ThemeConfig;
-use crate::watcher::hot_reload::{HotReloadSlot, PollTarget};
+use crate::watcher::hot_reload::{HotReloadSlot, PollTarget, bytes_fingerprint};
 use crate::watcher::{WatchCoordinator, WatchRegistry};
 use crate::{Error, Result};
 use std::collections::BTreeMap;
@@ -24,17 +24,63 @@ pub(crate) const BUILTIN_THEMES: &[(&str, &str)] = &[
     ("starship", STARSHIP_THEME_CONTENT),
 ];
 
-/// Active theme name, path, and content behind one lock so readers never see a torn pairing.
+/// Where a theme name resolves (user, then plugin, then builtin): its file path,
+/// and whether a file exists there (otherwise the embedded builtin is loaded).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ThemeLocation {
+    path: PathBuf,
+    on_disk: bool,
+}
+
+impl ThemeLocation {
+    fn resolve(theme_name: &str) -> Self {
+        let path = ThemeManager::theme_path(theme_name);
+        let on_disk = path.exists();
+        Self { path, on_disk }
+    }
+
+    /// Watches this source needs beyond the always-watched user themes dir: a
+    /// source directory outside it (a plugin's), and the file itself, since some
+    /// notify backends report truncate/write saves only on a file watch.
+    fn watch_paths(&self, user_themes_dir: &Path) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        if let Some(parent) = self.path.parent()
+            && parent != user_themes_dir
+        {
+            paths.push(parent.to_path_buf());
+        }
+        if self.on_disk {
+            paths.push(self.path.clone());
+        }
+        paths
+    }
+}
+
+/// Active theme name, source, and content behind one lock so readers never see a torn pairing.
 #[derive(Debug, Clone)]
 struct ThemeState {
     name: String,
-    path: PathBuf,
+    location: ThemeLocation,
+    /// Fingerprint of the file bytes the theme was parsed from; `None` when embedded.
+    fingerprint: Option<u64>,
     theme: Arc<ThemeConfig>,
+}
+
+/// What a reload of the active name found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reloaded {
+    /// Same source, same content: nothing was swapped.
+    Unchanged,
+    /// Same source with new content.
+    Content,
+    /// The name now resolves to a different source (an override appeared or went away).
+    Source,
 }
 
 /// Callback run after a successful hot-reload swap (see [`ThemeManager::set_reload_callback`]).
 pub type ThemeReloadCallback = Arc<dyn Fn() + Send + Sync>;
 type ReloadHookSlot = Arc<Mutex<Option<ThemeReloadCallback>>>;
+type WatcherSlot = Arc<Mutex<Option<WatchCoordinator>>>;
 
 /// Manages theme loading, caching, and hot-reloading.
 pub struct ThemeManager {
@@ -46,6 +92,73 @@ pub struct ThemeManager {
     watch_debounce: Arc<Mutex<Duration>>,
     /// Registry last armed with, so `switch_theme` re-arms on the shared one.
     watch_registry: Arc<Mutex<Option<Arc<WatchRegistry>>>>,
+    /// Watches armed for the active source (see [`ThemeLocation::watch_paths`]).
+    /// Lock order: the watcher slot first, then this.
+    source_watches: Arc<Mutex<Vec<PathBuf>>>,
+    /// Serializes resolve-load-swap, so a slow reload never installs a source
+    /// resolved before a faster one's.
+    reload_gate: Arc<Mutex<()>>,
+}
+
+/// What a watcher or poll-thread reload needs, detached from `&ThemeManager`.
+#[derive(Clone)]
+struct ReloadTarget {
+    state: Arc<RwLock<Arc<ThemeState>>>,
+    reload_gate: Arc<Mutex<()>>,
+    on_reload: ReloadHookSlot,
+    client_registry: Option<Arc<crate::ipc::ClientDirectory>>,
+    watcher: WatcherSlot,
+    source_watches: Arc<Mutex<Vec<PathBuf>>>,
+}
+
+impl ReloadTarget {
+    /// Reload the active name from its current source, logging failures. When
+    /// the theme changed, re-arm the source watches and run the reload hook if
+    /// registered, else `notify_reload`; an unchanged theme rings nothing.
+    fn reload_and_apply(&self, context: &str) {
+        match ThemeManager::reload_state(&self.state, &self.reload_gate) {
+            Ok(Reloaded::Unchanged) => return,
+            Ok(Reloaded::Content | Reloaded::Source) => {}
+            Err(e) => {
+                debug_log!("theme", "Failed to reload theme ({context}): {e}");
+                return;
+            }
+        }
+        // Only `try_lock`: `stop` holds the slot while joining the thread we run on.
+        if let Ok(mut slot) = self.watcher.try_lock() {
+            self.rearm(&mut slot);
+        }
+        // Called outside every lock: the hook reads `get()` and may re-register.
+        let registered = self
+            .on_reload
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(hook) = registered {
+            hook();
+        } else if let Some(registry) = &self.client_registry {
+            registry.notify_reload();
+        }
+    }
+
+    /// Point the source watches at the active location, leaving the user themes
+    /// dir alone. Best-effort: a watch that fails is retried on the next re-arm.
+    fn rearm(&self, slot: &mut Option<WatchCoordinator>) {
+        let Some(coordinator) = slot.as_mut() else {
+            return;
+        };
+        let wanted = self
+            .state
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .location
+            .watch_paths(&ThemeManager::user_themes_dir());
+        let mut armed = self
+            .source_watches
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        ThemeManager::rearm_source_watches(coordinator, &mut armed, wanted);
+    }
 }
 
 /// Source metadata for a discovered theme (shared with palettes).
@@ -65,23 +178,33 @@ impl ThemeManager {
                 "invalid theme name '{theme_name}': must not contain path separators, '..', or control characters"
             )));
         }
-        let theme_path = Self::theme_path(theme_name);
-        let theme = Self::load_from_path(&theme_path)?;
-        Ok(Self::with_theme_and_path(theme_name, theme, theme_path))
+        let location = ThemeLocation::resolve(theme_name);
+        let (theme, fingerprint) = Self::load_source(&location)?;
+        Ok(Self::with_state(theme_name, location, fingerprint, theme))
     }
 
-    fn with_theme_and_path(name: &str, theme: ThemeConfig, path: std::path::PathBuf) -> Self {
+    fn with_state(
+        name: &str,
+        location: ThemeLocation,
+        fingerprint: Option<u64>,
+        theme: ThemeConfig,
+    ) -> Self {
         Self {
             state: Arc::new(RwLock::new(Arc::new(ThemeState {
                 name: name.to_owned(),
-                path,
+                location,
+                fingerprint,
                 theme: Arc::new(theme),
             }))),
-            hot_reload: HotReloadSlot::new(),
+            // A removed override falls back to a lower-priority source, so a
+            // vanished file is a change for the poller too.
+            hot_reload: HotReloadSlot::new().reloading_on_missing(),
             on_reload: Arc::new(Mutex::new(None)),
             client_registry: Arc::new(Mutex::new(None)),
             watch_debounce: Arc::new(Mutex::new(Duration::from_secs(5_u64))),
             watch_registry: Arc::new(Mutex::new(None)),
+            source_watches: Arc::new(Mutex::new(Vec::new())),
+            reload_gate: Arc::new(Mutex::new(())),
         }
     }
 
@@ -103,11 +226,14 @@ impl ThemeManager {
         };
 
         let theme = crate::theme::parse(content, theme_name)?;
-        let theme_path = Self::user_theme_path(theme_name);
-        Ok(Self::with_theme_and_path(theme_name, theme, theme_path))
+        let location = ThemeLocation {
+            path: Self::user_theme_path(theme_name),
+            on_disk: false,
+        };
+        Ok(Self::with_state(theme_name, location, None, theme))
     }
 
-    /// Consistent snapshot of name, path, and content.
+    /// Consistent snapshot of name, location, and content.
     fn state(&self) -> Arc<ThemeState> {
         let guard = self.state.read().unwrap_or_else(PoisonError::into_inner);
         Arc::clone(&guard)
@@ -128,25 +254,89 @@ impl ThemeManager {
             .unwrap_or_else(PoisonError::into_inner) = Some(callback);
     }
 
-    /// Reload the current theme from disk.
+    /// Reload the active theme from wherever its name now resolves (user, then
+    /// plugin, then builtin), re-arming the watcher if that source moved.
+    ///
+    /// Returns whether the loaded theme changed: a different source, or new
+    /// content in the same file. Identical content swaps nothing, so a reload
+    /// after the watcher already applied an edit reports `false`. The current
+    /// theme is kept on error.
     ///
     /// # Errors
-    /// Returns an error if the theme can't be read/parsed or the lock is poisoned.
-    pub fn reload(&self) -> Result<()> {
-        let current = self.state();
-        let new_theme = Self::load_from_path(&current.path)?;
+    /// Returns an error if the resolved theme can't be read or parsed.
+    pub fn reload(&self) -> Result<bool> {
+        let reloaded = Self::reload_state(&self.state, &self.reload_gate)?;
+        if reloaded == Reloaded::Source {
+            self.rearm_source_watches_now();
+        }
+        Ok(reloaded != Reloaded::Unchanged)
+    }
 
-        let mut guard = self
-            .state
-            .write()
-            .map_err(|e| Error::config(e.to_string()))?;
-        *guard = Arc::new(ThemeState {
-            name: current.name.clone(),
-            path: current.path.clone(),
-            theme: Arc::new(new_theme),
-        });
+    /// Re-resolve and load the active name, swapping it in unless unchanged.
+    /// A no-op if a concurrent `switch_theme` replaced the name meanwhile.
+    ///
+    /// # Errors
+    /// Returns an error if the resolved theme can't be read or parsed.
+    fn reload_state(
+        state_lock: &RwLock<Arc<ThemeState>>,
+        reload_gate: &Mutex<()>,
+    ) -> Result<Reloaded> {
+        let _serialized = reload_gate.lock().unwrap_or_else(PoisonError::into_inner);
+        let name = state_lock
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .name
+            .clone();
+        let location = ThemeLocation::resolve(&name);
+        let (theme, fingerprint) = Self::load_source(&location)?;
+
+        let mut guard = state_lock.write().unwrap_or_else(PoisonError::into_inner);
+        let reloaded = if guard.name != name {
+            Reloaded::Unchanged
+        } else if guard.location != location {
+            Reloaded::Source
+        } else if guard.fingerprint != fingerprint {
+            Reloaded::Content
+        } else {
+            Reloaded::Unchanged
+        };
+        if reloaded != Reloaded::Unchanged {
+            *guard = Arc::new(ThemeState {
+                name,
+                location,
+                fingerprint,
+                theme: Arc::new(theme),
+            });
+        }
         drop(guard);
-        Ok(())
+        Ok(reloaded)
+    }
+
+    /// Load the theme at `location`, with the fingerprint of the file bytes
+    /// parsed (`None` for an embedded builtin).
+    ///
+    /// # Errors
+    /// Returns an error if the file can't be read or the theme can't be parsed.
+    fn load_source(location: &ThemeLocation) -> Result<(ThemeConfig, Option<u64>)> {
+        if !location.on_disk {
+            return Ok((Self::load_from_path(&location.path)?, None));
+        }
+        let source = location.path.display().to_string();
+        let content = std::fs::read_to_string(&location.path)
+            .map_err(|e| Error::config(format!("Failed to read theme file {source}: {e}")))?;
+        let fingerprint = bytes_fingerprint(content.as_bytes());
+        Ok((crate::theme::parse(&content, &source)?, Some(fingerprint)))
+    }
+
+    /// Re-arm the source watches from a non-watcher thread.
+    fn rearm_source_watches_now(&self) {
+        let target = self.reload_target(None);
+        // Not a watcher thread, so blocking on the slot cannot self-deadlock.
+        let mut slot = target
+            .watcher
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        target.rearm(&mut slot);
     }
 
     /// Switch to a different theme, installed in a single write.
@@ -154,11 +344,12 @@ impl ThemeManager {
     /// # Errors
     /// Returns an error if the theme can't be found/parsed or a lock is poisoned.
     pub fn switch_theme(&self, new_theme_name: &str) -> Result<()> {
-        let new_theme_path = Self::theme_path(new_theme_name);
-        let new_theme = Self::load_from_path(&new_theme_path)?;
+        let location = ThemeLocation::resolve(new_theme_name);
+        let (new_theme, fingerprint) = Self::load_source(&location)?;
         let new_state = Arc::new(ThemeState {
             name: new_theme_name.to_owned(),
-            path: new_theme_path,
+            location,
+            fingerprint,
             theme: Arc::new(new_theme),
         });
 
@@ -197,7 +388,7 @@ impl ThemeManager {
         Ok(())
     }
 
-    /// Start watching the theme file for changes.
+    /// Start watching the theme's sources for changes.
     ///
     /// # Errors
     /// Returns an error if the watcher can't start or a lock is poisoned.
@@ -213,7 +404,11 @@ impl ThemeManager {
         )
     }
 
-    /// Start watching the theme file, sharing `watch_registry` with the caller.
+    /// Start watching the theme's sources, sharing `watch_registry` with the caller.
+    ///
+    /// The user themes dir is always watched, since an override created there
+    /// outranks any plugin or builtin source; the active source's own watches
+    /// follow it as it moves.
     ///
     /// # Errors
     /// Returns an error if the watcher can't start or a lock is poisoned.
@@ -237,23 +432,9 @@ impl ThemeManager {
             .map_err(|e| Error::config(e.to_string()))? = Some(Arc::clone(watch_registry));
 
         let started = self.hot_reload.start_watcher(|| {
-            let state_arc = Arc::clone(&self.state);
-            let callback_registry = client_registry.clone();
-            let on_reload = Arc::clone(&self.on_reload);
-
+            let target = self.reload_target(client_registry.clone());
             let callback = Box::new(move |_event: crate::watcher::DebouncedEvent| {
-                let theme_path = state_arc
-                    .read()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .path
-                    .clone();
-                Self::reload_and_apply(
-                    &state_arc,
-                    callback_registry.as_deref(),
-                    &on_reload,
-                    &theme_path,
-                    "watch callback",
-                );
+                target.reload_and_apply("watch callback");
             });
 
             let mut watcher = WatchCoordinator::new(
@@ -261,17 +442,27 @@ impl ThemeManager {
                 callback,
                 Some(Arc::clone(watch_registry)),
             )?;
-            let theme_path = self.state().path.clone();
-            if let Some(parent) = theme_path.parent() {
-                if !parent.exists() {
-                    std::fs::create_dir_all(parent).map_err(|e| Error::config(e.to_string()))?;
-                }
-                watcher.watch_directory(parent)?;
+            let user_themes_dir = Self::user_themes_dir();
+            // Best-effort: a read-only config tree only loses override detection;
+            // the active source is still watched below.
+            if let Err(e) = std::fs::create_dir_all(&user_themes_dir)
+                .map_err(Error::from)
+                .and_then(|()| watcher.watch_directory(&user_themes_dir))
+            {
+                crate::debug::warn_fallback(
+                    &format!("Watching {}", user_themes_dir.display()),
+                    "watching only the active theme source",
+                    &e,
+                );
             }
-            if theme_path.exists() {
-                // Some notify backends need a file watch too for truncate/write saves.
-                watcher.watch_directory(&theme_path)?;
-            }
+            let mut armed = self
+                .source_watches
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            armed.clear();
+            let wanted = self.state().location.watch_paths(&user_themes_dir);
+            Self::rearm_source_watches(&mut watcher, &mut armed, wanted);
+            drop(armed);
             Ok(watcher)
         })?;
 
@@ -283,9 +474,52 @@ impl ThemeManager {
         Ok(())
     }
 
-    /// Stop watching the theme file.
+    /// Stop watching the theme's sources.
     pub fn stop_watching(&self) {
         self.hot_reload.stop();
+        self.source_watches
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
+
+    fn reload_target(
+        &self,
+        client_registry: Option<Arc<crate::ipc::ClientDirectory>>,
+    ) -> ReloadTarget {
+        ReloadTarget {
+            state: Arc::clone(&self.state),
+            reload_gate: Arc::clone(&self.reload_gate),
+            on_reload: Arc::clone(&self.on_reload),
+            client_registry,
+            watcher: self.hot_reload.watcher_handle(),
+            source_watches: Arc::clone(&self.source_watches),
+        }
+    }
+
+    /// Make `armed` match `wanted` on `coordinator`, unwatching stale paths
+    /// first. A watch that fails is logged and left out of `armed`.
+    fn rearm_source_watches(
+        coordinator: &mut WatchCoordinator,
+        armed: &mut Vec<PathBuf>,
+        wanted: Vec<PathBuf>,
+    ) {
+        for stale in armed.extract_if(.., |path| !wanted.contains(path)) {
+            if let Err(e) = coordinator.unwatch_directory(&stale) {
+                debug_log!("theme", "Failed to unwatch {}: {e}", stale.display());
+            }
+        }
+        for path in wanted {
+            if armed.contains(&path) {
+                continue;
+            }
+            match coordinator.watch_directory(&path) {
+                Ok(()) => armed.push(path),
+                Err(e) => {
+                    debug_log!("theme", "Failed to watch {}: {e}", path.display());
+                }
+            }
+        }
     }
 
     /// Test-only: the `WatchRegistry` currently backing the watcher.
@@ -487,72 +721,22 @@ impl ThemeManager {
         discovery::insert_toml_dir(merged, &Self::user_themes_dir(), &ThemeSource::User);
     }
 
-    /// Reload from `theme_path` and swap state in one write, logging failures.
-    /// Runs the reload hook if registered, else `notify_reload`.
-    fn reload_and_apply(
-        state_lock: &Arc<RwLock<Arc<ThemeState>>>,
-        client_registry: Option<&crate::ipc::ClientDirectory>,
-        on_reload: &ReloadHookSlot,
-        theme_path: &Path,
-        context: &str,
-    ) {
-        let path = theme_path.display();
-        match Self::load_from_path(theme_path) {
-            Ok(new_theme) => {
-                let mut guard = state_lock.write().unwrap_or_else(PoisonError::into_inner);
-                let current = Arc::clone(&guard);
-                *guard = Arc::new(ThemeState {
-                    name: current.name.clone(),
-                    path: current.path.clone(),
-                    theme: Arc::new(new_theme),
-                });
-                drop(guard);
-
-                // Called outside both locks: the hook reads `get()` and may re-register.
-                let registered = on_reload
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .clone();
-                if let Some(hook) = registered {
-                    hook();
-                } else if let Some(registry) = client_registry {
-                    registry.notify_reload();
-                }
-            }
-            Err(e) => {
-                debug_log!(
-                    "theme",
-                    "Failed to reload theme from {path} ({context}): {e}"
-                );
-            }
-        }
-    }
-
-    /// Poll target; the path is re-read each tick because `switch_theme` can repoint it.
+    /// Poll target. The path is re-resolved each tick: `switch_theme` can
+    /// repoint it, and an override appearing or vanishing moves it.
     fn poll_target(&self, client_registry: Option<Arc<crate::ipc::ClientDirectory>>) -> PollTarget {
         let path_state = Arc::clone(&self.state);
-        let reload_state = Arc::clone(&self.state);
-        let on_reload = Arc::clone(&self.on_reload);
+        let target = self.reload_target(client_registry);
 
         PollTarget {
             path_of: Box::new(move || {
-                Some(
-                    path_state
-                        .read()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .path
-                        .clone(),
-                )
+                let name = path_state
+                    .read()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .name
+                    .clone();
+                Some(ThemeLocation::resolve(&name).path)
             }),
-            reload: Box::new(move |path: &Path| {
-                Self::reload_and_apply(
-                    &reload_state,
-                    client_registry.as_deref(),
-                    &on_reload,
-                    path,
-                    "poll fallback",
-                );
-            }),
+            reload: Box::new(move |_path: &Path| target.reload_and_apply("poll fallback")),
         }
     }
 
@@ -563,21 +747,6 @@ impl ThemeManager {
     ) {
         self.hot_reload.start_poll_fallback(
             "GPY_THEME_WATCH_POLL_MS",
-            debounce_duration,
-            self.poll_target(client_registry),
-        );
-    }
-
-    /// Spawn the poll thread with a given interval; lets tests avoid `env::set_var` (unsafe).
-    #[cfg(test)]
-    fn spawn_poll_thread(
-        &self,
-        client_registry: Option<Arc<crate::ipc::ClientDirectory>>,
-        poll_interval: Duration,
-        debounce_duration: Duration,
-    ) {
-        self.hot_reload.spawn_poll_thread(
-            poll_interval,
             debounce_duration,
             self.poll_target(client_registry),
         );
@@ -598,14 +767,21 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
     #![allow(missing_docs)]
 
-    use super::{BUILTIN_THEMES, DiscoveredTheme, ThemeManager, ThemeSource};
+    use super::{BUILTIN_THEMES, DiscoveredTheme, ThemeLocation, ThemeManager, ThemeSource};
     use crate::config::Config;
-    use crate::config::defaults::DEFAULT_THEME_CONTENT;
     use crate::shell::Shell;
+    use crate::theme::ThemeConfig;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
-    use std::sync::{Arc, Mutex, PoisonError};
-    use std::time::Duration;
+
+    /// A manager holding `theme` under `name`, with no file behind it.
+    fn manager_with(name: &str, theme: ThemeConfig) -> ThemeManager {
+        let location = ThemeLocation {
+            path: PathBuf::from("/tmp/gpy-test-theme.toml"),
+            on_disk: false,
+        };
+        ThemeManager::with_state(name, location, None, theme)
+    }
 
     /// `new` must error naming the theme, not fall back to a blank default.
     #[test]
@@ -659,11 +835,7 @@ mod tests {
         let base = ThemeManager::builtin("default").expect("default theme should load");
         let mut theme = (*base.get()).clone();
         theme.segments.hostname.trim_at = "$(touch /tmp/gpy_pwned)".to_owned();
-        let manager = ThemeManager::with_theme_and_path(
-            "default",
-            theme,
-            std::path::PathBuf::from("/tmp/gpy-test-theme.toml"),
-        );
+        let manager = manager_with("default", theme);
 
         let output = manager.export(Shell::Bash, &Config::default());
 
@@ -683,11 +855,7 @@ mod tests {
         // `$`, backtick, and `"`; it must be escaped like every other value.
         let base = ThemeManager::builtin("default").expect("default theme should load");
         let theme = (*base.get()).clone();
-        let manager = ThemeManager::with_theme_and_path(
-            "weird$(touch x)",
-            theme,
-            std::path::PathBuf::from("/tmp/gpy-test-theme.toml"),
-        );
+        let manager = manager_with("weird$(touch x)", theme);
 
         let output = manager.export(Shell::Fish, &Config::default());
 
@@ -873,126 +1041,6 @@ mod tests {
         assert!(
             message.contains("no-such-theme-xyz"),
             "error should name the offending theme. Got: {message}"
-        );
-    }
-
-    #[test]
-    fn poll_fallback_detects_a_toctou_same_length_rewrite() {
-        // Immediate post-spawn, same-length rewrite: models the TOCTOU race and
-        // mtime-granularity blind spot. `time_format` keeps the anchor clock-specific.
-        let variant_a = DEFAULT_THEME_CONTENT;
-        let variant_b = variant_a.replacen(
-            "text_color = \"white\"\nbg_color = \"black\"\ntime_format",
-            "text_color = \"black\"\nbg_color = \"black\"\ntime_format",
-            1,
-        );
-        assert_ne!(
-            variant_a, variant_b,
-            "the swap anchor must have matched something"
-        );
-        assert_eq!(
-            variant_a.len(),
-            variant_b.len(),
-            "the two variants must be the same byte length for this test to mean anything"
-        );
-
-        let parsed_a = crate::theme::parse(variant_a, "default")
-            .expect("variant A (unmodified default theme) must parse");
-        assert_eq!(
-            parsed_a.segments.clock.text_color, "white",
-            "variant A must carry the original text_color"
-        );
-        let parsed_b = crate::theme::parse(&variant_b, "default")
-            .expect("variant B (swapped clock text_color) must parse");
-        assert_eq!(
-            parsed_b.segments.clock.text_color, "black",
-            "variant B must carry the swapped text_color"
-        );
-
-        let temp = tempfile::TempDir::new().expect("tempdir");
-        let theme_path = temp.path().join("theme.toml");
-        std::fs::write(&theme_path, variant_a).expect("write initial theme");
-
-        let manager = ThemeManager::with_theme_and_path("default", parsed_a, theme_path.clone());
-        assert_eq!(
-            manager.get().segments.clock.text_color,
-            "white",
-            "clock text_color should be white initially"
-        );
-
-        manager.spawn_poll_thread(None, Duration::from_millis(10), Duration::from_millis(10));
-        // Written right after spawn to model the TOCTOU race.
-        std::fs::write(&theme_path, &variant_b).expect("write updated theme");
-
-        let mut reloaded = false;
-        for _ in 0_i32..300_i32 {
-            std::thread::sleep(Duration::from_millis(20));
-            if manager.get().segments.clock.text_color == "black" {
-                reloaded = true;
-                break;
-            }
-        }
-
-        assert!(
-            reloaded,
-            "poll fallback must detect a same-length rewrite written immediately after spawn"
-        );
-
-        manager.stop_watching();
-    }
-
-    #[test]
-    fn theme_reload_runs_registered_callback_after_swap() {
-        let variant_a = DEFAULT_THEME_CONTENT;
-        let variant_b = variant_a.replacen(
-            "text_color = \"white\"\nbg_color = \"black\"\ntime_format",
-            "text_color = \"black\"\nbg_color = \"black\"\ntime_format",
-            1,
-        );
-        assert_ne!(variant_a, variant_b, "the swap anchor must have matched");
-        let parsed_a = crate::theme::parse(variant_a, "default").expect("variant A must parse");
-
-        let temp = tempfile::TempDir::new().expect("tempdir");
-        let theme_path = temp.path().join("theme.toml");
-        std::fs::write(&theme_path, variant_a).expect("write initial theme");
-        let manager = Arc::new(ThemeManager::with_theme_and_path(
-            "default",
-            parsed_a,
-            theme_path.clone(),
-        ));
-
-        let observed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let observed_in_cb = Arc::clone(&observed);
-        let manager_in_cb = Arc::clone(&manager);
-        manager.set_reload_callback(Arc::new(move || {
-            // Reads the manager: would deadlock if called under the state lock.
-            let text_color = manager_in_cb.get().segments.clock.text_color.clone();
-            observed_in_cb
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push(text_color.to_string());
-        }));
-
-        manager.spawn_poll_thread(None, Duration::from_millis(10), Duration::from_millis(10));
-        std::fs::write(&theme_path, &variant_b).expect("write updated theme");
-
-        let mut seen_black = false;
-        for _ in 0_i32..300_i32 {
-            std::thread::sleep(Duration::from_millis(20));
-            if observed
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .iter()
-                .any(|color| color == "black")
-            {
-                seen_black = true;
-                break;
-            }
-        }
-        manager.stop_watching();
-        assert!(
-            seen_black,
-            "reload callback must run after the swap and observe the new theme"
         );
     }
 }

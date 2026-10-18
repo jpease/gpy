@@ -304,15 +304,10 @@ mod tests {
             lang.get("swift_bg_color").expect("swift").as_str(),
             "orange"
         );
-        assert_eq!(
-            lang.get("php_bg_color").expect("php").as_str(),
-            "bright_magenta"
-        );
-        assert_eq!(
-            lang.get("cpp_bg_color").expect("cpp").as_str(),
-            "bright_green"
-        );
-        assert_eq!(lang.get("c_bg_color").expect("c").as_str(), "bright_green");
+        // Stored canonically; palettes resolve `brmagenta` through their `bright_magenta` key.
+        assert_eq!(lang.get("php_bg_color").expect("php").as_str(), "brmagenta");
+        assert_eq!(lang.get("cpp_bg_color").expect("cpp").as_str(), "brgreen");
+        assert_eq!(lang.get("c_bg_color").expect("c").as_str(), "brgreen");
     }
 
     #[test]

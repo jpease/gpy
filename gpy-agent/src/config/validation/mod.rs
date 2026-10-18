@@ -10,7 +10,7 @@ pub mod templates;
 pub mod theme;
 
 pub use colors::is_valid_color;
-pub use config::validate_config;
+pub use config::{normalize_config, validate_config};
 pub use theme::validate_theme_config;
 
 use crate::Error;
@@ -50,10 +50,17 @@ pub enum ValidationErrorKind {
     UnknownKey,
     /// The dotted key names a real field, but it cannot be set via `config set`.
     ReadOnlyKey,
-    /// A `ui.enabled_segments` entry uses characters `SegmentName` rejects.
+    /// A segment name (a `ui.enabled_segments` entry or a theme `[segments.<name>]`
+    /// key) uses characters `SegmentName` rejects.
     InvalidSegmentName {
         /// The offending segment name.
         value: String,
+    },
+    /// Two distinct segment names share one shell variable token, so one
+    /// segment's file and styles would shadow the other's.
+    SegmentTokenCollision {
+        /// The colliding names.
+        collision: crate::plugin::SegmentTokenCollision,
     },
     /// A `git.skip_paths` entry is not an absolute path (nor `~`-prefixed).
     RelativeSkipPath {
@@ -95,6 +102,9 @@ impl std::fmt::Display for ValidationError {
                 f,
                 "Invalid segment name: {value}. Segment names may contain only alphanumeric characters, underscores, and hyphens."
             ),
+            ValidationErrorKind::SegmentTokenCollision { collision } => {
+                write!(f, "{}: {collision}", self.field_path)
+            }
             ValidationErrorKind::RelativeSkipPath { value } => write!(
                 f,
                 "skip_paths must contain absolute paths: {value} is not absolute"
@@ -121,6 +131,7 @@ impl std::error::Error for ValidationError {
             | ValidationErrorKind::UnknownKey
             | ValidationErrorKind::ReadOnlyKey
             | ValidationErrorKind::InvalidSegmentName { .. }
+            | ValidationErrorKind::SegmentTokenCollision { .. }
             | ValidationErrorKind::RelativeSkipPath { .. }
             | ValidationErrorKind::InvalidColor { .. }
             | ValidationErrorKind::IconControlChars { .. } => None,

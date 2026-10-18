@@ -319,6 +319,7 @@ impl Agent {
             palette_cache: Arc::clone(&palette_cache),
             dispatch_guard: Arc::new(events::RepoRefreshCoordinator::default()),
             watch_registry,
+            theme_export_dir: crate::cache::theme_export::theme_export_dir()?,
         };
 
         Self::setup_hot_reload(&ctx, &watcher_slot, watcher_config);
@@ -409,7 +410,8 @@ impl Agent {
         let ctx_for_theme_callback = ctx.clone();
         ctx.theme_manager.set_reload_callback(Arc::new(move || {
             let config = ctx_for_theme_callback.config_manager.get();
-            if let Err(e) = crate::cache::write_theme_export_cache(
+            if let Err(e) = crate::cache::theme_export::write_theme_export_to_dir(
+                &ctx_for_theme_callback.theme_export_dir,
                 &ctx_for_theme_callback.theme_manager,
                 &config,
             ) {
@@ -477,7 +479,7 @@ impl Agent {
         language_cache: crate::language::DetectionCache,
         socket_path: std::path::PathBuf,
     ) -> Result<EndpointHandle> {
-        EndpointHandle::builder(EndpointDeps {
+        let builder = EndpointHandle::builder(EndpointDeps {
             client_registry: Arc::clone(&ctx.registry),
             git_cache: Arc::clone(&ctx.cache),
             config_manager: Arc::clone(&ctx.config_manager),
@@ -488,8 +490,10 @@ impl Agent {
         })
         .socket_path(socket_path)
         .watcher_slot(Arc::clone(watcher_slot))
-        .palette_cache(Arc::clone(&ctx.palette_cache))
-        .build()
+        .palette_cache(Arc::clone(&ctx.palette_cache));
+        #[cfg(unix)]
+        let builder = builder.socket_dir_repair(crate::agent::lifecycle::socket_dir_repair());
+        builder.build()
     }
 
     /// Prune dead clients from the registry and clean up the watcher.
@@ -715,6 +719,8 @@ impl Agent {
             )),
             dispatch_guard: Arc::new(events::RepoRefreshCoordinator::default()),
             watch_registry: Arc::clone(watcher.registry()),
+            theme_export_dir: std::env::temp_dir()
+                .join(format!("gpy-test-theme-export-{}", std::process::id())),
         };
 
         Ok(Self {

@@ -91,10 +91,20 @@ and with an older agent running it evicts it first (`Detected version
 mismatch`) so an upgrade never leaves a stale daemon serving new shells.
 A newer running agent is left alone. If the new daemon exits or does not
 answer within 5 seconds, `gpy start` (and `gpy-agent start`) exits `1`
-with an `Error:` line. The daemon runs in `/`, so it never keeps the
+with an `Error:` line; when the daemon fails before binding its socket, the
+line carries the daemon's own error, such as a cache directory it could not
+create and why. The daemon runs in `/`, so it never keeps the
 directory you started it from (or its volume) busy; a relative `--socket`,
 `GPY_AGENT_SOCKET_PATH`, `GPY_CONFIG_PATH` or `GPY_DEBUG_LOG` still
 resolves against that directory.
+
+The socket's directory, default or `GPY_AGENT_SOCKET_PATH`/`--socket`, must
+be a real directory you own. `gpy start` exits `1` naming the directory if it
+is a symlink or belongs to another user, so a socket directly in `/tmp` is
+refused. If the directory is yours but group- or world-writable, GPY's default
+runtime directory is set to `0700` and used; the directory of an explicit
+socket path is refused and left unchanged (`chmod 700` it, or pick a private
+directory).
 
 ---
 
@@ -1138,7 +1148,7 @@ commands rather than internals:
 | `gpy-agent stop` / `gpy-agent status` | Same behaviour and exit codes as the `gpy` equivalents above. Restarting is only available as `gpy restart`. |
 | `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|hostname\|username> [--cwd <dir>] [--format json\|ansi\|fish\|fish-source\|zsh\|zsh-source]` | Render one segment once, with no daemon. The shells use it as the fallback when the agent is down; it is also the quickest way to see what a segment produces for a directory. |
 | `gpy-agent theme export --format fish\|zsh\|bash` | Print the active theme as shell variable assignments. Each shell sources this on init (cached under `$XDG_CACHE_HOME/gpy/theme-export.<shell>`). |
-| `gpy-agent config reload` | Ask the running agent to reload `config.toml` from disk. Prints `Config reload request sent (agent may not have acknowledged).` when no acknowledgement arrived in time. |
+| `gpy-agent config reload` | Ask the running agent to reload `config.toml` from disk. Exits `0` when the agent applied it, or when no agent is running (the config applies at the next start). Exits `1` with an `Error:` line when the agent rejects the config, carrying its reason (the agent keeps its previous configuration), or when a running agent does not answer. |
 
 ---
 
@@ -1152,7 +1162,7 @@ GPY reads the following environment variables:
 | `XDG_CONFIG_HOME` | Config root: `$XDG_CONFIG_HOME/gpy` (default `~/.config/gpy`), also where user themes and palettes live. |
 | `XDG_CACHE_HOME` | Cache root: `$XDG_CACHE_HOME/gpy` (default `~/.cache/gpy`): theme exports, instant-prompt cache, the agent log. Also the runtime root when `XDG_RUNTIME_DIR` is unset. |
 | `XDG_RUNTIME_DIR` | Runtime root: `$XDG_RUNTIME_DIR/gpy`: the socket, `agent.version`, the shell registry. |
-| `GPY_AGENT_SOCKET_PATH` | Override the socket path alone (the runtime root is unchanged). Every command and every shell must see the same value. The agent's version marker then lives at `<socket>.version` instead of `agent.version`. Every socket, default or override, also gets a `<socket>.lock` start lock next to it. |
+| `GPY_AGENT_SOCKET_PATH` | Override the socket path alone (the runtime root is unchanged). Every command and every shell must see the same value. The agent's version marker then lives at `<socket>.version` instead of `agent.version`. Every socket, default or override, also gets a `<socket>.lock` start lock next to it. Its directory must be a real directory you own (see [`gpy start`](#gpy-start)). |
 | `HOME` | Fallback for the config and cache roots when the XDG variables are unset. |
 | `GPY_NERD_FONT` | Tells `gpy setup` what to assume about icons instead of asking: `1`/`true`/`yes`/`on`/`nerd` (Nerd Font present), `0`/`false`/`no`/`off`/`none`/`ascii` (absent), `unknown`; anything else falls through to detection. Setting it skips the prompt. Under WSL detection always reports `unknown` (the terminal's fonts are on the Windows side), so set this to answer for it. |
 | `VISUAL`, `EDITOR` | The editor `gpy config open` launches, in that order, before the platform fallback. |

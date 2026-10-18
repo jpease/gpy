@@ -302,21 +302,28 @@ fn handle_oneshot_command(command: OneshotCommands) {
 /// Ask the running agent to reload its config.
 ///
 /// # Errors
-/// Returns an error if the socket path or async runtime is unavailable.
+/// Returns an error if the agent rejected the config (it keeps its previous
+/// one) or did not answer, or the socket path or async runtime is unavailable.
 fn reload_config() -> Result<()> {
-    use gpy_agent::agent::lifecycle::{get_socket_path, send_config_reload_command};
+    use gpy_agent::agent::lifecycle::{ConfigReload, get_socket_path, send_config_reload_command};
 
     let socket_path = get_socket_path()?;
-    if !socket_path.exists() {
-        println!("Agent is not running; configuration changes will apply on next start.");
-        return Ok(());
-    }
-
-    let success = tokio::runtime::Runtime::new()?.block_on(send_config_reload_command())?;
-    if success {
-        println!("Requested running agent to reload configuration.");
-    } else {
-        println!("Config reload request sent (agent may not have acknowledged).");
+    match tokio::runtime::Runtime::new()?.block_on(send_config_reload_command()) {
+        Ok(ConfigReload::Applied) => println!("Running agent reloaded its configuration."),
+        Ok(ConfigReload::NotRunning) => {
+            println!("Agent is not running; configuration changes will apply on next start.");
+        }
+        Ok(ConfigReload::Rejected(reason)) => {
+            return Err(gpy_agent::Error::config(format!(
+                "the running agent rejected the new configuration and kept its previous one: {reason}"
+            )));
+        }
+        Err(e) => {
+            return Err(gpy_agent::Error::agent(format!(
+                "agent at {} did not answer the config reload request ({e})",
+                socket_path.display()
+            )));
+        }
     }
     Ok(())
 }
@@ -441,7 +448,7 @@ async fn print_agent_status() -> Result<AgentLiveness> {
 /// Returns an error if the agent is still answering or cannot be reached.
 async fn stop_agent() -> Result<()> {
     use gpy_agent::agent::lifecycle::{
-        get_socket_path, send_shutdown_command, wait_for_agent_shutdown,
+        get_socket_path, send_shutdown_command, socket_is_stale, wait_for_agent_shutdown,
     };
 
     let socket_path = get_socket_path()?;
@@ -493,25 +500,6 @@ async fn stop_agent() -> Result<()> {
             }
         }
     }
-}
-
-/// Whether nothing is listening on `socket_path` (connection refused or file
-/// gone); an accepted connection means a live agent.
-#[cfg(unix)]
-fn socket_is_stale(socket_path: &std::path::Path) -> bool {
-    match std::os::unix::net::UnixStream::connect(socket_path) {
-        Ok(_) => false,
-        Err(e) => matches!(
-            e.kind(),
-            std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound
-        ),
-    }
-}
-
-/// Native Windows has no daemon to probe; never claim a stale socket.
-#[cfg(not(unix))]
-fn socket_is_stale(_socket_path: &std::path::Path) -> bool {
-    false
 }
 
 /// Print the active theme as shell variable assignments.

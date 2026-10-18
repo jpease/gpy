@@ -41,6 +41,17 @@ pub enum TemplateError {
         /// The depth limit that was exceeded.
         limit: usize,
     },
+
+    /// Template text contains a terminal control character other than newline.
+    #[error(
+        "control character U+{code:04X} at character {position}; template text may contain only printable characters and newlines"
+    )]
+    ControlCharacter {
+        /// The offending character's code point.
+        code: u32,
+        /// Character index of the offending character.
+        position: usize,
+    },
 }
 
 /// Convenience alias for template results.

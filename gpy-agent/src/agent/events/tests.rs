@@ -33,6 +33,11 @@ fn make_instant_cache() -> Arc<InstantPromptCache> {
     Arc::new(InstantPromptCache::new_for_test())
 }
 
+/// A fresh directory for theme exports, so reloads never touch the user's cache.
+fn temp_export_dir() -> PathBuf {
+    tempdir().expect("theme export dir").keep()
+}
+
 fn make_agent_context() -> AgentContext {
     let config_manager = make_config_manager();
     let initial_config = config_manager.get();
@@ -46,6 +51,57 @@ fn make_agent_context() -> AgentContext {
         palette_cache: Arc::new(crate::palette::PaletteCache::from_config(&initial_config)),
         dispatch_guard: Arc::new(RepoRefreshCoordinator::default()),
         watch_registry: Arc::new(crate::watcher::WatchRegistry::new()),
+        theme_export_dir: temp_export_dir(),
+    }
+}
+
+/// Supervisor settings render nothing (no refresh) but change the theme
+/// export, so each rings the reload doorbell; an unchanged reload rings nothing.
+#[test]
+#[serial_test::serial(global_ttl)]
+fn supervisor_only_changes_ring_the_reload_doorbell() {
+    use crate::config::types::{SupervisorCheckInterval, SupervisorMaxRestartAttempts};
+
+    let original = Config::default();
+    let mut ctx = make_agent_context();
+    // Resolved the way `reload` re-resolves it, so re-reading it changes nothing.
+    ctx.theme_manager = Arc::new(ThemeManager::new(original.ui.theme.as_str()).expect("theme"));
+    let watcher_slot: SharedWatcherSlot = Arc::new(Mutex::new(None));
+    let rings = |old: &Config, new: &Config| {
+        let before = ctx.registry.notify_invocations();
+        handle_config_reload(
+            &ctx,
+            &watcher_slot,
+            WatcherConfig::default(),
+            true,
+            old,
+            new,
+        )
+        .expect("config reload should succeed");
+        ctx.registry.notify_invocations() > before
+    };
+
+    rings(&original, &original); // Writes the first export.
+    assert!(!rings(&original, &original), "an unchanged reload rang");
+
+    let mut disabled = original.clone();
+    disabled.agent.supervisor.enabled = false;
+    let mut interval = disabled.clone();
+    interval.agent.supervisor.check_interval_seconds =
+        SupervisorCheckInterval::new(45).expect("valid interval");
+    let mut attempts = interval.clone();
+    attempts.agent.supervisor.max_restart_attempts =
+        SupervisorMaxRestartAttempts::new(2).expect("valid attempts");
+    for (field, old, new) in [
+        ("enabled", &original, &disabled),
+        ("check_interval_seconds", &disabled, &interval),
+        ("max_restart_attempts", &interval, &attempts),
+    ] {
+        assert!(
+            !config_refresh_required(old, new),
+            "agent.supervisor.{field} must not force a re-render"
+        );
+        assert!(rings(old, new), "agent.supervisor.{field} must ring");
     }
 }
 
@@ -1044,6 +1100,7 @@ fn config_reload_disables_and_reenables_watcher() {
         palette_cache: Arc::new(crate::palette::PaletteCache::from_config(&initial_config)),
         dispatch_guard: Arc::new(RepoRefreshCoordinator::default()),
         watch_registry: Arc::new(crate::watcher::WatchRegistry::new()),
+        theme_export_dir: temp_export_dir(),
     };
 
     let apply = |old_cfg: &Config, new_cfg: &Config| {
@@ -1392,6 +1449,7 @@ fn make_hermetic_ctx(cache_dir: &Path) -> AgentContext {
         palette_cache: Arc::new(crate::palette::PaletteCache::from_config(&initial_config)),
         dispatch_guard: Arc::new(RepoRefreshCoordinator::default()),
         watch_registry: Arc::new(crate::watcher::WatchRegistry::new()),
+        theme_export_dir: temp_export_dir(),
     }
 }
 
@@ -1453,6 +1511,31 @@ fn theme_change_regenerates_git_caches_for_active_path() {
     assert!(
         rendered.contains('\u{1b}'),
         "regenerated git cache must be styled ANSI: {rendered:?}"
+    );
+}
+
+/// A repo cached before it was skipped must not get its git cache republished on reload.
+#[test]
+fn theme_change_does_not_publish_git_caches_for_skipped_repo() {
+    use crate::git::RepositoryState;
+    use std::collections::HashMap;
+
+    let (_tmp, repo) = create_temp_repo();
+    let cache_tmp = tempdir().expect("cache dir");
+    let ctx = make_hermetic_ctx(cache_tmp.path());
+
+    ctx.registry.register(4321, Some(repo.clone()));
+    ctx.cache
+        .set(&repo, status(0, RepositoryState::Clean), HashMap::new());
+
+    let mut config = Config::default();
+    config.git.skip_paths = vec![repo.to_string_lossy().into_owned()];
+    regenerate_instant_caches_for_theme_change(&ctx, &config);
+
+    let files = cache_file_names(cache_tmp.path());
+    assert!(
+        !files.iter().any(|f| f.contains(".git")),
+        "a skipped repo must not get git caches: {files:?}"
     );
 }
 

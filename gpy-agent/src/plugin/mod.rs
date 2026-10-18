@@ -10,7 +10,7 @@ pub mod registry;
 pub(crate) use builtin::{BUILTIN_ORDER, BuiltinSegment};
 pub use manifest::{
     CompatibilityConstraints, EntryType, GpyVersion, PluginApiVersion, PluginId, PluginManifest,
-    SegmentName,
+    SegmentName, SegmentTokenCollision, first_token_collision,
 };
 pub use registry::{
     DiscoveredPlugin, PluginDiagnostic, PluginDiscovery, PluginLoadStatus, PluginSource,

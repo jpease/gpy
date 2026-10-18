@@ -222,6 +222,64 @@ fn doctor_accepts_agent_disabled_via_config() {
         "{doctor:?}"
     );
     assert!(!doctor.stdout.contains("Not running"), "{doctor:?}");
+    assert!(
+        doctor
+            .stdout
+            .contains("Checking gpy-agent binary... ok: Found in PATH"),
+        "the working gpy-agent must pass the binary check: {doctor:?}"
+    );
+}
+
+/// `gpy doctor` with the agent disabled (so only the binary check can fail)
+/// and PATH holding just `bin_dir`.
+fn doctor_with_agent_path(sandbox: &AgentSandbox, bin_dir: &Path) -> CliCommandResult {
+    sandbox
+        .env
+        .write_config("[agent]\nenabled = false\n")
+        .expect("write config");
+    sandbox
+        .env
+        .run_gpy_with_env(&["doctor"], &[("PATH", bin_dir)])
+        .expect("run gpy doctor")
+}
+
+#[test]
+fn doctor_fails_a_gpy_agent_whose_version_probe_fails() {
+    let sandbox = AgentSandbox::new();
+    let bin_dir = sandbox.env.root().join("broken-bin");
+    std::fs::create_dir(&bin_dir).unwrap();
+    let agent = bin_dir.join("gpy-agent");
+    std::fs::write(&agent, "#!/bin/sh\necho 'loader failed' >&2\nexit 42\n").unwrap();
+    std::fs::set_permissions(&agent, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    let broken = doctor_with_agent_path(&sandbox, &bin_dir);
+    assert_eq!(broken.exit_code, 1_i32, "{broken:?}");
+    let binary_report = broken
+        .stdout
+        .split_once("Checking gpy-agent binary...")
+        .map(|(_, report)| report)
+        .expect("doctor ran the binary check");
+    assert!(binary_report.contains("42"), "exit status: {broken:?}");
+    assert!(
+        binary_report.contains("loader failed"),
+        "stderr: {broken:?}"
+    );
+
+    let empty_dir = sandbox.env.root().join("empty-bin");
+    std::fs::create_dir(&empty_dir).unwrap();
+    let missing = doctor_with_agent_path(&sandbox, &empty_dir);
+    assert_eq!(missing.exit_code, 1_i32, "{missing:?}");
+    assert_ne!(
+        missing
+            .stdout
+            .lines()
+            .find(|line| line.contains("gpy-agent binary")),
+        broken
+            .stdout
+            .lines()
+            .find(|line| line.contains("gpy-agent binary")),
+        "a failing binary must be reported differently from a missing one"
+    );
 }
 
 #[test]
@@ -424,6 +482,44 @@ fn gpy_agent_start_fails_when_the_daemon_dies_before_binding() {
     assert!(result.stderr.contains("Error:"), "{result:?}");
 }
 
+/// The detached daemon's stderr is `/dev/null`; its initialization error must
+/// still reach `start`, and the failed daemon must not linger.
+#[test]
+fn gpy_agent_start_reports_the_daemon_initialization_error() {
+    let sandbox = AgentSandbox::new();
+    let socket = sandbox.socket_path.to_string_lossy().into_owned();
+    let _reaper = DaemonReaper(sandbox.socket_path.clone());
+    let cache_file = sandbox.env.root().join("cache-is-a-file");
+    std::fs::write(&cache_file, "").expect("write cache file");
+    let cause = std::fs::create_dir_all(cache_file.join("gpy"))
+        .expect_err("a regular file cannot hold a directory")
+        .to_string();
+
+    let result = sandbox
+        .env
+        .run_gpy_agent_with_env(
+            &["start", "--socket", &socket],
+            &[("XDG_CACHE_HOME", cache_file.as_os_str())],
+        )
+        .expect("spawn gpy-agent");
+    assert_eq!(result.exit_code, 1_i32, "{result:?}");
+    assert!(
+        result.stderr.contains(&cache_file.display().to_string()),
+        "the error names the offending path: {result:?}"
+    );
+    assert!(
+        result.stderr.contains(&cause),
+        "the error carries the filesystem cause `{cause}`: {result:?}"
+    );
+    assert!(!sandbox.socket_path.exists(), "nothing was bound");
+    assert!(
+        common::wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
+            pids_matching(&sandbox.socket_path).is_empty()
+        }),
+        "the failed daemon exits"
+    );
+}
+
 struct SocketStopper<'a>(&'a CliTestEnv, PathBuf);
 
 impl Drop for SocketStopper<'_> {
@@ -497,6 +593,128 @@ fn relative_socket_is_resolved_against_the_launch_directory() {
         .expect("spawn gpy-agent status");
     assert_eq!(reported.exit_code, 0_i32, "{reported:?}");
     assert!(reported.stdout.contains(RUNNING_LINE), "{reported:?}");
+}
+
+/// The default endpoint `$XDG_RUNTIME_DIR/gpy/gpy.sock`, with any inherited
+/// `GPY_AGENT_SOCKET_PATH` blanked (empty means unset).
+fn start_on_default_socket(env: &CliTestEnv) -> CliCommandResult {
+    env.run_gpy_agent_with_env(&["start"], &[("GPY_AGENT_SOCKET_PATH", "")])
+        .expect("spawn gpy-agent start")
+}
+
+fn mode_of(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .expect("metadata")
+        .permissions()
+        .mode()
+        & 0o7777
+}
+
+#[test]
+fn start_tightens_an_owned_world_writable_runtime_dir() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let runtime = env.xdg_runtime_dir().join("gpy");
+    std::fs::create_dir_all(&runtime).expect("create runtime dir");
+    std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o777)).expect("chmod");
+    let _stopper = SocketStopper(&env, runtime.join("gpy.sock"));
+
+    start_on_default_socket(&env).assert_success("gpy-agent start");
+    assert_eq!(mode_of(&runtime), 0o700, "the runtime dir is repaired");
+    assert!(
+        std::os::unix::net::UnixStream::connect(runtime.join("gpy.sock")).is_ok(),
+        "the agent serves from the repaired dir"
+    );
+}
+
+#[test]
+fn start_refuses_a_symlinked_runtime_dir() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let target = tempfile::tempdir_in(gpy_test_root().expect("GPY test root")).expect("tempdir");
+    let runtime = env.xdg_runtime_dir().join("gpy");
+    std::os::unix::fs::symlink(target.path(), &runtime).expect("symlink runtime dir");
+    let _stopper = SocketStopper(&env, runtime.join("gpy.sock"));
+
+    let result = start_on_default_socket(&env);
+    assert_eq!(result.exit_code, 1_i32, "{result:?}");
+    assert!(
+        result.stderr.contains(&runtime.display().to_string()),
+        "the refusal names the directory: {result:?}"
+    );
+    assert_eq!(
+        std::fs::read_dir(target.path())
+            .expect("read target")
+            .count(),
+        0,
+        "nothing is created through the symlink"
+    );
+}
+
+#[test]
+fn start_refuses_an_explicit_socket_whose_directory_is_a_symlink() {
+    let sandbox = AgentSandbox::new();
+    let target = tempfile::tempdir_in(gpy_test_root().expect("GPY test root")).expect("tempdir");
+    let link = sandbox
+        .socket_path
+        .parent()
+        .expect("socket dir")
+        .join("link");
+    std::os::unix::fs::symlink(target.path(), &link).expect("symlink socket dir");
+    let socket = link.join("gpy.sock");
+    let _stopper = SocketStopper(&sandbox.env, socket.clone());
+
+    let result = sandbox
+        .env
+        .run_gpy_agent_with_env(&["start"], &[("GPY_AGENT_SOCKET_PATH", &socket)])
+        .expect("spawn gpy-agent");
+    assert_eq!(result.exit_code, 1_i32, "{result:?}");
+    assert!(
+        result.stderr.contains(&link.display().to_string()),
+        "the refusal names the directory: {result:?}"
+    );
+    assert_eq!(
+        std::fs::read_dir(target.path())
+            .expect("read target")
+            .count(),
+        0,
+        "nothing is created through the symlink"
+    );
+}
+
+/// A directory the user chose is never chmod'ed, through either override.
+#[test]
+fn start_refuses_an_explicit_socket_in_an_owned_world_writable_dir() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let dir = tempfile::tempdir_in(gpy_test_root().expect("GPY test root")).expect("tempdir");
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o777)).expect("chmod");
+    let socket = dir.path().join("gpy.sock");
+    let socket_arg = socket.to_string_lossy().into_owned();
+    let _stopper = SocketStopper(&env, socket.clone());
+
+    for result in [
+        env.run_gpy_agent_with_env(&["start"], &[("GPY_AGENT_SOCKET_PATH", &socket)]),
+        env.run_gpy_agent_with_env(
+            &["start", "--socket", &socket_arg],
+            &[("GPY_AGENT_SOCKET_PATH", "")],
+        ),
+    ] {
+        let result = result.expect("spawn gpy-agent");
+        assert_eq!(result.exit_code, 1_i32, "{result:?}");
+        assert!(
+            result.stderr.contains(&dir.path().display().to_string()),
+            "the refusal names the directory: {result:?}"
+        );
+        assert_eq!(mode_of(dir.path()), 0o777, "the mode is left unchanged");
+        assert_eq!(
+            std::fs::read_dir(dir.path()).expect("read dir").count(),
+            0,
+            "nothing is created in the refused directory"
+        );
+    }
 }
 
 #[test]
@@ -644,5 +862,94 @@ fn mutation_without_agent_prints_exactly_one_not_reloaded_notice() {
         switched.stdout.matches(NOT_RELOADED_NOTICE).count(),
         1_usize,
         "{switched:?}"
+    );
+}
+
+/// The same minimal config with only the theme varying.
+fn theme_config(theme: &str) -> String {
+    format!("[ui]\ntheme = \"{theme}\"\n")
+}
+
+#[test]
+fn config_reload_applies_a_valid_config() {
+    let sandbox = AgentSandbox::new();
+    sandbox.start_and_wait();
+    sandbox
+        .env
+        .write_config(&theme_config("starship"))
+        .expect("write config");
+
+    let reloaded = sandbox.gpy_agent(&["config", "reload"]);
+    reloaded.assert_success("gpy-agent config reload");
+    assert!(reloaded.stderr.is_empty(), "{reloaded:?}");
+}
+
+#[test]
+fn config_reload_surfaces_a_toml_parse_error_and_keeps_serving() {
+    const BROKEN: &str = "not [valid";
+    let sandbox = AgentSandbox::new();
+    sandbox.start_and_wait();
+    sandbox.env.write_config(BROKEN).expect("write config");
+    let cause = toml::from_str::<toml::Table>(BROKEN)
+        .expect_err("the fixture is invalid TOML")
+        .message()
+        .to_owned();
+
+    let reloaded = sandbox.gpy_agent(&["config", "reload"]);
+    assert_eq!(reloaded.exit_code, 1_i32, "{reloaded:?}");
+    assert!(reloaded.stderr.starts_with("Error:"), "{reloaded:?}");
+    assert!(
+        reloaded.stderr.contains(&cause),
+        "the agent's parse error `{cause}` reaches the user: {reloaded:?}"
+    );
+
+    let status = sandbox.gpy_agent(&["status"]);
+    assert!(
+        status.stdout.contains(RUNNING_LINE),
+        "a rejected reload leaves the agent serving: {status:?}"
+    );
+}
+
+#[test]
+fn config_reload_rejects_an_unknown_theme() {
+    let sandbox = AgentSandbox::new();
+    sandbox.start_and_wait();
+    sandbox
+        .env
+        .write_config(&theme_config("no-such-theme"))
+        .expect("write config");
+
+    let reloaded = sandbox.gpy_agent(&["config", "reload"]);
+    assert_eq!(reloaded.exit_code, 1_i32, "{reloaded:?}");
+    assert!(
+        reloaded.stderr.contains("no-such-theme"),
+        "the rejection names the theme: {reloaded:?}"
+    );
+}
+
+/// No agent, a stale socket file, and an agent that never answers are three
+/// different outcomes: only the last is a failure.
+#[test]
+fn config_reload_distinguishes_absent_and_unanswering_agents() {
+    let sandbox = AgentSandbox::new();
+
+    let absent = sandbox.gpy_agent(&["config", "reload"]);
+    absent.assert_success("config reload with no agent");
+
+    drop(bind_silent_socket(&sandbox.socket_path));
+    let stale = sandbox.gpy_agent(&["config", "reload"]);
+    stale.assert_success("config reload on a stale socket");
+    assert_eq!(stale.stdout, absent.stdout, "a stale socket is no agent");
+    std::fs::remove_file(&sandbox.socket_path).expect("remove stale socket");
+
+    let _listener = bind_silent_socket(&sandbox.socket_path);
+    let silent = sandbox.gpy_agent(&["config", "reload"]);
+    assert_eq!(silent.exit_code, 1_i32, "{silent:?}");
+    assert!(silent.stderr.starts_with("Error:"), "{silent:?}");
+    assert!(
+        silent
+            .stderr
+            .contains(&sandbox.socket_path.display().to_string()),
+        "names the agent that did not answer: {silent:?}"
     );
 }

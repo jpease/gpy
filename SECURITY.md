@@ -91,13 +91,30 @@ cache keeps a separate file per format. The integrations pin the prompt options
 that escaping relies on: `shopt -s promptvars` in Bash, and `prompt_subst`,
 `prompt_percent` and `no_prompt_bang` in Zsh. The clock's live-time token
 (`\D{…}`/`%D{…}`) is the only agent text left for the shell to expand. Fish
-prints its prompt literally and receives the unescaped `ansi` format.
+prints its prompt literally and receives the unescaped `ansi` format. In every
+format the agent also strips terminal control characters (ESC, BEL and the other
+C0/C1 controls) from resolved values and from theme template text, so neither
+can emit escape sequences; theme template text keeps only newline, and
+`gpy theme validate` rejects themes whose templates contain any other control
+character (`gpy-agent/src/template/eval.rs`).
 
 **The agent trusts whoever can open its socket.** The socket is chmod'ed to
-`0600` immediately after bind, and the agent refuses to bind at all if its
-runtime directory is owned by another user or is group- or world-writable
-(`gpy-agent/src/ipc/server/handle.rs`). That owner-only file permission is the
-access control. There is no handshake and no peer-credential check: any process
+`0600` immediately after bind. That mode does not stop anyone who can write the
+socket's directory from replacing the socket, so the directory is checked for
+every socket path, the default `$XDG_RUNTIME_DIR/gpy` (or its cache, home or
+`/tmp/gpy` fallback) and an explicit `GPY_AGENT_SOCKET_PATH` or `--socket`
+alike. The agent refuses to use a directory that is a symlink, is not a
+directory, or is owned by another user, so a socket directly in `/tmp` is
+refused. A directory owned by you that is group- or world-writable is treated
+by where the path came from: GPY's own default runtime directory is set to
+`0700` and checked again before use, while the directory of an explicit socket
+path is refused, never chmod'ed (`chmod 700` it, or choose a private
+directory). `gpy-agent start` applies the check before it creates the start
+lock, removes a stale socket or pings a running agent there, and the daemon
+applies it again immediately before bind (`secure_socket_dir` in
+`gpy-agent/src/ipc/server/handle.rs`). Only the directory itself is checked,
+not its parents. The owner-only socket in that directory is the access
+control. There is no handshake and no peer-credential check: any process
 running as you can talk to the agent, which is the same authority it already
 has to read your files and rewrite your shell config.
 
@@ -135,8 +152,10 @@ installers enforce, and how to check a download by hand, is in
 ### IPC
 
 - **Unix domain sockets** — local only, no network listener
-- **Socket mode `0600`** in a runtime directory the agent refuses to use when it
-  is owned by another user or is group- or world-writable
+- **Socket mode `0600`** in a directory the agent refuses to use when it is a
+  symlink or owned by another user; when it is yours but group- or
+  world-writable, the default runtime directory is set to `0700` and an
+  explicit socket path's directory is refused
 - **Path validation** to prevent directory traversal
 - **Message content validated against the protocol schema**
   (`gpy-agent/src/ipc/protocol/mod.rs`, `gpy-agent/schemas/`)
@@ -165,6 +184,11 @@ installers enforce, and how to check a download by hand, is in
 - Commands are built as argument vectors through `std::process::Command`, so
   repository, branch and path names are passed as arguments and never spliced
   into a shell string.
+- Python version detection reads a project-local `.venv`/`venv` only through
+  its `pyvenv.cfg`. A venv's interpreter is run to read its version only for
+  the environment your shell activated and forwarded (`VIRTUAL_ENV`, or a
+  non-base conda env); a project venv without a usable `pyvenv.cfg` version
+  shows no version.
 
 ### Dependencies
 

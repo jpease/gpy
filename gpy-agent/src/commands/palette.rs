@@ -148,7 +148,8 @@ impl ValidatableResource for PaletteResource {
 }
 
 fn validate_palette_name(palette_name: &str) -> Result<()> {
-    PaletteManager::new(palette_name)?;
+    let manager = PaletteManager::new(palette_name)?;
+    warn_aliased_keys(&manager.get());
     Ok(())
 }
 
@@ -157,7 +158,16 @@ fn validate_palette_file(path: &Path) -> Result<()> {
         .map_err(|e| Error::config(format!("Failed to read palette file: {e}")))?;
     let palette: crate::palette::PaletteConfig =
         toml::from_str(&content).map_err(|e| Error::config(format!("TOML parsing failed: {e}")))?;
-    palette.validate()
+    palette.validate()?;
+    warn_aliased_keys(&palette);
+    Ok(())
+}
+
+/// Report keys that alias one ANSI color; legal, but only one answers other spellings.
+fn warn_aliased_keys(palette: &crate::palette::PaletteConfig) {
+    for warning in palette.alias_warnings() {
+        super::output::warn_stderr(format_args!("palette '{}': {warning}", palette.name));
+    }
 }
 
 /// Import a base16/base24 scheme file into a GPY user palette.

@@ -1,7 +1,9 @@
 //! Theme schema validation.
 
 use super::colors::{validate_color, validate_icon};
+use super::{ValidationError, ValidationErrorKind};
 use crate::Result;
+use crate::plugin::{SegmentName, first_token_collision};
 use crate::theme::ThemeConfig;
 
 /// Validate the fully parsed theme configuration.
@@ -16,11 +18,13 @@ pub fn validate_theme_config(theme: &ThemeConfig, source: &str) -> Result<()> {
 /// Validate plugin-specific segment themes.
 ///
 /// # Errors
-/// Returns a configuration error if any plugin-specific color or icon is invalid.
+/// Returns a configuration error if a section name is not a segment name, two
+/// sections share a shell variable token, or a plugin-specific color or icon is invalid.
 fn validate_plugin_segment_themes(
     plugins: &std::collections::HashMap<String, crate::theme::PluginSegmentTheme>,
     source: &str,
 ) -> Result<()> {
+    validate_plugin_segment_names(plugins.keys())?;
     for (name, theme) in plugins {
         let field_prefix = format!("segments.{name}");
         for (key, value) in &theme.properties {
@@ -34,4 +38,73 @@ fn validate_plugin_segment_themes(
         }
     }
     Ok(())
+}
+
+/// Every `[segments.<name>]` plugin section must name a segment, and no two may
+/// export to the same shell variables (`Foo`/`foo`, `a-b`/`a_b`).
+///
+/// # Errors
+/// Returns the first invalid or colliding section name, in sorted order.
+fn validate_plugin_segment_names<'a>(keys: impl Iterator<Item = &'a String>) -> Result<()> {
+    let mut keys: Vec<&String> = keys.collect();
+    keys.sort_unstable();
+    let mut names: Vec<SegmentName> = Vec::with_capacity(keys.len());
+    for key in keys {
+        let name = SegmentName::new(key).map_err(|_| ValidationError {
+            field_path: format!("segments.{key}"),
+            kind: ValidationErrorKind::InvalidSegmentName { value: key.clone() },
+        })?;
+        if names.contains(&name) {
+            return Err(ValidationError {
+                field_path: format!("segments.{key}"),
+                kind: ValidationErrorKind::InvalidValue {
+                    expected: "segment section (duplicates another section's name ignoring case)",
+                    value: key.clone(),
+                },
+            }
+            .into());
+        }
+        names.push(name);
+    }
+    match first_token_collision(&names) {
+        Some(collision) => Err(ValidationError {
+            field_path: "segments".to_owned(),
+            kind: ValidationErrorKind::SegmentTokenCollision { collision },
+        }
+        .into()),
+        None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::missing_panics_doc)]
+
+    use super::validate_theme_config;
+    use crate::theme::ThemeConfig;
+
+    fn theme_with_sections(sections: &str) -> ThemeConfig {
+        toml::from_str(&format!("[ui]\n[segments]\n{sections}")).unwrap()
+    }
+
+    #[test]
+    fn plugin_sections_with_colliding_tokens_are_rejected() {
+        let theme = theme_with_sections("[segments.k8s-ctx]\n[segments.k8s_ctx]\n");
+        let err = validate_theme_config(&theme, "test")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("k8s-ctx") && err.contains("k8s_ctx"),
+            "error must name both sections: {err}"
+        );
+    }
+
+    #[test]
+    fn plugin_section_names_must_be_segment_names() {
+        let theme = theme_with_sections("[segments.\"k8s ctx\"]\n");
+        assert!(validate_theme_config(&theme, "test").is_err());
+        let theme = theme_with_sections("[segments.my--seg]\n[segments.seg_]\n");
+        assert!(validate_theme_config(&theme, "test").is_ok());
+    }
 }
