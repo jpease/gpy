@@ -91,7 +91,9 @@ and with an older agent running it evicts it first (`Detected version
 mismatch`) so an upgrade never leaves a stale daemon serving new shells.
 A newer running agent is left alone. If the new daemon exits or does not
 answer within 5 seconds, `gpy start` (and `gpy-agent start`) exits `1`
-with an `Error:` line. The daemon runs in `/`, so it never keeps the
+with an `Error:` line; when the daemon fails before binding its socket, the
+line carries the daemon's own error, such as a cache directory it could not
+create and why. The daemon runs in `/`, so it never keeps the
 directory you started it from (or its volume) busy; a relative `--socket`,
 `GPY_AGENT_SOCKET_PATH`, `GPY_CONFIG_PATH` or `GPY_DEBUG_LOG` still
 resolves against that directory.

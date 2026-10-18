@@ -232,10 +232,12 @@ pub struct EndpointHandle {
     /// Identity of the socket this handle bound; `None` means it never unlinks anything.
     #[cfg(unix)]
     bound_socket: Option<SocketIdentity>,
-    /// Inherited per-socket start lock, held until [`Self::bind_socket`] returns so a
-    /// concurrent start cannot evict or fork between our fork and bind.
+    /// Startup handshake with the waiting `gpy-agent start`, held until
+    /// [`Self::bind_socket`] returns: its start lock stops a concurrent start
+    /// evicting or forking between our fork and bind, and a bind failure is
+    /// reported through it.
     #[cfg(unix)]
-    start_lock: Option<nix::fcntl::Flock<std::fs::File>>,
+    startup: Option<crate::agent::lifecycle::start::StartupHandoff>,
     /// Ownership check period ([`SOCKET_OWNERSHIP_CHECK`] outside tests).
     #[cfg(unix)]
     pub(super) socket_ownership_check: Duration,
@@ -363,7 +365,7 @@ impl EndpointHandle {
             #[cfg(unix)]
             bound_socket: None,
             #[cfg(unix)]
-            start_lock: None,
+            startup: None,
             #[cfg(unix)]
             socket_ownership_check: SOCKET_OWNERSHIP_CHECK,
             security_config,
@@ -389,11 +391,14 @@ impl EndpointHandle {
         EndpointHandleBuilder::new(deps)
     }
 
-    /// Hold the per-socket start lock until this handle's socket is bound
-    /// (see the `start_lock` field).
+    /// Hold the startup handshake until this handle's socket is bound (see the
+    /// `startup` field).
     #[cfg(unix)]
-    pub(crate) fn hold_start_lock_until_bound(&mut self, lock: nix::fcntl::Flock<std::fs::File>) {
-        self.start_lock = Some(lock);
+    pub(crate) fn hold_startup_until_bound(
+        &mut self,
+        startup: crate::agent::lifecycle::start::StartupHandoff,
+    ) {
+        self.startup = Some(startup);
     }
 
     /// Start accepting client connections.
@@ -405,8 +410,10 @@ impl EndpointHandle {
         use crate::debug_log;
 
         let bound = self.bind_socket();
-        // Release the start lock regardless, so the next start sees the real outcome.
-        self.start_lock = None;
+        // End the handshake either way, so the next start sees the real outcome.
+        if let (Err(e), Some(startup)) = (&bound, self.startup.take()) {
+            startup.fail(e);
+        }
         bound?;
         debug_log!("server", "Listener stored, starting accept loop...");
 

@@ -482,6 +482,44 @@ fn gpy_agent_start_fails_when_the_daemon_dies_before_binding() {
     assert!(result.stderr.contains("Error:"), "{result:?}");
 }
 
+/// The detached daemon's stderr is `/dev/null`; its initialization error must
+/// still reach `start`, and the failed daemon must not linger.
+#[test]
+fn gpy_agent_start_reports_the_daemon_initialization_error() {
+    let sandbox = AgentSandbox::new();
+    let socket = sandbox.socket_path.to_string_lossy().into_owned();
+    let _reaper = DaemonReaper(sandbox.socket_path.clone());
+    let cache_file = sandbox.env.root().join("cache-is-a-file");
+    std::fs::write(&cache_file, "").expect("write cache file");
+    let cause = std::fs::create_dir_all(cache_file.join("gpy"))
+        .expect_err("a regular file cannot hold a directory")
+        .to_string();
+
+    let result = sandbox
+        .env
+        .run_gpy_agent_with_env(
+            &["start", "--socket", &socket],
+            &[("XDG_CACHE_HOME", cache_file.as_os_str())],
+        )
+        .expect("spawn gpy-agent");
+    assert_eq!(result.exit_code, 1_i32, "{result:?}");
+    assert!(
+        result.stderr.contains(&cache_file.display().to_string()),
+        "the error names the offending path: {result:?}"
+    );
+    assert!(
+        result.stderr.contains(&cause),
+        "the error carries the filesystem cause `{cause}`: {result:?}"
+    );
+    assert!(!sandbox.socket_path.exists(), "nothing was bound");
+    assert!(
+        common::wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
+            pids_matching(&sandbox.socket_path).is_empty()
+        }),
+        "the failed daemon exits"
+    );
+}
+
 struct SocketStopper<'a>(&'a CliTestEnv, PathBuf);
 
 impl Drop for SocketStopper<'_> {

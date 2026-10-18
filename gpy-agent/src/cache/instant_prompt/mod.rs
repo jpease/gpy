@@ -86,10 +86,16 @@ pub struct InstantPromptCache {
 impl InstantPromptCache {
     /// Create a new instant-prompt cache manager.
     /// # Errors
-    /// Returns an error if the cache directory cannot be created.
+    /// Returns an error naming the cache directory if it cannot be created.
     pub fn new() -> Result<Self> {
         let cache_dir = get_instant_cache_dir()?;
-        std::fs::create_dir_all(&cache_dir)?;
+        std::fs::create_dir_all(&cache_dir).map_err(|e| Error::Agent {
+            message: format!(
+                "cannot create instant-prompt cache directory {}",
+                cache_dir.display()
+            ),
+            source: Some(Box::new(e)),
+        })?;
         // Nothing else removes entries; best-effort, never blocks startup.
         let _ = prune_stale_entries(&cache_dir, SystemTime::now());
         Ok(Self {
