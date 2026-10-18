@@ -222,6 +222,64 @@ fn doctor_accepts_agent_disabled_via_config() {
         "{doctor:?}"
     );
     assert!(!doctor.stdout.contains("Not running"), "{doctor:?}");
+    assert!(
+        doctor
+            .stdout
+            .contains("Checking gpy-agent binary... ok: Found in PATH"),
+        "the working gpy-agent must pass the binary check: {doctor:?}"
+    );
+}
+
+/// `gpy doctor` with the agent disabled (so only the binary check can fail)
+/// and PATH holding just `bin_dir`.
+fn doctor_with_agent_path(sandbox: &AgentSandbox, bin_dir: &Path) -> CliCommandResult {
+    sandbox
+        .env
+        .write_config("[agent]\nenabled = false\n")
+        .expect("write config");
+    sandbox
+        .env
+        .run_gpy_with_env(&["doctor"], &[("PATH", bin_dir)])
+        .expect("run gpy doctor")
+}
+
+#[test]
+fn doctor_fails_a_gpy_agent_whose_version_probe_fails() {
+    let sandbox = AgentSandbox::new();
+    let bin_dir = sandbox.env.root().join("broken-bin");
+    std::fs::create_dir(&bin_dir).unwrap();
+    let agent = bin_dir.join("gpy-agent");
+    std::fs::write(&agent, "#!/bin/sh\necho 'loader failed' >&2\nexit 42\n").unwrap();
+    std::fs::set_permissions(&agent, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    let broken = doctor_with_agent_path(&sandbox, &bin_dir);
+    assert_eq!(broken.exit_code, 1_i32, "{broken:?}");
+    let binary_report = broken
+        .stdout
+        .split_once("Checking gpy-agent binary...")
+        .map(|(_, report)| report)
+        .expect("doctor ran the binary check");
+    assert!(binary_report.contains("42"), "exit status: {broken:?}");
+    assert!(
+        binary_report.contains("loader failed"),
+        "stderr: {broken:?}"
+    );
+
+    let empty_dir = sandbox.env.root().join("empty-bin");
+    std::fs::create_dir(&empty_dir).unwrap();
+    let missing = doctor_with_agent_path(&sandbox, &empty_dir);
+    assert_eq!(missing.exit_code, 1_i32, "{missing:?}");
+    assert_ne!(
+        missing
+            .stdout
+            .lines()
+            .find(|line| line.contains("gpy-agent binary")),
+        broken
+            .stdout
+            .lines()
+            .find(|line| line.contains("gpy-agent binary")),
+        "a failing binary must be reported differently from a missing one"
+    );
 }
 
 #[test]
