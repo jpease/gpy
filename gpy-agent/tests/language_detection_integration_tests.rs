@@ -312,61 +312,68 @@ fn test_ansi_format_ansi_codes() {
     );
 }
 
+/// A daemon on a private socket, stopped on drop.
+#[cfg(unix)]
+struct RunningAgent {
+    socket_path: PathBuf,
+    // Field order is drop order: stop the agent before removing its socket dir.
+    _stop: child_guard::AgentStopGuard,
+    _socket_dir: TempDir,
+}
+
+#[cfg(unix)]
+impl RunningAgent {
+    fn start(home: &TempDir, config_path: &Path) -> Self {
+        use std::os::unix::net::UnixStream;
+        use std::time::Duration;
+
+        let socket_dir = TempDir::new().expect("Failed to create socket dir");
+        let socket_path = socket_dir.path().join("gpy.sock");
+
+        // Registered before `start` so the daemon stops even if start fails.
+        let mut stop_command = std::process::Command::new(env!("CARGO_BIN_EXE_gpy-agent"));
+        configure_command_env(&mut stop_command, home, config_path);
+        let stop = child_guard::AgentStopGuard::new(stop_command, socket_path.clone());
+
+        let mut start = std::process::Command::new(env!("CARGO_BIN_EXE_gpy-agent"));
+        start.args(["start", "--socket"]).arg(&socket_path);
+        configure_command_env(&mut start, home, config_path);
+        let started = start.output().expect("Failed to execute gpy-agent start");
+        assert!(
+            started.status.success(),
+            "agent failed to start: {}",
+            String::from_utf8_lossy(&started.stderr)
+        );
+
+        assert!(
+            wait::wait_until(Duration::from_secs(10), Duration::from_millis(25), || {
+                UnixStream::connect(&socket_path).is_ok()
+            }),
+            "agent never accepted a connection on {}",
+            socket_path.display()
+        );
+        Self {
+            socket_path,
+            _stop: stop,
+            _socket_dir: socket_dir,
+        }
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn test_ipc_format_parameter() {
-    use std::io::{BufRead, BufReader, Write};
-    use std::os::unix::net::UnixStream;
-    use std::time::Duration;
-
     let (home_env, config_path) = setup_test_env();
-    let socket_dir = TempDir::new().expect("Failed to create socket dir");
-    let socket_path = socket_dir.path().join("gpy.sock");
-
-    // Registered before `start` so the daemon stops even if start fails.
-    let mut stop_command = std::process::Command::new(env!("CARGO_BIN_EXE_gpy-agent"));
-    configure_command_env(&mut stop_command, &home_env, &config_path);
-    let _daemon = child_guard::AgentStopGuard::new(stop_command, socket_path.clone());
-
-    let mut start = std::process::Command::new(env!("CARGO_BIN_EXE_gpy-agent"));
-    start.args(["start", "--socket"]).arg(&socket_path);
-    configure_command_env(&mut start, &home_env, &config_path);
-    let started = start.output().expect("Failed to execute gpy-agent start");
-    assert!(
-        started.status.success(),
-        "agent failed to start: {}",
-        String::from_utf8_lossy(&started.stderr)
-    );
-
-    assert!(
-        wait::wait_until(Duration::from_secs(10), Duration::from_millis(25), || {
-            UnixStream::connect(&socket_path).is_ok()
-        }),
-        "agent never accepted a connection on {}",
-        socket_path.display()
-    );
+    let daemon = RunningAgent::start(&home_env, &config_path);
 
     let test_dir = create_language_test_dir("rust");
     let path = test_dir.path().to_string_lossy().to_string();
 
-    let mut stream = UnixStream::connect(&socket_path).expect("connect to agent");
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .expect("set read timeout");
     let request = format!(
         r#"{{"op":"lang","cwd":"{}","format":"ansi"}}"#,
         path.replace('"', "\\\"")
     );
-    stream
-        .write_all(request.as_bytes())
-        .and_then(|()| stream.write_all(b"\n"))
-        .and_then(|()| stream.flush())
-        .expect("send lang request");
-
-    let mut response = String::new();
-    BufReader::new(stream)
-        .read_line(&mut response)
-        .expect("read lang response");
+    let response = ipc_request(&daemon.socket_path, &request);
 
     assert!(
         response.contains("\x1b["),
@@ -458,14 +465,7 @@ fn test_oneshot_lang_uses_git_root_in_subdirectory() {
     let repo = TempDir::new().expect("Failed to create temp dir");
     let root = repo.path();
 
-    let git_init = std::process::Command::new("git")
-        .args(["init", "-q"])
-        .arg(root)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .status()
-        .expect("Failed to run git init");
-    assert!(git_init.success(), "git init failed");
+    git_init(root);
 
     fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n")
         .expect("Failed to write Cargo.toml");
@@ -541,21 +541,50 @@ fn test_nongit_subdirectory_inherits_project_language() {
     );
 }
 
-/// Run `oneshot lang --format json` at `cwd` and return the parsed output.
+/// The default `agent.timeout_seconds`: the budget a language request gets.
+#[cfg(unix)]
+const OPERATION_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Run `oneshot lang --format json` at `cwd` and return the parsed output,
+/// failing if it outlives [`OPERATION_BUDGET`].
 #[cfg(unix)]
 fn oneshot_lang_json(cwd: &Path, home: &TempDir, config_path: &Path) -> serde_json::Value {
     let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_gpy-agent"));
     command.args(["oneshot", "lang", "--cwd"]);
     command.arg(cwd);
     command.args(["--format", "json"]);
+    command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
     configure_command_env(&mut command, home, config_path);
-    let output = command.output().expect("Failed to execute gpy-agent");
+    let mut child = command.spawn().expect("Failed to execute gpy-agent");
+    let deadline = std::time::Instant::now() + OPERATION_BUDGET;
+    while child.try_wait().expect("poll gpy-agent").is_none() {
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("oneshot lang at {} outlived its budget", cwd.display());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().expect("collect gpy-agent output");
     assert!(
         output.status.success(),
         "oneshot lang failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout).expect("Failed to parse JSON")
+}
+
+/// The `python` entry of a `lang` JSON reply.
+#[cfg(unix)]
+fn python_entry(json: &serde_json::Value) -> &serde_json::Value {
+    json.get("languages")
+        .and_then(|v| v.as_array())
+        .expect("languages should be an array")
+        .iter()
+        .find(|l| l.get("name").and_then(|n| n.as_str()) == Some("python"))
+        .unwrap_or_else(|| panic!("python must be detected: {json}"))
 }
 
 // A project `.venv` is repository content: rendering reads its `pyvenv.cfg`
@@ -600,19 +629,125 @@ fn test_discovered_venv_interpreter_is_never_executed() {
             !marker.exists(),
             "the project interpreter must not run (pyvenv.cfg {cfg:?})"
         );
-        let languages = json
-            .get("languages")
-            .and_then(|v| v.as_array())
-            .expect("languages should be an array");
-        let python_entry = languages
-            .iter()
-            .find(|l| l.get("name").and_then(|n| n.as_str()) == Some("python"))
-            .unwrap_or_else(|| panic!("python must still be detected: {json}"));
         assert!(
-            python_entry
+            python_entry(&json)
                 .get("version")
                 .is_none_or(serde_json::Value::is_null),
             "no usable pyvenv.cfg version means no version (pyvenv.cfg {cfg:?}): {json}"
         );
+    }
+}
+
+/// `git init` a fresh repository at `root`.
+fn git_init(root: &Path) {
+    let status = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .arg(root)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .status()
+        .expect("Failed to run git init");
+    assert!(status.success(), "git init failed");
+}
+
+/// Create a FIFO at `path`; no writer ever opens it.
+#[cfg(unix)]
+fn make_fifo(path: &Path) {
+    nix::unistd::mkfifo(path, nix::sys::stat::Mode::S_IRWXU).expect("Failed to create FIFO");
+}
+
+/// A Python project whose `.venv/pyvenv.cfg` is a writer-less FIFO, beside a
+/// regular non-executable `.venv/bin/python`.
+#[cfg(unix)]
+fn write_fifo_venv_project(project: &Path) {
+    fs::create_dir_all(project.join(".venv/bin")).expect("Failed to create .venv/bin");
+    setup_python_project(project);
+    fs::write(project.join("pyproject.toml"), "[project]\nname = \"x\"\n")
+        .expect("Failed to write pyproject.toml");
+    fs::write(project.join(".venv/bin/python"), "").expect("Failed to write python");
+    make_fifo(&project.join(".venv/pyvenv.cfg"));
+}
+
+/// A git repository whose only Python evidence is an extensionless shebang
+/// script, so detection must read it, beside an untracked extensionless FIFO.
+#[cfg(unix)]
+fn write_fifo_git_repo(root: &Path) {
+    fs::create_dir_all(root).expect("Failed to create repo dir");
+    git_init(root);
+    fs::write(root.join("tool"), "#!/usr/bin/env python3\nprint('hi')\n")
+        .expect("Failed to write tool");
+    make_fifo(&root.join("untracked-pipe"));
+}
+
+// A writer-less FIFO in repository metadata or content must not stall
+// detection: the reads fail fast and the regular files still count.
+#[cfg(unix)]
+#[test]
+fn test_fifo_repository_files_do_not_hang_oneshot() {
+    let (home_env, config_path) = setup_test_env();
+
+    let control = home_env.path().join("regular-venv");
+    write_fifo_venv_project(&control);
+    fs::remove_file(control.join(".venv/pyvenv.cfg")).expect("Failed to remove FIFO");
+    fs::write(control.join(".venv/pyvenv.cfg"), "version = 3.11.9\n").expect("write cfg");
+    let json = oneshot_lang_json(&control, &home_env, &config_path);
+    assert_eq!(
+        python_entry(&json).get("version").and_then(|v| v.as_str()),
+        Some("3.11.9"),
+        "a regular pyvenv.cfg still supplies the version: {json}"
+    );
+
+    let fifo_venv = home_env.path().join("fifo-venv");
+    write_fifo_venv_project(&fifo_venv);
+    oneshot_lang_json(&fifo_venv, &home_env, &config_path);
+
+    let fifo_repo = home_env.path().join("fifo-repo");
+    write_fifo_git_repo(&fifo_repo);
+    let json = oneshot_lang_json(&fifo_repo, &home_env, &config_path);
+    python_entry(&json);
+}
+
+/// Send one newline-framed request and return the reply line.
+#[cfg(unix)]
+fn ipc_request(socket_path: &Path, request: &str) -> String {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+
+    let mut stream = UnixStream::connect(socket_path).expect("connect to agent");
+    stream
+        .set_read_timeout(Some(OPERATION_BUDGET * 2))
+        .expect("set read timeout");
+    stream
+        .write_all(request.as_bytes())
+        .and_then(|()| stream.write_all(b"\n"))
+        .and_then(|()| stream.flush())
+        .expect("send request");
+    let mut response = String::new();
+    BufReader::new(stream)
+        .read_line(&mut response)
+        .expect("read response");
+    response
+}
+
+// The daemon answers for FIFO-bearing repositories within its budget (a
+// stuck detection job would surface as a timeout error) and keeps answering.
+#[cfg(unix)]
+#[test]
+fn test_daemon_answers_for_fifo_repositories() {
+    let (home_env, config_path) = setup_test_env();
+    let daemon = RunningAgent::start(&home_env, &config_path);
+
+    let repo = home_env.path().join("fifo-repo");
+    write_fifo_git_repo(&repo);
+    write_fifo_venv_project(&repo);
+    let request = format!(
+        r#"{{"op":"lang","cwd":"{}"}}"#,
+        repo.display().to_string().replace('"', "\\\"")
+    );
+    for attempt in ["cold", "cached"] {
+        let response = ipc_request(&daemon.socket_path, &request);
+        let json: serde_json::Value = serde_json::from_str(&response)
+            .unwrap_or_else(|e| panic!("{attempt} reply is not JSON ({e}): {response:?}"));
+        python_entry(&json);
     }
 }

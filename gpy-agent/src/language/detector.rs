@@ -252,8 +252,7 @@ fn walk_directory(path: &Path, include_file_sizes: bool) -> Vec<(Language, u64)>
             Box::new(move |result| {
                 if let Ok(entry) = result {
                     let entry_path = entry.path();
-                    // `is_dir()` follows symlinks, so dir symlinks are skipped (hyperpolyglot parity).
-                    if !entry_path.is_dir()
+                    if is_regular_file(&entry)
                         && let Ok(Some(language)) = detect_language(entry_path)
                     {
                         let bytes = if include_file_sizes {
@@ -291,7 +290,7 @@ fn detect_language(path: &Path) -> std::io::Result<Option<Language>> {
         return Ok(Some(*only_candidate));
     }
 
-    let contents = read_capped(path)?;
+    let contents = crate::fs_util::read_regular_file_capped(path, READ_LIMIT)?;
     Ok(Language::pick(path, &contents, READ_LIMIT))
 }
 
@@ -331,19 +330,14 @@ fn strip_suffix_extensions(path: &Path) -> Option<std::path::PathBuf> {
     Some(path.with_file_name(stripped))
 }
 
-/// Reads at most [`READ_LIMIT`] bytes from `path`.
-///
-/// # Errors
-/// If the file cannot be opened or read.
-fn read_capped(path: &Path) -> std::io::Result<Vec<u8>> {
-    use std::io::Read as _;
-
-    let limit = u64::try_from(READ_LIMIT).unwrap_or(u64::MAX);
-    let mut contents = Vec::new();
-    std::fs::File::open(path)?
-        .take(limit)
-        .read_to_end(&mut contents)?;
-    Ok(contents)
+/// Whether a walk entry is a regular file, following symlinks. Directory
+/// symlinks are skipped (hyperpolyglot parity), and FIFOs, sockets and devices
+/// never reach a content read. Only symlinks cost a `stat`.
+fn is_regular_file(entry: &ignore::DirEntry) -> bool {
+    entry.file_type().is_some_and(|file_type| {
+        file_type.is_file()
+            || (file_type.is_symlink() && entry.path().metadata().is_ok_and(|meta| meta.is_file()))
+    })
 }
 
 /// Folds per-file detections into per-canonical-name metrics.
