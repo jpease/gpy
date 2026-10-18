@@ -196,12 +196,12 @@ else
 end
 rm -rf "$t4"
 
-# 5. GPY-owned regular prompt + backup: old prompt restored
+# 5. GPY-owned regular prompt (a legacy install's copy) + backup: old prompt restored
 set -l t5 (mktemp -d)
 set -l t5_fn "$t5/config/fish/functions"
 mkdir -p "$t5_fn"
 set -l t5_prompt "$t5_fn/fish_prompt.fish"
-printf '%s\n' "function fish_prompt; # gpy prompt implementation; end" >"$t5_prompt"
+cp fish/functions/fish_prompt.fish "$t5_prompt"
 set -l t5_backup "$t5_fn/fish_prompt.fish.backup.20260101_000000"
 printf '%s\n' "function fish_prompt; echo restored_old; end" >"$t5_backup"
 __gpy_test_uninstall "$isolated_bin/uninstall.fish" "$t5"

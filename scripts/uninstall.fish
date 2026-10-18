@@ -220,9 +220,15 @@ function uninstall_custom_prompt
             echo "fish_prompt.fish is a symlink to $linked_target; leaving untouched"
         end
     else if test -f "$prompt_function_file"
-        if grep -q gpy "$prompt_function_file"
+        # Early installers copied the GPY prompt in as a regular file. Every GPY
+        # prompt ever shipped dispatches segments with these two lines; anything
+        # else (including a prompt that merely mentions gpy) is the user's.
+        if grep -Eq '^[[:space:]]*for segment in \$__enabled_segments[[:space:]]*$' "$prompt_function_file"
+            and grep -Eq '^[[:space:]]*if functions -q segment_\{\$segment\}_render[[:space:]]*$' "$prompt_function_file"
             rm "$prompt_function_file"
             echo "Removed GPY fish_prompt implementation"
+        else
+            echo "fish_prompt.fish is not a GPY prompt; leaving untouched"
         end
     end
 

@@ -635,7 +635,10 @@ sh /tmp/gpy-uninstall.sh                    # or download uninstall.fish the sam
 ### Fish Prompt Restoration
 
 If your `fish_prompt.fish` is an unrelated custom prompt or symlink, the uninstaller
-preserves it byte-for-byte and leaves all backups untouched.
+preserves it byte-for-byte and leaves all backups untouched. The uninstaller removes
+only GPY's prompt symlink or a regular-file copy of GPY's own prompt (one that runs
+GPY's `for segment in $__enabled_segments` dispatch); a prompt that merely mentions
+GPY is yours and stays.
 
 When the prompt destination is absent (or becomes absent after removing the GPY
 symlink/implementation), the uninstaller restores the newest backup by comparing the
