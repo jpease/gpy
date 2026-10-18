@@ -1674,9 +1674,17 @@ fn watcher_follows_a_user_override_above_a_plugin_theme() {
         wait_for_icon("U", &|| fs::write(&override_path, icon_theme("U")).unwrap()),
         "a new user override must replace the plugin theme"
     );
+    // Re-deleting a gone file makes no event, so if the OS drops or coalesces
+    // the delete (seen under FSEvents load), each poll also rewrites an
+    // unrelated file in the watched user themes dir: a reload on that event
+    // must still resolve the plugin theme.
+    let unrelated = override_path.with_file_name("unrelated.txt");
+    let nudges = std::cell::Cell::new(0_u32);
     assert!(
         wait_for_icon("P", &|| {
             let _ = fs::remove_file(&override_path);
+            nudges.set(nudges.get() + 1);
+            fs::write(&unrelated, nudges.get().to_string()).unwrap();
         }),
         "removing the override must fall back to the plugin theme"
     );
