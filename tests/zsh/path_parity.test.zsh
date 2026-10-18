@@ -105,7 +105,7 @@ source "$ROOT/zsh/gpy.zsh"
 # A git render through the agent makes it write the instant cache for this repo.
 __gpy_request git "$PWD" ansi true "" true >/dev/null
 resolved="$(realpath "$SHELL_E2E_REPO" 2>/dev/null || echo "$SHELL_E2E_REPO")"
-key="$(__gpy_path_to_cache_key "$resolved")"
+__gpy_path_to_cache_key "$resolved" key
 written() { ls "$XDG_CACHE_HOME/gpy/instant-prompts/$key".git*.zsh >/dev/null 2>&1; }
 if shell_e2e_poll 5 written; then
     pass "the agent's cache file name starts with zsh's key for the repo ($key)"
@@ -127,7 +127,7 @@ git -C "$odd_repo" add tracked.txt
 git -C "$odd_repo" commit -qm init
 __gpy_request git "$odd_repo" ansi true "" true >/dev/null
 odd_resolved="$(realpath "$odd_repo")"
-odd_key="$(__gpy_path_to_cache_key "$odd_resolved")"
+__gpy_path_to_cache_key "$odd_resolved" odd_key
 odd_written() { ls "$XDG_CACHE_HOME/gpy/instant-prompts/$odd_key".git*.zsh >/dev/null 2>&1; }
 if shell_e2e_poll 5 odd_written; then
     pass "the agent's cache file name matches zsh's key for a repo with ? and | in its path ($odd_key)"
@@ -159,9 +159,10 @@ else
 fi
 # The encoder's escape rules, exercised on characters the repo path lacks.
 odd="$tmp/under_score dir:with colons"
-case "$(__gpy_path_to_cache_key "$odd")" in
+__gpy_path_to_cache_key "$odd" odd_encoded
+case "$odd_encoded" in
     *"under__score_wdir_cwith_wcolons") pass "the encoder escapes _ / : and space injectively" ;;
-    *) fail "unexpected encoding for '$odd': $(__gpy_path_to_cache_key "$odd")" ;;
+    *) fail "unexpected encoding for '$odd': $odd_encoded" ;;
 esac
 
 test_finish "zsh path resolution and cache keys agree with the binary"

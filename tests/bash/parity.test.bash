@@ -80,7 +80,8 @@ git -C "$tmpdir" commit --allow-empty -m init -q \
 
 tmpdir_real=$(realpath "$tmpdir" 2>/dev/null || echo "$tmpdir")
 # Cache files are keyed by prev_bg token; a read with no prev_bg resolves "none".
-cache_key="$(__gpy_path_to_cache_key "$tmpdir_real")"
+cache_key=""
+__gpy_path_to_cache_key "$tmpdir_real" cache_key
 cache_file="$cache_dir/$cache_key.git.none.bash"
 
 sentinel="cached-git-output-sentinel"
@@ -171,7 +172,8 @@ echo "=== Non-Git Language Cache Tests ==="
 nongit=$(mktemp -d)
 touch "$nongit/package.json"
 nongit_real=$(realpath "$nongit" 2>/dev/null || echo "$nongit")
-nongit_key="$(__gpy_path_to_cache_key "$nongit_real")"
+nongit_key=""
+__gpy_path_to_cache_key "$nongit_real" nongit_key
 
 lang_file="$cache_dir/$nongit_key.lang.none.bash"
 lang_sentinel="cached-lang-output-sentinel"
@@ -244,7 +246,8 @@ echo "✓ prev_bg token derivation matches Rust"
 pb_repo=$(mktemp -d)
 git -C "$pb_repo" init -q
 pb_real=$(realpath "$pb_repo" 2>/dev/null || echo "$pb_repo")
-pb_key="$(__gpy_path_to_cache_key "$pb_real")"
+pb_key=""
+__gpy_path_to_cache_key "$pb_real" pb_key
 echo "blue-render" > "$cache_dir/$pb_key.git.blue.bash"
 echo "none-render" > "$cache_dir/$pb_key.git.none.bash"
 

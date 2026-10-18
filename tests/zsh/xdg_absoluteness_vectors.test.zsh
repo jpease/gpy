@@ -54,7 +54,7 @@ while IFS=$'\t' read -r value_col abs_col _rest; do
             ;;
     esac
 
-    actual=$(unset GPY_AGENT_SOCKET_PATH XDG_CACHE_HOME; export HOME="$FAKE_HOME" XDG_RUNTIME_DIR="$value"; __gpy_runtime_root)
+    actual=$(unset GPY_AGENT_SOCKET_PATH XDG_CACHE_HOME; export HOME="$FAKE_HOME" XDG_RUNTIME_DIR="$value"; __gpy_runtime_root actual; print -r -- "$actual")
     check "vector $vector_count ($value_col) runtime root" "$expected_root" "$actual"
 
     actual=$(unset GPY_AGENT_SOCKET_PATH XDG_CACHE_HOME; export HOME="$FAKE_HOME" XDG_RUNTIME_DIR="$value"; __gpy_ipc_endpoint)

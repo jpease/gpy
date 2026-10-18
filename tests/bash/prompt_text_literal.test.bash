@@ -75,7 +75,9 @@ check "IPC git render" "$ipc_git" "$branch"
 
 suffix="$(__gpy_cache_variant_suffix git true true)"
 resolved_root="$(cd "$SHELL_E2E_REPO" && pwd -P)"
-cache_file="$cache_dir/$(__gpy_path_to_cache_key "$resolved_root").$suffix.none.bash"
+resolved_key=""
+__gpy_path_to_cache_key "$resolved_root" resolved_key
+cache_file="$cache_dir/$resolved_key.$suffix.none.bash"
 if shell_e2e_poll 3 test -f "$cache_file"; then
     cached="$(__gpy_read_instant_cache "$suffix" "$SHELL_E2E_REPO" "")"
     check "instant-cache git hit" "$cached" "$branch"

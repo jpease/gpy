@@ -45,7 +45,7 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/gpy-knobs.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 export XDG_CACHE_HOME="$tmp/cache"
 mkdir -p "$tmp/repo/.git" "$XDG_CACHE_HOME/gpy/instant-prompts"
-key=$(__gpy_path_to_cache_key "$(realpath "$tmp/repo")")
+__gpy_path_to_cache_key "$(realpath "$tmp/repo")" key
 entry="$XDG_CACHE_HOME/gpy/instant-prompts/$key.git.none.zsh"
 print -rn -- cached >"$entry"
 export GPY_GIT_INSTANT_CACHE_TTL_SECONDS=soon

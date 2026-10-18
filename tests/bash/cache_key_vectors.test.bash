@@ -44,7 +44,8 @@ while IFS=$'\t' read -r input_col expected_col stem_col _rest; do
 
     CASE_COUNT=$((CASE_COUNT + 1))
     real_input="$(unescape_input "$input_col")"
-    actual="$(__gpy_path_to_cache_key "$real_input")"
+    actual=""
+    __gpy_path_to_cache_key "$real_input" actual
     if [[ "$actual" == "$expected_col" ]]; then
         echo "PASS: case $CASE_COUNT ($input_col)"
     else

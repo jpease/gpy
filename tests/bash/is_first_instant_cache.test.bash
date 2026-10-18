@@ -45,7 +45,8 @@ mkdir -p "$FAKE_REPO/.git"
 cd "$FAKE_REPO" || exit 1
 
 RESOLVED_ROOT="$(realpath "$FAKE_REPO" 2>/dev/null || echo "$FAKE_REPO")"
-CACHE_KEY="$(__gpy_path_to_cache_key "$RESOLVED_ROOT")"
+CACHE_KEY=""
+__gpy_path_to_cache_key "$RESOLVED_ROOT" CACHE_KEY
 
 # Distinct sentinel bytes per variant so a mismatch is unambiguous.
 printf 'GIT-NORMAL' >"$CACHE_DIR/$CACHE_KEY.git.none.bash"

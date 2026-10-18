@@ -49,7 +49,7 @@ mkdir -p "$CACHE_DIR"
 REPO="$TMP_DIR/myrepo"
 mkdir -p "$REPO/.git"
 RESOLVED_ROOT=$(realpath "$REPO" 2>/dev/null || echo "$REPO")
-CACHE_KEY=$(__gpy_path_to_cache_key "$RESOLVED_ROOT")
+__gpy_path_to_cache_key "$RESOLVED_ROOT" CACHE_KEY
 
 export GPY_GIT_INSTANT_CACHE_TTL_SECONDS=5
 export GPY_LANGUAGE_CACHE_TTL_SECONDS=30

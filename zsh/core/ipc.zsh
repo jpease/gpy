@@ -78,27 +78,26 @@ function __gpy_ipc_endpoint() {
     print -r -- "/tmp/gpy/gpy.sock"
 }
 
-# Mirrors the agent's paths::runtime_root_for.
+# Mirrors the agent's paths::runtime_root_for. Writes into variable $1 so hot
+# paths need no `$(...)` fork.
 function __gpy_runtime_root() {
-    local home
+    local __gpy_rr_home
     if [[ -n "${XDG_RUNTIME_DIR:-}" && "${XDG_RUNTIME_DIR:-}" == /* ]]; then
-        print -r -- "$XDG_RUNTIME_DIR/gpy"
-        return
+        printf -v "$1" '%s' "$XDG_RUNTIME_DIR/gpy"
+    elif [[ -n "${XDG_CACHE_HOME:-}" && "${XDG_CACHE_HOME:-}" == /* ]]; then
+        printf -v "$1" '%s' "$XDG_CACHE_HOME/gpy"
+    elif __gpy_home __gpy_rr_home; then
+        printf -v "$1" '%s' "$__gpy_rr_home/.cache/gpy"
+    else
+        printf -v "$1" '%s' "/tmp/gpy"
     fi
-    if [[ -n "${XDG_CACHE_HOME:-}" && "${XDG_CACHE_HOME:-}" == /* ]]; then
-        print -r -- "$XDG_CACHE_HOME/gpy"
-        return
-    fi
-    if __gpy_home home; then
-        print -r -- "$home/.cache/gpy"
-        return
-    fi
-    print -r -- "/tmp/gpy"
 }
 
 # The file name is the PID the agent signals; doorbell flags live beside it.
 function __gpy_shell_registry_dir() {
-    print -r -- "$(__gpy_runtime_root)/shells"
+    local root
+    __gpy_runtime_root root
+    print -r -- "$root/shells"
 }
 function __gpy_shell_registry_file() {
     print -r -- "$(__gpy_shell_registry_dir)/$$"
@@ -121,7 +120,8 @@ function __gpy_untrack_shell_for_agent_recovery() {
     rm -f "$file" "$file.reload" "$file.reregister" 2>/dev/null || true
     # (N): an unmatched glob must not print "no matches found" on exit.
     local throttle_dir
-    throttle_dir="$(__gpy_runtime_root)/refresh-throttle"
+    __gpy_runtime_root throttle_dir
+    throttle_dir+="/refresh-throttle"
     rm -f "$throttle_dir"/$$.*(N) 2>/dev/null || true
 }
 
@@ -322,16 +322,15 @@ function __gpy_find_git_root() {
     return 1
 }
 
-# Must match the agent's injective encoding; escape _ first.
+# Cache key for path $1 into variable $2. Must match the agent's injective
+# encoding; escape _ first.
 function __gpy_path_to_cache_key() {
-    # `local path` would shadow zsh's PATH-tied array.
-    local raw_path=$1
-    local key="${raw_path//_/__}"
-    key="${key//\//_s}"
-    key="${key//\\/_b}"
-    key="${key//:/_c}"
-    key="${key// /_w}"
-    print -r -- "$key"
+    local __gpy_pk_key="${1//_/__}"
+    __gpy_pk_key="${__gpy_pk_key//\//_s}"
+    __gpy_pk_key="${__gpy_pk_key//\\/_b}"
+    __gpy_pk_key="${__gpy_pk_key//:/_c}"
+    __gpy_pk_key="${__gpy_pk_key// /_w}"
+    printf -v "$2" '%s' "$__gpy_pk_key"
 }
 
 # Rewrites the key in place: unchanged up to 200 chars, else 50-char chunks
@@ -386,7 +385,7 @@ function __gpy_instant_cache_present() {
     local base=$1 cwd=${2:-$PWD} key_path cache_dir cache_key
     __gpy_instant_cache_key_path "$base" "$cwd" key_path || return 1
     cache_dir=$(__gpy_instant_cache_dir) || return 1
-    cache_key=$(__gpy_path_to_cache_key "$key_path")
+    __gpy_path_to_cache_key "$key_path" cache_key
     __gpy_chunk_cache_key cache_key
     local -a hits=("$cache_dir/$cache_key.$base."*.zsh(N) "$cache_dir/$cache_key.${base}_"*.zsh(N))
     (( ${#hits} > 0 ))
@@ -407,7 +406,7 @@ function __gpy_read_instant_cache() {
     # The ANSI bakes in the fg:prev_bg chevron, so the key includes prev_bg;
     # fall back to `.none` and let the caller trigger a refresh.
     local cache_key token
-    cache_key=$(__gpy_path_to_cache_key "$key_path")
+    __gpy_path_to_cache_key "$key_path" cache_key
     __gpy_chunk_cache_key cache_key
     token=$(__gpy_prev_bg_token "$prev_bg")
     # `.ansi` files are fish's and must never reach PROMPT.
@@ -499,14 +498,10 @@ function __gpy_sync_data_request() {
 function __gpy_cache_status_stale() { (( ($1 & 2) != 0 )); }
 function __gpy_cache_status_variant() { (( ($1 & 4) != 0 )); }
 
+# Epoch ms into variable $1.
 function __gpy_now_ms() {
     integer __gpy_ms=$(( EPOCHREALTIME * 1000 ))
-    print -r -- $__gpy_ms
-}
-
-# On disk because segments run in subshells that can't keep in-memory state.
-function __gpy_refresh_throttle_dir() {
-    print -r -- "$(__gpy_runtime_root)/refresh-throttle"
+    printf -v "$1" '%s' "$__gpy_ms"
 }
 
 # Stamp filename for throttle bucket $1 into $2. A bucket of up to 200 bytes
@@ -543,14 +538,17 @@ function __gpy_maybe_refresh() {
     local op=$1 root=$2 cache_suffix=$3 is_last=${4:-} prev_bg=${5:-} is_first=${6:-} throttle_key_extra=${7:-}
     __gpy_agent_enabled || return 0
 
-    local dir bucket stamp_name stamp stamped="" last_ms=0 now_ms
-    dir=$(__gpy_refresh_throttle_dir)
+    local dir bucket stamp_name stamp stamped="" last_ms=0 now_ms path_key
+    # On disk because segments run in subshells that can't keep in-memory state.
+    __gpy_runtime_root dir
+    dir+="/refresh-throttle"
     # The dot-free fields lead, so the bucket stays injective; the encoded
     # path has no spaces, so it is everything after the stamp's first space.
-    bucket="$op.$cache_suffix.$throttle_key_extra.$(__gpy_path_to_cache_key "$root")"
+    __gpy_path_to_cache_key "$root" path_key
+    bucket="$op.$cache_suffix.$throttle_key_extra.$path_key"
     __gpy_refresh_stamp_name "$bucket" stamp_name
     stamp="$dir/$stamp_name"
-    now_ms=$(__gpy_now_ms)
+    __gpy_now_ms now_ms
     [[ -r "$stamp" ]] && IFS= read -r -d '' stamped <"$stamp"
     [[ "${stamped#* }" == "$bucket" ]] && last_ms=${stamped%% *}
     [[ "$last_ms" == <-> ]] || last_ms=0
@@ -800,7 +798,9 @@ function __gpy_debug_paths() {
         cache_root="<unresolved>"
     fi
 
-    print -r -- "runtime_root=$(__gpy_runtime_root)"
+    local runtime_root
+    __gpy_runtime_root runtime_root
+    print -r -- "runtime_root=$runtime_root"
     print -r -- "socket=$socket"
     print -r -- "shell_registry_dir=$(__gpy_shell_registry_dir)"
     print -r -- "cache_root=$cache_root"

@@ -44,7 +44,7 @@ while IFS=$'\t' read -r input_col expected_col stem_col _rest; do
 
     vector_count=$((vector_count + 1))
     real_input=$(unescape_input "$input_col")
-    actual=$(__gpy_path_to_cache_key "$real_input")
+    __gpy_path_to_cache_key "$real_input" actual
     if [[ "$actual" == "$expected_col" ]]; then
         print -r -- "PASS: vector $vector_count ($input_col)"
     else
