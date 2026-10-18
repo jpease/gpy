@@ -339,8 +339,8 @@ tail -f /tmp/gpy-debug.log
 ### Test IPC Connection
 
 ```fish
-# From Fish shell, test IPC manually
-echo '{"op":"ping"}' | socat - UNIX-CONNECT:~/.cache/gpy/gpy.sock
+# From Fish shell, test IPC manually against the resolved socket
+echo '{"op":"ping"}' | socat - UNIX-CONNECT:(__gpy_ipc_endpoint)
 # Should respond: {"ack":true}
 ```
 
@@ -388,11 +388,15 @@ The agent will automatically reload the theme configuration.
 
 ## Socket Location
 
-The agent socket location follows this priority:
+The agent socket location follows this priority (the first that applies wins):
 
-1. `$XDG_RUNTIME_DIR/gpy/gpy.sock` (if XDG_RUNTIME_DIR is set)
-2. `$XDG_CACHE_HOME/gpy/gpy.sock` (if XDG_CACHE_HOME is set)
-3. `~/.cache/gpy/gpy.sock` (fallback)
+1. `--socket <path>` on `gpy-agent start`, `stop` and `status`, or `$GPY_AGENT_SOCKET_PATH` (empty counts as unset); every shell and command must see the same value
+2. `$XDG_RUNTIME_DIR/gpy/gpy.sock` (if XDG_RUNTIME_DIR is set to an absolute path)
+3. `$XDG_CACHE_HOME/gpy/gpy.sock` (if XDG_CACHE_HOME is set to an absolute path)
+4. `~/.cache/gpy/gpy.sock`
+5. `/tmp/gpy/gpy.sock` (no home directory)
+
+There is no `config.toml` key for the socket. The agent only uses a socket directory that is a real directory you own; see [Troubleshooting § IPC/Socket Issues](troubleshooting.md#ipcsocket-issues).
 
 To find the current socket:
 
