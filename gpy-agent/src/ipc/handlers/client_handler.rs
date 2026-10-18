@@ -232,12 +232,13 @@ impl ClientHandler {
             return;
         };
 
-        // Honor `git.enabled` / `git.skip_paths` like the IPC git request.
-        let skipped = {
-            let current = self.render.config_manager.get();
-            !current.git.enabled || current.git.is_path_skipped(&git_root)
-        };
-        if skipped {
+        if !self
+            .render
+            .config_manager
+            .get()
+            .git
+            .is_enabled_for(&git_root)
+        {
             return;
         }
 

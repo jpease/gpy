@@ -154,7 +154,7 @@ fn handle_oneshot_git_parsed(request: &OneshotRequest) -> Result<String> {
     let request_path = Path::new(&request.path);
     let canonical_request_path =
         std::fs::canonicalize(request_path).unwrap_or_else(|_| request_path.to_path_buf());
-    if !config.git.enabled || config.git.is_path_skipped(&canonical_request_path) {
+    if !config.git.is_enabled_for(&canonical_request_path) {
         let response = Response::Error {
             message: "Git segment disabled via config".to_owned(),
         };

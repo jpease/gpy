@@ -105,30 +105,17 @@ pub fn handle_file_event(ctx: &AgentContext, event: &DebouncedEvent, config: &Co
     debug_log!("agent", "handle_file_event called: {:?}", event);
     match &event.event {
         FileEvent::Git { paths } => {
-            if !config.agent.live_updates || !config.git.enabled {
-                debug_log!(
-                    "agent",
-                    "Skipping git event (live_updates={}, git.enabled={})",
-                    config.agent.live_updates,
-                    config.git.enabled
-                );
+            if !config.agent.live_updates {
+                debug_log!("agent", "Skipping git event (live_updates=false)");
                 return;
             }
 
             debug_log!("agent", "Git event for: {paths:?}");
 
             // `event.repo` is canonical, so the cache `*_canonical` fast paths apply.
-            let git_root = event.repo.clone();
-            if config.git.is_path_skipped(&git_root) {
-                debug_log!(
-                    "agent",
-                    "Skipping git event for {} (git.skip_paths)",
-                    git_root.display()
-                );
-                return;
-            }
-            let paths_hint = git_paths_hint(paths, &git_root);
-            refresh_and_notify_coalesced(ctx, &git_root, config, paths_hint.as_deref());
+            let git_root = &event.repo;
+            let paths_hint = git_paths_hint(paths, git_root);
+            refresh_and_notify_coalesced(ctx, git_root, config, paths_hint.as_deref());
         }
         FileEvent::Language { path } => {
             debug_log!("agent", "Language event for: {}", path.display());
@@ -371,14 +358,24 @@ pub(super) fn refresh_and_notify_if_changed(
     }
 }
 
-/// Per-repo-serialized [`refresh_and_notify_if_changed`]; production callers must
-/// use this. Follow-up passes force a full scan since the original hint is stale.
+/// Per-repo-serialized [`refresh_and_notify_if_changed`]; production callers
+/// (watcher events, reconcile ticks) must use this, as it applies the
+/// [`GitSettings::is_enabled_for`](crate::config::GitSettings::is_enabled_for)
+/// gate. Follow-up passes force a full scan since the original hint is stale.
 pub(super) fn refresh_and_notify_coalesced(
     ctx: &AgentContext,
     git_root: &Path,
     config: &Config,
     paths_hint: Option<&[PathBuf]>,
 ) {
+    if !config.git.is_enabled_for(git_root) {
+        debug_log!(
+            "agent",
+            "Skipping git refresh for {} (git.enabled/git.skip_paths)",
+            git_root.display()
+        );
+        return;
+    }
     run_coalesced(&ctx.dispatch_guard, git_root, |is_follow_up| {
         let hint = if is_follow_up { None } else { paths_hint };
         refresh_and_notify_if_changed(ctx, git_root, config, hint);
@@ -784,7 +781,11 @@ fn ui_refresh_required(old: &crate::config::UiSettings, new: &crate::config::UiS
         || old_transient_prompt != new_transient_prompt
 }
 
-/// Subprocess/watcher fields (`timeout_seconds`, `skip_paths`, `watch_worktree`) are excluded.
+/// Whether a `[git]` change needs cached git prompts re-rendered and a reload repaint.
+/// `timeout_seconds` and `watch_worktree` only affect later scans. `skip_paths` is
+/// excluded too: it is a gate, not render input. Every scan and cache publication
+/// (including the regeneration this triggers) checks it, so a change only alters
+/// what later requests and refreshes may scan or publish.
 fn git_refresh_required(
     old: &crate::config::GitSettings,
     new: &crate::config::GitSettings,
@@ -1005,8 +1006,8 @@ pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, con
             continue;
         }
 
-        if config.git.enabled
-            && let Some(root) = git_root.as_ref()
+        if let Some(root) = git_root.as_ref()
+            && config.git.is_enabled_for(root)
             && let Some(status) = ctx.cache.get(root)
         {
             for prev_bg in [None, Some(git_prev_bg)] {

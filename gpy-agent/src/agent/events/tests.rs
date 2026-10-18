@@ -1456,6 +1456,31 @@ fn theme_change_regenerates_git_caches_for_active_path() {
     );
 }
 
+/// A repo cached before it was skipped must not get its git cache republished on reload.
+#[test]
+fn theme_change_does_not_publish_git_caches_for_skipped_repo() {
+    use crate::git::RepositoryState;
+    use std::collections::HashMap;
+
+    let (_tmp, repo) = create_temp_repo();
+    let cache_tmp = tempdir().expect("cache dir");
+    let ctx = make_hermetic_ctx(cache_tmp.path());
+
+    ctx.registry.register(4321, Some(repo.clone()));
+    ctx.cache
+        .set(&repo, status(0, RepositoryState::Clean), HashMap::new());
+
+    let mut config = Config::default();
+    config.git.skip_paths = vec![repo.to_string_lossy().into_owned()];
+    regenerate_instant_caches_for_theme_change(&ctx, &config);
+
+    let files = cache_file_names(cache_tmp.path());
+    assert!(
+        !files.iter().any(|f| f.contains(".git")),
+        "a skipped repo must not get git caches: {files:?}"
+    );
+}
+
 #[test]
 fn show_icons_toggle_regenerates_git_caches_without_caps() {
     use crate::git::RepositoryState;

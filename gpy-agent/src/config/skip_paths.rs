@@ -63,9 +63,16 @@ struct Cached {
 static CACHE: Mutex<Option<Cached>> = Mutex::new(None);
 
 impl GitSettings {
-    /// Whether `git.skip_paths` skips `path` (pass a canonical path).
+    /// Whether Git detection may run for `path` (pass a canonical path):
+    /// `git.enabled` and not under `git.skip_paths`. Every Git status scan and
+    /// Git cache publication entry point, foreground or background, must check this.
     #[must_use]
-    pub fn is_path_skipped(&self, path: &Path) -> bool {
+    pub fn is_enabled_for(&self, path: &Path) -> bool {
+        self.enabled && !self.is_path_skipped(path)
+    }
+
+    /// Whether `git.skip_paths` skips `path` (pass a canonical path).
+    fn is_path_skipped(&self, path: &Path) -> bool {
         if self.skip_paths.is_empty() {
             return false;
         }
