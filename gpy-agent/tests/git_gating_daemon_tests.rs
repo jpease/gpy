@@ -274,3 +274,50 @@ fn skip_root_created_or_retargeted_while_running_takes_effect() {
         "a retargeted skip root must stop matching its old target"
     );
 }
+
+/// `skip_paths` is matched against the repository root: an entry at the root
+/// skips the repo for direct requests from a subdirectory and for background
+/// work alike, while an entry below the root skips neither.
+#[test]
+fn skip_paths_matches_the_repository_root() {
+    let env = CliTestEnv::new().expect("cli env");
+    let root_entry = create_repo(&env, "rootentry");
+    let sub_entry = create_repo(&env, "subentry");
+    for repo in [&root_entry, &sub_entry] {
+        std::fs::create_dir(repo.join("sub")).expect("create subdirectory");
+    }
+    write_config(
+        &env,
+        &format!(
+            "skip_paths = [\"{}\", \"{}\"]",
+            root_entry.display(),
+            sub_entry.join("sub").display()
+        ),
+    );
+
+    let daemon = Daemon::start(&env);
+    let _root_client = daemon.register_client(&root_entry.join("sub"));
+    let _sub_client = daemon.register_client(&sub_entry.join("sub"));
+
+    assert!(
+        wait_until(WAIT_TIMEOUT, POLL_INTERVAL, || !git_cache_files(
+            &env, "subentry"
+        )
+        .is_empty()),
+        "background work must scan a repo whose skip entry lies below its root"
+    );
+    assert!(
+        !daemon.git_skipped(&sub_entry.join("sub")),
+        "a direct request from inside a skip entry below the root must not be skipped"
+    );
+    assert!(
+        daemon.git_skipped(&root_entry.join("sub")),
+        "a direct request from a subdirectory of a skipped root must be skipped"
+    );
+    std::thread::sleep(SEVERAL_TICKS);
+    assert_eq!(
+        git_cache_files(&env, "rootentry"),
+        Vec::<PathBuf>::new(),
+        "background work must never publish a repo whose root is skipped"
+    );
+}

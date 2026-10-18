@@ -149,12 +149,16 @@ fn handle_oneshot_git_parsed(request: &OneshotRequest) -> Result<String> {
         return Ok(String::new());
     }
 
-    // Match against the canonical path (best effort), like the IPC `SafePath`,
-    // so `~/` and symlinked `git.skip_paths` entries apply here too.
+    // `skip_paths` gates the repository root, like the agent. Resolved from the
+    // canonical path (best effort), as with the IPC `SafePath`, so `~/` and
+    // symlinked entries apply here too.
     let request_path = Path::new(&request.path);
     let canonical_request_path =
         std::fs::canonicalize(request_path).unwrap_or_else(|_| request_path.to_path_buf());
-    if !config.git.is_enabled_for(&canonical_request_path) {
+    let git_allowed = config.git.enabled
+        && crate::git::find_repo_root(&canonical_request_path)
+            .is_none_or(|root| config.git.is_enabled_for(&root));
+    if !git_allowed {
         let response = Response::Error {
             message: "Git segment disabled via config".to_owned(),
         };

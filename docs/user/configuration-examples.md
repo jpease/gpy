@@ -68,13 +68,13 @@ Combine a few `[git]` keys to keep the prompt responsive in a huge or partially-
 ```toml
 # ~/.config/gpy/config.toml
 [git]
-skip_paths = ["~/work/monorepo/vendor", "/mnt/network-share"]
+skip_paths = ["~/work/huge-monorepo", "/mnt/network-share"]
 max_ahead_behind = 20
 stash_enabled = false
 timeout_seconds = 3
 ```
 
-`skip_paths` disables git detection entirely under those trees. `max_ahead_behind` caps the displayed ahead/behind counter (a capped count renders with a trailing `+`, e.g. `↓100+`); it limits the number shown, not the git work. `stash_enabled = false` skips the extra `git stash list` subprocess call. `timeout_seconds` fails fast on a slow repo instead of stalling the prompt.
+`skip_paths` disables git detection for every repository whose root is at or under those paths. `max_ahead_behind` caps the displayed ahead/behind counter (a capped count renders with a trailing `+`, e.g. `↓100+`); it limits the number shown, not the git work. `stash_enabled = false` skips the extra `git stash list` subprocess call. `timeout_seconds` fails fast on a slow repo instead of stalling the prompt.
 
 ---
 
