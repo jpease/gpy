@@ -21,7 +21,9 @@ pub(crate) mod parse;
 mod style;
 
 pub use error::{Result, TemplateError};
-pub use eval::{MapResolver, RenderContext, Span, SpanKind, VariableResolver, render};
+pub use eval::{
+    MapResolver, RenderContext, Span, SpanKind, VariableResolver, check_template_controls, render,
+};
 pub use style::canonical_ansi_name;
 pub(crate) use style::parse_color;
 #[cfg(test)]

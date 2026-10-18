@@ -91,7 +91,12 @@ cache keeps a separate file per format. The integrations pin the prompt options
 that escaping relies on: `shopt -s promptvars` in Bash, and `prompt_subst`,
 `prompt_percent` and `no_prompt_bang` in Zsh. The clock's live-time token
 (`\D{…}`/`%D{…}`) is the only agent text left for the shell to expand. Fish
-prints its prompt literally and receives the unescaped `ansi` format.
+prints its prompt literally and receives the unescaped `ansi` format. In every
+format the agent also strips terminal control characters (ESC, BEL and the other
+C0/C1 controls) from resolved values and from theme template text, so neither
+can emit escape sequences; theme template text keeps only newline, and
+`gpy theme validate` rejects themes whose templates contain any other control
+character (`gpy-agent/src/template/eval.rs`).
 
 **The agent trusts whoever can open its socket.** The socket is chmod'ed to
 `0600` immediately after bind. That mode does not stop anyone who can write the

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::{ValidationError, ValidationErrorKind};
-use crate::template::{Palette, RenderContext, VariableResolver, render};
+use crate::template::{Palette, RenderContext, VariableResolver, check_template_controls, render};
 use crate::theme::ThemeConfig;
 
 /// Resolver that returns a non-empty placeholder for every variable, so all
@@ -87,22 +87,25 @@ fn validate_style_values(
     let mut entries: Vec<(&String, &String)> = styles.iter().collect();
     entries.sort_unstable();
     for (key, value) in entries {
-        render(&format!("[x]({value})"), &ctx).map_err(|error| ValidationError {
-            field_path: format!("{prefix}.{key}"),
-            kind: ValidationErrorKind::TemplateRenderFailed {
-                segment,
-                template: value.clone(),
-                source: error,
-            },
-        })?;
+        check_template_controls(value)
+            .and_then(|()| render(&format!("[x]({value})"), &ctx).map(drop))
+            .map_err(|error| ValidationError {
+                field_path: format!("{prefix}.{key}"),
+                kind: ValidationErrorKind::TemplateRenderFailed {
+                    segment,
+                    template: escape_controls(value),
+                    source: error,
+                },
+            })?;
     }
     Ok(())
 }
 
-/// Render `format` against a placeholder resolver and `palette`, and report the first error.
+/// Reject terminal controls in `format`, render it against a placeholder
+/// resolver and `palette`, and report the first error.
 ///
 /// # Errors
-/// Returns `Err` with the segment name and template error if rendering fails.
+/// Returns `Err` with the segment name and template error if either check fails.
 fn validate_one(
     segment: &'static str,
     format: &str,
@@ -110,16 +113,29 @@ fn validate_one(
 ) -> Result<(), ValidationError> {
     let resolver = PlaceholderResolver;
     let ctx = RenderContext::new(&resolver).with_palette(palette.clone());
-    render(format, &ctx)
-        .map(|_| ())
+    check_template_controls(format)
+        .and_then(|()| render(format, &ctx).map(drop))
         .map_err(|error| ValidationError {
             field_path: format!("segments.{segment}.format"),
             kind: ValidationErrorKind::TemplateRenderFailed {
                 segment,
-                template: format.to_owned(),
+                template: escape_controls(format),
                 source: error,
             },
         })
+}
+
+/// Echo `text` with control characters as `\u{…}` so an error message never replays them.
+fn escape_controls(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch.is_control() {
+            escaped.extend(ch.escape_unicode());
+        } else {
+            escaped.push(ch);
+        }
+    }
+    escaped
 }
 
 #[cfg(test)]
@@ -168,6 +184,46 @@ mod tests {
             err.contains("nonsuch"),
             "error must name the unknown color: {err}"
         );
+    }
+
+    #[test]
+    fn err_for_terminal_control_in_format_without_echoing_it() {
+        let mut theme = ThemeConfig::default();
+        theme.segments.directory.format = Some("\u{1b}]0;title\u{7}$path".to_owned());
+        let err = validate_segment_templates(&theme, &Palette::default()).unwrap_err();
+        assert_eq!(err.field_path, "segments.directory.format");
+        assert!(matches!(
+            err.kind,
+            ValidationErrorKind::TemplateRenderFailed {
+                source: crate::template::TemplateError::ControlCharacter { code: 0x1b, .. },
+                ..
+            }
+        ));
+        let message = err.to_string();
+        assert!(
+            !message.chars().any(char::is_control),
+            "message replays control characters: {message:?}"
+        );
+    }
+
+    #[test]
+    fn ok_for_newline_in_format() {
+        let mut theme = ThemeConfig::default();
+        theme.segments.directory.format = Some("[$path](bold cyan)\n".to_owned());
+        assert!(validate_segment_templates(&theme, &Palette::default()).is_ok());
+    }
+
+    #[test]
+    fn err_for_terminal_control_in_style_value() {
+        let mut theme = ThemeConfig::default();
+        theme
+            .segments
+            .git
+            .git_style
+            .insert("conflicts".into(), "fg:red\u{7}".into());
+        let err = validate_segment_templates(&theme, &Palette::default()).unwrap_err();
+        assert_eq!(err.field_path, "segments.git.git_style.conflicts");
+        assert!(!err.to_string().chars().any(char::is_control));
     }
 
     #[test]
