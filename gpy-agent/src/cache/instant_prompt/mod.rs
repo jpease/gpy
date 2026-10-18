@@ -13,6 +13,7 @@ use crate::formatter::{
 };
 use crate::git::RepositoryStatus;
 use crate::ipc::Response;
+use crate::language::venv::PythonVenv;
 use crate::template::{Color, Palette, parse_color};
 use crate::theme::ThemeConfig;
 use crate::{Error, Result};
@@ -207,7 +208,7 @@ impl InstantPromptCache {
         pos: SegmentPosition,
         prev_bg: Option<&str>,
         palette: &Palette,
-        virtual_env: Option<&Path>,
+        python_venv: Option<&PythonVenv>,
     ) -> Result<bool> {
         let project_root = find_project_root(path);
         let key = path_to_cache_key(&project_root);
@@ -227,7 +228,7 @@ impl InstantPromptCache {
                 &project_root,
                 color,
                 palette,
-                virtual_env,
+                python_venv,
             ) {
                 Ok(prompts) => prompts,
                 Err(e) => {
@@ -263,7 +264,7 @@ impl InstantPromptCache {
         theme: &ThemeConfig,
         prev_bg: Option<&str>,
         palette: &Palette,
-        virtual_env: Option<&Path>,
+        python_venv: Option<&PythonVenv>,
     ) -> Result<bool> {
         let mut wrote_any = false;
         let mut first_err = None;
@@ -276,7 +277,7 @@ impl InstantPromptCache {
                 pos,
                 prev_bg,
                 palette,
-                virtual_env,
+                python_venv,
             ) {
                 Ok(wrote) => wrote_any |= wrote,
                 Err(e) => {
@@ -515,7 +516,7 @@ fn render_language_prompts(
     root: &Path,
     prev_bg: Option<Color>,
     palette: &Palette,
-    virtual_env: Option<&Path>,
+    python_venv: Option<&PythonVenv>,
 ) -> Result<DialectPrompts> {
     let ctx = RenderContext::new(config, theme, pos)
         .with_palette(palette.clone())
@@ -526,7 +527,7 @@ fn render_language_prompts(
         theme,
         &config.language,
         Some(root),
-        virtual_env,
+        python_venv,
     );
 
     let response = Response::Language { languages: langs };

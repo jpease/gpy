@@ -233,7 +233,7 @@ fn refresh_language_for(
             theme,
             prev_bg,
             &palette,
-            stashed_venv.as_deref(),
+            stashed_venv.as_ref(),
         ) {
             Ok(changed) => wrote |= changed,
             Err(e) => {

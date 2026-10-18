@@ -540,3 +540,79 @@ fn test_nongit_subdirectory_inherits_project_language() {
         "a non-git docs/ subdirectory must inherit the project's node: {stdout}"
     );
 }
+
+/// Run `oneshot lang --format json` at `cwd` and return the parsed output.
+#[cfg(unix)]
+fn oneshot_lang_json(cwd: &Path, home: &TempDir, config_path: &Path) -> serde_json::Value {
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_gpy-agent"));
+    command.args(["oneshot", "lang", "--cwd"]);
+    command.arg(cwd);
+    command.args(["--format", "json"]);
+    configure_command_env(&mut command, home, config_path);
+    let output = command.output().expect("Failed to execute gpy-agent");
+    assert!(
+        output.status.success(),
+        "oneshot lang failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("Failed to parse JSON")
+}
+
+// A project `.venv` is repository content: rendering reads its `pyvenv.cfg`
+// but never runs its interpreter, and without a usable version shows none.
+#[cfg(unix)]
+#[test]
+fn test_discovered_venv_interpreter_is_never_executed() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (home_env, config_path) = setup_test_env();
+    let cfgs: [Option<&str>; 3] = [
+        None,
+        Some("home = /x\nversion_info = final\n"),
+        Some("home = /x\ninclude-system-site-packages = false\n"),
+    ];
+    for (index, cfg) in cfgs.into_iter().enumerate() {
+        let project = home_env.path().join(format!("venv-project-{index}"));
+        let bin = project.join(".venv/bin");
+        fs::create_dir_all(&bin).expect("Failed to create .venv/bin");
+        setup_python_project(&project);
+        fs::write(project.join("pyproject.toml"), "[project]\nname = \"x\"\n")
+            .expect("Failed to write pyproject.toml");
+        let marker = project.join("executed");
+        let python = bin.join("python");
+        fs::write(
+            &python,
+            format!(
+                "#!/bin/sh\nprintf executed > '{}'\nprintf 'Python 3.11.9\\n'\n",
+                marker.display()
+            ),
+        )
+        .expect("Failed to write fixture python");
+        fs::set_permissions(&python, fs::Permissions::from_mode(0o755))
+            .expect("Failed to chmod fixture python");
+        if let Some(contents) = cfg {
+            fs::write(project.join(".venv/pyvenv.cfg"), contents).expect("Failed to write cfg");
+        }
+
+        let json = oneshot_lang_json(&project, &home_env, &config_path);
+
+        assert!(
+            !marker.exists(),
+            "the project interpreter must not run (pyvenv.cfg {cfg:?})"
+        );
+        let languages = json
+            .get("languages")
+            .and_then(|v| v.as_array())
+            .expect("languages should be an array");
+        let python_entry = languages
+            .iter()
+            .find(|l| l.get("name").and_then(|n| n.as_str()) == Some("python"))
+            .unwrap_or_else(|| panic!("python must still be detected: {json}"));
+        assert!(
+            python_entry
+                .get("version")
+                .is_none_or(serde_json::Value::is_null),
+            "no usable pyvenv.cfg version means no version (pyvenv.cfg {cfg:?}): {json}"
+        );
+    }
+}

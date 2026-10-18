@@ -5,6 +5,7 @@
 use crate::config::{LanguageSettings, LanguageTheme};
 use crate::ipc::LanguageInfo;
 use crate::language::detector::{DetectedLanguage, get_language_color_from_theme};
+use crate::language::venv::PythonVenv;
 use crate::theme::ThemeConfig;
 use std::collections::HashMap;
 use std::path::Path;
@@ -101,6 +102,8 @@ pub fn build_language_display_info(
 }
 
 /// Like [`build_language_display_info`], resolving versions from `version_cwd`.
+/// Python uses `python_venv` when the caller already resolved one, else a
+/// project venv under `version_cwd`.
 ///
 /// # Panics
 /// If the constant fallback color fails to parse.
@@ -110,7 +113,7 @@ pub fn build_language_display_info_at(
     theme: &ThemeConfig,
     language_cfg: &LanguageSettings,
     version_cwd: Option<&Path>,
-    virtual_env: Option<&Path>,
+    python_venv: Option<&PythonVenv>,
 ) -> Vec<LanguageInfo> {
     if !language_cfg.enabled {
         return Vec::new();
@@ -138,13 +141,22 @@ pub fn build_language_display_info_at(
                     PROBE_CALL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                     // The daemon never inherits an activated venv; prefer the project one.
-                    if is_python
-                        && let Some(cwd) = version_cwd
-                        && let Some(venv) =
-                            crate::language::venv::resolve_python_venv(cwd, virtual_env)
-                        && let Some(version) = crate::language::venv::read_venv_version(&venv)
-                    {
-                        return Some(version);
+                    if is_python && let Some(cwd) = version_cwd {
+                        let discovered;
+                        let venv = if python_venv.is_some() {
+                            python_venv
+                        } else {
+                            discovered = crate::language::venv::resolve_python_venv(cwd, None);
+                            discovered.as_ref()
+                        };
+                        if let Some(venv) = venv {
+                            let version = venv.version();
+                            // Without a usable `pyvenv.cfg` a project venv shows no
+                            // version rather than the unrelated PATH interpreter's.
+                            if version.is_some() || matches!(venv, PythonVenv::Discovered(_)) {
+                                return version;
+                            }
+                        }
                     }
                     // Prefer `.ruby-version` when no mise config governs the dir: mise often
                     // ignores idiomatic version files for ruby and reports the global one.

@@ -144,7 +144,8 @@ No migration tooling is provided for this narrow case.
 *global* interpreter rather than the project's venv. Detection now prefers, in order: a
 forwarded `$VIRTUAL_ENV` (new field), then a project-local `.venv`/`venv` directory, then
 the bare `python` fallback (unchanged). A located venv's version is read from `pyvenv.cfg`
-(no subprocess), falling back to invoking the venv's interpreter. The filesystem `.venv`
+(no subprocess); only a forwarded venv falls back to invoking its interpreter, since a
+project-local venv is repository content. The filesystem `.venv`
 detection needs no shell change and applies to every render path; the forwarded field only
 enriches venvs activated outside the project dir or under a non-standard name. To keep the
 background refresh (which has no IPC request context) consistent with the synchronous reply,

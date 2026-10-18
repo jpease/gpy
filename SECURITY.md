@@ -165,6 +165,11 @@ installers enforce, and how to check a download by hand, is in
 - Commands are built as argument vectors through `std::process::Command`, so
   repository, branch and path names are passed as arguments and never spliced
   into a shell string.
+- Python version detection reads a project-local `.venv`/`venv` only through
+  its `pyvenv.cfg`. A venv's interpreter is run to read its version only for
+  the environment your shell activated and forwarded (`VIRTUAL_ENV`, or a
+  non-base conda env); a project venv without a usable `pyvenv.cfg` version
+  shows no version.
 
 ### Dependencies
 
