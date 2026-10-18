@@ -53,7 +53,12 @@ KPID=$!
 exec 8>"$SANDBOX/kill.fifo"
 print -r -- 'print ready' >&8
 wait_dir
-kill -9 $KPID; exec 8>&-; wait $KPID 2>/dev/null
+# $! may be the backgrounding subshell rather than zsh itself; kill the PID
+# the dir is named after, and wait until it is really gone before the sweep.
+kdirs=("$SANDBOX"/tmp/gpy_cache_*(N))
+kzsh=${${kdirs[1]:t}#gpy_cache_}; kzsh=${kzsh%%_*}
+kill -9 $kzsh $KPID 2>/dev/null; exec 8>&-; wait $KPID 2>/dev/null
+for i in {1..50}; do kill -0 $kzsh 2>/dev/null || break; sleep 0.1; done
 n=$(leftovers)
 [[ $n == 1 ]] || fail "killed shell: expected 1 leftover before sweep, got $n"
 run_zsh 'exit'
