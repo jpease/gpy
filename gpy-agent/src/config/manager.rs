@@ -299,7 +299,12 @@ impl ConfigManager {
         on_reload: Option<ConfigReloadCallback>,
         rearm: Box<dyn Fn() + Send + Sync + 'static>,
     ) -> Box<dyn Fn(crate::watcher::DebouncedEvent) + Send + Sync + 'static> {
-        Box::new(move |_event| {
+        Box::new(move |event| {
+            // The config dir is watched recursively, but `gpy/themes` belongs to
+            // the theme watcher; reloading here too races it into a second doorbell.
+            if event.is_theme_only() {
+                return;
+            }
             Self::reload_and_apply(&config, &reload_gate, &candidates, on_reload.as_ref());
             // A retarget (`ln -sf other config.toml`) lands as an event in the
             // lexical parent; follow the link to its new directory.
@@ -591,6 +596,56 @@ mod tests {
         manager.stop_watching();
 
         manager.stop_watching();
+    }
+
+    /// The config dir is watched recursively, yet an edit under `gpy/themes`
+    /// belongs to the theme watcher and must not reload config; a config edit
+    /// still does, which also proves the watcher was live for the theme edit.
+    #[test]
+    fn config_watcher_leaves_theme_edits_to_the_theme_watcher() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let themes = temp.path().join("gpy").join("themes");
+        std::fs::create_dir_all(&themes).expect("create themes dir");
+        let theme_path = themes.join("mine.toml");
+        std::fs::write(&theme_path, "[ui]\n").expect("write theme");
+        let config_path = temp.path().join("gpy").join("config.toml");
+        std::fs::write(&config_path, "[git]\nenabled = true\n").expect("write config");
+
+        let manager = ConfigManager::from_path(&config_path).expect("manager");
+        let reloads = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&reloads);
+        manager.set_reload_callback(Arc::new(move |_old: &Config, _new: &Config| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }));
+        manager
+            .start_watching(Duration::from_millis(100))
+            .expect("start watching");
+        std::thread::sleep(Duration::from_millis(500));
+
+        std::fs::write(&theme_path, "[ui]\n# edited\n").expect("edit theme");
+        // Several flushes of the 100ms debounce, so a theme reload would land.
+        std::thread::sleep(Duration::from_millis(1500));
+        std::fs::write(&config_path, "[git]\nenabled = false\n").expect("edit config");
+        let mut applied = false;
+        for _ in 0_i32..500_i32 {
+            if !manager.get().git.enabled {
+                applied = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        manager.stop_watching();
+
+        assert!(applied, "the config edit must reload");
+        assert_eq!(
+            reloads.load(Ordering::SeqCst),
+            1,
+            "only the config edit may reload config"
+        );
     }
 
     #[test]

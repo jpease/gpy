@@ -12,11 +12,13 @@ mod common;
 
 use common::{AgentStopGuard, CliTestEnv, wait_until};
 use gpy_agent::ipc::protocol::CONFIG_RELOAD_JSON;
+use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 /// A running daemon on its own config tree, stopped on drop.
 struct Daemon {
@@ -116,6 +118,56 @@ impl Daemon {
 
     fn remove(&self, relative: &str) {
         fs::remove_file(self.env.config_dir().join(relative)).expect("remove file");
+    }
+}
+
+static DOORBELLS: AtomicUsize = AtomicUsize::new(0);
+
+extern "C" fn count_doorbell(_signal: i32) {
+    DOORBELLS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// This test process registered with the daemon as a shell, counting each
+/// `SIGURG` doorbell in its handler. A signal arriving while the handler runs
+/// stays pending and runs it again, so separate rings are never merged.
+struct DoorbellCounter {
+    previous: SigAction,
+}
+
+impl DoorbellCounter {
+    fn register(daemon: &Daemon) -> Self {
+        DOORBELLS.store(0, Ordering::Relaxed);
+        let handler = SigAction::new(
+            SigHandler::Handler(count_doorbell),
+            SaFlags::empty(),
+            SigSet::empty(),
+        );
+        // SAFETY: the handler only touches an atomic; restored on drop.
+        let previous = unsafe { sigaction(Signal::SIGURG, &handler) }.expect("install SIGURG");
+        let request = serde_json::json!({
+            "op": "register",
+            "pid": std::process::id(),
+            "cwd": daemon.cwd,
+        });
+        let response = daemon.request(&request.to_string());
+        assert!(
+            !response.contains("error"),
+            "registration failed: {response}"
+        );
+        Self { previous }
+    }
+
+    fn count() -> usize {
+        DOORBELLS.load(Ordering::Relaxed)
+    }
+}
+
+impl Drop for DoorbellCounter {
+    fn drop(&mut self) {
+        // SAFETY: restores the disposition `register` replaced.
+        unsafe {
+            let _ = sigaction(Signal::SIGURG, &self.previous);
+        }
     }
 }
 
@@ -285,5 +337,53 @@ fn config_reload_applies_an_in_place_theme_edit() {
     assert!(
         edited.contains("EDITED:"),
         "the edit must apply: {edited:?}"
+    );
+}
+
+/// Bound on a watched in-place theme save reaching a render: the 1 s debounce,
+/// up to 1 s more for the flush tick, plus slack for a loaded machine. Still
+/// below the 5 s theme debounce this replaced.
+const THEME_EDIT_LATENCY: Duration = Duration::from_secs(4);
+/// Long enough after an edit for every watcher to have flushed it.
+const DOORBELL_WINDOW: Duration = Duration::from_secs(6);
+
+/// With no explicit reload, an in-place save of the active theme reaches a
+/// render promptly and rings shells exactly once.
+#[test]
+fn watched_theme_edit_renders_promptly_and_rings_once() {
+    let env = palette_env("#123456");
+    // No clock segment: its minute repaint also rings `SIGURG`.
+    fs::write(
+        env.config_dir().join("config.toml"),
+        "[ui]\ntheme = \"audit\"\npalette = \"audit\"\nenabled_segments = [\"directory\"]\n",
+    )
+    .expect("write config");
+    let daemon = Daemon::start(env);
+    let _shell = DoorbellCounter::register(&daemon);
+    daemon.directory_matching_oneshot("before the edit");
+    // Let registration settle and the watchers arm before editing.
+    std::thread::sleep(Duration::from_millis(500));
+    let rang_before = DoorbellCounter::count();
+
+    daemon.write(
+        "themes/audit.toml",
+        "[ui]\n[segments.directory]\nformat = \"EDITED:$path\"\n",
+    );
+    let edited_at = Instant::now();
+    let rendered = wait_until(Duration::from_secs(15), Duration::from_millis(25), || {
+        daemon.directory().contains("EDITED:")
+    });
+    let latency = edited_at.elapsed();
+    assert!(rendered, "the theme edit never rendered");
+    assert!(
+        latency <= THEME_EDIT_LATENCY,
+        "the theme edit took {latency:?} to render"
+    );
+
+    std::thread::sleep(DOORBELL_WINDOW.saturating_sub(edited_at.elapsed()));
+    assert_eq!(
+        DoorbellCounter::count().saturating_sub(rang_before),
+        1,
+        "reload doorbells for one theme edit"
     );
 }

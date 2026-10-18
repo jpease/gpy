@@ -16,7 +16,7 @@ fn should_trigger_update(path: &Path) -> Option<PendingEvent> {
     super::should_trigger_update(path, &WatchRegistry::new())
 }
 
-/// The theme coordinator's 5s debounce exceeds the CLI's reload budget.
+/// A debounce longer than the CLI's 2s reload budget must not delay `stop`.
 #[test]
 fn stop_returns_promptly_regardless_of_debounce_window() {
     let mut coordinator = super::WatchCoordinator::new(

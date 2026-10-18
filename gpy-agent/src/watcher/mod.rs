@@ -145,6 +145,27 @@ pub struct DebouncedEvent {
     pub repo: PathBuf,
 }
 
+impl DebouncedEvent {
+    /// Whether every path behind this event lies in a `gpy/themes` tree, which
+    /// the theme watcher alone reloads.
+    #[must_use]
+    pub fn is_theme_only(&self) -> bool {
+        match &self.event {
+            FileEvent::Theme { .. } => true,
+            FileEvent::Git {
+                paths: GitPaths::Paths(paths),
+            } => paths
+                .iter()
+                .all(|path| !path_has_git_component(path) && is_in_gpy_themes(path)),
+            FileEvent::Git {
+                paths: GitPaths::WholeRepo,
+            }
+            | FileEvent::Language { .. }
+            | FileEvent::Config { .. } => false,
+        }
+    }
+}
+
 /// All watcher state, shared by the coordinators and filesystem watcher of one
 /// process. Fields are independently locked: they are read on separate hot
 /// paths and never need mutual consistency.
@@ -656,8 +677,8 @@ impl WatchCoordinator {
         let callback_for_thread = Arc::clone(&callback_arc);
         let flush_handle = std::thread::spawn(move || {
             while !stop_flag_thread.load(Ordering::Relaxed) {
-                // Short sleep slices keep `stop` fast: the theme coordinator's
-                // 5s debounce would otherwise exceed the CLI's 2s reload budget.
+                // Short sleep slices keep `stop` fast: a long debounce would
+                // otherwise exceed the CLI's 2s reload budget.
                 sleep_unless_stopped(debounce_interval, &stop_flag_thread);
                 if stop_flag_thread.load(Ordering::Relaxed) {
                     break;
@@ -914,6 +935,12 @@ fn path_after_last_git_component(path: &Path) -> Option<PathBuf> {
     )
 }
 
+/// Whether `path` is a `gpy/themes` directory or lies under one.
+fn is_in_gpy_themes(path: &Path) -> bool {
+    path_has_consecutive_components(path, "gpy", "themes")
+        || path_ends_with_components(path, "gpy", "themes")
+}
+
 fn classify_event(path: &Path, registry: &WatchRegistry) -> Option<FileEvent> {
     if registry.is_registered_config_path(path) {
         return Some(FileEvent::Config {
@@ -927,10 +954,7 @@ fn classify_event(path: &Path, registry: &WatchRegistry) -> Option<FileEvent> {
 
     // Theme saves often go via temp file + rename, so any change under
     // gpy/themes invalidates.
-    if !is_in_git_dir
-        && (path_has_consecutive_components(path, "gpy", "themes")
-            || path_ends_with_components(path, "gpy", "themes"))
-    {
+    if !is_in_git_dir && is_in_gpy_themes(path) {
         return Some(FileEvent::Theme {
             path: path.to_path_buf(),
         });

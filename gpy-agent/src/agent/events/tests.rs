@@ -52,6 +52,7 @@ fn make_agent_context() -> AgentContext {
         dispatch_guard: Arc::new(RepoRefreshCoordinator::default()),
         watch_registry: Arc::new(crate::watcher::WatchRegistry::new()),
         theme_export_dir: temp_export_dir(),
+        announce_gate: Arc::new(Mutex::new(())),
     }
 }
 
@@ -103,6 +104,54 @@ fn supervisor_only_changes_ring_the_reload_doorbell() {
         );
         assert!(rings(old, new), "agent.supervisor.{field} must ring");
     }
+}
+
+/// A theme reload and a config reload racing on one stale export ring once
+/// between them: the gate makes the later one see the earlier one's export.
+#[test]
+#[serial_test::serial(global_ttl)]
+fn racing_theme_and_config_reloads_ring_once() {
+    let config = Config::default();
+    let mut ctx = make_agent_context();
+    // Resolved the way `reload` re-resolves it, so re-reading it changes nothing.
+    ctx.theme_manager = Arc::new(ThemeManager::new(config.ui.theme.as_str()).expect("theme"));
+    let racer = Mutex::new(None);
+    // Stands in for a swap that left the (empty) export stale; the config
+    // reload starts mid-swap and, ungated, would write that export and ring.
+    let swap = || {
+        let (ctx, config) = (ctx.clone(), config.clone());
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        *racer.lock().expect("racer lock") = Some(thread::spawn(move || {
+            let slot: SharedWatcherSlot = Arc::new(Mutex::new(None));
+            handle_config_reload(
+                &ctx,
+                &slot,
+                WatcherConfig::default(),
+                true,
+                &config,
+                &config,
+            )
+            .expect("config reload should succeed");
+            let _ = done_tx.send(());
+        }));
+        let _ = done_rx.recv_timeout(Duration::from_millis(300));
+        true
+    };
+
+    handle_theme_reload(&ctx, &swap);
+    racer
+        .lock()
+        .expect("racer lock")
+        .take()
+        .expect("config reload started")
+        .join()
+        .expect("config reload thread");
+
+    assert_eq!(
+        ctx.registry.notify_invocations(),
+        1,
+        "one theme change must ring once"
+    );
 }
 
 /// `path` as a `git` URL argument; `git` rejects Windows `\\?\` paths.
@@ -1101,6 +1150,7 @@ fn config_reload_disables_and_reenables_watcher() {
         dispatch_guard: Arc::new(RepoRefreshCoordinator::default()),
         watch_registry: Arc::new(crate::watcher::WatchRegistry::new()),
         theme_export_dir: temp_export_dir(),
+        announce_gate: Arc::new(Mutex::new(())),
     };
 
     let apply = |old_cfg: &Config, new_cfg: &Config| {
@@ -1450,6 +1500,7 @@ fn make_hermetic_ctx(cache_dir: &Path) -> AgentContext {
         dispatch_guard: Arc::new(RepoRefreshCoordinator::default()),
         watch_registry: Arc::new(crate::watcher::WatchRegistry::new()),
         theme_export_dir: temp_export_dir(),
+        announce_gate: Arc::new(Mutex::new(())),
     }
 }
 

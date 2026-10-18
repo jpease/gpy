@@ -46,6 +46,9 @@ pub struct AgentContext {
     pub watch_registry: Arc<crate::watcher::WatchRegistry>,
     /// Where reloads write the shell theme exports (the gpy cache dir in production).
     pub theme_export_dir: PathBuf,
+    /// Held by each config or theme reload over its theme reload and export
+    /// write, so one theme change is seen as new, and rung for, by one path.
+    pub announce_gate: Arc<Mutex<()>>,
 }
 
 /// Serializes [`refresh_and_notify_if_changed`] per repository so a stale scan
@@ -704,31 +707,20 @@ pub(super) fn create_watcher(
         .map(Arc::new)
 }
 
-/// Apply the config's theme: switch when the name changed, else reload the
-/// active name from wherever it now resolves, so a user override added or
-/// removed, or an edit the theme watcher has not applied yet, takes effect.
-/// Returns whether the theme changed (a new name, source, or content); an edit
-/// the watcher already applied reports `false`, so it rings shells only once.
+/// Switch to the config's theme when its name changed; returns whether it did.
 ///
-/// A reload that fails keeps the current theme, as the theme watcher does,
-/// rather than rejecting unrelated config changes.
+/// Runs outside [`AgentContext::announce_gate`]: `switch_theme` joins the theme
+/// poll thread, whose reloads take that gate.
 ///
 /// # Errors
 /// Returns an error when a newly selected theme cannot be loaded.
-fn maybe_switch_theme(
-    theme_manager: &Arc<ThemeManager>,
+fn switch_renamed_theme(
+    theme_manager: &ThemeManager,
     old_config: &Config,
     new_config: &Config,
 ) -> Result<bool> {
     if old_config.ui.theme == new_config.ui.theme {
-        return Ok(theme_manager.reload().unwrap_or_else(|error| {
-            crate::debug::warn_fallback(
-                &format!("Theme '{}' reload", new_config.ui.theme),
-                "keeping the current theme",
-                &error,
-            );
-            false
-        }));
+        return Ok(false);
     }
 
     debug_log!(
@@ -745,6 +737,22 @@ fn maybe_switch_theme(
         new_config.ui.theme
     );
     Ok(true)
+}
+
+/// Reload the active name from wherever it now resolves, so a user override
+/// added or removed, or an edit the theme watcher has not applied yet, takes
+/// effect. Returns whether the theme changed; an edit the watcher already
+/// applied reports `false`. A failed reload keeps the current theme, as the
+/// theme watcher does, rather than rejecting unrelated config changes.
+fn reload_active_theme(theme_manager: &ThemeManager, config: &Config) -> bool {
+    theme_manager.reload().unwrap_or_else(|error| {
+        crate::debug::warn_fallback(
+            &format!("Theme '{}' reload", config.ui.theme),
+            "keeping the current theme",
+            &error,
+        );
+        false
+    })
 }
 
 /// Whether a config reload changes the rendered prompt and shells should redraw.
@@ -992,19 +1000,18 @@ pub(super) fn handle_config_reload(
 ) -> Result<()> {
     // Loaded before the theme switch so a rejected palette leaves nothing half-applied.
     let palette = reload_palette(old_config, new_config)?;
-    let theme_changed = maybe_switch_theme(&ctx.theme_manager, old_config, new_config)?;
+    let theme_switched = switch_renamed_theme(&ctx.theme_manager, old_config, new_config)?;
     let palette_changed = palette.is_some_and(|palette| ctx.palette_cache.replace(palette));
 
-    // Theme export must be on disk before the reload doorbell.
-    let export_changed = crate::cache::theme_export::write_theme_export_to_dir(
-        &ctx.theme_export_dir,
-        &ctx.theme_manager,
-        new_config,
-    )
-    .unwrap_or_else(|e| {
-        debug_log!("agent", "Failed to write theme export cache: {}", e);
-        false
-    });
+    let (theme_changed, export_changed) = {
+        let _announcing = ctx
+            .announce_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let theme_changed = theme_switched || reload_active_theme(&ctx.theme_manager, new_config);
+        // Theme export must be on disk before the reload doorbell.
+        (theme_changed, write_theme_export(ctx, new_config))
+    };
 
     crate::language::version::set_version_cache_ttl(new_config.language.cache_ttl_hours.get());
     ctx.watch_registry
@@ -1037,6 +1044,38 @@ pub(super) fn handle_config_reload(
         reload_required,
     );
     Ok(())
+}
+
+/// Write the shell theme exports; returns whether any changed. A failure is
+/// logged and reported as unchanged.
+fn write_theme_export(ctx: &AgentContext, config: &Config) -> bool {
+    crate::cache::theme_export::write_theme_export_to_dir(
+        &ctx.theme_export_dir,
+        &ctx.theme_manager,
+        config,
+    )
+    .unwrap_or_else(|e| {
+        debug_log!("agent", "Failed to write theme export cache: {}", e);
+        false
+    })
+}
+
+/// Run a theme watcher or poll reload: `reload` swaps in the active theme and
+/// reports whether it changed. Under [`AgentContext::announce_gate`], so a
+/// change a concurrent config reload already applied, and rang for, reads as
+/// unchanged here; otherwise refresh the export and caches, then ring.
+pub(super) fn handle_theme_reload(ctx: &AgentContext, reload: &dyn Fn() -> bool) {
+    let _announcing = ctx
+        .announce_gate
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if !reload() {
+        return;
+    }
+    let config = ctx.config_manager.get();
+    write_theme_export(ctx, &config);
+    regenerate_instant_caches_for_theme_change(ctx, &config);
+    ctx.registry.notify_reload();
 }
 
 /// Re-render instant-prompt caches for every registered repo from cached data

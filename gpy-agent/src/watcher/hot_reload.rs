@@ -9,6 +9,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+/// Debounce for the config and theme watchers. ADR-0005 chose 5 s to fold an
+/// editor's multi-write save into one reload, but the debouncer's 1 s max-delay
+/// cap flushes sooner anyway, and a reload of unchanged content is a no-op;
+/// a longer window only slows the flush tick that delivers edits.
+pub const HOT_RELOAD_DEBOUNCE: Duration = Duration::from_secs(1);
+
 /// A fingerprint of a watched file's contents; `None` when unreadable.
 ///
 /// Content, not mtime: Windows `LastWriteTime` is too coarse (~2–15.6ms), so

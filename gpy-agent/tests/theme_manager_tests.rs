@@ -1357,7 +1357,7 @@ fn concurrent_export_never_pairs_one_themes_name_with_anothers_colors() {
     let manager = Arc::new(ThemeManager::new("race_a").unwrap());
     // `switch_theme` tears the watcher down and builds a new one every call,
     // and `WatchCoordinator::stop` joins a flush thread that only checks its
-    // stop flag once per debounce interval. At the 5s default that is 5s of
+    // stop flag once per debounce interval. At the 1s default that is 1s of
     // dead time per switch; a 10ms debounce keeps the loop hammering the state
     // lock, which is what the test is actually measuring.
     manager
@@ -1451,8 +1451,8 @@ fn theme_source_content_returns_raw_builtin_content() {
     );
 }
 
-/// The reload hook runs after the swap and outside the state lock, so it may
-/// read the manager (a hook under the lock would deadlock here).
+/// The reload hook's step swaps outside the state lock, so the hook may read
+/// the manager after it (a hook under the lock would deadlock here).
 #[test]
 #[serial]
 fn reload_hook_runs_after_swap_and_may_read_the_manager() {
@@ -1466,7 +1466,10 @@ fn reload_hook_runs_after_swap_and_may_read_the_manager() {
     let observed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let observed_in_hook = Arc::clone(&observed);
     let manager_in_hook = Arc::clone(&manager);
-    manager.set_reload_callback(Arc::new(move || {
+    manager.set_reload_callback(Arc::new(move |reload: &dyn Fn() -> bool| {
+        if !reload() {
+            return;
+        }
         let icon = manager_in_hook.get().ui.prompt_icon.to_string();
         observed_in_hook
             .lock()

@@ -6,6 +6,8 @@ Accepted (2024-11)
 
 Superseded in part by [ADR-0007](adr-0007-sigurg-doorbell-notifications.md): reloads are now a `<pid>.reload` flag file plus SIGURG instead of SIGUSR2.
 
+Debounce revised (2026-10): both watchers now use 1 s. The debouncer's 1 s max-delay cap already flushed a 5 s window after about 1 s, so 5 s never coalesced a save session; it only spaced the flush ticks, delaying theme edits by up to 6 s. A reload of unchanged content rings nothing, so an editor rewriting the same bytes costs no extra doorbell. Each path has one watcher: `themes/` the theme watcher, the rest of the config dir (`config.toml`, palettes) the config watcher.
+
 ## Context
 
 Users want to customize their prompt appearance (colors, icons, segments) without restarting the agent or shell. The editing experience should be:
