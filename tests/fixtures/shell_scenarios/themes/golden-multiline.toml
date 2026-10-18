@@ -1,0 +1,17 @@
+# Fixture theme for the cross-shell contract: the directory and git `format`s
+# carry a newline mid-segment, which every shell must draw as a line break.
+
+[ui]
+prompt_icon = ">"
+prompt_color = "white"
+two_line = false
+
+[segments.directory]
+format = "[ dir\n$path]($style)"
+text_color = "black"
+bg_color = "cyan"
+
+[segments.git]
+format = "[ git\n$branch]($style)"
+text_color = "black"
+bg_color = "green"

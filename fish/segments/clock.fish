@@ -52,7 +52,7 @@ function segment_clock_render --argument-names is_last is_first
         test "$is_last" = true; and set is_last_value true
         set -l is_first_value ""
         test "$is_first" = true; and set is_first_value true
-        set -l result (__gpy_request_clock $is_last_value $is_first_value "$__gpy_last_segment_bg")
+        set -l result (__gpy_request_clock $is_last_value $is_first_value "$__gpy_last_segment_bg" | string collect)
         if test -n "$result"
             printf '%s' (string replace -- (__gpy_clock_date_format) $now $result)
             # Only track bg when a pill rendered.

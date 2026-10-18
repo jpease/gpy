@@ -603,7 +603,7 @@ function __gpy_request --argument-names op cwd is_last prev_bg is_first --descri
         set -l lang_suffix (__gpy_cache_variant_suffix lang $is_last $is_first)
         set -l cached_result (__gpy_read_instant_cache $lang_suffix $cwd $prev_bg)
         if test $status -ne 1
-            echo $cached_result
+            printf '%s\n' $cached_result
             return 0
         end
     end

@@ -129,7 +129,7 @@ function __gpy_resolve_prompt_character --argument-names last_status
             set -g __gpy_char_output $__gpy_char_cache_val
         else if functions -q __gpy_request_character
             # ipc.fish is not sourced in disabled mode.
-            set -g __gpy_char_output (__gpy_request_character $char_success true $__gpy_last_segment_bg)
+            set -g __gpy_char_output (__gpy_request_character $char_success true $__gpy_last_segment_bg | string collect)
             # Never cache a failed render: the agent-down fallback must retry next prompt.
             if test -n "$__gpy_char_output"
                 set -g __gpy_char_cache_key $char_key
@@ -146,7 +146,7 @@ function __gpy_print_prompt_symbol
         set_color "$__root_prompt_color"
         printf "%s " "$__icon_root_prompt"
     else if test "$__gpy_char_agent_rendered" -eq 1
-        printf '%s' $__gpy_char_output
+        printf '%s' "$__gpy_char_output"
     else
         set_color "$__prompt_color"
         printf "%s " "$__icon_prompt"

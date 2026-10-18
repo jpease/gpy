@@ -50,8 +50,8 @@ function segment_language_render --argument-names is_last is_first
 
     # Exit code: 1 = miss; stale/variant bits read via __gpy_cache_status_*.
     set -l cache_suffix (__gpy_cache_variant_suffix lang $is_last $is_first)
-    set -l rendered_output (__gpy_read_instant_cache $cache_suffix "$root" $prev_bg)
-    set -l cache_status $status
+    set -l rendered_output (__gpy_read_instant_cache $cache_suffix "$root" $prev_bg | string collect)
+    set -l cache_status $pipestatus[1]
 
     if test "$cache_status" -eq 1
         # Entries exist only for other prev_bg contexts; refresh and wait for repaint.
