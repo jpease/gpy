@@ -25,14 +25,17 @@ pub static SOCKET_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
 /// `$XDG_CACHE_HOME/gpy`, `$HOME/.cache/gpy`, `/tmp/gpy` (matches Fish and server).
 ///
 /// # Errors
-/// Returns an error if the runtime directory cannot be created.
+/// Returns an error naming the runtime directory if it cannot be created.
 pub fn get_runtime_dir() -> Result<PathBuf> {
     let path = crate::paths::runtime_root_for(
         crate::paths::root_var("XDG_RUNTIME_DIR").as_deref(),
         crate::paths::root_var("XDG_CACHE_HOME").as_deref(),
         crate::paths::home_dir().as_deref(),
     );
-    std::fs::create_dir_all(&path)?;
+    std::fs::create_dir_all(&path).map_err(|e| crate::Error::Agent {
+        message: format!("cannot create runtime directory {}", path.display()),
+        source: Some(Box::new(e)),
+    })?;
     Ok(path)
 }
 

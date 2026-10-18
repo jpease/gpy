@@ -652,6 +652,49 @@ fn start_refuses_a_symlinked_runtime_dir() {
     );
 }
 
+/// `gpy-agent start` on the default socket fails naming `runtime` and the
+/// `io::ErrorKind` that `create_dir_all(runtime)` reports.
+fn assert_start_reports_runtime_dir_error(env: &CliTestEnv, xdg_runtime: &Path, runtime: &Path) {
+    let cause = std::fs::create_dir_all(runtime).expect_err("the runtime dir cannot be created");
+    let result = env
+        .run_gpy_agent_with_env(
+            &["start"],
+            &[
+                ("GPY_AGENT_SOCKET_PATH", std::ffi::OsStr::new("")),
+                ("XDG_RUNTIME_DIR", xdg_runtime.as_os_str()),
+            ],
+        )
+        .expect("spawn gpy-agent start");
+    assert_eq!(result.exit_code, 1_i32, "{result:?}");
+    assert!(
+        result.stderr.contains(&runtime.display().to_string()),
+        "the error names the runtime dir: {result:?}"
+    );
+    assert!(
+        result.stderr.contains(&cause.to_string()),
+        "the error carries the {:?} cause `{cause}`: {result:?}",
+        cause.kind()
+    );
+}
+
+#[test]
+fn start_reports_an_xdg_runtime_dir_that_is_a_regular_file() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let file = env.root().join("runtime-is-a-file");
+    std::fs::write(&file, "").expect("write runtime file");
+
+    assert_start_reports_runtime_dir_error(&env, &file, &file.join("gpy"));
+}
+
+#[test]
+fn start_reports_a_dangling_runtime_dir_symlink() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let runtime = env.xdg_runtime_dir().join("gpy");
+    std::os::unix::fs::symlink(env.root().join("missing"), &runtime).expect("dangling symlink");
+
+    assert_start_reports_runtime_dir_error(&env, env.xdg_runtime_dir(), &runtime);
+}
+
 #[test]
 fn start_refuses_an_explicit_socket_whose_directory_is_a_symlink() {
     let sandbox = AgentSandbox::new();
