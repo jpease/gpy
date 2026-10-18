@@ -734,3 +734,50 @@ fn exported_index_and_role_colors_reach_real_set_color() {
         skip_shell_or_fail_under_ci(Shell::Bash);
     }
 }
+
+/// A palette entry shadows an ANSI name for shell-drawn colors, as it does in
+/// the agent's renderer; an ANSI index still names the terminal's own color.
+#[test]
+fn exported_ansi_names_follow_the_palette_and_indices_do_not() {
+    use crate::config::types::ColorSpec;
+    use crate::template::Color;
+    use std::collections::HashMap;
+
+    let mut theme = ThemeConfig::default();
+    theme.segments.clock.bg_color = ColorSpec::new("red").expect("named color");
+    theme.segments.clock.text_color = ColorSpec::new("1").expect("index color");
+    let palette = Palette::new(HashMap::from([(
+        "red".to_owned(),
+        Color::Rgb {
+            r: 0xf3,
+            g: 0x8b,
+            b: 0xa8,
+        },
+    )]));
+    for shell in [Shell::Fish, Shell::Bash, Shell::Zsh] {
+        let export = theme_to_shell(
+            &theme,
+            "t",
+            &Config::default(),
+            shell,
+            &palette,
+            &BTreeMap::new(),
+        );
+        let clock_lines: Vec<&str> = export
+            .lines()
+            .filter(|line| line.contains("color_clock_"))
+            .collect();
+        assert!(
+            clock_lines
+                .iter()
+                .any(|l| l.contains("clock_bg") && l.contains("#f38ba8")),
+            "{shell:?}: red must take the palette's value: {clock_lines:?}"
+        );
+        assert!(
+            clock_lines
+                .iter()
+                .any(|l| l.contains("clock_fg") && !l.contains('#')),
+            "{shell:?}: index 1 must stay the terminal's color: {clock_lines:?}"
+        );
+    }
+}

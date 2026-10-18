@@ -38,6 +38,9 @@ Every spelling of an ANSI color follows the palette role for it: `purple` (SGR 3
 when no palette defines it) recolors with the `magenta` role, and `gray`/`grey`,
 `brblack` and `bright-black` with `bright_black`. See
 [Palette file format](#palette-file-format) for how a key answers its aliases.
+This holds for colors the shell draws itself (clock, hostname, status,
+delimiters) as well as agent-rendered segments. A 256-color index such as `1`
+never goes through the palette, so it always shows the terminal's own color.
 
 **base16 vs base24.** base16 schemes define slots base00–0F only; the bright slots
 (base12–17) are absent. When importing a base16 scheme the importer derives the

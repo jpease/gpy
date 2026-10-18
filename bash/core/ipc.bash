@@ -229,7 +229,8 @@ __gpy_send_json() {
     fi
 
     if [[ $read_status -eq 0 && -n "$response" ]]; then
-        echo "$response"
+        # The agent sends embedded newlines as RS (\036) to keep one reply line.
+        echo "${response//$'\036'/$'\n'}"
         return 0
     fi
 

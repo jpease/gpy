@@ -404,6 +404,17 @@ fn test_parse_wire_workspace_keeps_pid_and_cwd_raw() {
 }
 
 #[test]
+fn test_encode_reply_newlines_keeps_reply_on_one_line() {
+    let encoded = encode_reply_newlines("a\x1eb\nc\n\nd");
+    assert_eq!(encoded, "ab\x1ec\x1e\x1ed");
+    assert!(!encoded.contains('\n'));
+    assert!(matches!(
+        encode_reply_newlines("\x1b[31mplain\x1b[0m"),
+        std::borrow::Cow::Borrowed(_)
+    ));
+}
+
+#[test]
 fn test_parse_wire_duration_is_a_plain_field_copy() {
     let json = br#"{"op":"duration","duration_ms":65000,"format":"ansi","is_last":true}"#;
     let wire = parse_wire(json).expect("parse_wire failed");

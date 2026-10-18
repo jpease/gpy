@@ -372,7 +372,9 @@ impl ConnectionHandler {
         };
 
         let write_result = timeout(self.request_timeout(), async {
-            writer.write_all(payload.as_bytes()).await?;
+            writer
+                .write_all(protocol::encode_reply_newlines(&payload).as_bytes())
+                .await?;
             writer.write_all(b"\n").await?;
             writer.flush().await
         })

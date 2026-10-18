@@ -187,6 +187,9 @@ function __gpy_ipc_client_available() {
     [[ "$__gpy_nc_supports_unix" == 1 ]]
 }
 
+# Embedded reply newline: the agent sends `\n` as RS so a reply stays one line.
+typeset -g __gpy_nl=$'\n'
+
 # Prints the reply. Returns 0 on a complete reply, 1 when unreachable, 2 when
 # the request was sent but no complete reply arrived in budget (the caller
 # must not recompute via oneshot; it omits the segment).
@@ -232,7 +235,8 @@ function __gpy_send_json() {
     # it on a second connection.
     if (( zsocket_connected )); then
         if [[ $read_status -eq 0 && -n "$response" ]]; then
-            print -r -- "$response"
+            # The agent sends embedded newlines as RS (\036) to keep one reply line.
+            print -r -- "${response//$'\036'/${__gpy_nl}}"
             return 0
         fi
         return 2
@@ -263,7 +267,7 @@ function __gpy_send_json() {
     fi
 
     if [[ $read_status -eq 0 && -n "$response" ]]; then
-        print -r -- "$response"
+        print -r -- "${response//$'\036'/${__gpy_nl}}"
         return 0
     fi
 

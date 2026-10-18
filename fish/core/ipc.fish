@@ -111,7 +111,8 @@ function __gpy_ipc_read_complete_line --description 'Validate newline framing on
     set -l raw
     read -lz raw
     if test -n "$raw"; and string match -qr '\n$' -- "$raw"
-        printf '%s\n' (string trim --right --chars \n -- "$raw")
+        # The agent sends embedded newlines as RS (\x1e) to keep one reply line.
+        printf '%s\n' (string trim --right --chars \n -- "$raw" | string replace -a \x1e \n | string collect)
         return 0
     end
     return 1

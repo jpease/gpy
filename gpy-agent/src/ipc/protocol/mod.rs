@@ -347,6 +347,27 @@ fn validate_length(field_name: &str, value: &str, max_length: usize) -> Result<(
 /// flag files under `<runtime_root>/shells/`; wire messages unchanged from v1.
 pub const PROTOCOL_VERSION: u8 = 2;
 
+/// Stands in for `\n` inside a reply, which must stay one newline-terminated
+/// line. Shells map it back to `\n`. Backward compatible both ways: an older
+/// shell shows the (non-printing) byte, an older agent sends the raw newline.
+pub const REPLY_NEWLINE: char = '\x1e';
+
+/// Encode a reply body for the newline-terminated wire: drop any stray
+/// [`REPLY_NEWLINE`], then replace `\n` with it. Borrows when neither occurs.
+#[must_use]
+pub fn encode_reply_newlines(payload: &str) -> std::borrow::Cow<'_, str> {
+    if !payload.contains(['\n', REPLY_NEWLINE]) {
+        return std::borrow::Cow::Borrowed(payload);
+    }
+    std::borrow::Cow::Owned(
+        payload
+            .chars()
+            .filter(|&c| c != REPLY_NEWLINE)
+            .map(|c| if c == '\n' { REPLY_NEWLINE } else { c })
+            .collect(),
+    )
+}
+
 /// Raw wire mirror of [`Message`] with unvalidated `String`/`u32` fields, so
 /// parsing needs no I/O; [`resolve`] builds the validated types. Must stay
 /// byte-compatible with `Message`'s own `Deserialize` (including `#[serde(default)]`).
