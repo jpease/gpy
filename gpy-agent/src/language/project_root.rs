@@ -4,6 +4,7 @@
 //! so marker-less subdirectories (`docs/`) still match the shell pre-filters.
 
 use crate::cache::ttl_map::TtlMap;
+use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
 use crate::language::metadata::marker_file_names;
 use crate::language::version::MAX_TOOL_VERSION_ANCESTORS;
 use crate::watcher::multi_repo::MultiRepoWatcher;
@@ -37,8 +38,12 @@ impl ProjectRoot {
 /// Maximum request directories tracked by the non-git root memo.
 const NON_GIT_ROOT_CACHE_CAPACITY: usize = 512;
 
-/// Memoizes the non-git ancestor walk per canonical request directory.
-static NON_GIT_ROOT_CACHE: TtlMap<PathBuf, PathBuf> = TtlMap::new(NON_GIT_ROOT_CACHE_CAPACITY);
+/// Memoizes the non-git ancestor walk per canonical request directory. It
+/// expires with the language refresh interval, so a marker created or removed
+/// above a request directory is honored once a stale detection would be
+/// re-run anyway; non-git trees have no watcher to invalidate it sooner.
+static NON_GIT_ROOT_CACHE: TtlMap<PathBuf, PathBuf> =
+    TtlMap::with_ttl(NON_GIT_ROOT_CACHE_CAPACITY, LANGUAGE_REFRESH_INTERVAL);
 
 /// Resolve the language-detection root for `path`: git root, else nearest
 /// marker ancestor below `$HOME` (bounded by [`MAX_TOOL_VERSION_ANCESTORS`]), else `path`.
@@ -50,17 +55,32 @@ pub fn project_root(path: &Path) -> ProjectRoot {
 
 /// Memoized non-git half of [`project_root`].
 fn non_git_root(path: &Path) -> PathBuf {
+    memoized_non_git_root(path, || {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home_dir| home_dir.canonicalize().unwrap_or(home_dir))
+    })
+}
+
+/// [`resolve_non_git_root`] for canonical `path` through [`NON_GIT_ROOT_CACHE`];
+/// `home` is only consulted on a miss.
+fn memoized_non_git_root(path: &Path, home: impl FnOnce() -> Option<PathBuf>) -> PathBuf {
     let dir = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     if let Some(cached) = NON_GIT_ROOT_CACHE.get(&dir) {
         return cached;
     }
-
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home_dir| home_dir.canonicalize().unwrap_or(home_dir));
-    let root = resolve_non_git_root(&dir, home.as_deref());
+    let root = resolve_non_git_root(&dir, home().as_deref());
     NON_GIT_ROOT_CACHE.insert(dir, root.clone());
     root
+}
+
+/// Backdate `path`'s memoized root by `age` (test-only).
+#[cfg(test)]
+pub(crate) fn age_non_git_root_for_test(path: &Path, age: std::time::Duration) {
+    let dir = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if let Some(root) = NON_GIT_ROOT_CACHE.get(&dir) {
+        NON_GIT_ROOT_CACHE.insert_at(dir, root, std::time::SystemTime::now() - age);
+    }
 }
 
 /// Nearest marker ancestor of `dir`, else `dir` itself.
@@ -189,5 +209,32 @@ mod tests {
             scratch,
             "with no marker ancestor the request directory stays the root"
         );
+    }
+
+    /// A marker appearing or vanishing above a memoized directory is honored
+    /// once the language refresh interval passes; `$HOME` stays a boundary.
+    #[test]
+    fn memo_follows_ancestor_marker_changes_within_the_refresh_interval() {
+        let (_temp_dir, home) = canonical_temp_dir();
+        let project = home.join("project");
+        let docs = project.join("docs");
+        std::fs::create_dir_all(&docs).expect("docs dir");
+        std::fs::write(home.join("package.json"), "{}").expect("marker in home");
+        let resolve = || memoized_non_git_root(&docs, || Some(home.clone()));
+        let expire = || age_non_git_root_for_test(&docs, LANGUAGE_REFRESH_INTERVAL);
+
+        assert_eq!(
+            resolve(),
+            docs,
+            "no marker below $HOME: docs is its own root"
+        );
+
+        std::fs::write(project.join("Cargo.toml"), "").expect("project marker");
+        expire();
+        assert_eq!(resolve(), project, "a new ancestor marker is picked up");
+
+        std::fs::remove_file(project.join("Cargo.toml")).expect("remove marker");
+        expire();
+        assert_eq!(resolve(), docs, "a removed ancestor marker is dropped");
     }
 }

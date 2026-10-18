@@ -14,4 +14,6 @@ pub mod version;
 
 pub use detection_cache::DetectionCache;
 pub use detector::{DetectedLanguage, Detector};
+#[cfg(test)]
+pub(crate) use project_root::age_non_git_root_for_test;
 pub use project_root::{ProjectRoot, project_root};

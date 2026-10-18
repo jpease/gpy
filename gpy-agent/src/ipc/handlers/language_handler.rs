@@ -584,4 +584,53 @@ mod tests {
             "the instant cache must stay keyed by the request path"
         );
     }
+
+    /// A marker-less non-git subdirectory follows an ancestor marker appearing
+    /// and disappearing once its cached root and detection go stale.
+    #[test]
+    fn non_git_subdirectory_follows_ancestor_marker_changes() {
+        let (handler, _registry) = make_handler();
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let project = std::fs::canonicalize(temp_dir.path()).expect("canonicalize");
+        let docs = project.join("docs");
+        std::fs::create_dir_all(&docs).expect("docs dir");
+        std::fs::write(docs.join("README.md"), "# d\n").expect("README.md");
+        let names = |response: Response| match response {
+            Response::Language { languages } => languages
+                .into_iter()
+                .map(|lang| lang.name)
+                .collect::<Vec<_>>(),
+            other => panic!("unexpected response: {other:?}"),
+        };
+        let request = || {
+            handler
+                .handle(&language_detect_request(&docs))
+                .expect("docs request")
+        };
+        let go_stale = || {
+            crate::language::age_non_git_root_for_test(&docs, LANGUAGE_REFRESH_INTERVAL);
+            handler.language_cache.age_entry_for_test(
+                &docs,
+                LANGUAGE_REFRESH_INTERVAL.saturating_add(Duration::from_secs(1)),
+            );
+        };
+
+        assert_eq!(names(request()), Vec::<String>::new());
+
+        write_rust_project(&project);
+        go_stale();
+        assert_eq!(
+            names(request()),
+            ["rust"],
+            "a new ancestor marker is honored"
+        );
+
+        std::fs::remove_file(project.join("Cargo.toml")).expect("remove marker");
+        go_stale();
+        assert_eq!(
+            names(request()),
+            Vec::<String>::new(),
+            "a removed ancestor marker is dropped"
+        );
+    }
 }
