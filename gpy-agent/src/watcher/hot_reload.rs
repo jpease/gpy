@@ -13,14 +13,18 @@ use std::time::Duration;
 ///
 /// Content, not mtime: Windows `LastWriteTime` is too coarse (~2–15.6ms), so
 /// two quick writes would collide and the second be missed permanently.
-/// `DefaultHasher` is unstable across releases, but values are never persisted.
 pub fn content_fingerprint(path: &Path) -> Option<u64> {
+    Some(bytes_fingerprint(&std::fs::read(path).ok()?))
+}
+
+/// A fingerprint of `bytes`, comparable with [`content_fingerprint`].
+/// `DefaultHasher` is unstable across releases, but values are never persisted.
+pub fn bytes_fingerprint(bytes: &[u8]) -> u64 {
     use std::hash::Hasher as _;
 
-    let bytes = std::fs::read(path).ok()?;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    hasher.write(&bytes);
-    Some(hasher.finish())
+    hasher.write(bytes);
+    hasher.finish()
 }
 
 /// Parse a raw poll-interval env value into milliseconds; `None` when unset,
@@ -224,7 +228,55 @@ mod tests {
     #![allow(missing_docs)]
 
     use super::{HotReloadSlot, PollTarget, content_fingerprint, parse_poll_interval_ms};
+    use std::sync::{Arc, Mutex, PoisonError};
     use std::time::{Duration, Instant};
+
+    /// A same-length rewrite landing right after spawn (before the first tick)
+    /// must still reload: the baseline is captured before the thread starts.
+    #[test]
+    fn poll_detects_a_same_length_rewrite_written_right_after_spawn() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let file = temp.path().join("watched.toml");
+        std::fs::write(&file, "color = \"white\"\n").expect("write file");
+
+        let reloads = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&reloads);
+        let watched = file.clone();
+        let slot = HotReloadSlot::new();
+        slot.spawn_poll_thread(
+            Duration::from_millis(10),
+            Duration::from_millis(10),
+            PollTarget {
+                path_of: Box::new(move || Some(watched.clone())),
+                reload: Box::new(move |path| {
+                    let content = std::fs::read_to_string(path).unwrap_or_default();
+                    recorded
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push(content);
+                }),
+            },
+        );
+        std::fs::write(&file, "color = \"black\"\n").expect("rewrite file");
+
+        let deadline = Instant::now() + Duration::from_secs(6);
+        let seen = loop {
+            let seen = reloads
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .iter()
+                .any(|content| content.contains("black"));
+            if seen || Instant::now() > deadline {
+                break seen;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        slot.stop();
+        assert!(
+            seen,
+            "the poll fallback missed a same-length rewrite written right after spawn"
+        );
+    }
 
     /// Same-length payloads written close together must still read as a change.
     #[test]

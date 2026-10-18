@@ -68,14 +68,38 @@ impl Daemon {
         response
     }
 
-    /// The ANSI-rendered directory segment for the fixture directory.
+    /// The ANSI-rendered directory segment for the fixture directory, as the
+    /// last segment (the oneshot default).
     fn directory(&self) -> String {
         let request = serde_json::json!({
             "op": "directory",
             "cwd": self.cwd,
             "format": "ansi",
+            "is_last": true,
         });
         self.request(&request.to_string())
+    }
+
+    /// What a fresh `gpy-agent oneshot` renders for the same directory request.
+    fn oneshot_directory(&self) -> String {
+        let cwd = self.cwd.to_str().expect("utf-8 fixture path");
+        let result = self
+            .env
+            .run_gpy_agent(&["oneshot", "directory", "--cwd", cwd, "--format", "ansi"])
+            .expect("run oneshot");
+        result.assert_success("gpy-agent oneshot directory");
+        result.stdout
+    }
+
+    /// The daemon's directory render, asserted equal to a fresh oneshot's.
+    fn directory_matching_oneshot(&self, context: &str) -> String {
+        let daemon = self.directory();
+        assert_eq!(
+            daemon.trim_end(),
+            self.oneshot_directory().trim_end(),
+            "{context}: the daemon disagrees with a fresh oneshot"
+        );
+        daemon
     }
 
     /// Send `config_reload` and return whether the daemon acknowledged it.
@@ -88,6 +112,10 @@ impl Daemon {
         let path = self.env.config_dir().join(relative);
         fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
         fs::write(path, content).expect("write file");
+    }
+
+    fn remove(&self, relative: &str) {
+        fs::remove_file(self.env.config_dir().join(relative)).expect("remove file");
     }
 }
 
@@ -175,5 +203,87 @@ fn switching_to_unusable_palette_rejects_the_reload() {
     assert!(
         fixed.contains(SECOND_FG),
         "fixed palette applies: {fixed:?}"
+    );
+}
+
+const USER_OVERRIDE: &str = "[ui]\n[segments.directory]\nformat = \"USER_THEME:$path\"\n";
+
+/// Add then remove a user override for the active theme `name`, applying each
+/// with `config_reload`: the daemon must follow both and agree with a fresh
+/// oneshot each time, without a restart.
+fn assert_override_followed(daemon: &Daemon, name: &str) {
+    let override_file = format!("themes/{name}.toml");
+    let before = daemon.directory_matching_oneshot("before the override");
+    assert!(!before.contains("USER_THEME:"), "{name}: {before:?}");
+
+    daemon.write(&override_file, USER_OVERRIDE);
+    assert!(
+        daemon.reload(),
+        "{name}: reload after adding the override acks"
+    );
+    let overridden = daemon.directory_matching_oneshot("with the override");
+    assert!(
+        overridden.contains("USER_THEME:"),
+        "{name}: the user override must win: {overridden:?}"
+    );
+
+    daemon.remove(&override_file);
+    assert!(
+        daemon.reload(),
+        "{name}: reload after removing the override acks"
+    );
+    assert_eq!(
+        daemon.directory_matching_oneshot("after removing the override"),
+        before,
+        "{name}: removing the override must restore the lower-priority theme"
+    );
+}
+
+#[test]
+fn config_reload_follows_a_user_override_above_the_builtin_theme() {
+    let env = CliTestEnv::with_config("[ui]\ntheme = \"default\"\n").expect("create env");
+    // The harness seeds a user copy of `default`; this test needs the builtin.
+    fs::remove_file(env.themes_dir().join("default.toml")).expect("remove seeded theme");
+    let daemon = Daemon::start(env);
+    assert_override_followed(&daemon, "default");
+}
+
+#[test]
+fn config_reload_follows_a_user_override_above_a_plugin_theme() {
+    let env = CliTestEnv::with_config("[ui]\ntheme = \"community\"\n").expect("create env");
+    let plugin = env.plugins_dir().join("acme");
+    fs::create_dir_all(plugin.join("themes")).expect("create plugin dir");
+    fs::write(
+        plugin.join("plugin.toml"),
+        "id = \"acme\"\nname = \"Acme\"\nversion = \"0.1.0\"\napi_version = \"v1\"\n\
+         entry_type = \"file\"\nprovided_segments = [\"acme_seg\"]\n",
+    )
+    .expect("write plugin manifest");
+    fs::write(
+        plugin.join("themes").join("community.toml"),
+        "[ui]\n[segments.directory]\nformat = \"PLUGIN_THEME:$path\"\n",
+    )
+    .expect("write plugin theme");
+    let daemon = Daemon::start(env);
+    assert!(daemon.directory().contains("PLUGIN_THEME:"));
+    assert_override_followed(&daemon, "community");
+}
+
+/// An explicit `config_reload` applies an in-place edit of the active theme
+/// file at once, without waiting for the theme watcher's debounce.
+#[test]
+fn config_reload_applies_an_in_place_theme_edit() {
+    let daemon = Daemon::start(palette_env("#123456"));
+    daemon.directory_matching_oneshot("before the edit");
+
+    daemon.write(
+        "themes/audit.toml",
+        "[ui]\n[segments.directory]\nformat = \"EDITED:$path\"\n",
+    );
+    assert!(daemon.reload(), "reload after the edit acks");
+    let edited = daemon.directory_matching_oneshot("after the edit");
+    assert!(
+        edited.contains("EDITED:"),
+        "the edit must apply: {edited:?}"
     );
 }

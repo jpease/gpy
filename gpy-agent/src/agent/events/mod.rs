@@ -702,17 +702,31 @@ pub(super) fn create_watcher(
         .map(Arc::new)
 }
 
-/// Switch the active theme when the config selects a different one.
+/// Apply the config's theme: switch when the name changed, else reload the
+/// active name from wherever it now resolves, so a user override added or
+/// removed, or an edit the theme watcher has not applied yet, takes effect.
+/// Returns whether the theme changed (a new name, source, or content); an edit
+/// the watcher already applied reports `false`, so it rings shells only once.
+///
+/// A reload that fails keeps the current theme, as the theme watcher does,
+/// rather than rejecting unrelated config changes.
 ///
 /// # Errors
-/// Returns an error when the requested theme cannot be loaded.
+/// Returns an error when a newly selected theme cannot be loaded.
 fn maybe_switch_theme(
     theme_manager: &Arc<ThemeManager>,
     old_config: &Config,
     new_config: &Config,
-) -> Result<()> {
+) -> Result<bool> {
     if old_config.ui.theme == new_config.ui.theme {
-        return Ok(());
+        return Ok(theme_manager.reload().unwrap_or_else(|error| {
+            crate::debug::warn_fallback(
+                &format!("Theme '{}' reload", new_config.ui.theme),
+                "keeping the current theme",
+                &error,
+            );
+            false
+        }));
     }
 
     debug_log!(
@@ -728,7 +742,7 @@ fn maybe_switch_theme(
         "Successfully switched to theme: {}",
         new_config.ui.theme
     );
-    Ok(())
+    Ok(true)
 }
 
 /// Whether a config reload changes the rendered prompt and shells should redraw.
@@ -974,7 +988,7 @@ pub(super) fn handle_config_reload(
 ) -> Result<()> {
     // Loaded before the theme switch so a rejected palette leaves nothing half-applied.
     let palette = reload_palette(old_config, new_config)?;
-    maybe_switch_theme(&ctx.theme_manager, old_config, new_config)?;
+    let theme_changed = maybe_switch_theme(&ctx.theme_manager, old_config, new_config)?;
     let palette_changed = palette.is_some_and(|palette| ctx.palette_cache.replace(palette));
 
     // Theme export must be on disk before the reload doorbell.
@@ -986,7 +1000,8 @@ pub(super) fn handle_config_reload(
     ctx.watch_registry
         .set_worktree_enabled(new_config.git.watch_worktree);
 
-    let refresh_required = palette_changed || config_refresh_required(old_config, new_config);
+    let refresh_required =
+        theme_changed || palette_changed || config_refresh_required(old_config, new_config);
 
     // Re-render cached data with the new theme before the doorbell to avoid flicker.
     // No synchronous detection on this path.

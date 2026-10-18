@@ -271,6 +271,8 @@ truncate_to_repo = false
 
 Every reload also re-reads the active palette file, so palette edits apply without a restart. A palette file that cannot be read, does not parse, or fails validation (for example a color reference cycle) keeps the last good palette and logs a warning; switching `ui.palette` to such a palette rejects the reload and keeps the previous configuration.
 
+The active theme name is re-resolved the same way, in user > plugin > built-in order: creating `~/.config/gpy/themes/<name>.toml` for the active theme replaces a plugin or built-in theme of that name, and deleting it falls back again, without a restart. The agent watches your user themes directory for this, and a config reload applies it at once.
+
 An edit made while the agent is stopped takes effect when the agent next starts. Shells that were open across the restart reload the new theme on their own. A new Fish shell that loaded the old theme at startup reloads it as soon as it registers with the agent.
 
 Use the CLI to inspect or edit values without hand-editing the file:
