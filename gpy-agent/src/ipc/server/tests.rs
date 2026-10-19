@@ -280,7 +280,7 @@ fn test_endpoint_handle_builder_optional_defaults() {
 
     assert_eq!(
         handle.socket_path,
-        crate::agent::lifecycle::get_socket_path().expect("default socket path"),
+        crate::paths::get_socket_path().expect("default socket path"),
         "Socket path should default to the platform path"
     );
     assert!(

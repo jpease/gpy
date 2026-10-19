@@ -589,11 +589,12 @@ pub fn start_background_agent() -> Result<()> {
             );
         }
         crate::debug::init_path();
-        let socket_path = crate::paths::absolutize(&super::get_socket_path()?);
+        super::ensure_runtime_dir()?;
+        let socket_path = crate::paths::absolutize(&crate::paths::get_socket_path()?);
         // Absolutize a relative `GPY_AGENT_SOCKET_PATH`; the default socket stays
         // unset so it keeps the `agent.version` marker.
-        if super::socket_path_override().is_some() {
-            let _ = super::SOCKET_OVERRIDE.set(socket_path.clone());
+        if crate::paths::socket_path_override().is_some() {
+            let _ = crate::paths::SOCKET_OVERRIDE.set(socket_path.clone());
         }
 
         // Vet the directory before the lock file, stale-socket eviction, or

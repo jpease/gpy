@@ -5,8 +5,6 @@
 //! shell's `__gpy_debug_paths`. Every value MUST come from the resolver
 //! production calls; re-deriving a precedence rule here would make the
 //! harness compare an implementation with itself.
-//!
-//! [`crate::agent::lifecycle::get_runtime_dir`] creates the runtime directory.
 
 use std::path::Path;
 
@@ -48,9 +46,9 @@ fn show(path: Option<&Path>) -> String {
 /// set is stable.
 #[must_use]
 pub fn resolved_paths() -> Vec<(&'static str, String)> {
-    let runtime_root = crate::agent::lifecycle::get_runtime_dir().ok();
+    let runtime_root = Some(crate::paths::runtime_dir());
     // Unvalidated: this is the diagnostic for when `get_socket_path` rejects the length.
-    let socket = crate::agent::lifecycle::resolve_socket_path().ok();
+    let socket = Some(crate::paths::resolve_socket_path());
     let shell_registry_dir = runtime_root.as_ref().map(|root| root.join("shells"));
 
     // `get_instant_cache_dir` is private; derive it from a real cache file's

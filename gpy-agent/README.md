@@ -53,7 +53,7 @@ note above.
 - `cargo run --example basic_usage`: in-process `Agent::handle_oneshot` with
   `{"type":"git_status"|"language_detect","path":...,"format":"json"}`.
 - `cargo run --example ipc_client`: newline-delimited JSON to a running daemon
-  on the socket from `agent::lifecycle::get_socket_path()` (`{"op":"ping"}`,
+  on the socket from `paths::get_socket_path()` (`{"op":"ping"}`,
   `{"op":"git","cwd":...,"format":"json"}`, `{"op":"lang",...}`).
 
 ## Architecture

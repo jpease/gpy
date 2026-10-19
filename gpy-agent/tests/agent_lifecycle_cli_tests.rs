@@ -700,6 +700,25 @@ fn start_on_default_socket(env: &CliTestEnv) -> CliCommandResult {
         .expect("spawn gpy-agent start")
 }
 
+/// Read-only commands must not create GPY's runtime directory.
+#[test]
+fn status_does_not_create_the_runtime_dir() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let runtime = env.xdg_runtime_dir().join("gpy");
+    assert!(!runtime.exists(), "precondition: no runtime dir yet");
+
+    let result = env
+        .run_gpy_agent_with_env(&["status"], &[("GPY_AGENT_SOCKET_PATH", "")])
+        .expect("spawn gpy-agent status");
+
+    assert_eq!(result.exit_code, 1_i32, "no agent is running: {result:?}");
+    assert!(
+        !runtime.exists(),
+        "status created {}: {result:?}",
+        runtime.display()
+    );
+}
+
 fn mode_of(path: &Path) -> u32 {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(path)

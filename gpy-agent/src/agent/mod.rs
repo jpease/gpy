@@ -337,7 +337,8 @@ impl Agent {
 
         Self::init_watcher(&initial_config, watcher_config, &ctx, &watcher_slot);
 
-        let socket_path = crate::agent::lifecycle::get_socket_path()?;
+        crate::agent::lifecycle::ensure_runtime_dir()?;
+        let socket_path = crate::paths::get_socket_path()?;
         let server = Self::init_server(&ctx, &watcher_slot, language_cache, socket_path)?;
 
         Ok(Self {

@@ -162,7 +162,8 @@ fn agent_enabled() -> bool {
 /// # Errors
 /// Returns an error if pinging fails or the agent does not answer in time.
 fn wait_for_agent_started() -> Result<()> {
-    use crate::agent::lifecycle::{get_socket_path, ping_agent_blocking};
+    use crate::agent::lifecycle::ping_agent_blocking;
+    use crate::paths::get_socket_path;
 
     let socket_path = get_socket_path()?;
     for _ in 0_i32..50_i32 {

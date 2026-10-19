@@ -2,7 +2,7 @@
 
 use crate::Result;
 #[cfg(unix)]
-use crate::agent::lifecycle::get_socket_path;
+use crate::paths::get_socket_path;
 #[cfg(unix)]
 use std::io::Write;
 #[cfg(unix)]

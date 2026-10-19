@@ -1,4 +1,4 @@
-//! `get_runtime_dir()` precedence: `$XDG_RUNTIME_DIR/gpy`, `$XDG_CACHE_HOME/gpy`,
+//! `paths::runtime_dir()` precedence: `$XDG_RUNTIME_DIR/gpy`, `$XDG_CACHE_HOME/gpy`,
 //! home `.cache/gpy`, `/tmp/gpy`.
 //! The home comes from `paths::home_dir`, which falls back to passwd when `HOME`
 //! is unset (as Fish and Zsh do), so `/tmp/gpy` is reachable only with no home.
@@ -10,7 +10,7 @@
 mod env_guard;
 
 use env_guard::EnvGuard;
-use gpy_agent::agent::lifecycle::{SOCKET_OVERRIDE, get_runtime_dir, get_socket_path};
+use gpy_agent::paths::{SOCKET_OVERRIDE, get_socket_path, runtime_dir};
 use serial_test::serial;
 
 const ROOT_VARS: [&str; 3] = ["XDG_RUNTIME_DIR", "XDG_CACHE_HOME", "HOME"];
@@ -21,7 +21,7 @@ fn runtime_dir_uses_xdg_runtime_dir() {
     let tmp = tempfile::tempdir().unwrap();
     let mut env = EnvGuard::cleared(&ROOT_VARS);
     env.set("XDG_RUNTIME_DIR", tmp.path());
-    let dir = get_runtime_dir().unwrap();
+    let dir = runtime_dir();
     assert_eq!(dir, tmp.path().join("gpy"));
 }
 
@@ -31,7 +31,7 @@ fn runtime_dir_uses_xdg_cache_home_when_no_runtime_dir() {
     let tmp = tempfile::tempdir().unwrap();
     let mut env = EnvGuard::cleared(&ROOT_VARS);
     env.set("XDG_CACHE_HOME", tmp.path());
-    let dir = get_runtime_dir().unwrap();
+    let dir = runtime_dir();
     assert_eq!(dir, tmp.path().join("gpy"));
 }
 
@@ -41,7 +41,7 @@ fn runtime_dir_uses_home_cache_when_no_xdg() {
     let tmp = tempfile::tempdir().unwrap();
     let mut env = EnvGuard::cleared(&ROOT_VARS);
     env.set("HOME", tmp.path());
-    let dir = get_runtime_dir().unwrap();
+    let dir = runtime_dir();
     assert_eq!(dir, tmp.path().join(".cache").join("gpy"));
 }
 
@@ -50,7 +50,7 @@ fn runtime_dir_uses_home_cache_when_no_xdg() {
 #[serial]
 fn runtime_dir_without_home_uses_the_passwd_home() {
     let _env = EnvGuard::cleared(&ROOT_VARS);
-    let dir = get_runtime_dir().unwrap();
+    let dir = runtime_dir();
     assert_eq!(dir, expected_homeless_runtime_root());
 }
 

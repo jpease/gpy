@@ -57,7 +57,7 @@ impl EndpointHandleBuilder {
         }
     }
 
-    /// Set the socket path (defaults to [`crate::agent::lifecycle::get_socket_path`]).
+    /// Set the socket path (defaults to [`crate::paths::get_socket_path`]).
     #[must_use]
     pub fn socket_path(mut self, path: PathBuf) -> Self {
         self.socket_path = Some(path);
@@ -110,7 +110,7 @@ impl EndpointHandleBuilder {
     pub fn build(self) -> Result<EndpointHandle> {
         let socket_path = match self.socket_path {
             Some(path) => path,
-            None => crate::agent::lifecycle::get_socket_path()?,
+            None => crate::paths::get_socket_path()?,
         };
 
         let EndpointDeps {

@@ -115,6 +115,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The agent keeps accepting shell connections while it prunes dead clients or
   registers a shell's repository with the watcher, and it now stops its
   watchers even when installing its signal handlers fails.
+- `gpy-agent status`, `gpy-agent stop` and `gpy debug paths` no longer create
+  the runtime directory (`$XDG_RUNTIME_DIR/gpy` or its fallback); only
+  `gpy-agent start` does.
 - `SECURITY.md` now lists 0.4.x, the current release series, as supported.
 - Fish: `prompt_debug vars` reports the duration threshold the duration
   segment uses (`__duration_threshold_ms`).
