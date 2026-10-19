@@ -286,3 +286,66 @@ fn re_running_replaces_files_a_package_manager_left_read_only() {
 
     assert_ok(&setup(home.path(), &["--shell", "zsh"]));
 }
+
+fn doctor(home: &Path) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
+        .arg("doctor")
+        .current_dir(home)
+        .env_clear()
+        .env("HOME", home)
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .output()
+        .expect("failed to spawn gpy doctor");
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// An upgrade runs setup for one shell. A shell set up earlier must get the
+/// new scripts too, without its rc file being touched, and `gpy doctor` must
+/// name a shell an older gpy left behind.
+#[test]
+fn setup_refreshes_shells_set_up_earlier_and_doctor_flags_stale_ones() {
+    let home = TempDir::new().unwrap();
+    assert_ok(&setup(home.path(), &["--shell", "bash"]));
+    assert_ok(&setup(home.path(), &["--shell", "zsh"]));
+
+    // What an older gpy left: different scripts and its own version stamp.
+    let bash_dir = home.path().join(".config/gpy/bash");
+    let core = bash_dir.join("core/ipc.bash");
+    fs::write(&core, "# scripts from an older gpy\n").unwrap();
+    fs::write(bash_dir.join(".gpy-version"), "0.0.1\n").unwrap();
+    let bashrc = fs::read_to_string(home.path().join(".bashrc")).unwrap();
+    let report = doctor(home.path());
+    assert!(
+        report.contains("Checking bash integration... ")
+            && report.contains("installed by gpy 0.0.1"),
+        "{report}"
+    );
+    assert!(report.contains("gpy setup --shell bash"), "{report}");
+
+    let output = setup(home.path(), &["--shell", "zsh"]);
+    assert_ok(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Refreshed bash files"), "{stdout}");
+    assert_eq!(
+        fs::read_to_string(&core).unwrap(),
+        fs::read_to_string(repo_root().join("bash/core/ipc.bash")).unwrap(),
+        "bash scripts refreshed"
+    );
+    assert_eq!(
+        fs::read_to_string(bash_dir.join(".gpy-version"))
+            .unwrap()
+            .trim(),
+        env!("CARGO_PKG_VERSION")
+    );
+    assert_eq!(
+        fs::read_to_string(home.path().join(".bashrc")).unwrap(),
+        bashrc,
+        "the other shell's rc file is left alone"
+    );
+    assert!(
+        !home.path().join(".config/fish").exists(),
+        "a shell never set up is not installed"
+    );
+    let report = doctor(home.path());
+    assert!(!report.contains("installed by"), "{report}");
+}

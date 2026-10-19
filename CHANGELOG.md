@@ -188,6 +188,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `prev_bg` render contexts instead of an arbitrary one.
 - `scripts/bench.sh --ci` fails when `cargo bench` fails, and checks every
   budget before reporting an over-budget one.
+- An idle Zsh shell no longer misses the agent's re-register ring when it
+  arrives while the trap for the reload ring is still running, as it does when
+  an upgraded agent starts. The shell used to go without live repaints until
+  the agent re-nudged it a minute later. Zsh also acts on a pending ring at its
+  next prompt now, as Bash does.
+- Upgrading through the installer for one shell refreshes the scripts of every
+  other shell set up earlier, instead of leaving them on the old version.
+  `gpy doctor` warns about a shell whose scripts an older `gpy` installed.
 
 ### Security
 

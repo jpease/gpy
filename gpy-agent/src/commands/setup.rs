@@ -19,6 +19,11 @@ const BLOCK_END: &str = "# <<< gpy-init <<<";
 /// Tag in the block header for an rc file `gpy setup` itself created, so the
 /// uninstaller may delete it again.
 const CREATED_NOTE: &str = " (gpy-created-file)";
+/// File in each installed shell tree naming the `gpy` version that wrote it,
+/// so `gpy doctor` can spot a tree an upgrade left behind.
+const VERSION_STAMP: &str = ".gpy-version";
+/// Every shell `gpy setup` can install.
+const SHELLS: [Shell; 3] = [Shell::Fish, Shell::Zsh, Shell::Bash];
 
 /// Options for [`run`], mirroring the `gpy setup` CLI flags.
 #[derive(Debug, Clone, Default)]
@@ -102,13 +107,13 @@ struct Outcome {
 /// Run `gpy setup`. `completions` renders the structural completion script,
 /// which only the binary can generate.
 ///
+/// Shells set up earlier get their files refreshed from the same source too,
+/// so an upgrade run for one shell does not leave the others on old scripts.
+///
 /// # Errors
 /// Fails when no shell can be determined, the scripts cannot be found, or a
 /// file cannot be written. The rc file is touched last.
-pub fn run(
-    options: &SetupOptions,
-    completions: impl FnOnce(Shell) -> Result<Vec<u8>>,
-) -> Result<()> {
+pub fn run(options: &SetupOptions, completions: impl Fn(Shell) -> Result<Vec<u8>>) -> Result<()> {
     if cfg!(not(unix)) {
         return Err(Error::invalid(
             "shell integration needs a Unix shell; on Windows, use GPY under WSL",
@@ -123,7 +128,7 @@ pub fn run(
     let source_root = find_source_root(options.from.as_deref(), &env, shell)?;
     println!("Setting up GPY for {shell} from {}", source_root.display());
 
-    let outcome = install(shell, &source_root, &env, completions)?;
+    let outcome = install(shell, &source_root, &env, &completions)?;
 
     println!("Installed {shell} files to {}", outcome.shell_dir.display());
     if outcome.rc_block_added {
@@ -131,6 +136,7 @@ pub fn run(
     } else {
         println!("GPY already configured in {}", outcome.rc_file.display());
     }
+    refresh_other_shells(shell, &source_root, &env, &completions);
     if let Err(err) = init::run(InitOptions {
         non_interactive: options.non_interactive,
         redetect: false,
@@ -141,6 +147,81 @@ pub fn run(
     }
     print_next_steps(shell, &outcome.rc_file, env.login_shell.as_deref());
     Ok(())
+}
+
+/// Refresh the files of every other shell already set up (its tree is
+/// installed) from `source_root`. Its rc file is left alone. A failure is
+/// reported and skipped: the shell asked for is already done.
+fn refresh_other_shells(
+    done: Shell,
+    source_root: &Path,
+    env: &Environment,
+    completions: &impl Fn(Shell) -> Result<Vec<u8>>,
+) {
+    let Ok(config_home) = env.config_home() else {
+        return;
+    };
+    for shell in SHELLS {
+        let shell_dir = shell_dir_for(&config_home, shell);
+        if shell == done
+            || !shell_dir.join(entry_point(shell)).is_file()
+            || !has_shell_tree(source_root, shell)
+        {
+            continue;
+        }
+        match install_files(shell, source_root, &config_home, completions) {
+            Ok(dir) => println!(
+                "Refreshed {shell} files in {} (set up earlier)",
+                dir.display()
+            ),
+            Err(err) => crate::commands::output::warn(format_args!(
+                "Could not refresh the {shell} files in {} ({err}); run `gpy setup --shell {shell}`",
+                shell_dir.display()
+            )),
+        }
+    }
+}
+
+/// One installed shell integration, as `gpy doctor` reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledIntegration {
+    /// The shell.
+    pub shell: Shell,
+    /// Where its scripts are installed.
+    pub dir: PathBuf,
+    /// The `gpy` version that installed them; `None` for a tree written
+    /// before setup stamped versions.
+    pub version: Option<String>,
+}
+
+/// The shell integrations `gpy setup` has installed for the current user.
+#[must_use]
+pub fn installed_integrations() -> Vec<InstalledIntegration> {
+    let Ok(config_home) = Environment::from_process().config_home() else {
+        return Vec::new();
+    };
+    installed_integrations_in(&config_home)
+}
+
+/// [`installed_integrations`] under an explicit config home.
+fn installed_integrations_in(config_home: &Path) -> Vec<InstalledIntegration> {
+    SHELLS
+        .into_iter()
+        .filter_map(|shell| {
+            let dir = shell_dir_for(config_home, shell);
+            dir.join(entry_point(shell)).is_file().then(|| {
+                let version = fs::read_to_string(dir.join(VERSION_STAMP))
+                    .ok()
+                    .map(|text| text.trim().to_owned())
+                    .filter(|text| !text.is_empty());
+                InstalledIntegration {
+                    shell,
+                    dir,
+                    version,
+                }
+            })
+        })
+        .collect()
 }
 
 /// Choose the shell: the flag wins, then `GPY_SHELL`, then `$SHELL`.
@@ -259,13 +340,40 @@ fn install(
     shell: Shell,
     source_root: &Path,
     env: &Environment,
-    completions: impl FnOnce(Shell) -> Result<Vec<u8>>,
+    completions: &impl Fn(Shell) -> Result<Vec<u8>>,
 ) -> Result<Outcome> {
     let config_home = env.config_home()?;
-    let shell_dir = match shell {
+    let shell_dir = install_files(shell, source_root, &config_home, completions)?;
+
+    let (rc_file, rc_block_added) = match shell {
+        Shell::Fish => wire_fish(&config_home, &shell_dir)?,
+        Shell::Zsh => wire_zsh(env, &shell_dir)?,
+        Shell::Bash => wire_bash(env, &shell_dir)?,
+    };
+    Ok(Outcome {
+        shell_dir,
+        rc_file,
+        rc_block_added,
+    })
+}
+
+/// Where `gpy setup` installs `shell`'s scripts under `config_home`.
+fn shell_dir_for(config_home: &Path, shell: Shell) -> PathBuf {
+    match shell {
         Shell::Fish => config_home.join("fish").join("gpy"),
         Shell::Zsh | Shell::Bash => config_home.join("gpy").join(shell.as_str()),
-    };
+    }
+}
+
+/// Copy `shell`'s tree and completions from `source_root` and stamp the
+/// version; returns the installed tree. Leaves the rc file alone.
+fn install_files(
+    shell: Shell,
+    source_root: &Path,
+    config_home: &Path,
+    completions: &impl Fn(Shell) -> Result<Vec<u8>>,
+) -> Result<PathBuf> {
+    let shell_dir = shell_dir_for(config_home, shell);
     check_sourceable(&shell_dir)?;
 
     let source = source_root.join(shell.as_str());
@@ -293,17 +401,11 @@ fn install(
         Shell::Zsh => write_replacing(&shell_dir.join("completions/_gpy"), &generated)?,
         Shell::Bash => write_replacing(&shell_dir.join("completions/gpy.bash"), &generated)?,
     }
-
-    let (rc_file, rc_block_added) = match shell {
-        Shell::Fish => wire_fish(&config_home, &shell_dir)?,
-        Shell::Zsh => wire_zsh(env, &shell_dir)?,
-        Shell::Bash => wire_bash(env, &shell_dir)?,
-    };
-    Ok(Outcome {
-        shell_dir,
-        rc_file,
-        rc_block_added,
-    })
+    write_replacing(
+        &shell_dir.join(VERSION_STAMP),
+        format!("{}\n", crate::VERSION).as_bytes(),
+    )?;
+    Ok(shell_dir)
 }
 
 /// Recursively copy `src` to `dst`, skipping top-level entries named in
