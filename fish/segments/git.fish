@@ -62,10 +62,11 @@ function segment_git_render --argument-names is_last is_first
             return 0
         end
         # Cold miss: bounded IPC-only query (oneshot is unbounded); instant omit if the socket is absent.
+        # Nothing to show yet, so it may wait the longer cold budget.
         __gpy_register_with_agent >/dev/null 2>&1
         if test -S (__gpy_ipc_endpoint)
             set -l payload (__gpy_build_data_payload git "$root" ansi "$is_last" "$prev_bg" "$is_first")
-            set -l synced (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS | string collect)
+            set -l synced (__gpy_ipc_send $payload (__gpy_ipc_cold_timeout_ms) | string collect)
             if test -n "$synced"
                 # The agent writes its own instant cache while handling this request.
                 printf '%s' "$synced"

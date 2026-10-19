@@ -2,7 +2,7 @@
 # tests/zsh/env_knobs_honoured.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# GPY_IPC_TIMEOUT_MS and the two instant-cache TTL knobs are honoured when set
+# GPY_IPC_TIMEOUT_MS, GPY_IPC_COLD_TIMEOUT_MS and the two instant-cache TTL knobs are honoured when set
 # in the environment before the shell integration loads, identically in all
 # three shells (tests/fish/env_knobs_honoured.test.fish and
 # tests/bash/env_knobs_honoured.test.bash are the twins). Sourcing
@@ -38,6 +38,17 @@ __gpy_ms_to_secs 750 secs
 check "an IPC budget of 750 ms is 0.750 s" "0.750" "$secs"
 __gpy_ms_to_secs fast secs
 check "a non-numeric IPC budget falls back to 150 ms" "0.150" "$secs"
+
+# The cold budget (nothing to show yet): 500 ms by default, honoured when set,
+# never below GPY_IPC_TIMEOUT_MS, and the default when non-numeric.
+cold_with() {
+    env -u GPY_IPC_TIMEOUT_MS -u GPY_IPC_COLD_TIMEOUT_MS "$@" zsh -f -c \
+        'source "$1/zsh/core/constants.zsh"; source "$1/zsh/core/ipc.zsh"; __gpy_cold_timeout_ms_into ms; print -r -- "$ms"' _ "$ROOT"
+}
+check "the cold budget defaults to 500 ms" "500" "$(cold_with)"
+check "GPY_IPC_COLD_TIMEOUT_MS is honoured" "900" "$(cold_with GPY_IPC_COLD_TIMEOUT_MS=900)"
+check "the cold budget is never below GPY_IPC_TIMEOUT_MS" "2000" "$(cold_with GPY_IPC_TIMEOUT_MS=2000)"
+check "a non-numeric cold budget falls back to 500 ms" "500" "$(cold_with GPY_IPC_COLD_TIMEOUT_MS=slow)"
 
 # A non-numeric TTL must not break the freshness comparison: the entry is read
 # with the default TTL (git: 5 s), so an old entry is stale and a fresh one is not.

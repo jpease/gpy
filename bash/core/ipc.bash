@@ -176,6 +176,20 @@ __gpy_ms_to_secs() {
     printf -v "$out_var" '%d.%03d' "$(( ms / 1000 ))" "$(( ms % 1000 ))"
 }
 
+# The budget for a segment the prompt has nothing to show for, into variable
+# $1: GPY_IPC_COLD_TIMEOUT_MS, never below GPY_IPC_TIMEOUT_MS. A non-numeric
+# value falls back to its default. Locals are __gpy_ct_* so a caller's OUTVAR
+# is not shadowed.
+__gpy_cold_timeout_ms_into() {
+    local __gpy_ct_cold="${GPY_IPC_COLD_TIMEOUT_MS:-}" __gpy_ct_warm="${GPY_IPC_TIMEOUT_MS:-}"
+    [[ "$__gpy_ct_cold" =~ ^[0-9]+$ ]] || __gpy_ct_cold=500
+    [[ "$__gpy_ct_warm" =~ ^[0-9]+$ ]] || __gpy_ct_warm=150
+    __gpy_ct_cold=$((10#$__gpy_ct_cold))
+    __gpy_ct_warm=$((10#$__gpy_ct_warm))
+    (( __gpy_ct_cold < __gpy_ct_warm )) && __gpy_ct_cold=$__gpy_ct_warm
+    printf -v "$1" '%s' "$__gpy_ct_cold"
+}
+
 # netcat-traditional has no -U, and using it would fail every request after a
 # fork. Prompt segments run in `$(...)` and cannot write the cache back, so
 # the probe also runs once at source time.
@@ -201,9 +215,10 @@ __gpy_ipc_client_available() {
     [[ "$__gpy_nc_supports_unix" == 1 ]]
 }
 
-# Prints the reply and returns 0 on a complete reply within GPY_IPC_TIMEOUT_MS,
-# 1 when the agent is unreachable, 2 when it accepted the request but replied
-# late (the caller must omit the segment, not fork oneshot).
+# Prints the reply and returns 0 on a complete reply within the budget ($2 in
+# ms, else GPY_IPC_TIMEOUT_MS), 1 when the agent is unreachable, 2 when it
+# accepted the request but replied late (the caller must omit the segment,
+# not fork oneshot).
 #
 # `IFS= read -r` returns nonzero on EOF before the newline, which separates a
 # truncated reply from a complete one; `$(...)` strips the newline and cannot.
@@ -220,7 +235,7 @@ __gpy_send_json() {
     socket_path="$(__gpy_ipc_endpoint)"
     local response="" read_status=1 timeout_secs client_status="" connected_codes=" 0 "
     # One reply budget for every transport.
-    __gpy_ms_to_secs "${GPY_IPC_TIMEOUT_MS:-}" timeout_secs
+    __gpy_ms_to_secs "${2:-${GPY_IPC_TIMEOUT_MS:-}}" timeout_secs
 
     [[ -S "$socket_path" ]] || return 1
 
@@ -487,12 +502,13 @@ __gpy_trigger_data_refresh() {
 }
 
 # Bounded IPC-only query; oneshot is unbounded and would break the omit
-# budget. The agent writes its own cache, so success needs no refresh.
+# budget. The agent writes its own cache, so success needs no refresh. $6 is
+# the reply budget in ms (default GPY_IPC_TIMEOUT_MS).
 __gpy_sync_data_request() {
-    local op="$1" cwd="$2" is_last="${3:-}" prev_bg="${4:-}" is_first="${5:-}"
+    local op="$1" cwd="$2" is_last="${3:-}" prev_bg="${4:-}" is_first="${5:-}" timeout_ms="${6:-}"
     local request response
     __gpy_build_data_request_into request "$op" "$cwd" bash-prompt "$is_last" "$prev_bg" "$is_first"
-    response="$(__gpy_send_json "$request" 2>/dev/null)" || return 1
+    response="$(__gpy_send_json "$request" "$timeout_ms" 2>/dev/null)" || return 1
     [[ -n "$response" ]] || return 1
     printf '%s' "$response"
 }
@@ -604,10 +620,12 @@ __gpy_request() {
         fi
     fi
 
-    local request
+    local request timeout_ms=""
     __gpy_build_data_request_into request "$op" "$context_path" "$format" "$is_last" "$prev_bg" "$is_first"
+    # A directory request means the memo had nothing to show.
+    [[ "$op" == "directory" ]] && __gpy_cold_timeout_ms_into timeout_ms
 
-    __gpy_send_json "$request"
+    __gpy_send_json "$request" "$timeout_ms"
     local send_status=$?
     # 2: late reply; the agent is computing it, so omit rather than fork oneshot.
     (( send_status == 2 )) && return 1

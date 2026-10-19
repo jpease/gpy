@@ -32,9 +32,11 @@ function __gpy_segment_git() {
             return
         fi
         # Cold miss: bounded IPC-only query (oneshot is unbounded); instant omit if the socket is absent.
+        # Nothing to show yet, so it may wait the longer cold budget.
         __gpy_register_with_agent >/dev/null 2>&1
-        local synced
-        if synced="$(__gpy_sync_data_request "git" "$root" "$is_last" "$prev_bg" "$is_first")"; then
+        local synced cold_ms
+        __gpy_cold_timeout_ms_into cold_ms
+        if synced="$(__gpy_sync_data_request "git" "$root" "$is_last" "$prev_bg" "$is_first" "$cold_ms")"; then
             printf '%s' "$synced"
             return 0
         fi

@@ -76,6 +76,30 @@ write_config() {
     [[ "$row_config" == - ]] || printf '\n%b\n' "$row_config" >>"$sandbox/config/gpy/config.toml"
 }
 
+# Whether every shell's theme-export cache under sandbox $1 has the segment
+# list the current config.toml exports.
+exports_match_config() {
+    local export_dir="$1/cache/gpy" sh want have
+    for sh in fish bash zsh; do
+        want="$("$REAL_AGENT" theme export --format "$sh" 2>/dev/null | grep '__enabled_segments')"
+        have="$(grep '__enabled_segments' "$export_dir/theme-export.$sh" 2>/dev/null)"
+        [[ -n "$want" && "$want" == "$have" ]] || return 1
+    done
+}
+
+# Make a running agent apply sandbox $1's config.toml before the next render.
+# Its own reload is debounced, and a render that raced it drew the previous
+# segment list from the shell export (jpease/gpy-archive#948). Talks to the
+# agent's own socket, so the observed IPC log never sees it.
+sync_agent_config() {
+    local sandbox="$1"
+    [[ -S "$sandbox/r.sock" ]] || return 0
+    "$REAL_AGENT" config reload >/dev/null 2>&1
+    shell_e2e_poll 10 exports_match_config "$sandbox" && return 0
+    fail "$row_name: the agent never exported the config's segments"
+    return 1
+}
+
 # A scratch git repo with one commit, hermetic against global git config.
 make_repo() {
     local repo="$1/repo"
@@ -173,6 +197,7 @@ run_shell() {
                     --prepare-timeout "$((10 * $(shell_e2e_timeout_scale)))")
             fi
             start_proxy "$sandbox" "${proxy_args[@]}" || { fail "$row_name: proxy did not start"; return 1; }
+            sync_agent_config "$sandbox" || return 1
             ;;
         down) ;;
         *) fail "$row_name: unknown agent state '$row_agent'"; return 1 ;;
@@ -183,6 +208,7 @@ run_shell() {
         # entry on disk), then forget it: only the render under test is observed.
         local saved_segments="$row_segments"
         write_config "$sandbox" "$row_prime"
+        sync_agent_config "$sandbox" || return 1
         SCN_RAW_OUT="" run_driver "$sandbox" "$sh" "$sandbox/prime.out" "$sandbox/prime.err"
         # Let the priming render's cache entries settle first.
         local seen="" now
@@ -192,6 +218,10 @@ run_shell() {
             seen="$now"
             sleep 0.3
         done
+        # Back to the row's own segments before the cache is doctored: a reload
+        # may rewrite instant entries, which must not undo what follows.
+        write_config "$sandbox" "$saved_segments"
+        sync_agent_config "$sandbox" || return 1
         if [[ ",$row_flags," == *,drop_variants,* ]]; then
             # Keep only the context-free `.none` entries: the row exercises a missing
             # variant for the previous segment's colour.
@@ -210,7 +240,6 @@ run_shell() {
         fi
         : >"$sandbox/calls.log"
         : >"$sandbox/ipc.log"
-        write_config "$sandbox" "$saved_segments"
     fi
 
     SCN_RAW_OUT="$dir/$sh.raw" run_driver "$sandbox" "$sh" "$dir/$sh.out" "$dir/$sh.err"

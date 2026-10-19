@@ -11,6 +11,10 @@ __enabled_segments="${__enabled_segments:-directory git}"
 # Tightens the nc fallback below nc's integer-second -w.
 GPY_IPC_TIMEOUT_MS="${GPY_IPC_TIMEOUT_MS:-150}"
 
+# Budget when the prompt has nothing to show for a segment (a cold git cache,
+# a directory not yet rendered); never shorter than GPY_IPC_TIMEOUT_MS.
+GPY_IPC_COLD_TIMEOUT_MS="${GPY_IPC_COLD_TIMEOUT_MS:-500}"
+
 # Entries older than this trigger a background refresh (self-heal for missed pushes).
 GPY_GIT_INSTANT_CACHE_TTL_SECONDS="${GPY_GIT_INSTANT_CACHE_TTL_SECONDS:-5}"
 

@@ -181,6 +181,18 @@ function __gpy_ms_to_secs() {
     printf -v "$out_var" '%d.%03d' "$(( ms / 1000 ))" "$(( ms % 1000 ))"
 }
 
+# The budget for a segment the prompt has nothing to show for, into variable
+# $1: GPY_IPC_COLD_TIMEOUT_MS, never below GPY_IPC_TIMEOUT_MS. A non-numeric
+# value falls back to its default. Locals are __gpy_ct_* so a caller's OUTVAR
+# is not shadowed.
+function __gpy_cold_timeout_ms_into() {
+    local __gpy_ct_cold=${GPY_IPC_COLD_TIMEOUT_MS:-} __gpy_ct_warm=${GPY_IPC_TIMEOUT_MS:-}
+    [[ "$__gpy_ct_cold" =~ ^[0-9]+$ ]] || __gpy_ct_cold=500
+    [[ "$__gpy_ct_warm" =~ ^[0-9]+$ ]] || __gpy_ct_warm=150
+    (( 10#$__gpy_ct_cold < 10#$__gpy_ct_warm )) && __gpy_ct_cold=$__gpy_ct_warm
+    printf -v "$1" '%d' "$(( 10#$__gpy_ct_cold ))"
+}
+
 # netcat-traditional lacks -U. Probed at source time too, because segment
 # subshells cannot write the cache back.
 typeset -g __gpy_nc_supports_unix=""
@@ -227,8 +239,8 @@ function __gpy_send_json() {
     local socket_path=$(__gpy_ipc_endpoint)
     local response="" read_status=1 client_status="" connected_codes=" 0 "
     local zsocket_connected=0 timeout_secs
-    # One reply budget for every transport.
-    __gpy_ms_to_secs "${GPY_IPC_TIMEOUT_MS:-}" timeout_secs
+    # One reply budget for every transport: $2 in ms, else GPY_IPC_TIMEOUT_MS.
+    __gpy_ms_to_secs "${2:-${GPY_IPC_TIMEOUT_MS:-}}" timeout_secs
 
     if [[ ! -S "$socket_path" ]]; then
         return 1
@@ -505,12 +517,13 @@ function __gpy_trigger_data_refresh() {
 }
 
 # One bounded IPC round trip, never oneshot (unbounded). The agent updates
-# its cache and notifies other shells itself.
+# its cache and notifies other shells itself. $6 is the reply budget in ms
+# (default GPY_IPC_TIMEOUT_MS).
 function __gpy_sync_data_request() {
-    local op=$1 cwd=$2 is_last=${3:-} prev_bg=${4:-} is_first=${5:-}
+    local op=$1 cwd=$2 is_last=${3:-} prev_bg=${4:-} is_first=${5:-} timeout_ms=${6:-}
     local request response
     __gpy_build_data_request_into request "$op" "$cwd" zsh-prompt "$is_last" "$prev_bg" "$is_first"
-    response=$(__gpy_send_json "$request" 2>/dev/null) || return 1
+    response=$(__gpy_send_json "$request" "$timeout_ms" 2>/dev/null) || return 1
     [[ -n "$response" ]] || return 1
     printf '%s' "$response"
 }
@@ -619,10 +632,12 @@ function __gpy_request() {
         fi
     fi
 
-    local request
+    local request timeout_ms=""
     __gpy_build_data_request_into request "$op" "$context_path" "$format" "$is_last" "$prev_bg" "$is_first"
+    # A directory request means the memo had nothing to show.
+    [[ "$op" == "directory" ]] && __gpy_cold_timeout_ms_into timeout_ms
 
-    __gpy_send_json "$request"
+    __gpy_send_json "$request" "$timeout_ms"
     local send_status=$?
     # 2: the agent is already computing it; omit rather than fork oneshot.
     (( send_status == 2 )) && return 1
