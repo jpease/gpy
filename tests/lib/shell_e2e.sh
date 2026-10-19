@@ -99,6 +99,13 @@ test_require_command() {
 # shell_e2e_assert_registered PID
 #                           0 when the agent's log shows that PID registered
 # shell_e2e_stop_client     end the client session
+# shell_e2e_use_session NAME
+#                           make NAME the current client session (its own
+#                           pty directory); SHELL_E2E_CLIENT_PID is re-read
+#                           from that session's transcript, so switching back
+#                           restores it (empty before the client is spawned)
+# shell_e2e_stop_all_clients
+#                           end every client session, named or default
 # shell_e2e_timeout_scale   1-minute load average per core, rounded up and
 #                           capped at 5; SHELL_E2E_TIMEOUT_SCALE overrides it
 # shell_e2e_poll T CMD...   run CMD every 100 ms until it succeeds or T
@@ -114,7 +121,7 @@ test_require_command() {
 # `exit`, so every EXIT trap a test installs also runs when the test is
 # interrupted or timed out (bash skips its EXIT trap on INT, zsh on INT and
 # TERM). shell_e2e_init installs shell_e2e_cleanup as the EXIT trap: it ends
-# the pty client, stops the agent, kills whatever still holds a unix socket
+# every pty client, stops the agent, kills whatever still holds a unix socket
 # under $SHELL_E2E_ROOT (an agent the supervisor autostarted), kills the PIDs
 # registered with shell_e2e_track_pid, and removes the sandbox. Nothing is
 # matched by process name, so a contributor's own daemon survives. SIGKILL
@@ -451,6 +458,23 @@ shell_e2e_stop_client() {
     python3 "$SHELL_E2E_PTY" stop "$SHELL_E2E_SESSION" >/dev/null 2>&1 || true
 }
 
+shell_e2e_use_session() {
+    SHELL_E2E_SESSION="$SHELL_E2E_ROOT/session-$1"
+    SHELL_E2E_CLIENT_PID=""
+    if [ -f "$SHELL_E2E_SESSION/transcript" ]; then
+        SHELL_E2E_CLIENT_PID="$(tr -d '\r' <"$SHELL_E2E_SESSION/transcript" | sed -n 's/.*GPY_E2E_PID=\([0-9][0-9]*\).*/\1/p' | head -n 1)"
+    fi
+}
+
+shell_e2e_stop_all_clients() {
+    [ -n "$SHELL_E2E_ROOT" ] || return 0
+    for _dir in "$SHELL_E2E_ROOT/session" "$SHELL_E2E_ROOT"/session-*; do
+        [ -d "$_dir" ] || continue
+        python3 "$SHELL_E2E_PTY" stop "$_dir" >/dev/null 2>&1 || true
+    done
+    return 0
+}
+
 shell_e2e_dump_transcript() {
     echo "--- transcript tail ---"
     shell_e2e_transcript 0 | tail -n 15
@@ -499,7 +523,7 @@ shell_e2e_kill_sandbox_holders() {
 }
 
 shell_e2e_cleanup() {
-    shell_e2e_stop_client
+    shell_e2e_stop_all_clients
     shell_e2e_stop_agent
     shell_e2e_kill_sandbox_holders
     shell_e2e_kill_tracked

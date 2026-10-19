@@ -5,6 +5,9 @@
 Standard library only. A session lives in a directory:
 
     transcript   everything the program wrote, appended as it arrives
+    transcript.times
+                 one "<end-offset> <monotonic-ns>" line per transcript chunk,
+                 written before the chunk it describes
     control      a FIFO; bytes written here go to the program's stdin
     pid          the driver's PID (the program's parent)
     exit         written when the program exits, holding its wait status
@@ -22,6 +25,11 @@ Subcommands:
     size DIR                       print the transcript length (an OFFSET for
                                    a later wait-for: "anything new after now")
     stop DIR                       end the program and the driver
+    first-match-time DIR REGEX OFFSET
+                                   print the time.monotonic_ns() stamp of the
+                                   chunk that completed the first REGEX match
+                                   after byte OFFSET; exit 1 if none
+    now                            print time.monotonic_ns() (no DIR)
 
 `wait-for` only reads the transcript, so a test can watch for output that
 arrives with no keystroke sent -- the live-repaint case this exists for.
@@ -53,7 +61,14 @@ def paths(directory):
     return {
         name: os.path.join(directory, name)
         for name in ("transcript", "control", "pid", "exit")
-    }
+    } | {"times": os.path.join(directory, "transcript.times")}
+
+
+def record_chunk(transcript, times, chunk, end):
+    end += len(chunk)
+    times.write(b"%d %d\n" % (end, time.monotonic_ns()))
+    transcript.write(chunk)
+    return end
 
 
 def start(directory, command):
@@ -61,7 +76,7 @@ def start(directory, command):
 
     os.makedirs(directory, exist_ok=True)
     p = paths(directory)
-    for stale in (p["transcript"], p["pid"], p["exit"]):
+    for stale in (p["transcript"], p["times"], p["pid"], p["exit"]):
         if os.path.exists(stale):
             os.unlink(stale)
     if not os.path.exists(p["control"]):
@@ -77,6 +92,8 @@ def start(directory, command):
     with open(p["pid"], "w") as f:
         f.write(str(os.getpid()))
     transcript = open(p["transcript"], "ab", buffering=0)
+    times = open(p["times"], "ab", buffering=0)
+    end = 0
     pid, master = pty.fork()
     if pid == 0:
         os.environ.update(ENV)
@@ -100,7 +117,7 @@ def start(directory, command):
             except OSError:
                 chunk = b""  # EIO: the program closed its side (it exited)
             if chunk:
-                transcript.write(chunk)
+                end = record_chunk(transcript, times, chunk, end)
                 if CPR_QUERY in chunk:
                     os.write(master, CPR_REPLY)
                 if any(query in chunk for query in DA_QUERIES):
@@ -124,10 +141,11 @@ def start(directory, command):
             chunk = b""
         if not chunk:
             break
-        transcript.write(chunk)
+        end = record_chunk(transcript, times, chunk, end)
     with open(p["exit"], "w") as f:
         f.write(str(status))
     transcript.close()
+    times.close()
     os._exit(0)
 
 
@@ -174,6 +192,36 @@ def wait_for(directory, pattern, timeout, offset):
         time.sleep(0.05)
 
 
+def first_match_time(directory, pattern, offset):
+    regex = re.compile(pattern.encode(), re.DOTALL)
+    data = read_transcript(directory)
+    match = regex.search(data, offset)
+    if match is None:
+        sys.stderr.write(
+            "pty_session: no match for %r after offset %d\n" % (pattern, offset)
+        )
+        return 1
+    needed = match.end()
+    try:
+        with open(paths(directory)["times"], "rb") as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        lines = []
+    for line in lines:
+        fields = line.split()
+        if len(fields) != 2:
+            continue  # a last line still being written
+        try:
+            end, stamp = int(fields[0]), int(fields[1])
+        except ValueError:
+            continue
+        if end >= needed:
+            print(stamp)
+            return 0
+    sys.stderr.write("pty_session: no timestamp covers offset %d\n" % needed)
+    return 1
+
+
 def stop(directory):
     p = paths(directory)
     try:
@@ -196,6 +244,9 @@ def stop(directory):
 
 
 def main(argv):
+    if argv[:1] == ["now"]:
+        print(time.monotonic_ns())
+        return 0
     if len(argv) < 2:
         sys.stderr.write(__doc__)
         return 2
@@ -215,6 +266,11 @@ def main(argv):
         return 0
     if verb == "stop":
         return stop(directory)
+    if verb == "first-match-time":
+        if len(argv) < 4:
+            sys.stderr.write("usage: first-match-time DIR REGEX OFFSET\n")
+            return 2
+        return first_match_time(directory, argv[2], int(argv[3]))
     sys.stderr.write("unknown subcommand %r\n" % verb)
     return 2
 
