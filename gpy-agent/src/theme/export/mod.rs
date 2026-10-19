@@ -880,12 +880,15 @@ fn append_plugin_segment_assignments(
     }
 }
 
-/// Export plugin segment file paths so fish can source community segments.
+/// Export plugin segment file paths (Fish only) so fish can source community segments.
 fn append_plugin_segment_file_assignments(
     output: &mut String,
     shell: Shell,
     plugin_segment_files: &BTreeMap<String, String>,
 ) {
+    if !matches!(shell, Shell::Fish) {
+        return;
+    }
     let syntax = shell.variable_syntax();
     let escape = |text: &str| escape_shell_value(text, shell);
 

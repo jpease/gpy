@@ -524,7 +524,11 @@ impl ThemeManager {
     #[must_use]
     pub fn export(&self, shell: Shell, config: &Config, palette: &Palette) -> String {
         let state = self.state();
-        let plugin_files = Self::collect_plugin_segment_files();
+        let plugin_files = if matches!(shell, Shell::Fish) {
+            Self::collect_plugin_segment_files()
+        } else {
+            BTreeMap::new()
+        };
         export::theme_to_shell(
             &state.theme,
             &state.name,

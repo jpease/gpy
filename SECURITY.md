@@ -79,6 +79,12 @@ these three:
 - Nothing else. There is no signature check at load time and no integrity check
   on the cache file.
 
+**Plugin segment files run as you.** Third-party plugins ship Fish scripts
+(`segments/<name>.fish`) that `fish/core/init.fish` sources, with your full user
+privileges, when the segment is enabled. Only the Fish theme export carries
+their paths (`__gpy_plugin_segment_file_*`); Bash and Zsh never source them.
+Installing a plugin means trusting its code like a shell startup file.
+
 **Prompt data is escaped for the shell that draws it.** Bash and Zsh paste the
 agent's prompt output into `PS1`/`PROMPT`, and both shells expand prompt
 strings on every draw. Directory names, git branch names, language and
