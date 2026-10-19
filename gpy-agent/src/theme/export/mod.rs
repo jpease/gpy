@@ -4,7 +4,7 @@ use crate::config::validation::colors::{THEME_ONLY_COLORS, canonical_color};
 use crate::config::{Config, DelimiterConfig};
 use crate::formatter::separator::Glyphs;
 use crate::plugin::SegmentName;
-use crate::shell::{Shell, VariableSyntax};
+use crate::shell::Shell;
 use crate::template::{Color, Palette, parse_color};
 use crate::theme::model::{PluginSegmentTheme, ThemeConfig};
 use std::borrow::Cow;
@@ -49,11 +49,17 @@ impl ShellAssignment {
         }
     }
 
-    fn render(self, syntax: VariableSyntax) -> String {
+    /// Render the assignment, escaping the value once with [`escape_shell_value`].
+    fn render(self, shell: Shell) -> String {
+        let syntax = shell.variable_syntax();
         match self.scope {
             AssignmentScope::Unset => syntax.format_unset(&self.name),
-            AssignmentScope::Local => syntax.format(&self.name, &self.value),
-            AssignmentScope::Export => syntax.format_export(&self.name, &self.value),
+            AssignmentScope::Local => {
+                syntax.format(&self.name, &escape_shell_value(&self.value, shell))
+            }
+            AssignmentScope::Export => {
+                syntax.format_export(&self.name, &escape_shell_value(&self.value, shell))
+            }
         }
     }
 }
@@ -89,22 +95,18 @@ fn sanitize_property_token(raw: &str) -> String {
     normalized.trim_matches('_').to_owned()
 }
 
-fn append_shell_assignment(
-    output: &mut String,
-    syntax: VariableSyntax,
-    assignment: ShellAssignment,
-) {
-    output.push_str(&assignment.render(syntax));
+fn append_shell_assignment(output: &mut String, shell: Shell, assignment: ShellAssignment) {
+    output.push_str(&assignment.render(shell));
     output.push('\n');
 }
 
 fn append_shell_assignments(
     output: &mut String,
-    syntax: VariableSyntax,
+    shell: Shell,
     assignments: impl IntoIterator<Item = ShellAssignment>,
 ) {
     for assignment in assignments {
-        append_shell_assignment(output, syntax, assignment);
+        append_shell_assignment(output, shell, assignment);
     }
 }
 
@@ -235,7 +237,7 @@ const fn flag(value: bool) -> &'static str {
     if value { "1" } else { "0" }
 }
 
-/// `GPY_*` env exports mirroring `config`; all values are flags/validated enums, no escaping needed.
+/// `GPY_*` env exports mirroring `config`; all values are flags/validated enums.
 fn config_export_assignments(config: &Config) -> Vec<ShellAssignment> {
     let agent = &config.agent;
     let supervisor = &agent.supervisor;
@@ -287,9 +289,6 @@ fn append_global_assignments(
     theme_name: &str,
     config: &Config,
 ) {
-    let syntax = shell.variable_syntax();
-    let escape = |text: &str| escape_shell_value(text, shell);
-
     let prompt_icon_style = if config.ui.show_icons {
         "nerd"
     } else {
@@ -311,84 +310,79 @@ fn append_global_assignments(
             .map_or("", |cfg| cfg.icon.as_str()),
     );
 
-    let mut assignments = vec![ShellAssignment::local(
-        "__gpy_theme_name",
-        escape(theme_name),
-    )];
+    let mut assignments = vec![ShellAssignment::local("__gpy_theme_name", theme_name)];
     assignments.extend(config_export_assignments(config));
     assignments.extend([
         ShellAssignment::local("__prompt_icons", prompt_icon_style),
-        ShellAssignment::local("__icon_powerline_segment_start", escape(powerline_start)),
-        ShellAssignment::local("__icon_powerline_segment_end", escape(powerline_end)),
+        ShellAssignment::local("__icon_powerline_segment_start", powerline_start),
+        ShellAssignment::local("__icon_powerline_segment_end", powerline_end),
     ]);
-    append_shell_assignments(output, syntax, assignments);
+    append_shell_assignments(output, shell, assignments);
 }
 
 /// Prompt and root-prompt icons/colors plus the two-line layout flag.
 /// `__gpy_ui_*_icon_color` is skipped when unset; `__prompt_color`/`__root_prompt_color` fall back to green/red.
 fn append_prompt_assignments(output: &mut String, colors: ShellColors<'_>, theme: &ThemeConfig) {
     let shell = colors.shell;
-    let syntax = shell.variable_syntax();
-    let escape = |text: &str| escape_shell_value(text, shell);
 
     let prompt_icon = &theme.ui.prompt_icon;
     append_shell_assignments(
         output,
-        syntax,
+        shell,
         [
-            ShellAssignment::local("__gpy_ui_prompt_icon", escape(prompt_icon.as_str())),
-            ShellAssignment::local("__icon_prompt", escape(prompt_icon.as_str())),
+            ShellAssignment::local("__gpy_ui_prompt_icon", prompt_icon.as_str()),
+            ShellAssignment::local("__icon_prompt", prompt_icon.as_str()),
         ],
     );
 
     if let Some(c) = &theme.ui.prompt_color {
         append_shell_assignment(
             output,
-            syntax,
+            shell,
             ShellAssignment::local("__gpy_ui_prompt_icon_color", colors.resolve(c)),
         );
     }
     let prompt_color = theme.ui.prompt_color.as_deref().unwrap_or("green");
     append_shell_assignment(
         output,
-        syntax,
+        shell,
         ShellAssignment::local("__prompt_color", colors.resolve(prompt_color)),
     );
 
     let root_icon = &theme.ui.root_prompt_icon;
     append_shell_assignments(
         output,
-        syntax,
+        shell,
         [
-            ShellAssignment::local("__gpy_ui_root_prompt_icon", escape(root_icon.as_str())),
-            ShellAssignment::local("__icon_root_prompt", escape(root_icon.as_str())),
+            ShellAssignment::local("__gpy_ui_root_prompt_icon", root_icon.as_str()),
+            ShellAssignment::local("__icon_root_prompt", root_icon.as_str()),
         ],
     );
 
     if let Some(c) = &theme.ui.root_prompt_color {
         append_shell_assignment(
             output,
-            syntax,
+            shell,
             ShellAssignment::local("__gpy_ui_root_prompt_icon_color", colors.resolve(c)),
         );
     }
     let root_color = theme.ui.root_prompt_color.as_deref().unwrap_or("red");
     append_shell_assignment(
         output,
-        syntax,
+        shell,
         ShellAssignment::local("__root_prompt_color", colors.resolve(root_color)),
     );
 
     // Always emit 0/1 so disabling in-session re-exports 0.
     append_shell_assignment(
         output,
-        syntax,
+        shell,
         ShellAssignment::local("__gpy_two_line", flag(theme.ui.two_line)),
     );
 
     append_shell_assignment(
         output,
-        syntax,
+        shell,
         ShellAssignment::local("__gpy_add_newline", flag(theme.ui.add_newline)),
     );
 }
@@ -403,13 +397,11 @@ fn append_builtin_segment_assignments(
     theme: &ThemeConfig,
 ) {
     let shell = colors.shell;
-    let syntax = shell.variable_syntax();
-    let escape = |text: &str| escape_shell_value(text, shell);
     let bool_flag = |v: Option<bool>| flag(v.unwrap_or(false));
 
     append_shell_assignments(
         output,
-        syntax,
+        shell,
         [
             ShellAssignment::local(
                 "__color_clock_bg",
@@ -423,15 +415,15 @@ fn append_builtin_segment_assignments(
     );
     append_shell_assignment(
         output,
-        syntax,
+        shell,
         ShellAssignment::local(
             "__time_format",
-            escape(theme.segments.clock.time_format.as_deref().unwrap_or("12")),
+            theme.segments.clock.time_format.as_deref().unwrap_or("12"),
         ),
     );
     append_shell_assignments(
         output,
-        syntax,
+        shell,
         [
             ShellAssignment::local(
                 "__clock_show_leading_zero",
@@ -469,12 +461,10 @@ fn append_builtin_segment_assignments(
 /// `format`/`icon` are always assigned (empty when `None`) so the shell can `test -n`.
 fn append_hostname_assignments(output: &mut String, colors: ShellColors<'_>, theme: &ThemeConfig) {
     let shell = colors.shell;
-    let syntax = shell.variable_syntax();
-    let escape = |text: &str| escape_shell_value(text, shell);
 
     append_shell_assignments(
         output,
-        syntax,
+        shell,
         [
             ShellAssignment::local(
                 "__color_hostname_bg",
@@ -486,7 +476,7 @@ fn append_hostname_assignments(output: &mut String, colors: ShellColors<'_>, the
             ),
             ShellAssignment::local(
                 "__hostname_trim_at",
-                escape(&theme.segments.hostname.trim_at),
+                theme.segments.hostname.trim_at.as_str(),
             ),
             ShellAssignment::local(
                 "__hostname_show_always",
@@ -509,7 +499,7 @@ fn append_hostname_assignments(output: &mut String, colors: ShellColors<'_>, the
                     .hostname
                     .icon
                     .as_ref()
-                    .map_or_else(String::new, |icon| escape(icon.as_str())),
+                    .map_or("", |icon| icon.as_str()),
             ),
         ],
     );
@@ -519,12 +509,10 @@ fn append_hostname_assignments(output: &mut String, colors: ShellColors<'_>, the
 /// `__username_format` is a presence flag only, same rationale as `__hostname_format`.
 fn append_username_assignments(output: &mut String, colors: ShellColors<'_>, theme: &ThemeConfig) {
     let shell = colors.shell;
-    let syntax = shell.variable_syntax();
-    let escape = |text: &str| escape_shell_value(text, shell);
 
     append_shell_assignments(
         output,
-        syntax,
+        shell,
         [
             ShellAssignment::local(
                 "__color_username_bg",
@@ -553,7 +541,7 @@ fn append_username_assignments(output: &mut String, colors: ShellColors<'_>, the
                     .username
                     .icon
                     .as_ref()
-                    .map_or_else(String::new, |icon| escape(icon.as_str())),
+                    .map_or("", |icon| icon.as_str()),
             ),
         ],
     );
@@ -562,28 +550,26 @@ fn append_username_assignments(output: &mut String, colors: ShellColors<'_>, the
 /// Status segment icons (erased when unset) and the ok/fail colors.
 fn append_status_assignments(output: &mut String, colors: ShellColors<'_>, theme: &ThemeConfig) {
     let shell = colors.shell;
-    let syntax = shell.variable_syntax();
-    let escape = |text: &str| escape_shell_value(text, shell);
 
     append_shell_assignment(
         output,
-        syntax,
+        shell,
         theme.segments.status.ok_icon.as_ref().map_or_else(
             || ShellAssignment::unset("__icon_status_ok"),
-            |icon| ShellAssignment::local("__icon_status_ok", escape(icon.as_str())),
+            |icon| ShellAssignment::local("__icon_status_ok", icon.as_str()),
         ),
     );
     append_shell_assignment(
         output,
-        syntax,
+        shell,
         theme.segments.status.fail_icon.as_ref().map_or_else(
             || ShellAssignment::unset("__icon_status_fail"),
-            |icon| ShellAssignment::local("__icon_status_fail", escape(icon.as_str())),
+            |icon| ShellAssignment::local("__icon_status_fail", icon.as_str()),
         ),
     );
     append_shell_assignments(
         output,
-        syntax,
+        shell,
         [
             ShellAssignment::local(
                 "__color_status_ok_bg",
@@ -611,12 +597,11 @@ fn append_git_language_color_assignments(
     colors: ShellColors<'_>,
     theme: &ThemeConfig,
 ) {
-    let syntax = colors.shell.variable_syntax();
     let git = &theme.segments.git;
 
     append_shell_assignments(
         output,
-        syntax,
+        colors.shell,
         [
             ShellAssignment::local(
                 "__color_git_clean_bg",
@@ -650,31 +635,29 @@ fn append_delimiter_assignments(
     glyphs: Glyphs,
 ) {
     let shell = colors.shell;
-    let syntax = shell.variable_syntax();
-    let escape = |text: &str| escape_shell_value(glyphs.delimiter(text), shell);
 
     let (prompt_open_fg, prompt_open_bg) = delimiter_colors(theme.ui.prompt_open.as_ref());
     let (prompt_close_fg, prompt_close_bg) = delimiter_colors(theme.ui.prompt_close.as_ref());
     let (seg_delim_fg, seg_delim_bg) = delimiter_colors(theme.ui.segment_open.as_ref());
     append_shell_assignments(
         output,
-        syntax,
+        shell,
         [
             ShellAssignment::local(
                 "__segment_delim_first",
-                escape(theme.ui.get_prompt_open_delimiter()),
+                glyphs.delimiter(theme.ui.get_prompt_open_delimiter()),
             ),
             ShellAssignment::local(
                 "__segment_delim_start",
-                escape(theme.ui.get_segment_open_delimiter()),
+                glyphs.delimiter(theme.ui.get_segment_open_delimiter()),
             ),
             ShellAssignment::local(
                 "__segment_delim_end",
-                escape(theme.ui.get_segment_close_delimiter()),
+                glyphs.delimiter(theme.ui.get_segment_close_delimiter()),
             ),
             ShellAssignment::local(
                 "__segment_delim_last",
-                escape(theme.ui.get_prompt_close_delimiter()),
+                glyphs.delimiter(theme.ui.get_prompt_close_delimiter()),
             ),
             ShellAssignment::local("__prompt_open_color", colors.resolve(prompt_open_fg)),
             ShellAssignment::local("__prompt_open_bg", colors.resolve(prompt_open_bg)),
@@ -696,11 +679,10 @@ fn plugin_segment_style_assignments(
     segment_token: &str,
     segment_theme: &PluginSegmentTheme,
 ) -> Vec<ShellAssignment> {
-    let escape = |text: &str| escape_shell_value(text, colors.shell);
     let gpy_prefix = format!("__gpy_segment_{segment_token}");
     let mut assignments = vec![ShellAssignment::local(
         format!("{gpy_prefix}_id"),
-        escape(segment_name),
+        segment_name,
     )];
 
     if let Some(bg_color) = segment_theme.bg_color.as_deref() {
@@ -730,11 +712,11 @@ fn plugin_segment_style_assignments(
     if let Some(icon) = segment_theme.icon.as_ref() {
         assignments.push(ShellAssignment::local(
             format!("{gpy_prefix}_icon"),
-            escape(icon.as_str()),
+            icon.as_str(),
         ));
         assignments.push(ShellAssignment::local(
             format!("__icon_{segment_token}"),
-            escape(icon.as_str()),
+            icon.as_str(),
         ));
     }
 
@@ -765,10 +747,7 @@ fn plugin_segment_delimiter_assignments(
         return Vec::new();
     };
     vec![
-        ShellAssignment::local(
-            format!("{gpy_prefix}_{side}_icon"),
-            escape_shell_value(config.icon.as_str(), colors.shell),
-        ),
+        ShellAssignment::local(format!("{gpy_prefix}_{side}_icon"), config.icon.as_str()),
         ShellAssignment::local(
             format!("{gpy_prefix}_{side}_icon_color"),
             colors.resolve(&config.icon_color),
@@ -786,7 +765,6 @@ fn plugin_segment_property_assignments(
     segment_token: &str,
     segment_theme: &PluginSegmentTheme,
 ) -> Vec<ShellAssignment> {
-    let escape = |text: &str| escape_shell_value(text, colors.shell);
     let gpy_prefix = format!("__gpy_segment_{segment_token}");
     let mut assignments = Vec::new();
 
@@ -816,7 +794,7 @@ fn plugin_segment_property_assignments(
 
         assignments.push(ShellAssignment::local(
             format!("{gpy_prefix}_{property_token}"),
-            escape(&value),
+            value.as_ref(),
         ));
 
         if is_color {
@@ -835,7 +813,7 @@ fn plugin_segment_property_assignments(
             if !base_token.is_empty() {
                 assignments.push(ShellAssignment::local(
                     format!("__icon_{segment_token}_{base_token}"),
-                    escape(&value),
+                    value.as_ref(),
                 ));
             }
         }
@@ -850,8 +828,6 @@ fn append_plugin_segment_assignments(
     colors: ShellColors<'_>,
     theme: &ThemeConfig,
 ) {
-    let syntax = colors.shell.variable_syntax();
-
     let mut plugin_segments: Vec<_> = theme.segments.plugin.iter().collect();
     plugin_segments.sort_unstable_by_key(|(left_name, _)| *left_name);
 
@@ -864,7 +840,7 @@ fn append_plugin_segment_assignments(
 
         append_shell_assignments(
             output,
-            syntax,
+            colors.shell,
             plugin_segment_style_assignments(
                 colors,
                 segment_name.as_str(),
@@ -874,7 +850,7 @@ fn append_plugin_segment_assignments(
         );
         append_shell_assignments(
             output,
-            syntax,
+            colors.shell,
             plugin_segment_property_assignments(colors, &segment_token, segment_theme),
         );
     }
@@ -889,22 +865,19 @@ fn append_plugin_segment_file_assignments(
     if !matches!(shell, Shell::Fish) {
         return;
     }
-    let syntax = shell.variable_syntax();
-    let escape = |text: &str| escape_shell_value(text, shell);
-
     for (segment_name, segment_file) in plugin_segment_files {
         let Ok(segment_name) = SegmentName::new(segment_name) else {
             continue;
         };
         append_shell_assignment(
             output,
-            syntax,
+            shell,
             ShellAssignment::local(
                 format!(
                     "__gpy_plugin_segment_file_{}",
                     segment_name.variable_token()
                 ),
-                escape(segment_file),
+                segment_file.as_str(),
             ),
         );
     }
@@ -1029,8 +1002,9 @@ fn append_segment_bg_function(output: &mut String, shell: Shell) {
 }
 
 /// Serialize a theme into shell assignments. Call order is the export contract,
-/// pinned by snapshots. Free text goes through [`escape_shell_value`]; colors are
-/// validated upstream and resolved against `palette` (see [`ShellColors`]).
+/// pinned by snapshots. Every assigned value is escaped once, in [`ShellAssignment::render`],
+/// by [`escape_shell_value`]; colors are validated upstream and resolved against `palette`
+/// (see [`ShellColors`]).
 pub(crate) fn theme_to_shell(
     theme: &ThemeConfig,
     theme_name: &str,
