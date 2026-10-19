@@ -34,9 +34,3 @@ impl CachePolicy {
         }
     }
 }
-
-/// Trait for caches that follow a policy
-pub trait PolicyDriven {
-    /// Get the cache policy
-    fn policy(&self) -> CachePolicy;
-}

@@ -42,39 +42,6 @@ fn create_git_repo() -> TempDir {
 }
 
 #[test]
-fn test_sparse_checkout_detection() {
-    let repo = create_git_repo();
-    let repo_path = repo.path();
-
-    // Older git may lack `git sparse-checkout`.
-    // Note: "git sparse-checkout" command might not be available in older git versions
-
-    let status = std::process::Command::new("git")
-        .args(["sparse-checkout", "init", "--cone"])
-        .current_dir(repo_path)
-        .status();
-
-    if let Ok(s) = status {
-        if !s.success() {
-            println!("Skipping sparse checkout test: git sparse-checkout not supported or failed");
-            return;
-        }
-
-        std::process::Command::new("git")
-            .args(["sparse-checkout", "set", "src"])
-            .current_dir(repo_path)
-            .status()
-            .expect("sparse-checkout set");
-    } else {
-        println!("Skipping sparse checkout test: git command not found");
-    }
-
-    let is_sparse = NativeGitBackend::is_sparse_checkout(repo_path);
-    // True if sparse-checkout setup succeeded.
-    assert!(is_sparse);
-}
-
-#[test]
 fn test_sparse_checkout_doesnt_crash() {
     let repo = create_git_repo();
     let repo_path = repo.path();
@@ -105,9 +72,6 @@ fn test_sparse_checkout_doesnt_crash() {
         .current_dir(repo_path)
         .status()
         .expect("config sparse");
-
-    let is_sparse = NativeGitBackend::is_sparse_checkout(repo_path);
-    assert!(is_sparse, "Should detect sparse checkout");
 
     fs::write(repo_path.join("src/file.txt"), "src content").expect("write src file");
     fs::write(repo_path.join("test.txt"), "root content").expect("write root file");

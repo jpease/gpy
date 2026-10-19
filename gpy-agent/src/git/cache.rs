@@ -4,11 +4,11 @@
 //! byte budget keep aggregates but lose file detail, forcing a full rescan on
 //! the next incremental update.
 
+use crate::cache::CachePolicy;
 use crate::cache::bounded::{
     GIT_STATUS_CACHE_CAPACITY, GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES, drop_file_details_to_budget,
     evict_to_capacity,
 };
-use crate::cache::{CachePolicy, PolicyDriven};
 use crate::debug_log;
 use crate::git::native::resolve_overall_state;
 use crate::git::{FileStatus, RepositoryStatus, StatusAggregate};
@@ -231,52 +231,6 @@ impl GitStatusCache {
         drop(entries);
     }
 
-    /// Update one file's status incrementally.
-    ///
-    /// Returns `None` when the entry is missing or lost its file details;
-    /// the caller should then do a full scan.
-    #[must_use]
-    pub fn update_file(
-        &self,
-        repo_path: &Path,
-        file_path: &Path,
-        new_status: FileStatus,
-    ) -> Option<RepositoryStatus> {
-        self.update_file_canonical(&Self::canonical_key(repo_path), file_path, new_status)
-    }
-
-    /// [`update_file`](Self::update_file) for an already-canonical key.
-    #[must_use]
-    pub fn update_file_canonical(
-        &self,
-        key: &Path,
-        file_path: &Path,
-        new_status: FileStatus,
-    ) -> Option<RepositoryStatus> {
-        let mut guard = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
-        let entry = guard.get_mut(key)?;
-
-        if !entry.files_complete {
-            return None;
-        }
-
-        let rel_path = file_path
-            .strip_prefix(key)
-            .unwrap_or(file_path)
-            .to_path_buf();
-
-        if new_status.is_clean() {
-            entry.data.files.remove(&rel_path);
-        } else {
-            entry.data.files.insert(rel_path, new_status);
-        }
-
-        let aggregates = reaggregate(entry);
-
-        drop(guard);
-        Some(aggregates)
-    }
-
     /// Fold a pathspec-limited scan into the cached file map.
     ///
     /// `scanned` and `results` are relative to `key`. The scan is authoritative
@@ -429,17 +383,11 @@ impl Default for GitStatusCache {
     }
 }
 
-impl PolicyDriven for GitStatusCache {
-    fn policy(&self) -> CachePolicy {
-        self.policy
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::missing_panics_doc)]
 mod tests {
     use super::GitStatusCache;
-    use crate::cache::{CachePolicy, PolicyDriven};
+    use crate::cache::CachePolicy;
     use crate::git::{FileStatus, RepositoryState, RepositoryStatus};
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -499,7 +447,7 @@ mod tests {
 
     #[test]
     fn new_uses_git_status_policy() {
-        assert_eq!(GitStatusCache::new().policy(), CachePolicy::git_status());
+        assert_eq!(GitStatusCache::new().policy, CachePolicy::git_status());
     }
 
     #[test]
@@ -580,13 +528,18 @@ mod tests {
         cache.set(&repo_a, dummy_status(), dirty_files(10));
         cache.set(&repo_b, dummy_status(), dirty_files(files_per_repo));
 
-        let result = cache.update_file_canonical(
+        let file = PathBuf::from("src/main.rs");
+        let result = cache.update_paths_canonical(
             &repo_a,
-            &PathBuf::from("src/main.rs"),
-            FileStatus {
-                staged: true,
-                ..FileStatus::default()
-            },
+            std::slice::from_ref(&file),
+            &HashMap::from([(
+                file.clone(),
+                FileStatus {
+                    staged: true,
+                    ..FileStatus::default()
+                },
+            )]),
+            false,
         );
         assert!(
             result.is_none(),
@@ -605,13 +558,18 @@ mod tests {
         let repo = PathBuf::from("/repo/incremental-dirty");
         cache.set(&repo, dummy_status(), HashMap::new());
 
-        let result = cache.update_file_canonical(
+        let file = PathBuf::from("src/main.rs");
+        let result = cache.update_paths_canonical(
             &repo,
-            &PathBuf::from("src/main.rs"),
-            FileStatus {
-                unstaged: true,
-                ..FileStatus::default()
-            },
+            std::slice::from_ref(&file),
+            &HashMap::from([(
+                file.clone(),
+                FileStatus {
+                    unstaged: true,
+                    ..FileStatus::default()
+                },
+            )]),
+            false,
         );
 
         let status = result.expect("entry with complete file details must return Some");
@@ -642,7 +600,12 @@ mod tests {
         );
         cache.set(&repo, dirty_status, files);
 
-        let result = cache.update_file_canonical(&repo, &file, FileStatus::default());
+        let result = cache.update_paths_canonical(
+            &repo,
+            std::slice::from_ref(&file),
+            &HashMap::from([(file.clone(), FileStatus::default())]),
+            false,
+        );
 
         let status = result.expect("entry with complete file details must return Some");
         assert_eq!(status.unstaged, 0);
@@ -659,13 +622,18 @@ mod tests {
         let repo = PathBuf::from("/repo/incremental-conflict");
         cache.set(&repo, dummy_status(), HashMap::new());
 
-        let result = cache.update_file_canonical(
+        let file = PathBuf::from("src/main.rs");
+        let result = cache.update_paths_canonical(
             &repo,
-            &PathBuf::from("src/main.rs"),
-            FileStatus {
-                conflicted: true,
-                ..FileStatus::default()
-            },
+            std::slice::from_ref(&file),
+            &HashMap::from([(
+                file.clone(),
+                FileStatus {
+                    conflicted: true,
+                    ..FileStatus::default()
+                },
+            )]),
+            false,
         );
 
         let status = result.expect("entry with complete file details must return Some");
@@ -683,13 +651,18 @@ mod tests {
         merging_status.state = RepositoryState::Merging;
         cache.set(&repo, merging_status, HashMap::new());
 
-        let result = cache.update_file_canonical(
+        let file = PathBuf::from("src/main.rs");
+        let result = cache.update_paths_canonical(
             &repo,
-            &PathBuf::from("src/main.rs"),
-            FileStatus {
-                unstaged: true,
-                ..FileStatus::default()
-            },
+            std::slice::from_ref(&file),
+            &HashMap::from([(
+                file.clone(),
+                FileStatus {
+                    unstaged: true,
+                    ..FileStatus::default()
+                },
+            )]),
+            false,
         );
 
         let status = result.expect("entry with complete file details must return Some");

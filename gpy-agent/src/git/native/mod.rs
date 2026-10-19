@@ -213,17 +213,6 @@ impl NativeGitBackend {
             .collect()
     }
 
-    /// Check if sparse checkout is enabled in the repository
-    #[must_use]
-    pub fn is_sparse_checkout(repo_path: &Path) -> bool {
-        Self::run_git_optional(
-            repo_path,
-            &["config", "--get", "core.sparseCheckout"],
-            Self::default_deadline(),
-        )
-        .is_some_and(|v| v == "true")
-    }
-
     /// Resolve the git directory, following `.git` pointer files.
     fn resolve_git_dir_opt(repo_root: &Path) -> Option<PathBuf> {
         let git_item = repo_root.join(".git");
