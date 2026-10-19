@@ -464,6 +464,12 @@ impl FileSystemWatcher {
             callback_arc(PendingEvent::git(repo, path.to_path_buf()));
         }
 
+        if matches!(pending.event, super::FileEvent::Language { .. })
+            && language_marker_is_ignored(path, worktree_ctx.registry)
+        {
+            return;
+        }
+
         callback_arc(pending);
     }
 
@@ -985,6 +991,19 @@ fn is_force_added(repo_root: &Path, path: &Path, registry: &Arc<WatchRegistry>) 
     // Match the canonical form stored by `tracked_ignored_files`.
     let candidate = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     set.contains(&candidate)
+}
+
+/// A language marker inside a gitignored subtree of a repo; root-level
+/// markers always count.
+fn language_marker_is_ignored(path: &Path, registry: &Arc<WatchRegistry>) -> bool {
+    let Some(attribution) = attribute_repo_detailed(path, registry) else {
+        return false;
+    };
+    if !attribution.is_genuine_repo() {
+        return false;
+    }
+    let repo = attribution.into_repo();
+    path.parent().is_some_and(|parent| parent != repo) && path_is_gitignored(&repo, path, registry)
 }
 
 /// Whether `path` is gitignored (nested-aware chain) and not force-added.

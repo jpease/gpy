@@ -371,6 +371,86 @@ fn gitignored_language_manifest_does_not_emit_git_refresh() {
     ));
 }
 
+/// A canonicalized repo with `.git`, `gitignore` and the marker at `marker`
+/// (relative), plus the edit events the marker produces.
+fn language_marker_events(gitignore: &str, marker: &str) -> Vec<PendingEvent> {
+    let tmp = tempfile::TempDir::new().expect("temp dir");
+    // Canonicalize: a `/var` vs `/private/var` mismatch makes `ignore` panic.
+    let repo = std::fs::canonicalize(tmp.path()).expect("canonicalize repo");
+    std::fs::create_dir_all(repo.join(".git")).expect("git dir");
+    std::fs::write(repo.join(".gitignore"), gitignore).expect("write gitignore");
+    let file = repo.join(marker);
+    std::fs::create_dir_all(file.parent().expect("parent")).expect("marker dir");
+    std::fs::write(&file, "{}").expect("write marker");
+    events_for_edit(&repo, &file)
+}
+
+fn has_language_event(events: &[PendingEvent]) -> bool {
+    events
+        .iter()
+        .any(|e| matches!(e.event, FileEvent::Language { .. }))
+}
+
+#[test]
+fn ignored_language_marker_emits_no_language_event() {
+    let events = language_marker_events("node_modules/\n", "node_modules/x/package.json");
+    assert!(
+        !has_language_event(&events),
+        "a marker under an ignored directory must not trigger re-detection, got: {events:?}"
+    );
+}
+
+#[test]
+fn root_language_marker_still_emits() {
+    let events = language_marker_events("node_modules/\n", "package.json");
+    assert!(
+        has_language_event(&events),
+        "a root marker must emit a Language event, got: {events:?}"
+    );
+}
+
+#[test]
+fn root_marker_with_negated_wildcard_gitignore_still_emits() {
+    let events = language_marker_events("*\n!package.json\n", "package.json");
+    assert!(
+        has_language_event(&events),
+        "a root marker must emit a Language event, got: {events:?}"
+    );
+}
+
+#[test]
+fn non_git_marker_under_token_dir_still_emits() {
+    let registry = test_registry(true, HashSet::new());
+    let tmp = tempfile::TempDir::new().expect("temp dir");
+    let project = std::fs::canonicalize(tmp.path()).expect("canonicalize project");
+    let file = project.join("node_modules/x/package.json");
+    std::fs::create_dir_all(file.parent().expect("parent")).expect("marker dir");
+    std::fs::write(&file, "{}").expect("write marker");
+
+    let events = run_with_capture(|captured| {
+        let callback_arc: Arc<PendingCallback> = Arc::new(Box::new(move |event| {
+            captured.lock().unwrap().push(event);
+        }));
+        let evt = Event {
+            kind: EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+            paths: vec![file.clone()],
+            attrs: EventAttributes::default(),
+        };
+        FileSystemWatcher::process_event(
+            &evt,
+            &callback_arc,
+            &registry,
+            TEST_FOLLOWUP_DELAY,
+            &no_op_scheduler(),
+        );
+    });
+
+    assert!(
+        has_language_event(&events),
+        "a non-git project's marker must emit a Language event, got: {events:?}"
+    );
+}
+
 /// A nested event attributes to its watched root by longest prefix; no `.git`
 /// exists, so only the prefix match can succeed.
 #[test]
