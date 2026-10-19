@@ -55,11 +55,11 @@ Windows is unmeasured.
 
 ### Shells
 
-| Shell | Minimum version |
-|-------|------------------|
-| Fish | 3.6+ |
-| Zsh | 5.8+ |
-| Bash | 3.2+ (5.0+ recommended — see [Bash on macOS is too old](#bash-on-macos-is-too-old)) |
+| Shell | Minimum version | What backs the floor |
+|-------|-----------------|----------------------|
+| Fish | 3.6+ | Enforced at startup (`fish/core/init.fish`); CI runs Fish 4 |
+| Zsh | 5.8+ | The 5.8 floor is untested; CI runs Zsh 5.9 |
+| Bash | 3.2+ (5.0+ recommended — see [Bash on macOS is too old](#bash-on-macos-is-too-old)) | `tests/bash/debug_trap.test.bash` and `tests/bash/prompt_command_preserves_status.test.bash` also run under macOS `/bin/bash` 3.2; the other suites run Bash 5 |
 
 ### Shell feature matrix
 
