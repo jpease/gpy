@@ -123,6 +123,7 @@ Everything below runs on `main`, with a clean tree.
 |---|---|
 | Tag format is `vMAJOR.MINOR.PATCH` | `release.yml`, `validate` |
 | Tag matches both version-bearing files | `release.yml`, `validate` |
+| The released commit is on `main` (tag push or `publish: true`; skipped on a dry run) | `release.yml`, `validate` |
 | Full Rust + shell gate, `just lint`, and the performance budgets (`just bench-ci`) pass at the tagged commit | `release.yml`, `validate` |
 | The packaged binaries actually run: the archive's `install.sh`, both `--version`s, a oneshot render, a responding agent, one prompt each from fish, zsh and bash (Linux); both `.exe` `--version`s and `gpy --help` (Windows). A failure here blocks `create-release` | `release.yml`, `smoke` → `scripts/smoke-release.sh` |
 | No Linux binary (either arch) references a glibc newer than `GPY_GLIBC_FLOOR` (2.31); the Linux legs link against that floor with `cargo zigbuild --target <triple>.2.31`, and the packaged x86_64 binaries run their `--version` in `ubuntu:20.04` | `release.yml`, `build` → `scripts/check-glibc-floor.sh`; `smoke` |
