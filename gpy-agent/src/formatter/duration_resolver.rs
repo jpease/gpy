@@ -1,7 +1,7 @@
 //! Maps command duration to Starship-compatible `cmd_duration` variables.
 
 use crate::formatter::SegmentPosition;
-use crate::formatter::separator::{Glyphs, SeparatorStyle, resolve_separator};
+use crate::formatter::separator::{Glyphs, SeparatorStyle, separator_var};
 use crate::template::VariableResolver;
 use crate::theme::ThemeConfig;
 
@@ -70,15 +70,9 @@ impl VariableResolver for DurationResolver<'_> {
             "duration" => Some(self.format_duration()),
             "style" => Some(self.style()),
             "bg" => Some(self.theme.segments.duration.bg_color.as_str().to_owned()),
-            "sep_gap" => resolve_separator(self.pos, SeparatorStyle::Chained, self.glyphs)
-                .gap
-                .map(str::to_owned),
-            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Chained, self.glyphs)
-                .close
-                .map(str::to_owned),
-            "sep_open" => resolve_separator(self.pos, SeparatorStyle::Chained, self.glyphs)
-                .open
-                .map(str::to_owned),
+            "sep_gap" | "sep_open" | "sep_close" => {
+                separator_var(name, self.pos, SeparatorStyle::Chained, self.glyphs)
+            }
             _ => None,
         }
     }

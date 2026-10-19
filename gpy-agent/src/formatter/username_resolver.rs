@@ -2,7 +2,7 @@
 //! (The importer renames Starship's `$user` to `$username`.)
 
 use crate::formatter::SegmentPosition;
-use crate::formatter::separator::{Glyphs, SeparatorStyle, resolve_separator};
+use crate::formatter::separator::{Glyphs, SeparatorStyle, separator_var};
 use crate::template::VariableResolver;
 use crate::theme::ThemeConfig;
 
@@ -46,9 +46,9 @@ impl VariableResolver for UsernameResolver<'_> {
                     .unwrap_or("")
                     .to_owned(),
             ),
-            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Terminal, self.glyphs)
-                .close
-                .map(str::to_owned),
+            "sep_gap" | "sep_open" | "sep_close" => {
+                separator_var(name, self.pos, SeparatorStyle::Terminal, self.glyphs)
+            }
             _ => None,
         }
     }

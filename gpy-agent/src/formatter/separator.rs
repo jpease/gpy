@@ -114,6 +114,24 @@ pub const fn resolve_separator(
     }
 }
 
+/// `$sep_gap`/`$sep_open`/`$sep_close`; `None` for other names.
+#[must_use]
+pub fn separator_var(
+    name: &str,
+    pos: SegmentPosition,
+    style: SeparatorStyle,
+    glyphs: Glyphs,
+) -> Option<String> {
+    let separators = resolve_separator(pos, style, glyphs);
+    match name {
+        "sep_gap" => separators.gap,
+        "sep_open" => separators.open,
+        "sep_close" => separators.close,
+        _ => None,
+    }
+    .map(str::to_owned)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(
