@@ -57,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `SECURITY.md` now lists 0.4.x, the current release series, as supported.
 
+- A slow git scan can no longer overwrite a newer cached status.
+
 - Bash and Zsh keep a newline in a segment `format` when the agent answers
   live, instead of cutting the segment at it. Agent replies now carry an
   embedded newline as the RS byte (`\x1e`) so each reply stays one line;

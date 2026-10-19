@@ -201,8 +201,39 @@ impl GitStatusCache {
         status: RepositoryStatus,
         files: HashMap<PathBuf, FileStatus>,
     ) {
-        debug_log!("cache", "Caching status for {}", key.display());
+        self.set_inner(key, status, files, None);
+    }
+
+    /// Like [`set_canonical`](Self::set_canonical), but skips the write and
+    /// returns `false` when the entry was written after `started`.
+    #[must_use]
+    pub fn set_canonical_if_not_newer(
+        &self,
+        key: &Path,
+        started: Instant,
+        status: RepositoryStatus,
+        files: HashMap<PathBuf, FileStatus>,
+    ) -> bool {
+        self.set_inner(key, status, files, Some(started))
+    }
+
+    /// Compare, insert and evict under one `entries` guard; with `started`,
+    /// an entry written after it is kept and `false` returned.
+    fn set_inner(
+        &self,
+        key: &Path,
+        status: RepositoryStatus,
+        files: HashMap<PathBuf, FileStatus>,
+        started: Option<Instant>,
+    ) -> bool {
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(started) = started
+            && entries.get(key).is_some_and(|e| e.cached_at > started)
+        {
+            debug_log!("cache", "Kept newer status for {}", key.display());
+            return false;
+        }
+        debug_log!("cache", "Caching status for {}", key.display());
         entries.insert(
             key.to_path_buf(),
             CacheEntry {
@@ -229,6 +260,7 @@ impl GitStatusCache {
             },
         );
         drop(entries);
+        true
     }
 
     /// Fold a pathspec-limited scan into the cached file map.
@@ -391,7 +423,7 @@ mod tests {
     use crate::git::{FileStatus, RepositoryState, RepositoryStatus};
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     fn dummy_status() -> RepositoryStatus {
         RepositoryStatus {
@@ -443,6 +475,48 @@ mod tests {
         });
         past.set(&repo, dummy_status(), HashMap::new());
         assert!(!past.is_fresh(&repo));
+    }
+
+    #[test]
+    fn set_canonical_if_not_newer_keeps_the_newer_entry() {
+        let cache = GitStatusCache::new();
+        let key = PathBuf::from("/repo/not-newer-keep");
+        let newer = RepositoryStatus {
+            untracked: 2,
+            ..dummy_status()
+        };
+        let stale = RepositoryStatus {
+            untracked: 1,
+            ..dummy_status()
+        };
+        // A second back so coarse clocks cannot make the instants equal.
+        let started = Instant::now()
+            .checked_sub(Duration::from_secs(1))
+            .expect("instant");
+        cache.set_canonical(&key, newer.clone(), HashMap::new());
+
+        assert!(!cache.set_canonical_if_not_newer(&key, started, stale, HashMap::new()));
+        assert_eq!(cache.get_any_canonical(&key), Some(newer));
+    }
+
+    #[test]
+    fn set_canonical_if_not_newer_writes_when_older() {
+        let cache = GitStatusCache::new();
+        let key = PathBuf::from("/repo/not-newer-write");
+        let older = RepositoryStatus {
+            untracked: 1,
+            ..dummy_status()
+        };
+        let newer = RepositoryStatus {
+            untracked: 2,
+            ..dummy_status()
+        };
+        cache.set_canonical(&key, older, HashMap::new());
+        cache.age_entry_for_test(&key, Duration::from_secs(5));
+        let started = Instant::now();
+
+        assert!(cache.set_canonical_if_not_newer(&key, started, newer.clone(), HashMap::new()));
+        assert_eq!(cache.get_any_canonical(&key), Some(newer));
     }
 
     #[test]
