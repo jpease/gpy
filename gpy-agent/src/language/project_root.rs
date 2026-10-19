@@ -110,13 +110,28 @@ fn nearest_marker_ancestor(path: &Path, home: Option<&Path>) -> Option<PathBuf> 
     None
 }
 
-/// Whether `dir` directly contains a marker file (case-insensitive).
+/// Most directory entries [`has_marker_file`] reads for a case-insensitive
+/// match. A temp or downloads directory can hold a million entries, and an
+/// ancestor walk on the request path must not list them all; such a
+/// directory is not a project root anyway.
+const MARKER_SCAN_LIMIT: usize = 1024;
+
+/// Whether `dir` directly contains a marker file (case-insensitive). The
+/// exact names are checked first (each one lookup, and every spelling on a
+/// case-insensitive filesystem); other spellings only within the first
+/// [`MARKER_SCAN_LIMIT`] entries.
 fn has_marker_file(dir: &Path) -> bool {
+    let markers = marker_file_names();
+    if markers
+        .iter()
+        .any(|marker| dir.join(marker).symlink_metadata().is_ok())
+    {
+        return true;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
     };
-    let markers = marker_file_names();
-    entries.flatten().any(|entry| {
+    entries.take(MARKER_SCAN_LIMIT).flatten().any(|entry| {
         let file_name = entry.file_name();
         let name = file_name.to_string_lossy();
         markers
@@ -195,6 +210,34 @@ mod tests {
             Some(top),
             "a marker exactly MAX_TOOL_VERSION_ANCESTORS levels up is still found"
         );
+    }
+
+    #[test]
+    fn markers_are_found_by_name_in_a_large_dir_and_in_any_case_in_a_small_one() {
+        let (_temp_dir, root) = canonical_temp_dir();
+        let large = root.join("large");
+        std::fs::create_dir_all(&large).expect("large dir");
+        for i in 0..MARKER_SCAN_LIMIT + 10 {
+            std::fs::write(large.join(format!("f{i}")), "").expect("filler");
+        }
+        std::fs::write(large.join("package.json"), "{}").expect("marker");
+        assert!(
+            has_marker_file(&large),
+            "an exact name is found past the scan limit"
+        );
+
+        let small = root.join("small");
+        std::fs::create_dir_all(&small).expect("small dir");
+        std::fs::write(small.join("PACKAGE.JSON"), "{}").expect("odd-case marker");
+        assert!(
+            has_marker_file(&small),
+            "another spelling is found within the limit"
+        );
+
+        let plain = root.join("plain");
+        std::fs::create_dir_all(&plain).expect("plain dir");
+        std::fs::write(plain.join("notes.txt"), "x").expect("non-marker");
+        assert!(!has_marker_file(&plain));
     }
 
     #[test]

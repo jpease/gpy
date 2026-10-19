@@ -123,7 +123,7 @@ pub fn build_language_display_info_at(
         language_cfg,
         version_cwd,
         python_venv,
-        ProbePolicy::Spawn,
+        Versions::Probe,
     )
     .unwrap_or_default()
 }
@@ -147,20 +147,58 @@ pub fn cached_language_display_info_at(
         language_cfg,
         version_cwd,
         python_venv,
-        ProbePolicy::CachedOnly,
+        Versions::Cached,
     )
     .ok()
 }
 
-/// Display entries under `policy`; [`ColdVersion`] only under
-/// [`ProbePolicy::CachedOnly`].
+/// [`cached_language_display_info_at`] once a probe job for these languages
+/// has finished: a version still cold shows as none instead of failing the
+/// render. The job cached every result, success or failure, so a cold one
+/// means the entry is already gone again (expired, evicted, or a wall-clock
+/// step back made it read as stale).
+///
+/// # Panics
+/// If the constant fallback color fails to parse.
+#[must_use]
+pub fn settled_language_display_info_at(
+    detected_languages: &[DetectedLanguage],
+    theme: &ThemeConfig,
+    language_cfg: &LanguageSettings,
+    version_cwd: Option<&Path>,
+    python_venv: Option<&PythonVenv>,
+) -> Vec<LanguageInfo> {
+    display_info(
+        detected_languages,
+        theme,
+        language_cfg,
+        version_cwd,
+        python_venv,
+        Versions::Settled,
+    )
+    .unwrap_or_default()
+}
+
+/// Where [`display_info`] gets versions.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Versions {
+    /// Probe cold versions.
+    Probe,
+    /// Cache only; a cold version fails with [`ColdVersion`].
+    Cached,
+    /// Cache only; a cold version shows as none.
+    Settled,
+}
+
+/// Display entries with versions from `versions`; [`ColdVersion`] only under
+/// [`Versions::Cached`].
 fn display_info(
     detected_languages: &[DetectedLanguage],
     theme: &ThemeConfig,
     language_cfg: &LanguageSettings,
     version_cwd: Option<&Path>,
     python_venv: Option<&PythonVenv>,
-    policy: ProbePolicy,
+    versions: Versions,
 ) -> Result<Vec<LanguageInfo>, ColdVersion> {
     if !language_cfg.enabled {
         return Ok(Vec::new());
@@ -169,6 +207,11 @@ fn display_info(
     let displayed_languages: Vec<&DetectedLanguage> =
         select_display_languages(detected_languages, &theme.segments.language, language_cfg);
 
+    let policy = if versions == Versions::Probe {
+        ProbePolicy::Spawn
+    } else {
+        ProbePolicy::CachedOnly
+    };
     let versions: Vec<Option<String>> = if language_cfg.show_versions {
         let version_detectors: HashMap<_, _> = crate::language::version::get_version_detectors()
             .iter()
@@ -184,14 +227,18 @@ fn display_info(
             )
         };
 
-        match policy {
+        match versions {
             // Cache reads only: nothing to overlap.
-            ProbePolicy::CachedOnly => displayed_languages
+            Versions::Cached => displayed_languages
                 .iter()
                 .map(|detected_lang| lookup(detected_lang))
                 .collect::<Result<Vec<_>, _>>()?,
+            Versions::Settled => displayed_languages
+                .iter()
+                .map(|detected_lang| lookup(detected_lang).unwrap_or(None))
+                .collect(),
             // Probe concurrently (each probe has its own timeout); slots keep order.
-            ProbePolicy::Spawn => std::thread::scope(|scope| {
+            Versions::Probe => std::thread::scope(|scope| {
                 // Spawn eagerly before joining; a lazy iterator would serialize.
                 let mut probe_handles = Vec::with_capacity(displayed_languages.len());
                 for detected_lang in &displayed_languages {
@@ -395,6 +442,48 @@ mod tests {
         let selected = select_display_languages(&detected, &theme.segments.language, &language_cfg);
         let names: Vec<&str> = selected.iter().map(|lang| lang.name.as_str()).collect();
         assert_eq!(names, vec!["json"]);
+    }
+
+    /// After a probe job, a version whose cache entry is already gone again
+    /// renders without a version instead of failing the request (#951).
+    #[test]
+    fn settled_read_shows_a_cold_version_as_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let detected = vec![DetectedLanguage {
+            name: "rust".to_owned(),
+            confidence: 1.0,
+            file_count: 1,
+            total_bytes: 84,
+        }];
+        let theme = ThemeConfig::default();
+        let language_cfg = LanguageSettings {
+            show_versions: true,
+            ..LanguageSettings::default()
+        };
+
+        assert!(
+            super::cached_language_display_info_at(
+                &detected,
+                &theme,
+                &language_cfg,
+                Some(dir.path()),
+                None
+            )
+            .is_none(),
+            "never probed here, so the version is cold"
+        );
+        let settled = super::settled_language_display_info_at(
+            &detected,
+            &theme,
+            &language_cfg,
+            Some(dir.path()),
+            None,
+        );
+        let shown: Vec<(&str, Option<&str>)> = settled
+            .iter()
+            .map(|lang| (lang.name.as_str(), lang.version.as_deref()))
+            .collect();
+        assert_eq!(shown, [("rust", None)]);
     }
 
     #[test]

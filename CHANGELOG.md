@@ -203,6 +203,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `$TMPDIR/gpy_relay_<uid>`, which is all the sweep reads. A `$TMPDIR` holding
   many entries from other programs used to add a second or more to every Zsh
   start, and over ten seconds on a loaded machine.
+- Finding a directory's language project root no longer lists every entry of
+  each ancestor directory. Marker files are looked up by name first, and
+  other spellings only within a directory's first 1024 entries, so a prompt
+  under a directory with many files (a crowded `$TMPDIR` or downloads
+  folder) no longer times out the language segment.
+- A language request whose version probe finished in time no longer fails
+  when the version's cache entry is already gone again (expired, or read as
+  stale after the system clock stepped back); the language shows without a
+  version.
 
 ### Security
 
