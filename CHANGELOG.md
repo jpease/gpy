@@ -82,6 +82,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file-event handling no longer stalls for up to 10 s on a slow tool.
 - Bash and Zsh build the flags tail, the forwarded virtualenv and the git and
   language requests without forking a subshell.
+- When the prompt has nothing to show for a segment yet (a cold git cache, a
+  directory not yet rendered in this shell), Fish, Bash and Zsh wait up to
+  `GPY_IPC_COLD_TIMEOUT_MS` (default 500 ms, never below
+  `GPY_IPC_TIMEOUT_MS`) for the agent instead of 150 ms. A heavily loaded
+  machine then still draws those segments. Warm and stale renders keep the
+  150 ms budget.
 
 ### Removed
 

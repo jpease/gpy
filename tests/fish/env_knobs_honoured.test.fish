@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-# GPY_IPC_TIMEOUT_MS and the two instant-cache TTL knobs are honoured when set
+# GPY_IPC_TIMEOUT_MS, GPY_IPC_COLD_TIMEOUT_MS and the two instant-cache TTL knobs are honoured when set
 # in the environment before the shell integration loads, as in Bash and (for
 # the TTLs) Zsh: fish/core/constants.fish must not overwrite them with its
 # defaults at source time, or exporting one in config.fish would do nothing.
@@ -36,6 +36,17 @@ check "GPY_GIT_INSTANT_CACHE_TTL_SECONDS is honoured" (test (constants_with GPY_
 check "GPY_LANGUAGE_CACHE_TTL_SECONDS is honoured" (test (constants_with GPY_LANGUAGE_CACHE_TTL_SECONDS=22) = "150 5 22"; and echo 1; or echo 0) "got: "(constants_with GPY_LANGUAGE_CACHE_TTL_SECONDS=22)
 check "a non-numeric GPY_IPC_TIMEOUT_MS falls back to the default" (test (constants_with GPY_IPC_TIMEOUT_MS=fast) = "150 5 30"; and echo 1; or echo 0) "got: "(constants_with GPY_IPC_TIMEOUT_MS=fast)
 check "an empty TTL falls back to the default" (test (constants_with GPY_GIT_INSTANT_CACHE_TTL_SECONDS=) = "150 5 30"; and echo 1; or echo 0) "got: "(constants_with GPY_GIT_INSTANT_CACHE_TTL_SECONDS=)
+
+# The cold budget (nothing to show yet): 500 ms by default, honoured when set,
+# never below GPY_IPC_TIMEOUT_MS, and the default when non-numeric.
+function cold_with
+    env -u GPY_IPC_TIMEOUT_MS -u GPY_IPC_COLD_TIMEOUT_MS $argv \
+        fish --no-config -c 'source $argv[1]/fish/core/constants.fish; source $argv[1]/fish/core/util.fish; source $argv[1]/fish/core/ipc.fish; __gpy_ipc_cold_timeout_ms' -- $repo_root
+end
+check "the cold budget defaults to 500 ms" (test (cold_with) = 500; and echo 1; or echo 0) "got: "(cold_with)
+check "GPY_IPC_COLD_TIMEOUT_MS is honoured" (test (cold_with GPY_IPC_COLD_TIMEOUT_MS=900) = 900; and echo 1; or echo 0) "got: "(cold_with GPY_IPC_COLD_TIMEOUT_MS=900)
+check "the cold budget is never below GPY_IPC_TIMEOUT_MS" (test (cold_with GPY_IPC_TIMEOUT_MS=2000) = 2000; and echo 1; or echo 0) "got: "(cold_with GPY_IPC_TIMEOUT_MS=2000)
+check "a non-numeric cold budget falls back to 500 ms" (test (cold_with GPY_IPC_COLD_TIMEOUT_MS=slow) = 500; and echo 1; or echo 0) "got: "(cold_with GPY_IPC_COLD_TIMEOUT_MS=slow)
 
 if test $failures -gt 0
     print_test_footer "Env knobs are honoured" FAIL

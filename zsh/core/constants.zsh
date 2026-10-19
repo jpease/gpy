@@ -30,6 +30,10 @@ typeset -g -a __enabled_segments=()
 # IPC round-trip bound (ms); __gpy_ms_to_secs rejects a non-numeric override.
 typeset -g GPY_IPC_TIMEOUT_MS=${GPY_IPC_TIMEOUT_MS:-150}
 
+# Budget when the prompt has nothing to show for a segment (a cold git cache,
+# a directory not yet rendered); never shorter than GPY_IPC_TIMEOUT_MS.
+typeset -g GPY_IPC_COLD_TIMEOUT_MS=${GPY_IPC_COLD_TIMEOUT_MS:-500}
+
 # Stale git cache entries are still served but trigger a background refresh,
 # so a missed agent repaint push self-heals within this bound.
 typeset -g GPY_GIT_INSTANT_CACHE_TTL_SECONDS=${GPY_GIT_INSTANT_CACHE_TTL_SECONDS:-5}

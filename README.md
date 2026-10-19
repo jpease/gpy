@@ -4,9 +4,11 @@
 
 GPY is a shell prompt for Fish, Zsh and Bash. Its git and language detection
 runs in a small background daemon that watches your repositories, so the
-prompt draws from a cache instead of running `git status` each time. On a cold
-cache the prompt waits at most 150 ms (`GPY_IPC_TIMEOUT_MS`) before drawing
-without the segment.
+prompt draws from a cache instead of running `git status` each time. When the
+cache is warm, the prompt waits at most 150 ms (`GPY_IPC_TIMEOUT_MS`) for the
+agent. With nothing cached yet it waits up to 500 ms
+(`GPY_IPC_COLD_TIMEOUT_MS`), so a busy machine still draws the segment, and
+otherwise draws without it.
 
 <p align="center">
   <img src="./assets/demo.gif" alt="GPY prompt in a git repository" width="90%">

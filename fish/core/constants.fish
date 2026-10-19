@@ -30,6 +30,11 @@ end
 
 set -g GPY_IPC_TIMEOUT_MS (__gpy_uint_or_default "$GPY_IPC_TIMEOUT_MS" 150)
 
+# Budget when the prompt has nothing to show for a segment (a cold git cache,
+# a directory not yet rendered): waiting longer keeps the segment under load.
+# Never shorter than GPY_IPC_TIMEOUT_MS; see __gpy_ipc_cold_timeout_ms.
+set -g GPY_IPC_COLD_TIMEOUT_MS (__gpy_uint_or_default "$GPY_IPC_COLD_TIMEOUT_MS" 500)
+
 set -g GPY_AGENT_START_DELAY_MS 200
 
 # Exponential backoff, ~2s total.

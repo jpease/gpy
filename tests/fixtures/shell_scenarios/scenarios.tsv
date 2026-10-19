@@ -90,6 +90,9 @@ variant-down	variant-git	status,git	0	-	drop_variants,down_after_prime	up	repo	-
 slow-reply	default	directory,git	0	GPY_IPC_TIMEOUT_MS=150	-	slow	repo	-	-	starts=0 registers=1 oneshots=- ipc.git=2 prompt!~=main
 # GPY_IPC_TIMEOUT_MS is honoured: a budget longer than the delay uses the late reply
 ipc-timeout-long	default	directory,git	0	GPY_IPC_TIMEOUT_MS=5000	-	slow	repo	-	-	starts=0 oneshots=- ipc.git=1 prompt~=main
+# GPY_IPC_COLD_TIMEOUT_MS: with nothing to show (cold git cache, no directory memo) the
+# prompt waits the cold budget, so a reply too late for GPY_IPC_TIMEOUT_MS still draws
+cold-budget	default	directory,git	0	GPY_IPC_TIMEOUT_MS=150 GPY_IPC_COLD_TIMEOUT_MS=5000	-	slow	repo	-	-	starts=0 oneshots=- ipc.git=1 prompt~=main prompt~=repo
 # GPY_GIT_INSTANT_CACHE_TTL_SECONDS is honoured: a fresh entry is served with no git request...
 ttl-fresh	default	directory,git	0	GPY_GIT_INSTANT_CACHE_TTL_SECONDS=3600	-	up	repo	-	git	starts=0 oneshots=- ipc.git=0 prompt~=main
 # ...and an expired one is still drawn (stale) and the agent is asked to refresh it

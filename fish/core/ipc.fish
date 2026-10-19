@@ -118,6 +118,14 @@ function __gpy_ipc_read_complete_line --description 'Validate newline framing on
     return 1
 end
 
+# The budget for a segment the prompt has nothing to show for:
+# GPY_IPC_COLD_TIMEOUT_MS, never below GPY_IPC_TIMEOUT_MS.
+function __gpy_ipc_cold_timeout_ms --description 'Reply budget (ms) when a segment has nothing to show'
+    set -l cold (__gpy_uint_or_default "$GPY_IPC_COLD_TIMEOUT_MS" 500)
+    set -l warm (__gpy_uint_or_default "$GPY_IPC_TIMEOUT_MS" 150)
+    math --scale=0 "max($cold, $warm)"
+end
+
 # Returns 0 on a complete reply, 1 if unreachable, 2 if the request was sent
 # but no complete reply arrived in time; on 2 callers must not resend or fork
 # oneshot for the same segment.
@@ -632,7 +640,10 @@ function __gpy_request --argument-names op cwd is_last prev_bg is_first --descri
             return 1
     end
 
-    set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
+    # A directory request means the memo had nothing to show.
+    set -l timeout_ms $GPY_IPC_TIMEOUT_MS
+    test "$op" = directory; and set timeout_ms (__gpy_ipc_cold_timeout_ms)
+    set -l result (__gpy_ipc_send $payload $timeout_ms)
     set -l send_status $status
 
     # Status 2: the daemon is computing this segment; omit it rather than fork.
