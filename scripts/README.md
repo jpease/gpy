@@ -49,10 +49,9 @@ Exit status is 0 when every check passed, 1 otherwise.
 | `check-privacy-patterns.sh` | No workstation paths, private identifiers or hardcoded sockets in tracked files. |
 | `check-doc-links.sh` | Every repository-relative Markdown link resolves. |
 | `cleanup-test-agents.sh` | Reap agents and sockets left by killed Rust test runs. |
-| `bench.sh` | Rust micro-benchmarks; `--ci` enforces `tests/performance-baselines.json`. |
+| `bench.sh --ci` | Rust micro-benchmark budgets from `tests/performance-baselines.json` (part of `just bench-ci`). |
 | `ci-bench.sh` | End-to-end prompt-latency and agent-memory budgets (`just bench-ci`). |
 | `perf-canary.sh` | Compare canary benchmarks against an upstream commit on the same machine. |
-| `perf-baseline.sh` | Establish or compare performance baselines (`just bench-baseline`). |
 | `build-release-binaries.sh` | Build release binaries for every supported platform into `bin/`. |
 | `check-glibc-floor.sh <binary> <floor>` | Fail when a Linux binary needs a `GLIBC_` version above `<floor>`. |
 | `generate-sbom.sh` | CycloneDX SBOM from `Cargo.lock` (needs `jq`). |

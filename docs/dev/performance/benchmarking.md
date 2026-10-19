@@ -80,23 +80,17 @@ Run benchmarks in this order and record the outputs:
 RUSTC_WRAPPER= just bench-ci
 ```
 
-2) Shell end-to-end timing (prompt latency)
-```bash
-just bench-shell
-```
-
-3) Rust micro-benchmarks (agent internals)
+2) Rust micro-benchmarks (agent internals)
 ```bash
 RUSTC_WRAPPER= just bench-rust
 ```
 
-4) Plugin discovery overhead budgets (0/10/50 plugins)
+3) Plugin discovery overhead budgets (0/10/50 plugins)
 ```bash
 (cd gpy-agent && RUSTC_WRAPPER= cargo test --test plugin_performance_tests)
 ```
 
 Optional:
-- Baseline comparison/update: `just bench-baseline`
 - Same-machine canary against the last pushed commit: `just perf-canary` (CI runs it against the PR base in the non-gating `perf` job of `pr-gate.yml`, together with the budgets in `tests/performance-baselines.json`)
 
 ## End-to-End Prompt & Memory Benchmark
@@ -210,4 +204,3 @@ which can be `>50ms` on large or noisy repositories.
 ## Notes
 
 - `just bench-ci` writes `bench-results.json` in the repo root.
-- Use `./scripts/perf-baseline.sh --compare` for budget comparisons if needed.

@@ -67,8 +67,7 @@ without reopening the shell.
 Bash renders the prompt in shell code through `PROMPT_COMMAND`, and its string
 and array handling is slower than Fish's or Zsh's. The render-time budgets
 every gate enforces are in `tests/performance-baselines.json`
-(`./scripts/bench.sh --ci` checks them; `./scripts/bench.sh` measures your
-machine with hyperfine).
+(`./scripts/bench.sh --ci` checks them).
 
 ---
 

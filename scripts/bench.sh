@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# GPY performance benchmarks.
-# Usage: ./scripts/bench.sh [--ci] [-m MODE] [-p PRESET] [-d DEBOUNCE_MS] [-i ITERS]
-#   default: hyperfine over the fish language segment
-#   --ci:    cargo bench, enforcing budgets from tests/performance-baselines.json
+# Rust micro-benchmark budgets.
+# Usage: ./scripts/bench.sh --ci  (cargo bench, enforcing tests/performance-baselines.json)
 
 # check_budget OUTPUT BENCH_NAME BUDGET_NS METRIC_NAME
 check_budget() {
@@ -143,12 +141,6 @@ if [[ " $* " == *" --ci "* ]]; then
   # 5k-file corpus (gpy-agent/benches/language_bench.rs).
   check_budget "$BENCH_OUTPUT" "lang_detect_5k" "$BUDGET_LANG_DETECT" "Language Detection (5k-file corpus)" || ((FAILURES++))
 
-  echo "Running perf-baseline.sh verification..."
-  if ! "$PROJECT_ROOT/scripts/perf-baseline.sh" --compare; then
-      echo "Error: perf-baseline.sh checks failed"
-      ((FAILURES++))
-  fi
-
   if echo "$BENCH_OUTPUT" | grep -q "budget exceeded"; then
     echo "Error: Performance budget exceeded in benchmark output"
     ((FAILURES++))
@@ -190,47 +182,5 @@ EOF
   fi
 fi
 
-echo "--- Running benchmarks in Local mode ---"
-
-MODE=fast
-PRESET=common
-DEBOUNCE=0
-ITERS=300
-
-while getopts ":m:p:d:i:" opt; do
-  case "$opt" in
-    m) MODE="$OPTARG" ;;
-    p) PRESET="$OPTARG" ;;
-    d) DEBOUNCE="$OPTARG" ;;
-    i) ITERS="$OPTARG" ;;
-    :) echo "Missing argument for -$OPTARG" >&2; exit 2 ;;
-    \?) echo "Unknown option -$OPTARG" >&2; exit 2 ;;
-  esac
-done
-
-if ! command -v hyperfine >/dev/null 2>&1; then
-  echo "hyperfine is required. Install: https://github.com/sharkdp/hyperfine" >&2
-  exit 1
-fi
-if ! command -v fish >/dev/null 2>&1; then
-  echo "fish shell is required." >&2
-  exit 1
-fi
-
-FISH_CMD='source segments/language.fish; \
-set -gx GPY_LANG_SIG_MODE '"$MODE"'; \
-set -gx GPY_LANG_SIG_PRESET '"$PRESET"'; \
-if test '"$DEBOUNCE"' -gt 0; set -gx GPY_LANG_SIG_DEBOUNCE_MS '"$DEBOUNCE"'; end; \
-for i in (seq '"$ITERS"'); segment_language_render >/dev/null; end'
-
-echo "Mode=$MODE  Preset=$PRESET  Debounce=$DEBOUNCE  Iters=$ITERS"
-hyperfine "fish -lc '$FISH_CMD'" --warmup 3 --min-runs 6
-
-FISH_TWO='source segments/language.fish; \
-set -gx GPY_LANG_SIG_MODE '"$MODE"'; \
-set -gx GPY_LANG_SIG_PRESET '"$PRESET"'; \
-if test '"$DEBOUNCE"' -gt 0; set -gx GPY_LANG_SIG_DEBOUNCE_MS '"$DEBOUNCE"'; end; \
-segment_language_render >/dev/null; segment_language_render >/dev/null'
-
-printf '\nTwo-call micro-benchmark (miss ➜ hit in same dir):\n'
-hyperfine "fish -lc '$FISH_TWO'" --warmup 3 --min-runs 10
+echo "Usage: ./scripts/bench.sh --ci" >&2
+exit 2

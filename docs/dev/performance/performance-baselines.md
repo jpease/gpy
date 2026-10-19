@@ -101,18 +101,13 @@ cost (fork/exec or `CreateProcess`), which varies significantly across
 machines and CI runners; its budget carries much larger headroom than the
 in-process benchmarks for that reason.
 
-### IPC and Integration Benchmarks (Shell)
+### IPC and Integration Benchmarks
 
-The shell-level benchmarks measure end-to-end performance including IPC:
+`./scripts/bench.sh --ci` runs `cargo bench` and enforces the budgets below.
+`./scripts/ci-bench.sh` measures the end-to-end shell path (see
+[benchmarking.md](benchmarking.md)).
 
 ```bash
-# Run full benchmark suite (local mode)
-./scripts/bench.sh
-
-# Run with specific file signature mode
-./scripts/bench.sh -m files
-
-# Run CI mode with budget enforcement
 ./scripts/bench.sh --ci
 ```
 
@@ -172,10 +167,6 @@ cargo build --release
 
 # Run formatter benchmarks
 cargo bench --bench formatter_bench
-
-# Run integration benchmarks
-cd ..
-./scripts/bench.sh
 ```
 
 ### 2. Record baseline results
@@ -278,128 +269,11 @@ The `scripts/bench.sh --ci` mode enforces these budgets (with 15% tolerance):
 
 ## Detecting Regressions
 
-### Automated Baseline Comparison
-
-The performance baseline script can compare current measurements against saved baselines:
-
-```bash
-# Compare current baselines to saved values
-./scripts/perf-baseline.sh --compare
-
-# Example output:
-# [INFO] Comparing current results to baseline...
-# [INFO] Baseline file: tests/performance-baselines.json
-#
-# [INFO] Regression thresholds:
-#   Major regression: >50%
-#   Minor regression: >20%
-#   Variance tolerance: ±15%
-#
-# [INFO] Budget compliance check:
-# [✓] ipc_latency: 0.2ms / 1.5ms (13.3%) ✓
-#   └─ IPC roundtrip latency budget
-# [✓] git_status_cold: 45.2ms / 750.0ms (6.0%) ✓
-#   └─ Git status scan (cold cache) budget
-# [✓] cache_write: 2.1ms / 25.0ms (8.4%) ✓
-#   └─ Cache write operation budget
-#
-# [✓] ✓ All measured metrics within budgets
-```
-
-**Exit codes:**
-- `0`: All metrics within budgets
-- `1`: One or more metrics exceed budgets or comparison failed
-
-**Requirements:**
-- `jq` must be installed for comparison (`sudo apt install jq` or `brew install jq`)
-- `bc` must be installed for percentage calculations (usually pre-installed)
-
-**Understanding the output:**
-
-```bash
-# Green checkmark: Metric is within budget
-[✓] ipc_latency: 0.2ms / 1.5ms (13.3%) ✓
-  └─ IPC roundtrip latency budget
-
-# Red X: Metric exceeds budget (regression detected)
-[✗] git_status_cold: 800ms / 750.0ms (106.7%) EXCEEDS BUDGET
-  └─ Git status scan (cold cache) budget
-
-# Warning: No baseline available yet
-[⚠] cache_write: No baseline measurement available
-  └─ Cache write operation budget
-```
-
-### Local Development Integration
-
-Compare local performance against `tests/performance-baselines.json`; the
-command exits non-zero if any budget is exceeded:
-
-```bash
-./scripts/perf-baseline.sh --compare   # or: just bench-baseline
-```
-
-**Requirements:**
-- `jq` must be installed (`sudo apt install jq` or `brew install jq`)
-- `bc` must be installed (usually pre-installed on most systems)
-
-**When to run:**
-- Before committing performance-sensitive changes
-- Before creating pull requests
-- When updating formatter code paths
-- After dependency upgrades
-
-**What to do when it fails:**
-1. Check which metric exceeded its budget in the output
-2. Run the specific benchmark to get detailed results:
-   ```bash
-   ./scripts/perf-baseline.sh --rust  # For formatter benchmarks
-   ./scripts/perf-baseline.sh --shell # For IPC benchmarks
-   ```
-3. Investigate the regression using profiling tools (see "Optimization Guidelines" below)
-4. Either fix the regression or update the baseline if the change is justified
-
 ### CI Integration
 
-**⏳ Performance regression checks are READY but not yet integrated into CI**
-
-**Current Status:**
-- Integration step is designed and documented
-- Requires manual addition to `.github/workflows/ci.yml` (workflow permissions limitation)
-- See `CI_INTEGRATION_GUIDE.md` in project root for complete instructions
-
-**Recommended CI Setup:**
-
-Add this step to `.github/workflows/ci.yml` in the `benchmark` job (after "Generate performance report"):
-
-```yaml
-- name: Performance baseline regression check
-  continue-on-error: true  # Advisory mode while establishing baselines
-  run: |
-    echo "Running performance baseline comparison..."
-    sudo apt-get update
-    sudo apt-get install -y jq bc
-    ./scripts/perf-baseline.sh --compare
-
-    BASELINE_CHECK_EXIT=$?
-    if [ $BASELINE_CHECK_EXIT -eq 0 ]; then
-      echo "All performance metrics within budgets"
-      echo "PERF_BASELINE_STATUS=PASS" >> $GITHUB_ENV
-    else
-      echo "Some performance metrics exceed budgets"
-      echo "PERF_BASELINE_STATUS=WARN" >> $GITHUB_ENV
-    fi
-```
-
-**Once integrated, it will:**
-1. Run benchmarks as part of the `benchmark` job
-2. Install jq and bc for comparison
-3. Run `./scripts/perf-baseline.sh --compare`
-4. Report results in build logs
-5. Set `PERF_BASELINE_STATUS` environment variable (PASS/WARN)
-6. Run in advisory mode initially (doesn't block builds)
-
-**Future:** After 2-3 weeks of data collection, make it blocking by removing `continue-on-error: true`.
+`pr-gate.yml`'s non-gating `perf` job runs `./scripts/bench.sh --ci` and the
+base-vs-head canary (`scripts/perf-canary.sh`). `release.yml`'s `validate` job
+runs `just bench-ci`, so an exceeded budget blocks a release.
 
 **Manual CI-mode benchmarks:**
 You can also run benchmarks with budget enforcement locally:
@@ -416,9 +290,6 @@ Compare current results to baseline for deeper analysis:
 ```bash
 # Run current benchmarks
 cargo bench --bench formatter_bench > current-results.txt
-
-# Compare to baseline using the script
-./scripts/perf-baseline.sh --compare
 
 # Or manually inspect the baseline file
 jq '.baselines' tests/performance-baselines.json
@@ -509,10 +380,10 @@ c.bench_function("my_bench", |b| {
 
 - [Criterion.rs documentation](https://bheisler.github.io/criterion.rs/book/)
 - [Rust Performance Book](https://nnethercote.github.io/perf-book/)
-- [hyperfine](https://github.com/sharkdp/hyperfine) - Shell benchmark tool used in `bench.sh`
+- [hyperfine](https://github.com/sharkdp/hyperfine) - Shell benchmark tool used by `scripts/ci-bench.sh`
 
 ## See Also
 
-- `scripts/bench.sh` - Shell-level benchmarking
+- `scripts/bench.sh --ci` - Rust micro-benchmark budgets
 - `gpy-agent/benches/` - Rust microbenchmarks
 - `docs/ARCHITECTURE.md` - System design and performance considerations
