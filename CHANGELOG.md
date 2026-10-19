@@ -7,25 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Security
-
-- Rendering the language segment no longer runs a project's `.venv`/`venv`
-  Python interpreter to read its version. Only a virtualenv the shell
-  activated is probed; a project venv's version comes from `pyvenv.cfg`, or is
-  omitted.
-- `gpy-agent start` refuses a symlinked or foreign-owned socket directory,
-  for both the default runtime directory and `GPY_AGENT_SOCKET_PATH`/`--socket`.
-  A group/world-writable directory is tightened to `0700` if it is GPY's
-  default runtime directory, and refused unchanged if you chose it.
-- Theme format templates can no longer emit terminal escape sequences:
-  `gpy theme validate` rejects control characters other than newline, and
-  rendering strips them from literal text.
-- FIFOs and other special files in a project no longer hang language
-  detection or version reading; they are refused when opened, not read.
-- Instant-prompt cache files and `theme-export.{fish,bash,zsh}` are now
-  created owner-only (`0600`), in a `0700` `instant-prompts` directory.
-- Bash no longer `eval`s an unvalidated username when `$HOME` is empty.
-
 ### Changed
 
 - Language markers under gitignored directories (e.g.
@@ -80,13 +61,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Serialize`/`Deserialize`.
 - The library's `GuardSettings` no longer has a `request_timeout` field; it
   was never read. The IPC request timeout is still `agent.timeout_seconds`.
-
-### Removed
-
-- The hidden, deprecated `gpy theme use --apply-layout` alias; use `--force`.
-  `gpy theme import --apply-layout` is unchanged.
-- **Breaking:** `gpy-agent oneshot --format` and the IPC `format` field accept only `json`, `ansi`, `bash-prompt` and `zsh-prompt`. The unused `fish`, `fish-source` and `zsh` formats and the never-implemented `bash-source` and `zsh-source` are gone; no shipped shell sent them.
-- **Breaking:** the unused IPC operations `theme` and `latency_stats` are removed; no shipped shell or CLI sent them.
 - `just install` (`install-dev.fish`) installs Fish through `gpy setup`:
   `gpy_init.fish` is sourced once and built-in themes are no longer copied.
   Older dev installs may have `default.toml`, `starship.toml` and `text.toml`
@@ -101,6 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The hidden, deprecated `gpy theme use --apply-layout` alias; use `--force`.
+  `gpy theme import --apply-layout` is unchanged.
+- **Breaking:** `gpy-agent oneshot --format` and the IPC `format` field accept only `json`, `ansi`, `bash-prompt` and `zsh-prompt`. The unused `fish`, `fish-source` and `zsh` formats and the never-implemented `bash-source` and `zsh-source` are gone; no shipped shell sent them.
+- **Breaking:** the unused IPC operations `theme` and `latency_stats` are removed; no shipped shell or CLI sent them.
 - `scripts/update.fish`, which never detected a version change; run
   `just install` from the checkout.
 - `uninstall.fish` and the `fisher-gpy.tar.gz` release asset are gone. Use
@@ -187,6 +165,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An error creating the runtime directory names the directory and the cause.
 - A theme file edit reloads once, within about a second, and rings shells
   exactly once.
+
+### Security
+
+- Rendering the language segment no longer runs a project's `.venv`/`venv`
+  Python interpreter to read its version. Only a virtualenv the shell
+  activated is probed; a project venv's version comes from `pyvenv.cfg`, or is
+  omitted.
+- `gpy-agent start` refuses a symlinked or foreign-owned socket directory,
+  for both the default runtime directory and `GPY_AGENT_SOCKET_PATH`/`--socket`.
+  A group/world-writable directory is tightened to `0700` if it is GPY's
+  default runtime directory, and refused unchanged if you chose it.
+- Theme format templates can no longer emit terminal escape sequences:
+  `gpy theme validate` rejects control characters other than newline, and
+  rendering strips them from literal text.
+- FIFOs and other special files in a project no longer hang language
+  detection or version reading; they are refused when opened, not read.
+- Instant-prompt cache files and `theme-export.{fish,bash,zsh}` are now
+  created owner-only (`0600`), in a `0700` `instant-prompts` directory.
+- Bash no longer `eval`s an unvalidated username when `$HOME` is empty.
 
 ## [0.4.0] - 2026-10-16
 
