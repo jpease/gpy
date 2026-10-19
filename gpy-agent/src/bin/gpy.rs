@@ -116,16 +116,6 @@ enum Commands {
         #[arg(value_enum)]
         kind: CliCompleteKind,
     },
-
-    /// Internal: force a wizard terminal-setup failure at `stage` (hidden;
-    /// `test-support` builds only).
-    #[cfg(all(unix, feature = "test-support"))]
-    #[command(name = "__wizard_force_fail", hide = true)]
-    WizardForceFail {
-        /// Which `TerminalGuard` setup stage to fail.
-        #[arg(value_enum)]
-        stage: CliForcedFailureStage,
-    },
 }
 
 /// `clap::ValueEnum` mirror of [`gpy_agent::commands::complete::CompleteKind`].
@@ -145,26 +135,6 @@ impl From<CliCompleteKind> for commands::complete::CompleteKind {
             CliCompleteKind::Theme => Self::Theme,
             CliCompleteKind::Palette => Self::Palette,
             CliCompleteKind::Segment => Self::Segment,
-        }
-    }
-}
-
-/// `clap::ValueEnum` mirror of [`gpy_agent::commands::wizard::ForcedFailureStage`].
-#[cfg(all(unix, feature = "test-support"))]
-#[derive(Clone, Copy, Debug, clap::ValueEnum)]
-enum CliForcedFailureStage {
-    /// Fail after raw mode is enabled.
-    AfterRawMode,
-    /// Fail after the alternate screen is entered.
-    AfterAltScreen,
-}
-
-#[cfg(all(unix, feature = "test-support"))]
-impl From<CliForcedFailureStage> for commands::wizard::ForcedFailureStage {
-    fn from(stage: CliForcedFailureStage) -> Self {
-        match stage {
-            CliForcedFailureStage::AfterRawMode => Self::AfterRawMode,
-            CliForcedFailureStage::AfterAltScreen => Self::AfterAltScreen,
         }
     }
 }
@@ -559,10 +529,6 @@ fn run(command: Commands) -> Result<ExitCode> {
             std::io::Write::write_all(&mut std::io::stdout().lock(), &script)?;
         }
         Commands::Complete { kind } => commands::complete::run(kind.into()),
-        #[cfg(all(unix, feature = "test-support"))]
-        Commands::WizardForceFail { stage } => {
-            commands::wizard::run_with_forced_failure(stage.into())?;
-        }
     }
     Ok(ExitCode::SUCCESS)
 }

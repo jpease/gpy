@@ -1,5 +1,5 @@
 //! Snapshots of the `gpy` and `gpy-agent` help surface. Hidden items
-//! (`__complete`, `__wizard_force_fail`, `theme use --apply-layout`) must
+//! (`__complete`, `theme use --apply-layout`) must
 //! never appear. Review changes with `cargo insta review`.
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -40,7 +40,7 @@ const GPY_SUBCOMMANDS: &[&[&str]] = &[
 
 /// Subcommands that only exist for tests or shell glue and are marked
 /// `hide = true`; neither may leak into user-facing help.
-const HIDDEN_SUBCOMMANDS: &[&str] = &["__complete", "__wizard_force_fail"];
+const HIDDEN_SUBCOMMANDS: &[&str] = &["__complete"];
 
 fn help_of(env: &CliTestEnv, args: &[&str]) -> String {
     let mut full: Vec<&str> = args.to_vec();

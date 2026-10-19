@@ -74,11 +74,11 @@ sysinfo = "0.39"
 # No Windows dependencies: Windows builds the CLI only; IPC is Unix-socket only.
 
 [target."cfg(unix)".dev-dependencies]
-# PTY-backed wizard terminal-restoration test (needs the `test-support` feature).
+# PTY-backed `init` and wizard tests.
 portable-pty = "0.9"
 
 [features]
-# Compiles in test-only surface (hidden `gpy __wizard_force_fail`).
+# Compiles in test-only surface (`ThemeManager::watch_registry_for_test`).
 test-support = []
 
 [dev-dependencies]
