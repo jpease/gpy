@@ -1,7 +1,9 @@
 //! Path resolution for GPY's runtime, cache, and config roots and the agent socket. Nothing here creates directories.
 //!
-//! Functions take environment values as parameters (no ambient reads) so the
-//! precedence can be table-tested without `unsafe` `set_var`. The runtime root
+//! The `*_for` resolvers take environment values as parameters (no ambient
+//! reads) so the precedence can be table-tested without `unsafe` `set_var`;
+//! `runtime_dir`, `resolve_socket_path` and `home_dir` are the entry points
+//! that read the environment. The runtime root
 //! stays separate from cache because `XDG_RUNTIME_DIR` is a 0700 tmpfs cleared
 //! at logout. Native Windows gets a cache branch only: IPC is Unix-socket
 //! based, so Windows is CLI-only and shell integration runs under WSL.
