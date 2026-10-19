@@ -58,6 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer fork subshells; Zsh forks nothing, Bash only for `realpath` and
   `stat`.
 - The toolchain pin is Rust 1.99.1 (the minimum supported version stays 1.99).
+- The agent's file-watcher threads no longer wake on a timer while idle: they
+  block until a filesystem event arrives or a debounce deadline falls due,
+  removing about 150 wakeups per second from an idle agent.
 
 ### Fixed
 

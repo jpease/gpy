@@ -157,6 +157,27 @@ impl DebounceEngine {
             .collect()
     }
 
+    /// The earliest instant [`DebounceEngine::drain_expired_events`] would
+    /// release a pending entry, or `None` when nothing can fall due. Per entry
+    /// that is the quiet gap or the max-delay cap, whichever is sooner, but no
+    /// earlier than its `not_before` floor; an overflowing term never falls due.
+    #[must_use]
+    pub fn next_deadline(&self) -> Option<Instant> {
+        self.pending_events
+            .values()
+            .filter_map(|entry| {
+                let quiet = entry.last_seen.checked_add(self.debounce_duration);
+                let cap = entry.first_seen.checked_add(self.max_delay);
+                let due = match (quiet, cap) {
+                    (Some(quiet), Some(cap)) => quiet.min(cap),
+                    (Some(due), None) | (None, Some(due)) => due,
+                    (None, None) => return None,
+                };
+                Some(due.max(entry.not_before.unwrap_or(due)))
+            })
+            .min()
+    }
+
     /// Clear all pending events
     pub fn clear(&mut self) {
         self.pending_events.clear();
@@ -488,5 +509,61 @@ mod tests {
             &GitPaths::WholeRepo,
             "past MAX_PATHS the coalesced burst degrades to a whole-repo scan, as for any burst"
         );
+    }
+
+    #[test]
+    fn next_deadline_is_none_when_empty() {
+        let engine = DebounceEngine::new(Duration::from_millis(10));
+        assert_eq!(engine.next_deadline(), None);
+    }
+
+    #[test]
+    fn next_deadline_is_last_seen_plus_debounce() {
+        let debounce = Duration::from_millis(10);
+        let mut engine = DebounceEngine::new(debounce);
+        let before = Instant::now();
+        engine.handle_event(make_pending("/repo", "/repo/.git/HEAD"));
+        let after = Instant::now();
+
+        let deadline = engine.next_deadline().expect("one pending entry");
+        assert!(
+            deadline >= before + debounce,
+            "not before last_seen + debounce"
+        );
+        assert!(
+            deadline <= after + debounce,
+            "not after last_seen + debounce"
+        );
+    }
+
+    #[test]
+    fn next_deadline_is_capped_by_max_delay() {
+        let mut engine =
+            DebounceEngine::new(Duration::from_secs(60)).with_max_delay(Duration::from_millis(20));
+        engine.handle_event(make_pending("/repo", "/repo/.git/HEAD"));
+        let after = Instant::now();
+
+        let deadline = engine.next_deadline().expect("one pending entry");
+        assert!(
+            deadline <= after + Duration::from_millis(20),
+            "the max-delay cap bounds the deadline"
+        );
+    }
+
+    #[test]
+    fn next_deadline_respects_not_before() {
+        let mut engine = DebounceEngine::new(Duration::from_millis(10));
+        let due = Instant::now() + Duration::from_millis(500);
+        engine.handle_event_due(make_pending("/repo", "/repo/.git/HEAD"), due);
+
+        assert_eq!(engine.next_deadline(), Some(due));
+    }
+
+    #[test]
+    fn next_deadline_skips_overflowing_entries() {
+        let mut engine = DebounceEngine::new(Duration::MAX).with_max_delay(Duration::MAX);
+        engine.handle_event(make_pending("/repo", "/repo/.git/HEAD"));
+
+        assert_eq!(engine.next_deadline(), None);
     }
 }

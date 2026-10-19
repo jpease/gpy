@@ -447,9 +447,9 @@ fn test_stop_does_not_block_on_in_flight_slow_callback() {
     coordinator.stop();
     let stop_elapsed = stop_started.elapsed();
 
-    // stop() only needs to join the flush thread (which wakes every 20ms to
-    // check the stop flag) -- it must not block behind the in-flight 3s
-    // callback. 1.5s leaves comfortable headroom over that ~20ms join cost
+    // stop() only needs to join the flush thread (which `stop()` wakes
+    // immediately) -- it must not block behind the in-flight 3s
+    // callback. 1.5s leaves comfortable headroom over that near-instant join
     // for scheduler contention while still being clearly less than the
     // callback's full duration, so a regression that makes stop() wait on
     // the callback would still be caught.

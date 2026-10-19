@@ -7,13 +7,28 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Debounce for the config and theme watchers. ADR-0005 chose 5 s to fold an
 /// editor's multi-write save into one reload, but the debouncer's 1 s max-delay
 /// cap flushes sooner anyway, and a reload of unchanged content is a no-op;
-/// a longer window only slows the flush tick that delivers edits.
+/// a longer window only slows the flush deadline that delivers edits.
 pub const HOT_RELOAD_DEBOUNCE: Duration = Duration::from_secs(1);
+
+/// The longest the poll thread sleeps before re-checking its stop flag.
+const FLUSH_STOP_POLL: Duration = Duration::from_millis(25);
+
+/// Sleep for `total`, waking early once `stop` is set.
+fn sleep_unless_stopped(total: Duration, stop: &AtomicBool) {
+    let deadline = Instant::now().checked_add(total);
+    while !stop.load(Ordering::Relaxed) {
+        let remaining = deadline.map_or(total, |at| at.saturating_duration_since(Instant::now()));
+        if remaining.is_zero() {
+            return;
+        }
+        std::thread::sleep(remaining.min(FLUSH_STOP_POLL));
+    }
+}
 
 /// A fingerprint of a watched file's contents; `None` when unreadable.
 ///
@@ -197,7 +212,7 @@ impl HotReloadSlot {
                     None => {}
                 }
 
-                crate::watcher::sleep_unless_stopped(interval, &stop_flag);
+                sleep_unless_stopped(interval, &stop_flag);
             }
         });
 

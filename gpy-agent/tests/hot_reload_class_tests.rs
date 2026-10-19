@@ -51,7 +51,7 @@ const SETTLE_DEADLINE: Duration = Duration::from_secs(25);
 /// Extra time after settling to catch a late stale overwrite.
 const QUIET_PERIOD: Duration = Duration::from_millis(2500);
 /// Doorbells are counted this long after the change, so a late ring from
-/// either 1 s watcher, whose flush tick drains a change within 2 s, lands.
+/// either 1 s watcher, whose flush deadline drains a change within 2 s, lands.
 const DOORBELL_WINDOW: Duration = Duration::from_secs(5);
 
 const ACTIVE_THEME: &str = "active";

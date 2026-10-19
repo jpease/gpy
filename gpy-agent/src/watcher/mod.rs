@@ -3,10 +3,11 @@
 //! Pipeline: `filesystem::FileSystemWatcher` (raw notify events) →
 //! `debouncer::DebounceEngine` (coalescing) → `WatchCoordinator`.
 //!
-//! A flush thread wakes every debounce interval, drains expired events under
-//! the debouncer lock, and hands each to its own dispatch thread, so a slow
-//! callback for one repo never stalls ingestion or delivery for others. The
-//! timer thread is needed because expiry must happen even when events stop.
+//! A flush thread sleeps until the earliest pending deadline (or, with nothing
+//! pending, until the next event), drains expired events under the debouncer
+//! lock, and hands each to its own dispatch thread, so a slow callback for one
+//! repo never stalls ingestion or delivery for others. The timer thread is
+//! needed because expiry must happen even when events stop.
 //!
 //! Entries flush once quiet for the debounce window (default 100ms,
 //! `GPY_DEBOUNCE_MS`) or once older than the max-delay cap (1s), so sustained
@@ -25,6 +26,7 @@ use std::env;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -595,19 +597,17 @@ pub type PendingCallback = Box<dyn Fn(PendingEvent) + Send + Sync>;
 /// like an immediate event. Synchronous and cheap; the flush thread waits.
 pub type DelayedEventScheduler = Arc<dyn Fn(PendingEvent, Instant) + Send + Sync>;
 
-/// The longest a flush thread sleeps before re-checking its stop flag.
-const FLUSH_STOP_POLL: Duration = Duration::from_millis(25);
-
-/// Sleep for `total`, waking early once `stop` is set.
-pub(crate) fn sleep_unless_stopped(total: Duration, stop: &AtomicBool) {
-    let deadline = Instant::now().checked_add(total);
-    while !stop.load(Ordering::Relaxed) {
-        let remaining = deadline.map_or(total, |at| at.saturating_duration_since(Instant::now()));
-        if remaining.is_zero() {
-            return;
-        }
-        std::thread::sleep(remaining.min(FLUSH_STOP_POLL));
-    }
+/// Insert under the debouncer lock, release it, then wake the flush thread.
+fn ingest(
+    debouncer: &Mutex<debouncer::DebounceEngine>,
+    kick: &mpsc::Sender<()>,
+    pending: PendingEvent,
+) {
+    debouncer
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .handle_event(pending);
+    let _ = kick.send(());
 }
 
 /// Single-repository file system watcher with debouncing.
@@ -617,6 +617,8 @@ pub struct WatchCoordinator {
     callback: Arc<EventCallback>,
     stop_flag: Arc<AtomicBool>,
     flush_handle: Option<JoinHandle<()>>,
+    /// Wakes the flush thread: new pending events and `stop` send on it.
+    flush_kick: mpsc::Sender<()>,
     /// Registry shared with the filesystem layer.
     registry: Arc<WatchRegistry>,
 
@@ -643,23 +645,22 @@ impl WatchCoordinator {
         // Feed watcher events into the debouncer.
         let debouncer_arc = Arc::new(Mutex::new(event_debouncer));
         let debouncer_for_watcher = Arc::clone(&debouncer_arc);
-        let debounce_interval = debounce;
+        let (flush_kick, kick_rx) = mpsc::channel::<()>();
 
-        let ingress_callback: PendingCallback = Box::new(move |pending| {
-            debouncer_for_watcher
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .handle_event(pending);
-        });
+        let kick_for_ingress = flush_kick.clone();
+        let ingress_callback: PendingCallback =
+            Box::new(move |pending| ingest(&debouncer_for_watcher, &kick_for_ingress, pending));
 
         // Directory-create follow-up uses a due-time floor in the same
         // debouncer instead of a timer thread per directory.
         let debouncer_for_schedule = Arc::clone(&debouncer_arc);
+        let kick_for_schedule = flush_kick.clone();
         let schedule_delayed: DelayedEventScheduler = Arc::new(move |pending, due| {
             debouncer_for_schedule
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .handle_event_due(pending, due);
+            let _ = kick_for_schedule.send(());
         });
 
         // Follow-up delay = debounce window, so contents created before the
@@ -676,17 +677,17 @@ impl WatchCoordinator {
         let debouncer_for_thread = Arc::clone(&debouncer_arc);
         let callback_for_thread = Arc::clone(&callback_arc);
         let flush_handle = std::thread::spawn(move || {
-            while !stop_flag_thread.load(Ordering::Relaxed) {
-                // Short sleep slices keep `stop` fast: a long debounce would
-                // otherwise exceed the CLI's 2s reload budget.
-                sleep_unless_stopped(debounce_interval, &stop_flag_thread);
+            loop {
+                while kick_rx.try_recv().is_ok() {}
                 if stop_flag_thread.load(Ordering::Relaxed) {
                     break;
                 }
-                let expired = debouncer_for_thread
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .drain_expired_events();
+                let (expired, deadline) = {
+                    let mut engine = debouncer_for_thread
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner);
+                    (engine.drain_expired_events(), engine.next_deadline())
+                };
                 // Dispatch each event on its own thread, off the flush loop
                 // and outside the debouncer lock, so a slow callback for one
                 // repo cannot delay flushing or delivery for another.
@@ -695,6 +696,18 @@ impl WatchCoordinator {
                     std::thread::spawn(move || {
                         (callback_for_event)(event);
                     });
+                }
+                // A kick sent after the lock was released stays queued, so
+                // no wakeup is lost between the drain and this wait.
+                let disconnected = match deadline {
+                    None => kick_rx.recv().is_err(),
+                    Some(at) => matches!(
+                        kick_rx.recv_timeout(at.saturating_duration_since(Instant::now())),
+                        Err(mpsc::RecvTimeoutError::Disconnected)
+                    ),
+                };
+                if disconnected {
+                    break;
                 }
             }
         });
@@ -705,6 +718,7 @@ impl WatchCoordinator {
             callback: callback_arc,
             stop_flag,
             flush_handle: Some(flush_handle),
+            flush_kick,
             registry: shared_registry,
             #[cfg(test)]
             unwatch_calls: Mutex::new(Vec::new()),
@@ -808,6 +822,7 @@ impl WatchCoordinator {
         self.watcher = None;
 
         self.stop_flag.store(true, Ordering::Relaxed);
+        let _ = self.flush_kick.send(());
         if let Some(handle) = self.flush_handle.take() {
             let _ = handle.join();
         }
@@ -829,6 +844,12 @@ impl WatchCoordinator {
         for event in expired {
             (self.callback)(event);
         }
+    }
+
+    /// Feed `pending` through the production ingress path, kick included.
+    #[cfg(test)]
+    pub(crate) fn ingest_for_test(&self, pending: PendingEvent) {
+        ingest(&self.debouncer, &self.flush_kick, pending);
     }
 }
 

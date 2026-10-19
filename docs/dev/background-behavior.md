@@ -39,7 +39,7 @@ The server listens on the Unix socket using `UnixListener::accept()`. This is a 
 ### 2. File Watcher (Idle Behavior)
 The file watcher (powered by the `notify` crate) uses OS-native APIs (FSEvents on macOS, inotify on Linux) to monitor directories.
 *   **Active**: When a file change occurs, the OS wakes the agent. The event is debounced and processed.
-*   **Idle**: No polling occurs. The watcher sleeps until the OS reports an event.
+*   **Idle**: No polling occurs. The watcher's event and flush threads block until the OS reports an event; a pending event wakes the flush thread once, at its debounce deadline. Only the poll fallbacks (`GPY_WATCH_FORCE_POLL`, the `PollWatcher` swap after a failed startup health probe, `GPY_CONFIG_WATCH_POLL_MS`/`GPY_THEME_WATCH_POLL_MS`) wake on an interval.
 
 ### 3. Clock Timer (Idle Behavior)
 A `tokio::time::interval` timer fires periodically (default: 1 second if seconds are shown, otherwise 1 minute).
@@ -55,7 +55,7 @@ A separate 60-second timer triggers the client pruning process.
 
 The agent is designed to be extremely lightweight when idle:
 
-*   **CPU**: Near zero. The event loop blocks on `epoll`/`kqueue` until IO or a timer event occurs.
+*   **CPU**: Near zero. The event loop blocks on `epoll`/`kqueue` until IO or a timer event occurs, and the file-watcher threads block until an event arrives or a debounce deadline falls due.
 *   **Memory**: Uses `Arc` (Atomic Reference Counting) to share large data structures (Git cache, configuration, theme) between components, avoiding duplication. The memory footprint primarily depends on the number of cached Git repositories.
 *   **Handles**: Holds one file descriptor for the socket, one for the file watcher (plus internal watcher handles), and temporary handles for active client connections.
 

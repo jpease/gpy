@@ -341,7 +341,7 @@ fn config_reload_applies_an_in_place_theme_edit() {
 }
 
 /// Bound on a watched in-place theme save reaching a render: the 1 s debounce,
-/// up to 1 s more for the flush tick, plus slack for a loaded machine. Still
+/// up to 1 s more for the flush deadline, plus slack for a loaded machine. Still
 /// below the 5 s theme debounce this replaced.
 const THEME_EDIT_LATENCY: Duration = Duration::from_secs(4);
 /// Long enough after an edit for every watcher to have flushed it.
