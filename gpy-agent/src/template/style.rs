@@ -101,6 +101,18 @@ impl Palette {
             .or_else(|| self.aliases.get(canonical_ansi_name(name)?))
             .cloned()
     }
+
+    /// The palette's color for a named or palette-reference color, `None` for
+    /// any other color or a name the palette leaves alone. Starship semantics: a
+    /// palette entry shadows the ANSI name; an ANSI index never goes through it.
+    /// The one rule both the template renderer and the shell export apply.
+    #[must_use]
+    pub fn lookup(&self, color: &Color) -> Option<Color> {
+        match color {
+            Color::Named(name) | Color::Palette(name) => self.get(name),
+            Color::Rgb { .. } | Color::Ansi256(_) | Color::PrevFg | Color::PrevBg => None,
+        }
+    }
 }
 
 /// Among `keys`, the one answering every non-key spelling of the ANSI color

@@ -9,7 +9,7 @@ use crate::template::{Color, config_color_name, parse_color};
 
 /// Theme-only keywords: the shell renderers resolve them against the
 /// neighbouring segment's colors; templates never see them.
-const THEME_ONLY_COLORS: [&str; 2] = ["match_bg", "match_text"];
+pub(crate) const THEME_ONLY_COLORS: [&str; 2] = ["match_bg", "match_text"];
 
 /// Accent role names every shipped palette defines; they resolve through the
 /// active palette, not the ANSI table.
