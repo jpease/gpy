@@ -79,15 +79,11 @@ test: test-rust test-fish
 
 # Run Rust unit and integration tests
 test-rust:
-    cd {{agent_dir}} && cargo nextest run
+    cd {{agent_dir}} && cargo nextest run --features test-support
 
 # Run Fish integration tests
 test-fish:
     ./{{scripts_dir}}/test_fish.sh
-
-# Run end-to-end shell integration benchmarks (requires hyperfine)
-bench-shell *args:
-    ./{{scripts_dir}}/bench.sh {{args}}
 
 # Enforce performance budgets: Rust micro-benchmarks, then prompt latency and agent memory
 bench-ci:
@@ -97,10 +93,6 @@ bench-ci:
     ./{{scripts_dir}}/bench.sh --ci || fail=1
     ./{{scripts_dir}}/ci-bench.sh --ci || fail=1
     exit $fail
-
-# Run performance baseline comparison or establishment
-bench-baseline *args:
-    ./{{scripts_dir}}/perf-baseline.sh {{args}}
 
 # Compare canary benchmarks against an upstream commit on the same machine
 perf-canary *args:

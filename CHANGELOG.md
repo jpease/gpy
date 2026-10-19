@@ -7,24 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Security
-
-- Rendering the language segment no longer runs a project's `.venv`/`venv`
-  Python interpreter to read its version. Only a virtualenv the shell
-  activated is probed; a project venv's version comes from `pyvenv.cfg`, or is
-  omitted.
-- `gpy-agent start` refuses a symlinked or foreign-owned socket directory,
-  for both the default runtime directory and `GPY_AGENT_SOCKET_PATH`/`--socket`.
-  A group/world-writable directory is tightened to `0700` if it is GPY's
-  default runtime directory, and refused unchanged if you chose it.
-- Theme format templates can no longer emit terminal escape sequences:
-  `gpy theme validate` rejects control characters other than newline, and
-  rendering strips them from literal text.
-- FIFOs and other special files in a project no longer hang language
-  detection or version reading; they are refused when opened, not read.
-
 ### Changed
 
+- Language markers under gitignored directories (e.g.
+  `node_modules/x/package.json`) no longer trigger language re-detection.
+- `gpy doctor` reports unknown config keys and the file they are in.
 - A socket directory set through `GPY_AGENT_SOCKET_PATH` must be private: a
   socket placed directly in a shared directory such as `/tmp` is refused.
 - Theme colors are stored in one canonical spelling (`bright-magenta` becomes
@@ -52,8 +39,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer fork subshells; Zsh forks nothing, Bash only for `realpath` and
   `stat`.
 - The toolchain pin is Rust 1.99.1 (the minimum supported version stays 1.99).
+- The agent's file-watcher threads no longer wake on a timer while idle: they
+  block until a filesystem event arrives or a debounce deadline falls due,
+  removing about 150 wakeups per second from an idle agent.
+- `gpy-agent theme export --format bash`/`zsh` no longer emits
+  `__gpy_plugin_segment_file_*` variables; plugin segment files are Fish-only.
+- Bash resolves the working directory once per `cd` instead of forking
+  `realpath` on every prompt. A directory re-pointed by a symlink change
+  without a `cd` keeps its old resolution until the next `cd`, as in Fish.
+- Bash and Zsh build agent requests without forking a subshell for each
+  JSON-escaped value.
+- `{"op":"status"}` now replies through the JSON formatter, as
+  `{"AgentStatus":{...}}` in every format; the keys are unchanged and now
+  appear in alphabetical order.
+- **Breaking:** the agent accepts only `{"op":...}` IPC messages. The serde
+  externally-tagged form (`{"RepositoryStatus":{...}}`, `"Ping"`) is rejected,
+  and `schemas/message.json` no longer lists it. The shell integrations
+  already send only the `op` form.
+- **Breaking (library):** `gpy_agent::ipc::protocol::serialize_message` is
+  removed, and `Message`, `SafePath` and `ClientPid` no longer implement
+  `Serialize`/`Deserialize`.
+- The library's `GuardSettings` no longer has a `request_timeout` field; it
+  was never read. The IPC request timeout is still `agent.timeout_seconds`.
+- `just install` (`install-dev.fish`) installs Fish through `gpy setup`:
+  `gpy_init.fish` is sourced once and built-in themes are no longer copied.
+  Older dev installs may have `default.toml`, `starship.toml` and `text.toml`
+  in `~/.config/gpy/themes` shadowing the built-ins; delete them.
+- Bash: theme variables (`__gpy_*`, `__color_*`, `__icon_*`, `__prompt_*`,
+  `__enabled_segments`) are plain shell variables, no longer exported to every
+  child process. `GPY_*` settings are still exported.
+- `gpy start`, `stop`, `restart`, `status` and `doctor` run the `gpy-agent`
+  installed beside `gpy`, falling back to `PATH` only when there is none, so an
+  older `gpy-agent` earlier on `PATH` is no longer used. `gpy doctor` shows
+  which agent binary it checked.
+
+### Removed
+
+- The hidden, deprecated `gpy theme use --apply-layout` alias; use `--force`.
+  `gpy theme import --apply-layout` is unchanged.
+- **Breaking:** `gpy-agent oneshot --format` and the IPC `format` field accept only `json`, `ansi`, `bash-prompt` and `zsh-prompt`. The unused `fish`, `fish-source` and `zsh` formats and the never-implemented `bash-source` and `zsh-source` are gone; no shipped shell sent them.
+- **Breaking:** the unused IPC operations `theme` and `latency_stats` are removed; no shipped shell or CLI sent them.
+- `scripts/update.fish`, which never detected a version change; run
+  `just install` from the checkout.
+- `uninstall.fish` and the `fisher-gpy.tar.gz` release asset are gone. Use
+  `sh uninstall.sh`, which removes the Fish integration too (rc block, prompt
+  symlink, prompt restore). GPY was never installable through Fisher: the
+  plugin tree shipped no agent binary.
+- Fish: the `gpy_lang_status` debug function, which printed settings nothing
+  reads and called a function that no longer exists.
 
 ### Fixed
+
+- The agent keeps accepting shell connections while it prunes dead clients or
+  registers a shell's repository with the watcher, and it now stops its
+  watchers even when installing its signal handlers fails.
+- `gpy-agent status`, `gpy-agent stop` and `gpy debug paths` no longer create
+  the runtime directory (`$XDG_RUNTIME_DIR/gpy` or its fallback); only
+  `gpy-agent start` does.
+- `SECURITY.md` now lists 0.4.x, the current release series, as supported.
+- Fish: `prompt_debug vars` reports the duration threshold the duration
+  segment uses (`__duration_threshold_ms`).
+
+- A slow git scan can no longer overwrite a newer cached status.
+
+- Idle prompts no longer repaint spuriously after the instant-prompt write
+  cache overflows.
+
+- `config/config.example.toml` documents `git.max_ahead_behind` and
+  `git.watch_worktree`.
 
 - Bash and Zsh keep a newline in a segment `format` when the agent answers
   live, instead of cutting the segment at it. Agent replies now carry an
@@ -112,6 +165,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An error creating the runtime directory names the directory and the cause.
 - A theme file edit reloads once, within about a second, and rings shells
   exactly once.
+
+### Security
+
+- Rendering the language segment no longer runs a project's `.venv`/`venv`
+  Python interpreter to read its version. Only a virtualenv the shell
+  activated is probed; a project venv's version comes from `pyvenv.cfg`, or is
+  omitted.
+- `gpy-agent start` refuses a symlinked or foreign-owned socket directory,
+  for both the default runtime directory and `GPY_AGENT_SOCKET_PATH`/`--socket`.
+  A group/world-writable directory is tightened to `0700` if it is GPY's
+  default runtime directory, and refused unchanged if you chose it.
+- Theme format templates can no longer emit terminal escape sequences:
+  `gpy theme validate` rejects control characters other than newline, and
+  rendering strips them from literal text.
+- FIFOs and other special files in a project no longer hang language
+  detection or version reading; they are refused when opened, not read.
+- Instant-prompt cache files and `theme-export.{fish,bash,zsh}` are now
+  created owner-only (`0600`), in a `0700` `instant-prompts` directory.
+- Bash no longer `eval`s an unvalidated username when `$HOME` is empty.
 
 ## [0.4.0] - 2026-10-16
 

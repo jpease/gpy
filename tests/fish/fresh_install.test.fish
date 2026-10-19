@@ -175,7 +175,7 @@ echo "Test 9: Verify environment variables"
 set -l gpy_vars (set -n | grep -i gpy | grep -v GPY_AGENT_ENABLED | grep -v GPY_AGENT_SUPERVISOR_ENABLED | grep -v __gpy)
 if test (count $gpy_vars) -gt 0
     test_pass "GPY configuration variables set: "(count $gpy_vars)" vars"
-    echo "  Example vars: GPY_DEBOUNCE_MS, GPY_IPC_TIMEOUT_MS, GPY_GIT_SHOW"
+    echo "  Example vars: GPY_IPC_TIMEOUT_MS, GPY_LANGUAGE_CACHE_TTL_SECONDS"
 else
     test_fail "No GPY configuration variables set (expected some)"
 end

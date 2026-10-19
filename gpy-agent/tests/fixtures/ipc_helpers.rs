@@ -76,11 +76,6 @@ impl TestIpcClient {
     pub fn status_message() -> Message {
         Message::Status
     }
-
-    /// Create a `ThemeQuery` message
-    pub fn theme_query_message(key: String) -> Message {
-        Message::ThemeQuery { key }
-    }
 }
 
 impl Default for TestIpcClient {

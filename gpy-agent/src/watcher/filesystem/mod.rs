@@ -171,26 +171,19 @@ impl FileSystemWatcher {
         let callback_arc = Arc::new(callback);
         let stop_flag_thread = Arc::clone(stop_flag);
         thread::spawn(move || {
-            loop {
+            while let Ok(event) = event_rx.recv() {
                 if stop_flag_thread.load(Ordering::Relaxed) {
                     break;
                 }
-
-                match event_rx.recv_timeout(Duration::from_millis(100)) {
-                    Ok(event) => {
-                        // Arm new directories before any refresh scans them.
-                        track_poll_expansion(&event, &state.backend, &state.registry);
-                        Self::process_event(
-                            &event,
-                            &callback_arc,
-                            &state.registry,
-                            followup.delay,
-                            &followup.schedule,
-                        );
-                    }
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                }
+                // Arm new directories before any refresh scans them.
+                track_poll_expansion(&event, &state.backend, &state.registry);
+                Self::process_event(
+                    &event,
+                    &callback_arc,
+                    &state.registry,
+                    followup.delay,
+                    &followup.schedule,
+                );
             }
         })
     }
@@ -464,6 +457,12 @@ impl FileSystemWatcher {
             callback_arc(PendingEvent::git(repo, path.to_path_buf()));
         }
 
+        if matches!(pending.event, super::FileEvent::Language { .. })
+            && language_marker_is_ignored(path, worktree_ctx.registry)
+        {
+            return;
+        }
+
         callback_arc(pending);
     }
 
@@ -516,7 +515,9 @@ impl FileSystemWatcher {
             .unwrap_or_else(PoisonError::into_inner)
             .watcher = None;
 
-        self.event_tx.take();
+        if let Some(tx) = self.event_tx.take() {
+            let _ = tx.send(Event::new(EventKind::Other));
+        }
 
         // The probe checks `stop_flag` each iteration, so this returns promptly.
         if let Some(handle) = self.probe_handle.take() {
@@ -985,6 +986,19 @@ fn is_force_added(repo_root: &Path, path: &Path, registry: &Arc<WatchRegistry>) 
     // Match the canonical form stored by `tracked_ignored_files`.
     let candidate = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     set.contains(&candidate)
+}
+
+/// A language marker inside a gitignored subtree of a repo; root-level
+/// markers always count.
+fn language_marker_is_ignored(path: &Path, registry: &Arc<WatchRegistry>) -> bool {
+    let Some(attribution) = attribute_repo_detailed(path, registry) else {
+        return false;
+    };
+    if !attribution.is_genuine_repo() {
+        return false;
+    }
+    let repo = attribution.into_repo();
+    path.parent().is_some_and(|parent| parent != repo) && path_is_gitignored(&repo, path, registry)
 }
 
 /// Whether `path` is gitignored (nested-aware chain) and not force-added.

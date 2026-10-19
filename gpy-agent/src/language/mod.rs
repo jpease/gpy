@@ -1,6 +1,5 @@
 //! Programming language detection and version probing.
 
-pub mod cache;
 pub mod detection_cache;
 pub mod detector;
 /// Building [`crate::ipc::LanguageInfo`] display entries.

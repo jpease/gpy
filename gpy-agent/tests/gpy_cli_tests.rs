@@ -153,9 +153,8 @@ fn test_completions_zsh() {
     );
 }
 
-/// `hide`-marked items (`__complete`, the deprecated `theme use --apply-layout`
-/// alias) must not leak into completions; `clap_complete` ignores `is_hide_set()`.
-/// The unrelated, visible `theme import --apply-layout` must still complete.
+/// `hide`-marked items (e.g. `__complete`) must not leak into completions; `clap_complete` ignores `is_hide_set()`.
+/// The visible `theme import --apply-layout` must still complete, confined to `theme import`.
 #[test]
 fn test_completions_omit_hidden_items() {
     for shell in ["fish", "bash", "zsh"] {
@@ -634,6 +633,35 @@ provided_segments = ["k8s_tools"]
 }
 
 #[test]
+fn plugin_list_marks_discovered_plugins_ready() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    let plugin_dir = env.plugins_dir().join("demo");
+    fs::create_dir_all(&plugin_dir).expect("Failed to create plugin dir");
+    fs::write(
+        plugin_dir.join("plugin.toml"),
+        r#"
+id = "demo"
+name = "Demo"
+version = "0.1.0"
+api_version = "v1"
+entry_type = "file"
+provided_segments = ["k8s_tools"]
+"#,
+    )
+    .expect("Failed to write plugin manifest");
+
+    let list = env
+        .run_gpy(&["plugin", "list"])
+        .expect("Failed to run gpy plugin list");
+    list.assert_success("gpy plugin list");
+    assert!(
+        list.stdout.contains("\n- demo 0.1.0 [user] (ready)\n"),
+        "Discovered plugin must be listed as ready.\nstdout:\n{}",
+        list.stdout
+    );
+}
+
+#[test]
 fn test_plugin_new_creates_scaffold() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
 
@@ -823,6 +851,19 @@ enabled_segments = ["language", "directory", "git"]
     assert!(
         updated_config.contains("show_versions = true"),
         "Config should have show_versions = true"
+    );
+}
+
+#[test]
+fn doctor_reports_unknown_config_key() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    fs::write(env.config_path(), "[git]\nenabeld = true\n").expect("Failed to write config");
+
+    let output = env.run_gpy(&["doctor"]).expect("Failed to run gpy doctor");
+    assert!(
+        output.stdout.contains("Unknown key in ")
+            && output.stdout.contains(": git.enabeld (ignored)"),
+        "doctor must name the unknown key and its file: {output:?}"
     );
 }
 

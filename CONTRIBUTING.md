@@ -100,7 +100,7 @@ just check-rust
 just check-shell
 just check-fish
 just build           # cargo build
-just test-rust       # cargo nextest run
+just test-rust       # cargo nextest run --features test-support
 just test-fish       # ./scripts/test_fish.sh
 just lint            # cargo clippy --all-targets --all-features
 just format          # cargo fmt

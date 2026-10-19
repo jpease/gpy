@@ -3,9 +3,6 @@ name: Windows gate
 # The single Windows leg, called by pr-gate.yml and cross-platform-test.yml.
 # Native Windows is CLI-only (the prompt talks to the agent over a Unix
 # socket), so it runs the lib tests and the hermetic CLI integration targets.
-#
-# config::manager::tests::poll_fallback_reloads_without_any_watcher_running is
-# a known timing flake here; re-run once before treating red as a regression.
 
 on:
   workflow_call:
@@ -68,7 +65,7 @@ jobs:
         # Runs even when the lib step failed. Each target uses an isolated
         # HOME/XDG_* and no running agent.
         run: >-
-          cargo nextest run --locked --no-fail-fast --features test-support
+          cargo nextest run --locked --no-fail-fast --no-tests=fail --features test-support
           --test gpy_cli_tests
           --test cli_config_mutation_tests
           --test theme_import_tests

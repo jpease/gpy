@@ -13,7 +13,7 @@ below classify each change's compatibility impact.
 
 | Change type | Version component | Examples |
 |---|---|---|
-| **MAJOR** | `X`.y.z | Field type change, field rename, field removal, IPC enum variant removed, schema version bump |
+| **MAJOR** | `X`.y.z | Field type change, field rename, field removal, IPC enum variant removed that a shipped client uses, schema version bump |
 | **MINOR** | x.`Y`.z | New optional config field with a serde default, new IPC operation, new CLI subcommand, new optional response field |
 | **PATCH** | x.y.`Z` | Bug fix that does not alter schema shape, documentation update, internal refactor |
 
@@ -23,14 +23,42 @@ below classify each change's compatibility impact.
   takes its serde default. Older agent binaries ignore unknown JSON fields in IPC
   responses: serde ignores unrecognised keys by default, and no GPY type opts
   into `deny_unknown_fields`.
-* **MAJOR changes** — require a schema-version bump in `gpy-agent/src/ipc/protocol/mod.rs`
-  and corresponding Fish-side negotiation.
+* **Removals** — removing a field, value or enum variant is BREAKING. It needs a schema-version bump in `gpy-agent/src/ipc/protocol/mod.rs` only if a shipped client sends or reads it; shells compare protocol versions for equality, so there is no negotiation.
 
 ---
 
 ## Schema Change Log
 
 Changes are listed newest-first within each release group.
+
+---
+
+### IPC protocol — removed the theme and latency_stats ops (BREAKING)
+
+| Property | Value |
+|---|---|
+| Scope | `Message::ThemeQuery`, `Message::LatencyStats`, `Response::ThemeValue`, `Response::LatencyStatsResult`, shell ops `theme`/`latency_stats` and their `key` field |
+| Change type | BREAKING — IPC operations removed |
+| IPC protocol | `PROTOCOL_VERSION` unchanged; no shipped shell or CLI sends either op. They now get an `Unknown shell operation` error reply |
+| Config schema | Unchanged |
+
+**What changed.** Neither op had a sender. `latency_stats` reported whole-millisecond
+samples, most of which read 0.
+
+---
+
+### IPC protocol — output formats reduced to four (BREAKING)
+
+| Property | Value |
+|---|---|
+| Scope | `formatter::Format`; `message.json` `format` enum; `oneshot --format` |
+| Change type | BREAKING — `fish`, `fish-source`, `zsh`, `bash-source`, `zsh-source` removed |
+| IPC protocol | `PROTOCOL_VERSION` unchanged. No v0.4.0 shell sends the removed values. In `op` form they now fall back to `json`; in native form the message is rejected with a JSON parse error |
+| Config schema | Unchanged |
+
+**What changed.** `fish`, `fish-source` and `zsh` had no consumer and `bash-source` and
+`zsh-source` were never implemented, so `Format` now keeps only `json`, `ansi`,
+`bash-prompt` and `zsh-prompt`.
 
 ---
 

@@ -10,12 +10,11 @@ use clap::{Parser, Subcommand};
 use gpy_agent::{
     Result, VERSION,
     agent::{
-        Agent,
-        lifecycle::SOCKET_OVERRIDE,
         lifecycle::start::start_background_agent,
-        oneshot::{OneshotKind, OneshotRequest},
+        oneshot::{OneshotKind, OneshotRequest, handle_oneshot_request},
     },
     config::schema,
+    paths::SOCKET_OVERRIDE,
 };
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -290,7 +289,7 @@ impl From<OneshotCommands> for OneshotRequest {
 fn handle_oneshot_command(command: OneshotCommands) {
     let request = OneshotRequest::from(command);
 
-    match Agent::handle_oneshot_request(&request) {
+    match handle_oneshot_request(&request) {
         Ok(response) => println!("{response}"),
         Err(e) => {
             eprintln!("{}", serde_json::json!({"error": e.to_string()}));
@@ -305,7 +304,8 @@ fn handle_oneshot_command(command: OneshotCommands) {
 /// Returns an error if the agent rejected the config (it keeps its previous
 /// one) or did not answer, or the socket path or async runtime is unavailable.
 fn reload_config() -> Result<()> {
-    use gpy_agent::agent::lifecycle::{ConfigReload, get_socket_path, send_config_reload_command};
+    use gpy_agent::agent::lifecycle::{ConfigReload, send_config_reload_command};
+    use gpy_agent::paths::get_socket_path;
 
     let socket_path = get_socket_path()?;
     match tokio::runtime::Runtime::new()?.block_on(send_config_reload_command()) {
@@ -400,9 +400,8 @@ enum AgentLiveness {
 /// # Errors
 /// Returns an error if the socket path cannot be determined.
 async fn print_agent_status() -> Result<AgentLiveness> {
-    use gpy_agent::agent::lifecycle::{
-        check_protocol_version_compatibility, get_socket_path, query_agent_status,
-    };
+    use gpy_agent::agent::lifecycle::{check_protocol_version_compatibility, query_agent_status};
+    use gpy_agent::paths::get_socket_path;
 
     println!("GPY Agent Status");
     println!("================");
@@ -448,8 +447,9 @@ async fn print_agent_status() -> Result<AgentLiveness> {
 /// Returns an error if the agent is still answering or cannot be reached.
 async fn stop_agent() -> Result<()> {
     use gpy_agent::agent::lifecycle::{
-        get_socket_path, send_shutdown_command, socket_is_stale, wait_for_agent_shutdown,
+        send_shutdown_command, socket_is_stale, wait_for_agent_shutdown,
     };
+    use gpy_agent::paths::get_socket_path;
 
     let socket_path = get_socket_path()?;
     if !socket_path.exists() {

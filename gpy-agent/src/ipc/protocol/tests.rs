@@ -89,35 +89,6 @@ fn test_hostname_into_message_without_is_last_and_prev_bg() {
 }
 
 #[test]
-fn test_hostname_native_round_trip_is_ssh_present_and_absent() {
-    for sent in [true, false] {
-        let native = Message::HostnameRequest {
-            hostname: "myhost".to_owned(),
-            format: Format::Ansi,
-            is_last: false,
-            is_ssh: sent,
-            prev_bg: None,
-        };
-        let bytes = serialize_message(&native).expect("serialize failed");
-        let text = std::str::from_utf8(&bytes).expect("utf8");
-        assert_eq!(
-            text.contains("is_ssh"),
-            sent,
-            "is_ssh must be serialized only when true: {text}"
-        );
-        match deserialize_message(&bytes).expect("deserialize failed") {
-            Message::HostnameRequest {
-                hostname, is_ssh, ..
-            } => {
-                assert_eq!(hostname, "myhost");
-                assert_eq!(is_ssh, sent);
-            }
-            other => panic!("expected HostnameRequest, got {other:?}"),
-        }
-    }
-}
-
-#[test]
 fn test_hostname_validation_accepts_valid_request() {
     let msg = Message::HostnameRequest {
         hostname: "my-host".to_owned(),
@@ -245,8 +216,6 @@ fn test_prev_bg_validation_null_byte() {
     assert!(result.is_err());
 }
 
-// The shell and native formats must be disjoint so trying the shell format first is safe.
-
 #[test]
 fn test_deserialize_message_shell_format_hot_path() {
     let json = r#"{"op":"git","cwd":"/some/path"}"#;
@@ -273,32 +242,17 @@ fn test_deserialize_message_shell_format_hot_path() {
 }
 
 #[test]
-fn test_deserialize_message_native_format_fallback() {
-    let native = Message::Ping;
-    let serialized = serialize_message(&native).expect("serialize failed");
-    let msg = deserialize_message(&serialized).expect("deserialize failed");
-    assert!(matches!(msg, Message::Ping));
-}
-
-#[test]
-fn test_shell_and_native_message_formats_are_disjoint() {
-    let shell_json = r#"{"op":"git","cwd":"/some/path"}"#;
-    let native_parse: std::result::Result<Message, serde_json::Error> =
-        serde_json::from_str(shell_json);
-    assert!(
-        native_parse.is_err(),
-        "shell-format JSON unexpectedly parsed as native Message"
-    );
-
-    let native = Message::Ping;
-    let native_bytes = serialize_message(&native).expect("serialize failed");
-    let native_str = std::str::from_utf8(&native_bytes).expect("valid utf-8");
-    let shell_parse: std::result::Result<ShellIpcMessage, serde_json::Error> =
-        serde_json::from_str(native_str);
-    assert!(
-        shell_parse.is_err(),
-        "native-format JSON unexpectedly parsed as ShellIpcMessage"
-    );
+fn test_deserialize_message_rejects_native_form() {
+    for native in [
+        r#"{"Ping":null}"#,
+        r#""Ping""#,
+        r#"{"RepositoryStatus":{"path":"/tmp"}}"#,
+    ] {
+        assert!(
+            deserialize_message(native.as_bytes()).is_err(),
+            "accepted {native}"
+        );
+    }
 }
 
 // `parse_wire` must not validate: these use denylisted paths and out-of-range PIDs.
@@ -437,16 +391,6 @@ fn test_parse_wire_duration_is_a_plain_field_copy() {
 }
 
 #[test]
-fn test_parse_wire_theme_query_carries_key() {
-    let json = br#"{"op":"theme","key":"prompt_close"}"#;
-    let wire = parse_wire(json).expect("parse_wire failed");
-    match wire {
-        WireMessage::ThemeQuery { key } => assert_eq!(key, "prompt_close"),
-        _ => panic!("expected WireMessage::ThemeQuery"),
-    }
-}
-
-#[test]
 fn test_parse_wire_unit_ops() {
     assert!(matches!(
         parse_wire(br#"{"op":"ping"}"#).expect("parse_wire failed"),
@@ -455,10 +399,6 @@ fn test_parse_wire_unit_ops() {
     assert!(matches!(
         parse_wire(br#"{"op":"status"}"#).expect("parse_wire failed"),
         WireMessage::Status
-    ));
-    assert!(matches!(
-        parse_wire(br#"{"op":"latency_stats"}"#).expect("parse_wire failed"),
-        WireMessage::LatencyStats
     ));
 }
 
@@ -504,40 +444,11 @@ fn test_parse_wire_unknown_operation() {
 }
 
 #[test]
-fn test_parse_wire_rejects_neither_format() {
+fn test_parse_wire_rejects_payload_without_op() {
     let err = parse_wire(br#"{"not_an_op":true}"#).expect_err("unrecognized payload must fail");
     assert!(
         err.to_string()
             .contains("Failed to deserialize message: invalid format"),
         "unexpected error text"
     );
-}
-
-#[test]
-fn test_parse_wire_native_format_struct_variant() {
-    let json =
-        br#"{"RepositoryStatus":{"path":"/etc/nope","format":"fish-source","is_last":true}}"#;
-    let wire = parse_wire(json).expect("parse_wire failed");
-    match wire {
-        WireMessage::RepositoryStatus {
-            path,
-            format,
-            is_last,
-            is_first,
-            prev_bg,
-        } => {
-            assert_eq!(path, "/etc/nope");
-            assert_eq!(format, Format::FishSource);
-            assert!(is_last);
-            assert!(!is_first);
-            assert_eq!(prev_bg, None);
-        }
-        _ => panic!("expected WireMessage::RepositoryStatus"),
-    }
-}
-
-#[test]
-fn test_parse_wire_native_format_unit_variant() {
-    let wire = parse_wire(br#""Ping""#).expect("parse_wire failed");
-    assert!(matches!(wire, WireMessage::Ping));
 }

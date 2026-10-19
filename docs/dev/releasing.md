@@ -9,20 +9,18 @@ Distribution is GitHub Releases, the one-line installer, and the
 
 ## Version-bearing files
 
-Three files declare the version. The `validate` job in
-`.github/workflows/release.yml` refuses to build unless all three agree with the
+Two files declare the version. The `validate` job in
+`.github/workflows/release.yml` refuses to build unless both agree with the
 tag, so a release cannot ship binaries that report a different version than the
 tag they came from.
 
 - `gpy-agent/Cargo.toml` — `version = "X.Y.Z"`; stamps both binaries.
-- `fish/fisher.json` — `"version": "X.Y.Z"`; `scripts/package-release.sh`
-  re-stamps this in the packaged plugin archive, so a mismatch here means the
-  committed tree and the published archive disagree.
 - `CHANGELOG.md` — a `## [X.Y.Z]` heading. `scripts/release-notes.sh` builds the
   GitHub release body from that section and fails if it is empty.
 
-`tests/bash/release_version_consistency.test.bash` checks that the three agree
-and that the newest CHANGELOG heading has its `[X.Y.Z]: ...` link reference.
+`tests/bash/release_version_consistency.test.bash` checks that the three agree,
+that the newest CHANGELOG heading has its `[X.Y.Z]: ...` link reference, and
+that `SECURITY.md` names exactly one supported series, `X.Y.x`.
 
 ## Cutting a release
 
@@ -47,8 +45,10 @@ Everything below runs on `main`, with a clean tree.
    grep -n 'YYYY-MM-DD' CHANGELOG.md   # must print nothing before tagging
    ```
 
-4. **Bump `SECURITY.md`.** The Supported Versions table names one line, the
-   released minor series (`0.1.x` for v0.1.0). The gate asserts it matches.
+4. **Bump `SECURITY.md`.** The Supported Versions table names one row, the
+   released minor series (`0.4.x` for v0.4.0).
+   `tests/bash/release_version_consistency.test.bash`, run by `just check-shell`
+   in the `validate` job, fails unless it matches.
 
 5. **Preview the release body.** This is exactly what the workflow publishes:
 
@@ -122,7 +122,8 @@ Everything below runs on `main`, with a clean tree.
 | Check | Where |
 |---|---|
 | Tag format is `vMAJOR.MINOR.PATCH` | `release.yml`, `validate` |
-| Tag matches all three version-bearing files | `release.yml`, `validate` |
+| Tag matches both version-bearing files | `release.yml`, `validate` |
+| The released commit is on `main` (tag push or `publish: true`; skipped on a dry run) | `release.yml`, `validate` |
 | Full Rust + shell gate, `just lint`, and the performance budgets (`just bench-ci`) pass at the tagged commit | `release.yml`, `validate` |
 | The packaged binaries actually run: the archive's `install.sh`, both `--version`s, a oneshot render, a responding agent, one prompt each from fish, zsh and bash (Linux); both `.exe` `--version`s and `gpy --help` (Windows). A failure here blocks `create-release` | `release.yml`, `smoke` → `scripts/smoke-release.sh` |
 | No Linux binary (either arch) references a glibc newer than `GPY_GLIBC_FLOOR` (2.31); the Linux legs link against that floor with `cargo zigbuild --target <triple>.2.31`, and the packaged x86_64 binaries run their `--version` in `ubuntu:20.04` | `release.yml`, `build` → `scripts/check-glibc-floor.sh`; `smoke` |
@@ -131,7 +132,7 @@ Everything below runs on `main`, with a clean tree.
 | Build matrix agrees with both installers' asset names | `tests/bash/release_asset_contract.test.bash` |
 | Packaging and note generation still work | `tests/bash/release_packaging.test.bash` |
 | The Linux legs stay pinned to the glibc floor, the gate checks it, and `docs/INSTALL.md` states the same floor | `tests/bash/release_glibc_floor.test.bash` |
-| Cargo.toml, fisher.json and the newest CHANGELOG heading declare the same version | `tests/bash/release_version_consistency.test.bash` |
+| Cargo.toml and the newest CHANGELOG heading declare the same version | `tests/bash/release_version_consistency.test.bash` |
 | The smoke run passes on the real debug binaries and fails on an agent that answers `--version` but nothing else | `tests/bash/release_smoke.test.bash` |
 | A stock `ubuntu:24.04` container with an empty `$HOME` installs from an archive built from the checkout and renders one prompt per shell | `scripts/test-fresh-install.sh` (`tests/docker/Dockerfile.fresh-install`; the `fresh-install` job in `pr-gate.yml`) |
 
@@ -162,9 +163,6 @@ project's fault to a first-time user.
 
 **Not operational — do not document as available:**
 
-- **Fisher.** `release.yml` publishes `fisher-gpy.tar.gz`, but the plugin tree
-  ships no agent binary, so it is not a standalone install. It is not offered by
-  the installers or by any doc page.
 - **crates.io.** `gpy-agent` sets `publish = false` and is never published. A registry install would place two binaries and none of the shell
   files the prompt renders from.
 - **Debian and Arch.** No package is built.

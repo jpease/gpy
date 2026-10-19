@@ -652,6 +652,12 @@ mod tests {
     fn poll_fallback_detects_a_same_length_rewrite() {
         // Same length, written within one mtime tick (Windows), so only a
         // content check catches it.
+        fn write_file_atomically(path: &std::path::Path, contents: &str) {
+            let tmp = path.with_extension("toml.tmp");
+            std::fs::write(&tmp, contents).expect("write temp config");
+            std::fs::rename(&tmp, path).expect("rename temp config");
+        }
+
         let temp = tempfile::TempDir::new().expect("tempdir");
         let config_path = temp.path().join("config.toml");
         std::fs::write(&config_path, "[git]\nenabled = true \n").expect("write config");
@@ -659,24 +665,28 @@ mod tests {
         let manager = ConfigManager::from_path(&config_path).expect("manager");
         assert!(manager.get().git.enabled, "git should be enabled initially");
 
+        let (tx, rx) = std::sync::mpsc::channel();
+        manager.set_reload_callback(Arc::new(move |_old: &Config, new: &Config| {
+            let _ = tx.send(new.git.enabled);
+            Ok(())
+        }));
         manager.spawn_poll_thread(Duration::from_millis(10), Duration::from_millis(10));
-        std::fs::write(&config_path, "[git]\nenabled = false\n").expect("write updated config");
+        write_file_atomically(&config_path, "[git]\nenabled = false\n");
 
         let mut reloaded = false;
-        for _ in 0_i32..300_i32 {
-            std::thread::sleep(Duration::from_millis(20));
-            if !manager.get().git.enabled {
+        while let Ok(enabled) = rx.recv_timeout(Duration::from_secs(30)) {
+            if !enabled {
                 reloaded = true;
                 break;
             }
         }
+        manager.stop_watching();
 
         assert!(
             reloaded,
             "poll fallback must detect a rewrite that changes content but not length"
         );
-
-        manager.stop_watching();
+        assert!(!manager.get().git.enabled);
     }
 
     #[test]
@@ -726,6 +736,12 @@ theme = "other"
 
     #[test]
     fn poll_fallback_reloads_without_any_watcher_running() {
+        fn write_file_atomically(path: &std::path::Path, contents: &str) {
+            let tmp = path.with_extension("toml.tmp");
+            std::fs::write(&tmp, contents).expect("write temp config");
+            std::fs::rename(&tmp, path).expect("rename temp config");
+        }
+
         let temp = tempfile::TempDir::new().expect("tempdir");
         let config_path = temp.path().join("config.toml");
         std::fs::write(&config_path, "[git]\nenabled = true\n").expect("write config");
@@ -733,27 +749,30 @@ theme = "other"
         let manager = ConfigManager::from_path(&config_path).expect("manager");
         assert!(manager.get().git.enabled, "git should be enabled initially");
 
+        let (tx, rx) = std::sync::mpsc::channel();
+        manager.set_reload_callback(Arc::new(move |_old: &Config, new: &Config| {
+            let _ = tx.send(new.git.enabled);
+            Ok(())
+        }));
         // Poll thread only: deterministic regardless of FSEvents.
         manager.spawn_poll_thread(Duration::from_millis(10), Duration::from_millis(10));
 
-        std::fs::write(&config_path, "[git]\nenabled = false\n").expect("write updated config");
+        write_file_atomically(&config_path, "[git]\nenabled = false\n");
 
-        // Generous ceiling so a loaded parallel test run doesn't flake.
         let mut reloaded = false;
-        for _ in 0_i32..300_i32 {
-            std::thread::sleep(Duration::from_millis(20));
-            if !manager.get().git.enabled {
+        while let Ok(enabled) = rx.recv_timeout(Duration::from_secs(30)) {
+            if !enabled {
                 reloaded = true;
                 break;
             }
         }
+        manager.stop_watching();
 
         assert!(
             reloaded,
             "poll fallback should reload the config with no watcher running"
         );
-
-        manager.stop_watching();
+        assert!(!manager.get().git.enabled);
     }
 
     /// The CLI's `reload_now` and the watcher's reload both fire per change;

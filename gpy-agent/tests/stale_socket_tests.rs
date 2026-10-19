@@ -12,9 +12,8 @@ mod env_guard;
 
 use env_guard::EnvGuard;
 use gpy_agent::VERSION;
-use gpy_agent::agent::lifecycle::{
-    check_and_cleanup_socket, get_socket_path, get_version_file_path,
-};
+use gpy_agent::agent::lifecycle::{check_and_cleanup_socket, get_version_file_path};
+use gpy_agent::paths::get_socket_path;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -38,8 +37,10 @@ static ENV_LOCK: Mutex<()> = Mutex::new(());
 /// Redirects the runtime dir to an isolated temp dir until the guard drops.
 fn redirect_runtime_dir(dir: &Path) -> EnvGuard {
     let mut env = EnvGuard::cleared(&["XDG_RUNTIME_DIR", "XDG_CACHE_HOME", "HOME"]);
-    // XDG_RUNTIME_DIR wins in get_runtime_dir(), isolating the version file.
+    // XDG_RUNTIME_DIR wins in paths::runtime_dir(), isolating the version file.
     env.set("XDG_RUNTIME_DIR", dir);
+    // Resolving paths no longer creates it; a started agent would have.
+    std::fs::create_dir_all(dir.join("gpy")).expect("create redirected runtime dir");
     env
 }
 
@@ -290,7 +291,7 @@ fn version_mismatched_agent_is_evicted() {
 
     // Eviction targets `get_socket_path()`, so the fixture must listen there.
     let socket_path = get_socket_path().expect("compute redirected socket path");
-    let version_path = get_version_file_path().expect("compute redirected version path");
+    let version_path = get_version_file_path();
     std::fs::write(&version_path, "0.0.0-old\n").expect("write the old agent's version");
     // Acks pings and goes away once told to shut down.
     let responder = Responder::spawn_exiting_on_shutdown(&socket_path, Duration::ZERO);
@@ -330,7 +331,7 @@ fn eviction_does_not_unlink_a_replacement_agents_socket() {
     let _env = redirect_runtime_dir(tmp.path());
 
     let socket_path = get_socket_path().expect("compute redirected socket path");
-    let version_path = get_version_file_path().expect("compute redirected version path");
+    let version_path = get_version_file_path();
     std::fs::write(&version_path, "0.0.0-old\n").expect("write the old agent's version");
     // Bind the replacement early but publish via rename at shutdown, so there is
     // no gap eviction could read as "no agent".
@@ -397,7 +398,7 @@ fn version_matched_agent_is_left_running() {
     let _env = redirect_runtime_dir(tmp.path());
 
     let socket_path = get_socket_path().expect("compute redirected socket path");
-    let version_path = get_version_file_path().expect("compute redirected version path");
+    let version_path = get_version_file_path();
     std::fs::write(&version_path, format!("{VERSION}\n")).expect("write the matching version");
     let responder = Responder::spawn(&socket_path, true, Duration::ZERO);
 
@@ -429,7 +430,7 @@ fn newer_running_agent_is_left_running() {
     let _env = redirect_runtime_dir(tmp.path());
 
     let socket_path = get_socket_path().expect("compute redirected socket path");
-    let version_path = get_version_file_path().expect("compute redirected version path");
+    let version_path = get_version_file_path();
     std::fs::write(&version_path, "999.0.0\n").expect("write the newer agent's version");
     let responder = Responder::spawn(&socket_path, true, Duration::ZERO);
 

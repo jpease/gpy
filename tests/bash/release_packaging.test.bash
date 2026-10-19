@@ -71,7 +71,6 @@ fi
 # (a) + (b): asserted against the archive listings.
 tar_listing="$(tar -tzf "$OUT/gpy-release.tar.gz" 2>/dev/null || true)"
 zip_listing="$(unzip -Z1 "$OUT/gpy-release.zip" 2>/dev/null || true)"
-fisher_listing="$(tar -tzf "$OUT/fisher-gpy.tar.gz" 2>/dev/null || true)"
 
 expect_entry() {
     local listing="$1" label="$2" entry="$3"
@@ -80,7 +79,6 @@ expect_entry() {
 
 for entry in \
     install.sh \
-    scripts/uninstall.fish \
     scripts/uninstall.sh \
     fish/core/init.fish \
     fish/conf.d/gpy_init.fish \
@@ -105,17 +103,6 @@ done
 
 grep -qxF "gpy-release/bin/gpy-agent" <<<"$tar_listing" &&
     fail "archive contains an unrenamed bin/gpy-agent; assets must be renamed to their asset names"
-
-for entry in fisher.json conf.d/gpy_init.fish core/init.fish functions/fish_prompt.fish LICENSE; do
-    expect_entry "$fisher_listing" "fisher-gpy.tar.gz" "fisher-gpy/$entry"
-done
-
-# The Fisher manifest carries the released version and the project license.
-tar -xzf "$OUT/fisher-gpy.tar.gz" -C "$WORKDIR"
-grep -q '"version": "9.9.9"' "$WORKDIR/fisher-gpy/fisher.json" ||
-    fail "fisher.json was not stamped with the release version"
-grep -q '"license": "GPL-3.0-or-later"' "$WORKDIR/fisher-gpy/fisher.json" ||
-    fail "fisher.json lost its GPL-3.0-or-later declaration"
 
 echo "--- checksums ---"
 
@@ -143,8 +130,8 @@ expect_sidecar() {
         fail "checksum sidecar for $(basename "$file") is not in '<digest>  <basename>' format"
 }
 
-for published in gpy-release.tar.gz gpy-release.zip fisher-gpy.tar.gz gpy-shell-files.tar.gz \
-    install-oneline.sh uninstall.sh uninstall.fish gpy-sbom.cdx.json; do
+for published in gpy-release.tar.gz gpy-release.zip gpy-shell-files.tar.gz \
+    install-oneline.sh uninstall.sh gpy-sbom.cdx.json; do
     if [[ -f "$OUT/$published" ]]; then
         expect_sidecar "$OUT/$published"
     else
@@ -162,15 +149,15 @@ done
 expect_entry "$tar_listing" "gpy-release.tar.gz" "gpy-release/sbom.cdx.json"
 
 if [[ -f "$OUT/SHA256SUMS" ]]; then
-    for name in gpy-release.tar.gz gpy-release.zip fisher-gpy.tar.gz gpy-shell-files.tar.gz \
-        install-oneline.sh uninstall.sh uninstall.fish gpy-sbom.cdx.json "${ASSETS[@]}"; do
+    for name in gpy-release.tar.gz gpy-release.zip gpy-shell-files.tar.gz \
+        install-oneline.sh uninstall.sh gpy-sbom.cdx.json "${ASSETS[@]}"; do
         grep -qE "^[0-9a-f]{64}  $name\$" "$OUT/SHA256SUMS" ||
             fail "SHA256SUMS has no entry for $name"
     done
-    # Nothing downloadable may be left out: 8 published files + 10 binaries.
+    # Nothing downloadable may be left out: 6 published files + 10 binaries.
     manifest_lines="$(wc -l <"$OUT/SHA256SUMS" | tr -d ' ')"
-    [[ "$manifest_lines" -eq $((8 + ${#ASSETS[@]})) ]] ||
-        fail "SHA256SUMS has $manifest_lines entries, expected $((8 + ${#ASSETS[@]}))"
+    [[ "$manifest_lines" -eq $((6 + ${#ASSETS[@]})) ]] ||
+        fail "SHA256SUMS has $manifest_lines entries, expected $((6 + ${#ASSETS[@]}))"
 else
     fail "package-release.sh did not produce a SHA256SUMS manifest"
 fi
@@ -192,7 +179,6 @@ if ! diff <(sed 's/^RELEASE_VERSION="v9.9.9"$/RELEASE_VERSION=""/' "$OUT/install
 fi
 sh -n "$OUT/install-oneline.sh" || fail "the stamped install-oneline.sh does not parse"
 cmp -s "$ROOT/scripts/uninstall.sh" "$OUT/uninstall.sh" || fail "uninstall.sh asset differs from scripts/uninstall.sh"
-cmp -s "$ROOT/scripts/uninstall.fish" "$OUT/uninstall.fish" || fail "uninstall.fish asset differs from scripts/uninstall.fish"
 
 # gpy-shell-files.tar.gz is what install-oneline.sh unpacks and hands to
 # `gpy setup --from`: the three shell trees at the top level, matching the repo.

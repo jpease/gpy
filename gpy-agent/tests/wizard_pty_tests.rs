@@ -1,7 +1,6 @@
 //! Wizard terminal restoration on a real pty: `cargo test` has no TTY, so
 //! unit tests cannot prove termios and the alternate screen come back.
-//! `__wizard_force_fail` forces startup failures at each rollback stage.
-#![cfg(all(unix, feature = "test-support"))]
+#![cfg(unix)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
@@ -119,62 +118,6 @@ fn open_pty_and_snapshot_termios() -> (portable_pty::PtyPair, Box<dyn Read + Sen
         .expect("open pty");
     let reader = pair.master.try_clone_reader().expect("clone pty reader");
     (pair, reader)
-}
-
-#[test]
-fn ac1_forced_failure_after_raw_mode_restores_terminal() {
-    let env = CliTestEnv::new().expect("create isolated CLI test env");
-    let (pair, reader) = open_pty_and_snapshot_termios();
-    let before = pair.master.get_termios();
-
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gpy"));
-    cmd.args(["__wizard_force_fail", "after-raw-mode"]);
-    configure_gpy_env(&mut cmd, &env);
-
-    let captured = spawn_reader_thread(reader);
-    let mut child = PtyChild::new(pair.slave.spawn_command(cmd).expect("spawn gpy in pty"));
-    drop(pair.slave);
-
-    let status = wait_for_exit(&mut *child, EXIT_DEADLINE);
-    assert!(!status.success(), "forced-failure run should exit non-zero");
-
-    let after = pair.master.get_termios();
-    assert_eq!(
-        before, after,
-        "termios state was not restored after a forced failure entering the alt screen"
-    );
-
-    // The alt-screen step is the one forced to fail, so it was never entered.
-    let output = captured.lock().expect("captured output lock").clone();
-    assert!(
-        last_position(&output, ENTER_ALT_SCREEN).is_none(),
-        "alt screen should never have been entered when the AfterRawMode stage is forced to fail"
-    );
-}
-
-#[test]
-fn ac2_forced_failure_after_alt_screen_restores_terminal() {
-    let env = CliTestEnv::new().expect("create isolated CLI test env");
-    let (pair, reader) = open_pty_and_snapshot_termios();
-    let before = pair.master.get_termios();
-
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gpy"));
-    cmd.args(["__wizard_force_fail", "after-alt-screen"]);
-    configure_gpy_env(&mut cmd, &env);
-
-    let captured = spawn_reader_thread(reader);
-    let mut child = PtyChild::new(pair.slave.spawn_command(cmd).expect("spawn gpy in pty"));
-    drop(pair.slave);
-
-    let status = wait_for_exit(&mut *child, EXIT_DEADLINE);
-    assert!(!status.success(), "forced-failure run should exit non-zero");
-
-    let after = pair.master.get_termios();
-    assert_eq!(
-        before, after,
-        "termios state was not restored after a forced failure initializing the backend"
-    );
-    assert_alt_screen_entered_and_left(&captured);
 }
 
 #[test]

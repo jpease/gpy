@@ -1,5 +1,6 @@
 //! `gpy start|stop|restart|status`, delegated to the `gpy-agent` binary.
 
+use super::utils::agent_binary;
 use crate::{Error, Result};
 use std::io::{BufRead, BufReader};
 use std::process::{Command, ExitCode, Stdio};
@@ -9,7 +10,7 @@ use std::process::{Command, ExitCode, Stdio};
 /// # Errors
 /// Returns an error if `gpy-agent start` cannot run or fails.
 pub fn start() -> Result<()> {
-    let status = Command::new("gpy-agent")
+    let status = Command::new(agent_binary())
         .arg("start")
         .status()
         .map_err(|e| Error::process("gpy-agent".to_owned(), e.to_string()))?;
@@ -28,7 +29,7 @@ pub fn start() -> Result<()> {
 /// # Errors
 /// Returns an error if `gpy-agent stop` cannot run or fails.
 pub fn stop() -> Result<()> {
-    let status = Command::new("gpy-agent")
+    let status = Command::new(agent_binary())
         .arg("stop")
         .status()
         .map_err(|e| Error::process("gpy-agent".to_owned(), e.to_string()))?;
@@ -62,7 +63,7 @@ pub fn restart() -> Result<()> {
 /// # Errors
 /// Returns an error if `gpy-agent stop` cannot run or fails.
 fn restart_stop() -> Result<()> {
-    let mut child = Command::new("gpy-agent")
+    let mut child = Command::new(agent_binary())
         .arg("stop")
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -108,7 +109,7 @@ fn restart_stop() -> Result<()> {
 /// # Errors
 /// Returns an error if `gpy-agent start` fails or the agent never answers.
 fn restart_start() -> Result<()> {
-    let mut child = Command::new("gpy-agent")
+    let mut child = Command::new(agent_binary())
         .arg("start")
         .stdout(Stdio::inherit())
         .stderr(Stdio::piped())
@@ -161,7 +162,8 @@ fn agent_enabled() -> bool {
 /// # Errors
 /// Returns an error if pinging fails or the agent does not answer in time.
 fn wait_for_agent_started() -> Result<()> {
-    use crate::agent::lifecycle::{get_socket_path, ping_agent_blocking};
+    use crate::agent::lifecycle::ping_agent_blocking;
+    use crate::paths::get_socket_path;
 
     let socket_path = get_socket_path()?;
     for _ in 0_i32..50_i32 {
@@ -183,7 +185,7 @@ fn wait_for_agent_started() -> Result<()> {
 /// # Errors
 /// Returns an error if `gpy-agent` cannot run or was killed by a signal.
 pub fn status() -> Result<ExitCode> {
-    let status = Command::new("gpy-agent")
+    let status = Command::new(agent_binary())
         .arg("status")
         .status()
         .map_err(|e| Error::process("gpy-agent".to_owned(), e.to_string()))?;

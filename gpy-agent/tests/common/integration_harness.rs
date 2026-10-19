@@ -13,6 +13,7 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::let_unit_value)]
 #![allow(clippy::expect_used)]
+#![allow(clippy::panic)]
 #![allow(clippy::too_many_lines)]
 #![allow(clippy::cast_possible_truncation)]
 
@@ -39,6 +40,49 @@ use fixtures::TempSocket;
 #[path = "../fixtures/config_helpers.rs"]
 pub mod config_helpers;
 use config_helpers::TestConfig;
+
+/// Encode a request as one `{"op":…}` JSON line; panics on variants the harness never sends.
+fn op_line(msg: &Message) -> String {
+    let value = match msg {
+        Message::Ping => serde_json::json!({"op": "ping"}),
+        Message::Status => serde_json::json!({"op": "status"}),
+        Message::RepositoryStatus {
+            path,
+            format,
+            is_last,
+            is_first,
+            prev_bg,
+        } => serde_json::json!({
+            "op": "git", "cwd": path.as_str(), "format": format,
+            "is_last": is_last, "is_first": is_first, "prev_bg": prev_bg,
+        }),
+        Message::LanguageDetect {
+            path,
+            format,
+            is_last,
+            is_first,
+            prev_bg,
+            virtual_env,
+        } => serde_json::json!({
+            "op": "lang", "cwd": path.as_str(), "format": format, "is_last": is_last,
+            "is_first": is_first, "prev_bg": prev_bg, "virtual_env": virtual_env,
+        }),
+        Message::RegisterClient {
+            pid,
+            cwd,
+            shell,
+            shell_version,
+        } => serde_json::json!({
+            "op": "register", "pid": pid.get(), "cwd": cwd.as_ref().map(SafePath::as_str),
+            "shell": shell, "shell_version": shell_version,
+        }),
+        Message::UnregisterClient { pid } => {
+            serde_json::json!({"op": "unregister", "pid": pid.get()})
+        }
+        other => panic!("op_line: no op encoding for {other:?}"),
+    };
+    value.to_string()
+}
 
 /// Spawns a real agent process; resources are cleaned up on drop.
 pub struct IntegrationTestServer {
@@ -82,8 +126,7 @@ impl IntegrationTestServer {
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Connection timeout"))?
             .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
 
-        let json = serde_json::to_string(msg)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let json = op_line(msg);
 
         stream.write_all(json.as_bytes()).await?;
         stream.write_all(b"\n").await?;

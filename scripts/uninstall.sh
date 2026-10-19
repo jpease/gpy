@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Remove the current user's whole GPY install (every shell, binaries, config,
 # cache, runtime). Usage: sh scripts/uninstall.sh
-# Sources nothing, so a lone downloaded copy works. Must remove the same set
-# as scripts/uninstall.fish.
+# Sources nothing, so a lone downloaded copy works.
 
 set -e
 

@@ -118,12 +118,6 @@ the build-provenance attestation (\`gh attestation verify\`) before running it.
 Detects Fish, Zsh, or Bash and installs the agent, the \`gpy\` CLI, and the
 shell integration for the detected shell.
 
-### Fisher (Fish)
-
-\`\`\`fish
-fisher install jpease/gpy/fish
-\`\`\`
-
 ### From the release archive
 
 \`\`\`sh

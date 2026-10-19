@@ -51,7 +51,7 @@ PKG="$SHELL_E2E_ROOT/pkg"
 mkdir -p "$PKG/bin" "$PKG/scripts"
 cp -R "$ROOT/fish" "$PKG/fish"
 cp "$ROOT/install.sh" "$PKG/install.sh"
-cp "$ROOT/scripts/uninstall.fish" "$ROOT/scripts/uninstall.sh" "$PKG/scripts/"
+cp "$ROOT/scripts/uninstall.sh" "$PKG/scripts/"
 cp "$SHELL_E2E_AGENT_BIN" "$PKG/bin/$AGENT_ASSET"
 cp "$GPY_CLI" "$PKG/bin/$CLI_ASSET"
 for asset in "$AGENT_ASSET" "$CLI_ASSET"; do
@@ -193,12 +193,12 @@ fi
 echo "--- uninstall ---"
 SUPERVISOR_PIDFILE="$XDG_RUNTIME_DIR/gpy/supervisor.pid"
 supervisor_pid="$(cat "$SUPERVISOR_PIDFILE" 2>/dev/null || true)"
-printf '\n' | fish "$PKG/scripts/uninstall.fish" >"$SHELL_E2E_ROOT/uninstall.log" 2>&1
+printf '\n' | sh "$PKG/scripts/uninstall.sh" >"$SHELL_E2E_ROOT/uninstall.log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ]; then
-    pass "uninstall.fish exited 0"
+    pass "uninstall.sh exited 0"
 else
-    fail "uninstall.fish exited $rc"
+    fail "uninstall.sh exited $rc"
     cat "$SHELL_E2E_ROOT/uninstall.log"
 fi
 

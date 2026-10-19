@@ -3,7 +3,7 @@
 //! `symbol` is Starship's `ssh_symbol`: the theme icon only over SSH.
 
 use crate::formatter::SegmentPosition;
-use crate::formatter::separator::{Glyphs, SeparatorStyle, resolve_separator};
+use crate::formatter::separator::{Glyphs, SeparatorStyle, separator_var};
 use crate::template::VariableResolver;
 use crate::theme::ThemeConfig;
 
@@ -68,9 +68,9 @@ impl VariableResolver for HostnameResolver<'_> {
             } else {
                 String::new()
             }),
-            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Terminal, self.glyphs)
-                .close
-                .map(str::to_owned),
+            "sep_gap" | "sep_open" | "sep_close" => {
+                separator_var(name, self.pos, SeparatorStyle::Terminal, self.glyphs)
+            }
             _ => None,
         }
     }

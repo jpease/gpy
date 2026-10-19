@@ -1,14 +1,11 @@
 //! JSON IPC between shell clients and the agent over Unix domain sockets.
 
-pub mod client;
 pub mod handlers;
-pub mod latency;
 pub mod protocol;
 pub mod registry;
 pub mod server;
 #[cfg(unix)]
 pub(crate) mod socket_identity;
-pub mod transport;
 
 pub use crate::formatter::Format;
 
@@ -43,7 +40,6 @@ pub fn decode_wire_reply(text: &str) -> crate::Result<Response> {
         "Failed to parse agent response: not a Response: {body}"
     )))
 }
-pub use latency::LatencyTracker;
 pub use registry::ClientDirectory;
 
 use serde::{Deserialize, Serialize};
@@ -59,27 +55,19 @@ pub(crate) fn native_windows_unsupported() -> crate::Error {
 }
 
 /// IPC message types that can be sent between Fish and Agent
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub enum Message {
     /// Request git status for a directory
     RepositoryStatus {
         /// The path to the directory to check.
         path: crate::security::SafePath,
         /// Desired response format.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Format::is_json_ref")]
         format: Format,
         /// Whether this is the last segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
         /// Whether this is the first segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_first: bool,
         /// Previous segment's background color, for chevron transitions.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         prev_bg: Option<String>,
     },
 
@@ -88,25 +76,15 @@ pub enum Message {
         /// The path to the directory to check.
         path: crate::security::SafePath,
         /// Desired response format.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Format::is_json_ref")]
         format: Format,
         /// Whether this is the last segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
         /// Whether this is the first segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_first: bool,
         /// Previous segment's background color, for chevron transitions.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         prev_bg: Option<String>,
         /// Client-forwarded `$VIRTUAL_ENV` for venv-aware Python version
         /// detection. Absent when no venv is activated (back-compatible).
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         virtual_env: Option<String>,
     },
 
@@ -115,23 +93,14 @@ pub enum Message {
         /// The working directory to render, canonicalized and validated.
         path: crate::security::SafePath,
         /// The client's logical `$PWD`, rendered as `cwd` so symlinks match oneshot output. Never on the wire.
-        #[serde(skip)]
         display_path: String,
         /// Desired response format.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Format::is_json_ref")]
         format: Format,
         /// Whether this is the last segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
         /// Whether this is the first segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_first: bool,
         /// Previous segment's background color, for chevron transitions.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         prev_bg: Option<String>,
     },
 
@@ -141,20 +110,12 @@ pub enum Message {
         /// Shell whose live-time prompt token the render should embed.
         shell: crate::shell::Shell,
         /// Desired response format.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Format::is_json_ref")]
         format: Format,
         /// Whether this is the last segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
         /// Whether this is the first segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_first: bool,
         /// Previous segment's background color, for chevron transitions.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         prev_bg: Option<String>,
     },
 
@@ -163,20 +124,12 @@ pub enum Message {
         /// The command duration in milliseconds.
         duration_ms: u64,
         /// Desired response format.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Format::is_json_ref")]
         format: Format,
         /// Whether this is the last segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
         /// Whether this is the first segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_first: bool,
         /// Previous segment's background color, for chevron transitions.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         prev_bg: Option<String>,
     },
 
@@ -185,16 +138,10 @@ pub enum Message {
         /// Whether the last command succeeded (`true`) or failed (`false`).
         success: bool,
         /// Desired response format.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Format::is_json_ref")]
         format: Format,
         /// Whether this is the last segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
         /// Previous segment's background color, for chevron transitions.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         prev_bg: Option<String>,
     },
 
@@ -204,20 +151,12 @@ pub enum Message {
         /// The hostname string resolved by the client.
         hostname: String,
         /// Desired response format.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Format::is_json_ref")]
         format: Format,
         /// Whether this is the last segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
         /// Whether the client session is over SSH; absent means `false`.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_ssh: bool,
         /// Previous segment's background color, for chevron transitions.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         prev_bg: Option<String>,
     },
 
@@ -227,16 +166,10 @@ pub enum Message {
         /// The effective username string resolved by the client.
         username: String,
         /// Desired response format.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Format::is_json_ref")]
         format: Format,
         /// Whether this is the last segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
         /// Previous segment's background color, for chevron transitions.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         prev_bg: Option<String>,
     },
 
@@ -271,15 +204,6 @@ pub enum Message {
 
     /// Get detailed agent status (for debugging)
     Status,
-
-    /// Query theme setting
-    ThemeQuery {
-        /// The theme setting key to query (e.g., "`prompt_close`", "`prompt_open`", "prompt")
-        key: String,
-    },
-
-    /// Get IPC latency statistics
-    LatencyStats,
 
     /// Shutdown agent gracefully
     Shutdown,
@@ -403,11 +327,6 @@ impl Message {
     }
 }
 
-#[expect(clippy::trivially_copy_pass_by_ref, reason = "serde signature")]
-const fn is_false(value: &bool) -> bool {
-    !*value
-}
-
 /// IPC response types
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Response {
@@ -476,24 +395,6 @@ pub enum Response {
         registered_clients: usize,
         /// Number of cache entries
         cache_entries: usize,
-    },
-
-    /// Theme setting value
-    ThemeValue {
-        /// The theme setting value
-        value: String,
-    },
-
-    /// IPC latency statistics
-    LatencyStatsResult {
-        /// Minimum response time in milliseconds
-        min_ms: u64,
-        /// Maximum response time in milliseconds
-        max_ms: u64,
-        /// Average response time in milliseconds
-        avg_ms: u64,
-        /// Number of samples in statistics (up to 100)
-        sample_count: usize,
     },
 
     /// Error response

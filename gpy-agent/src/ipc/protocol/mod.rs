@@ -8,19 +8,6 @@ use serde_json;
 /// Wire payload for a client-initiated config reload; shared so send sites cannot diverge.
 pub const CONFIG_RELOAD_JSON: &str = r#"{"op":"config_reload"}"#;
 
-/// Serialize a message to JSON bytes.
-///
-/// # Errors
-/// Returns an error if serialization fails or the message exceeds size limits.
-pub fn serialize_message(msg: &Message) -> Result<Vec<u8>> {
-    let mut buffer = Vec::with_capacity(256);
-    serde_json::to_writer(&mut buffer, msg)
-        .map_err(|e| Error::ipc(format!("Failed to serialize message: {e}")))?;
-
-    validate_message_size(&buffer)?;
-    Ok(buffer)
-}
-
 /// Deserialize JSON bytes into a message.
 ///
 /// # Errors
@@ -53,18 +40,9 @@ fn parse_wire(data: &[u8]) -> Result<WireMessage> {
     let json = std::str::from_utf8(data)
         .map_err(|e| Error::ipc(format!("Invalid UTF-8 in message: {e}")))?;
 
-    // Shell traffic dominates the hot path, so try its format first.
-    if let Ok(shell_msg) = serde_json::from_str::<ShellIpcMessage>(json) {
-        return shell_msg.into_wire_message();
-    }
-
-    if let Ok(wire) = serde_json::from_str::<WireMessage>(json) {
-        return Ok(wire);
-    }
-
-    Err(Error::ipc(
-        "Failed to deserialize message: invalid format".to_owned(),
-    ))
+    let shell_msg = serde_json::from_str::<ShellIpcMessage>(json)
+        .map_err(|_| Error::ipc("Failed to deserialize message: invalid format".to_owned()))?;
+    shell_msg.into_wire_message()
 }
 
 /// Resolve a [`WireMessage`] into a [`Message`]; the only place the stronger
@@ -206,12 +184,10 @@ fn resolve(wire: WireMessage) -> Result<Message> {
             cwd: crate::security::SafePath::new(&cwd)
                 .map_err(|e| Error::ipc(format!("Invalid workspace path: {e}")))?,
         }),
-        WireMessage::ThemeQuery { key } => Ok(Message::ThemeQuery { key }),
         WireMessage::Ping => Ok(Message::Ping),
         WireMessage::Status => Ok(Message::Status),
         WireMessage::Shutdown => Ok(Message::Shutdown),
         WireMessage::ConfigReload => Ok(Message::ConfigReload),
-        WireMessage::LatencyStats => Ok(Message::LatencyStats),
     }
 }
 
@@ -281,17 +257,13 @@ pub fn validate_message_content(msg: &Message) -> Result<()> {
         Message::RegisterClient { shell_version, .. } => {
             validate_register_client(shell_version.as_deref())?;
         }
-        Message::ThemeQuery { key } => {
-            validate_string_field("key", key, 256)?;
-        }
         // `ClientPid` is range-checked at construction; liveness is probed at route time.
         Message::UnregisterClient { .. }
         | Message::WorkspaceUpdate { .. }
         | Message::Ping
         | Message::Shutdown
         | Message::Status
-        | Message::ConfigReload
-        | Message::LatencyStats => {}
+        | Message::ConfigReload => {}
     }
     Ok(())
 }
@@ -368,95 +340,62 @@ pub fn encode_reply_newlines(payload: &str) -> std::borrow::Cow<'_, str> {
     )
 }
 
-/// Raw wire mirror of [`Message`] with unvalidated `String`/`u32` fields, so
-/// parsing needs no I/O; [`resolve`] builds the validated types. Must stay
-/// byte-compatible with `Message`'s own `Deserialize` (including `#[serde(default)]`).
-#[derive(Debug, Deserialize)]
+/// Unvalidated form of [`Message`] built from a [`ShellIpcMessage`] with zero I/O; [`resolve`] builds the validated types.
+#[derive(Debug)]
 enum WireMessage {
     RepositoryStatus {
         path: String,
-        #[serde(default)]
         format: super::Format,
-        #[serde(default)]
         is_last: bool,
-        #[serde(default)]
         is_first: bool,
-        #[serde(default)]
         prev_bg: Option<String>,
     },
     LanguageDetect {
         path: String,
-        #[serde(default)]
         format: super::Format,
-        #[serde(default)]
         is_last: bool,
-        #[serde(default)]
         is_first: bool,
-        #[serde(default)]
         prev_bg: Option<String>,
-        #[serde(default)]
         virtual_env: Option<String>,
     },
     DirectoryRequest {
         path: String,
-        #[serde(default)]
         format: super::Format,
-        #[serde(default)]
         is_last: bool,
-        #[serde(default)]
         is_first: bool,
-        #[serde(default)]
         prev_bg: Option<String>,
     },
     ClockRequest {
         shell: crate::shell::Shell,
-        #[serde(default)]
         format: super::Format,
-        #[serde(default)]
         is_last: bool,
-        #[serde(default)]
         is_first: bool,
-        #[serde(default)]
         prev_bg: Option<String>,
     },
     DurationRequest {
         duration_ms: u64,
-        #[serde(default)]
         format: super::Format,
-        #[serde(default)]
         is_last: bool,
-        #[serde(default)]
         is_first: bool,
-        #[serde(default)]
         prev_bg: Option<String>,
     },
     CharacterRequest {
         success: bool,
-        #[serde(default)]
         format: super::Format,
-        #[serde(default)]
         is_last: bool,
-        #[serde(default)]
         prev_bg: Option<String>,
     },
     HostnameRequest {
         hostname: String,
-        #[serde(default)]
         format: super::Format,
-        #[serde(default)]
         is_last: bool,
-        #[serde(default)]
         is_ssh: bool,
-        #[serde(default)]
         prev_bg: Option<String>,
     },
     UsernameRequest {
         username: String,
-        #[serde(default)]
         format: super::Format,
-        #[serde(default)]
         is_last: bool,
-        #[serde(default)]
         prev_bg: Option<String>,
     },
     RegisterClient {
@@ -474,10 +413,6 @@ enum WireMessage {
     },
     Ping,
     Status,
-    ThemeQuery {
-        key: String,
-    },
-    LatencyStats,
     Shutdown,
     ConfigReload,
 }
@@ -499,8 +434,6 @@ impl WireMessage {
             | Self::WorkspaceUpdate { .. }
             | Self::Ping
             | Self::Status
-            | Self::ThemeQuery { .. }
-            | Self::LatencyStats
             | Self::Shutdown
             | Self::ConfigReload => None,
         }
@@ -514,7 +447,6 @@ struct ShellIpcMessage {
     cwd: Option<String>,
     pid: Option<u32>,
     format: Option<String>,
-    key: Option<String>,
     is_last: Option<bool>,
     #[serde(default)]
     is_first: Option<bool>,
@@ -539,7 +471,6 @@ struct ShellIpcMessage {
 
 impl ShellIpcMessage {
     /// Convert to [`WireMessage`], checking only wire shape; validation happens in [`resolve`].
-    #[expect(clippy::too_many_lines, reason = "one arm per shell op")]
     fn into_wire_message(self) -> Result<WireMessage> {
         // Unlike `Format::from_str`, a bad format defaults to JSON: shell IPC is best-effort.
         let format = self
@@ -644,12 +575,6 @@ impl ShellIpcMessage {
                     .ok_or_else(|| Error::ipc("Workspace update missing cwd".to_owned()))?;
                 Ok(WireMessage::WorkspaceUpdate { pid, cwd })
             }
-            "theme" => Ok(WireMessage::ThemeQuery {
-                key: self
-                    .key
-                    .ok_or_else(|| Error::ipc("Theme query missing key".to_owned()))?,
-            }),
-            "latency_stats" => Ok(WireMessage::LatencyStats),
             _ => Err(Error::ipc(format!("Unknown shell operation: {}", self.op))),
         }
     }

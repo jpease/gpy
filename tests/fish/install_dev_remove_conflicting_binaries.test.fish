@@ -40,6 +40,9 @@ end
 set -l sandbox (mktemp -d)
 set -l home_dir "$sandbox/home"
 mkdir -p "$home_dir"
+mkdir -p "$home_dir/.local/bin"
+printf '#!/bin/sh\nexit 0\n' >"$home_dir/.local/bin/gpy"
+chmod +x "$home_dir/.local/bin/gpy"
 
 # PATH layout: early/ (ours, stale, under $HOME) : outside/ (ours, outside
 # $HOME) : other/ (unrelated tool) : tools/shims/ (shim) : install/ (the

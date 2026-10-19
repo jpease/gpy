@@ -5,6 +5,8 @@ use super::{
     is_git_significant_relative, split_at_git_dir_modules,
 };
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 /// Classify against a fresh, empty registry.
 fn classify_event(path: &Path) -> Option<FileEvent> {
@@ -32,6 +34,76 @@ fn stop_returns_promptly_regardless_of_debounce_window() {
     assert!(
         elapsed < std::time::Duration::from_secs(2),
         "stop() must not wait out the debounce window, took {elapsed:?}"
+    );
+}
+
+/// A coordinator whose callback reports each delivery instant on the channel.
+fn timed_coordinator(debounce: Duration) -> (super::WatchCoordinator, mpsc::Receiver<Instant>) {
+    let (tx, rx) = mpsc::channel();
+    let coordinator = super::WatchCoordinator::new(
+        debounce,
+        Box::new(move |_| {
+            let _ = tx.send(Instant::now());
+        }),
+        None,
+    )
+    .expect("coordinator");
+    (coordinator, rx)
+}
+
+fn head_event() -> PendingEvent {
+    PendingEvent::git(PathBuf::from("/repo"), PathBuf::from("/repo/.git/HEAD"))
+}
+
+/// A pending event's far-off deadline must not delay `stop`.
+#[test]
+fn stop_returns_promptly_with_pending_events() {
+    let (mut coordinator, _rx) = timed_coordinator(Duration::from_secs(30));
+    coordinator.ingest_for_test(head_event());
+
+    let started = Instant::now();
+    coordinator.stop();
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "stop() must not wait out a pending deadline, took {elapsed:?}"
+    );
+}
+
+/// The flush thread waits for the debounce deadline before delivering.
+#[test]
+fn event_is_not_flushed_before_its_deadline() {
+    let debounce = Duration::from_millis(100);
+    let (mut coordinator, rx) = timed_coordinator(debounce);
+
+    let t0 = Instant::now();
+    coordinator.ingest_for_test(head_event());
+    let delivered = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("event delivered");
+    coordinator.stop();
+
+    assert!(
+        delivered.duration_since(t0) >= debounce,
+        "delivered {:?} after ingest, before the {debounce:?} debounce",
+        delivered.duration_since(t0)
+    );
+}
+
+/// One event with nothing after it is still delivered near its deadline: the
+/// ingress kick arms the wait, so delivery needs neither a later event nor `stop`.
+#[cfg(unix)]
+#[test]
+fn event_is_flushed_without_a_further_event() {
+    let (mut coordinator, rx) = timed_coordinator(Duration::from_millis(100));
+
+    coordinator.ingest_for_test(head_event());
+    let delivered = rx.recv_timeout(Duration::from_millis(350));
+    coordinator.stop();
+
+    assert!(
+        delivered.is_ok(),
+        "the event must be delivered within debounce + 250ms"
     );
 }
 
@@ -583,8 +655,8 @@ fn socket_lookalike_filename_is_not_filtered() {
 #[test]
 fn real_sock_file_is_still_filtered() {
     assert!(
-        filter_ignored(Path::new("/tmp/gpy-agent.sock")).is_none(),
-        "the well-known gpy-agent.sock file must still be filtered"
+        filter_ignored(Path::new("/tmp/gpy.sock")).is_none(),
+        "the agent's gpy.sock socket must be filtered by its .sock extension"
     );
     assert!(
         filter_ignored(Path::new("/tmp/project/other.sock")).is_none(),

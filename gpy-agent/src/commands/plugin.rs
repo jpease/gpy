@@ -16,12 +16,6 @@ pub(crate) const fn render_source(source: PluginSource) -> &'static str {
     }
 }
 
-const fn render_status(status: crate::plugin::PluginLoadStatus) -> &'static str {
-    match status {
-        crate::plugin::PluginLoadStatus::Ready => "ready",
-    }
-}
-
 const PUBLIC_PLUGIN_HELPERS: &[&str] = &[
     "gpy_section_start",
     "gpy_section_append",
@@ -240,11 +234,10 @@ pub fn list() {
     } else {
         for plugin in discovery.plugins {
             println!(
-                "\n- {} {} [{}] ({})",
+                "\n- {} {} [{}] (ready)",
                 plugin.manifest.id,
                 plugin.manifest.version,
-                render_source(plugin.source),
-                render_status(plugin.status)
+                render_source(plugin.source)
             );
             println!("  api: {}", plugin.manifest.api_version);
             println!(

@@ -26,9 +26,6 @@ check_field() {
 }
 
 check_field "Cargo.toml" "gpy-agent/Cargo.toml" '^license = "[^"]*"'
-check_field "Fisher manifest" "fish/fisher.json" '"license": *"[^"]*"'
-# package-release.sh refuses to build the Fisher archive unless fisher.json declares GPL.
-check_field "Release packaging license guard" "scripts/package-release.sh" '"license": *"[^"]*"'
 
 if [[ ! -f LICENSE ]] || ! grep -q "GNU GENERAL PUBLIC LICENSE" LICENSE || ! grep -q "Version 3" LICENSE; then
     echo "✗ LICENSE: missing or not GPLv3 text"

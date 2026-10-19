@@ -225,9 +225,26 @@ fn doctor_accepts_agent_disabled_via_config() {
     assert!(
         doctor
             .stdout
-            .contains("Checking gpy-agent binary... ok: Found in PATH"),
+            .contains("Checking gpy-agent binary... ok: Found ("),
         "the working gpy-agent must pass the binary check: {doctor:?}"
     );
+    let sibling = Path::new(env!("CARGO_BIN_EXE_gpy")).with_file_name("gpy-agent");
+    assert!(
+        doctor
+            .stdout
+            .contains(&format!("Found ({})", sibling.display())),
+        "{doctor:?}"
+    );
+}
+
+/// `gpy` copied alone into a fresh directory: no sibling `gpy-agent`, so it
+/// must find the agent on `PATH`.
+fn lone_gpy(env: &CliTestEnv) -> PathBuf {
+    let dir = env.root().join("lone-gpy");
+    std::fs::create_dir_all(&dir).expect("create lone gpy dir");
+    let gpy = dir.join("gpy");
+    std::fs::copy(env!("CARGO_BIN_EXE_gpy"), &gpy).expect("copy gpy");
+    gpy
 }
 
 /// `gpy doctor` with the agent disabled (so only the binary check can fail)
@@ -239,7 +256,7 @@ fn doctor_with_agent_path(sandbox: &AgentSandbox, bin_dir: &Path) -> CliCommandR
         .expect("write config");
     sandbox
         .env
-        .run_gpy_with_env(&["doctor"], &[("PATH", bin_dir)])
+        .run_program_with_env(&lone_gpy(&sandbox.env), &["doctor"], &[("PATH", bin_dir)])
         .expect("run gpy doctor")
 }
 
@@ -568,6 +585,87 @@ fn daemon_does_not_keep_the_launch_directory_as_cwd() {
     assert_eq!(process_cwd(pid), PathBuf::from("/"));
 }
 
+/// Start a daemon on the sandbox socket and return its single pid.
+fn start_signal_target(sandbox: &AgentSandbox, socket: &str) -> String {
+    let status = sandbox
+        .env
+        .gpy_agent_command()
+        .args(["start", "--socket", socket])
+        .status()
+        .expect("spawn gpy-agent start");
+    assert!(status.success());
+    sandbox.wait_until_responding();
+    let daemons = pids_matching(&sandbox.socket_path);
+    let [pid] = daemons.as_slice() else {
+        panic!("expected one daemon, found {daemons:?}");
+    };
+    pid.clone()
+}
+
+fn send_signal(signal: &str, pid: &str) {
+    let status = std::process::Command::new("kill")
+        .args([signal, pid])
+        .status()
+        .expect("spawn kill");
+    assert!(status.success(), "kill {signal} {pid} failed");
+}
+
+#[test]
+fn sigterm_stops_the_daemon_and_unlinks_its_socket() {
+    let sandbox = AgentSandbox::new();
+    let socket = sandbox.socket_path.to_string_lossy().into_owned();
+    let _reaper = DaemonReaper(sandbox.socket_path.clone());
+
+    let pid = start_signal_target(&sandbox, &socket);
+    send_signal("-TERM", &pid);
+
+    assert!(
+        common::wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
+            pids_matching(&sandbox.socket_path).is_empty() && !sandbox.socket_path.exists()
+        }),
+        "SIGTERM must stop the daemon and unlink its socket"
+    );
+}
+
+#[test]
+fn sigkill_leaves_a_stale_socket_that_start_replaces() {
+    let sandbox = AgentSandbox::new();
+    let socket = sandbox.socket_path.to_string_lossy().into_owned();
+    let _reaper = DaemonReaper(sandbox.socket_path.clone());
+
+    let pid = start_signal_target(&sandbox, &socket);
+    send_signal("-KILL", &pid);
+
+    assert!(
+        common::wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
+            pids_matching(&sandbox.socket_path).is_empty()
+        }),
+        "SIGKILL must end the daemon"
+    );
+    assert!(
+        sandbox.socket_path.exists(),
+        "a SIGKILLed daemon cannot unlink its socket"
+    );
+
+    start_signal_target(&sandbox, &socket);
+    let status = sandbox
+        .env
+        .run_gpy_agent(&["status", "--socket", &socket])
+        .expect("spawn gpy-agent status");
+    assert_eq!(status.exit_code, 0, "status after restart: {status:?}");
+
+    sandbox
+        .env
+        .run_gpy_agent(&["stop", "--socket", &socket])
+        .expect("spawn gpy-agent stop");
+    assert!(
+        common::wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
+            pids_matching(&sandbox.socket_path).is_empty() && !sandbox.socket_path.exists()
+        }),
+        "the restarted daemon must stop and unlink its socket"
+    );
+}
+
 #[test]
 fn relative_socket_is_resolved_against_the_launch_directory() {
     let env = CliTestEnv::new().expect("create isolated CLI test env");
@@ -600,6 +698,25 @@ fn relative_socket_is_resolved_against_the_launch_directory() {
 fn start_on_default_socket(env: &CliTestEnv) -> CliCommandResult {
     env.run_gpy_agent_with_env(&["start"], &[("GPY_AGENT_SOCKET_PATH", "")])
         .expect("spawn gpy-agent start")
+}
+
+/// Read-only commands must not create GPY's runtime directory.
+#[test]
+fn status_does_not_create_the_runtime_dir() {
+    let env = CliTestEnv::new().expect("create isolated CLI test env");
+    let runtime = env.xdg_runtime_dir().join("gpy");
+    assert!(!runtime.exists(), "precondition: no runtime dir yet");
+
+    let result = env
+        .run_gpy_agent_with_env(&["status"], &[("GPY_AGENT_SOCKET_PATH", "")])
+        .expect("spawn gpy-agent status");
+
+    assert_eq!(result.exit_code, 1_i32, "no agent is running: {result:?}");
+    assert!(
+        !runtime.exists(),
+        "status created {}: {result:?}",
+        runtime.display()
+    );
 }
 
 fn mode_of(path: &Path) -> u32 {
@@ -853,10 +970,11 @@ fn gpy_lifecycle_fails_clearly_when_gpy_agent_missing() {
     let empty_path = env.root().join("empty-path");
     std::fs::create_dir_all(&empty_path).expect("create empty PATH dir");
     let empty = empty_path.to_string_lossy().into_owned();
+    let gpy = lone_gpy(&env);
 
     for command in ["start", "stop", "restart", "status"] {
         let result = env
-            .run_gpy_with_env(&[command], &[("PATH", empty.as_str())])
+            .run_program_with_env(&gpy, &[command], &[("PATH", empty.as_str())])
             .expect("spawn gpy");
         assert_eq!(result.exit_code, 1_i32, "gpy {command}: {result:?}");
         assert!(

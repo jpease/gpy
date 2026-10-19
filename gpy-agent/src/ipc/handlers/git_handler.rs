@@ -10,7 +10,7 @@ use crate::git::{self, cache::GitStatusCache};
 use crate::ipc::{Message, Response};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Max age at which a stale entry is still served immediately after the fast
 /// window misses. Must exceed the 30s git-status TTL.
@@ -218,6 +218,7 @@ impl GitHandler {
     fn spawn_git_status_job(job_spec: GitStatusJob) {
         let job = move || {
             let stash_enabled = job_spec.render.config_manager.get().git.stash_enabled;
+            let started = Instant::now();
             let result = crate::git::status::load_repository_state_with(
                 &crate::git::native::NativeGitBackend,
                 &job_spec.path,
@@ -236,13 +237,26 @@ impl GitHandler {
             );
             let shared_result = match result {
                 Ok(Some(crate::git::CompleteStatus { status, files })) => {
-                    job_spec
-                        .cache
-                        .set(&job_spec.git_root, status.clone(), files);
-                    // The request path may have served stale data; publish the
-                    // fresh status. No request context, so prev_bg is None.
-                    publish_and_repaint(&job_spec.render, &job_spec.git_root, &status, None);
-                    Ok(Some(status))
+                    // `git_root` is already canonical. A newer entry was
+                    // already published, so its waiters get it instead.
+                    if job_spec.cache.set_canonical_if_not_newer(
+                        &job_spec.git_root,
+                        started,
+                        status.clone(),
+                        files,
+                    ) {
+                        // The request path may have served stale data; publish the
+                        // fresh status. No request context, so prev_bg is None.
+                        publish_and_repaint(&job_spec.render, &job_spec.git_root, &status, None);
+                        Ok(Some(status))
+                    } else {
+                        Ok(Some(
+                            job_spec
+                                .cache
+                                .get_any_canonical(&job_spec.git_root)
+                                .unwrap_or(status),
+                        ))
+                    }
                 }
                 Ok(None) => Ok(None),
                 Err(e) => Err(e.to_string()),

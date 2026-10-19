@@ -61,7 +61,7 @@ Implement a **hybrid architecture** with clear separation of concerns:
 ### Communication
 - **Protocol**: JSON over Unix domain sockets
 - **Latency target**: < 1ms for IPC roundtrip
-- **Formats**: JSON (structured), fish-ansi (ANSI codes), fish-source (Fish variables)
+- **Formats**: JSON (structured), ANSI prompt text (`ansi` for Fish, `bash-prompt`, `zsh-prompt`)
 
 ## Consequences
 

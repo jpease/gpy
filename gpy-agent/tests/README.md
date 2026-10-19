@@ -41,8 +41,8 @@ to the code in `src/`.
   (`just check-rust` wraps it). Plain `cargo test` works but runs each
   binary in one process; nextest's per-test processes are what the
   isolation below assumes. Doc tests still need `cargo test --doc`.
-- **`test-support` feature**: compiles in the test-only surface the
-  `init`/wizard PTY tests need; `just lint` and the pre-push gate pass it.
+- **`test-support` feature**: compiles in the test-only library surface
+  (`ThemeManager::watch_registry_for_test`); `just lint` and the pre-push gate pass it.
 - **Serialisation**: tests that touch process-global state (environment
   variables, the config watcher's file, one real agent per socket) are
   marked `#[serial_test::serial]` or `#[serial_test::file_serial]`. The
@@ -96,9 +96,11 @@ cargo llvm-cov nextest --features test-support --html --open
 
 - **macOS** — primary development platform; the maintainer's pre-push gate
   runs the full suite, including the shell end-to-end tiers.
-- **Linux** — the ubuntu leg of `pr-gate.yml` (manual `workflow_dispatch`).
+- **Linux** — the ubuntu legs of `pr-gate.yml`, which runs on every pull
+  request to `main` (and on manual dispatch).
 - **Windows** — `windows-gate.yml` (build, lib tests, CLI integration
-  binaries; manual dispatch). Signal and socket tests are `#[cfg(unix)]`.
+  binaries), called by `pr-gate.yml` on every pull request and required by
+  `gate-result`. Signal and socket tests are `#[cfg(unix)]`.
 
 ## Troubleshooting
 

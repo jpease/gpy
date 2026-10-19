@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/jpease/gpy/schemas/response.json",
   "title": "GPY Agent IPC Response (format: json)",
-  "description": "Replies the agent writes, one JSON object per line, when the request's format is `json` (the default). Replies are flat objects, not serde enum wrappers, except AgentStatus. For every other format the reply is one line of rendered text, not JSON. A missing client-side format in the shell form falls back to json. Errors are {\"error\":...} for json requests.",
+  "description": "Replies the agent writes, one JSON object per line, when the request's format is `json` (the default). Replies are flat objects, not serde enum wrappers, except AgentStatus, which is always {\"AgentStatus\":{...}}. For every other format the reply is one line of rendered text, not JSON. A missing client-side format in the shell form falls back to json. Errors are {\"error\":...} for json requests.",
   "oneOf": [
     {
       "type": "object",
@@ -235,52 +235,6 @@
     {
       "type": "object",
       "required": [
-        "value"
-      ],
-      "properties": {
-        "value": {
-          "type": "string"
-        }
-      },
-      "title": "ThemeValue (theme)",
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "required": [
-        "min_ms",
-        "max_ms",
-        "avg_ms",
-        "sample_count"
-      ],
-      "properties": {
-        "min_ms": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "min_ms"
-        },
-        "max_ms": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "max_ms"
-        },
-        "avg_ms": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "avg_ms"
-        },
-        "sample_count": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "sample_count"
-        }
-      },
-      "title": "LatencyStatsResult (latency_stats)",
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "required": [
         "error"
       ],
       "properties": {
@@ -299,7 +253,7 @@
         "AgentStatus"
       ],
       "additionalProperties": false,
-      "description": "The only wrapped reply: sent with the native serializer regardless of the requested format.",
+      "description": "The only wrapped reply. Every format sends this same JSON shape for a status request.",
       "properties": {
         "AgentStatus": {
           "type": "object",

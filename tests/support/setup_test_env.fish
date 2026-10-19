@@ -74,9 +74,6 @@ set -gx GPY_LIVE_DEBOUNCE_MS 0
 set -gx GPY_IPC_TIMEOUT_MS 5000 # Generous timeout for CI environments
 set -gx GPY_AGENT_STARTUP_TIMEOUT 10
 
-# Override git check interval for faster testing
-set -gx __git_check_interval 0
-
 # Test logging
 function test_log
     if test "$GPY_DEBUG" = 1

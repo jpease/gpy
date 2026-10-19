@@ -9,8 +9,8 @@ covers.
 Two kinds of file live here: shell-integration tests of `bash/gpy.bash`, and
 repository-invariant checks that use bash as a scripting language (doc links,
 privacy patterns, version and MSRV consistency, the release asset contract,
-installer checksum verification). Tests of file wording or source text do not
-belong here.
+installer checksum verification, workflow structure, security policy).
+Repository invariants belong in tests; doc wording and source text do not.
 
 ## Running
 

@@ -74,11 +74,11 @@ sysinfo = "0.39"
 # No Windows dependencies: Windows builds the CLI only; IPC is Unix-socket only.
 
 [target."cfg(unix)".dev-dependencies]
-# PTY-backed wizard terminal-restoration test (needs the `test-support` feature).
+# PTY-backed `init` and wizard tests.
 portable-pty = "0.9"
 
 [features]
-# Compiles in test-only surface (hidden `gpy __wizard_force_fail`).
+# Compiles in test-only surface (`ThemeManager::watch_registry_for_test`).
 test-support = []
 
 [dev-dependencies]
@@ -132,14 +132,14 @@ harness = false
 name = "agent_startup_bench"
 harness = false
 
-# Tuned for build speed: local `--release` builds and `cargo bench` use this.
-# Shipped binaries use `release-dist`, so local benchmarks understate them.
+# Local `--release` builds and `cargo bench` (the bench profile inherits this).
+# Shipped binaries use `release-dist`, which inherits only `panic` from here.
 [profile.release]
-lto = false
-codegen-units = 256
-panic = "abort"
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"  # Fail fast; see docs/dev/adr/adr-0008-fail-fast-on-panic.md
 strip = false
-opt-level = 1
 
 [profile.fast]
 inherits = "dev"

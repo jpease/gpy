@@ -114,7 +114,6 @@ fn snapshot_git_json_clean() {
     let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
 
     let output = create_formatter(Format::Json)
-        .unwrap()
         .render(&sample_git_status(), &ctx)
         .unwrap();
 
@@ -130,7 +129,6 @@ fn snapshot_git_json_conflicts() {
     let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
 
     let output = create_formatter(Format::Json)
-        .unwrap()
         .render(&sample_git_with_conflicts(), &ctx)
         .unwrap();
 
@@ -146,44 +144,11 @@ fn snapshot_git_json_rebase() {
     let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
 
     let output = create_formatter(Format::Json)
-        .unwrap()
         .render(&sample_git_rebase(), &ctx)
         .unwrap();
 
     with_settings!({description => "Git status (rebase) in JSON format"}, {
         assert_snapshot!("git_json_rebase", output);
-    });
-}
-
-#[test]
-fn snapshot_git_fish_args_clean() {
-    let config = Config::default();
-    let theme = ThemeConfig::default();
-    let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
-
-    let output = create_formatter(Format::Fish)
-        .unwrap()
-        .render(&sample_git_status(), &ctx)
-        .unwrap();
-
-    with_settings!({description => "Git status (clean) in Fish args format"}, {
-        assert_snapshot!("git_fish_args_clean", output);
-    });
-}
-
-#[test]
-fn snapshot_git_fish_source_clean() {
-    let config = Config::default();
-    let theme = ThemeConfig::default();
-    let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
-
-    let output = create_formatter(Format::FishSource)
-        .unwrap()
-        .render(&sample_git_status(), &ctx)
-        .unwrap();
-
-    with_settings!({description => "Git status (clean) in Fish source format"}, {
-        assert_snapshot!("git_fish_source_clean", output);
     });
 }
 
@@ -194,7 +159,6 @@ fn snapshot_language_json_multi() {
     let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
 
     let output = create_formatter(Format::Json)
-        .unwrap()
         .render(&sample_language_multi(), &ctx)
         .unwrap();
 
@@ -210,28 +174,11 @@ fn snapshot_language_json_single_no_version() {
     let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
 
     let output = create_formatter(Format::Json)
-        .unwrap()
         .render(&sample_language_single_no_version(), &ctx)
         .unwrap();
 
     with_settings!({description => "Single language without version in JSON format"}, {
         assert_snapshot!("language_json_single_no_version", output);
-    });
-}
-
-#[test]
-fn snapshot_language_fish_source_multi() {
-    let config = Config::default();
-    let theme = ThemeConfig::default();
-    let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
-
-    let output = create_formatter(Format::FishSource)
-        .unwrap()
-        .render(&sample_language_multi(), &ctx)
-        .unwrap();
-
-    with_settings!({description => "Multiple languages in Fish source format"}, {
-        assert_snapshot!("language_fish_source_multi", output);
     });
 }
 
@@ -242,28 +189,11 @@ fn snapshot_agent_status_json() {
     let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
 
     let output = create_formatter(Format::Json)
-        .unwrap()
         .render(&sample_agent_status(), &ctx)
         .unwrap();
 
     with_settings!({description => "Agent status in JSON format"}, {
         assert_snapshot!("agent_status_json", output);
-    });
-}
-
-#[test]
-fn snapshot_agent_status_fish_source() {
-    let config = Config::default();
-    let theme = ThemeConfig::default();
-    let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
-
-    let output = create_formatter(Format::FishSource)
-        .unwrap()
-        .render(&sample_agent_status(), &ctx)
-        .unwrap();
-
-    with_settings!({description => "Agent status in Fish source format"}, {
-        assert_snapshot!("agent_status_fish_source", output);
     });
 }
 
@@ -290,7 +220,6 @@ fn snapshot_git_long_branch_name() {
     });
 
     let output = create_formatter(Format::Json)
-        .unwrap()
         .render(&response, &ctx)
         .unwrap();
 
@@ -314,7 +243,6 @@ fn snapshot_language_special_characters() {
     };
 
     let output = create_formatter(Format::Json)
-        .unwrap()
         .render(&response, &ctx)
         .unwrap();
 

@@ -1,12 +1,10 @@
-//! Output formatting layer: renders agent responses as JSON, ANSI, or shell code.
+//! Output formatting layer: renders agent responses as JSON or ANSI prompt text.
 
 pub(crate) mod character_resolver;
 pub(crate) mod clock_resolver;
 pub(crate) mod directory_resolver;
 pub(crate) mod duration_resolver;
-mod fish;
 mod fish_ansi;
-mod fish_source;
 pub(crate) mod git_resolver;
 pub(crate) mod hostname_resolver;
 mod json;
@@ -16,17 +14,11 @@ mod style_encoder;
 pub(crate) mod username_resolver;
 
 // The ANSI format is shell-agnostic, so it is a re-export of `FishAnsiFormatter`.
-pub use fish::FishFormatter;
 pub use fish_ansi::FishAnsiFormatter as AnsiFormatter;
-// Zsh shell-argument rendering is byte-identical to Fish's.
-pub use fish::FishFormatter as ZshFormatter;
 pub use fish_ansi::FishAnsiFormatter;
 pub(crate) use fish_ansi::{get_language_display, select_languages};
-pub use fish_source::FishSourceFormatter;
 pub use json::JsonFormatter;
-pub use style_encoder::{
-    PromptDialect, encode_ansi, encode_bash_prompt, encode_zsh, encode_zsh_prompt,
-};
+pub use style_encoder::{PromptDialect, encode_ansi, encode_bash_prompt, encode_zsh_prompt};
 
 use crate::Result;
 use crate::config::Config;
@@ -48,16 +40,6 @@ pub enum Format {
     BashPrompt,
     /// ANSI colors with text escaped for zsh `PROMPT`.
     ZshPrompt,
-    /// Fish shell arguments (space-separated flags)
-    Fish,
-    /// Fish shell source code (variable assignments)
-    FishSource,
-    /// Bash source code (future)
-    BashSource,
-    /// Zsh arguments (space-separated flags)
-    Zsh,
-    /// Zsh source code (variable assignments)
-    ZshSource,
 }
 
 impl Format {
@@ -69,43 +51,12 @@ impl Format {
             Self::Ansi => "ansi",
             Self::BashPrompt => "bash-prompt",
             Self::ZshPrompt => "zsh-prompt",
-            Self::Fish => "fish",
-            Self::FishSource => "fish-source",
-            Self::BashSource => "bash-source",
-            Self::Zsh => "zsh",
-            Self::ZshSource => "zsh-source",
         }
     }
     /// Returns `true` when the provided format is JSON.
     #[must_use]
     pub const fn is_json(format: Self) -> bool {
         matches!(format, Self::Json)
-    }
-
-    /// Returns `true` when the provided format is JSON (reference version for serde).
-    #[must_use]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "serde skip_serializing_if signature requires &Self"
-    )]
-    pub const fn is_json_ref(format: &Self) -> bool {
-        Self::is_json(*format)
-    }
-
-    /// Whether [`create_formatter`] can produce a formatter for this format.
-    /// Single source of truth for the not-yet-implemented set.
-    #[must_use]
-    pub const fn is_renderable(self) -> bool {
-        match self {
-            Self::Json
-            | Self::Ansi
-            | Self::BashPrompt
-            | Self::ZshPrompt
-            | Self::Fish
-            | Self::FishSource
-            | Self::Zsh => true,
-            Self::BashSource | Self::ZshSource => false,
-        }
     }
 }
 
@@ -124,11 +75,6 @@ impl std::str::FromStr for Format {
             "ansi" => Ok(Self::Ansi),
             "bash-prompt" => Ok(Self::BashPrompt),
             "zsh-prompt" => Ok(Self::ZshPrompt),
-            "fish" => Ok(Self::Fish),
-            "fish-source" => Ok(Self::FishSource),
-            "bash-source" => Ok(Self::BashSource),
-            "zsh" => Ok(Self::Zsh),
-            "zsh-source" => Ok(Self::ZshSource),
             _ => Err(crate::Error::config(format!("Unknown format: {s}"))),
         }
     }
@@ -136,15 +82,7 @@ impl std::str::FromStr for Format {
 
 impl ValueEnum for Format {
     fn value_variants<'a>() -> &'a [Self] {
-        &[
-            Self::Json,
-            Self::Ansi,
-            Self::BashPrompt,
-            Self::ZshPrompt,
-            Self::Fish,
-            Self::FishSource,
-            Self::Zsh,
-        ]
+        &[Self::Json, Self::Ansi, Self::BashPrompt, Self::ZshPrompt]
     }
 
     fn to_possible_value(&self) -> Option<PossibleValue> {
@@ -153,11 +91,6 @@ impl ValueEnum for Format {
             Self::Ansi => PossibleValue::new("ansi"),
             Self::BashPrompt => PossibleValue::new("bash-prompt"),
             Self::ZshPrompt => PossibleValue::new("zsh-prompt"),
-            Self::Fish => PossibleValue::new("fish"),
-            Self::FishSource => PossibleValue::new("fish-source"),
-            Self::BashSource => PossibleValue::new("bash-source"),
-            Self::Zsh => PossibleValue::new("zsh"),
-            Self::ZshSource => PossibleValue::new("zsh-source"),
         })
     }
 }
@@ -296,22 +229,14 @@ pub trait Formatter {
     fn render(&self, response: &Response, ctx: &RenderContext<'_>) -> Result<String>;
 }
 
-/// Create a formatter for the given format.
-///
-/// # Errors
-/// Returns an error if the format is not yet implemented.
-pub fn create_formatter(format: Format) -> Result<Box<dyn Formatter>> {
+/// Create the formatter for `format`.
+#[must_use]
+pub fn create_formatter(format: Format) -> Box<dyn Formatter> {
     match format {
-        Format::Json => Ok(Box::new(JsonFormatter)),
-        Format::Ansi => Ok(Box::new(AnsiFormatter::new(PromptDialect::Ansi))),
-        Format::BashPrompt => Ok(Box::new(AnsiFormatter::new(PromptDialect::BashPrompt))),
-        Format::ZshPrompt => Ok(Box::new(AnsiFormatter::new(PromptDialect::ZshPrompt))),
-        Format::Fish => Ok(Box::new(FishFormatter)),
-        Format::FishSource => Ok(Box::new(FishSourceFormatter)),
-        Format::Zsh => Ok(Box::new(ZshFormatter)),
-        Format::BashSource | Format::ZshSource => Err(crate::Error::config(format!(
-            "Format '{format}' not yet implemented. Use 'ansi' (fish), 'bash-prompt', 'zsh-prompt' or 'json'.",
-        ))),
+        Format::Json => Box::new(JsonFormatter),
+        Format::Ansi => Box::new(AnsiFormatter::new(PromptDialect::Ansi)),
+        Format::BashPrompt => Box::new(AnsiFormatter::new(PromptDialect::BashPrompt)),
+        Format::ZshPrompt => Box::new(AnsiFormatter::new(PromptDialect::ZshPrompt)),
     }
 }
 

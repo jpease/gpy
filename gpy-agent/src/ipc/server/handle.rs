@@ -5,6 +5,11 @@ use super::builder::{EndpointDeps, EndpointHandleBuilder};
 #[cfg(unix)]
 use super::connection::ConnectionHandler;
 #[cfg(unix)]
+use super::socket_dir::{DirRepair, secure_socket_dir};
+#[cfg(unix)]
+use crate::Error;
+use crate::Result;
+#[cfg(unix)]
 use crate::debug_log;
 #[cfg(unix)]
 use crate::ipc::Response;
@@ -12,7 +17,6 @@ use crate::ipc::{
     ClientDirectory,
     handlers::{
         ClientHandler, GitHandler, HandlerRegistry, LanguageHandler, MiscHandler, RenderDeps,
-        ThemeHandler,
     },
 };
 use crate::palette::PaletteCache;
@@ -20,9 +24,6 @@ use crate::security::{GuardSettings, RateLimiter};
 use crate::theme::ThemeManager;
 #[cfg(unix)]
 use crate::warn_log;
-use crate::{Error, Result};
-#[cfg(unix)]
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 #[cfg(unix)]
@@ -53,8 +54,6 @@ pub(crate) struct ServerDeps {
     pub theme_manager: Arc<ThemeManager>,
     /// On-disk cache the shell reads to render a prompt without any IPC.
     pub instant_cache: Arc<crate::cache::InstantPromptCache>,
-    /// Rolling request-latency samples reported by `Message::LatencyStats`.
-    pub latency_tracker: Arc<crate::ipc::LatencyTracker>,
     /// Per-repo language detection results shared with the agent event loop.
     pub language_cache: crate::language::DetectionCache,
     /// Cached active palette, so a reload is picked up without re-parsing per render.
@@ -93,108 +92,6 @@ fn accept_error_is_transient(err: &std::io::Error) -> bool {
 #[cfg(unix)]
 fn accept_error_is_fd_exhaustion(err: &std::io::Error) -> bool {
     matches!(err.raw_os_error(), Some(libc::EMFILE | libc::ENFILE))
-}
-
-/// What [`secure_socket_dir`] does with a directory we own that is group- or
-/// world-writable. Decided by where the socket path came from.
-#[cfg(unix)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DirRepair {
-    /// GPY's own runtime directory: set it to `0700` and use it.
-    Tighten,
-    /// A directory the user chose (`GPY_AGENT_SOCKET_PATH`, `--socket`): refuse
-    /// it rather than change the mode of a directory GPY does not own.
-    Refuse,
-}
-
-/// Make the directory `socket_path` is published in safe for it. Socket mode
-/// `0600` does not stop anyone who can write the directory from replacing the
-/// socket, so refuse a symlink, a non-directory, or a directory owned by
-/// another user; one we own that is group/world-writable is handled by `repair`.
-///
-/// # Errors
-/// Fails if the directory cannot be opened or fails a trust check.
-#[cfg(unix)]
-pub(crate) fn secure_socket_dir(socket_path: &Path, repair: DirRepair) -> Result<()> {
-    let dir = socket_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    secure_dir_for_uid(dir, nix::unistd::getuid().as_raw(), repair)
-}
-
-/// [`secure_socket_dir`] against an explicit owner `uid`.
-///
-/// # Errors
-/// Fails if `dir` cannot be opened or fails a trust check.
-#[cfg(unix)]
-fn secure_dir_for_uid(dir: &Path, uid: u32, repair: DirRepair) -> Result<()> {
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-
-    let refuse = |problem: &str| {
-        Error::ipc(format!(
-            "refusing socket directory {}: {problem}. Use a directory you own that \
-             only you can write (via XDG_RUNTIME_DIR or GPY_AGENT_SOCKET_PATH)",
-            dir.display()
-        ))
-    };
-    let unreadable = |e: std::io::Error| {
-        Error::ipc(format!(
-            "cannot inspect socket directory {}: {e}",
-            dir.display()
-        ))
-    };
-
-    // O_NOFOLLOW fails on a final-component symlink instead of following it,
-    // and every check below acts on this one inode (fstat/fchmod), so the
-    // path cannot be swapped between check and repair.
-    let handle = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
-        .open(dir)
-        .map_err(|e| match e.raw_os_error() {
-            Some(libc::ELOOP | libc::ENOTDIR) if dir.is_symlink() => refuse("it is a symlink"),
-            Some(libc::ENOTDIR) => refuse("it is not a directory"),
-            _ => unreadable(e),
-        })?;
-    let meta = handle.metadata().map_err(unreadable)?;
-    if meta.uid() != uid {
-        return Err(refuse(&format!(
-            "it is owned by uid {}, not the current user (uid {uid})",
-            meta.uid()
-        )));
-    }
-    if meta.mode() & 0o022 == 0 {
-        return Ok(());
-    }
-    if repair == DirRepair::Refuse {
-        return Err(refuse(&format!(
-            "it is group/world-writable (mode {:o}); run `chmod 700 {}`",
-            meta.mode() & 0o7777,
-            dir.display()
-        )));
-    }
-
-    handle
-        .set_permissions(std::fs::Permissions::from_mode(0o700))
-        .map_err(|e| {
-            refuse(&format!(
-                "it is group/world-writable and chmod 0700 failed: {e}"
-            ))
-        })?;
-    let mode = handle.metadata().map_err(unreadable)?.mode();
-    if mode & 0o022 != 0 {
-        return Err(refuse(&format!(
-            "it is still group/world-writable (mode {:o}) after chmod 0700",
-            mode & 0o7777
-        )));
-    }
-    warn_log!(
-        "server",
-        "Socket directory {} was group/world-writable; set it to 0700",
-        dir.display()
-    );
-    Ok(())
 }
 
 #[cfg(unix)]
@@ -258,12 +155,12 @@ pub struct EndpointHandle {
     )]
     pub(crate) watcher: WatcherRef,
     theme_manager: Arc<ThemeManager>,
-    latency_tracker: Arc<crate::ipc::LatencyTracker>,
     palette_cache: Arc<PaletteCache>,
     connection_semaphore: Arc<Semaphore>,
     shutdown_tx: broadcast::Sender<()>, // Used to signal shutdown to all listeners
-    // Keeps `shutdown_tx.send(())` from erroring for lack of receivers.
-    _shutdown_rx: broadcast::Receiver<()>,
+    /// Created with the channel and taken by `accept_loop` on entry, so a
+    /// shutdown sent before the loop starts is still received.
+    shutdown_rx: Option<broadcast::Receiver<()>>,
     pub(crate) handler_registry: Arc<HandlerRegistry>,
 }
 
@@ -342,18 +239,15 @@ impl EndpointHandle {
             render.clone(),
             deps.language_cache.clone(),
         ));
-        let theme_handler = Arc::new(ThemeHandler::new(Arc::clone(&deps.theme_manager)));
         let client_handler = Arc::new(ClientHandler::new(
             render,
             Arc::clone(&deps.git_cache),
             Arc::clone(&watcher),
-            Arc::clone(&deps.latency_tracker),
         ));
         let misc_handler = Arc::new(MiscHandler::new());
         let handler_registry = Arc::new(HandlerRegistry::new(
             git_handler,
             language_handler,
-            theme_handler,
             client_handler,
             misc_handler,
         ));
@@ -376,11 +270,10 @@ impl EndpointHandle {
             socket_dir_repair: DirRepair::Refuse,
             watcher,
             theme_manager: deps.theme_manager,
-            latency_tracker: deps.latency_tracker,
             palette_cache: deps.palette_cache,
             connection_semaphore,
             shutdown_tx,
-            _shutdown_rx: shutdown_rx,
+            shutdown_rx: Some(shutdown_rx),
             handler_registry,
         }
     }
@@ -485,12 +378,13 @@ impl EndpointHandle {
         use crate::debug_log;
 
         debug_log!("server", "Starting accept loop");
+        let mut shutdown_rx = self.shutdown_rx.take().ok_or_else(|| {
+            Error::ipc("accept loop already ran: no shutdown receiver".to_owned())
+        })?;
         let listener = self
             .listener
             .as_ref()
             .ok_or_else(|| Error::ipc("Server not started - no listener available".to_owned()))?;
-
-        let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         // A socket removed or rebound by another process makes us unreachable: exit like `Shutdown`.
         let mut ownership_timer = tokio::time::interval(self.socket_ownership_check);
@@ -617,7 +511,6 @@ impl EndpointHandle {
             config_manager: Arc::clone(&self.config_manager),
             theme_manager: Arc::clone(&self.theme_manager),
             palette_cache: Arc::clone(&self.palette_cache),
-            latency_tracker: Arc::clone(&self.latency_tracker),
             shutdown_tx: self.shutdown_tx.clone(),
             handler_registry: Arc::clone(&self.handler_registry),
         };
@@ -672,39 +565,15 @@ impl EndpointHandle {
         notify_clients_for_response(&self.config_manager, client_registry, response, notify_path);
     }
 
-    /// Stop the server. On Unix the socket is removed only if still owned.
-    ///
-    /// # Errors
-    /// Fails if the socket file cannot be removed (non-Unix only).
-    #[cfg_attr(
-        unix,
-        expect(
-            clippy::unnecessary_wraps,
-            reason = "non-Unix path can fail; Unix body is always Ok"
-        )
-    )]
-    pub fn stop(&mut self) -> Result<()> {
-        #[cfg(unix)]
-        {
-            // Stop accepting, then remove the socket only if still ours.
-            self.listener.take();
-            self.unlink_socket_if_owned();
-        }
-
-        #[cfg(not(unix))]
-        {
-            if self.socket_path.exists() {
-                std::fs::remove_file(&self.socket_path)
-                    .map_err(|e| Error::ipc(format!("Failed to remove socket file: {e}")))?;
-            }
-        }
-
-        Ok(())
-    }
-
     /// Get the socket path being used.
     pub fn socket_path(&self) -> &str {
         self.socket_path.to_str().unwrap_or("")
+    }
+
+    /// Sender that stops the accept loop, for a caller that moved this handle into a task.
+    #[must_use]
+    pub fn shutdown_sender(&self) -> broadcast::Sender<()> {
+        self.shutdown_tx.clone()
     }
 
     /// Create an unbound `EndpointHandle` for tests.
@@ -728,8 +597,6 @@ impl EndpointHandle {
 
         let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
 
-        let latency_tracker = Arc::new(crate::ipc::LatencyTracker::new(100_usize));
-
         let language_cache = crate::language::DetectionCache::new();
 
         let initial_config = config_manager.get();
@@ -743,7 +610,6 @@ impl EndpointHandle {
                 config_manager,
                 theme_manager,
                 instant_cache,
-                latency_tracker,
                 language_cache,
                 palette_cache,
             },
@@ -977,7 +843,6 @@ mod socket_ownership_tests {
     use crate::config::manager::ConfigManager;
     use crate::git::cache::GitStatusCache;
     use crate::ipc::ClientDirectory;
-    use crate::ipc::LatencyTracker;
     use crate::theme::ThemeManager;
     use std::os::unix::fs::MetadataExt;
     use std::os::unix::net::UnixListener;
@@ -992,7 +857,6 @@ mod socket_ownership_tests {
             config_manager: Arc::new(ConfigManager::with_defaults().expect("default config")),
             theme_manager: Arc::new(ThemeManager::builtin("default").expect("default theme")),
             instant_cache: Arc::new(crate::cache::InstantPromptCache::new_for_test()),
-            latency_tracker: Arc::new(LatencyTracker::new(100_usize)),
             language_cache: crate::language::DetectionCache::new(),
         }
     }
@@ -1010,39 +874,8 @@ mod socket_ownership_tests {
         std::fs::metadata(path).expect("metadata").ino()
     }
 
-    // stop() must not unlink a socket rebound by another process.
     #[tokio::test]
-    async fn stop_does_not_unlink_foreign_socket() {
-        let tmp = tempfile::tempdir().expect("temp dir");
-        let socket_path = tmp.path().join("gpy.sock");
-
-        let mut handle = build_handle(&socket_path);
-        handle.bind_socket().expect("bind");
-
-        // Simulate another agent rebinding the path (new inode).
-        handle.listener.take();
-        std::fs::remove_file(&socket_path).expect("remove ours");
-        let foreign = UnixListener::bind(&socket_path).expect("foreign bind");
-        let foreign_inode = inode_of(&socket_path);
-
-        handle
-            .stop()
-            .expect("stop is a successful no-op when not owner");
-
-        assert!(
-            socket_path.exists(),
-            "must not unlink a socket bound by another process"
-        );
-        assert_eq!(
-            inode_of(&socket_path),
-            foreign_inode,
-            "the foreign agent's socket inode must remain in place"
-        );
-        drop(foreign);
-    }
-
-    #[tokio::test]
-    async fn stop_unlinks_own_socket() {
+    async fn cleanup_socket_file_unlinks_own_socket() {
         let tmp = tempfile::tempdir().expect("temp dir");
         let socket_path = tmp.path().join("gpy.sock");
 
@@ -1050,7 +883,7 @@ mod socket_ownership_tests {
         handle.bind_socket().expect("bind");
         assert!(socket_path.exists(), "socket should exist after bind");
 
-        handle.stop().expect("stop");
+        handle.cleanup_socket_file();
 
         assert!(
             !socket_path.exists(),
@@ -1094,7 +927,7 @@ mod socket_ownership_tests {
             .socket_ownership_check(std::time::Duration::from_millis(50))
             .build()
             .expect("handle build");
-        let shutdown = handle.shutdown_tx.clone();
+        let shutdown = handle.shutdown_sender();
         let task = tokio::spawn(async move { handle.start().await });
         for _ in 0_u32..200 {
             if socket_path.exists() {
@@ -1161,6 +994,24 @@ mod socket_ownership_tests {
             "a handle that never bound must not remove anything"
         );
     }
+
+    #[test]
+    fn socket_in_an_untrusted_directory_is_never_bound() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let real = tmp.path().join("real");
+        std::fs::create_dir_all(&real).expect("mkdir real");
+        let link = tmp.path().join("rt");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+
+        let mut handle = super::socket_ownership_tests::build_handle(&link.join("gpy.sock"));
+        handle
+            .bind_socket()
+            .expect_err("bind must refuse a symlinked directory");
+        assert!(
+            !real.join("gpy.sock").exists(),
+            "nothing may be bound through the symlink"
+        );
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -1206,137 +1057,5 @@ mod accept_error_tests {
         let err = Error::new(ErrorKind::PermissionDenied, "fatal");
         assert!(!accept_error_is_transient(&err));
         assert!(!accept_error_is_fd_exhaustion(&err));
-    }
-}
-
-#[cfg(all(test, unix))]
-mod socket_dir_trust_tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
-
-    use super::{DirRepair, secure_dir_for_uid};
-    use std::fs;
-    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
-
-    const BOTH: [DirRepair; 2] = [DirRepair::Tighten, DirRepair::Refuse];
-
-    #[test]
-    fn accepts_owned_private_directory() {
-        for repair in BOTH {
-            let tmp = tempfile::tempdir().expect("temp dir");
-            let dir = tmp.path().join("gpy-rt");
-            fs::create_dir_all(&dir).expect("mkdir");
-            fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).expect("chmod");
-
-            let uid = fs::metadata(&dir).expect("meta").uid();
-            secure_dir_for_uid(&dir, uid, repair)
-                .expect("an owned, not-writable-by-others dir must pass");
-            assert_eq!(mode_of(&dir), 0o755, "a trusted dir is left as it was");
-        }
-    }
-
-    #[test]
-    fn rejects_symlinked_directory() {
-        for repair in BOTH {
-            let tmp = tempfile::tempdir().expect("temp dir");
-            let real = tmp.path().join("real");
-            fs::create_dir_all(&real).expect("mkdir real");
-            let link = tmp.path().join("gpy-rt");
-            symlink(&real, &link).expect("symlink");
-
-            let uid = fs::metadata(&real).expect("meta").uid();
-            let err = secure_dir_for_uid(&link, uid, repair)
-                .expect_err("a symlink must be rejected even when it points to a dir we own");
-            assert!(
-                err.to_string().contains(&link.display().to_string()),
-                "{err}"
-            );
-        }
-    }
-
-    #[test]
-    fn rejects_a_regular_file() {
-        for repair in BOTH {
-            let tmp = tempfile::tempdir().expect("temp dir");
-            let file = tmp.path().join("gpy-rt");
-            fs::write(&file, "").expect("write file");
-
-            let uid = fs::metadata(&file).expect("meta").uid();
-            secure_dir_for_uid(&file, uid, repair).expect_err("a non-directory must be rejected");
-        }
-    }
-
-    #[test]
-    fn tightens_owned_group_or_world_writable_directory_to_0700() {
-        for mode in [0o777, 0o775, 0o1777] {
-            let tmp = tempfile::tempdir().expect("temp dir");
-            let dir = tmp.path().join("gpy-rt");
-            fs::create_dir_all(&dir).expect("mkdir");
-            fs::set_permissions(&dir, fs::Permissions::from_mode(mode)).expect("chmod");
-
-            let uid = fs::metadata(&dir).expect("meta").uid();
-            secure_dir_for_uid(&dir, uid, DirRepair::Tighten)
-                .expect("an owned writable dir is repaired, not refused");
-            assert_eq!(mode_of(&dir), 0o700, "mode {mode:o} must be tightened");
-        }
-    }
-
-    #[test]
-    fn refuses_owned_group_or_world_writable_directory_without_touching_it() {
-        for mode in [0o777, 0o775, 0o1777] {
-            let tmp = tempfile::tempdir().expect("temp dir");
-            let dir = tmp.path().join("gpy-rt");
-            fs::create_dir_all(&dir).expect("mkdir");
-            fs::set_permissions(&dir, fs::Permissions::from_mode(mode)).expect("chmod");
-
-            let uid = fs::metadata(&dir).expect("meta").uid();
-            let err = secure_dir_for_uid(&dir, uid, DirRepair::Refuse)
-                .expect_err("a user-chosen writable dir is refused, not repaired");
-            assert!(
-                err.to_string().contains(&dir.display().to_string()),
-                "{err}"
-            );
-            assert_eq!(mode_of(&dir), mode, "mode {mode:o} must be left alone");
-        }
-    }
-
-    #[test]
-    fn rejects_directory_owned_by_another_uid_without_touching_it() {
-        for repair in BOTH {
-            // Can't chown without privilege; claim a non-owner uid instead.
-            let tmp = tempfile::tempdir().expect("temp dir");
-            let dir = tmp.path().join("gpy-rt");
-            fs::create_dir_all(&dir).expect("mkdir");
-            fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).expect("chmod");
-
-            let foreign_uid = fs::metadata(&dir).expect("meta").uid().wrapping_add(1);
-            secure_dir_for_uid(&dir, foreign_uid, repair)
-                .expect_err("a dir not owned by the expected uid must be rejected");
-            assert_eq!(mode_of(&dir), 0o777, "a foreign dir is never chmod'ed");
-        }
-    }
-
-    #[test]
-    fn socket_in_an_untrusted_directory_is_never_bound() {
-        let tmp = tempfile::tempdir().expect("temp dir");
-        let real = tmp.path().join("real");
-        fs::create_dir_all(&real).expect("mkdir real");
-        let link = tmp.path().join("rt");
-        symlink(&real, &link).expect("symlink");
-
-        let mut handle = super::socket_ownership_tests::build_handle(&link.join("gpy.sock"));
-        handle
-            .bind_socket()
-            .expect_err("bind must refuse a symlinked directory");
-        assert!(
-            !real.join("gpy.sock").exists(),
-            "nothing may be bound through the symlink"
-        );
-    }
-
-    fn mode_of(path: &std::path::Path) -> u32 {
-        fs::metadata(path).expect("meta").mode() & 0o7777
     }
 }

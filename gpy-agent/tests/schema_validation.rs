@@ -3,9 +3,7 @@
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::unwrap_used)]
 
-use gpy_agent::config::types::ClientPid;
-use gpy_agent::ipc::{Message, Response};
-use gpy_agent::security::SafePath;
+use gpy_agent::ipc::Response;
 
 #[test]
 fn test_msg_deserialize_repository_status_fish() {
@@ -35,7 +33,7 @@ fn test_msg_deserialize_language_detect_fish() {
     let cases: &[(&[u8], &str)] = &[
         (br#"{"op":"lang","cwd":"."}"#, "LanguageDetect (minimal)"),
         (
-            br#"{"op":"lang","cwd":"/home/user/project","format":"fish-source","is_last":true}"#,
+            br#"{"op":"lang","cwd":"/home/user/project","format":"ansi","is_last":true}"#,
             "LanguageDetect (full)",
         ),
     ];
@@ -100,7 +98,6 @@ fn test_msg_deserialize_simple_ops_fish() {
     let cases: &[(&[u8], &str)] = &[
         (br#"{"op":"ping"}"#, "Ping"),
         (br#"{"op":"status"}"#, "Status"),
-        (br#"{"op":"theme","key":"prompt_close"}"#, "ThemeQuery"),
         (br#"{"op":"shutdown"}"#, "Shutdown"),
         (br#"{"op":"config_reload"}"#, "ConfigReload"),
     ];
@@ -171,11 +168,6 @@ fn test_response_deserialize_simple_variants() {
             r#"{"AgentStatus":{"version":"0.1.0","protocol_version":1,"watched_repos":5,"registered_clients":3,"cache_entries":12}}"#,
             "AgentStatus",
         ),
-        (r#"{"ThemeValue":{"value":""}}"#, "ThemeValue (delimiter)"),
-        (
-            r##"{"ThemeValue":{"value":"#ff6b6b"}}"##,
-            "ThemeValue (color)",
-        ),
         (
             r#"{"Error":{"message":"Failed to detect language: directory not found"}}"#,
             "Error (generic)",
@@ -192,56 +184,6 @@ fn test_response_deserialize_simple_variants() {
             "Failed to deserialize {label}: {:?}",
             result.err()
         );
-    }
-}
-
-#[test]
-fn test_message_roundtrip() {
-    let pid_val = std::process::id();
-    let pid = ClientPid::new(pid_val).unwrap();
-
-    let messages = vec![
-        Message::RepositoryStatus {
-            path: SafePath::new("/home/user/repo").unwrap(),
-            format: gpy_agent::formatter::Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
-        },
-        Message::LanguageDetect {
-            path: SafePath::new("/home/user/project").unwrap(),
-            format: gpy_agent::formatter::Format::FishSource,
-            is_last: true,
-            is_first: false,
-            prev_bg: None,
-            virtual_env: None,
-        },
-        Message::RegisterClient {
-            pid,
-            cwd: Some(SafePath::new("/home/user/project").unwrap()),
-            shell: None,
-            shell_version: None,
-        },
-        Message::UnregisterClient { pid },
-        Message::WorkspaceUpdate {
-            pid,
-            cwd: SafePath::new("/home/user/new-project").unwrap(),
-        },
-        Message::Ping,
-        Message::Status,
-        Message::ThemeQuery {
-            key: "prompt_close".to_owned(),
-        },
-        Message::Shutdown,
-        Message::ConfigReload,
-    ];
-
-    for msg in messages {
-        let json = serde_json::to_string(&msg).expect("Failed to serialize message");
-        let deserialized: Message =
-            serde_json::from_str(&json).expect("Failed to deserialize message");
-        let json2 = serde_json::to_string(&deserialized).expect("Failed to re-serialize message");
-        assert_eq!(json, json2, "Roundtrip mismatch for message: {msg:?}");
     }
 }
 
@@ -277,9 +219,6 @@ fn test_response_roundtrip() {
             watched_repos: 5,
             registered_clients: 3,
             cache_entries: 12,
-        },
-        Response::ThemeValue {
-            value: String::new(),
         },
         Response::Error {
             message: "Test error".to_owned(),
@@ -331,7 +270,7 @@ mod schema_files {
     use gpy_agent::config::Config;
     use gpy_agent::formatter::{Format, RenderContext, SegmentPosition, create_formatter};
     use gpy_agent::git::{RepositoryState, RepositoryStatus};
-    use gpy_agent::ipc::protocol::{deserialize_message, serialize_response};
+    use gpy_agent::ipc::protocol::deserialize_message;
     use gpy_agent::ipc::{LanguageInfo, Response};
     use gpy_agent::theme::ThemeConfig;
     use serde_json::Value;
@@ -344,7 +283,7 @@ mod schema_files {
         serde_json::from_str(&text).unwrap()
     }
 
-    /// Source of `ipc/protocol/mod.rs`: the op table and `WireMessage` live there.
+    /// Source of `ipc/protocol/mod.rs`, where the op table lives.
     fn protocol_source() -> String {
         let path = format!("{}/src/ipc/protocol/mod.rs", env!("CARGO_MANIFEST_DIR"));
         std::fs::read_to_string(path).unwrap()
@@ -362,23 +301,10 @@ mod schema_files {
             Format::Ansi,
             Format::BashPrompt,
             Format::ZshPrompt,
-            Format::Fish,
-            Format::FishSource,
-            Format::BashSource,
-            Format::Zsh,
-            Format::ZshSource,
         ];
         for format in &all {
             match format {
-                Format::Json
-                | Format::Ansi
-                | Format::BashPrompt
-                | Format::ZshPrompt
-                | Format::Fish
-                | Format::FishSource
-                | Format::BashSource
-                | Format::Zsh
-                | Format::ZshSource => {}
+                Format::Json | Format::Ansi | Format::BashPrompt | Format::ZshPrompt => {}
             }
         }
         all
@@ -412,7 +338,7 @@ mod schema_files {
         let mut sites = Vec::new();
         collect_format_properties(&schema, &mut sites);
         assert!(
-            sites.len() >= 16,
+            sites.len() >= 8,
             "expected many format sites: {}",
             sites.len()
         );
@@ -465,57 +391,22 @@ mod schema_files {
             .captures_iter(table)
             .map(|c| c[1].to_owned())
             .collect();
-        assert!(ops.len() >= 17, "op table parse found only {ops:?}");
+        assert!(ops.len() >= 15, "op table parse found only {ops:?}");
         ops
-    }
-
-    /// `WireMessage` variant names (the native form), parsed from the enum.
-    fn native_variants_from_code() -> BTreeSet<String> {
-        let source = protocol_source();
-        let body = source
-            .split("enum WireMessage {")
-            .nth(1)
-            .unwrap()
-            .split("\nimpl WireMessage")
-            .next()
-            .unwrap();
-        let variants: BTreeSet<String> = regex::Regex::new(r"(?m)^    ([A-Z][A-Za-z]+)(?: \{|,)$")
-            .unwrap()
-            .captures_iter(body)
-            .map(|c| c[1].to_owned())
-            .collect();
-        assert!(
-            variants.len() >= 17,
-            "variant parse found only {variants:?}"
-        );
-        variants
     }
 
     #[test]
     fn schema_lists_every_shell_op() {
         let schema = load("message.json");
         let mut schema_ops = BTreeSet::new();
-        let mut schema_native = BTreeSet::new();
         for entry in one_of(&schema) {
-            if let Some(op) = entry["properties"]["op"]["const"].as_str() {
-                assert!(schema_ops.insert(op.to_owned()), "duplicate op entry {op}");
-            } else if let Some(name) = entry["const"].as_str() {
-                schema_native.insert(name.to_owned());
-            } else {
-                let keys = entry["required"].as_array().unwrap();
-                assert_eq!(keys.len(), 1, "native entry must name one variant");
-                schema_native.insert(keys[0].as_str().unwrap().to_owned());
-            }
+            let op = entry["properties"]["op"]["const"].as_str().unwrap();
+            assert!(schema_ops.insert(op.to_owned()), "duplicate op entry {op}");
         }
         assert_eq!(
             schema_ops,
             ops_from_code(),
             "message.json ops != into_wire_message ops"
-        );
-        assert_eq!(
-            schema_native,
-            native_variants_from_code(),
-            "message.json native variants != WireMessage variants"
         );
     }
 
@@ -636,11 +527,11 @@ mod schema_files {
             ),
             (
                 "lang",
-                r#"{"op":"lang","cwd":".","format":"fish-source","virtual_env":"/v"}"#,
+                r#"{"op":"lang","cwd":".","format":"ansi","virtual_env":"/v"}"#,
             ),
             (
                 "directory",
-                r#"{"op":"directory","cwd":".","format":"zsh"}"#,
+                r#"{"op":"directory","cwd":".","format":"zsh-prompt"}"#,
             ),
             (
                 "clock",
@@ -676,8 +567,6 @@ mod schema_files {
             ),
             ("unregister", r#"{"op":"unregister","pid":123}"#),
             ("workspace", r#"{"op":"workspace","pid":123,"cwd":"."}"#),
-            ("theme", r#"{"op":"theme","key":"git.branch"}"#),
-            ("latency_stats", r#"{"op":"latency_stats"}"#),
         ];
         let sampled: BTreeSet<String> = shell.iter().map(|(op, _)| (*op).to_owned()).collect();
         assert_eq!(sampled, ops_from_code(), "add a sample for the new op");
@@ -691,49 +580,29 @@ mod schema_files {
                 "agent rejects {op}: {text}"
             );
         }
-        let native: &[&str] = &[
-            r#"{"RepositoryStatus":{"path":".","format":"ansi"}}"#,
-            r#"{"LanguageDetect":{"path":".","virtual_env":null}}"#,
-            r#"{"DirectoryRequest":{"path":"."}}"#,
-            r#"{"ClockRequest":{"shell":"bash"}}"#,
-            r#"{"DurationRequest":{"duration_ms":5}}"#,
-            r#"{"CharacterRequest":{"success":false}}"#,
-            r#"{"HostnameRequest":{"hostname":"h"}}"#,
-            r#"{"HostnameRequest":{"hostname":"h","is_ssh":true}}"#,
-            r#"{"UsernameRequest":{"username":"u"}}"#,
-            r#"{"RegisterClient":{"pid":123,"cwd":null,"shell":"zsh","shell_version":null}}"#,
-            r#"{"UnregisterClient":{"pid":123}}"#,
-            r#"{"WorkspaceUpdate":{"pid":123,"cwd":"."}}"#,
+        for text in [
             r#""Ping""#,
-            r#""Status""#,
-            r#"{"ThemeQuery":{"key":"k"}}"#,
-            r#""LatencyStats""#,
-            r#""Shutdown""#,
-            r#""ConfigReload""#,
-        ];
-        for text in native {
+            r#"{"Ping":null}"#,
+            r#"{"RepositoryStatus":{"path":"."}}"#,
+        ] {
             assert!(
-                validate(&schema, &schema, &json(text)),
-                "schema rejects {text}"
+                !validate(&schema, &schema, &json(text)),
+                "schema accepts {text}"
             );
             assert!(
-                deserialize_message(text.as_bytes()).is_ok(),
-                "agent rejects {text}"
+                deserialize_message(text.as_bytes()).is_err(),
+                "agent accepts {text}"
             );
         }
         // The retired format name is rejected by the schema and the agent.
         let stale = json(r#"{"op":"git","cwd":".","format":"fish-ansi"}"#);
         assert!(!validate(&schema, &schema, &stale));
-        // `is_ssh` is a bare boolean in both hostname forms.
-        for bad in [
-            r#"{"op":"hostname","hostname":"box","is_ssh":"yes"}"#,
-            r#"{"HostnameRequest":{"hostname":"h","is_ssh":1}}"#,
-        ] {
-            assert!(
-                !validate(&schema, &schema, &json(bad)),
-                "schema accepts {bad}"
-            );
-        }
+        // `is_ssh` is a bare boolean.
+        let bad = r#"{"op":"hostname","hostname":"box","is_ssh":"yes"}"#;
+        assert!(
+            !validate(&schema, &schema, &json(bad)),
+            "schema accepts {bad}"
+        );
     }
 
     fn render_json(response: &Response) -> Value {
@@ -741,7 +610,6 @@ mod schema_files {
         let theme = ThemeConfig::default();
         let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
         let text = create_formatter(Format::Json)
-            .unwrap()
             .render(response, &ctx)
             .unwrap();
         json(&text)
@@ -806,12 +674,6 @@ mod schema_files {
                 }),
             ),
             (
-                "theme",
-                render_json(&Response::ThemeValue {
-                    value: "red".to_owned(),
-                }),
-            ),
-            (
                 "duration",
                 render_json(&Response::Duration { duration_ms: 3 }),
             ),
@@ -839,30 +701,14 @@ mod schema_files {
                 }),
             ),
             (
-                "latency_stats",
-                render_json(&Response::LatencyStatsResult {
-                    min_ms: 1,
-                    max_ms: 15,
-                    avg_ms: 3,
-                    sample_count: 42,
-                }),
-            ),
-            (
                 "status",
-                // The socket sends AgentStatus through the native serializer.
-                json(
-                    &String::from_utf8(
-                        serialize_response(&Response::AgentStatus {
-                            version: "1.0.0".to_owned(),
-                            protocol_version: 2,
-                            watched_repos: 1,
-                            registered_clients: 2,
-                            cache_entries: 3,
-                        })
-                        .unwrap(),
-                    )
-                    .unwrap(),
-                ),
+                render_json(&Response::AgentStatus {
+                    version: "1.0.0".to_owned(),
+                    protocol_version: 2,
+                    watched_repos: 1,
+                    registered_clients: 2,
+                    cache_entries: 3,
+                }),
             ),
         ];
         for (label, reply) in &replies {

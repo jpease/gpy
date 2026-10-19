@@ -1,9 +1,9 @@
 //! Builder for the IPC server endpoint; required collaborators come in
 //! [`EndpointDeps`] so a missing one is a compile error.
 
-#[cfg(unix)]
-use super::handle::DirRepair;
 use super::handle::{EndpointHandle, ServerDeps, WatcherRef};
+#[cfg(unix)]
+use super::socket_dir::DirRepair;
 use crate::{
     Result, config::manager::ConfigManager, git::cache::GitStatusCache, ipc::ClientDirectory,
     palette::PaletteCache, security::GuardSettings, theme::ThemeManager,
@@ -23,8 +23,6 @@ pub struct EndpointDeps {
     pub theme_manager: Arc<ThemeManager>,
     /// On-disk cache the shell reads to render a prompt without any IPC.
     pub instant_cache: Arc<crate::cache::InstantPromptCache>,
-    /// Rolling request-latency samples reported by `Message::LatencyStats`.
-    pub latency_tracker: Arc<crate::ipc::LatencyTracker>,
     /// Per-repo language detection results shared with the agent event loop.
     pub language_cache: crate::language::DetectionCache,
 }
@@ -59,7 +57,7 @@ impl EndpointHandleBuilder {
         }
     }
 
-    /// Set the socket path (defaults to [`crate::agent::lifecycle::get_socket_path`]).
+    /// Set the socket path (defaults to [`crate::paths::get_socket_path`]).
     #[must_use]
     pub fn socket_path(mut self, path: PathBuf) -> Self {
         self.socket_path = Some(path);
@@ -112,7 +110,7 @@ impl EndpointHandleBuilder {
     pub fn build(self) -> Result<EndpointHandle> {
         let socket_path = match self.socket_path {
             Some(path) => path,
-            None => crate::agent::lifecycle::get_socket_path()?,
+            None => crate::paths::get_socket_path()?,
         };
 
         let EndpointDeps {
@@ -121,7 +119,6 @@ impl EndpointHandleBuilder {
             config_manager,
             theme_manager,
             instant_cache,
-            latency_tracker,
             language_cache,
         } = self.deps;
 
@@ -142,7 +139,6 @@ impl EndpointHandleBuilder {
                 config_manager,
                 theme_manager,
                 instant_cache,
-                latency_tracker,
                 language_cache,
                 palette_cache,
             },

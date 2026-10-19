@@ -49,7 +49,7 @@ because they are still duplicated in `Cargo.lock`.
 
 | crate | versions | why |
 |---|---|---|
-| bitflags | 1.3.2, 2.13.1 | 1.3.2 used only for the Unix `test-support` PTY test (portable-pty 0.9.0); 2.13.1 under crossterm, notify, nix and the ratatui workspace |
+| bitflags | 1.3.2, 2.13.1 | 1.3.2 used only for the Unix PTY tests (portable-pty 0.9.0); 2.13.1 under crossterm, notify, nix and the ratatui workspace |
 | getrandom | 0.3.4, 0.4.3 | both used only in tests: 0.3.4 under rand_core 0.9.5, via proptest; 0.4.3 under tempfile, via insta, proptest and rusty-fork |
 | windows-sys | 0.60.2, 0.61.2 | 0.60.2 under notify; 0.61.2 under rustix, mio, socket2, clap's anstream/anstyle-wincon, and ignore/walkdir's winapi-util |
 

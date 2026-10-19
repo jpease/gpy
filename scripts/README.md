@@ -45,14 +45,13 @@ Exit status is 0 when every check passed, 1 otherwise.
 |---|---|
 | `test_fish.sh` | Build the debug binaries and run `tests/fish/*.test.fish`. |
 | `check-active-toolchain.sh` | Fail unless the `rustc` active in `gpy-agent/` is the `rust-toolchain.toml` pin; names the override on a mismatch. |
-| `check-license-metadata.sh` | Cargo, Fisher, Homebrew and release metadata agree on the license. |
+| `check-license-metadata.sh` | `Cargo.toml`, `LICENSE` and every other license declaration agree on GPL-3.0-or-later. |
 | `check-privacy-patterns.sh` | No workstation paths, private identifiers or hardcoded sockets in tracked files. |
 | `check-doc-links.sh` | Every repository-relative Markdown link resolves. |
 | `cleanup-test-agents.sh` | Reap agents and sockets left by killed Rust test runs. |
-| `bench.sh` | Rust micro-benchmarks; `--ci` enforces `tests/performance-baselines.json`. |
+| `bench.sh --ci` | Rust micro-benchmark budgets from `tests/performance-baselines.json` (part of `just bench-ci`). |
 | `ci-bench.sh` | End-to-end prompt-latency and agent-memory budgets (`just bench-ci`). |
 | `perf-canary.sh` | Compare canary benchmarks against an upstream commit on the same machine. |
-| `perf-baseline.sh` | Establish or compare performance baselines (`just bench-baseline`). |
 | `build-release-binaries.sh` | Build release binaries for every supported platform into `bin/`. |
 | `check-glibc-floor.sh <binary> <floor>` | Fail when a Linux binary needs a `GLIBC_` version above `<floor>`. |
 | `generate-sbom.sh` | CycloneDX SBOM from `Cargo.lock` (needs `jq`). |
@@ -63,8 +62,7 @@ Exit status is 0 when every check passed, 1 otherwise.
 | `wsl-smoke.sh [--contract \| --contract-only]` | Inside WSL: font detection via `gpy setup`, `gpy-agent oneshot git` on Linux and Windows-drive repos, and optionally the cross-shell contract suite. `GPY_AGENT_BIN` and `GPY_WSL_DRVFS_DIR` override paths. |
 | `test-windows-vm.sh` | Run `cargo test --locked --lib` over SSH on a local Windows VM; see below. |
 | `install-hooks.sh [--uninstall]` | Install (or remove) the prek git hooks from `.pre-commit-config.yaml`. |
-| `uninstall.sh`, `uninstall.fish` | Remove an installed GPY. |
-| `update.fish` | Update the installed Fish scripts and config from this checkout. |
+| `uninstall.sh` | Remove an installed GPY (every shell, Fish included). |
 
 ### test-windows-vm.sh
 

@@ -496,11 +496,11 @@ fn test_theme_manager_start_stop_watching() {
     let manager = ThemeManager::new("watch_test").unwrap();
 
     // Start watching
-    let result = manager.start_watching(Duration::from_millis(100), None);
+    let result = manager.start_watching(Duration::from_millis(100));
     assert!(result.is_ok());
 
     // Starting again should be a no-op
-    let result = manager.start_watching(Duration::from_millis(100), None);
+    let result = manager.start_watching(Duration::from_millis(100));
     assert!(result.is_ok());
 
     // Stop watching
@@ -701,9 +701,7 @@ fn test_theme_hot_reload_triggers_on_file_change() {
 
     // Start watching with very short debounce for testing
     env.set("GPY_THEME_WATCH_POLL_MS", "25");
-    manager
-        .start_watching(Duration::from_millis(50), None)
-        .unwrap();
+    manager.start_watching(Duration::from_millis(50)).unwrap();
 
     // A watch has no observable "armed" signal, so each poll re-applies the
     // edit (idempotent) until the watcher sees it. The 100 ms interval is
@@ -771,14 +769,15 @@ fn test_theme_change_sends_reload() {
 
     let initial_count = DOORBELL_COUNTER.load(Ordering::Relaxed);
 
-    // Start watching with client registry
+    // Start watching; the reload hook rings the client registry's doorbell
     env.set("GPY_THEME_WATCH_POLL_MS", "25");
-    manager
-        .start_watching(
-            Duration::from_millis(50),
-            Some(Arc::clone(&client_registry)),
-        )
-        .unwrap();
+    let registry_in_hook = Arc::clone(&client_registry);
+    manager.set_reload_callback(Arc::new(move |reload: &dyn Fn() -> bool| {
+        if reload() {
+            registry_in_hook.notify_reload();
+        }
+    }));
+    manager.start_watching(Duration::from_millis(50)).unwrap();
 
     // Modify theme file
     let updated_theme = r#"
@@ -910,10 +909,10 @@ fn test_theme_export_zsh_bash_include_plugin_segment_vars() {
         &gpy_agent::template::Palette::default(),
     );
     assert!(bash_output.contains("export GPY_UI_DIRECTORY_DISPLAY=\"basename\""));
-    assert!(bash_output.contains("export __gpy_segment_k8s_id=\"k8s\""));
-    assert!(bash_output.contains("export __gpy_segment_k8s_bg_color=\"#073642\""));
-    assert!(bash_output.contains("export __color_k8s_context=\"#326ce5\""));
-    assert!(bash_output.contains("export __icon_k8s_secondary=\"•\""));
+    assert!(bash_output.contains("__gpy_segment_k8s_id=\"k8s\""));
+    assert!(bash_output.contains("__gpy_segment_k8s_bg_color=\"#073642\""));
+    assert!(bash_output.contains("__color_k8s_context=\"#326ce5\""));
+    assert!(bash_output.contains("__icon_k8s_secondary=\"•\""));
 }
 
 #[test]
@@ -1092,11 +1091,14 @@ fn test_switch_theme_preserves_reload_notifications() {
         .join(format!("{}.reload", std::process::id()));
     client_registry.register(std::process::id(), Some(std::env::current_dir().unwrap()));
 
+    let registry_in_hook = Arc::clone(&client_registry);
+    manager.set_reload_callback(Arc::new(move |reload: &dyn Fn() -> bool| {
+        if reload() {
+            registry_in_hook.notify_reload();
+        }
+    }));
     manager
-        .start_watching(
-            Duration::from_millis(50),
-            Some(Arc::clone(&client_registry)),
-        )
+        .start_watching(Duration::from_millis(50))
         .expect("start watching");
     manager
         .switch_theme("after_switch")
@@ -1172,7 +1174,7 @@ fn switch_theme_reuses_the_registry_it_was_started_with() {
     let registry = Arc::new(WatchRegistry::new());
 
     manager
-        .start_watching_with(Duration::from_millis(50), None, &registry)
+        .start_watching_with(Duration::from_millis(50), &registry)
         .expect("start watching with shared registry");
 
     let armed = manager
@@ -1391,14 +1393,10 @@ fn concurrent_export_never_pairs_one_themes_name_with_anothers_colors() {
     let valid_pairs = [pair_a, pair_b];
 
     let manager = Arc::new(ThemeManager::new("race_a").unwrap());
-    // `switch_theme` tears the watcher down and builds a new one every call,
-    // and `WatchCoordinator::stop` joins a flush thread that only checks its
-    // stop flag once per debounce interval. At the 1s default that is 1s of
-    // dead time per switch; a 10ms debounce keeps the loop hammering the state
-    // lock, which is what the test is actually measuring.
-    manager
-        .start_watching(Duration::from_millis(10), None)
-        .unwrap();
+    // `switch_theme` tears the watcher down and builds a new one every call; a
+    // 10ms debounce keeps the loop hammering the state lock, which is what the
+    // test is actually measuring.
+    manager.start_watching(Duration::from_millis(10)).unwrap();
     let stop = Arc::new(AtomicBool::new(false));
     let barrier = Arc::new(Barrier::new(READERS + 1));
 
@@ -1518,9 +1516,7 @@ fn reload_hook_runs_after_swap_and_may_read_the_manager() {
     }));
 
     env.set("GPY_THEME_WATCH_POLL_MS", "25");
-    manager
-        .start_watching(Duration::from_millis(50), None)
-        .unwrap();
+    manager.start_watching(Duration::from_millis(50)).unwrap();
     let seen = wait_until(Duration::from_secs(5), Duration::from_millis(100), || {
         fs::write(&theme_path, CUSTOM_THEME).unwrap();
         observed
@@ -1629,7 +1625,7 @@ fn watching_survives_an_uncreatable_user_themes_dir() {
 
     let manager = ThemeManager::new("community").unwrap();
     fs::set_permissions(&gpy_dir, fs::Permissions::from_mode(0o500)).unwrap();
-    let started = manager.start_watching(Duration::from_millis(50), None);
+    let started = manager.start_watching(Duration::from_millis(50));
     let followed = started.is_ok()
         && wait_until(Duration::from_secs(10), Duration::from_millis(200), || {
             fs::write(&plugin_path, icon_theme("Q")).unwrap();
@@ -1659,9 +1655,7 @@ fn watcher_follows_a_user_override_above_a_plugin_theme() {
         .join("gpy/plugins/acme/themes/community.toml");
 
     let manager = ThemeManager::new("community").unwrap();
-    manager
-        .start_watching(Duration::from_millis(50), None)
-        .unwrap();
+    manager.start_watching(Duration::from_millis(50)).unwrap();
 
     // A watch has no "armed" signal: re-apply each idempotent change until seen.
     let wait_for_icon = |icon: &str, apply: &dyn Fn()| {

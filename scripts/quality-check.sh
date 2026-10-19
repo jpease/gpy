@@ -262,7 +262,7 @@ run_shell_checks() {
 }
 
 # Run from gpy-agent/. $1: extra nextest flags. test-support compiles the
-# PTY-backed wizard test so clippy lints it too; lint levels live in Cargo.toml.
+# test-only library surface so clippy lints it too; lint levels live in Cargo.toml.
 run_rust_lint_and_tests() {
     local nextest_flags="${1:-}" nextest_log retries
     run_check "Rust format check" "cargo fmt -- --check" || true

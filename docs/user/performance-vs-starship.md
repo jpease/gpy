@@ -144,7 +144,7 @@ Useful variations:
 ```
 
 Compare release binaries, not a local `cargo build --release`: local release
-builds are tuned for build speed (`opt-level = 1`), and shipped binaries are
-not. Reading the report, the full method, every option and the fairness rules
+builds keep symbols and use fat LTO, while shipped binaries use the stripped,
+thin-LTO `release-dist` profile. Reading the report, the full method, every option and the fairness rules
 are in [`benchmarks/compare-starship/README.md`](../../benchmarks/compare-starship/README.md).
 If you share a result, include the report's machine and version lines with it.

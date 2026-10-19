@@ -91,6 +91,7 @@ Theme export emits `__gpy_plugin_segment_file_<segment_token>` variables, where
 and nothing else changed (`my--seg` → `my__seg`, `seg_` → `seg_`); names whose
 tokens collide are rejected (see Identifier normalization above).
 `fish/core/init.fish` uses these variables to source plugin segment files when a segment is enabled.
+Plugin segment files are Fish scripts sourced with your full user privileges; they are Fish-only, so these variables are exported for Fish only.
 
 That export variable naming is an implementation detail, not a plugin-author API. Plugin authors should rely on the manifest + segment-file contract, not on private shell variables.
 

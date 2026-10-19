@@ -2,11 +2,7 @@
 
 use crate::Result;
 #[cfg(unix)]
-use crate::agent::lifecycle::get_socket_path;
-#[cfg(unix)]
-use crate::formatter::Format;
-#[cfg(unix)]
-use crate::ipc::Message;
+use crate::paths::get_socket_path;
 #[cfg(unix)]
 use std::io::Write;
 #[cfg(unix)]
@@ -25,13 +21,13 @@ const REQUEST_TIMEOUT_MS: u64 = 500;
 
 /// Send one newline-delimited JSON request and return its round-trip time.
 #[cfg(unix)]
-async fn send_request(stream: &mut UnixStream, msg: &Message) -> Result<Duration> {
+async fn send_request(stream: &mut UnixStream, msg: &serde_json::Value) -> Result<Duration> {
     let timeout_duration = Duration::from_millis(REQUEST_TIMEOUT_MS);
 
     timeout(timeout_duration, async {
         let start = Instant::now();
 
-        let mut json = serde_json::to_string(msg).map_err(|e| crate::Error::ipc(e.to_string()))?;
+        let mut json = msg.to_string();
         json.push('\n');
 
         stream
@@ -115,35 +111,25 @@ pub fn prompt() -> Result<()> {
 
         print!("Ping (Baseline):      ");
         std::io::stdout().flush()?;
-        let ping_msg = Message::Ping;
-        let ping_duration = send_request(&mut stream, &ping_msg).await?;
+        let ping_duration = send_request(&mut stream, &serde_json::json!({"op": "ping"})).await?;
         println!("{ping_duration:.2?}");
 
         print!("Git Status:           ");
         std::io::stdout().flush()?;
-
-        let git_msg = Message::RepositoryStatus {
-            path: safe_cwd.clone(),
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
-        };
-        let git_duration = send_request(&mut stream, &git_msg).await?;
+        let git_duration = send_request(
+            &mut stream,
+            &serde_json::json!({"op": "git", "cwd": safe_cwd.as_str(), "format": "json"}),
+        )
+        .await?;
         println!("{git_duration:.2?}");
 
         print!("Language Detection:   ");
         std::io::stdout().flush()?;
-
-        let lang_msg = Message::LanguageDetect {
-            path: safe_cwd,
-            format: Format::Json,
-            is_last: true,
-            is_first: false,
-            prev_bg: None,
-            virtual_env: None,
-        };
-        let lang_duration = send_request(&mut stream, &lang_msg).await?;
+        let lang_duration = send_request(
+            &mut stream,
+            &serde_json::json!({"op": "lang", "cwd": safe_cwd.as_str(), "format": "json", "is_last": true}),
+        )
+        .await?;
         println!("{lang_duration:.2?}");
 
         println!("--------------------------");

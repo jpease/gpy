@@ -6,8 +6,6 @@ use crate::{Error, Result};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 
-use super::cache;
-
 /// Trait for detecting language versions
 pub trait ReleaseSource: Send + Sync {
     /// Language name this detector handles
@@ -29,13 +27,6 @@ pub trait ReleaseSource: Send + Sync {
     fn fallback_programs(&self) -> &[&str] {
         &[]
     }
-}
-
-/// Look up `cache_key` in the shared version cache, evicting it if stale.
-fn get_cached_version(cache_key: &str) -> cache::CacheLookup {
-    VERSION_CACHE
-        .get(cache_key)
-        .map_or(cache::CacheLookup::Miss, cache::CacheLookup::Hit)
 }
 
 /// Execute version command and parse output, bypassing the cache.
@@ -290,7 +281,7 @@ fn parse_version_output<P: ReleaseSource + ?Sized>(
 }
 
 /// Record `version` for `cache_key` in the shared version cache.
-fn cache_version_result(cache_key: &str, version: Option<String>) {
+fn cache_version_result(cache_key: &str, version: String) {
     VERSION_CACHE.insert(cache_key.to_owned(), version);
 }
 
@@ -312,8 +303,8 @@ pub fn detect_language_release_at<P: ReleaseSource + ?Sized>(
 ) -> Option<String> {
     let cache_key = version_cache_key(detector.language_name(), cwd);
 
-    if let cache::CacheLookup::Hit(cached_result) = get_cached_version(&cache_key) {
-        return cached_result;
+    if let Some(cached) = VERSION_CACHE.get(&cache_key) {
+        return Some(cached);
     }
     if has_recent_failure(&cache_key) {
         return None;
@@ -321,7 +312,7 @@ pub fn detect_language_release_at<P: ReleaseSource + ?Sized>(
 
     if let Ok(Some(version)) = execute_version_command(detector, cwd) {
         VERSION_FAILURE_CACHE.remove(&cache_key);
-        cache_version_result(&cache_key, Some(version.clone()));
+        cache_version_result(&cache_key, version.clone());
         Some(version)
     } else {
         VERSION_FAILURE_CACHE.insert(cache_key, SystemTime::now());
@@ -534,7 +525,7 @@ use std::time::{Duration, SystemTime};
 static VERSION_DETECTORS: OnceLock<Vec<Box<dyn ReleaseSource + Sync + Send>>> = OnceLock::new();
 
 /// Successful probe results; shares [`TtlMap`]'s TTL knob.
-static VERSION_CACHE: TtlMap<String, Option<String>> = TtlMap::new(VERSION_CACHE_CAPACITY);
+static VERSION_CACHE: TtlMap<String, String> = TtlMap::new(VERSION_CACHE_CAPACITY);
 
 /// How long a failed probe suppresses re-probing: avoids respawning a broken
 /// tool every render while picking up a fixed one within a minute.
@@ -721,26 +712,21 @@ mod tests {
         set_version_cache_ttl(1);
 
         VERSION_CACHE.clear();
-        VERSION_CACHE.insert("test-lang".to_owned(), Some("1.0.0".to_owned()));
+        VERSION_CACHE.insert("test-lang".to_owned(), "1.0.0".to_owned());
 
-        match get_cached_version("test-lang") {
-            cache::CacheLookup::Hit(Some(value)) => assert_eq!(value, "1.0.0"),
-            cache::CacheLookup::Hit(None) => panic!("expected cached value, got None"),
-            cache::CacheLookup::Miss => panic!("cache should have contained entry"),
-        }
+        assert_eq!(VERSION_CACHE.get("test-lang").as_deref(), Some("1.0.0"));
 
         VERSION_CACHE.insert_at(
             "test-lang".to_owned(),
-            Some("1.0.0".to_owned()),
+            "1.0.0".to_owned(),
             SystemTime::now() - Duration::from_secs(3600 + 5),
         );
 
-        match get_cached_version("test-lang") {
-            cache::CacheLookup::Miss => {}
-            cache::CacheLookup::Hit(result) => {
-                panic!("expected cache miss after expiration, got hit: {result:?}")
-            }
-        }
+        assert_eq!(
+            VERSION_CACHE.get("test-lang"),
+            None,
+            "expected cache miss after expiration"
+        );
 
         set_version_cache_ttl(24);
     }
@@ -776,8 +762,8 @@ mod tests {
         let second_key = version_cache_key("ruby", Some(second.path()));
 
         VERSION_CACHE.clear();
-        VERSION_CACHE.insert(first_key.clone(), Some("3.3.11".to_owned()));
-        VERSION_CACHE.insert(second_key.clone(), Some("4.0.5".to_owned()));
+        VERSION_CACHE.insert(first_key.clone(), "3.3.11".to_owned());
+        VERSION_CACHE.insert(second_key.clone(), "4.0.5".to_owned());
 
         invalidate_language_release_cache_at(first.path());
 
@@ -787,7 +773,7 @@ mod tests {
             "invalidated project's entry should be gone"
         );
         assert_eq!(
-            VERSION_CACHE.get(&second_key).flatten().as_deref(),
+            VERSION_CACHE.get(&second_key).as_deref(),
             Some("4.0.5"),
             "other project's entry should survive invalidation"
         );
@@ -800,7 +786,7 @@ mod tests {
 
         let visits = VERSION_CACHE_CAPACITY.saturating_mul(2);
         for i in 0..visits {
-            cache_version_result(&format!("ruby:/project/{i}"), Some("3.3.0".to_owned()));
+            cache_version_result(&format!("ruby:/project/{i}"), "3.3.0".to_owned());
         }
 
         let len = VERSION_CACHE.len();

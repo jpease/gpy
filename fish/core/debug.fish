@@ -105,8 +105,7 @@ function prompt_debug --argument-names action
             echo "  Enabled segments: $__enabled_segments"
             echo "  Performance:"
             echo "    Language cache TTL: $GPY_LANGUAGE_CACHE_TTL_SECONDS"
-            echo "    Git check interval: $__git_check_interval"
-            echo "    Duration threshold: $__duration_threshold"
+            echo "    Duration threshold: $__duration_threshold_ms"
         case ""
             echo "Usage: prompt_debug [validate|benchmark|cache|vars]"
         case '*'

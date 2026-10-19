@@ -61,15 +61,6 @@ function __gpy_load_default_config
     set -q __enabled_segments; or set -g __enabled_segments clock duration language directory git
     set -q __prompt_icons; or set -g __prompt_icons nerd
     set -q __prompt_theme; or set -g __prompt_theme default
-    set -q __git_check_interval; or set -g __git_check_interval 1
-    set -q GPY_GIT_SHOW; or set -g GPY_GIT_SHOW 1
-    set -q GPY_GIT_SHOW_AHEAD_BEHIND; or set -g GPY_GIT_SHOW_AHEAD_BEHIND 1
-    set -q GPY_LANG_SIG_MODE; or set -g GPY_LANG_SIG_MODE fast
-    set -q GPY_DEBOUNCE_MS; or set -g GPY_DEBOUNCE_MS 300
-    set -q GPY_UI_DIRECTORY_DISPLAY; or set -g GPY_UI_DIRECTORY_DISPLAY basename
-    set -q GPY_UI_DIRECTORY_MAX_LENGTH; or set -g GPY_UI_DIRECTORY_MAX_LENGTH 80
-
-    set -q __duration_threshold; or set -g __duration_threshold 100
 
     set -q __prompt_base_bg; or set -g __prompt_base_bg normal
     set -q __prompt_base_fg; or set -g __prompt_base_fg normal
@@ -196,11 +187,6 @@ else if set -q GPY_TEST_SEGMENTS
 end
 
 __gpy_load_segments $__prompt_dir $__enabled_segments
-
-set -l devtools_file $__prompt_dir/../segments/devtools.fish
-if test -f $devtools_file
-    source $devtools_file
-end
 
 for segment in $__enabled_segments
     if functions -q segment_{$segment}_init

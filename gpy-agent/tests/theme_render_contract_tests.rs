@@ -152,7 +152,7 @@ fn exported_value(env: &CliTestEnv, variable: &str) -> String {
         .run_gpy_agent(&["theme", "export", "--format", "bash"])
         .expect("run theme export");
     result.assert_success("gpy-agent theme export --format bash");
-    let prefix = format!("export {variable}=\"");
+    let prefix = format!("{variable}=\"");
     result
         .stdout
         .lines()

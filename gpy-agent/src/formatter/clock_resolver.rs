@@ -4,7 +4,7 @@
 //! clock ticks between redraws; Fish gets the bare spec, replaced by `clock.fish`.
 
 use crate::formatter::SegmentPosition;
-use crate::formatter::separator::{Glyphs, SeparatorStyle, resolve_separator};
+use crate::formatter::separator::{Glyphs, SeparatorStyle, separator_var};
 use crate::shell::Shell;
 use crate::template::VariableResolver;
 use crate::theme::ThemeConfig;
@@ -87,15 +87,9 @@ impl VariableResolver for ClockResolver<'_> {
             "time" => Some(self.time_token()),
             "style" => Some(self.style()),
             "bg" => Some(self.theme.segments.clock.bg_color.as_str().to_owned()),
-            "sep_gap" => resolve_separator(self.pos, SeparatorStyle::Chained, self.glyphs)
-                .gap
-                .map(str::to_owned),
-            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Chained, self.glyphs)
-                .close
-                .map(str::to_owned),
-            "sep_open" => resolve_separator(self.pos, SeparatorStyle::Chained, self.glyphs)
-                .open
-                .map(str::to_owned),
+            "sep_gap" | "sep_open" | "sep_close" => {
+                separator_var(name, self.pos, SeparatorStyle::Chained, self.glyphs)
+            }
             _ => None,
         }
     }

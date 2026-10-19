@@ -1,6 +1,4 @@
-//! `--format` values offered by clap must be exactly the formats the socket
-//! and oneshot paths can render, in both directions, and the oneshot
-//! help must not advertise a value the agent rejects.
+//! `--format` values offered by clap must be exactly the four rendered formats, and the oneshot help must list exactly those.
 
 #![allow(clippy::missing_panics_doc, clippy::unwrap_used, clippy::expect_used)]
 
@@ -17,23 +15,10 @@ fn every_format() -> Vec<Format> {
         Format::Ansi,
         Format::BashPrompt,
         Format::ZshPrompt,
-        Format::Fish,
-        Format::FishSource,
-        Format::Zsh,
-        Format::BashSource,
-        Format::ZshSource,
     ];
     for format in &all {
         match format {
-            Format::Json
-            | Format::Ansi
-            | Format::BashPrompt
-            | Format::ZshPrompt
-            | Format::Fish
-            | Format::FishSource
-            | Format::Zsh
-            | Format::BashSource
-            | Format::ZshSource => {}
+            Format::Json | Format::Ansi | Format::BashPrompt | Format::ZshPrompt => {}
         }
     }
     all
@@ -41,27 +26,9 @@ fn every_format() -> Vec<Format> {
 
 #[test]
 fn value_variants_are_all_renderable() {
-    for variant in Format::value_variants() {
-        assert!(
-            variant.is_renderable(),
-            "Format {} is offered by clap but is not renderable",
-            variant.as_str()
-        );
-    }
-}
-
-#[test]
-fn every_renderable_format_is_offered() {
-    let offered = Format::value_variants();
-    for format in every_format() {
-        assert_eq!(
-            offered.contains(&format),
-            format.is_renderable(),
-            "Format {}: offered by clap={}, renderable={}",
-            format.as_str(),
-            offered.contains(&format),
-            format.is_renderable()
-        );
+    assert_eq!(Format::value_variants().to_vec(), every_format());
+    for f in every_format() {
+        assert_eq!(f.as_str().parse::<Format>().unwrap(), f);
     }
 }
 
@@ -101,12 +68,14 @@ fn oneshot_help_lists_only_working_formats() {
             let listed = possible
                 .split([',', ' ', ']', ':'])
                 .any(|value| value == format.as_str());
-            assert_eq!(
-                listed,
-                format.is_renderable(),
-                "oneshot {sub} --help: {} listed={listed}, renderable={}",
-                format.as_str(),
-                format.is_renderable()
+            assert!(listed, "oneshot {sub} --help omits {}", format.as_str());
+        }
+        for removed in ["fish", "fish-source", "zsh", "bash-source", "zsh-source"] {
+            assert!(
+                !possible
+                    .split([',', ' ', ']', ':'])
+                    .any(|value| value == removed),
+                "oneshot {sub} --help still lists removed format {removed}"
             );
         }
     }

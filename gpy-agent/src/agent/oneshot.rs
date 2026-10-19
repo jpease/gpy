@@ -144,11 +144,6 @@ fn handle_oneshot_git_parsed(request: &OneshotRequest) -> Result<String> {
     let palette = crate::palette::active_palette(&config);
     let ctx = RenderContext::new(&config, &theme, position).with_palette(palette);
 
-    // Shell-source formats have no formatter yet and always render empty.
-    if !format.is_renderable() {
-        return Ok(String::new());
-    }
-
     // `skip_paths` gates the repository root, like the agent. Resolved from the
     // canonical path (best effort), as with the IPC `SafePath`, so `~/` and
     // symlinked entries apply here too.
@@ -162,7 +157,7 @@ fn handle_oneshot_git_parsed(request: &OneshotRequest) -> Result<String> {
         let response = Response::Error {
             message: "Git segment disabled via config".to_owned(),
         };
-        return create_formatter(format)?.render(&response, &ctx);
+        return create_formatter(format).render(&response, &ctx);
     }
 
     let Some(crate::git::CompleteStatus { status, .. }) = ({
@@ -180,7 +175,7 @@ fn handle_oneshot_git_parsed(request: &OneshotRequest) -> Result<String> {
         let response = Response::Error {
             message: "Not in a git repository".to_owned(),
         };
-        return create_formatter(format)?.render(&response, &ctx);
+        return create_formatter(format).render(&response, &ctx);
     };
 
     let response_status = if config.git.show_upstream {
@@ -191,7 +186,7 @@ fn handle_oneshot_git_parsed(request: &OneshotRequest) -> Result<String> {
 
     let response = Response::RepositoryStatus(response_status);
 
-    create_formatter(format)?.render(&response, &ctx)
+    create_formatter(format).render(&response, &ctx)
 }
 
 /// Handle a oneshot language detection request.
@@ -252,13 +247,9 @@ fn handle_oneshot_language_parsed(request: &OneshotRequest) -> Result<String> {
         languages: languages_info,
     };
 
-    if !format.is_renderable() {
-        return Ok(String::new());
-    }
-
     let ctx = RenderContext::new(&config, &theme, position)
         .with_palette(crate::palette::active_palette(&config));
-    create_formatter(format)?.render(&response, &ctx)
+    create_formatter(format).render(&response, &ctx)
 }
 
 /// Handle a oneshot directory request.
@@ -371,7 +362,7 @@ fn render_response(
 ) -> Result<String> {
     let ctx = RenderContext::new(config, theme, position)
         .with_palette(crate::palette::active_palette(config));
-    create_formatter(format)?.render(response, &ctx)
+    create_formatter(format).render(response, &ctx)
 }
 
 #[cfg(test)]

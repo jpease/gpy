@@ -55,11 +55,11 @@ Windows is unmeasured.
 
 ### Shells
 
-| Shell | Minimum version |
-|-------|------------------|
-| Fish | 3.6+ |
-| Zsh | 5.8+ |
-| Bash | 3.2+ (5.0+ recommended — see [Bash on macOS is too old](#bash-on-macos-is-too-old)) |
+| Shell | Minimum version | What backs the floor |
+|-------|-----------------|----------------------|
+| Fish | 3.6+ | Enforced at startup (`fish/core/init.fish`); CI runs Fish 4 |
+| Zsh | 5.8+ | The 5.8 floor is untested; CI runs Zsh 5.9 |
+| Bash | 3.2+ (5.0+ recommended — see [Bash on macOS is too old](#bash-on-macos-is-too-old)) | `tests/bash/debug_trap.test.bash` and `tests/bash/prompt_command_preserves_status.test.bash` also run under macOS `/bin/bash` 3.2; the other suites run Bash 5 |
 
 ### Shell feature matrix
 
@@ -428,7 +428,7 @@ cp -r /tmp/gpy/fish/* ~/.config/fish/gpy/
 # Add to config.fish. Source conf.d/gpy_init.fish, the same fail-safe
 # entry point the installers use (it checks the layout before loading and
 # disables GPY cleanly when something is missing); the marker lines are
-# what scripts/uninstall.fish removes.
+# what scripts/uninstall.sh removes.
 echo '
 # >>> gpy-init >>>
 # GPY Prompt Enhancement
@@ -493,8 +493,8 @@ If you want to build GPY yourself or contribute to development:
 git clone https://github.com/jpease/gpy.git
 cd gpy
 
-# Build the agent. Use the release-dist profile: `release` is tuned for build
-# speed (opt-level 1), release-dist matches the shipped binaries.
+# Build the agent. Use the release-dist profile: `release` is opt-level 3 with
+# fat LTO and keeps symbols; release-dist matches the shipped binaries.
 (cd gpy-agent && cargo build --profile release-dist)
 
 # The binaries are now in gpy-agent/target/release-dist/
@@ -613,8 +613,8 @@ bash --version
 
 ## Uninstallation
 
-Run either uninstall script (`fish scripts/uninstall.fish` or `sh scripts/uninstall.sh`).
-Uninstallation is **global for the current user's install**: either script stops
+Run the uninstall script (`sh scripts/uninstall.sh`); it removes the Fish, Zsh and Bash integration alike.
+Uninstallation is **global for the current user's install**: the script stops
 the agent and supervisor processes, removes the binaries and their upgrade backups
 from `~/.local/bin`, removes all shell integration files and completions (Fish,
 Zsh, Bash), cleans the `gpy-init` block from all supported startup files
@@ -624,14 +624,13 @@ and startup files are restored byte-for-byte (startup files the installer create
 
 ```bash
 # From a release archive or a clone of the repository
-fish scripts/uninstall.fish                 # Fish entry point (uninstalls globally)
 sh scripts/uninstall.sh                     # POSIX shell entry point (uninstalls globally)
 
 # Installed with the one-liner and no local copy? Download the script from the
 # release. Piping it straight into a shell would feed the confirmation prompt
 # the script itself:
 curl -fsSL https://github.com/jpease/gpy/releases/latest/download/uninstall.sh -o /tmp/gpy-uninstall.sh
-sh /tmp/gpy-uninstall.sh                    # or download uninstall.fish the same way
+sh /tmp/gpy-uninstall.sh
 ```
 
 ### Fish Prompt Restoration

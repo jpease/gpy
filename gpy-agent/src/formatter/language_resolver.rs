@@ -2,7 +2,7 @@
 //! so imported Starship `format` strings work verbatim.
 
 use crate::config::Config;
-use crate::formatter::separator::{Glyphs, SeparatorStyle, resolve_separator};
+use crate::formatter::separator::{Glyphs, SeparatorStyle, separator_var};
 use crate::formatter::{SegmentPosition, get_language_display};
 use crate::ipc::LanguageInfo;
 use crate::template::VariableResolver;
@@ -73,15 +73,9 @@ impl VariableResolver for LanguageResolver<'_> {
                     .get_style(&self.lang.name)
                     .to_owned(),
             ),
-            "sep_gap" => resolve_separator(self.pos, SeparatorStyle::Chained, glyphs)
-                .gap
-                .map(str::to_owned),
-            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Chained, glyphs)
-                .close
-                .map(str::to_owned),
-            "sep_open" => resolve_separator(self.pos, SeparatorStyle::Chained, glyphs)
-                .open
-                .map(str::to_owned),
+            "sep_gap" | "sep_open" | "sep_close" => {
+                separator_var(name, self.pos, SeparatorStyle::Chained, glyphs)
+            }
             _ => None,
         }
     }

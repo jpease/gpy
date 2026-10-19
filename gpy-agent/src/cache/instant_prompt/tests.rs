@@ -157,6 +157,85 @@ fn test_write_cache_file_is_atomic_no_temp_leftovers() {
     assert_eq!(content, "hello world");
 }
 
+#[test]
+fn last_written_evicts_least_recently_written() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    let write = |key: &str, content: &str| {
+        cache
+            .write_cache_file(key, "git", PromptDialect::Ansi, content)
+            .expect("write")
+    };
+    // Oldest first: one past capacity evicts exactly the oldest record.
+    for i in 0..=INSTANT_PROMPT_LAST_WRITTEN_CAPACITY {
+        assert!(write(&format!("k{i:04}"), "c"));
+    }
+    let newest = format!("k{INSTANT_PROMPT_LAST_WRITTEN_CAPACITY:04}");
+
+    assert!(!write(&newest, "c"), "newest key is still recorded");
+    assert!(!write("k0512", "c"), "a middle key is still recorded");
+    assert!(write("k0000", "c"), "the oldest key was evicted");
+    assert!(write(&newest, "d"), "changed content is written");
+}
+
+/// Permission bits of `path`.
+#[cfg(unix)]
+fn mode_of(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .expect("metadata")
+        .permissions()
+        .mode()
+        & 0o777
+}
+
+#[cfg(unix)]
+#[test]
+fn instant_cache_dir_and_files_are_private() {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let parent = temp_dir.path().join("gpy");
+    let root = parent.join("instant-prompts");
+    std::fs::DirBuilder::new()
+        .mode(0o755)
+        .recursive(true)
+        .create(&root)
+        .expect("create root");
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+    let cache = InstantPromptCache::new_in_dir(root.clone()).expect("cache");
+    assert_eq!(mode_of(&root), 0o700, "instant-prompts root is owner-only");
+    assert_eq!(mode_of(&parent), 0o755, "the parent keeps its mode");
+
+    assert!(
+        cache
+            .write_cache_file("repo", "git", PromptDialect::Ansi, "content")
+            .expect("write")
+    );
+    let file = cache.cache_file_path("repo", "git", PromptDialect::Ansi);
+    assert_eq!(mode_of(&file), 0o600, "cache files are owner-only");
+}
+
+#[cfg(unix)]
+#[test]
+fn recreated_cache_dir_is_private() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let root = temp_dir.path().join("instant-prompts");
+    let cache = InstantPromptCache::new_in_dir(root.clone()).expect("cache");
+    std::fs::remove_dir_all(&root).expect("remove root");
+
+    assert!(
+        cache
+            .write_cache_file("repo", "git", PromptDialect::Ansi, "content")
+            .expect("write")
+    );
+    assert_eq!(mode_of(&root), 0o700, "re-created root is owner-only");
+    let file = cache.cache_file_path("repo", "git", PromptDialect::Ansi);
+    assert_eq!(mode_of(&file), 0o600, "cache files are owner-only");
+}
+
 /// Direct tests of [`write_atomic`].
 mod write_atomic_tests {
     use super::*;
@@ -431,8 +510,9 @@ impl CacheHarness {
                     .last_written
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
+                    .entries
                     .get(&format!("{key}:{suffix}.ansi"))
-                    .cloned()
+                    .map(|written| written.content.clone())
                     .expect("a concurrent write must be recorded");
                 assert!(
                     versions.contains(&recorded.as_str()),
@@ -1886,7 +1966,7 @@ fn git_cache_changes_when_palette_redefines_used_color() {
     );
     let palette_b = Palette::new(map_b);
 
-    let formatter = create_formatter(Format::Ansi).expect("ansi formatter");
+    let formatter = create_formatter(Format::Ansi);
 
     let ctx_a =
         RenderContext::new(&config, &theme_arc, SegmentPosition::MIDDLE).with_palette(palette_a);

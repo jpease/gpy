@@ -98,13 +98,6 @@ pub enum Error {
         /// A description of the error.
         message: String,
     },
-
-    /// Timeout occurred
-    #[error("Operation timed out: {operation}")]
-    Timeout {
-        /// The operation that timed out.
-        operation: String,
-    },
 }
 
 impl Error {
@@ -168,13 +161,6 @@ impl Error {
     pub fn invalid<S: Into<String>>(message: S) -> Self {
         Self::Invalid {
             message: message.into(),
-        }
-    }
-
-    /// Create a Timeout error
-    pub fn timeout<S: Into<String>>(operation: S) -> Self {
-        Self::Timeout {
-            operation: operation.into(),
         }
     }
 }

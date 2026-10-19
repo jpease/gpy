@@ -4,7 +4,7 @@ use crate::config::Config;
 use crate::config::DirectorySettings;
 use crate::config::types::DirectoryDisplay;
 use crate::formatter::SegmentPosition;
-use crate::formatter::separator::{Glyphs, SeparatorStyle, resolve_separator};
+use crate::formatter::separator::{Glyphs, SeparatorStyle, separator_var};
 use crate::template::VariableResolver;
 use crate::theme::ThemeConfig;
 use std::path::{Path, PathBuf};
@@ -370,15 +370,9 @@ impl VariableResolver for DirectoryResolver<'_> {
             "read_only" => self.read_only.then(|| "\u{1f512}".to_owned()), // 🔒
             "style" => Some(self.style()),
             "bg" => Some(self.theme.segments.directory.bg_color.as_str().to_owned()),
-            "sep_gap" => resolve_separator(self.pos, SeparatorStyle::Chained, glyphs)
-                .gap
-                .map(str::to_owned),
-            "sep_close" => resolve_separator(self.pos, SeparatorStyle::Chained, glyphs)
-                .close
-                .map(str::to_owned),
-            "sep_open" => resolve_separator(self.pos, SeparatorStyle::Chained, glyphs)
-                .open
-                .map(str::to_owned),
+            "sep_gap" | "sep_open" | "sep_close" => {
+                separator_var(name, self.pos, SeparatorStyle::Chained, glyphs)
+            }
             _ => None,
         }
     }

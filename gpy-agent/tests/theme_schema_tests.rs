@@ -393,46 +393,6 @@ fn theme_use_force_preserves_explicit_user_preferences() {
 }
 
 #[test]
-fn theme_use_apply_layout_alias_warns_but_still_applies() {
-    let temp_dir = tempfile::tempdir().expect("temp dir");
-    let xdg_config = temp_dir.path().join("config");
-    write_config(&xdg_config, "[ui]\ntheme = \"default\"\n");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
-        .args(["theme", "use", "starship", "--apply-layout"])
-        .env("XDG_CONFIG_HOME", &xdg_config)
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("run gpy theme use --apply-layout");
-    assert!(
-        output.status.success(),
-        "deprecated --apply-layout alias should still succeed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
-    assert!(
-        stderr.contains("--apply-layout is deprecated") && stderr.contains("--force"),
-        "the alias should emit a deprecation warning pointing at --force: {stderr}"
-    );
-
-    let written = fs::read_to_string(xdg_config.join("gpy").join("config.toml"))
-        .expect("read updated config");
-    let config: gpy_agent::config::Config = toml::from_str(&written).expect("parse config");
-    assert_eq!(
-        config.ui.enabled_segments,
-        vec![
-            "username",
-            "hostname",
-            "directory",
-            "git",
-            "language",
-            "duration"
-        ],
-        "the deprecated alias should apply the recommended layout like --force"
-    );
-}
-
-#[test]
 fn theme_use_force_applies_recommended_detection_mode() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let xdg_config = temp_dir.path().join("config");

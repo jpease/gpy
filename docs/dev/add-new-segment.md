@@ -1,6 +1,6 @@
 # Adding a New Segment
 
-A short checklist for adding a shell-rendered segment to the Fish prompt (for example a Docker context). For agent-rendered segments, theming and the full contract, see [Segment Development](segment-development.md); to ship a segment outside this repository, see [Build a Segment Plugin](build-segment-plugin.md).
+A short checklist for adding a shell-rendered segment to the Fish prompt (for example a Docker context). to ship a segment outside this repository, see [Build a Segment Plugin](build-segment-plugin.md).
 
 ## 1. Decide where the data comes from
 
@@ -9,7 +9,7 @@ A short checklist for adding a shell-rendered segment to the Fish prompt (for ex
 | Environment variable | Shell-only |
 | File existence check | Shell-only |
 | Command output under ~10 ms | Shell-only |
-| Slower command, external API, complex parsing | Agent-assisted ([Segment Development](segment-development.md)) |
+| Slower command, external API, complex parsing | Agent-assisted |
 
 A shell-only segment runs synchronously on every prompt, so everything it does counts against the prompt budget (`prompt_render`: 20 ms target, 50 ms max in `tests/performance-baselines.json`).
 

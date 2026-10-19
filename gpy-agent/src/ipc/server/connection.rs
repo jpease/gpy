@@ -7,7 +7,6 @@ use crate::palette::PaletteCache;
 use crate::security::{GuardSettings, PidValidator};
 use crate::template::{Color, parse_color};
 use crate::theme::ThemeManager;
-#[cfg(unix)]
 use crate::warn_log;
 use crate::{Error, Result};
 use std::sync::Arc;
@@ -27,16 +26,12 @@ pub(super) struct RouteResult {
     pub(super) prev_bg: Option<String>,
 }
 
-/// Result of [`ConnectionHandler::parse_and_route_blocking`]; `route_elapsed` is
-/// `None` when parsing failed.
+/// Result of [`ConnectionHandler::parse_and_route_blocking`].
 struct BlockingLineResult {
     response: Response,
-    format: Format,
     notify_path: Option<String>,
-    position: SegmentPosition,
-    prev_bg: Option<String>,
     should_shutdown: bool,
-    route_elapsed: Option<Duration>,
+    payload: Result<String>,
 }
 
 /// Serves a single already-accepted client connection.
@@ -45,7 +40,6 @@ pub(super) struct ConnectionHandler {
     pub(super) config_manager: Arc<crate::config::manager::ConfigManager>,
     pub(super) theme_manager: Arc<ThemeManager>,
     pub(super) palette_cache: Arc<PaletteCache>,
-    pub(super) latency_tracker: Arc<crate::ipc::LatencyTracker>,
     pub(super) shutdown_tx: broadcast::Sender<()>,
     pub(super) handler_registry: Arc<HandlerRegistry>,
 }
@@ -155,38 +149,54 @@ impl ConnectionHandler {
         Ok(false)
     }
 
-    /// Parse and route one line on the blocking pool. Parsing canonicalizes
-    /// paths and routing can block on single-flight `Condvar`s, so a hung
-    /// NFS cwd must not wedge a Tokio worker.
+    /// Parse, route and render one line on the blocking pool. Parsing
+    /// canonicalizes paths, routing can block on single-flight `Condvar`s and
+    /// rendering resolves directories, so a hung NFS cwd must not wedge a
+    /// Tokio worker.
     #[cfg(unix)]
     async fn route_line_blocking(&self, line_data: &[u8]) -> BlockingLineResult {
         let line_data_owned = line_data.to_vec();
         let handler_registry = Arc::clone(&self.handler_registry);
         let security_config = self.security_config.clone();
+        let config_manager = Arc::clone(&self.config_manager);
+        let theme_manager = Arc::clone(&self.theme_manager);
+        let palette_cache = Arc::clone(&self.palette_cache);
 
         let blocking_result = tokio::task::spawn_blocking(move || {
-            Self::parse_and_route_blocking(&line_data_owned, &handler_registry, &security_config)
+            Self::parse_and_route_blocking(
+                &line_data_owned,
+                &handler_registry,
+                &security_config,
+                &config_manager,
+                &theme_manager,
+                &palette_cache,
+            )
         })
         .await;
 
         match blocking_result {
-            Ok(result) => {
-                if let Some(elapsed) = result.route_elapsed {
-                    self.latency_tracker.record(elapsed);
-                }
-                result
-            }
-            Err(join_err) => BlockingLineResult {
-                response: Response::Error {
+            Ok(result) => result,
+            Err(join_err) => {
+                let response = Response::Error {
                     message: format!("Request processing failed: {join_err}"),
-                },
-                format: Format::Json,
-                notify_path: None,
-                position: SegmentPosition::MIDDLE,
-                prev_bg: None,
-                should_shutdown: false,
-                route_elapsed: None,
-            },
+                };
+                // A JSON error render touches no filesystem; safe on a worker.
+                let payload = Self::render_payload(
+                    &response,
+                    Format::Json,
+                    SegmentPosition::MIDDLE,
+                    None,
+                    &self.config_manager,
+                    &self.theme_manager,
+                    &self.palette_cache,
+                );
+                BlockingLineResult {
+                    response,
+                    notify_path: None,
+                    should_shutdown: false,
+                    payload,
+                }
+            }
         }
     }
 
@@ -203,20 +213,14 @@ impl ConnectionHandler {
     ) -> Result<bool> {
         let BlockingLineResult {
             response,
-            format,
             notify_path,
-            position,
-            prev_bg,
             should_shutdown,
-            route_elapsed: _,
+            payload,
         } = self.route_line_blocking(line_data).await;
 
         self.notify_clients(client_registry, &response, notify_path.as_deref());
 
-        if let Err(e) = self
-            .serialize_and_send_response(&response, format, position, prev_bg.as_deref(), writer)
-            .await
-        {
+        if let Err(e) = self.serialize_and_send_response(payload, writer).await {
             warn_log!("connection", "Failed to send response: {e}");
         }
 
@@ -229,48 +233,66 @@ impl ConnectionHandler {
         Ok(should_shutdown)
     }
 
-    /// Blocking: parse and route one wire message (see [`Self::route_line_blocking`]).
+    /// Blocking: parse, route and render one wire message (see [`Self::route_line_blocking`]).
     fn parse_and_route_blocking(
         line_data: &[u8],
         handler_registry: &HandlerRegistry,
         security_config: &GuardSettings,
+        config_manager: &crate::config::manager::ConfigManager,
+        theme_manager: &ThemeManager,
+        palette_cache: &PaletteCache,
     ) -> BlockingLineResult {
         let (requested_format, parsed) = protocol::deserialize_message_with_format(line_data);
         match parsed {
             Ok(message) => {
                 let is_shutdown = matches!(message, Message::Shutdown);
 
-                let start = std::time::Instant::now();
                 let route_result =
                     Self::route_request_secure(handler_registry, security_config, &message);
-                let elapsed = start.elapsed();
 
+                let response = route_result.response;
+                let position = SegmentPosition::new(
+                    IsLast::from(route_result.is_last),
+                    IsFirst::from(route_result.is_first),
+                );
+                let payload = Self::render_payload(
+                    &response,
+                    route_result.format,
+                    position,
+                    route_result.prev_bg.as_deref(),
+                    config_manager,
+                    theme_manager,
+                    palette_cache,
+                );
                 BlockingLineResult {
-                    response: route_result.response,
-                    format: route_result.format,
+                    response,
                     notify_path: route_result.notify_path,
-                    position: SegmentPosition::new(
-                        IsLast::from(route_result.is_last),
-                        IsFirst::from(route_result.is_first),
-                    ),
-                    prev_bg: route_result.prev_bg,
                     should_shutdown: is_shutdown,
-                    route_elapsed: Some(elapsed),
+                    payload,
                 }
             }
             // Answer in the requested format when known, so a prompt gets an
             // empty segment rather than protocol JSON.
-            Err(e) => BlockingLineResult {
-                response: Response::Error {
+            Err(e) => {
+                let response = Response::Error {
                     message: format!("Parse error: {e}"),
-                },
-                format: requested_format.unwrap_or(Format::Json),
-                notify_path: None,
-                position: SegmentPosition::MIDDLE,
-                prev_bg: None,
-                should_shutdown: false,
-                route_elapsed: None,
-            },
+                };
+                let payload = Self::render_payload(
+                    &response,
+                    requested_format.unwrap_or(Format::Json),
+                    SegmentPosition::MIDDLE,
+                    None,
+                    config_manager,
+                    theme_manager,
+                    palette_cache,
+                );
+                BlockingLineResult {
+                    response,
+                    notify_path: None,
+                    should_shutdown: false,
+                    payload,
+                }
+            }
         }
     }
 
@@ -330,46 +352,56 @@ impl ConnectionHandler {
         );
     }
 
-    /// Serialize and send a response. `AgentStatus` uses native protocol
-    /// serialization to keep the enum wrapper for backwards compatibility.
+    /// Render a reply line in the requested format.
     ///
     /// # Errors
-    /// Fails if serialization or writing fails.
-    #[cfg(unix)]
-    async fn serialize_and_send_response(
-        &self,
+    /// Fails if serialization fails.
+    fn render_payload(
         response: &Response,
         format: Format,
         position: SegmentPosition,
         prev_bg: Option<&str>,
+        config_manager: &crate::config::manager::ConfigManager,
+        theme_manager: &ThemeManager,
+        palette_cache: &PaletteCache,
+    ) -> Result<String> {
+        match Self::render_response(
+            config_manager,
+            theme_manager,
+            palette_cache,
+            response,
+            format,
+            position,
+            prev_bg,
+        ) {
+            Ok(rendered) => Ok(rendered),
+            Err(e) => {
+                // Rendering failed: answer with a JSON error rather than staying silent.
+                warn_log!("connection", "Failed to render response: {e}");
+                let error = Response::Error {
+                    message: e.to_string(),
+                };
+                let config = config_manager.get();
+                let theme = theme_manager.get();
+                let ctx = RenderContext::new(&config, &theme, position);
+                create_formatter(Format::Json).render(&error, &ctx)
+            }
+        }
+    }
+
+    /// Write a reply already rendered on the blocking pool.
+    ///
+    /// # Errors
+    /// Fails if rendering failed or writing fails.
+    #[cfg(unix)]
+    async fn serialize_and_send_response(
+        &self,
+        payload: Result<String>,
         writer: &mut tokio::net::unix::OwnedWriteHalf,
     ) -> Result<()> {
         use tokio::io::AsyncWriteExt;
 
-        let payload = if matches!(response, Response::AgentStatus { .. }) {
-            match protocol::serialize_response(response) {
-                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                Err(e) => {
-                    return Err(Error::ipc(format!("Failed to serialize response: {e}")));
-                }
-            }
-        } else {
-            match self.render_response(response, format, position, prev_bg) {
-                Ok(rendered) => rendered,
-                Err(e) => {
-                    // The client asked for a format the socket does not serve:
-                    // answer with a JSON error rather than staying silent.
-                    warn_log!("connection", "Failed to render response: {e}");
-                    let error = Response::Error {
-                        message: e.to_string(),
-                    };
-                    let config = self.config_manager.get();
-                    let theme = self.theme_manager.get();
-                    let ctx = RenderContext::new(&config, &theme, position);
-                    create_formatter(Format::Json)?.render(&error, &ctx)?
-                }
-            }
-        };
+        let payload = payload?;
 
         let write_result = timeout(self.request_timeout(), async {
             writer
@@ -393,37 +425,24 @@ impl ConnectionHandler {
     /// Render a response into the requested format; an unparseable `prev_bg` becomes `None`.
     ///
     /// # Errors
-    /// Fails if the format is unsupported or serialization fails.
+    /// Fails if serialization fails.
     fn render_response(
-        &self,
+        config_manager: &crate::config::manager::ConfigManager,
+        theme_manager: &ThemeManager,
+        palette_cache: &PaletteCache,
         response: &Response,
         format: Format,
         position: SegmentPosition,
         prev_bg: Option<&str>,
     ) -> Result<String> {
-        match format {
-            Format::Fish => Err(Error::ipc(format!(
-                "IPC format '{format}' is only available to local CLI oneshot commands."
-            ))),
-            Format::BashSource | Format::ZshSource => Err(Error::ipc(format!(
-                "IPC format {format:?} is not yet implemented for socket clients."
-            ))),
-            Format::Ansi
-            | Format::BashPrompt
-            | Format::ZshPrompt
-            | Format::Json
-            | Format::FishSource
-            | Format::Zsh => {
-                let config = self.config_manager.get();
-                let theme = self.theme_manager.get();
-                let palette = self.palette_cache.get();
-                let parsed_prev_bg: Option<Color> = prev_bg.and_then(|s| parse_color(s).ok());
-                let ctx = RenderContext::new(&config, &theme, position)
-                    .with_palette(palette)
-                    .with_prev_colors(None, parsed_prev_bg);
-                create_formatter(format)?.render(response, &ctx)
-            }
-        }
+        let config = config_manager.get();
+        let theme = theme_manager.get();
+        let palette = palette_cache.get();
+        let parsed_prev_bg: Option<Color> = prev_bg.and_then(|s| parse_color(s).ok());
+        let ctx = RenderContext::new(&config, &theme, position)
+            .with_palette(palette)
+            .with_prev_colors(None, parsed_prev_bg);
+        create_formatter(format).render(response, &ctx)
     }
 }
 
@@ -438,14 +457,11 @@ impl ConnectionHandler {
 mod tests {
     use super::*;
     use crate::config::manager::ConfigManager;
-    use crate::formatter::Format;
     use crate::ipc::handlers::{
         ClientHandler, GitHandler, HandlerRegistry, LanguageHandler, MiscHandler, RenderDeps,
-        ThemeHandler,
     };
     use crate::ipc::registry::ClientDirectory;
     use crate::palette::PaletteCache;
-    use crate::security::SafePath;
     use std::sync::Mutex;
 
     /// Production-wired `HandlerRegistry` plus the caches the language handler shares.
@@ -462,7 +478,6 @@ mod tests {
         let language_cache = crate::language::DetectionCache::new();
         let client_registry = Arc::new(ClientDirectory::new());
         let watcher: crate::ipc::server::handle::WatcherRef = Arc::new(Mutex::new(None));
-        let latency_tracker = Arc::new(crate::ipc::LatencyTracker::new(100));
 
         let render = RenderDeps {
             config_manager: Arc::clone(&config_manager),
@@ -475,19 +490,16 @@ mod tests {
         let git_handler = Arc::new(GitHandler::new(render.clone(), Arc::clone(&git_cache)));
         let language_handler =
             Arc::new(LanguageHandler::new(render.clone(), language_cache.clone()));
-        let theme_handler = Arc::new(ThemeHandler::new(Arc::clone(&theme_manager)));
         let client_handler = Arc::new(ClientHandler::new(
             render,
             Arc::clone(&git_cache),
             Arc::clone(&watcher),
-            Arc::clone(&latency_tracker),
         ));
         let misc_handler = Arc::new(MiscHandler::new());
 
         let handler_registry = Arc::new(HandlerRegistry::new(
             git_handler,
             language_handler,
-            theme_handler,
             client_handler,
             misc_handler,
         ));
@@ -508,7 +520,6 @@ mod tests {
             config_manager,
             theme_manager,
             palette_cache,
-            latency_tracker: Arc::new(crate::ipc::LatencyTracker::new(100)),
             shutdown_tx,
             handler_registry,
         };
@@ -533,12 +544,22 @@ mod tests {
     #[test]
     fn ansi_request_with_denied_path_keeps_ansi_format() {
         let (registry, _instant_cache, _language_cache) = test_handler_registry();
+        let config_manager = ConfigManager::with_defaults().expect("config");
+        let theme_manager = ThemeManager::builtin("default").expect("theme");
+        let palette_cache = PaletteCache::from_config(&config_manager.get());
         let result = ConnectionHandler::parse_and_route_blocking(
             br#"{"op":"directory","cwd":"/etc","format":"ansi"}"#,
             &registry,
             &GuardSettings::default(),
+            &config_manager,
+            &theme_manager,
+            &palette_cache,
         );
-        assert_eq!(result.format, Format::Ansi);
+        let payload = result.payload.expect("rendered");
+        assert!(
+            !payload.trim_start().starts_with('{'),
+            "denied ANSI request must not get a JSON line, got {payload:?}"
+        );
         assert!(
             matches!(result.response, Response::Error { .. }),
             "denied path must still be an error, got {:?}",
@@ -552,6 +573,9 @@ mod tests {
     fn language_request_writes_each_variant_file_once() {
         let (handler_registry, instant_cache, language_cache) = test_handler_registry();
         let security_config = GuardSettings::default();
+        let config_manager = ConfigManager::with_defaults().expect("config");
+        let theme_manager = ThemeManager::builtin("default").expect("theme");
+        let palette_cache = PaletteCache::from_config(&config_manager.get());
 
         let repo = tempfile::TempDir::new().expect("temp dir");
         std::fs::write(repo.path().join("Cargo.toml"), "[package]\nname = \"t\"\n")
@@ -567,19 +591,19 @@ mod tests {
             }],
         );
 
-        let message = Message::LanguageDetect {
-            path: SafePath::new(repo.path().to_str().expect("utf8 path")).expect("safe path"),
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
-            virtual_env: None,
-        };
-        let line = protocol::serialize_message(&message).expect("serialize message");
+        let line = serde_json::json!({"op": "lang", "cwd": repo.path().to_str().expect("utf8 path"), "format": "json"})
+            .to_string()
+            .into_bytes();
 
         let before = instant_cache.write_call_count();
-        let result =
-            ConnectionHandler::parse_and_route_blocking(&line, &handler_registry, &security_config);
+        let result = ConnectionHandler::parse_and_route_blocking(
+            &line,
+            &handler_registry,
+            &security_config,
+            &config_manager,
+            &theme_manager,
+            &palette_cache,
+        );
         assert!(
             !matches!(result.response, Response::Error { .. }),
             "unexpected error response: {:?}",

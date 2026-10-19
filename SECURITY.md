@@ -6,7 +6,7 @@ GPY is a personal project with one release line. Security fixes land on the late
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.3.x   | :white_check_mark: |
+| 0.4.x   | :white_check_mark: |
 
 ## Reporting a Vulnerability
 
@@ -78,6 +78,12 @@ these three:
   paths. Anything already running as you can write to them.
 - Nothing else. There is no signature check at load time and no integrity check
   on the cache file.
+
+**Plugin segment files run as you.** Third-party plugins ship Fish scripts
+(`segments/<name>.fish`) that `fish/core/init.fish` sources, with your full user
+privileges, when the segment is enabled. Only the Fish theme export carries
+their paths (`__gpy_plugin_segment_file_*`); Bash and Zsh never source them.
+Installing a plugin means trusting its code like a shell startup file.
 
 **Prompt data is escaped for the shell that draws it.** Bash and Zsh paste the
 agent's prompt output into `PS1`/`PROMPT`, and both shells expand prompt
@@ -231,7 +237,7 @@ For the per-advisory assessment and audit history, see [Security Audit Notes](do
 |----------|---------|
 | `install-oneline.sh` | The one-line installer, with the release tag built in. Published as an asset of each release, never fetched from a branch |
 | `gpy-shell-files.tar.gz` | The Fish, Zsh and Bash scripts the installer puts in your config directory |
-| `uninstall.sh`, `uninstall.fish` | The uninstallers |
+| `uninstall.sh` | The uninstaller (every shell) |
 | `<asset>.sha256` | SHA-256 digest beside each binary, archive and script |
 | `SHA256SUMS` | Aggregate manifest covering every downloadable file |
 | `gpy-sbom.cdx.json` | CycloneDX SBOM of the Rust dependency graph the binaries were built from |

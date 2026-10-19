@@ -3,16 +3,24 @@ __gpy_agent_enabled() {
     [[ -z "${GPY_AGENT_ENABLED:-}" || "${GPY_AGENT_ENABLED:-}" == "1" ]]
 }
 
-# Backslashes first so later escapes are not re-escaped. A raw newline/CR/tab
-# would make malformed JSON and the agent would drop the segment.
+# Escape $2 for a JSON string into variable $1 without a fork. Backslashes
+# first so later escapes are not re-escaped; a raw newline/CR/tab would make
+# malformed JSON. Locals are __gpy_ej_* so a caller's OUTVAR is not shadowed.
+__gpy_escape_json_into() {
+    local __gpy_ej_s="$2"
+    __gpy_ej_s="${__gpy_ej_s//\\/\\\\}"
+    __gpy_ej_s="${__gpy_ej_s//\"/\\\"}"
+    __gpy_ej_s="${__gpy_ej_s//$'\n'/\\n}"
+    __gpy_ej_s="${__gpy_ej_s//$'\r'/\\r}"
+    __gpy_ej_s="${__gpy_ej_s//$'\t'/\\t}"
+    printf -v "$1" '%s' "$__gpy_ej_s"
+}
+
+# Printing form, kept for the vector tests.
 __gpy_escape_json() {
-    local s="$1"
-    s="${s//\\/\\\\}"
-    s="${s//\"/\\\"}"
-    s="${s//$'\n'/\\n}"
-    s="${s//$'\r'/\\r}"
-    s="${s//$'\t'/\\t}"
-    echo "$s"
+    local __gpy_ej_out
+    __gpy_escape_json_into __gpy_ej_out "$1"
+    printf '%s\n' "$__gpy_ej_out"
 }
 
 # $VIRTUAL_ENV, else $CONDA_PREFIX unless the conda env is `base`.
@@ -26,9 +34,11 @@ __gpy_forwarded_venv() {
 
 # `,"virtual_env":"<venv>"` for a `lang` request, or nothing.
 __gpy_lang_venv_json() {
-    local venv
+    local venv venv_json
     venv="$(__gpy_forwarded_venv)"
-    [[ -n "$venv" ]] && printf ',"virtual_env":"%s"' "$(__gpy_escape_json "$venv")"
+    [[ -n "$venv" ]] || return 0
+    __gpy_escape_json_into venv_json "$venv"
+    printf ',"virtual_env":"%s"' "$venv_json"
     return 0
 }
 
@@ -41,6 +51,8 @@ __gpy_home() {
     if [[ -z "$__gpy_home_value" ]]; then
         __gpy_home_user="$(id -un 2>/dev/null)" || return 1
         [[ -n "$__gpy_home_user" ]] || return 1
+        # Only a plausible username may reach eval; a leading - would make ~- expand to $OLDPWD.
+        [[ "$__gpy_home_user" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || return 1
         # Assignment context tilde-expands "~user"; an unknown user stays
         # literal and the guard rejects it.
         eval "__gpy_home_value=~$__gpy_home_user" 2>/dev/null
@@ -207,16 +219,16 @@ __gpy_send_json() {
     [[ -S "$socket_path" ]] || return 1
 
     if command -v socat &>/dev/null; then
-        IFS= read -r response < <(exec 2>/dev/null; echo "$json" | socat -t "$timeout_secs" - "UNIX-CONNECT:$socket_path" 2>/dev/null; printf '\037%s\n' "$?")
+        IFS= read -r response < <(exec 2>/dev/null; printf '%s\n' "$json" | socat -t "$timeout_secs" - "UNIX-CONNECT:$socket_path" 2>/dev/null; printf '\037%s\n' "$?")
         read_status=$?
     # nc -w takes whole seconds only; `timeout` tightens the bound when present.
     elif __gpy_ipc_client_available; then
         if command -v timeout &>/dev/null; then
-            IFS= read -r response < <(exec 2>/dev/null; echo "$json" | timeout "$timeout_secs" nc -U "$socket_path" -w 1 2>/dev/null; printf '\037%s\n' "$?")
+            IFS= read -r response < <(exec 2>/dev/null; printf '%s\n' "$json" | timeout "$timeout_secs" nc -U "$socket_path" -w 1 2>/dev/null; printf '\037%s\n' "$?")
             # 124: `timeout` killed an nc that had connected and was waiting.
             connected_codes=" 0 124 "
         else
-            IFS= read -r response < <(exec 2>/dev/null; echo "$json" | nc -U "$socket_path" -w 1 2>/dev/null; printf '\037%s\n' "$?")
+            IFS= read -r response < <(exec 2>/dev/null; printf '%s\n' "$json" | nc -U "$socket_path" -w 1 2>/dev/null; printf '\037%s\n' "$?")
         fi
         read_status=$?
     else
@@ -265,13 +277,25 @@ __gpy_check_protocol_version() {
     return 0
 }
 
+# $PWD resolved once per directory change (`__gpy_pwd_memo`, "" when realpath
+# fails), so a cache-hit render forks no realpath.
+__gpy_resolve_pwd() {
+    [[ "$PWD" == "${__gpy_pwd_memo_key-}" ]] && return 0
+    __gpy_pwd_memo_key="$PWD"
+    __gpy_pwd_memo="$(realpath "$PWD" 2>/dev/null)" || __gpy_pwd_memo=""
+}
+
 # Git root above $1 into variable $2; status 1 when there is none.
 __gpy_find_git_root() {
-    # Keep the realpath fork: the cache key must match the Rust writer's
-    # `path_to_cache_key` byte for byte, including symlink resolution, and
-    # bash has no builtin that resolves a path without changing directory.
-    local __gpy_fgr_dir
-    __gpy_fgr_dir=$(realpath "${1:-$PWD}" 2>/dev/null)
+    # The cache key must match the Rust writer's `path_to_cache_key` byte for byte,
+    # including symlink resolution, and only `realpath` resolves a path without
+    # changing directory. $PWD uses the per-`cd` memo; any other path still forks.
+    local __gpy_fgr_dir __gpy_fgr_start="${1:-$PWD}"
+    if [[ -n "${__gpy_pwd_memo_key-}" && "$__gpy_fgr_start" == "$__gpy_pwd_memo_key" ]]; then
+        __gpy_fgr_dir="${__gpy_pwd_memo-}"
+    else
+        __gpy_fgr_dir=$(realpath "$__gpy_fgr_start" 2>/dev/null)
+    fi
     [[ -z "$__gpy_fgr_dir" ]] && return 1
 
     while [[ "$__gpy_fgr_dir" != "/" ]]; do
@@ -336,7 +360,11 @@ __gpy_instant_cache_key_path() {
     local suffix="$1" cwd="$2" __gpy_kp=""
     __gpy_find_git_root "$cwd" __gpy_kp
     if [[ -z "$__gpy_kp" && "$suffix" == lang* ]]; then
-        __gpy_kp="$(realpath "$cwd" 2>/dev/null)"
+        if [[ -n "${__gpy_pwd_memo_key-}" && "$cwd" == "$__gpy_pwd_memo_key" ]]; then
+            __gpy_kp="${__gpy_pwd_memo-}"
+        else
+            __gpy_kp="$(realpath "$cwd" 2>/dev/null)"
+        fi
     fi
     printf -v "$3" '%s' "$__gpy_kp"
     [[ -n "$__gpy_kp" ]]
@@ -418,11 +446,12 @@ __gpy_read_instant_cache() {
 # flags are omitted (the agent defaults them to false).
 __gpy_json_flags_tail() {
     local is_last="$1" is_first="$2" prev_bg="$3"
-    local tail=""
+    local tail="" prev_bg_json
     [[ "$is_last" == "true" ]] && tail="${tail},\"is_last\":true"
     [[ "$is_first" == "true" ]] && tail="${tail},\"is_first\":true"
     if [[ -n "$prev_bg" ]]; then
-        tail="${tail},\"prev_bg\":\"$(__gpy_escape_json "$prev_bg")\""
+        __gpy_escape_json_into prev_bg_json "$prev_bg"
+        tail="${tail},\"prev_bg\":\"${prev_bg_json}\""
     fi
     printf '%s' "$tail"
 }
@@ -431,7 +460,7 @@ __gpy_json_flags_tail() {
 __gpy_build_data_request() {
     local op="$1" cwd="$2" format="${3:-bash-prompt}" is_last="${4:-}" prev_bg="${5:-}" is_first="${6:-}"
     local json_cwd flags_tail venv_json=""
-    json_cwd="$(__gpy_escape_json "$cwd")"
+    __gpy_escape_json_into json_cwd "$cwd"
     flags_tail="$(__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg")"
     [[ "$op" == "lang" ]] && venv_json="$(__gpy_lang_venv_json)"
     printf '%s' "{\"op\":\"$op\",\"cwd\":\"$json_cwd\",\"format\":\"$format\"${flags_tail}${venv_json}}"
@@ -715,7 +744,7 @@ __gpy_request_hostname() {
     local is_ssh="${4:-}"
 
     local json_hostname flags_tail ssh_json=""
-    json_hostname="$(__gpy_escape_json "$hostname")"
+    __gpy_escape_json_into json_hostname "$hostname"
     flags_tail="$(__gpy_json_flags_tail "$is_last" "" "$prev_bg")"
     [[ "$is_ssh" == "1" ]] && ssh_json=',"is_ssh":true'
     local request="{\"op\":\"hostname\",\"hostname\":\"${json_hostname}\",\"format\":\"bash-prompt\"${flags_tail}${ssh_json}}"
@@ -735,7 +764,7 @@ __gpy_request_username() {
     local prev_bg="${3:-}"
 
     local json_username flags_tail
-    json_username="$(__gpy_escape_json "$username")"
+    __gpy_escape_json_into json_username "$username"
     flags_tail="$(__gpy_json_flags_tail "$is_last" "" "$prev_bg")"
     local request="{\"op\":\"username\",\"username\":\"${json_username}\",\"format\":\"bash-prompt\"${flags_tail}}"
 

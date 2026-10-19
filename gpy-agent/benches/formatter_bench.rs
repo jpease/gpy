@@ -7,9 +7,7 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use gpy_agent::config::Config;
-use gpy_agent::formatter::{
-    FishAnsiFormatter, FishSourceFormatter, Formatter, RenderContext, SegmentPosition,
-};
+use gpy_agent::formatter::{FishAnsiFormatter, Formatter, RenderContext, SegmentPosition};
 use gpy_agent::ipc::{LanguageInfo, Response};
 use gpy_agent::theme::ThemeConfig;
 use std::hint::black_box;
@@ -101,36 +99,6 @@ fn bench_git_status_rendering(c: &mut Criterion) {
     });
 }
 
-fn bench_fish_source_rendering(c: &mut Criterion) {
-    let config = Config::default();
-    let theme = ThemeConfig::default();
-    let formatter = FishSourceFormatter;
-
-    c.bench_function("git_status_source_short_branch", |b| {
-        let response = Response::RepositoryStatus(gpy_agent::git::RepositoryStatus {
-            branch: "main".to_owned(),
-            ahead: 2,
-            behind: 1,
-            ahead_capped: false,
-            behind_capped: false,
-            staged: 3,
-            unstaged: 4,
-            untracked: 5,
-            conflicts: 0,
-            state: gpy_agent::git::RepositoryState::Clean,
-            stash_count: 0,
-            detached: false,
-            rebase_progress: None,
-        });
-        let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
-
-        b.iter(|| {
-            let result = formatter.render(black_box(&response), black_box(&ctx));
-            black_box(result)
-        });
-    });
-}
-
 fn bench_language_rendering(c: &mut Criterion) {
     let config = Config::default();
     let theme = ThemeConfig::default();
@@ -187,7 +155,6 @@ fn bench_language_rendering(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_git_status_rendering,
-    bench_fish_source_rendering,
     bench_language_rendering
 );
 criterion_main!(benches);

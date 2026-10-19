@@ -25,6 +25,8 @@ Users want to customize their prompt appearance (colors, icons, segments) withou
 
 ### User Workflow
 
+> **Superseded by [ADR-0007](adr-0007-sigurg-doorbell-notifications.md):** reloads now use a `<pid>.reload` flag plus SIGURG; SIGUSR2 is unused.
+
 ```
 1. User edits ~/.config/gpy/themes/custom.toml
 2. Saves file
@@ -53,6 +55,8 @@ Implement **hot-reload with filesystem watching** for both themes and configurat
 
 ### Reload Flow
 
+> **Superseded by [ADR-0007](adr-0007-sigurg-doorbell-notifications.md):** reloads now use a `<pid>.reload` flag plus SIGURG; SIGUSR2 is unused.
+
 ```rust
 // Theme reload
 File Change → Debouncer (5s) → Load & Validate → Apply → SIGUSR2 to Fish
@@ -66,20 +70,11 @@ File Change → Debouncer (5s) → Load & Validate → Apply → Callback
 ### Theme Reload Implementation
 
 ```rust
-pub fn reload(&self) -> Result<()> {
-    let theme_path = self.theme_path.read().unwrap().clone();
-    let new_theme = Self::load_from_path(&theme_path)?;  // Validate
-
-    let mut guard = self.theme.write().unwrap();
-    *guard = new_theme;  // Atomically replace
-
-    // Notify Fish to reload theme vars
-    if let Some(registry) = &self.client_registry {
-        registry.notify_sigusr2();
-    }
-
-    Ok(())
-}
+// Watcher and poll-fallback reloads go through the agent's callback, which
+// serializes the reload, refreshes caches, then rings the doorbell.
+theme_manager.set_reload_callback(Arc::new(move |reload| {
+    events::handle_theme_reload(&ctx, reload); // calls reload(), then notify_reload() if it changed
+}));
 ```
 
 ### Config Reload with Callback
@@ -99,6 +94,8 @@ if let Some(ref callback) = *reload_callback.lock().unwrap() {
 ## Consequences
 
 ### Positive
+
+> **Superseded by [ADR-0007](adr-0007-sigurg-doorbell-notifications.md):** reloads now use a `<pid>.reload` flag plus SIGURG; SIGUSR2 is unused.
 
 1. **Great UX**: Instant feedback on changes
    - No need to restart agent
@@ -145,6 +142,8 @@ if let Some(ref callback) = *reload_callback.lock().unwrap() {
 
 ### Mitigation Strategies
 
+> **Superseded by [ADR-0007](adr-0007-sigurg-doorbell-notifications.md):** reloads now use a `<pid>.reload` flag plus SIGURG; SIGUSR2 is unused.
+
 1. **Clear Logging**
    - Debug log all reload attempts
    - Log validation errors
@@ -180,6 +179,8 @@ if let Some(ref callback) = *reload_callback.lock().unwrap() {
 - Users want instant feedback
 
 ### SIGUSR2 Choice
+
+> **Superseded by [ADR-0007](adr-0007-sigurg-doorbell-notifications.md):** reloads now use a `<pid>.reload` flag plus SIGURG; SIGUSR2 is unused.
 
 **Why SIGUSR2 (not SIGUSR1)?**
 - SIGUSR1 already used for prompt repaints (git changes)

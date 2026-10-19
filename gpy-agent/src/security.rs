@@ -3,14 +3,12 @@
 #[cfg(unix)]
 use crate::warn_log;
 use crate::{Error, Result};
-use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 /// A path that has passed [`PathValidator`] checks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(transparent)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SafePath(PathBuf);
 
 impl SafePath {
@@ -55,16 +53,6 @@ impl std::ops::Deref for SafePath {
     }
 }
 
-impl<'de> Deserialize<'de> for SafePath {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Self::new(&s).map_err(serde::de::Error::custom)
-    }
-}
-
 impl std::fmt::Display for SafePath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0.display())
@@ -95,15 +83,12 @@ const MAX_PATH_LENGTH: usize = 4096;
 /// Wire-size cap shared by the connection guard and `ipc::protocol`.
 pub(crate) const MAX_MESSAGE_SIZE: usize = 64 * 1024;
 
-const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 5;
 const DEFAULT_MAX_CONNECTIONS_PER_SEC: u32 = 1000;
 const DEFAULT_MAX_CONCURRENT_CONNECTIONS: usize = 200;
 
 /// Security limits for the IPC server.
 #[derive(Clone)]
 pub struct GuardSettings {
-    /// Per-request timeout.
-    pub request_timeout: Duration,
     /// Maximum message size in bytes.
     pub max_message_size: usize,
     /// Probe client PID liveness at route time.
@@ -117,7 +102,6 @@ pub struct GuardSettings {
 impl Default for GuardSettings {
     fn default() -> Self {
         Self {
-            request_timeout: Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS),
             max_message_size: MAX_MESSAGE_SIZE,
             validate_pids: true,
             max_connections_per_second: DEFAULT_MAX_CONNECTIONS_PER_SEC,

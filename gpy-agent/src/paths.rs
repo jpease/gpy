@@ -1,7 +1,9 @@
-//! Pure path resolution for GPY's runtime, cache, and config roots.
+//! Path resolution for GPY's runtime, cache, and config roots and the agent socket. Nothing here creates directories.
 //!
-//! Functions take environment values as parameters (no ambient reads) so the
-//! precedence can be table-tested without `unsafe` `set_var`. The runtime root
+//! The `*_for` resolvers take environment values as parameters (no ambient
+//! reads) so the precedence can be table-tested without `unsafe` `set_var`;
+//! `runtime_dir`, `resolve_socket_path` and `home_dir` are the entry points
+//! that read the environment. The runtime root
 //! stays separate from cache because `XDG_RUNTIME_DIR` is a 0700 tmpfs cleared
 //! at logout. Native Windows gets a cache branch only: IPC is Unix-socket
 //! based, so Windows is CLI-only and shell integration runs under WSL.
@@ -216,6 +218,54 @@ pub fn runtime_root_for(
         return PathBuf::from(home_dir).join(".cache").join("gpy");
     }
     PathBuf::from("/tmp/gpy")
+}
+
+/// Overrides the default agent socket path (`--socket`, tests, fixed deployments).
+pub static SOCKET_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
+
+/// Runtime directory for agent files: `$XDG_RUNTIME_DIR/gpy`, then
+/// `$XDG_CACHE_HOME/gpy`, `$HOME/.cache/gpy`, `/tmp/gpy` (matches the shells).
+/// Never creates it; `gpy-agent start` does (`lifecycle::ensure_runtime_dir`).
+#[must_use]
+pub fn runtime_dir() -> PathBuf {
+    runtime_root_for(
+        root_var("XDG_RUNTIME_DIR").as_deref(),
+        root_var("XDG_CACHE_HOME").as_deref(),
+        home_dir().as_deref(),
+    )
+}
+
+/// Socket path for the agent.
+///
+/// # Errors
+/// Returns an error if the path exceeds the platform's Unix socket path limit.
+pub fn get_socket_path() -> crate::Result<PathBuf> {
+    let path = resolve_socket_path();
+    check_socket_path_len(&absolutize(&path))?;
+    Ok(path)
+}
+
+/// The configured socket path before the length check, for diagnostics.
+#[must_use]
+pub fn resolve_socket_path() -> PathBuf {
+    if let Some(override_path) = SOCKET_OVERRIDE.get() {
+        return override_path.clone();
+    }
+
+    // Empty means unset, matching Bash and Zsh.
+    if let Some(custom_path) = socket_path_override() {
+        return custom_path;
+    }
+
+    runtime_dir().join("gpy.sock")
+}
+
+/// The `GPY_AGENT_SOCKET_PATH` override; empty counts as unset everywhere.
+#[must_use]
+pub fn socket_path_override() -> Option<PathBuf> {
+    std::env::var_os("GPY_AGENT_SOCKET_PATH")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 /// The cache root: `$XDG_CACHE_HOME/gpy`, then `$HOME/.cache/gpy` (Unix) or

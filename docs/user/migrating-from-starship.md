@@ -31,7 +31,7 @@ gpy theme use my-prompt
 The importer (`gpy-agent/src/import/starship/`, exercised by `gpy-agent/tests/starship_import_golden_tests.rs`) translates:
 
 - **Colors** — your active `[palettes.x]` table, plus any colors it finds inline in module `style` fields, become a GPY palette.
-- **Directory, git, duration, and character segments** — `format`/`style` fields map onto GPY's equivalent segment `format` strings, including conditional groups (`(...)`) and style tokens (`bold`, `fg:`, `bg:`, `prev_fg`/`prev_bg`).
+- **Directory, git, duration, and character segments** — `format`/`style` fields map onto GPY's equivalent segment `format` strings, including conditional groups (`(...)`) and style tokens (`bold`, `fg:`, `bg:`, `prev_fg`/`prev_bg`). `prev_fg` is accepted but renders as the terminal default in the live prompt, because only `prev_bg` is transferred; the wizard preview does show it.
 - **Language segments** — `rust`, `python`, `nodejs`, `golang`, `java`, `ruby`, `php`, `swift`, `elixir`, `c`, `cpp`, `csharp`, `erlang`, and others fold into one GPY `language` segment, with per-language colors and attributes preserved.
 - **Clock** — `time_format` maps to GPY's `"12"`/`"24"` setting on a best-effort basis.
 - **Username and hostname** — `format`, `style_root`, `show_always` (username) and `format`, `style`, `ssh_only`, `ssh_symbol`, `trim_at` (hostname) carry over. As in Starship, the hostname's `ssh_symbol` (default `🌐 `) shows only in SSH sessions, even with `ssh_only = false`.

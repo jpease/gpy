@@ -4,7 +4,7 @@ use super::git_handler::publish_and_repaint;
 use super::{HandlerError, RenderDeps, RequestHandler, spawn_detached};
 use crate::git::CompleteStatus;
 use crate::git::cache::GitStatusCache;
-use crate::ipc::{LatencyTracker, Message, Response};
+use crate::ipc::{Message, Response};
 use crate::warn_log;
 use crate::watcher::multi_repo::MultiRepoWatcher;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -12,13 +12,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 /// Shared, lazily-set watcher handle.
 type WatcherRef = Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>;
 
-/// Handler for client lifecycle, status, config reload, latency, ping and shutdown.
+/// Handler for client lifecycle, status, config reload, ping and shutdown.
 pub struct ClientHandler {
     /// Publishing handles; see [`ClientHandler::trigger_initial_scan`].
     render: RenderDeps,
     git_cache: Arc<GitStatusCache>,
     watcher: WatcherRef,
-    latency_tracker: Arc<LatencyTracker>,
 }
 
 impl ClientHandler {
@@ -28,13 +27,11 @@ impl ClientHandler {
         render: RenderDeps,
         git_cache: Arc<GitStatusCache>,
         watcher: WatcherRef,
-        latency_tracker: Arc<LatencyTracker>,
     ) -> Self {
         Self {
             render,
             git_cache,
             watcher,
-            latency_tracker,
         }
     }
 
@@ -70,11 +67,12 @@ impl ClientHandler {
         if let Some(ref path) = sanitized {
             // Best-effort: watcher failures must not break registration; the
             // initial scan still fills the cache and TTL reconciles missed events.
-            if let Some(watcher) = self
+            let watcher = self
                 .watcher
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .as_ref()
+                .clone();
+            if let Some(watcher) = watcher
                 && let Err(e) = watcher.register_client(pid.get(), path)
             {
                 crate::debug::write_debug_log(
@@ -137,12 +135,12 @@ impl ClientHandler {
         pid: crate::config::types::ClientPid,
     ) -> Result<Response, HandlerError> {
         self.render.client_registry.unregister(pid.get());
-        if let Some(watcher) = self
+        let watcher = self
             .watcher
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-        {
+            .clone();
+        if let Some(watcher) = watcher {
             watcher.unregister_client(pid.get());
         }
 
@@ -186,21 +184,6 @@ impl ClientHandler {
                 source: e,
             })?;
         Ok(Response::Ack)
-    }
-
-    /// Handle latency statistics query.
-    ///
-    /// # Errors
-    /// Never fails; matches the dispatch signature.
-    #[expect(clippy::unnecessary_wraps, reason = "dispatch signature")]
-    fn handle_latency_stats(&self) -> Result<Response, HandlerError> {
-        let (min_ms, max_ms, avg_ms, sample_count) = self.latency_tracker.stats();
-        Ok(Response::LatencyStatsResult {
-            min_ms,
-            max_ms,
-            avg_ms,
-            sample_count,
-        })
     }
 
     /// Handle ping request.
@@ -248,7 +231,7 @@ impl ClientHandler {
 
         let job = move || {
             let config = render.config_manager.get();
-
+            let started = std::time::Instant::now();
             match load_repository_state(
                 &scan_path,
                 None,
@@ -256,11 +239,17 @@ impl ClientHandler {
                 config.git.stash_enabled,
             ) {
                 Ok(Some(CompleteStatus { status, files })) => {
-                    // `git_root` is already canonical.
-                    git_cache.set_canonical(&git_root, status.clone(), files);
-
-                    // No request color context, so prev_bg is None.
-                    publish_and_repaint(&render, &git_root, &status, None);
+                    // `git_root` is already canonical. A newer entry was
+                    // already published, so skip republishing older content.
+                    if git_cache.set_canonical_if_not_newer(
+                        &git_root,
+                        started,
+                        status.clone(),
+                        files,
+                    ) {
+                        // No request color context, so prev_bg is None.
+                        publish_and_repaint(&render, &git_root, &status, None);
+                    }
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -291,7 +280,6 @@ impl RequestHandler for ClientHandler {
             Message::WorkspaceUpdate { pid, cwd } => self.handle_workspace_update(*pid, cwd),
             Message::Status => self.handle_status(),
             Message::ConfigReload => self.handle_config_reload(),
-            Message::LatencyStats => self.handle_latency_stats(),
             Message::Ping => self.handle_ping(),
             Message::Shutdown => self.handle_shutdown(),
             _ => Err(HandlerError::UnexpectedMessage {
@@ -355,7 +343,6 @@ mod tests {
             render,
             Arc::new(GitStatusCache::new()),
             Arc::new(Mutex::new(None)),
-            Arc::new(LatencyTracker::new(16)),
         )
     }
 

@@ -11,77 +11,39 @@ use crate::{Result, VERSION};
 #[cfg(unix)]
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 #[cfg(unix)]
 use crate::ipc::socket_identity::SocketIdentity;
 #[cfg(unix)]
 use std::os::unix::net::UnixListener;
 
-/// Overrides the default agent socket path (tests, fixed deployments).
-pub static SOCKET_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
-
-/// Runtime directory for agent files: `$XDG_RUNTIME_DIR/gpy`, then
-/// `$XDG_CACHE_HOME/gpy`, `$HOME/.cache/gpy`, `/tmp/gpy` (matches Fish and server).
+/// Create the default runtime directory when the socket lives there (no
+/// `--socket`/`GPY_AGENT_SOCKET_PATH` override). Only the start path calls this.
 ///
 /// # Errors
 /// Returns an error naming the runtime directory if it cannot be created.
-pub fn get_runtime_dir() -> Result<PathBuf> {
-    let path = crate::paths::runtime_root_for(
-        crate::paths::root_var("XDG_RUNTIME_DIR").as_deref(),
-        crate::paths::root_var("XDG_CACHE_HOME").as_deref(),
-        crate::paths::home_dir().as_deref(),
-    );
+pub fn ensure_runtime_dir() -> Result<()> {
+    if crate::paths::SOCKET_OVERRIDE.get().is_some()
+        || crate::paths::socket_path_override().is_some()
+    {
+        return Ok(());
+    }
+    let path = crate::paths::runtime_dir();
     std::fs::create_dir_all(&path).map_err(|e| crate::Error::Agent {
         message: format!("cannot create runtime directory {}", path.display()),
         source: Some(Box::new(e)),
-    })?;
-    Ok(path)
+    })
 }
 
-/// Socket path for the agent.
-///
-/// # Errors
-/// Returns an error if the runtime directory cannot be created or the path
-/// exceeds the platform's Unix socket path limit.
-pub fn get_socket_path() -> Result<PathBuf> {
-    let path = resolve_socket_path()?;
-    crate::paths::check_socket_path_len(&crate::paths::absolutize(&path))?;
-    Ok(path)
-}
-
-/// The configured socket path before the length check, for diagnostics.
-///
-/// # Errors
-/// Returns an error if the runtime directory cannot be created.
-pub fn resolve_socket_path() -> Result<PathBuf> {
-    if let Some(override_path) = SOCKET_OVERRIDE.get() {
-        return Ok(override_path.clone());
-    }
-
-    // Empty means unset, matching Bash and Zsh.
-    if let Some(custom_path) = socket_path_override() {
-        return Ok(custom_path);
-    }
-
-    Ok(get_runtime_dir()?.join("gpy.sock"))
-}
-
-/// The `GPY_AGENT_SOCKET_PATH` override; empty counts as unset everywhere.
-#[must_use]
-pub fn socket_path_override() -> Option<PathBuf> {
-    std::env::var_os("GPY_AGENT_SOCKET_PATH")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-}
-
-/// How the socket's directory may be repaired, by where [`resolve_socket_path`]
+/// How the socket's directory may be repaired, by where [`crate::paths::resolve_socket_path`]
 /// takes the path from: GPY's own runtime directory is tightened, while a
 /// user-chosen `--socket` or `GPY_AGENT_SOCKET_PATH` directory is never chmod'ed.
 #[cfg(unix)]
 #[must_use]
 pub fn socket_dir_repair() -> crate::ipc::server::DirRepair {
-    if SOCKET_OVERRIDE.get().is_some() || socket_path_override().is_some() {
+    if crate::paths::SOCKET_OVERRIDE.get().is_some()
+        || crate::paths::socket_path_override().is_some()
+    {
         crate::ipc::server::DirRepair::Refuse
     } else {
         crate::ipc::server::DirRepair::Tighten
@@ -90,14 +52,14 @@ pub fn socket_dir_repair() -> crate::ipc::server::DirRepair {
 
 /// Version marker path: `<runtime>/agent.version` for the default socket,
 /// `<socket>.version` for an overridden one so agents never share a marker.
-///
-/// # Errors
-/// Returns an error if the runtime directory cannot be created.
-pub fn get_version_file_path() -> Result<PathBuf> {
-    let socket_override = SOCKET_OVERRIDE.get().cloned().or_else(socket_path_override);
+pub fn get_version_file_path() -> PathBuf {
+    let socket_override = crate::paths::SOCKET_OVERRIDE
+        .get()
+        .cloned()
+        .or_else(crate::paths::socket_path_override);
     match socket_override {
-        Some(socket) => Ok(version_file_for(Some(&socket), Path::new(""))),
-        None => Ok(version_file_for(None, &get_runtime_dir()?)),
+        Some(socket) => version_file_for(Some(&socket), Path::new("")),
+        None => version_file_for(None, &crate::paths::runtime_dir()),
     }
 }
 
@@ -165,7 +127,7 @@ fn should_replace(running: &str, binary: &str) -> bool {
 /// Read the version of the currently running agent.
 #[must_use]
 pub fn read_agent_version() -> Option<String> {
-    let version_path = get_version_file_path().ok()?;
+    let version_path = get_version_file_path();
     std::fs::read_to_string(version_path)
         .ok()
         .map(|s| s.trim().to_owned())
@@ -176,8 +138,7 @@ pub fn read_agent_version() -> Option<String> {
 /// # Errors
 /// Returns an error if the version file cannot be written.
 pub fn write_agent_version() -> Result<()> {
-    let version_path = get_version_file_path()?;
-    std::fs::write(version_path, VERSION)?;
+    std::fs::write(get_version_file_path(), VERSION)?;
     Ok(())
 }
 
@@ -445,7 +406,7 @@ async fn request(
 #[cfg(unix)]
 pub async fn send_shutdown_command() -> Result<()> {
     // Bounded so a wedged agent cannot hang `gpy-agent stop`.
-    let socket_path = get_socket_path()?;
+    let socket_path = crate::paths::get_socket_path()?;
     let response = request(
         &socket_path,
         r#"{"op":"shutdown"}"#,
@@ -491,7 +452,7 @@ pub enum ConfigReload {
 /// that is neither an ack nor an error).
 #[cfg(unix)]
 pub async fn send_config_reload_command() -> Result<ConfigReload> {
-    let socket_path = get_socket_path()?;
+    let socket_path = crate::paths::get_socket_path()?;
     if !socket_path.exists() {
         return Ok(ConfigReload::NotRunning);
     }
@@ -571,7 +532,7 @@ pub async fn query_agent_status() -> Result<AgentStatusInfo> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::UnixStream;
 
-    let socket_path = get_socket_path()?;
+    let socket_path = crate::paths::get_socket_path()?;
     let stream = tokio::time::timeout(Duration::from_secs(2), UnixStream::connect(socket_path))
         .await
         .map_err(|_| Error::ipc("Timeout connecting to agent".to_owned()))?
@@ -823,9 +784,7 @@ fn remove_socket_if_unchanged(socket_path: &Path, identity: SocketIdentity) {
         return;
     }
     let _ = std::fs::remove_file(socket_path);
-    if let Ok(version_path) = get_version_file_path() {
-        let _ = std::fs::remove_file(version_path);
-    }
+    let _ = std::fs::remove_file(get_version_file_path());
 }
 
 /// Evict a wedged or incompatible agent: request shutdown, wait for release,
@@ -1333,7 +1292,6 @@ mod stale_socket_tests {
         let theme = crate::theme::ThemeConfig::default();
         let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
         let rendered = create_formatter(Format::Json)
-            .expect("JSON formatter exists")
             .render(&Response::Ack, &ctx)
             .expect("Ack renders");
 

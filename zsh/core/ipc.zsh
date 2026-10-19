@@ -10,16 +10,25 @@ function __gpy_agent_enabled() {
     [[ "${GPY_AGENT_ENABLED:-1}" == "1" ]]
 }
 
-# Backslashes first so later escapes aren't re-escaped.
+# Escape $2 for a JSON string into variable $1 without a fork. Backslashes
+# first so later escapes aren't re-escaped. Locals are __gpy_ej_* so a
+# caller's OUTVAR is not shadowed.
+function __gpy_escape_json_into() {
+    local __gpy_ej_s=$2
+    __gpy_ej_s=${__gpy_ej_s//\\/\\\\}
+    __gpy_ej_s=${__gpy_ej_s//\"/\\\"}
+    __gpy_ej_s=${__gpy_ej_s//$'\n'/\\n}
+    __gpy_ej_s=${__gpy_ej_s//$'\r'/\\r}
+    __gpy_ej_s=${__gpy_ej_s//$'\t'/\\t}
+    printf -v "$1" '%s' "$__gpy_ej_s"
+}
+
+# Printing form, kept for the vector tests.
 function __gpy_escape_json() {
-    local s=$1
-    s=${s//\\/\\\\}
-    s=${s//\"/\\\"}
-    s=${s//$'\n'/\\n}
-    s=${s//$'\r'/\\r}
-    s=${s//$'\t'/\\t}
+    local __gpy_ej_out
+    __gpy_escape_json_into __gpy_ej_out "$1"
     # -r: echo-style escape handling would collapse the doubled backslashes.
-    print -r -- "$s"
+    print -r -- "$__gpy_ej_out"
 }
 
 # $VIRTUAL_ENV, else $CONDA_PREFIX unless the conda env is `base`.
@@ -32,9 +41,11 @@ function __gpy_forwarded_venv() {
 }
 
 function __gpy_lang_venv_json() {
-    local venv
+    local venv venv_json
     venv="$(__gpy_forwarded_venv)"
-    [[ -n "$venv" ]] && printf ',"virtual_env":"%s"' "$(__gpy_escape_json "$venv")"
+    [[ -n "$venv" ]] || return 0
+    __gpy_escape_json_into venv_json "$venv"
+    printf ',"virtual_env":"%s"' "$venv_json"
     return 0
 }
 
@@ -451,11 +462,12 @@ function __gpy_read_instant_cache() {
 # "true" or "".
 function __gpy_json_flags_tail() {
     local is_last=$1 is_first=$2 prev_bg=$3
-    local tail=""
+    local tail="" prev_bg_json
     [[ "$is_last" == "true" ]] && tail="${tail},\"is_last\":true"
     [[ "$is_first" == "true" ]] && tail="${tail},\"is_first\":true"
     if [[ -n "$prev_bg" ]]; then
-        tail="${tail},\"prev_bg\":\"$(__gpy_escape_json "$prev_bg")\""
+        __gpy_escape_json_into prev_bg_json "$prev_bg"
+        tail="${tail},\"prev_bg\":\"${prev_bg_json}\""
     fi
     printf '%s' "$tail"
 }
@@ -464,7 +476,7 @@ function __gpy_json_flags_tail() {
 function __gpy_build_data_request() {
     local op=$1 cwd=$2 format=${3:-zsh-prompt} is_last=${4:-} prev_bg=${5:-} is_first=${6:-}
     local json_cwd flags_tail venv_json=""
-    json_cwd=$(__gpy_escape_json "$cwd")
+    __gpy_escape_json_into json_cwd "$cwd"
     flags_tail=$(__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg")
     [[ "$op" == "lang" ]] && venv_json="$(__gpy_lang_venv_json)"
     printf '%s' "{\"op\":\"$op\",\"cwd\":\"$json_cwd\",\"format\":\"$format\"${flags_tail}${venv_json}}"
@@ -705,7 +717,7 @@ function __gpy_request_hostname() {
     local is_ssh=${4:-}
 
     local json_hostname flags_tail ssh_json=""
-    json_hostname=$(__gpy_escape_json "$hostname")
+    __gpy_escape_json_into json_hostname "$hostname"
     flags_tail=$(__gpy_json_flags_tail "$is_last" "" "$prev_bg")
     [[ "$is_ssh" == "1" ]] && ssh_json=',"is_ssh":true'
     local request="{\"op\":\"hostname\",\"hostname\":\"${json_hostname}\",\"format\":\"zsh-prompt\"${flags_tail}${ssh_json}}"
@@ -727,7 +739,7 @@ function __gpy_request_username() {
     local prev_bg=${3:-}
 
     local json_username flags_tail
-    json_username=$(__gpy_escape_json "$username")
+    __gpy_escape_json_into json_username "$username"
     flags_tail=$(__gpy_json_flags_tail "$is_last" "" "$prev_bg")
     local request="{\"op\":\"username\",\"username\":\"${json_username}\",\"format\":\"zsh-prompt\"${flags_tail}}"
 
