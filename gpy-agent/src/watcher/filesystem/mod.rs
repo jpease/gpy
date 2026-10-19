@@ -171,26 +171,19 @@ impl FileSystemWatcher {
         let callback_arc = Arc::new(callback);
         let stop_flag_thread = Arc::clone(stop_flag);
         thread::spawn(move || {
-            loop {
+            while let Ok(event) = event_rx.recv() {
                 if stop_flag_thread.load(Ordering::Relaxed) {
                     break;
                 }
-
-                match event_rx.recv_timeout(Duration::from_millis(100)) {
-                    Ok(event) => {
-                        // Arm new directories before any refresh scans them.
-                        track_poll_expansion(&event, &state.backend, &state.registry);
-                        Self::process_event(
-                            &event,
-                            &callback_arc,
-                            &state.registry,
-                            followup.delay,
-                            &followup.schedule,
-                        );
-                    }
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                }
+                // Arm new directories before any refresh scans them.
+                track_poll_expansion(&event, &state.backend, &state.registry);
+                Self::process_event(
+                    &event,
+                    &callback_arc,
+                    &state.registry,
+                    followup.delay,
+                    &followup.schedule,
+                );
             }
         })
     }
@@ -522,7 +515,9 @@ impl FileSystemWatcher {
             .unwrap_or_else(PoisonError::into_inner)
             .watcher = None;
 
-        self.event_tx.take();
+        if let Some(tx) = self.event_tx.take() {
+            let _ = tx.send(Event::new(EventKind::Other));
+        }
 
         // The probe checks `stop_flag` each iteration, so this returns promptly.
         if let Some(handle) = self.probe_handle.take() {

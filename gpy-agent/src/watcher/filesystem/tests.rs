@@ -1819,6 +1819,26 @@ fn poll_fallback_backend_delivers_real_worktree_writes() {
     );
 }
 
+/// `stop` wakes the blocked event thread even though the poll backend keeps a
+/// sender clone alive, so a long poll interval cannot hold the join.
+#[test]
+fn stop_returns_promptly_with_poll_backend() {
+    let (mut watcher, repo, _events) = real_repo_watcher(FallbackPolicy::ForcePoll {
+        poll_interval: Duration::from_secs(60),
+    });
+    watcher.watch(&repo).expect("watch repo");
+
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        watcher.stop();
+        let _ = done_tx.send(());
+    });
+    let stopped = done_rx.recv_timeout(Duration::from_secs(2)).is_ok();
+    let _ = std::fs::remove_dir_all(&repo);
+
+    assert!(stopped, "stop must return within 2s with the poll backend");
+}
+
 /// The poll fallback delivers edits to an existing file, which `PollWatcher`
 /// reports only as `Modify(Metadata(WriteTime))`.
 #[test]
