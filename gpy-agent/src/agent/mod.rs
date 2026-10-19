@@ -511,36 +511,32 @@ impl Agent {
         } = self;
         startup::startup_checks(server.socket_path());
 
-        // Recovery nudge: only the daemon runs it, so each tracked shell is
-        // nudged once to re-register after the socket accepts.
-        #[cfg(unix)]
-        {
-            let socket_path = server.socket_path().to_owned();
-            tokio::spawn(async move {
-                for _ in 0..100_u32 {
-                    if std::os::unix::net::UnixStream::connect(&socket_path).is_ok() {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-                crate::agent::lifecycle::start::notify_existing_shells_of_restart();
-            });
-        }
-
-        // Warm the theme-export cache on a blocking thread after accept begins;
-        // racing requests fall back to `gpy-agent theme export`. If the export
-        // changed, ring tracked shells with `.reload`.
+        // Once the socket accepts, warm the theme-export cache on a blocking
+        // thread (racing requests fall back to `gpy-agent theme export`) and
+        // announce the start to tracked shells: `.reload` if the export
+        // changed, `.reregister` always, one ring each. Only the daemon runs
+        // this, so each tracked shell is announced to once.
         {
             let theme_manager_for_export = Arc::clone(&ctx.theme_manager);
             let config_for_export = ctx.config_manager.get();
             let palette_for_export = ctx.palette_cache.get();
+            #[cfg(unix)]
+            let socket_path = server.socket_path().to_owned();
             tokio::task::spawn_blocking(move || {
                 #[cfg(unix)]
-                lifecycle::start::warm_theme_export_cache(
-                    &theme_manager_for_export,
-                    &config_for_export,
-                    &palette_for_export,
-                );
+                {
+                    for _ in 0..100_u32 {
+                        if std::os::unix::net::UnixStream::connect(&socket_path).is_ok() {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    lifecycle::start::announce_start_to_tracked_shells(
+                        &theme_manager_for_export,
+                        &config_for_export,
+                        &palette_for_export,
+                    );
+                }
                 #[cfg(not(unix))]
                 if let Err(e) = crate::cache::write_theme_export_cache(
                     &theme_manager_for_export,
