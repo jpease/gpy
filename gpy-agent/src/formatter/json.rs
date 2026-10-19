@@ -3,7 +3,7 @@
 use crate::Result;
 use crate::formatter::{Formatter, RenderContext};
 use crate::ipc::Response;
-use serde_json::{Map, Value};
+use serde_json::json;
 
 /// Serializes responses to JSON.
 pub struct JsonFormatter;
@@ -15,75 +15,24 @@ impl Formatter for JsonFormatter {
             Response::RepositoryStatus(status) => serde_json::to_value(status).map_err(|e| {
                 crate::Error::ipc(format!("failed to serialize repository status: {e}"))
             })?,
-            Response::Language { languages } => {
-                let json_langs: Vec<Value> = languages
-                    .iter()
-                    .map(|lang| {
-                        let mut map = Map::new();
-                        map.insert("name".to_owned(), Value::String(lang.name.clone()));
-                        map.insert(
-                            "version".to_owned(),
-                            lang.version
-                                .as_ref()
-                                .map_or(Value::Null, |v| Value::String(v.clone())),
-                        );
-                        map.insert("color".to_owned(), Value::String(lang.color.to_string()));
-                        Value::Object(map)
-                    })
-                    .collect();
-
-                let mut outer = Map::new();
-                outer.insert("languages".to_owned(), Value::Array(json_langs));
-                Value::Object(outer)
-            }
-            Response::Ack => {
-                let mut map = Map::new();
-                map.insert("status".to_owned(), Value::String("ok".to_owned()));
-                Value::Object(map)
-            }
+            Response::Language { languages } => json!({
+                "languages": serde_json::to_value(languages).map_err(|e| {
+                    crate::Error::ipc(format!("failed to serialize languages: {e}"))
+                })?,
+            }),
+            Response::Ack => json!({"status": "ok"}),
             // Wire shape is `{"AgentStatus":{…}}`, the same in every format.
             Response::AgentStatus { .. } => serde_json::to_value(response)
                 .map_err(|e| crate::Error::ipc(format!("failed to serialize agent status: {e}")))?,
-            Response::Directory { cwd, read_only } => {
-                let mut map = Map::new();
-                map.insert("cwd".to_owned(), Value::String(cwd.clone()));
-                map.insert("read_only".to_owned(), Value::Bool(*read_only));
-                Value::Object(map)
-            }
-            Response::Clock { shell } => {
-                let mut map = Map::new();
-                map.insert("shell".to_owned(), Value::String(shell.as_str().to_owned()));
-                Value::Object(map)
-            }
-            Response::Duration { duration_ms } => {
-                let mut map = Map::new();
-                map.insert(
-                    "duration_ms".to_owned(),
-                    Value::Number((*duration_ms).into()),
-                );
-                Value::Object(map)
-            }
-            Response::Character { success } => {
-                let mut map = Map::new();
-                map.insert("success".to_owned(), Value::Bool(*success));
-                Value::Object(map)
-            }
+            Response::Directory { cwd, read_only } => json!({"cwd": cwd, "read_only": read_only}),
+            Response::Clock { shell } => json!({"shell": shell.as_str()}),
+            Response::Duration { duration_ms } => json!({"duration_ms": duration_ms}),
+            Response::Character { success } => json!({"success": success}),
             Response::Hostname { hostname, is_ssh } => {
-                let mut map = Map::new();
-                map.insert("hostname".to_owned(), Value::String(hostname.clone()));
-                map.insert("is_ssh".to_owned(), Value::Bool(*is_ssh));
-                Value::Object(map)
+                json!({"hostname": hostname, "is_ssh": is_ssh})
             }
-            Response::Username { username } => {
-                let mut map = Map::new();
-                map.insert("username".to_owned(), Value::String(username.clone()));
-                Value::Object(map)
-            }
-            Response::Error { message } => {
-                let mut map = Map::new();
-                map.insert("error".to_owned(), Value::String(message.clone()));
-                Value::Object(map)
-            }
+            Response::Username { username } => json!({"username": username}),
+            Response::Error { message } => json!({"error": message}),
         };
 
         serde_json::to_string(&json_value)
@@ -221,5 +170,109 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&output).expect("invalid JSON output");
 
         assert_eq!(parsed["status"], "ok");
+    }
+
+    fn pinned_cases() -> Vec<(Response, &'static str)> {
+        vec![
+            (
+                Response::RepositoryStatus(crate::git::RepositoryStatus {
+                    branch: "main".to_owned(),
+                    ahead: 2,
+                    behind: 1,
+                    ahead_capped: false,
+                    behind_capped: false,
+                    staged: 3,
+                    unstaged: 4,
+                    untracked: 5,
+                    conflicts: 0,
+                    state: crate::git::RepositoryState::Clean,
+                    stash_count: 0,
+                    detached: false,
+                    rebase_progress: None,
+                }),
+                r#"{"ahead":2,"ahead_capped":false,"behind":1,"behind_capped":false,"branch":"main","conflicts":0,"detached":false,"rebase_progress":null,"staged":3,"stash_count":0,"state":"clean","unstaged":4,"untracked":5}"#,
+            ),
+            (
+                Response::Language {
+                    languages: vec![
+                        crate::ipc::LanguageInfo {
+                            name: "Rust".to_owned(),
+                            version: Some("1.75.0".to_owned()),
+                            color: crate::config::types::ColorSpec::new("#dea584").unwrap(),
+                        },
+                        crate::ipc::LanguageInfo {
+                            name: "Python".to_owned(),
+                            version: None,
+                            color: crate::config::types::ColorSpec::new("#3776ab").unwrap(),
+                        },
+                    ],
+                },
+                r##"{"languages":[{"color":"#dea584","name":"Rust","version":"1.75.0"},{"color":"#3776ab","name":"Python","version":null}]}"##,
+            ),
+            (Response::Ack, r#"{"status":"ok"}"#),
+            (
+                Response::AgentStatus {
+                    version: "1.0.0".to_owned(),
+                    protocol_version: 2,
+                    watched_repos: 1,
+                    registered_clients: 2,
+                    cache_entries: 3,
+                },
+                r#"{"AgentStatus":{"cache_entries":3,"protocol_version":2,"registered_clients":2,"version":"1.0.0","watched_repos":1}}"#,
+            ),
+            (
+                Response::Directory {
+                    cwd: "~/src".to_owned(),
+                    read_only: true,
+                },
+                r#"{"cwd":"~/src","read_only":true}"#,
+            ),
+            (
+                Response::Clock {
+                    shell: crate::shell::Shell::Zsh,
+                },
+                r#"{"shell":"zsh"}"#,
+            ),
+            (
+                Response::Duration { duration_ms: 1500 },
+                r#"{"duration_ms":1500}"#,
+            ),
+            (
+                Response::Character { success: false },
+                r#"{"success":false}"#,
+            ),
+            (
+                Response::Hostname {
+                    hostname: "box".to_owned(),
+                    is_ssh: true,
+                },
+                r#"{"hostname":"box","is_ssh":true}"#,
+            ),
+            (
+                Response::Username {
+                    username: "me".to_owned(),
+                },
+                r#"{"username":"me"}"#,
+            ),
+            (
+                Response::Error {
+                    message: r#"boom "q""#.to_owned(),
+                },
+                r#"{"error":"boom \"q\""}"#,
+            ),
+        ]
+    }
+
+    /// Byte-exact output for every `Response` variant; extend when a variant is added.
+    #[test]
+    fn json_formatter_pins_every_variant() {
+        let (config, theme) = create_test_context();
+        let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
+        for (response, expected) in pinned_cases() {
+            let output = JsonFormatter
+                .render(&response, &ctx)
+                .expect("render failed");
+            assert_eq!(output, expected, "{response:?}");
+        }
     }
 }
