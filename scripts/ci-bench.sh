@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end prompt-latency and agent-memory benchmark (real fish_prompt + live daemon).
+# End-to-end prompt-latency and agent-memory benchmark (real fish_prompt, bash PS1 and zsh PROMPT renders + live daemon).
 # Usage: ./scripts/ci-bench.sh [--ci]   # --ci (or CI=true): budget overages fail
 #
 # A broken measurement (non-zero exit, empty output, unparseable timing, zero
@@ -148,6 +148,71 @@ prompt_loop_command() {
     "$(prompt_setup "$target")" "$iters" "${prep:+$prep; }"
 }
 
+# The first bash >= 4.4 (for ${PS1@P}) among $GPY_BENCH_BASH, Homebrew's and
+# the PATH's; empty when none qualifies.
+find_bench_bash() {
+  local c
+  for c in "${GPY_BENCH_BASH:-}" "$(brew --prefix 2>/dev/null)/bin/bash" "$(command -v bash)"; do
+    [[ -n "$c" && -x "$c" ]] || continue
+    # shellcheck disable=SC2016
+    if "$c" -c '(( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) ))' 2>/dev/null; then
+      printf '%s\n' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# bench_shell_command BODY SHELL [ARG...]: SHELL ARG... -c BODY against the
+# bench daemon, with this checkout's agent first on PATH. The env prefix is
+# per command so the Fish scenarios keep their own environment. hyperfine
+# runs it under `sh`; %q output is POSIX-safe for these paths.
+bench_shell_command() {
+  local body="$1"; shift
+  local argv="" a
+  for a in "$@"; do argv+="$(printf '%q ' "$a")"; done
+  printf 'env PATH=%q XDG_CACHE_HOME=%q GPY_AGENT_SOCKET_PATH=%q %s-c %q' \
+    "$AGENT_DIR/target/release:$PATH" "$BENCH_CACHE" "$BENCH_SOCKET" "$argv" "$body"
+}
+
+# Bash and Zsh: cd into $PROJECT_ROOT (the tree the Fish scenarios render),
+# source the integration once, then render RENDER_ITERS times.
+scenario_shell_prompts() {
+  local cd_src bash_bin body
+  bash_bin="$(find_bench_bash)"
+  if [[ -z "$bash_bin" ]]; then
+    if [[ "$CI_MODE" == true ]]; then
+      record_hard "bash prompt: bash >= 4.4 not found"
+    else
+      warn "bash prompt: bash >= 4.4 not found; skipping"
+    fi
+  else
+    cd_src="cd $(printf %q "$PROJECT_ROOT") && source $(printf %q "$PROJECT_ROOT/bash/gpy.bash") && "
+    # shellcheck disable=SC2016
+    body="$cd_src"'for i in $(seq '"$RENDER_ITERS"'); do __gpy_precmd; : "${PS1@P}"; done'
+    # shellcheck disable=SC2016
+    run_latency "bash prompt" "$(budget_ms prompt_render_bash)" \
+      "$(bench_shell_command "$body" "$bash_bin" --noprofile --norc)" "$RENDER_ITERS" \
+      "$(bench_shell_command "$cd_src"'__gpy_precmd; printf %s "${PS1@P}"' "$bash_bin" --noprofile --norc)"
+  fi
+
+  if ! command -v zsh >/dev/null 2>&1; then
+    if [[ "$CI_MODE" == true ]]; then
+      record_hard "zsh prompt: zsh not found"
+    else
+      warn "zsh prompt: zsh not found; skipping"
+    fi
+  else
+    cd_src="cd $(printf %q "$PROJECT_ROOT") && source $(printf %q "$PROJECT_ROOT/zsh/gpy.zsh") && "
+    # shellcheck disable=SC2016
+    body="$cd_src"'for i in {1..'"$RENDER_ITERS"'}; do for f in $precmd_functions; do $f; done; : ${(%)PROMPT}; done'
+    # shellcheck disable=SC2016
+    run_latency "zsh prompt" "$(budget_ms prompt_render_zsh)" \
+      "$(bench_shell_command "$body" zsh -f)" "$RENDER_ITERS" \
+      "$(bench_shell_command "$cd_src"'for f in $precmd_functions; do $f; done; print -P "$PROMPT"' zsh -f)"
+  fi
+}
+
 # Exit 0 only if CMD succeeds with non-empty output.
 preflight_render() {
   local cmd="$1" out rc
@@ -271,6 +336,8 @@ scenario_prompt_latency() {
     # Stale: cache aged before every render (serve-stale path).
     eval "$preflight" >/dev/null 2>&1
     run_latency "stale cache" "$(budget_ms prompt_render_stale)" "$stale" "$RENDER_ITERS" "$preflight"
+
+    scenario_shell_prompts
   else
     record_hard "warm/cold/stale scenarios: daemon failed to start"
   fi

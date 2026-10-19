@@ -102,7 +102,7 @@ Optional:
 ## End-to-End Prompt & Memory Benchmark
 
 `scripts/ci-bench.sh` measures the *user-visible* path: the real Fish
-`fish_prompt` implementation and the live `gpy-agent` daemon. It complements the
+`fish_prompt`, Bash `PS1` and Zsh `PROMPT` renders and the live `gpy-agent` daemon. It complements the
 Rust micro-benchmarks in `scripts/bench.sh` and is run automatically as part of
 `just bench-ci`.
 
@@ -114,6 +114,8 @@ Rust micro-benchmarks in `scripts/bench.sh` and is run automatically as part of
 | cold cache          | Instant cache cleared before every render          | `prompt_render_cold`                            |
 | stale cache         | Instant cache aged (serve-stale path)              | `prompt_render_stale`                           |
 | agent unavailable   | Daemon stopped (graceful fallback)                 | `prompt_render_degraded`                        |
+| bash prompt | Agent up; bash/gpy.bash sourced once, __gpy_precmd + ${PS1@P} per render | `prompt_render_bash` |
+| zsh prompt | Agent up; zsh/gpy.zsh sourced once, precmd_functions + ${(%)PROMPT} per render | `prompt_render_zsh` |
 | large repository    | Cold git scan on a 1,500-file synthetic repo       | `git_status_cold`                               |
 | startup RSS         | Daemon RSS right after it becomes responsive       | `memory_usage`                                  |
 | long-running RSS    | Peak daemon RSS under sustained prompt load        | `memory_long_running`                           |
