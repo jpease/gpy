@@ -57,7 +57,9 @@ jobs:
 
       - name: Rust lib tests
         working-directory: gpy-agent
-        run: cargo test --locked --lib --verbose
+        # The ci-windows profile (.config/nextest.toml) kills and names any
+        # test still running after 5 minutes, instead of the job timing out.
+        run: cargo nextest run --locked --profile ci-windows --lib --no-fail-fast --no-tests=fail
 
       - name: CLI integration tests (the targets behind the CLI-only claim)
         if: ${{ !cancelled() }}
@@ -65,7 +67,7 @@ jobs:
         # Runs even when the lib step failed. Each target uses an isolated
         # HOME/XDG_* and no running agent.
         run: >-
-          cargo nextest run --locked --no-fail-fast --no-tests=fail --features test-support
+          cargo nextest run --locked --profile ci-windows --no-fail-fast --no-tests=fail --features test-support
           --test gpy_cli_tests
           --test cli_config_mutation_tests
           --test theme_import_tests
