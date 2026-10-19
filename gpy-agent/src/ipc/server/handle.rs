@@ -7,6 +7,9 @@ use super::connection::ConnectionHandler;
 #[cfg(unix)]
 use super::socket_dir::{DirRepair, secure_socket_dir};
 #[cfg(unix)]
+use crate::Error;
+use crate::Result;
+#[cfg(unix)]
 use crate::debug_log;
 #[cfg(unix)]
 use crate::ipc::Response;
@@ -21,7 +24,6 @@ use crate::security::{GuardSettings, RateLimiter};
 use crate::theme::ThemeManager;
 #[cfg(unix)]
 use crate::warn_log;
-use crate::{Error, Result};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 #[cfg(unix)]
