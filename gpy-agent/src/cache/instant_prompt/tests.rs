@@ -178,6 +178,34 @@ fn last_written_evicts_least_recently_written() {
     assert!(write(&newest, "d"), "changed content is written");
 }
 
+#[test]
+fn known_contexts_evicts_least_recently_used_key() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    for i in 0..INSTANT_PROMPT_LAST_WRITTEN_CAPACITY {
+        cache.known_contexts(&format!("k{i:04}"), Some("red"));
+    }
+    // Using the oldest key makes k0001 the least recently used.
+    cache.known_contexts("k0000", Some("blue"));
+    cache.known_contexts("new", None);
+
+    assert_eq!(
+        cache.known_contexts("k0000", Some("red")),
+        vec![Some("red".to_owned()), Some("blue".to_owned())],
+        "the recently used key keeps its contexts"
+    );
+    assert_eq!(
+        cache.known_contexts("k1023", Some("green")),
+        vec![Some("red".to_owned()), Some("green".to_owned())],
+        "the newest key keeps its contexts"
+    );
+    assert_eq!(
+        cache.known_contexts("k0001", Some("green")),
+        vec![Some("green".to_owned())],
+        "the least recently used key was evicted"
+    );
+}
+
 /// Permission bits of `path`.
 #[cfg(unix)]
 fn mode_of(path: &Path) -> u32 {
