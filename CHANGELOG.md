@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rendering strips them from literal text.
 - FIFOs and other special files in a project no longer hang language
   detection or version reading; they are refused when opened, not read.
+- Instant-prompt cache files and `theme-export.{fish,bash,zsh}` are now
+  created owner-only (`0600`), in a `0700` `instant-prompts` directory.
 
 ### Changed
 

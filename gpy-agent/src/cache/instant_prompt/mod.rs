@@ -18,6 +18,9 @@ use crate::template::{Color, Palette, parse_color};
 use crate::theme::ThemeConfig;
 use crate::{Error, Result};
 use std::collections::{HashMap, HashSet};
+use std::io::Write as _;
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError, RwLock};
@@ -29,7 +32,53 @@ pub(super) fn next_tmp_suffix() -> u64 {
     COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Write `content` to `dir/name` atomically via a dot-prefixed temp file + rename.
+/// Create `path` owner-only (`0700`); missing parents get the default mode.
+/// An existing real directory is restricted too; a symlink is left alone.
+/// # Errors
+/// Returns an error if a directory cannot be created or inspected.
+#[cfg(unix)]
+fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    match std::fs::DirBuilder::new().mode(0o700).create(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => return Err(e),
+        Ok(()) | Err(_) => {}
+    }
+    if std::fs::symlink_metadata(path)?.file_type().is_dir()
+        && let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+    {
+        crate::warn_log!("cache", "cannot restrict {}: {e}", path.display());
+    }
+    Ok(())
+}
+
+/// Create `path` and its parents.
+/// # Errors
+/// Returns an error if a directory cannot be created.
+#[cfg(not(unix))]
+fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(path)
+}
+
+/// Create the temp file `path` owner-only (`0600` on unix), replacing a
+/// leftover from an earlier attempt once.
+fn create_temp_file(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    match options.open(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let _ = std::fs::remove_file(path);
+            options.open(path)
+        }
+        result => result,
+    }
+}
+
+/// Write `content` to `dir/name` atomically via a dot-prefixed, owner-only
+/// temp file + rename.
 /// # Errors
 /// Returns an error if the write or rename fails; the temp file is removed best-effort.
 pub(super) fn write_atomic(dir: &Path, name: &str, content: &str) -> Result<()> {
@@ -37,7 +86,9 @@ pub(super) fn write_atomic(dir: &Path, name: &str, content: &str) -> Result<()> 
     // Independent of `name`: deriving it overflowed NAME_MAX for long names.
     let tmp_path = dir.join(format!(".tmp-{}-{}", std::process::id(), next_tmp_suffix()));
 
-    if let Err(e) = std::fs::write(&tmp_path, content) {
+    if let Err(e) =
+        create_temp_file(&tmp_path).and_then(|mut file| file.write_all(content.as_bytes()))
+    {
         let _ = std::fs::remove_file(&tmp_path);
         return Err(e.into());
     }
@@ -115,7 +166,7 @@ impl InstantPromptCache {
     /// Returns an error naming the cache directory if it cannot be created.
     pub fn new() -> Result<Self> {
         let cache_dir = get_instant_cache_dir()?;
-        std::fs::create_dir_all(&cache_dir).map_err(|e| Error::Agent {
+        create_private_dir(&cache_dir).map_err(|e| Error::Agent {
             message: format!(
                 "cannot create instant-prompt cache directory {}",
                 cache_dir.display()
@@ -164,7 +215,7 @@ impl InstantPromptCache {
     /// Returns an error if the cache directory cannot be created.
     #[doc(hidden)]
     pub(crate) fn new_in_dir(cache_dir: PathBuf) -> Result<Self> {
-        std::fs::create_dir_all(&cache_dir)?;
+        create_private_dir(&cache_dir)?;
         Ok(Self {
             cache_dir,
             last_written: Mutex::new(LastWritten {
@@ -486,6 +537,7 @@ impl InstantPromptCache {
         // under the same guard. Not done up front to avoid a `stat` per write.
         match write_atomic(&dir, &file_name, content) {
             Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                create_private_dir(&self.cache_dir)?;
                 std::fs::create_dir_all(&dir)?;
                 write_atomic(&dir, &file_name, content)?;
             }
