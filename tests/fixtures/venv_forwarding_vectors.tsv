@@ -9,8 +9,8 @@
 # forwarded. Read by ALL FOUR implementations so they cannot drift apart:
 #   - Rust:  resolve_python_venv precedence for the forwarded value
 #            (gpy-agent/src/language/venv.rs, venv_forwarding_shared_vectors)
-#   - Bash:  __gpy_forwarded_venv (tests/bash/venv_forwarding_vectors.test.bash)
-#   - Zsh:   __gpy_forwarded_venv (tests/zsh/venv_forwarding_vectors.test.zsh)
+#   - Bash:  __gpy_forwarded_venv_into (tests/bash/venv_forwarding_vectors.test.bash)
+#   - Zsh:   __gpy_forwarded_venv_into (tests/zsh/venv_forwarding_vectors.test.zsh)
 #   - Fish:  __gpy_forwarded_venv (tests/fish/venv_forwarding_vectors.test.fish)
 #
 # Format: one vector per line, tab-separated:

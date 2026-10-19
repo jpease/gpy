@@ -2,7 +2,7 @@
 # tests/zsh/venv_forwarding_vectors.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Zsh's __gpy_forwarded_venv picks the same `virtual_env` value as every
+# Zsh's __gpy_forwarded_venv_into picks the same `virtual_env` value as every
 # row of tests/fixtures/venv_forwarding_vectors.tsv (also read by the Rust and
 # Bash/Fish tests). See the fixture's header for the format.
 
@@ -34,8 +34,8 @@ while IFS=$'\t' read -r venv_col prefix_col env_col expected_col _rest; do
     expected=$(col "$expected_col")
 
     # Empty and unset must behave alike.
-    actual=$(export VIRTUAL_ENV="$venv" CONDA_PREFIX="$prefix" CONDA_DEFAULT_ENV="$conda_env"; __gpy_forwarded_venv)
-    unset_actual=$(unset VIRTUAL_ENV CONDA_PREFIX CONDA_DEFAULT_ENV; [[ -n "$venv" ]] && export VIRTUAL_ENV="$venv"; [[ -n "$prefix" ]] && export CONDA_PREFIX="$prefix"; [[ -n "$conda_env" ]] && export CONDA_DEFAULT_ENV="$conda_env"; __gpy_forwarded_venv)
+    actual=$(export VIRTUAL_ENV="$venv" CONDA_PREFIX="$prefix" CONDA_DEFAULT_ENV="$conda_env"; __gpy_forwarded_venv_into out; printf '%s' "$out")
+    unset_actual=$(unset VIRTUAL_ENV CONDA_PREFIX CONDA_DEFAULT_ENV; [[ -n "$venv" ]] && export VIRTUAL_ENV="$venv"; [[ -n "$prefix" ]] && export CONDA_PREFIX="$prefix"; [[ -n "$conda_env" ]] && export CONDA_DEFAULT_ENV="$conda_env"; __gpy_forwarded_venv_into out; printf '%s' "$out")
     for got in "$actual" "$unset_actual"; do
         if [[ "$got" == "$expected" ]]; then
             print -r -- "PASS: vector $vector_count ($venv_col|$prefix_col|$env_col)"

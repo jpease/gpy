@@ -53,7 +53,7 @@ GPY is a **two-process system** for creating fast, live-updating shell prompts a
 ```
 1. segment_git_render → __gpy_request git $PWD
      Fish:     __gpy_build_data_payload … ansi → __gpy_ipc_send
-     Zsh/Bash: __gpy_build_data_request … zsh-prompt|bash-prompt → __gpy_send_json
+     Zsh/Bash: __gpy_build_data_request_into … zsh-prompt|bash-prompt → __gpy_send_json
 2. {"op":"git","cwd":…,"format":"ansi"}\n over the Unix socket → gpy-agent
 3. agent reuses a fresh cache entry, or runs git status --porcelain=v2
 4. agent renders with the theme in the requested format
