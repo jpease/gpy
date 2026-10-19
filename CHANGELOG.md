@@ -81,6 +81,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bash: theme variables (`__gpy_*`, `__color_*`, `__icon_*`, `__prompt_*`,
   `__enabled_segments`) are plain shell variables, no longer exported to every
   child process. `GPY_*` settings are still exported.
+- `gpy start`, `stop`, `restart`, `status` and `doctor` run the `gpy-agent`
+  installed beside `gpy`, falling back to `PATH` only when there is none, so an
+  older `gpy-agent` earlier on `PATH` is no longer used. `gpy doctor` shows
+  which agent binary it checked.
 
 ### Removed
 

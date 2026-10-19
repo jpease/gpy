@@ -225,9 +225,26 @@ fn doctor_accepts_agent_disabled_via_config() {
     assert!(
         doctor
             .stdout
-            .contains("Checking gpy-agent binary... ok: Found in PATH"),
+            .contains("Checking gpy-agent binary... ok: Found ("),
         "the working gpy-agent must pass the binary check: {doctor:?}"
     );
+    let sibling = Path::new(env!("CARGO_BIN_EXE_gpy")).with_file_name("gpy-agent");
+    assert!(
+        doctor
+            .stdout
+            .contains(&format!("Found ({})", sibling.display())),
+        "{doctor:?}"
+    );
+}
+
+/// `gpy` copied alone into a fresh directory: no sibling `gpy-agent`, so it
+/// must find the agent on `PATH`.
+fn lone_gpy(env: &CliTestEnv) -> PathBuf {
+    let dir = env.root().join("lone-gpy");
+    std::fs::create_dir_all(&dir).expect("create lone gpy dir");
+    let gpy = dir.join("gpy");
+    std::fs::copy(env!("CARGO_BIN_EXE_gpy"), &gpy).expect("copy gpy");
+    gpy
 }
 
 /// `gpy doctor` with the agent disabled (so only the binary check can fail)
@@ -239,7 +256,7 @@ fn doctor_with_agent_path(sandbox: &AgentSandbox, bin_dir: &Path) -> CliCommandR
         .expect("write config");
     sandbox
         .env
-        .run_gpy_with_env(&["doctor"], &[("PATH", bin_dir)])
+        .run_program_with_env(&lone_gpy(&sandbox.env), &["doctor"], &[("PATH", bin_dir)])
         .expect("run gpy doctor")
 }
 
@@ -934,10 +951,11 @@ fn gpy_lifecycle_fails_clearly_when_gpy_agent_missing() {
     let empty_path = env.root().join("empty-path");
     std::fs::create_dir_all(&empty_path).expect("create empty PATH dir");
     let empty = empty_path.to_string_lossy().into_owned();
+    let gpy = lone_gpy(&env);
 
     for command in ["start", "stop", "restart", "status"] {
         let result = env
-            .run_gpy_with_env(&[command], &[("PATH", empty.as_str())])
+            .run_program_with_env(&gpy, &[command], &[("PATH", empty.as_str())])
             .expect("spawn gpy");
         assert_eq!(result.exit_code, 1_i32, "gpy {command}: {result:?}");
         assert!(

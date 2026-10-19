@@ -1,7 +1,7 @@
-//! Config load/save and agent reload helpers shared by CLI commands.
+//! Config load/save, agent binary lookup and agent reload helpers shared by CLI commands.
 
 use crate::{Error, Result, config};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The config path CLI commands read and write: the highest-priority existing
 /// config file, else the highest-priority candidate, so a new file is never
@@ -61,6 +61,23 @@ pub fn read_config() -> Result<config::Config> {
     load_active_config(&path)
 }
 
+/// The `gpy-agent` installed beside this `gpy`, else `gpy-agent` from `PATH`
+/// (split installs).
+#[must_use]
+pub fn agent_binary() -> PathBuf {
+    std::env::current_exe().map_or_else(
+        |_| PathBuf::from("gpy-agent"),
+        |exe| agent_binary_beside(&exe),
+    )
+}
+
+fn agent_binary_beside(exe: &Path) -> PathBuf {
+    exe.parent()
+        .map(|dir| dir.join(format!("gpy-agent{}", std::env::consts::EXE_SUFFIX)))
+        .filter(|sibling| sibling.is_file())
+        .unwrap_or_else(|| PathBuf::from("gpy-agent"))
+}
+
 /// Printed when the running agent did not confirm a reload.
 const NOT_RELOADED_NOTICE: &str =
     "Agent not reloaded; the new config applies the next time it starts.";
@@ -91,4 +108,30 @@ pub fn reload_agent_and_notify() {
 #[cfg(not(unix))]
 pub fn reload_agent_and_notify() {
     crate::commands::output::warn(NOT_RELOADED_NOTICE);
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn agent_binary_falls_back_to_path_without_a_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("gpy");
+        std::fs::write(&exe, "").unwrap();
+        assert_eq!(agent_binary_beside(&exe), PathBuf::from("gpy-agent"));
+    }
+
+    #[test]
+    fn agent_binary_prefers_the_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("gpy");
+        let sibling = dir
+            .path()
+            .join(format!("gpy-agent{}", std::env::consts::EXE_SUFFIX));
+        std::fs::write(&exe, "").unwrap();
+        std::fs::write(&sibling, "").unwrap();
+        assert_eq!(agent_binary_beside(&exe), sibling);
+    }
 }

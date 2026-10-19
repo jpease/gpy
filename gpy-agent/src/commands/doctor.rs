@@ -1,5 +1,6 @@
 //! `gpy doctor`: agent, config, theme, segment, plugin and binary checks.
 
+use super::utils::agent_binary;
 use crate::commands::output::{self, Status};
 use crate::commands::theme::ThemeCheckError;
 use crate::plugin::discover_plugins;
@@ -346,14 +347,16 @@ fn print_suspect_patterns(segment: &str, content: &str) {
 fn check_binaries() -> bool {
     println!("[System]");
     print!("  Checking gpy-agent binary... ");
-    match Command::new("gpy-agent").arg("--version").output() {
+    let agent = agent_binary();
+    match Command::new(&agent).arg("--version").output() {
         Ok(probe) if probe.status.success() => {
-            output::ok("Found in PATH");
+            output::ok(format_args!("Found ({})", agent.display()));
             true
         }
         Ok(probe) => {
             output::fail(format_args!(
-                "Found in PATH, but `gpy-agent --version` failed ({})",
+                "Found ({}), but `gpy-agent --version` failed ({})",
+                agent.display(),
                 probe.status
             ));
             let stderr = String::from_utf8_lossy(&probe.stderr);
@@ -385,7 +388,7 @@ fn check_binaries() -> bool {
 /// Whether a live agent answered `gpy-agent status`. The report line is
 /// checked too: older agents exit 0 even when stopped.
 fn check_agent_running() -> bool {
-    match Command::new("gpy-agent").arg("status").output() {
+    match Command::new(agent_binary()).arg("status").output() {
         Ok(output) => {
             output.status.success()
                 && String::from_utf8_lossy(&output.stdout).contains(AGENT_RESPONDING_LINE)

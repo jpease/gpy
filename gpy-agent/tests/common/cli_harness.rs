@@ -169,6 +169,20 @@ impl CliTestEnv {
         self.run_command_with_env(Path::new(env!("CARGO_BIN_EXE_gpy")), args, envs)
     }
 
+    /// Run `program` (e.g. a relocated `gpy`) with the harness environment plus `envs`.
+    pub fn run_program_with_env<K, V>(
+        &self,
+        program: &Path,
+        args: &[&str],
+        envs: &[(K, V)],
+    ) -> io::Result<CliCommandResult>
+    where
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        self.run_command_with_env(program, args, envs)
+    }
+
     pub fn run_gpy_agent(&self, args: &[&str]) -> io::Result<CliCommandResult> {
         self.run_command(Path::new(env!("CARGO_BIN_EXE_gpy-agent")), args)
     }
