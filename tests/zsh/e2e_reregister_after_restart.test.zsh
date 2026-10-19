@@ -11,7 +11,9 @@
 # receiving agent notifications for the rest of its life after any restart.
 # With a client registered and idle (no keystrokes from here on):
 #   (a) `gpy-agent stop` then `gpy-agent start` on the same socket leaves the
-#       client registered again within 5 s;
+#       client registered again within 5 s, and the restarted agent's config
+#       (a different directory display) reaches the prompt: the shell drops
+#       its memoized directory render when it re-registers;
 #   (b) a tracked-file edit then repaints the idle prompt with no keystroke
 #       (the shell is a live client of the new agent);
 #   (c) the shell's PID file exists under the runtime root's shells/ directory
@@ -23,6 +25,7 @@ emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 shell_e2e_init "$ROOT"
 
 shell_e2e_text_config '"directory", "git"'
+shell_e2e_truncated_directory_config OLD/
 shell_e2e_start_agent || exit 1
 export GPY_AGENT_ENABLED=1
 export GPY_AGENT_SUPERVISOR_ENABLED=1
@@ -47,6 +50,9 @@ scans_before="$(grep -c "Caching status for .*$(basename "$SHELL_E2E_REPO")" "$G
 : "${scans_before:=0}"
 shell_e2e_stop_agent
 [ -S "$GPY_AGENT_SOCKET_PATH" ] && fail "socket still present after stop"
+shell_e2e_text_config '"directory", "git"'
+shell_e2e_truncated_directory_config TRUNC/
+off_restart="$(shell_e2e_size)"
 # A restarted agent appends to the same debug log.
 shell_e2e_start_agent || { fail "agent did not restart"; shell_e2e_dump_transcript; exit 1; }
 
@@ -70,6 +76,11 @@ if shell_e2e_poll 5 counted; then
     pass "gpy-agent status lists the client again"
 else
     fail "gpy-agent status does not list the client: $("$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep Registered)"
+fi
+if shell_e2e_wait_for 'TRUNC/' 5 "$off_restart" >/dev/null; then
+    pass "the idle prompt shows the restarted agent's directory render"
+else
+    fail "the prompt kept the memoized directory render after the restart"
 fi
 
 # --- (b) a change now reaches the shell as a live client ----------------------------

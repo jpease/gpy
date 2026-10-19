@@ -117,10 +117,12 @@ function __gpy_register_with_agent() {
     return 0
 }
 
-# Called from TRAPURG after an agent restart.
+# Called from TRAPURG after an agent restart. The agent may have restarted
+# with another config, so its renders are dropped too.
 function __gpy_reregister_with_agent() {
     __gpy_registered=""
     __gpy_last_workspace=""
+    __gpy_clear_render_memos
     __gpy_register_with_agent
 }
 

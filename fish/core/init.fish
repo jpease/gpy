@@ -228,16 +228,7 @@ function __gpy_reload_theme --description 'reload GPY theme from config (interna
     __gpy_initialize_icons
 
     __gpy_ensure_segments_loaded
-
-    for var in (set -n | string match '__gpy_lang_cache_*')
-        set -e $var
-    end
-
-    # Render caches are keyed by theme name, which survives an edited re-export.
-    set -e __gpy_char_cache_key
-    set -e __gpy_char_cache_val
-    set -e __gpy_dir_cache_key
-    set -e __gpy_dir_cache_val
+    __gpy_clear_render_memos
 
     if status is-interactive
         commandline -f force-repaint 2>/dev/null

@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # A Bash shell re-registers after the agent restarts, at its next prompt.
-# (a) stop/start leaves `<pid>.reregister`; one Enter re-registers. (b) edits then reach
+# (a) stop/start leaves `<pid>.reregister`; one Enter re-registers and shows the
+# restarted agent's config (the directory memo is dropped). (b) edits then reach
 # the shell. (c) the PID file under shells/ exists while running, gone after `exit`.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -13,6 +14,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 shell_e2e_init "$ROOT"
 
 shell_e2e_text_config '"directory", "git"'
+shell_e2e_truncated_directory_config OLD/
 shell_e2e_start_agent || exit 1
 export GPY_AGENT_ENABLED=1
 export GPY_AGENT_SUPERVISOR_ENABLED=1
@@ -36,6 +38,8 @@ scans_before="$(grep -c "Caching status for .*$(basename "$SHELL_E2E_REPO")" "$G
 : "${scans_before:=0}"
 shell_e2e_stop_agent
 [ -S "$GPY_AGENT_SOCKET_PATH" ] && fail "socket still present after stop"
+shell_e2e_text_config '"directory", "git"'
+shell_e2e_truncated_directory_config TRUNC/
 # A restarted agent appends to the same debug log.
 shell_e2e_start_agent || { fail "agent did not restart"; shell_e2e_dump_transcript; exit 1; }
 
@@ -45,6 +49,7 @@ if shell_e2e_poll 5 flag_written; then
 else
     fail "no .reregister flag for $client_pid after the restart"
 fi
+off_restart="$(shell_e2e_size)"
 shell_e2e_send '\r'
 reregistered() {
     now="$(grep -c "Registering client: PID=$client_pid," "$GPY_DEBUG_LOG")"
@@ -66,6 +71,11 @@ if shell_e2e_poll 5 counted; then
     pass "gpy-agent status lists the client again"
 else
     fail "gpy-agent status does not list the client: $("$SHELL_E2E_AGENT_BIN" status 2>/dev/null | grep Registered)"
+fi
+if shell_e2e_wait_for 'TRUNC/' 5 "$off_restart" >/dev/null; then
+    pass "the next prompt shows the restarted agent's directory render"
+else
+    fail "the prompt kept the memoized directory render after the restart"
 fi
 
 # --- (b) a change now reaches the shell as a live client ----------------------------
