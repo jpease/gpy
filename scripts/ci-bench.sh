@@ -248,7 +248,8 @@ run_latency() {
   fi
 
   local mean_s mean_ms
-  mean_s="$(jq -r '.results[0].mean // empty' "$json" 2>/dev/null)"
+  # hyperfine 1.x exports `.results[0].mean`; 2.x moved it under `.summary`.
+  mean_s="$(jq -r '.results[0].mean // .results[0].summary.time_wall_clock.mean // empty' "$json" 2>/dev/null)"
   if [[ -z "$mean_s" ]]; then
     record_hard "$label: could not parse timing result"
     return 1
