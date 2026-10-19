@@ -228,18 +228,21 @@ fn refresh_language_for(
 
     let palette = ctx.palette_cache.get();
     let stashed_venv = crate::language::venv::stashed_project_venv(root);
+    // Off the request path, so a cold version is probed here.
+    let languages = crate::language::display::build_language_display_info_at(
+        &detected,
+        theme,
+        &config.language,
+        Some(root),
+        stashed_venv.as_ref(),
+    );
 
     let mut wrote = false;
     for prev_bg in std::iter::once(None).chain(extra_prev_bg.map(Some)) {
-        match ctx.instant_cache.write_language_variants(
-            root,
-            &detected,
-            config,
-            theme,
-            prev_bg,
-            &palette,
-            stashed_venv.as_ref(),
-        ) {
+        match ctx
+            .instant_cache
+            .write_language_variants(root, &languages, config, theme, prev_bg, &palette)
+        {
             Ok(changed) => wrote |= changed,
             Err(e) => {
                 debug_log!(

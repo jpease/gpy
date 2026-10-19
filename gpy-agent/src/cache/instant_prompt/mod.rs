@@ -12,8 +12,7 @@ use crate::formatter::{
     FishAnsiFormatter, Formatter, IsFirst, IsLast, PromptDialect, RenderContext, SegmentPosition,
 };
 use crate::git::RepositoryStatus;
-use crate::ipc::Response;
-use crate::language::venv::PythonVenv;
+use crate::ipc::{LanguageInfo, Response};
 use crate::template::{Color, Palette, parse_color};
 use crate::theme::ThemeConfig;
 use crate::{Error, Result};
@@ -300,6 +299,7 @@ impl InstantPromptCache {
     }
 
     /// Write the language cache for one position; returns `true` if content changed.
+    /// `languages` are resolved display entries, so writing never probes a version.
     /// # Errors
     /// Returns an error if prompt rendering or file writing fails.
     #[expect(
@@ -309,13 +309,12 @@ impl InstantPromptCache {
     pub(crate) fn write_language(
         &self,
         path: &Path,
-        languages: &[crate::language::DetectedLanguage],
+        languages: &[LanguageInfo],
         config: &Config,
         theme: &ThemeConfig,
         pos: SegmentPosition,
         prev_bg: Option<&str>,
         palette: &Palette,
-        python_venv: Option<&PythonVenv>,
     ) -> Result<bool> {
         let project_root = find_project_root(path);
         let key = path_to_cache_key(&project_root);
@@ -327,22 +326,14 @@ impl InstantPromptCache {
         for ctx_prev_bg in self.known_contexts(&key, prev_bg) {
             let token = prev_bg_token(ctx_prev_bg.as_deref());
             let color = ctx_prev_bg.as_deref().and_then(|s| parse_color(s).ok());
-            let prompts = match render_language_prompts(
-                languages,
-                config,
-                theme,
-                pos,
-                &project_root,
-                color,
-                palette,
-                python_venv,
-            ) {
-                Ok(prompts) => prompts,
-                Err(e) => {
-                    first_err.get_or_insert(e);
-                    continue;
-                }
-            };
+            let prompts =
+                match render_language_prompts(languages, config, theme, pos, color, palette) {
+                    Ok(prompts) => prompts,
+                    Err(e) => {
+                        first_err.get_or_insert(e);
+                        continue;
+                    }
+                };
             let base_token = format!("{base}.{token}");
             for (dialect, prompt) in prompts {
                 match self.write_cache_file(&key, &base_token, dialect, &prompt) {
@@ -359,33 +350,19 @@ impl InstantPromptCache {
     /// Write all four language variants; returns `true` if any content changed.
     /// # Errors
     /// Returns an error if prompt rendering or file writing fails.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "independent render inputs; a params struct would only rename them"
-    )]
     pub fn write_language_variants(
         &self,
         path: &Path,
-        languages: &[crate::language::DetectedLanguage],
+        languages: &[LanguageInfo],
         config: &Config,
         theme: &ThemeConfig,
         prev_bg: Option<&str>,
         palette: &Palette,
-        python_venv: Option<&PythonVenv>,
     ) -> Result<bool> {
         let mut wrote_any = false;
         let mut first_err = None;
         for pos in SEGMENT_POSITIONS {
-            match self.write_language(
-                path,
-                languages,
-                config,
-                theme,
-                pos,
-                prev_bg,
-                palette,
-                python_venv,
-            ) {
+            match self.write_language(path, languages, config, theme, pos, prev_bg, palette) {
                 Ok(wrote) => wrote_any |= wrote,
                 Err(e) => {
                     first_err.get_or_insert(e);
@@ -683,33 +660,21 @@ fn render_git_prompts(
 /// Render the language segment in every dialect.
 /// # Errors
 /// Returns an error if prompt rendering fails.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "independent render inputs; a params struct would only rename them"
-)]
 fn render_language_prompts(
-    languages: &[crate::language::DetectedLanguage],
+    languages: &[LanguageInfo],
     config: &Config,
     theme: &ThemeConfig,
     pos: SegmentPosition,
-    root: &Path,
     prev_bg: Option<Color>,
     palette: &Palette,
-    python_venv: Option<&PythonVenv>,
 ) -> Result<DialectPrompts> {
     let ctx = RenderContext::new(config, theme, pos)
         .with_palette(palette.clone())
         .with_prev_colors(None, prev_bg);
 
-    let langs = crate::language::display::build_language_display_info_at(
-        languages,
-        theme,
-        &config.language,
-        Some(root),
-        python_venv,
-    );
-
-    let response = Response::Language { languages: langs };
+    let response = Response::Language {
+        languages: languages.to_vec(),
+    };
     render_all_dialects(&response, &ctx)
 }
 

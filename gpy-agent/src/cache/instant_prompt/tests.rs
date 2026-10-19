@@ -1,5 +1,13 @@
 use super::*;
-use crate::language::DetectedLanguage;
+
+/// A resolved Rust entry, so language writes never probe a real `rustc`.
+fn rust_languages() -> Vec<crate::ipc::LanguageInfo> {
+    vec![crate::ipc::LanguageInfo {
+        name: "rust".to_owned(),
+        version: Some("1.99.0".to_owned()),
+        color: crate::config::types::ColorSpec::new("#dea584").expect("color"),
+    }]
+}
 
 impl InstantPromptCache {
     /// Get the cache file path for a given cache key, suffix and dialect
@@ -1072,12 +1080,7 @@ fn test_write_language_uses_git_root_for_key() {
 
     let config = Config::default();
     let theme = ThemeConfig::default();
-    let languages = vec![DetectedLanguage {
-        name: "rust".to_owned(),
-        confidence: 1.0,
-        file_count: 1,
-        total_bytes: 1,
-    }];
+    let languages = rust_languages();
 
     cache
         .write_language(
@@ -1088,7 +1091,6 @@ fn test_write_language_uses_git_root_for_key() {
             SegmentPosition::new(IsLast::No, IsFirst::No),
             None,
             &crate::palette::active_palette(&config),
-            None,
         )
         .unwrap();
 
@@ -1113,12 +1115,7 @@ fn test_language_cache_suffixes_use_repo_root() {
 
     let config = Config::default();
     let theme = ThemeConfig::default();
-    let languages = vec![DetectedLanguage {
-        name: "rust".to_owned(),
-        confidence: 1.0,
-        file_count: 1,
-        total_bytes: 1,
-    }];
+    let languages = rust_languages();
 
     cache
         .write_language(
@@ -1129,7 +1126,6 @@ fn test_language_cache_suffixes_use_repo_root() {
             SegmentPosition::new(IsLast::No, IsFirst::No),
             None,
             &crate::palette::active_palette(&config),
-            None,
         )
         .expect("write lang");
     let key = path_to_cache_key(&repo_root);
@@ -1145,7 +1141,6 @@ fn test_language_cache_suffixes_use_repo_root() {
             SegmentPosition::new(IsLast::Yes, IsFirst::No),
             None,
             &crate::palette::active_palette(&config),
-            None,
         )
         .expect("write lang_last");
     let lang_last_path = cache.cache_file_path(&key, "lang_last.none", PromptDialect::Ansi);
@@ -1162,12 +1157,7 @@ fn test_write_language_variants_rewrites_missing_files() {
 
     let config = Config::default();
     let theme = ThemeConfig::default();
-    let languages = vec![DetectedLanguage {
-        name: "rust".to_owned(),
-        confidence: 1.0,
-        file_count: 1,
-        total_bytes: 128,
-    }];
+    let languages = rust_languages();
 
     cache
         .write_language_variants(
@@ -1177,7 +1167,6 @@ fn test_write_language_variants_rewrites_missing_files() {
             &theme,
             None,
             &crate::palette::active_palette(&config),
-            None,
         )
         .expect("write variants");
 
@@ -1196,7 +1185,6 @@ fn test_write_language_variants_rewrites_missing_files() {
             &theme,
             None,
             &crate::palette::active_palette(&config),
-            None,
         )
         .expect("rewrite variants");
 
@@ -1454,12 +1442,7 @@ fn write_language_variants_creates_is_first_variants_and_suppresses_opening_cap(
     let config = Config::default();
     let theme_mgr = crate::theme::ThemeManager::builtin("default").expect("builtin default theme");
     let theme = theme_mgr.get();
-    let languages = vec![DetectedLanguage {
-        name: "rust".to_owned(),
-        confidence: 1.0,
-        file_count: 1,
-        total_bytes: 128,
-    }];
+    let languages = rust_languages();
 
     cache
         .write_language_variants(
@@ -1469,7 +1452,6 @@ fn write_language_variants_creates_is_first_variants_and_suppresses_opening_cap(
             &theme,
             None,
             &crate::palette::active_palette(&config),
-            None,
         )
         .expect("write variants");
 
@@ -1567,12 +1549,7 @@ fn write_language_variants_writes_every_variant_for_a_near_name_max_path() {
     let (repo, key) = near_name_max_repo(temp_dir.path());
     let config = Config::default();
     let theme_mgr = crate::theme::ThemeManager::builtin("default").expect("builtin default theme");
-    let languages = vec![DetectedLanguage {
-        name: "rust".to_owned(),
-        confidence: 1.0,
-        file_count: 1,
-        total_bytes: 128,
-    }];
+    let languages = rust_languages();
 
     cache
         .write_language_variants(
@@ -1582,7 +1559,6 @@ fn write_language_variants_writes_every_variant_for_a_near_name_max_path() {
             &theme_mgr.get(),
             None,
             &crate::palette::active_palette(&config),
-            None,
         )
         .expect("write variants");
 
@@ -2175,12 +2151,7 @@ fn language_cache_writes_one_file_per_prev_bg_context() {
     let config = Config::default();
     let theme_mgr = crate::theme::ThemeManager::builtin("default").expect("builtin default theme");
     let theme = theme_mgr.get();
-    let languages = vec![DetectedLanguage {
-        name: "rust".to_owned(),
-        confidence: 1.0,
-        file_count: 1,
-        total_bytes: 128,
-    }];
+    let languages = rust_languages();
 
     cache
         .write_language_variants(
@@ -2190,7 +2161,6 @@ fn language_cache_writes_one_file_per_prev_bg_context() {
             &theme,
             Some("blue"),
             &crate::palette::active_palette(&config),
-            None,
         )
         .expect("write blue");
     cache
@@ -2201,7 +2171,6 @@ fn language_cache_writes_one_file_per_prev_bg_context() {
             &theme,
             Some("green"),
             &crate::palette::active_palette(&config),
-            None,
         )
         .expect("write green");
 

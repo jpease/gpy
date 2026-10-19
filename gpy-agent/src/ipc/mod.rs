@@ -405,7 +405,7 @@ pub enum Response {
 }
 
 /// Individual language information
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanguageInfo {
     /// Language name (e.g., `Rust`, `JavaScript`)
     pub name: String,
