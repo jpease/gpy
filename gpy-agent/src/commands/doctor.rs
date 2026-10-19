@@ -88,21 +88,43 @@ fn check_active_palette(palette_name: &str) -> bool {
     }
 }
 
+/// Warn about keys in `path` that `Config` ignores. A read or parse failure
+/// prints nothing: the typed load already reports it as invalid.
+fn print_unknown_config_keys(path: &std::path::Path) {
+    let Some(raw) = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| text.parse::<toml::Table>().ok())
+    else {
+        return;
+    };
+    for key in config::loader::unknown_config_keys(&raw) {
+        println!("  Unknown key in {}: {key} (ignored)", path.display());
+    }
+}
+
 fn check_config_and_theme(
     loaded_config: &Result<config::Config>,
     discovery: &crate::plugin::PluginDiscovery,
 ) -> bool {
     println!("[Configuration]");
     print!("  Checking config file... ");
+    let active = config::schema::resolve_active_config(&config::schema::get_config_paths());
     let cfg = match loaded_config {
         Ok(cfg) => {
             output::ok("Valid");
+            if let Some((_, Some(existing))) = &active {
+                print_unknown_config_keys(existing);
+            }
             cfg
         }
         Err(e) => {
             output::fail("Invalid");
             println!("  Diagnostic: {e}");
-            println!("  Remediation: Fix the syntax error in ~/.config/gpy/config.toml");
+            let write_path = active.as_ref().map_or_else(
+                || "~/.config/gpy/config.toml".to_owned(),
+                |(write_path, _)| write_path.display().to_string(),
+            );
+            println!("  Remediation: Fix the syntax error in {write_path}");
             return false;
         }
     };

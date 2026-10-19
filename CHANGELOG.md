@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Language markers under gitignored directories (e.g.
   `node_modules/x/package.json`) no longer trigger language re-detection.
+- `gpy doctor` reports unknown config keys and the file they are in.
 - A socket directory set through `GPY_AGENT_SOCKET_PATH` must be private: a
   socket placed directly in a shared directory such as `/tmp` is refused.
 - Theme colors are stored in one canonical spelling (`bright-magenta` becomes

@@ -827,6 +827,19 @@ enabled_segments = ["language", "directory", "git"]
 }
 
 #[test]
+fn doctor_reports_unknown_config_key() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    fs::write(env.config_path(), "[git]\nenabeld = true\n").expect("Failed to write config");
+
+    let output = env.run_gpy(&["doctor"]).expect("Failed to run gpy doctor");
+    assert!(
+        output.stdout.contains("Unknown key in ")
+            && output.stdout.contains(": git.enabeld (ignored)"),
+        "doctor must name the unknown key and its file: {output:?}"
+    );
+}
+
+#[test]
 fn test_doctor_checks_config() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     let config_path = env.config_path();

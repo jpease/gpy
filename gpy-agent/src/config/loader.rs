@@ -137,6 +137,30 @@ fn flatten_table(
     }
 }
 
+/// Dotted keys set in `raw` that `Config` does not read (serde ignores them,
+/// so typos go unnoticed), sorted. Keys under a dynamic-map prefix such as
+/// `language.icons.` are never unknown.
+#[must_use]
+pub fn unknown_config_keys(raw: &toml::Table) -> Vec<String> {
+    let Ok(known) = config_leaves(&Config::default()) else {
+        return Vec::new();
+    };
+    let mut set = BTreeMap::new();
+    flatten_table(raw, &mut Vec::new(), &mut set);
+    let mut unknown: Vec<String> = set
+        .into_keys()
+        .filter(|path| !known.contains_key(path))
+        .map(|path| path.join("."))
+        .filter(|key| {
+            !super::metadata::DYNAMIC_KEY_PREFIXES
+                .iter()
+                .any(|prefix| key.starts_with(prefix))
+        })
+        .collect();
+    unknown.sort();
+    unknown
+}
+
 /// # Errors
 /// Returns an error if a datetime value cannot be converted.
 fn to_edit_value(value: &toml::Value) -> Result<toml_edit::Value> {
@@ -333,6 +357,20 @@ pub fn load_theme_from_path(path: &str) -> Result<crate::theme::ThemeConfig> {
     };
 
     crate::theme::parse(&contents, path)
+}
+
+#[cfg(test)]
+mod unknown_config_keys_tests {
+    use super::unknown_config_keys;
+
+    #[test]
+    fn unknown_config_keys_reports_typos_and_skips_dynamic_prefixes() {
+        let raw: toml::Table = "[git]\nenabeld = true\n[git.icons]\nahead = \"A\"\n[language.icons]\nzig = \"Z\"\n[ui]\ntheme = \"text\"\n"
+            .parse()
+            .expect("valid TOML");
+
+        assert_eq!(unknown_config_keys(&raw), vec!["git.enabeld".to_owned()]);
+    }
 }
 
 #[cfg(test)]
