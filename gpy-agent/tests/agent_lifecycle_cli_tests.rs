@@ -568,6 +568,87 @@ fn daemon_does_not_keep_the_launch_directory_as_cwd() {
     assert_eq!(process_cwd(pid), PathBuf::from("/"));
 }
 
+/// Start a daemon on the sandbox socket and return its single pid.
+fn start_signal_target(sandbox: &AgentSandbox, socket: &str) -> String {
+    let status = sandbox
+        .env
+        .gpy_agent_command()
+        .args(["start", "--socket", socket])
+        .status()
+        .expect("spawn gpy-agent start");
+    assert!(status.success());
+    sandbox.wait_until_responding();
+    let daemons = pids_matching(&sandbox.socket_path);
+    let [pid] = daemons.as_slice() else {
+        panic!("expected one daemon, found {daemons:?}");
+    };
+    pid.clone()
+}
+
+fn send_signal(signal: &str, pid: &str) {
+    let status = std::process::Command::new("kill")
+        .args([signal, pid])
+        .status()
+        .expect("spawn kill");
+    assert!(status.success(), "kill {signal} {pid} failed");
+}
+
+#[test]
+fn sigterm_stops_the_daemon_and_unlinks_its_socket() {
+    let sandbox = AgentSandbox::new();
+    let socket = sandbox.socket_path.to_string_lossy().into_owned();
+    let _reaper = DaemonReaper(sandbox.socket_path.clone());
+
+    let pid = start_signal_target(&sandbox, &socket);
+    send_signal("-TERM", &pid);
+
+    assert!(
+        common::wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
+            pids_matching(&sandbox.socket_path).is_empty() && !sandbox.socket_path.exists()
+        }),
+        "SIGTERM must stop the daemon and unlink its socket"
+    );
+}
+
+#[test]
+fn sigkill_leaves_a_stale_socket_that_start_replaces() {
+    let sandbox = AgentSandbox::new();
+    let socket = sandbox.socket_path.to_string_lossy().into_owned();
+    let _reaper = DaemonReaper(sandbox.socket_path.clone());
+
+    let pid = start_signal_target(&sandbox, &socket);
+    send_signal("-KILL", &pid);
+
+    assert!(
+        common::wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
+            pids_matching(&sandbox.socket_path).is_empty()
+        }),
+        "SIGKILL must end the daemon"
+    );
+    assert!(
+        sandbox.socket_path.exists(),
+        "a SIGKILLed daemon cannot unlink its socket"
+    );
+
+    start_signal_target(&sandbox, &socket);
+    let status = sandbox
+        .env
+        .run_gpy_agent(&["status", "--socket", &socket])
+        .expect("spawn gpy-agent status");
+    assert_eq!(status.exit_code, 0, "status after restart: {status:?}");
+
+    sandbox
+        .env
+        .run_gpy_agent(&["stop", "--socket", &socket])
+        .expect("spawn gpy-agent stop");
+    assert!(
+        common::wait_until(Duration::from_secs(10), Duration::from_millis(50), || {
+            pids_matching(&sandbox.socket_path).is_empty() && !sandbox.socket_path.exists()
+        }),
+        "the restarted daemon must stop and unlink its socket"
+    );
+}
+
 #[test]
 fn relative_socket_is_resolved_against_the_launch_directory() {
     let env = CliTestEnv::new().expect("create isolated CLI test env");
