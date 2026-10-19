@@ -54,13 +54,13 @@
       "description": "Agent-unavailable prompt render budget (graceful fallback)"
     },
     "prompt_render_bash": {
-      "target_ms": 100.0,
-      "max_ms": 500.0,
+      "target_ms": 37.0,
+      "max_ms": 111.0,
       "description": "Bash per-render cost (__gpy_precmd + PS1 expansion, agent up)"
     },
     "prompt_render_zsh": {
-      "target_ms": 100.0,
-      "max_ms": 500.0,
+      "target_ms": 13.0,
+      "max_ms": 39.0,
       "description": "Zsh per-render cost (precmd_functions + PROMPT expansion, agent up)"
     },
     "memory_usage": {
