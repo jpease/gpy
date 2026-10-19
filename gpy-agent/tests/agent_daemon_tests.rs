@@ -191,30 +191,6 @@ async fn test_language_detection_scenarios() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-#[serial]
-async fn test_fish_format_output() -> Result<()> {
-    let _env = set_test_env();
-    let git_request = r#"{"type":"git_status","path":".","format":"fish"}"#;
-    let response = Agent::handle_oneshot(git_request)?;
-
-    assert!(
-        !response.contains('{'),
-        "Fish format output should be shell-friendly without JSON braces"
-    );
-    // Fish format may be empty for clean repos.
-
-    let lang_request = r#"{"type":"language_detect","path":".","format":"fish"}"#;
-    let lang_response = Agent::handle_oneshot(lang_request)?;
-
-    assert!(
-        !lang_response.contains('{'),
-        "Language detection Fish output should be shell-friendly without JSON braces"
-    );
-
-    Ok(())
-}
-
 /// An unbindable socket must fail `start_background` with a propagated error,
 /// not hang or continue. `Agent::new` only records the path; bind happens later.
 #[tokio::test]

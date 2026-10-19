@@ -938,18 +938,13 @@
   "definitions": {
     "Format": {
       "type": "string",
-      "description": "Output format. `json` replies with one JSON object (see response.json); every other value replies with one line of rendered text. The agent renders json, ansi, bash-prompt, zsh-prompt, fish, fish-source and zsh; bash-source and zsh-source parse but are not implemented. In the shell (`op`) form an unrecognized or missing value silently falls back to `json`; in the native form it rejects the whole message.",
+      "description": "Output format. `json` replies with one JSON object (see response.json); `ansi` (Fish), `bash-prompt` and `zsh-prompt` reply with one line of rendered prompt text. In the shell (`op`) form an unrecognized or missing value silently falls back to `json`; in the native form it rejects the whole message.",
       "default": "json",
       "enum": [
         "json",
         "ansi",
         "bash-prompt",
-        "zsh-prompt",
-        "fish",
-        "fish-source",
-        "bash-source",
-        "zsh",
-        "zsh-source"
+        "zsh-prompt"
       ]
     }
   }

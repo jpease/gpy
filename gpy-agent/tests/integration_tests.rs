@@ -498,50 +498,6 @@ async fn ansi_error_replies_are_empty_lines() {
     server_handle.abort();
 }
 
-/// Formats the socket does not serve (`fish`, `bash-source`, `zsh-source`)
-/// get one newline-terminated JSON error line naming the format, instead of
-/// silence until the client times out.
-#[tokio::test]
-#[serial_test::serial]
-async fn unsupported_socket_format_gets_json_error() {
-    let _env = set_test_env();
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let socket_path = temp_dir.path().join("test_unsupported_format.sock");
-
-    let mut server = endpoint_builder(socket_path.clone())
-        .build()
-        .expect("server build");
-    let server_handle = tokio::spawn(async move {
-        let _ = server.start().await;
-    });
-    wait_for_socket(&socket_path, SOCKET_TIMEOUT).await;
-
-    for (format, expected) in [
-        ("fish", "only available to local CLI oneshot"),
-        ("bash-source", "not yet implemented"),
-        ("zsh-source", "not yet implemented"),
-    ] {
-        let request = format!(r#"{{"op":"duration","duration_ms":5,"format":"{format}"}}"#);
-        let reply = request_reply_line(&socket_path, &request).await;
-        assert!(
-            reply.ends_with('\n'),
-            "reply must end with a newline: {reply:?}"
-        );
-        let value: serde_json::Value =
-            serde_json::from_str(&reply).expect("reply must be a JSON line");
-        let message = value
-            .get("error")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_else(|| panic!("reply must carry an error string, got {reply}"));
-        assert!(
-            message.contains(expected),
-            "error for {format} must contain {expected:?}, got {message:?}"
-        );
-    }
-
-    server_handle.abort();
-}
-
 /// Point `GPY_CONFIG_PATH` at a non-existent file so the agent falls back to
 /// its builtin defaults instead of the developer's config.
 #[must_use]

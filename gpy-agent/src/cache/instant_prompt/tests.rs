@@ -1966,7 +1966,7 @@ fn git_cache_changes_when_palette_redefines_used_color() {
     );
     let palette_b = Palette::new(map_b);
 
-    let formatter = create_formatter(Format::Ansi).expect("ansi formatter");
+    let formatter = create_formatter(Format::Ansi);
 
     let ctx_a =
         RenderContext::new(&config, &theme_arc, SegmentPosition::MIDDLE).with_palette(palette_a);

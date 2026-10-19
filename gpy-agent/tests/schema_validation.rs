@@ -35,7 +35,7 @@ fn test_msg_deserialize_language_detect_fish() {
     let cases: &[(&[u8], &str)] = &[
         (br#"{"op":"lang","cwd":"."}"#, "LanguageDetect (minimal)"),
         (
-            br#"{"op":"lang","cwd":"/home/user/project","format":"fish-source","is_last":true}"#,
+            br#"{"op":"lang","cwd":"/home/user/project","format":"ansi","is_last":true}"#,
             "LanguageDetect (full)",
         ),
     ];
@@ -210,7 +210,7 @@ fn test_message_roundtrip() {
         },
         Message::LanguageDetect {
             path: SafePath::new("/home/user/project").unwrap(),
-            format: gpy_agent::formatter::Format::FishSource,
+            format: gpy_agent::formatter::Format::Ansi,
             is_last: true,
             is_first: false,
             prev_bg: None,
@@ -362,23 +362,10 @@ mod schema_files {
             Format::Ansi,
             Format::BashPrompt,
             Format::ZshPrompt,
-            Format::Fish,
-            Format::FishSource,
-            Format::BashSource,
-            Format::Zsh,
-            Format::ZshSource,
         ];
         for format in &all {
             match format {
-                Format::Json
-                | Format::Ansi
-                | Format::BashPrompt
-                | Format::ZshPrompt
-                | Format::Fish
-                | Format::FishSource
-                | Format::BashSource
-                | Format::Zsh
-                | Format::ZshSource => {}
+                Format::Json | Format::Ansi | Format::BashPrompt | Format::ZshPrompt => {}
             }
         }
         all
@@ -636,11 +623,11 @@ mod schema_files {
             ),
             (
                 "lang",
-                r#"{"op":"lang","cwd":".","format":"fish-source","virtual_env":"/v"}"#,
+                r#"{"op":"lang","cwd":".","format":"ansi","virtual_env":"/v"}"#,
             ),
             (
                 "directory",
-                r#"{"op":"directory","cwd":".","format":"zsh"}"#,
+                r#"{"op":"directory","cwd":".","format":"zsh-prompt"}"#,
             ),
             (
                 "clock",
@@ -741,7 +728,6 @@ mod schema_files {
         let theme = ThemeConfig::default();
         let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
         let text = create_formatter(Format::Json)
-            .unwrap()
             .render(response, &ctx)
             .unwrap();
         json(&text)

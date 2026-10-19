@@ -515,8 +515,7 @@ fn test_parse_wire_rejects_neither_format() {
 
 #[test]
 fn test_parse_wire_native_format_struct_variant() {
-    let json =
-        br#"{"RepositoryStatus":{"path":"/etc/nope","format":"fish-source","is_last":true}}"#;
+    let json = br#"{"RepositoryStatus":{"path":"/etc/nope","format":"ansi","is_last":true}}"#;
     let wire = parse_wire(json).expect("parse_wire failed");
     match wire {
         WireMessage::RepositoryStatus {
@@ -527,7 +526,7 @@ fn test_parse_wire_native_format_struct_variant() {
             prev_bg,
         } => {
             assert_eq!(path, "/etc/nope");
-            assert_eq!(format, Format::FishSource);
+            assert_eq!(format, Format::Ansi);
             assert!(is_last);
             assert!(!is_first);
             assert_eq!(prev_bg, None);

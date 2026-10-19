@@ -73,6 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The hidden, deprecated `gpy theme use --apply-layout` alias; use `--force`.
   `gpy theme import --apply-layout` is unchanged.
+- **Breaking:** `gpy-agent oneshot --format` and the IPC `format` field accept only `json`, `ansi`, `bash-prompt` and `zsh-prompt`. The unused `fish`, `fish-source` and `zsh` formats and the never-implemented `bash-source` and `zsh-source` are gone; no shipped shell sent them.
 
 ### Fixed
 

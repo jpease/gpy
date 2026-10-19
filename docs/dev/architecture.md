@@ -1459,7 +1459,7 @@ fish tests/fish/e2e_interactive_session.test.fish
 
 ### Adding a New Segment
 
-See [segment-development.md](segment-development.md) for detailed guide.
+See [add-new-segment.md](add-new-segment.md) for the checklist.
 
 Quick version:
 1. Create `segments/my_segment.fish`
@@ -1516,7 +1516,7 @@ time git status --porcelain
 2. **Read module docs**: `gpy-agent/src/agent.rs`, `gpy-agent/src/watcher/mod.rs`
 3. **Trace a request**: Follow git status request through entire stack
 4. **Run tests**: `cargo test`, `./scripts/test_fish.sh`
-5. **Read [segment-development.md](segment-development.md)**: Learn how to add segments
+5. **Read [add-new-segment.md](add-new-segment.md)**: Learn how to add segments
 6. **Pick a good first issue**: Look for `good-first-issue` label
 
 ### Good First Issues
@@ -1540,7 +1540,7 @@ After you're comfortable with basics:
 
 ## Further Reading
 
-- [segment-development.md](segment-development.md) - How to add segments
+- [add-new-segment.md](add-new-segment.md) - How to add segments
 - [ADR-0004: SIGUSR1 Live Updates](adr/adr-0004-sigusr1-live-updates.md) - Why the watcher signals shells instead of polling
 - [ADR-0007: SIGURG Doorbell](adr/adr-0007-sigurg-doorbell-notifications.md) - The current single-signal protocol and flag files
 - [CONTRIBUTING.md § Quality Gates](../../CONTRIBUTING.md#quality-gates) - How to run every suite

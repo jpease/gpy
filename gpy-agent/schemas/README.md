@@ -31,7 +31,7 @@ Messages use Rust enum serialization:
 
 The schemas can be used with standard JSON Schema validators to ensure protocol compliance. `gpy-agent/tests/schema_validation.rs` checks them against the code: the `format` enum against `Format`, the ops against the `into_wire_message` dispatch table, and real agent replies against `response.json`.
 
-In the `op` form an unrecognized `format` silently falls back to `json`; in the native form it rejects the message. `bash-source` and `zsh-source` parse but are not implemented.
+In the `op` form an unrecognized `format` silently falls back to `json`; in the native form it rejects the message.
 
 ## Version Compatibility
 

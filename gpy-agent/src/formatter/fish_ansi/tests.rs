@@ -706,7 +706,7 @@ fn has_private_use(text: &str) -> bool {
 fn show_icons_false_renders_no_private_use_glyphs() {
     use crate::formatter::{Format, create_formatter};
     let theme = default_theme_with_terminal_caps();
-    let formatter = create_formatter(Format::Ansi).expect("ansi formatter");
+    let formatter = create_formatter(Format::Ansi);
     let positions = [
         SegmentPosition::FIRST,
         SegmentPosition::MIDDLE,

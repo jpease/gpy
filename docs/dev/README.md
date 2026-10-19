@@ -9,7 +9,6 @@
 
 ## Development Guides
 
-- [Segment Development](segment-development.md) - How to write new prompt segments.
 - [Adding a New Segment](add-new-segment.md) - Step-by-step checklist for adding a segment.
 - [Plugin Framework](plugins.md) - Manifest, discovery, and runtime segment loading contract.
 - [Build a Segment Plugin](build-segment-plugin.md) - Step-by-step guide for community segment plugins.

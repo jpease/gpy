@@ -1333,7 +1333,6 @@ mod stale_socket_tests {
         let theme = crate::theme::ThemeConfig::default();
         let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
         let rendered = create_formatter(Format::Json)
-            .expect("JSON formatter exists")
             .render(&Response::Ack, &ctx)
             .expect("Ack renders");
 

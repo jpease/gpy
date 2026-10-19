@@ -397,8 +397,7 @@ impl ConnectionHandler {
         ) {
             Ok(rendered) => Ok(rendered),
             Err(e) => {
-                // The client asked for a format the socket does not serve:
-                // answer with a JSON error rather than staying silent.
+                // Rendering failed: answer with a JSON error rather than staying silent.
                 warn_log!("connection", "Failed to render response: {e}");
                 let error = Response::Error {
                     message: e.to_string(),
@@ -406,7 +405,7 @@ impl ConnectionHandler {
                 let config = config_manager.get();
                 let theme = theme_manager.get();
                 let ctx = RenderContext::new(&config, &theme, position);
-                create_formatter(Format::Json)?.render(&error, &ctx)
+                create_formatter(Format::Json).render(&error, &ctx)
             }
         }
     }
@@ -447,7 +446,7 @@ impl ConnectionHandler {
     /// Render a response into the requested format; an unparseable `prev_bg` becomes `None`.
     ///
     /// # Errors
-    /// Fails if the format is unsupported or serialization fails.
+    /// Fails if serialization fails.
     fn render_response(
         config_manager: &crate::config::manager::ConfigManager,
         theme_manager: &ThemeManager,
@@ -457,29 +456,14 @@ impl ConnectionHandler {
         position: SegmentPosition,
         prev_bg: Option<&str>,
     ) -> Result<String> {
-        match format {
-            Format::Fish => Err(Error::ipc(format!(
-                "IPC format '{format}' is only available to local CLI oneshot commands."
-            ))),
-            Format::BashSource | Format::ZshSource => Err(Error::ipc(format!(
-                "IPC format {format:?} is not yet implemented for socket clients."
-            ))),
-            Format::Ansi
-            | Format::BashPrompt
-            | Format::ZshPrompt
-            | Format::Json
-            | Format::FishSource
-            | Format::Zsh => {
-                let config = config_manager.get();
-                let theme = theme_manager.get();
-                let palette = palette_cache.get();
-                let parsed_prev_bg: Option<Color> = prev_bg.and_then(|s| parse_color(s).ok());
-                let ctx = RenderContext::new(&config, &theme, position)
-                    .with_palette(palette)
-                    .with_prev_colors(None, parsed_prev_bg);
-                create_formatter(format)?.render(response, &ctx)
-            }
-        }
+        let config = config_manager.get();
+        let theme = theme_manager.get();
+        let palette = palette_cache.get();
+        let parsed_prev_bg: Option<Color> = prev_bg.and_then(|s| parse_color(s).ok());
+        let ctx = RenderContext::new(&config, &theme, position)
+            .with_palette(palette)
+            .with_prev_colors(None, parsed_prev_bg);
+        create_formatter(format).render(response, &ctx)
     }
 }
 
