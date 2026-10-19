@@ -126,14 +126,14 @@ function __gpy_reregister_with_agent() {
 
 function __gpy_build_register_payload() {
     local json_cwd
-    json_cwd=$(__gpy_escape_json "$PWD")
+    __gpy_escape_json_into json_cwd "$PWD"
     local shell_version="$ZSH_VERSION"
     print -r -- "{\"op\":\"register\",\"pid\":$$,\"cwd\":\"$json_cwd\",\"shell\":\"zsh\",\"shell_version\":\"$shell_version\"}"
 }
 
 function __gpy_build_workspace_payload() {
     local json_cwd
-    json_cwd=$(__gpy_escape_json "$PWD")
+    __gpy_escape_json_into json_cwd "$PWD"
     print -r -- "{\"op\":\"workspace\",\"pid\":$$,\"cwd\":\"$json_cwd\"}"
 }
 

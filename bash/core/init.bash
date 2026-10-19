@@ -390,15 +390,15 @@ __gpy_reregister_with_agent() {
 
 __gpy_build_register_payload() {
     local json_cwd shell_version
-    json_cwd="$(__gpy_escape_json "$PWD")"
-    shell_version="$(__gpy_escape_json "$BASH_VERSION")"
-    echo "{\"op\":\"register\",\"pid\":$$,\"cwd\":\"$json_cwd\",\"shell\":\"bash\",\"shell_version\":\"$shell_version\"}"
+    __gpy_escape_json_into json_cwd "$PWD"
+    __gpy_escape_json_into shell_version "$BASH_VERSION"
+    printf '%s\n' "{\"op\":\"register\",\"pid\":$$,\"cwd\":\"$json_cwd\",\"shell\":\"bash\",\"shell_version\":\"$shell_version\"}"
 }
 
 __gpy_build_workspace_payload() {
     local json_cwd
-    json_cwd="$(__gpy_escape_json "$PWD")"
-    echo "{\"op\":\"workspace\",\"pid\":$$,\"cwd\":\"$json_cwd\"}"
+    __gpy_escape_json_into json_cwd "$PWD"
+    printf '%s\n' "{\"op\":\"workspace\",\"pid\":$$,\"cwd\":\"$json_cwd\"}"
 }
 
 __gpy_sync_workspace() {

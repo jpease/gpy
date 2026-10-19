@@ -66,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bash resolves the working directory once per `cd` instead of forking
   `realpath` on every prompt. A directory re-pointed by a symlink change
   without a `cd` keeps its old resolution until the next `cd`, as in Fish.
+- Bash and Zsh build agent requests without forking a subshell for each
+  JSON-escaped value.
 
 ### Removed
 

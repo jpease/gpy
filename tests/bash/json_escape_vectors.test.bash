@@ -40,6 +40,24 @@ while IFS=$'\t' read -r input_col expected_col; do
     fi
 done < "$FIXTURE"
 
+# __gpy_escape_json_into must not fork: the DEBUG trap (inherited via
+# functrace) logs any command run in a subshell during the call.
+forks_file="$(mktemp "${TMPDIR:-/tmp}/gpy-ej-forks.XXXXXX")"
+no_fork_out=""
+set -T
+trap '(( BASH_SUBSHELL > 0 )) && printf "%s\n" "$BASH_COMMAND" >>"$forks_file"' DEBUG
+__gpy_escape_json_into no_fork_out $'a\\b"c\nd\re\tf'
+trap - DEBUG
+set +T
+CASE_COUNT=$((CASE_COUNT + 1))
+if [[ ! -s "$forks_file" && "$no_fork_out" == 'a\\b\"c\nd\re\tf' ]]; then
+    echo "PASS: case $CASE_COUNT (__gpy_escape_json_into forks no subshell)"
+else
+    echo "FAIL: case $CASE_COUNT (__gpy_escape_json_into): forks [$(<"$forks_file")], got [$no_fork_out]"
+    FAILED=1
+fi
+rm -f "$forks_file"
+
 if [[ "$CASE_COUNT" -eq 0 ]]; then
     echo "FAIL: no test vectors read from $FIXTURE"
     exit 1
