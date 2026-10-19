@@ -137,7 +137,7 @@ harness = false
 [profile.release]
 lto = false
 codegen-units = 256
-panic = "abort"
+panic = "abort"  # Fail fast; see docs/dev/adr/adr-0008-fail-fast-on-panic.md
 strip = false
 opt-level = 1
 
