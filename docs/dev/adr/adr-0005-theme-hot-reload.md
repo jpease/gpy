@@ -66,20 +66,11 @@ File Change → Debouncer (5s) → Load & Validate → Apply → Callback
 ### Theme Reload Implementation
 
 ```rust
-pub fn reload(&self) -> Result<()> {
-    let theme_path = self.theme_path.read().unwrap().clone();
-    let new_theme = Self::load_from_path(&theme_path)?;  // Validate
-
-    let mut guard = self.theme.write().unwrap();
-    *guard = new_theme;  // Atomically replace
-
-    // Notify Fish to reload theme vars
-    if let Some(registry) = &self.client_registry {
-        registry.notify_sigusr2();
-    }
-
-    Ok(())
-}
+// Watcher and poll-fallback reloads go through the agent's callback, which
+// serializes the reload, refreshes caches, then rings the doorbell.
+theme_manager.set_reload_callback(Arc::new(move |reload| {
+    events::handle_theme_reload(&ctx, reload); // calls reload(), then notify_reload() if it changed
+}));
 ```
 
 ### Config Reload with Callback

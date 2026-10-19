@@ -80,9 +80,10 @@ enum Reloaded {
     Source,
 }
 
-/// Runs a watcher- or poll-triggered reload in place of the built-in doorbell
-/// (see [`ThemeManager::set_reload_callback`]). It gets the reload step, which
-/// swaps in the active theme and reports whether it changed.
+/// Runs every watcher- or poll-triggered reload (see
+/// [`ThemeManager::set_reload_callback`]). It gets the reload step, which swaps
+/// in the active theme and reports whether it changed; ringing shells is the
+/// callback's job.
 pub type ThemeReloadCallback = Arc<dyn Fn(&dyn Fn() -> bool) + Send + Sync>;
 type ReloadHookSlot = Arc<Mutex<Option<ThemeReloadCallback>>>;
 type WatcherSlot = Arc<Mutex<Option<WatchCoordinator>>>;
@@ -91,10 +92,9 @@ type WatcherSlot = Arc<Mutex<Option<WatchCoordinator>>>;
 pub struct ThemeManager {
     state: Arc<RwLock<Arc<ThemeState>>>,
     hot_reload: HotReloadSlot,
-    /// When set, runs each hot reload so the owner can serialize it and
-    /// refresh caches before its own doorbell.
+    /// When set, runs each hot reload so the owner can serialize it, refresh
+    /// caches and ring the shell doorbell.
     on_reload: ReloadHookSlot,
-    client_registry: Arc<Mutex<Option<Arc<crate::ipc::ClientDirectory>>>>,
     watch_debounce: Arc<Mutex<Duration>>,
     /// Registry last armed with, so `switch_theme` re-arms on the shared one.
     watch_registry: Arc<Mutex<Option<Arc<WatchRegistry>>>>,
@@ -112,14 +112,12 @@ struct ReloadTarget {
     state: Arc<RwLock<Arc<ThemeState>>>,
     reload_gate: Arc<Mutex<()>>,
     on_reload: ReloadHookSlot,
-    client_registry: Option<Arc<crate::ipc::ClientDirectory>>,
     watcher: WatcherSlot,
     source_watches: Arc<Mutex<Vec<PathBuf>>>,
 }
 
 impl ReloadTarget {
-    /// Reload via the registered hook, else swap and ring `notify_reload` when
-    /// the theme changed.
+    /// Reload via the registered hook, else just swap in the reloaded theme.
     fn reload_and_apply(&self, context: &str) {
         let registered = self
             .on_reload
@@ -131,11 +129,7 @@ impl ReloadTarget {
             // Called outside every lock: the hook reads `get()` and may re-register.
             Some(hook) => hook(&reload),
             None => {
-                if reload()
-                    && let Some(registry) = &self.client_registry
-                {
-                    registry.notify_reload();
-                }
+                reload();
             }
         }
     }
@@ -217,7 +211,6 @@ impl ThemeManager {
             // vanished file is a change for the poller too.
             hot_reload: HotReloadSlot::new().reloading_on_missing(),
             on_reload: Arc::new(Mutex::new(None)),
-            client_registry: Arc::new(Mutex::new(None)),
             watch_debounce: Arc::new(Mutex::new(HOT_RELOAD_DEBOUNCE)),
             watch_registry: Arc::new(Mutex::new(None)),
             source_watches: Arc::new(Mutex::new(Vec::new())),
@@ -262,8 +255,9 @@ impl ThemeManager {
         Arc::clone(&self.state().theme)
     }
 
-    /// Register the hook that runs every watcher or poll reload; it replaces the
-    /// `notify_reload` doorbell. Not run on [`switch_theme`](Self::switch_theme).
+    /// Register the hook that runs every watcher or poll reload. It is the only
+    /// path from a theme reload to the shell doorbell; without it a reload just
+    /// swaps the theme. Not run on [`switch_theme`](Self::switch_theme).
     pub fn set_reload_callback(&self, callback: ThemeReloadCallback) {
         *self
             .on_reload
@@ -347,7 +341,7 @@ impl ThemeManager {
 
     /// Re-arm the source watches from a non-watcher thread.
     fn rearm_source_watches_now(&self) {
-        let target = self.reload_target(None);
+        let target = self.reload_target();
         // Not a watcher thread, so blocking on the slot cannot self-deadlock.
         let mut slot = target
             .watcher
@@ -377,11 +371,6 @@ impl ThemeManager {
             .write()
             .map_err(|e| Error::config(e.to_string()))? = new_state;
 
-        let client_registry = self
-            .client_registry
-            .lock()
-            .map_err(|e| Error::config(e.to_string()))?
-            .clone();
         let debounce_duration = *self
             .watch_debounce
             .lock()
@@ -393,9 +382,7 @@ impl ThemeManager {
             .map_err(|e| Error::config(e.to_string()))?
             .clone()
             .unwrap_or_else(|| Arc::new(WatchRegistry::new()));
-        if let Err(error) =
-            self.start_watching_with(debounce_duration, client_registry, &watch_registry)
-        {
+        if let Err(error) = self.start_watching_with(debounce_duration, &watch_registry) {
             // Non-fatal: theme switched, but hot-reload is now off.
             debug_log!(
                 "theme",
@@ -409,16 +396,8 @@ impl ThemeManager {
     ///
     /// # Errors
     /// Returns an error if the watcher can't start or a lock is poisoned.
-    pub fn start_watching(
-        &self,
-        debounce_duration: Duration,
-        client_registry: Option<Arc<crate::ipc::ClientDirectory>>,
-    ) -> Result<()> {
-        self.start_watching_with(
-            debounce_duration,
-            client_registry,
-            &Arc::new(WatchRegistry::new()),
-        )
+    pub fn start_watching(&self, debounce_duration: Duration) -> Result<()> {
+        self.start_watching_with(debounce_duration, &Arc::new(WatchRegistry::new()))
     }
 
     /// Start watching the theme's sources, sharing `watch_registry` with the caller.
@@ -432,13 +411,8 @@ impl ThemeManager {
     pub fn start_watching_with(
         &self,
         debounce_duration: Duration,
-        client_registry: Option<Arc<crate::ipc::ClientDirectory>>,
         watch_registry: &Arc<WatchRegistry>,
     ) -> Result<()> {
-        self.client_registry
-            .lock()
-            .map_err(|e| Error::config(e.to_string()))?
-            .clone_from(&client_registry);
         *self
             .watch_debounce
             .lock()
@@ -449,7 +423,7 @@ impl ThemeManager {
             .map_err(|e| Error::config(e.to_string()))? = Some(Arc::clone(watch_registry));
 
         let started = self.hot_reload.start_watcher(|| {
-            let target = self.reload_target(client_registry.clone());
+            let target = self.reload_target();
             let callback = Box::new(move |_event: crate::watcher::DebouncedEvent| {
                 target.reload_and_apply("watch callback");
             });
@@ -487,7 +461,7 @@ impl ThemeManager {
             return Ok(());
         }
 
-        self.start_poll_fallback(client_registry, debounce_duration);
+        self.start_poll_fallback(debounce_duration);
         Ok(())
     }
 
@@ -500,15 +474,11 @@ impl ThemeManager {
             .clear();
     }
 
-    fn reload_target(
-        &self,
-        client_registry: Option<Arc<crate::ipc::ClientDirectory>>,
-    ) -> ReloadTarget {
+    fn reload_target(&self) -> ReloadTarget {
         ReloadTarget {
             state: Arc::clone(&self.state),
             reload_gate: Arc::clone(&self.reload_gate),
             on_reload: Arc::clone(&self.on_reload),
-            client_registry,
             watcher: self.hot_reload.watcher_handle(),
             source_watches: Arc::clone(&self.source_watches),
         }
@@ -748,9 +718,9 @@ impl ThemeManager {
 
     /// Poll target. The path is re-resolved each tick: `switch_theme` can
     /// repoint it, and an override appearing or vanishing moves it.
-    fn poll_target(&self, client_registry: Option<Arc<crate::ipc::ClientDirectory>>) -> PollTarget {
+    fn poll_target(&self) -> PollTarget {
         let path_state = Arc::clone(&self.state);
-        let target = self.reload_target(client_registry);
+        let target = self.reload_target();
 
         PollTarget {
             path_of: Box::new(move || {
@@ -765,15 +735,11 @@ impl ThemeManager {
         }
     }
 
-    fn start_poll_fallback(
-        &self,
-        client_registry: Option<Arc<crate::ipc::ClientDirectory>>,
-        debounce_duration: Duration,
-    ) {
+    fn start_poll_fallback(&self, debounce_duration: Duration) {
         self.hot_reload.start_poll_fallback(
             "GPY_THEME_WATCH_POLL_MS",
             debounce_duration,
-            self.poll_target(client_registry),
+            self.poll_target(),
         );
     }
 }

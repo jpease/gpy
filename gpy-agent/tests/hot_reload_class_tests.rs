@@ -573,7 +573,7 @@ fn hot_reload_switch_theme_by_name_with_poll_fallback_is_prompt() {
 
     let manager = ThemeManager::new(ACTIVE_THEME).expect("theme manager");
     manager
-        .start_watching(Duration::from_secs(5), None)
+        .start_watching(Duration::from_secs(5))
         .expect("start watching");
     // Let the poll thread enter its between-ticks sleep.
     std::thread::sleep(Duration::from_millis(500));

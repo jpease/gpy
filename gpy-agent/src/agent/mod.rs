@@ -291,11 +291,7 @@ impl Agent {
 
         let theme_manager = Self::init_theme_manager(&initial_config)?;
 
-        if let Err(e) = theme_manager.start_watching_with(
-            HOT_RELOAD_DEBOUNCE,
-            Some(Arc::clone(&client_registry)),
-            &watch_registry,
-        ) {
+        if let Err(e) = theme_manager.start_watching_with(HOT_RELOAD_DEBOUNCE, &watch_registry) {
             // eprintln! vanishes once daemonized (stdio -> /dev/null); log instead.
             debug_log!("agent", "Warning: Failed to start theme watching ({e})");
         }
