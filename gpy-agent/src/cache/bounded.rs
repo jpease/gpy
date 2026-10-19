@@ -8,7 +8,8 @@ use std::hash::Hash;
 pub const GIT_STATUS_CACHE_CAPACITY: usize = 512;
 
 /// Byte budget for per-file change detail across all git-status entries; the
-/// oldest entries lose file maps first (about 1.5 MB per repo with 10,000 dirty files).
+/// oldest entries lose file maps first. At 80 B per file (`CacheEntry::file_detail_bytes`),
+/// that is about 0.8 MB per repo with 10,000 dirty files.
 pub const GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES: usize = 10 * 1024 * 1024;
 
 /// Maximum number of directories tracked by the language detection cache.
