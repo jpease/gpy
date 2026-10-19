@@ -94,10 +94,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sh uninstall.sh`, which removes the Fish integration too (rc block, prompt
   symlink, prompt restore). GPY was never installable through Fisher: the
   plugin tree shipped no agent binary.
+- Fish: the `gpy_lang_status` debug function, which printed settings nothing
+  reads and called a function that no longer exists.
 
 ### Fixed
 
 - `SECURITY.md` now lists 0.4.x, the current release series, as supported.
+- Fish: `prompt_debug vars` reports the duration threshold the duration
+  segment uses (`__duration_threshold_ms`).
 
 - A slow git scan can no longer overwrite a newer cached status.
 

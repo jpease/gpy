@@ -2,7 +2,7 @@
 # tests/bash/segment_registry_parity.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The CLI registry (`gpy __complete segment` in an empty sandbox), the
-# fish/bash/zsh segment files (minus helpers) and the `gpy enable` list in
+# fish/bash/zsh segment files and the `gpy enable` list in
 # docs/user/cli-reference.md (minus aliases) are the same set.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -18,10 +18,6 @@ if [ ! -x "$GPY" ]; then
     }
 fi
 
-# Files under <shell>/segments/ that are NOT prompt segments.
-#   fish/segments/devtools.fish -- developer debug helpers (gpy_lang_status),
-#                                  sourced by fish/core/init.fish; no segment.
-NON_SEGMENT_FILES="fish/segments/devtools.fish"
 # Names the docs list for a segment that are aliases, not segment names.
 #   `lang` -- accepted by `gpy enable` as an alias for `language`.
 DOC_ALIASES="lang"
@@ -65,15 +61,11 @@ EOF
     [ "$bad" -eq 0 ] && pass "$label_a == $label_b"
 }
 
-# The segment names a shell ships: <shell>/segments/<name>.<ext>, minus helpers.
+# The segment names a shell ships: <shell>/segments/<name>.<ext>.
 shipped_segments() {
-    local shell="$1" ext="$2" file rel
+    local shell="$1" ext="$2" file
     for file in "$ROOT/$shell/segments/"*."$ext"; do
         [ -e "$file" ] || continue
-        rel="$shell/segments/$(basename "$file")"
-        case " $NON_SEGMENT_FILES " in
-            *" $rel "*) continue ;;
-        esac
         basename "$file" ".$ext"
     done | sort -u
 }
