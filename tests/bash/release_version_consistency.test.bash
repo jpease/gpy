@@ -3,7 +3,8 @@
 # Every version declaration agrees with the newest released CHANGELOG
 # section, and scripts/release-notes.sh renders notes for it.
 # Asserts: (a) Cargo.toml, fisher.json and the CHANGELOG agree; (b) the heading
-# has a tag link reference; (c) its date is ISO or YYYY-MM-DD; (d) notes render.
+# has a tag link reference; (c) its date is ISO or YYYY-MM-DD; (d) notes render;
+# (e) SECURITY.md names one series, the CHANGELOG minor.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
@@ -58,6 +59,18 @@ notes="$(scripts/release-notes.sh --version "v$CHANGELOG_VERSION" 2>&1)" || {
 if [[ -n "$notes" ]]; then
     grep -qF "# GPY v$CHANGELOG_VERSION" <<<"$notes" ||
         fail "release notes for v$CHANGELOG_VERSION have no version heading"
+fi
+
+echo "--- SECURITY.md names the released minor series ---"
+expected="${CHANGELOG_VERSION%.*}.x"
+mapfile -t rows < <(grep -E '^[|] [0-9]+\.[0-9]+\.x ' SECURITY.md || true)
+if [[ ${#rows[@]} -ne 1 ]]; then
+    fail "SECURITY.md must have exactly one '| N.N.x |' row, found ${#rows[@]}"
+else
+    listed="$(printf '%s\n' "${rows[0]}" | sed -nE 's/^[|] ([0-9]+\.[0-9]+\.x) .*/\1/p')"
+    if [[ "$listed" != "$expected" ]]; then
+        fail "SECURITY.md lists $listed but $CHANGELOG declares $CHANGELOG_VERSION (expected $expected)"
+    fi
 fi
 
 test_finish "version declarations agree with CHANGELOG $CHANGELOG_VERSION"

@@ -21,8 +21,9 @@ tag they came from.
 - `CHANGELOG.md` — a `## [X.Y.Z]` heading. `scripts/release-notes.sh` builds the
   GitHub release body from that section and fails if it is empty.
 
-`tests/bash/release_version_consistency.test.bash` checks that the three agree
-and that the newest CHANGELOG heading has its `[X.Y.Z]: ...` link reference.
+`tests/bash/release_version_consistency.test.bash` checks that the three agree,
+that the newest CHANGELOG heading has its `[X.Y.Z]: ...` link reference, and
+that `SECURITY.md` names exactly one supported series, `X.Y.x`.
 
 ## Cutting a release
 
@@ -47,8 +48,10 @@ Everything below runs on `main`, with a clean tree.
    grep -n 'YYYY-MM-DD' CHANGELOG.md   # must print nothing before tagging
    ```
 
-4. **Bump `SECURITY.md`.** The Supported Versions table names one line, the
-   released minor series (`0.1.x` for v0.1.0). The gate asserts it matches.
+4. **Bump `SECURITY.md`.** The Supported Versions table names one row, the
+   released minor series (`0.4.x` for v0.4.0).
+   `tests/bash/release_version_consistency.test.bash`, run by `just check-shell`
+   in the `validate` job, fails unless it matches.
 
 5. **Preview the release body.** This is exactly what the workflow publishes:
 

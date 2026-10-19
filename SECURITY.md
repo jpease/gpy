@@ -6,7 +6,7 @@ GPY is a personal project with one release line. Security fixes land on the late
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.3.x   | :white_check_mark: |
+| 0.4.x   | :white_check_mark: |
 
 ## Reporting a Vulnerability
 
