@@ -200,6 +200,9 @@ function __gpy_precmd() {
         __gpy_cmd_duration=0
     fi
 
+    # A doorbell ring zsh dropped leaves its flag behind; act on it now.
+    __gpy_consume_shell_flags
+
     if [[ -z "$__gpy_registered" ]] && __gpy_agent_enabled; then
         __gpy_register_with_agent
     fi
