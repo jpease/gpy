@@ -96,9 +96,11 @@ cargo llvm-cov nextest --features test-support --html --open
 
 - **macOS** — primary development platform; the maintainer's pre-push gate
   runs the full suite, including the shell end-to-end tiers.
-- **Linux** — the ubuntu leg of `pr-gate.yml` (manual `workflow_dispatch`).
+- **Linux** — the ubuntu legs of `pr-gate.yml`, which runs on every pull
+  request to `main` (and on manual dispatch).
 - **Windows** — `windows-gate.yml` (build, lib tests, CLI integration
-  binaries; manual dispatch). Signal and socket tests are `#[cfg(unix)]`.
+  binaries), called by `pr-gate.yml` on every pull request and required by
+  `gate-result`. Signal and socket tests are `#[cfg(unix)]`.
 
 ## Troubleshooting
 

@@ -51,21 +51,13 @@ GPY is a **two-process system** for creating fast, live-updating shell prompts a
 ### Request/Response Flow
 
 ```
-User types command → Fish renders prompt → segment_git_render()
-                                              ↓
-                        __gpy_request "git" $PWD "fish-ansi" false
-                                              ↓
-                        JSON over Unix socket → gpy-agent
-                                                     ↓
-                              git status --porcelain=v2 subprocess
-                                                     ↓
-                                      Check cache (fresh? return cached)
-                                                     ↓
-                                      Render ANSI codes with theme
-                                                     ↓
-                        ← fish-ansi response ← gpy-agent
-                                              ↓
-                        printf '%s' $response
+1. segment_git_render → __gpy_request git $PWD
+     Fish:     __gpy_build_data_payload … ansi → __gpy_ipc_send
+     Zsh/Bash: __gpy_build_data_request … zsh-prompt|bash-prompt → __gpy_send_json
+2. {"op":"git","cwd":…,"format":"ansi"}\n over the Unix socket → gpy-agent
+3. agent reuses a fresh cache entry, or runs git status --porcelain=v2
+4. agent renders with the theme in the requested format
+5. ← one line of rendered text, which the shell prints
 ```
 
 **Timing**: a cached response costs one IPC round trip (`ipc_ping` baseline 0.037 ms); a fresh git query on a 100-file repository baselines at 17.2 ms (`git_status_100_files`). Both figures are from `tests/performance-baselines.json`.
@@ -166,58 +158,20 @@ end
 
 ### Format Negotiation
 
-The agent supports multiple output formats via the `format` field:
+Every data request names a `format` (`Format` in `gpy-agent/src/formatter/mod.rs`):
 
-```
-┌─────────────────────────────────────────────────────┐
-│              Format Types (Request)                 │
-├─────────────────────────────────────────────────────┤
-│  "json"           → Raw data for shell processing   │
-│  "fish-ansi"      → ANSI codes for Fish display     │
-│  "zsh-ansi"       → ANSI codes for Zsh display      │
-│  "bash-ansi"      → ANSI codes for Bash display     │
-│  "fish-rendered"  → Fully rendered Fish prompt      │
-└─────────────────────────────────────────────────────┘
-```
-
-**Current status**:
-- `json`: supported; all shells use it
-- `fish-ansi`: legacy format, deprecated but supported
-- `*-rendered`: not implemented
-
-**Design decision**: Start with `json` format to keep shell integrations flexible. Future optimization: pre-rendered formats to eliminate shell-side formatting.
+| Format | Used by | Reply |
+|--------|---------|-------|
+| `ansi` | Fish | One line with ANSI SGR escapes |
+| `zsh-prompt` | Zsh | SGR escapes inside `%{ %}` |
+| `bash-prompt` | Bash | SGR escapes inside `\[ \]` |
+| `json` | `gpy-agent oneshot` default and tooling | A flat object per `gpy-agent/schemas/response.json` |
 
 ### Segment Rendering Boundary
 
-**Where does rendering happen?**
-
-```
-Agent Side (Rust)              Shell Side (Fish/Zsh/Bash)
-─────────────────             ──────────────────────────
-
-Git status query    ───→
-Language detection  ───→
-Theme data          ───→
-                                            ←─── Segment composition
-                                            ←─── ANSI color codes
-                                            ←─── Delimiter placement
-                                            ←─── Prompt string assembly
-```
-
-**Current design** (as of 2025-12-22):
-1. **Agent provides**: Raw data (branch name, file counts) + theme colors
-2. **Shell assembles**: ANSI codes, delimiters, prompt string
-3. **Boundary**: JSON response from IPC
-
-**Why this boundary?**
-- **Flexibility**: Shells can customize rendering (e.g., Bash limitations)
-- **Simplicity**: Agent doesn't need prompt syntax knowledge
-- **Performance**: Rendered segments can be cached in shell variables
-
-**Future optimization**:
-- Agent pre-renders ANSI strings → zero shell-side processing
-- Requires format="fish-rendered" support
-- Trade-off: Less flexible, but faster prompts
+The agent renders each segment, colors and separators included, into a
+shell-ready string in the requested format. The shell only orders segments and
+concatenates them into the prompt.
 
 ### Shell-Specific Constraints
 
@@ -430,7 +384,7 @@ error.rs (foundation)
       ├── debouncer.rs (event coalescing)
       └── multi_repo.rs (multi-repo coordination)
 
-agent.rs (orchestrator - coordinates above)
+agent/mod.rs (orchestrator - coordinates above)
 
 main.rs (CLI entry point)
 ```
@@ -441,55 +395,23 @@ main.rs (CLI entry point)
 
 ## Threading Model
 
-### Agent Event Loop (async, single-threaded)
+### Agent runtime
 
-```rust
-tokio::select! {
-    // IPC server accepts connections
-    result = server_future => { /* handle server completion */ }
+- tokio multi-thread runtime (`Runtime::new()`, `agent/lifecycle/start.rs`).
+- `Agent::start_background` (`agent/mod.rs`) runs one 5-branch `tokio::select!`:
+  `server_task` (the spawned IPC server stopped), `shutdown_signal`
+  (SIGINT/SIGTERM), `clock_timer` (1 s, gated on `agent.live_updates`),
+  `pruning_timer` (60 s: prune dead clients, re-nudge shells) and
+  `reconcile_timer` (45 s `RECONCILE_INTERVAL_SECS`,
+  `GPY_RECONCILE_INTERVAL_SECS` override, gated on `live_updates`).
+- Git and language work runs in `spawn_blocking`.
 
-    // Shutdown signal (SIGTERM/SIGINT)
-    shutdown = shutdown_signal => { /* graceful cleanup */ }
+### Watcher threads
 
-    // Clock timer (1s or 60s intervals)
-    _ = clock_timer.tick() => {
-        // Send SIGURG (repaint) to all registered shells
-    }
-}
-```
-
-**Why tokio::select?**
-- Allows immediate response to shutdown signals
-- Coordinates IPC server + clock timer concurrently
-- All I/O is async (no blocking)
-
-### Watcher Background Thread
-
-The file watcher uses **one dedicated OS thread** for debounce flushing:
-
-```
-Main Thread                     Flush Thread
-     │                               │
-     ├─ notify event                 │
-     ├─ filter event                 │
-     ├─ feed debouncer               │
-     │                               │
-     │                          sleep 150ms
-     │                               │
-     │                          acquire lock
-     │                          flush expired
-     │                          release lock
-     │                               │
-     ├─ another event                │
-     ├─ reset expiry                 │
-     │                          sleep 150ms
-     │                               │
-```
-
-**Why a dedicated thread?**
-- Debouncer needs periodic flushing independent of events
-- If events stop arriving, pending events would never expire
-- sleep-based thread is lightweight (minimal CPU)
+The watchers are plain `std::thread`s: the `notify` event thread
+(`watcher/filesystem/mod.rs`), the debounce flush thread, which dispatches
+each expired event on its own thread (`watcher/mod.rs`), and the hot-reload
+poller (`watcher/hot_reload.rs`).
 
 ### Shared State (Thread-Safe via Arc)
 
@@ -625,9 +547,9 @@ No manual cleanup needed beyond stopping watchers and servers.
 ```
 Fish segment_git_render()
   ↓
-__gpy_request "git" $PWD "fish-ansi" false
+__gpy_request git $PWD
   ↓
-JSON: {"op":"git","cwd":"/path","format":"fish-ansi"}
+JSON: {"op":"git","cwd":"/path","format":"ansi"}
   ↓
 Unix socket → gpy-agent IPC server
   ↓
@@ -646,12 +568,12 @@ if stale:
       ↓
     git_cache.insert(repo_path, status, timestamp)
   ↓
-Render response in fish-ansi format:
+Render response in ansi format:
   - Apply theme colors
   - Generate ANSI escape codes
   - Add delimiters (if not is_last)
   ↓
-← fish-ansi: "\x1b[32m main \x1b[0m  2 \x1b[33m⚡1\x1b[0m"
+← ansi: "\x1b[32m main \x1b[0m  2 \x1b[33m⚡1\x1b[0m"
   ↓
 Fish: printf '%s' $response
 ```
@@ -699,112 +621,20 @@ Prompt redraws (calls segment_git_render again)
 ### Clock Timer
 
 ```
-Agent starts with show_seconds = false
+1 s tick (clock_timer, while agent.live_updates is on)
   ↓
-create_clock_timer():
-  - Calculate seconds until next minute
-  - First tick: align to 14:33:00 (wait 13s if started at 14:32:47)
-  - Subsequent ticks: exactly 60s apart
+handle_clock_tick() → skip unless the clock segment is enabled
   ↓
-Timer tick event
-  ↓
-Check: should_send_clock_signal()
-  - If on minute boundary: send
-  - Otherwise: skip
+clock_signal_decision(): ring every tick if show_seconds, else once per minute
   ↓
 client_registry.notify_repaint(None)
   ↓
-All shell processes receive SIGURG
-  ↓
-Prompt repaints with updated time
+SIGURG to every registered shell
 ```
 
----
-
-## Common Behaviors → Code Paths
-
-This section maps user-visible behaviors to their implementation paths.
-
-**1. Git commit → prompt updates in ~200ms**
-```
-User runs: git commit -m "message"
-  ↓
-.git/HEAD modified
-  ↓
-watcher/filesystem/mod.rs:125 - notify event filtered (accept .git/HEAD)
-  ↓
-watcher/debouncer.rs:87 - debounce 100ms
-  ↓
-agent.rs:1065 - handle_file_event() invalidates cache
-  ↓
-agent.rs:1102 - notify_clients_for_repo() sends SIGURG
-  ↓
-All Fish processes repaint with fresh git status
-  ↓
-Tests: gpy-agent/tests/git_status_tests.rs:test_git_status_with_staged_files
-```
-
-**2. Config change → theme reloads automatically**
-```
-User edits: ~/.config/gpy/config.toml
-  ↓
-watcher/filesystem/mod.rs:329 - config file event detected
-  ↓
-agent.rs:1150 - handle_config_change() calls config_mgr.reload()
-  ↓
-agent writes <pid>.reload for each client, then sends SIGURG (notify_reload)
-  ↓
-Fish SIGURG handler sees the reload flag → sources fresh theme export
-  ↓
-Tests: gpy-agent/tests/config_hot_reload_tests.rs:test_config_watcher_triggers_reload
-       gpy-agent/tests/cli_integration_tests.rs:test_config_hot_reload_git_toggle
-```
-
-**3. Directory change → language detection updates**
-```
-Fish: cd /path/to/rust/project
-  ↓
-Fish prompt renders → segment_language_render()
-  ↓
-core/ipc.fish:__gpy_request "language" $PWD
-  ↓
-ipc/server.rs:250 - handles Operation::Language
-  ↓
-language/detector.rs - gengo-language detection (cached)
-  ↓
-Returns: {"language":"Rust","version":"1.90.0"}
-  ↓
-Fish renders: " 1.90.0 "
-  ↓
-Tests: gpy-agent/tests/language_tests.rs:test_version_parsing_rust
-       gpy-agent/tests/language_detection_integration_tests.rs
-```
-
-**4. Clock tick → time updates across all terminals**
-```
-Agent clock timer (60s interval if show_seconds=false)
-  ↓
-agent.rs:200 - create_clock_timer() ticks
-  ↓
-agent.rs:850 - should_send_clock_signal() checks minute boundary
-  ↓
-agent.rs:870 - client_registry.notify_repaint(None) sends to all clients
-  ↓
-All Fish terminals repaint with updated time
-  ↓
-Tests: gpy-agent/tests/clock_timer_tests.rs:test_timer_alignment_to_minute_boundary
-```
-
-**5. Prompt render latency budget**
-```
-User presses Enter → Fish renders new prompt
-  ↓
-Budget (cached paths): prompt_render 20 ms target, 50 ms max
-  ↓
-Performance validation: time fish_prompt
-```
-
-**Key insight**: Most user-visible behaviors involve the pattern: filesystem event → watcher → agent cache update → SIGURG (plus a `<pid>.reload` flag for config/theme) → Fish repaint. The agent orchestrates this coordination in `agent.rs`, ensuring prompt updates stay fast via caching while remaining accurate via file watching.
+**Key insight**: most user-visible behaviors follow one pattern: filesystem
+event → watcher → agent cache update → SIGURG (plus a `<pid>.reload` flag for
+config/theme) → shell repaint. `agent/mod.rs` and `agent/events/` coordinate it.
 
 ---
 
@@ -835,309 +665,20 @@ GPY uses a **JSON-based request/response protocol** over Unix domain sockets. Th
 - The socket's directory is trusted only if it is a real directory (not a symlink) owned by the user. An owned group- or world-writable directory is set to `0700` when it is the default runtime root and refused when it comes from `--socket` or `$GPY_AGENT_SOCKET_PATH`. `gpy-agent start` checks before it touches the directory, and the daemon checks again immediately before bind (`secure_socket_dir` in `ipc/server/socket_dir.rs`)
 - No handshake or peer-credential check: any process running as the user can connect. See [SECURITY.md](../../SECURITY.md#trust-boundaries) for the full trust policy
 
-### Message Format
-
-#### Request Message
-
-All requests share this structure:
-
-```json
-{
-  "op": "<operation>",
-  "cwd": "<current-working-directory>",
-  "format": "<response-format>",
-  "is_last": <boolean>
-}
-```
-
-**Fields**:
-- `op` (string, required): Operation type (`"git"`, `"language"`, `"ping"`, `"register"`)
-- `cwd` (string, optional): Current working directory (required for git/language operations)
-- `format` (string, optional): Response format (`"json"`, `"fish-ansi"`, `"fish-rendered"`)
-- `is_last` (boolean, optional): Whether this is the last segment (affects delimiter rendering)
-
-**Additional fields** (operation-specific):
-- For `"register"`: `pid`, `shell`, `shell_version`
-
-#### Response Message
-
-Responses are operation-specific, but always valid JSON:
-
-**Success response** (git operation):
-```json
-{
-  "branch": "main",
-  "ahead": 0,
-  "behind": 0,
-  "ahead_capped": false,
-  "behind_capped": false,
-  "staged": 2,
-  "unstaged": 1,
-  "untracked": 0,
-  "conflicts": 0,
-  "state": "dirty"
-}
-```
-
-**Success response** (language operation):
-```json
-{
-  "language": "Rust",
-  "version": "1.90.0",
-  "confidence": 0.95
-}
-```
-
-**Success response** (ping operation):
-```json
-{
-  "status": "ok",
-  "version": "0.1.0"
-}
-```
-
-**Error response**:
-```json
-{
-  "error": "Not in a git repository",
-  "code": "NOT_A_REPO"
-}
-```
-
 ### Operations
 
-#### 1. Git Status (`"git"`)
+Each request is one newline-terminated JSON object with an `op`:
 
-**Request**:
-```json
-{
-  "op": "git",
-  "cwd": "/path/to/repo",
-  "format": "json",
-  "is_last": false
-}
-```
+`git` `lang` `directory` `clock` `duration` `character` `hostname` `username`
+`ping` `status` `shutdown` `config_reload` `register` `unregister` `workspace`
 
-**Response** (success):
-```json
-{
-  "branch": "main",
-  "ahead": 2,
-  "behind": 1,
-  "ahead_capped": false,
-  "behind_capped": false,
-  "staged": 3,
-  "unstaged": 1,
-  "untracked": 2,
-  "conflicts": 0,
-  "state": "dirty"
-}
-```
-
-**State values**:
-- `"clean"`: No changes
-- `"dirty"`: Has changes (staged/unstaged/untracked)
-- `"merging"`: In merge conflict resolution
-- `"rebasing"`: In rebase operation
-- `"cherry-picking"`: In cherry-pick operation
-- `"reverting"`: In revert operation
-- `"bisecting"`: In git bisect
-
-**Error cases**:
-- `"NOT_A_REPO"`: Not in a git repository
-- `"PERMISSION_DENIED"`: Can't read .git directory
-- `"INVALID_PATH"`: Path validation failed
-
-#### 2. Language Detection (`"language"`)
-
-**Request**:
-```json
-{
-  "op": "language",
-  "cwd": "/path/to/project",
-  "format": "json"
-}
-```
-
-**Response** (success):
-```json
-{
-  "language": "Python",
-  "version": "3.11.0",
-  "confidence": 0.87
-}
-```
-
-**Response** (no language detected):
-```json
-{
-  "language": null,
-  "version": null,
-  "confidence": 0.0
-}
-```
-
-#### 3. Client Registration (`"register"`)
-
-**Purpose**: Register a shell process for live updates (SIGURG doorbell)
-
-**Request**:
-```json
-{
-  "op": "register",
-  "pid": 12345,
-  "cwd": "/home/user",
-  "shell": "fish",
-  "shell_version": "3.6.0"
-}
-```
-
-**Response**:
-```json
-{
-  "status": "registered",
-  "watching": ["/home/user"]
-}
-```
-
-**Behavior**:
-- Agent tracks PID in client registry
-- Agent starts watching `cwd` for git changes (if git repo)
-- Agent sends SIGURG to PID when git status changes (repaint)
-- Agent writes `<pid>.reload` then sends SIGURG when config/theme changes
-
-#### 4. Ping (`"ping"`)
-
-**Purpose**: Health check, verify agent is responsive
-
-**Request**:
-```json
-{
-  "op": "ping"
-}
-```
-
-**Response**:
-```json
-{
-  "status": "ok",
-  "version": "0.1.0",
-  "uptime_seconds": 3600
-}
-```
-
-### Protocol Guarantees
-
-**Ordering**: Requests are processed in order per connection (FIFO)
-
-**Timeout**: Agent responses within 100ms (or returns partial/cached data)
-- Git operations use progressive timeout (see Git Status Request flow)
-- If git query takes > 100ms, agent returns cached data (if available)
-- Client receives either: fresh data, stale data, or error
-
-**Message Size Limits**:
-- Request: 64KB max (enforced by agent)
-- Response: Unlimited (but typically < 1KB)
-
-**Connection Lifecycle**:
-1. Client opens socket connection
-2. Client sends request(s)
-3. Agent responds to each request
-4. Client closes connection (or keeps alive for multiple requests)
-5. Agent cleans up on connection close
-
-**Error Handling**:
-- Malformed JSON → Agent closes connection
-- Invalid operation → Agent returns error response
-- Invalid path → Agent returns error response
-- Timeout → Agent returns cached data or error
-
-### Shell Integration Examples
-
-#### Fish
-
-```fish
-function __gpy_request -a operation cwd format is_last
-    # Build JSON request; __gpy_ipc_endpoint resolves the socket path
-    set -l socket (__gpy_ipc_endpoint)
-    set -l request "{\"op\":\"$operation\",\"cwd\":\"$cwd\",\"format\":\"$format\",\"is_last\":$is_last}"
-
-    # Send request, read response
-    echo $request | socat - UNIX-CONNECT:$socket
-end
-
-# Usage
-set -l git_status (__gpy_request "git" (pwd) "json" false)
-```
-
-#### Zsh
-
-```zsh
-__gpy_request() {
-    local op=$1 cwd=$2 format=$3 is_last=$4
-    local socket=$(__gpy_ipc_endpoint)
-    local request="{\"op\":\"$op\",\"cwd\":\"$cwd\",\"format\":\"$format\",\"is_last\":$is_last}"
-
-    # Prefer the zsh/net/socket builtin (no external tool needed); fall back
-    # to socat, then nc -U.
-    zmodload zsh/net/socket 2>/dev/null
-    if zsocket "$socket" 2>/dev/null; then
-        echo $request >&$REPLY
-        cat <&$REPLY
-        exec {REPLY}>&-
-    elif command -v socat &>/dev/null; then
-        echo $request | socat - UNIX-CONNECT:$socket
-    else
-        echo $request | nc -U "$socket"
-    fi
-}
-```
-
-#### Bash
-
-```bash
-__gpy_request() {
-    local op=$1 cwd=$2 format=$3 is_last=$4
-    local socket=$(__gpy_ipc_endpoint)
-    local request="{\"op\":\"$op\",\"cwd\":\"$cwd\",\"format\":\"$format\",\"is_last\":$is_last}"
-
-    # Bash has no /dev/tcp-to-Unix-socket path; use socat, then nc -U.
-    if command -v socat &>/dev/null; then
-        echo "$request" | socat - UNIX-CONNECT:"$socket"
-    else
-        echo "$request" | nc -U "$socket"
-    fi
-}
-```
+Per-op fields, `format` values and reply shapes:
+[`gpy-agent/schemas/README.md`](../../gpy-agent/schemas/README.md).
 
 ### Protocol Versioning
 
-**Current version**: 1.0 (implicit, no version field in protocol)
-
-**Future versioning**:
-```json
-{
-  "version": "2.0",
-  "op": "git",
-  ...
-}
-```
-
-**Compatibility strategy**:
-- Agent supports multiple protocol versions concurrently
-- Version negotiation via `version` field in request
-- If no `version` field → assume 1.0
-- Agent responds with same version as request
-
-**Breaking changes** (require version bump):
-- Renaming fields
-- Changing field types
-- Removing operations
-
-**Non-breaking changes** (no version bump needed):
-- Adding new fields (ignored by old clients)
-- Adding new operations
-- Adding new response formats
+`PROTOCOL_VERSION = 2` (`gpy-agent/src/ipc/protocol/mod.rs`); shells compare
+for equality and restart the agent on mismatch. There is no negotiation.
 
 ### Performance Characteristics
 
@@ -1145,45 +686,7 @@ A cached git status costs one IPC round trip (`tests/performance-baselines.json`
 
 ### Security Considerations
 
-**Threat model**:
-- **Trusted**: User's own processes (same UID)
-- **Untrusted**: Other users on the system
-
-**Protections**:
-
-1. **Socket Permissions** (`0600`):
-   - Only owner can connect
-   - OS enforces UID matching
-   - No cross-user access
-
-2. **Path Validation**:
-   - Rejects paths with null bytes, control characters
-   - Limits path length to prevent buffer exploits
-   - Canonicalizes paths to prevent traversal attacks
-
-3. **Message Size Limits**:
-   - 64KB max request size
-   - Prevents memory exhaustion DoS
-
-4. **Rate Limiting**:
-   - 50ms minimum interval per client
-   - Prevents request flooding
-
-5. **PID Validation** (for registration):
-   - `kill(pid, 0)` checks if PID is valid and owned by user
-   - Returns `EPERM` if PID belongs to different user
-   - Prevents signal delivery to arbitrary processes
-
-**Attack scenarios prevented**:
-- Malicious IPC client sending crafted requests
-- PID spoofing to receive signals for other user's shells
-- Socket hijacking by other users
-- Path traversal to read arbitrary files
-- DoS via message flooding or large messages
-
-**Not protected against**:
-- User attacking their own agent (same UID = full trust)
-- Root user accessing any socket (by design)
+See [SECURITY.md](../../SECURITY.md#trust-boundaries) for the trust boundaries, threat model and defenses.
 
 ---
 
@@ -1244,37 +747,7 @@ subprocess. ADR-0003 records the original decision and its reversal;
 
 ## Security Model
 
-### Threat Model
-
-**Trusted**: User's own processes (same UID)
-**Untrusted**: Other users on the system
-
-**Attack scenarios prevented**:
-1. **Malicious IPC client**: Path validation, message size limits, rate limiting
-2. **PID spoofing**: OS enforces via kill() permissions (EPERM if not your PID)
-3. **Socket hijacking**: 0600 permissions, only owner can connect
-4. **Path traversal**: Security module validates all paths
-5. **DoS**: 64KB message limit, connection rate and concurrency limits
-
-### Defense Layers
-
-```
-IPC Request
-  ↓
-1. Socket permissions (0600) → only user can connect
-  ↓
-2. Message size validation (64KB max)
-  ↓
-3. JSON parsing (reject malformed)
-  ↓
-4. Path validation (length, null bytes, control chars)
-  ↓
-5. PID validation (kill(pid, 0) → ESRCH if invalid)
-  ↓
-6. Rate limiting (50ms minimum interval per client)
-  ↓
-Process request
-```
+See [SECURITY.md](../../SECURITY.md#trust-boundaries) for the trust boundaries, threat model and defenses.
 
 ---
 
@@ -1514,7 +987,7 @@ time git status --porcelain
 ## Next Steps for New Contributors
 
 1. **Read this doc**
-2. **Read module docs**: `gpy-agent/src/agent.rs`, `gpy-agent/src/watcher/mod.rs`
+2. **Read module docs**: `gpy-agent/src/agent/mod.rs`, `gpy-agent/src/watcher/mod.rs`
 3. **Trace a request**: Follow git status request through entire stack
 4. **Run tests**: `cargo test`, `./scripts/test_fish.sh`
 5. **Read [add-new-segment.md](add-new-segment.md)**: Learn how to add segments

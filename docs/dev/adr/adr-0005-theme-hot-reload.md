@@ -25,6 +25,8 @@ Users want to customize their prompt appearance (colors, icons, segments) withou
 
 ### User Workflow
 
+> **Superseded by [ADR-0007](adr-0007-sigurg-doorbell-notifications.md):** reloads now use a `<pid>.reload` flag plus SIGURG; SIGUSR2 is unused.
+
 ```
 1. User edits ~/.config/gpy/themes/custom.toml
 2. Saves file
@@ -52,6 +54,8 @@ Implement **hot-reload with filesystem watching** for both themes and configurat
 - Both notify Fish on success
 
 ### Reload Flow
+
+> **Superseded by [ADR-0007](adr-0007-sigurg-doorbell-notifications.md):** reloads now use a `<pid>.reload` flag plus SIGURG; SIGUSR2 is unused.
 
 ```rust
 // Theme reload
@@ -90,6 +94,8 @@ if let Some(ref callback) = *reload_callback.lock().unwrap() {
 ## Consequences
 
 ### Positive
+
+> **Superseded by [ADR-0007](adr-0007-sigurg-doorbell-notifications.md):** reloads now use a `<pid>.reload` flag plus SIGURG; SIGUSR2 is unused.
 
 1. **Great UX**: Instant feedback on changes
    - No need to restart agent
@@ -136,6 +142,8 @@ if let Some(ref callback) = *reload_callback.lock().unwrap() {
 
 ### Mitigation Strategies
 
+> **Superseded by [ADR-0007](adr-0007-sigurg-doorbell-notifications.md):** reloads now use a `<pid>.reload` flag plus SIGURG; SIGUSR2 is unused.
+
 1. **Clear Logging**
    - Debug log all reload attempts
    - Log validation errors
@@ -171,6 +179,8 @@ if let Some(ref callback) = *reload_callback.lock().unwrap() {
 - Users want instant feedback
 
 ### SIGUSR2 Choice
+
+> **Superseded by [ADR-0007](adr-0007-sigurg-doorbell-notifications.md):** reloads now use a `<pid>.reload` flag plus SIGURG; SIGUSR2 is unused.
 
 **Why SIGUSR2 (not SIGUSR1)?**
 - SIGUSR1 already used for prompt repaints (git changes)

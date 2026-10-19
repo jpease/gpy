@@ -126,7 +126,7 @@ A Starship language `style` carries a color plus optional attributes (e.g.
   `bold` (the renderer default) no `{lang}_style` is emitted; a bare-color style
   emits `{lang}_style = ""` to suppress the default.
 
-Supported attributes and their fish-ansi SGR codes:
+Supported attributes and their SGR codes (the `ansi` encoder):
 
 | Attribute | `Attr` variant | SGR |
 |---|---|---|
@@ -139,7 +139,7 @@ Supported attributes and their fish-ansi SGR codes:
 | `hidden` | `Attr::Hidden` | `8` |
 | `strikethrough` | `Attr::Strikethrough` | `9` |
 
-> **Encoder note:** all encoders map every attribute. The fish-ansi encoder
+> **Encoder note:** all encoders map every attribute. The `ansi` encoder
 > emits SGR codes directly; the zsh encoder uses native prompt escapes for
 > bold (`%B`), underline (`%U`), and standout/inverted (`%S`), and raw SGR
 > wrapped in `%{…%}` for the rest (no zsh escape exists for them). Bash/zsh

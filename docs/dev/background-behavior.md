@@ -24,32 +24,36 @@ The agent process is named `gpy-agent`. There is typically one agent instance pe
 
 ## Concurrency Model
 
-The agent uses the `tokio` asynchronous runtime to handle multiple tasks concurrently on a single thread (or thread pool). The main event loop (`Agent::start_background`) uses `tokio::select!` to orchestrate four primary subsystems:
+tokio multi-thread runtime; `Agent::start_background`'s `tokio::select!` drives five branches: IPC server, shutdown signal, 1 s clock, 60 s pruning, 45 s reconcile. The file watcher runs on its own OS threads.
 
 1.  **IPC Server**: Accepts and handles client connections.
-2.  **File Watcher**: Monitors filesystem events for Git repositories and config files.
-3.  **Clock Timer**: Triggers periodic updates for the prompt clock.
-4.  **Pruning Timer**: Periodically cleans up stale client records.
+2.  **Clock Timer**: Triggers periodic updates for the prompt clock.
+3.  **Pruning Timer**: Periodically cleans up stale client records.
+4.  **Reconcile Timer**: rescans watched repos, signals only on a real diff.
 
 ### 1. IPC Server (Idle Behavior)
 The server listens on the Unix socket using `UnixListener::accept()`. This is a non-blocking asynchronous operation.
 *   **Active**: When a request arrives, a lightweight task is spawned to handle it (deserialize, process, serialize response).
 *   **Idle**: When no requests are pending, the listener task is suspended by the runtime, consuming zero CPU.
 
-### 2. File Watcher (Idle Behavior)
-The file watcher (powered by the `notify` crate) uses OS-native APIs (FSEvents on macOS, inotify on Linux) to monitor directories.
-*   **Active**: When a file change occurs, the OS wakes the agent. The event is debounced and processed.
-*   **Idle**: No polling occurs. The watcher's event and flush threads block until the OS reports an event; a pending event wakes the flush thread once, at its debounce deadline. Only the poll fallbacks (`GPY_WATCH_FORCE_POLL`, the `PollWatcher` swap after a failed startup health probe, `GPY_CONFIG_WATCH_POLL_MS`/`GPY_THEME_WATCH_POLL_MS`) wake on an interval.
-
-### 3. Clock Timer (Idle Behavior)
-A `tokio::time::interval` timer fires periodically (default: 1 second if seconds are shown, otherwise 1 minute).
+### 2. Clock Timer (Idle Behavior)
+A 1-second `tokio::time::interval` ticks while `agent.live_updates` is on; the agent rings every tick when the clock shows seconds, otherwise once per minute.
 *   **Behavior**: On each tick, the agent checks the `ClientDirectory` to see if any clients are registered.
 *   **Optimization**: If **no clients are registered** (e.g., no active terminal windows), the timer tick performs a quick check and returns immediately, sending no signals. This minimizes wakeups when the agent is unused.
 
-### 4. Pruning Timer (Idle Behavior)
+### 3. Pruning Timer (Idle Behavior)
 A separate 60-second timer triggers the client pruning process.
 *   **Behavior**: Scans the registered client list and checks if the process IDs (PIDs) are still alive using signal 0 (`kill(pid, 0)`).
 *   **Cleanup**: Dead clients are removed from the registry and unregistered from the file watcher to free up resources.
+
+### 4. Reconcile Timer (Idle Behavior)
+A 45-second timer (`GPY_RECONCILE_INTERVAL_SECS` overrides it) ticks while `agent.live_updates` is on.
+*   **Behavior**: Rescans watched repos to catch changes the OS watcher dropped, and signals shells only on a real diff.
+
+### File Watcher (Idle Behavior)
+The file watcher (powered by the `notify` crate) uses OS-native APIs (FSEvents on macOS, inotify on Linux) to monitor directories.
+*   **Active**: When a file change occurs, the OS wakes the agent. The event is debounced and processed.
+*   **Idle**: No polling occurs. The watcher's event and flush threads block until the OS reports an event; a pending event wakes the flush thread once, at its debounce deadline. Only the poll fallbacks (`GPY_WATCH_FORCE_POLL`, the `PollWatcher` swap after a failed startup health probe, `GPY_CONFIG_WATCH_POLL_MS`/`GPY_THEME_WATCH_POLL_MS`) wake on an interval.
 
 ## Resource Usage
 

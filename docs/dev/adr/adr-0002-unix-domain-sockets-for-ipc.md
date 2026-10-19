@@ -50,7 +50,7 @@ Use **Unix Domain Sockets** for IPC between Fish and the Rust agent.
 
 **Socket Location:**
 ```
-~/.cache/gpy/agent.sock  (or $XDG_CACHE_HOME/gpy/agent.sock)
+<runtime root>/gpy.sock  (runtime root: first of $XDG_RUNTIME_DIR/gpy, $XDG_CACHE_HOME/gpy, ~/.cache/gpy, /tmp/gpy)
 ```
 
 **Permissions:**
@@ -72,17 +72,8 @@ Use **Unix Domain Sockets** for IPC between Fish and the Rust agent.
 
 ```json
 // Request (Fish → Agent)
-{
-  "op": "git",
-  "cwd": "/home/user/project",
-  "format": "fish-rendered"
-}
-
-// Response (Agent → Fish)
-{
-  "status": "ok",
-  "data": "set -g __gpy_git_branch main\nset -g __gpy_git_ahead 2\n..."
-}
+{"op":"git","cwd":"/home/user/project","format":"ansi"}
+// Reply: one newline-terminated line of rendered prompt text; a "json" request gets a flat object, an error {"error":"..."}
 ```
 
 ## Consequences
