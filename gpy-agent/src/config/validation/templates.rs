@@ -32,29 +32,20 @@ pub fn validate_segment_templates(
     theme: &ThemeConfig,
     palette: &Palette,
 ) -> Result<(), ValidationError> {
-    if let Some(format) = theme.segments.git.format.as_deref() {
-        validate_one("git", format, palette)?;
-    }
-    if let Some(format) = theme.segments.language.format.as_deref() {
-        validate_one("language", format, palette)?;
-    }
-    if let Some(format) = theme.segments.directory.format.as_deref() {
-        validate_one("directory", format, palette)?;
-    }
-    if let Some(format) = theme.segments.duration.format.as_deref() {
-        validate_one("duration", format, palette)?;
-    }
-    if let Some(format) = theme.segments.character.format.as_deref() {
-        validate_one("character", format, palette)?;
-    }
-    if let Some(format) = theme.segments.clock.format.as_deref() {
-        validate_one("clock", format, palette)?;
-    }
-    if let Some(format) = theme.segments.hostname.format.as_deref() {
-        validate_one("hostname", format, palette)?;
-    }
-    if let Some(format) = theme.segments.username.format.as_deref() {
-        validate_one("username", format, palette)?;
+    let s = &theme.segments;
+    for (name, format) in [
+        ("git", &s.git.format),
+        ("language", &s.language.format),
+        ("directory", &s.directory.format),
+        ("duration", &s.duration.format),
+        ("character", &s.character.format),
+        ("clock", &s.clock.format),
+        ("hostname", &s.hostname.format),
+        ("username", &s.username.format),
+    ] {
+        if let Some(format) = format.as_deref() {
+            validate_one(name, format, palette)?;
+        }
     }
     validate_style_values(
         "language",

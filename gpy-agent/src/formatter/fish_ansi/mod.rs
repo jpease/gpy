@@ -3,9 +3,15 @@
 
 use crate::Result;
 use crate::config::Config;
+use crate::formatter::character_resolver::CharacterResolver;
+use crate::formatter::clock_resolver::ClockResolver;
+use crate::formatter::directory_resolver::DirectoryResolver;
+use crate::formatter::duration_resolver::DurationResolver;
+use crate::formatter::git_resolver::GitResolver;
+use crate::formatter::hostname_resolver::HostnameResolver;
 use crate::formatter::separator::Glyphs;
+use crate::formatter::username_resolver::UsernameResolver;
 use crate::formatter::{Formatter, PromptDialect, RenderContext};
-use crate::git::RepositoryStatus;
 use crate::ipc::{LanguageInfo, Response, protocol};
 use crate::theme::ThemeConfig;
 
@@ -27,22 +33,86 @@ impl Formatter for FishAnsiFormatter {
     fn render(&self, response: &Response, ctx: &RenderContext<'_>) -> Result<String> {
         let dialect = self.dialect;
         match response {
-            Response::RepositoryStatus(repo) => Ok(render_git_segment(repo, ctx, dialect)),
-            Response::Language { languages } => {
-                Ok(render_language_segment(languages, ctx, dialect))
-            }
-            Response::Directory { cwd, read_only } => {
-                Ok(render_directory_segment(cwd, *read_only, ctx, dialect))
-            }
-            Response::Clock { shell } => Ok(render_clock_segment(*shell, ctx, dialect)),
-            Response::Duration { duration_ms } => {
-                Ok(render_duration_segment(*duration_ms, ctx, dialect))
-            }
-            Response::Character { success } => Ok(render_character_segment(*success, ctx, dialect)),
-            Response::Hostname { hostname, is_ssh } => {
-                Ok(render_hostname_segment(hostname, *is_ssh, ctx, dialect))
-            }
-            Response::Username { username } => Ok(render_username_segment(username, ctx, dialect)),
+            Response::RepositoryStatus(repo) => Ok(render_segment(
+                "git segment",
+                ctx.theme.segments.git.format.as_deref(),
+                |f| {
+                    let state = crate::theme::GitState::from_status(repo);
+                    let resolver =
+                        GitResolver::new(repo, ctx.config, ctx.theme, state, ctx.position);
+                    render_via_template(&resolver, ctx, dialect, f)
+                },
+            )),
+            Response::Language { languages } => Ok(render_segment(
+                "language segment",
+                ctx.theme.segments.language.format.as_deref(),
+                |f| render_languages_via_template(languages, ctx, dialect, f),
+            )),
+            Response::Directory { cwd, read_only } => Ok(render_segment(
+                "directory segment",
+                ctx.theme.segments.directory.format.as_deref(),
+                |f| {
+                    let resolver = DirectoryResolver::new(
+                        cwd,
+                        *read_only,
+                        ctx.config,
+                        ctx.theme,
+                        ctx.position,
+                    );
+                    render_via_template(&resolver, ctx, dialect, f)
+                },
+            )),
+            Response::Clock { shell } => Ok(render_segment(
+                "clock segment",
+                ctx.theme.segments.clock.format.as_deref(),
+                |f| {
+                    let resolver = ClockResolver::new(*shell, ctx.theme, ctx.position)
+                        .with_glyphs(Glyphs::from(&ctx.config.ui));
+                    render_via_template(&resolver, ctx, dialect, f)
+                },
+            )),
+            Response::Duration { duration_ms } => Ok(render_segment(
+                "duration segment",
+                ctx.theme.segments.duration.format.as_deref(),
+                |f| {
+                    let resolver = DurationResolver::new(*duration_ms, ctx.theme, ctx.position)
+                        .with_glyphs(Glyphs::from(&ctx.config.ui));
+                    render_via_template(&resolver, ctx, dialect, f)
+                },
+            )),
+            Response::Character { success } => Ok(render_segment(
+                "character segment",
+                ctx.theme.segments.character.format.as_deref(),
+                |f| {
+                    let resolver = CharacterResolver::new(*success, ctx.theme, ctx.position)
+                        .with_glyphs(Glyphs::from(&ctx.config.ui));
+                    render_via_template(&resolver, ctx, dialect, f)
+                },
+            )),
+            Response::Hostname { hostname, is_ssh } => Ok(render_segment(
+                "hostname segment",
+                ctx.theme.segments.hostname.format.as_deref(),
+                |f| {
+                    let resolver = HostnameResolver::new(
+                        hostname.to_owned(),
+                        *is_ssh,
+                        ctx.theme,
+                        ctx.position,
+                    )
+                    .with_glyphs(Glyphs::from(&ctx.config.ui));
+                    render_via_template(&resolver, ctx, dialect, f)
+                },
+            )),
+            Response::Username { username } => Ok(render_segment(
+                "username segment",
+                ctx.theme.segments.username.format.as_deref(),
+                |f| {
+                    let resolver =
+                        UsernameResolver::new(username.to_owned(), ctx.theme, ctx.position)
+                            .with_glyphs(Glyphs::from(&ctx.config.ui));
+                    render_via_template(&resolver, ctx, dialect, f)
+                },
+            )),
             // The reply is printed verbatim into the prompt, so protocol JSON must never reach it.
             Response::Error { message } => {
                 crate::debug_log!("formatter", "omitting segment after error: {message}");
@@ -87,48 +157,16 @@ fn render_or_warn(component: &str, result: crate::template::Result<String>) -> S
     }
 }
 
-/// Render the git segment; no format or a template error yields nothing.
-fn render_git_segment(
-    status: &RepositoryStatus,
-    ctx: &RenderContext<'_>,
-    dialect: PromptDialect,
+/// No format → empty; template error → empty + `warn_fallback`.
+fn render_segment(
+    component: &str,
+    format: Option<&str>,
+    build: impl FnOnce(&str) -> crate::template::Result<String>,
 ) -> String {
-    let Some(format) = ctx.theme.segments.git.format.as_deref() else {
+    let Some(format) = format else {
         return String::new();
     };
-    render_or_warn(
-        "git segment",
-        render_git_via_template(status, ctx, dialect, format),
-    )
-}
-
-/// Render the git segment through the template engine.
-fn render_git_via_template(
-    status: &RepositoryStatus,
-    ctx: &RenderContext<'_>,
-    dialect: PromptDialect,
-    format: &str,
-) -> crate::template::Result<String> {
-    use crate::formatter::git_resolver::GitResolver;
-
-    let state = crate::theme::GitState::from_status(status);
-    let resolver = GitResolver::new(status, ctx.config, ctx.theme, state, ctx.position);
-    render_via_template(&resolver, ctx, dialect, format)
-}
-
-/// Render the language segment; no format or a template error yields nothing.
-fn render_language_segment(
-    languages: &[LanguageInfo],
-    ctx: &RenderContext<'_>,
-    dialect: PromptDialect,
-) -> String {
-    let Some(format) = ctx.theme.segments.language.format.as_deref() else {
-        return String::new();
-    };
-    render_or_warn(
-        "language segment",
-        render_languages_via_template(languages, ctx, dialect, format),
-    )
+    render_or_warn(component, build(format))
 }
 
 /// Select up to three languages to show. With `show_versions`, versionless ones
@@ -185,183 +223,6 @@ fn render_languages_via_template(
         output.push_str(&render_via_template(&resolver, ctx, dialect, format)?);
     }
     Ok(output)
-}
-
-/// Render the directory; without a format the shell renders it locally.
-fn render_directory_segment(
-    cwd: &str,
-    read_only: bool,
-    ctx: &RenderContext<'_>,
-    dialect: PromptDialect,
-) -> String {
-    let Some(format) = ctx.theme.segments.directory.format.as_deref() else {
-        return String::new();
-    };
-    render_or_warn(
-        "directory segment",
-        render_directory_via_template(cwd, read_only, ctx, dialect, format),
-    )
-}
-
-/// Render the directory segment through the template engine.
-fn render_directory_via_template(
-    cwd: &str,
-    read_only: bool,
-    ctx: &RenderContext<'_>,
-    dialect: PromptDialect,
-    format: &str,
-) -> crate::template::Result<String> {
-    use crate::formatter::directory_resolver::DirectoryResolver;
-
-    let resolver = DirectoryResolver::new(cwd, read_only, ctx.config, ctx.theme, ctx.position);
-    render_via_template(&resolver, ctx, dialect, format)
-}
-
-/// Render the clock; without a format the shell renders it locally.
-fn render_clock_segment(
-    shell: crate::shell::Shell,
-    ctx: &RenderContext<'_>,
-    dialect: PromptDialect,
-) -> String {
-    let Some(format) = ctx.theme.segments.clock.format.as_deref() else {
-        return String::new();
-    };
-    render_or_warn(
-        "clock segment",
-        render_clock_via_template(shell, ctx, dialect, format),
-    )
-}
-
-/// Render the clock segment through the template engine.
-fn render_clock_via_template(
-    shell: crate::shell::Shell,
-    ctx: &RenderContext<'_>,
-    dialect: PromptDialect,
-    format: &str,
-) -> crate::template::Result<String> {
-    use crate::formatter::clock_resolver::ClockResolver;
-
-    let resolver = ClockResolver::new(shell, ctx.theme, ctx.position)
-        .with_glyphs(Glyphs::from(&ctx.config.ui));
-    render_via_template(&resolver, ctx, dialect, format)
-}
-
-/// Render duration; without a format the shell renders it locally.
-fn render_duration_segment(
-    duration_ms: u64,
-    ctx: &RenderContext<'_>,
-    dialect: PromptDialect,
-) -> String {
-    let Some(format) = ctx.theme.segments.duration.format.as_deref() else {
-        return String::new();
-    };
-    render_or_warn(
-        "duration segment",
-        render_duration_via_template(duration_ms, ctx, dialect, format),
-    )
-}
-
-/// Render the duration segment through the template engine.
-fn render_duration_via_template(
-    duration_ms: u64,
-    ctx: &RenderContext<'_>,
-    dialect: PromptDialect,
-    format: &str,
-) -> crate::template::Result<String> {
-    use crate::formatter::duration_resolver::DurationResolver;
-
-    let resolver = DurationResolver::new(duration_ms, ctx.theme, ctx.position)
-        .with_glyphs(Glyphs::from(&ctx.config.ui));
-    render_via_template(&resolver, ctx, dialect, format)
-}
-
-/// Render the character; without a format the shell renders it locally.
-fn render_character_segment(
-    success: bool,
-    ctx: &RenderContext<'_>,
-    dialect: PromptDialect,
-) -> String {
-    let Some(format) = ctx.theme.segments.character.format.as_deref() else {
-        return String::new();
-    };
-    render_or_warn(
-        "character segment",
-        render_character_via_template(success, ctx, dialect, format),
-    )
-}
-
-/// Render the character segment through the template engine.
-fn render_character_via_template(
-    success: bool,
-    ctx: &RenderContext<'_>,
-    dialect: PromptDialect,
-    format: &str,
-) -> crate::template::Result<String> {
-    use crate::formatter::character_resolver::CharacterResolver;
-
-    let resolver = CharacterResolver::new(success, ctx.theme, ctx.position)
-        .with_glyphs(Glyphs::from(&ctx.config.ui));
-    render_via_template(&resolver, ctx, dialect, format)
-}
-
-/// Render the hostname; without a format the shell renders it locally.
-fn render_hostname_segment(
-    hostname: &str,
-    is_ssh: bool,
-    ctx: &RenderContext<'_>,
-    dialect: PromptDialect,
-) -> String {
-    let Some(format) = ctx.theme.segments.hostname.format.as_deref() else {
-        return String::new();
-    };
-    render_or_warn(
-        "hostname segment",
-        render_hostname_via_template(hostname, is_ssh, ctx, dialect, format),
-    )
-}
-
-/// Render the hostname segment through the template engine.
-fn render_hostname_via_template(
-    hostname: &str,
-    is_ssh: bool,
-    ctx: &RenderContext<'_>,
-    dialect: PromptDialect,
-    format: &str,
-) -> crate::template::Result<String> {
-    use crate::formatter::hostname_resolver::HostnameResolver;
-
-    let resolver = HostnameResolver::new(hostname.to_owned(), is_ssh, ctx.theme, ctx.position)
-        .with_glyphs(Glyphs::from(&ctx.config.ui));
-    render_via_template(&resolver, ctx, dialect, format)
-}
-
-/// Render the username; without a format the shell renders it locally.
-fn render_username_segment(
-    username: &str,
-    ctx: &RenderContext<'_>,
-    dialect: PromptDialect,
-) -> String {
-    let Some(format) = ctx.theme.segments.username.format.as_deref() else {
-        return String::new();
-    };
-    render_or_warn(
-        "username segment",
-        render_username_via_template(username, ctx, dialect, format),
-    )
-}
-
-/// Render the username segment through the template engine.
-fn render_username_via_template(
-    username: &str,
-    ctx: &RenderContext<'_>,
-    dialect: PromptDialect,
-    format: &str,
-) -> crate::template::Result<String> {
-    use crate::formatter::username_resolver::UsernameResolver;
-
-    let resolver = UsernameResolver::new(username.to_owned(), ctx.theme, ctx.position)
-        .with_glyphs(Glyphs::from(&ctx.config.ui));
-    render_via_template(&resolver, ctx, dialect, format)
 }
 
 /// Resolve the display text for a language (icon or name) used by resolvers.
