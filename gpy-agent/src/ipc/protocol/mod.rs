@@ -8,19 +8,6 @@ use serde_json;
 /// Wire payload for a client-initiated config reload; shared so send sites cannot diverge.
 pub const CONFIG_RELOAD_JSON: &str = r#"{"op":"config_reload"}"#;
 
-/// Serialize a message to JSON bytes.
-///
-/// # Errors
-/// Returns an error if serialization fails or the message exceeds size limits.
-pub fn serialize_message(msg: &Message) -> Result<Vec<u8>> {
-    let mut buffer = Vec::with_capacity(256);
-    serde_json::to_writer(&mut buffer, msg)
-        .map_err(|e| Error::ipc(format!("Failed to serialize message: {e}")))?;
-
-    validate_message_size(&buffer)?;
-    Ok(buffer)
-}
-
 /// Deserialize JSON bytes into a message.
 ///
 /// # Errors
@@ -53,18 +40,9 @@ fn parse_wire(data: &[u8]) -> Result<WireMessage> {
     let json = std::str::from_utf8(data)
         .map_err(|e| Error::ipc(format!("Invalid UTF-8 in message: {e}")))?;
 
-    // Shell traffic dominates the hot path, so try its format first.
-    if let Ok(shell_msg) = serde_json::from_str::<ShellIpcMessage>(json) {
-        return shell_msg.into_wire_message();
-    }
-
-    if let Ok(wire) = serde_json::from_str::<WireMessage>(json) {
-        return Ok(wire);
-    }
-
-    Err(Error::ipc(
-        "Failed to deserialize message: invalid format".to_owned(),
-    ))
+    let shell_msg = serde_json::from_str::<ShellIpcMessage>(json)
+        .map_err(|_| Error::ipc("Failed to deserialize message: invalid format".to_owned()))?;
+    shell_msg.into_wire_message()
 }
 
 /// Resolve a [`WireMessage`] into a [`Message`]; the only place the stronger
@@ -362,95 +340,62 @@ pub fn encode_reply_newlines(payload: &str) -> std::borrow::Cow<'_, str> {
     )
 }
 
-/// Raw wire mirror of [`Message`] with unvalidated `String`/`u32` fields, so
-/// parsing needs no I/O; [`resolve`] builds the validated types. Must stay
-/// byte-compatible with `Message`'s own `Deserialize` (including `#[serde(default)]`).
-#[derive(Debug, Deserialize)]
+/// Unvalidated form of [`Message`] built from a [`ShellIpcMessage`] with zero I/O; [`resolve`] builds the validated types.
+#[derive(Debug)]
 enum WireMessage {
     RepositoryStatus {
         path: String,
-        #[serde(default)]
         format: super::Format,
-        #[serde(default)]
         is_last: bool,
-        #[serde(default)]
         is_first: bool,
-        #[serde(default)]
         prev_bg: Option<String>,
     },
     LanguageDetect {
         path: String,
-        #[serde(default)]
         format: super::Format,
-        #[serde(default)]
         is_last: bool,
-        #[serde(default)]
         is_first: bool,
-        #[serde(default)]
         prev_bg: Option<String>,
-        #[serde(default)]
         virtual_env: Option<String>,
     },
     DirectoryRequest {
         path: String,
-        #[serde(default)]
         format: super::Format,
-        #[serde(default)]
         is_last: bool,
-        #[serde(default)]
         is_first: bool,
-        #[serde(default)]
         prev_bg: Option<String>,
     },
     ClockRequest {
         shell: crate::shell::Shell,
-        #[serde(default)]
         format: super::Format,
-        #[serde(default)]
         is_last: bool,
-        #[serde(default)]
         is_first: bool,
-        #[serde(default)]
         prev_bg: Option<String>,
     },
     DurationRequest {
         duration_ms: u64,
-        #[serde(default)]
         format: super::Format,
-        #[serde(default)]
         is_last: bool,
-        #[serde(default)]
         is_first: bool,
-        #[serde(default)]
         prev_bg: Option<String>,
     },
     CharacterRequest {
         success: bool,
-        #[serde(default)]
         format: super::Format,
-        #[serde(default)]
         is_last: bool,
-        #[serde(default)]
         prev_bg: Option<String>,
     },
     HostnameRequest {
         hostname: String,
-        #[serde(default)]
         format: super::Format,
-        #[serde(default)]
         is_last: bool,
-        #[serde(default)]
         is_ssh: bool,
-        #[serde(default)]
         prev_bg: Option<String>,
     },
     UsernameRequest {
         username: String,
-        #[serde(default)]
         format: super::Format,
-        #[serde(default)]
         is_last: bool,
-        #[serde(default)]
         prev_bg: Option<String>,
     },
     RegisterClient {

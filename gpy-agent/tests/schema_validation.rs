@@ -3,9 +3,7 @@
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::unwrap_used)]
 
-use gpy_agent::config::types::ClientPid;
-use gpy_agent::ipc::{Message, Response};
-use gpy_agent::security::SafePath;
+use gpy_agent::ipc::Response;
 
 #[test]
 fn test_msg_deserialize_repository_status_fish() {
@@ -190,53 +188,6 @@ fn test_response_deserialize_simple_variants() {
 }
 
 #[test]
-fn test_message_roundtrip() {
-    let pid_val = std::process::id();
-    let pid = ClientPid::new(pid_val).unwrap();
-
-    let messages = vec![
-        Message::RepositoryStatus {
-            path: SafePath::new("/home/user/repo").unwrap(),
-            format: gpy_agent::formatter::Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
-        },
-        Message::LanguageDetect {
-            path: SafePath::new("/home/user/project").unwrap(),
-            format: gpy_agent::formatter::Format::Ansi,
-            is_last: true,
-            is_first: false,
-            prev_bg: None,
-            virtual_env: None,
-        },
-        Message::RegisterClient {
-            pid,
-            cwd: Some(SafePath::new("/home/user/project").unwrap()),
-            shell: None,
-            shell_version: None,
-        },
-        Message::UnregisterClient { pid },
-        Message::WorkspaceUpdate {
-            pid,
-            cwd: SafePath::new("/home/user/new-project").unwrap(),
-        },
-        Message::Ping,
-        Message::Status,
-        Message::Shutdown,
-        Message::ConfigReload,
-    ];
-
-    for msg in messages {
-        let json = serde_json::to_string(&msg).expect("Failed to serialize message");
-        let deserialized: Message =
-            serde_json::from_str(&json).expect("Failed to deserialize message");
-        let json2 = serde_json::to_string(&deserialized).expect("Failed to re-serialize message");
-        assert_eq!(json, json2, "Roundtrip mismatch for message: {msg:?}");
-    }
-}
-
-#[test]
 fn test_response_roundtrip() {
     let responses = vec![
         Response::RepositoryStatus(gpy_agent::git::RepositoryStatus {
@@ -332,7 +283,7 @@ mod schema_files {
         serde_json::from_str(&text).unwrap()
     }
 
-    /// Source of `ipc/protocol/mod.rs`: the op table and `WireMessage` live there.
+    /// Source of `ipc/protocol/mod.rs`, where the op table lives.
     fn protocol_source() -> String {
         let path = format!("{}/src/ipc/protocol/mod.rs", env!("CARGO_MANIFEST_DIR"));
         std::fs::read_to_string(path).unwrap()
@@ -387,7 +338,7 @@ mod schema_files {
         let mut sites = Vec::new();
         collect_format_properties(&schema, &mut sites);
         assert!(
-            sites.len() >= 16,
+            sites.len() >= 8,
             "expected many format sites: {}",
             sites.len()
         );
@@ -444,53 +395,18 @@ mod schema_files {
         ops
     }
 
-    /// `WireMessage` variant names (the native form), parsed from the enum.
-    fn native_variants_from_code() -> BTreeSet<String> {
-        let source = protocol_source();
-        let body = source
-            .split("enum WireMessage {")
-            .nth(1)
-            .unwrap()
-            .split("\nimpl WireMessage")
-            .next()
-            .unwrap();
-        let variants: BTreeSet<String> = regex::Regex::new(r"(?m)^    ([A-Z][A-Za-z]+)(?: \{|,)$")
-            .unwrap()
-            .captures_iter(body)
-            .map(|c| c[1].to_owned())
-            .collect();
-        assert!(
-            variants.len() >= 15,
-            "variant parse found only {variants:?}"
-        );
-        variants
-    }
-
     #[test]
     fn schema_lists_every_shell_op() {
         let schema = load("message.json");
         let mut schema_ops = BTreeSet::new();
-        let mut schema_native = BTreeSet::new();
         for entry in one_of(&schema) {
-            if let Some(op) = entry["properties"]["op"]["const"].as_str() {
-                assert!(schema_ops.insert(op.to_owned()), "duplicate op entry {op}");
-            } else if let Some(name) = entry["const"].as_str() {
-                schema_native.insert(name.to_owned());
-            } else {
-                let keys = entry["required"].as_array().unwrap();
-                assert_eq!(keys.len(), 1, "native entry must name one variant");
-                schema_native.insert(keys[0].as_str().unwrap().to_owned());
-            }
+            let op = entry["properties"]["op"]["const"].as_str().unwrap();
+            assert!(schema_ops.insert(op.to_owned()), "duplicate op entry {op}");
         }
         assert_eq!(
             schema_ops,
             ops_from_code(),
             "message.json ops != into_wire_message ops"
-        );
-        assert_eq!(
-            schema_native,
-            native_variants_from_code(),
-            "message.json native variants != WireMessage variants"
         );
     }
 
@@ -664,47 +580,29 @@ mod schema_files {
                 "agent rejects {op}: {text}"
             );
         }
-        let native: &[&str] = &[
-            r#"{"RepositoryStatus":{"path":".","format":"ansi"}}"#,
-            r#"{"LanguageDetect":{"path":".","virtual_env":null}}"#,
-            r#"{"DirectoryRequest":{"path":"."}}"#,
-            r#"{"ClockRequest":{"shell":"bash"}}"#,
-            r#"{"DurationRequest":{"duration_ms":5}}"#,
-            r#"{"CharacterRequest":{"success":false}}"#,
-            r#"{"HostnameRequest":{"hostname":"h"}}"#,
-            r#"{"HostnameRequest":{"hostname":"h","is_ssh":true}}"#,
-            r#"{"UsernameRequest":{"username":"u"}}"#,
-            r#"{"RegisterClient":{"pid":123,"cwd":null,"shell":"zsh","shell_version":null}}"#,
-            r#"{"UnregisterClient":{"pid":123}}"#,
-            r#"{"WorkspaceUpdate":{"pid":123,"cwd":"."}}"#,
+        for text in [
             r#""Ping""#,
-            r#""Status""#,
-            r#""Shutdown""#,
-            r#""ConfigReload""#,
-        ];
-        for text in native {
+            r#"{"Ping":null}"#,
+            r#"{"RepositoryStatus":{"path":"."}}"#,
+        ] {
             assert!(
-                validate(&schema, &schema, &json(text)),
-                "schema rejects {text}"
+                !validate(&schema, &schema, &json(text)),
+                "schema accepts {text}"
             );
             assert!(
-                deserialize_message(text.as_bytes()).is_ok(),
-                "agent rejects {text}"
+                deserialize_message(text.as_bytes()).is_err(),
+                "agent accepts {text}"
             );
         }
         // The retired format name is rejected by the schema and the agent.
         let stale = json(r#"{"op":"git","cwd":".","format":"fish-ansi"}"#);
         assert!(!validate(&schema, &schema, &stale));
-        // `is_ssh` is a bare boolean in both hostname forms.
-        for bad in [
-            r#"{"op":"hostname","hostname":"box","is_ssh":"yes"}"#,
-            r#"{"HostnameRequest":{"hostname":"h","is_ssh":1}}"#,
-        ] {
-            assert!(
-                !validate(&schema, &schema, &json(bad)),
-                "schema accepts {bad}"
-            );
-        }
+        // `is_ssh` is a bare boolean.
+        let bad = r#"{"op":"hostname","hostname":"box","is_ssh":"yes"}"#;
+        assert!(
+            !validate(&schema, &schema, &json(bad)),
+            "schema accepts {bad}"
+        );
     }
 
     fn render_json(response: &Response) -> Value {

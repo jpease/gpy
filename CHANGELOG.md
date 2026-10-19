@@ -71,6 +71,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `{"op":"status"}` now replies through the JSON formatter, as
   `{"AgentStatus":{...}}` in every format; the keys are unchanged and now
   appear in alphabetical order.
+- **Breaking:** the agent accepts only `{"op":...}` IPC messages. The serde
+  externally-tagged form (`{"RepositoryStatus":{...}}`, `"Ping"`) is rejected,
+  and `schemas/message.json` no longer lists it. The shell integrations
+  already send only the `op` form.
+- **Breaking (library):** `gpy_agent::ipc::protocol::serialize_message` is
+  removed, and `Message`, `SafePath` and `ClientPid` no longer implement
+  `Serialize`/`Deserialize`.
 
 ### Removed
 

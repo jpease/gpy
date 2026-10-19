@@ -457,13 +457,11 @@ impl ConnectionHandler {
 mod tests {
     use super::*;
     use crate::config::manager::ConfigManager;
-    use crate::formatter::Format;
     use crate::ipc::handlers::{
         ClientHandler, GitHandler, HandlerRegistry, LanguageHandler, MiscHandler, RenderDeps,
     };
     use crate::ipc::registry::ClientDirectory;
     use crate::palette::PaletteCache;
-    use crate::security::SafePath;
     use std::sync::Mutex;
 
     /// Production-wired `HandlerRegistry` plus the caches the language handler shares.
@@ -593,15 +591,9 @@ mod tests {
             }],
         );
 
-        let message = Message::LanguageDetect {
-            path: SafePath::new(repo.path().to_str().expect("utf8 path")).expect("safe path"),
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
-            virtual_env: None,
-        };
-        let line = protocol::serialize_message(&message).expect("serialize message");
+        let line = serde_json::json!({"op": "lang", "cwd": repo.path().to_str().expect("utf8 path"), "format": "json"})
+            .to_string()
+            .into_bytes();
 
         let before = instant_cache.write_call_count();
         let result = ConnectionHandler::parse_and_route_blocking(

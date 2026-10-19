@@ -5,57 +5,12 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::missing_panics_doc)] // Test functions panic on assertion failures
 
-use gpy_agent::config::types::{ClientPid, ColorSpec};
+use gpy_agent::config::types::ColorSpec;
 use gpy_agent::ipc::protocol::{
-    deserialize_message, deserialize_response, serialize_message, serialize_response,
-    validate_message_size,
+    deserialize_message, deserialize_response, serialize_response, validate_message_size,
 };
 use gpy_agent::ipc::{Format, LanguageInfo, Message, Response};
 use gpy_agent::security::SafePath;
-
-#[test]
-fn test_message_serialization_git_status() {
-    let msg = Message::RepositoryStatus {
-        path: SafePath::new("/test/path").unwrap(),
-        format: Format::Json,
-        is_last: false,
-        is_first: false,
-        prev_bg: None,
-    };
-
-    let serialized = serialize_message(&msg).expect("serialize_message failed");
-    let deserialized = deserialize_message(&serialized).expect("deserialize_message failed");
-
-    assert!(
-        matches!(deserialized, Message::RepositoryStatus { .. }),
-        "Wrong message type deserialized"
-    );
-    if let Message::RepositoryStatus { path, format, .. } = deserialized {
-        assert_eq!(path, "/test/path");
-        assert_eq!(format, Format::Json);
-    }
-}
-
-#[test]
-fn test_message_serialization_language_detect() {
-    let msg = Message::LanguageDetect {
-        path: SafePath::new("/project").unwrap(),
-        format: Format::Json,
-        is_last: false,
-        is_first: false,
-        prev_bg: None,
-        virtual_env: None,
-    };
-
-    let serialized = serialize_message(&msg).expect("serialize_message failed");
-    let deserialized = deserialize_message(&serialized).expect("deserialize_message failed");
-
-    assert!(matches!(deserialized, Message::LanguageDetect { .. }));
-    if let Message::LanguageDetect { path, format, .. } = deserialized {
-        assert_eq!(path, "/project");
-        assert_eq!(format, Format::Json);
-    }
-}
 
 #[test]
 fn lang_request_without_virtual_env_still_parses() {
@@ -77,36 +32,6 @@ fn lang_request_carries_virtual_env() {
         }
         other => panic!("expected LanguageDetect, got {other:?}"),
     }
-}
-
-#[test]
-fn test_message_serialization_register_client() {
-    let pid_val = std::process::id();
-    let msg = Message::RegisterClient {
-        pid: ClientPid::new(pid_val).unwrap(),
-        cwd: Some(SafePath::new("/tmp").unwrap()),
-        shell: None,
-        shell_version: None,
-    };
-
-    let serialized = serialize_message(&msg).expect("serialize_message failed");
-    let deserialized = deserialize_message(&serialized).expect("deserialize_message failed");
-
-    assert!(matches!(deserialized, Message::RegisterClient { .. }));
-    if let Message::RegisterClient { pid, cwd, .. } = deserialized {
-        assert_eq!(pid, pid_val);
-        assert_eq!(cwd.unwrap(), SafePath::new("/tmp").unwrap());
-    }
-}
-
-#[test]
-fn test_message_serialization_ping() {
-    let msg = Message::Ping;
-
-    let serialized = serialize_message(&msg).expect("serialize_message failed");
-    let deserialized = deserialize_message(&serialized).expect("deserialize_message failed");
-
-    assert!(matches!(deserialized, Message::Ping));
 }
 
 #[test]
@@ -371,16 +296,8 @@ fn test_missing_required_fields() {
 #[test]
 fn test_json_string_escaping() {
     let path_with_quotes = r#"/path/with"quotes"/and\backslashes"#;
-    let msg = Message::RepositoryStatus {
-        path: SafePath::new(path_with_quotes).unwrap(),
-        format: Format::Json,
-        is_last: false,
-        is_first: false,
-        prev_bg: None,
-    };
-
-    let serialized = serialize_message(&msg).expect("serialize_message failed");
-    let deserialized = deserialize_message(&serialized).expect("deserialize_message failed");
+    let line = serde_json::json!({"op": "git", "cwd": path_with_quotes}).to_string();
+    let deserialized = deserialize_message(line.as_bytes()).expect("deserialize_message failed");
 
     match deserialized {
         Message::RepositoryStatus { path, format, .. } => {

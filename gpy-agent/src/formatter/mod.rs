@@ -58,16 +58,6 @@ impl Format {
     pub const fn is_json(format: Self) -> bool {
         matches!(format, Self::Json)
     }
-
-    /// Returns `true` when the provided format is JSON (reference version for serde).
-    #[must_use]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "serde skip_serializing_if signature requires &Self"
-    )]
-    pub const fn is_json_ref(format: &Self) -> bool {
-        Self::is_json(*format)
-    }
 }
 
 impl std::fmt::Display for Format {

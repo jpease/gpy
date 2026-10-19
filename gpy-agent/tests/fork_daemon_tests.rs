@@ -215,7 +215,7 @@ async fn test_ipc_under_load() -> Result<()> {
             let mut stream = UnixStream::connect(&socket_path_clone).await?;
 
             let request = if i % 2_i32 == 0_i32 {
-                r#""Ping""#
+                r#"{"op":"ping"}"#
             } else {
                 r#"{"type":"git_status","path":"/tmp","format":"json"}"#
             };

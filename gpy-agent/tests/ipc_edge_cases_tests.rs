@@ -7,8 +7,8 @@
 mod fixtures;
 
 use fixtures::ipc_helpers::*;
-use gpy_agent::config::types::ClientPid;
-use gpy_agent::ipc::{Format, Message, Response};
+use gpy_agent::ipc::protocol::deserialize_message;
+use gpy_agent::ipc::{Message, Response};
 use gpy_agent::security::SafePath;
 
 #[test]
@@ -28,16 +28,8 @@ fn test_very_long_path() {
     let long_component = "a".repeat(255); // Max component length
     let path = format!("/{long_component}/{long_component}/{long_component}/{long_component}");
 
-    let msg = Message::RepositoryStatus {
-        path: SafePath::new(&path).unwrap(),
-        format: Format::Json,
-        is_last: false,
-        is_first: false,
-        prev_bg: None,
-    };
-
-    let json = serde_json::to_string(&msg).expect("Should serialize");
-    let parsed: Message = serde_json::from_str(&json).expect("Should deserialize");
+    let json = serde_json::json!({"op": "git", "cwd": path}).to_string();
+    let parsed = deserialize_message(json.as_bytes()).expect("Should deserialize");
 
     match parsed {
         Message::RepositoryStatus { path: p, .. } => {
@@ -51,22 +43,14 @@ fn test_very_long_path() {
 fn test_large_message_near_limit() {
     let large_path = "x".repeat(4000); // 4KB path
 
-    let msg = Message::RepositoryStatus {
-        path: SafePath::new(&large_path).unwrap(),
-        format: Format::Json,
-        is_last: false,
-        is_first: false,
-        prev_bg: None,
-    };
-
-    let json = serde_json::to_string(&msg).expect("Should serialize");
+    let json = serde_json::json!({"op": "git", "cwd": large_path}).to_string();
     assert!(
         json.len() < 65536,
         "Message should be under 64KB limit, was {} bytes",
         json.len()
     );
 
-    let parsed: Message = serde_json::from_str(&json).expect("Should deserialize");
+    let parsed = deserialize_message(json.as_bytes()).expect("Should deserialize");
     match parsed {
         Message::RepositoryStatus { path: p, .. } => {
             assert_eq!(p.to_string().len(), large_path.len());
@@ -88,7 +72,7 @@ fn test_message_exceeding_size_limit() {
 fn test_incomplete_json_message() {
     let incomplete_json = r#"{"op":"repository_status","path":"/tmp","#;
 
-    let result = serde_json::from_str::<Message>(incomplete_json);
+    let result = deserialize_message(incomplete_json.as_bytes());
     assert!(
         result.is_err(),
         "Incomplete JSON should fail to deserialize"
@@ -97,16 +81,10 @@ fn test_incomplete_json_message() {
 
 #[test]
 fn test_json_with_unexpected_fields() {
-    let json_with_extra = r#"{
-        "RepositoryStatus": {
-            "path": "/tmp",
-            "format": "json",
-            "is_last": false,
-            "unexpected_field": "should be ignored"
-        }
-    }"#;
+    let json_with_extra =
+        r#"{"op":"git","cwd":"/tmp","format":"json","is_last":false,"unexpected_field":"x"}"#;
 
-    let result = serde_json::from_str::<Message>(json_with_extra);
+    let result = deserialize_message(json_with_extra.as_bytes());
     // Extra fields are ignored for forward compatibility.
     assert!(
         result.is_ok(),
@@ -116,46 +94,33 @@ fn test_json_with_unexpected_fields() {
 }
 
 #[test]
-fn test_all_message_types_serialize() {
-    let pid_val = std::process::id();
-    let pid = ClientPid::new(pid_val).unwrap();
-    let messages = vec![
-        Message::RegisterClient {
-            pid,
-            cwd: Some(SafePath::new("/tmp").unwrap()),
-            shell: None,
-            shell_version: None,
-        },
-        Message::UnregisterClient { pid },
-        Message::WorkspaceUpdate {
-            pid,
-            cwd: SafePath::new("/tmp").unwrap(),
-        },
-        Message::RepositoryStatus {
-            path: SafePath::new("/tmp").unwrap(),
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
-        },
-        Message::LanguageDetect {
-            path: SafePath::new("/tmp").unwrap(),
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
-            virtual_env: None,
-        },
-        Message::Status,
-    ];
-
-    for msg in messages {
-        let json = serde_json::to_string(&msg).expect("Should serialize");
-        let parsed: Message = serde_json::from_str(&json).expect("Should deserialize");
-
-        let json2 = serde_json::to_string(&parsed).expect("Should re-serialize");
-        assert_eq!(json, json2, "Messages should round-trip identically");
-    }
+fn test_all_message_types_parse_in_op_form() {
+    let pid = std::process::id();
+    let parse = |line: String| deserialize_message(line.as_bytes()).expect("Should deserialize");
+    assert!(matches!(
+        parse(format!(r#"{{"op":"register","pid":{pid},"cwd":"/tmp"}}"#)),
+        Message::RegisterClient { .. }
+    ));
+    assert!(matches!(
+        parse(format!(r#"{{"op":"unregister","pid":{pid}}}"#)),
+        Message::UnregisterClient { .. }
+    ));
+    assert!(matches!(
+        parse(format!(r#"{{"op":"workspace","pid":{pid},"cwd":"/tmp"}}"#)),
+        Message::WorkspaceUpdate { .. }
+    ));
+    assert!(matches!(
+        parse(r#"{"op":"git","cwd":"/tmp"}"#.to_owned()),
+        Message::RepositoryStatus { .. }
+    ));
+    assert!(matches!(
+        parse(r#"{"op":"lang","cwd":"/tmp"}"#.to_owned()),
+        Message::LanguageDetect { .. }
+    ));
+    assert!(matches!(
+        parse(r#"{"op":"status"}"#.to_owned()),
+        Message::Status
+    ));
 }
 
 #[test]

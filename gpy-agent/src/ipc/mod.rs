@@ -55,27 +55,19 @@ pub(crate) fn native_windows_unsupported() -> crate::Error {
 }
 
 /// IPC message types that can be sent between Fish and Agent
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub enum Message {
     /// Request git status for a directory
     RepositoryStatus {
         /// The path to the directory to check.
         path: crate::security::SafePath,
         /// Desired response format.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Format::is_json_ref")]
         format: Format,
         /// Whether this is the last segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
         /// Whether this is the first segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_first: bool,
         /// Previous segment's background color, for chevron transitions.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         prev_bg: Option<String>,
     },
 
@@ -84,25 +76,15 @@ pub enum Message {
         /// The path to the directory to check.
         path: crate::security::SafePath,
         /// Desired response format.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Format::is_json_ref")]
         format: Format,
         /// Whether this is the last segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
         /// Whether this is the first segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_first: bool,
         /// Previous segment's background color, for chevron transitions.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         prev_bg: Option<String>,
         /// Client-forwarded `$VIRTUAL_ENV` for venv-aware Python version
         /// detection. Absent when no venv is activated (back-compatible).
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         virtual_env: Option<String>,
     },
 
@@ -111,23 +93,14 @@ pub enum Message {
         /// The working directory to render, canonicalized and validated.
         path: crate::security::SafePath,
         /// The client's logical `$PWD`, rendered as `cwd` so symlinks match oneshot output. Never on the wire.
-        #[serde(skip)]
         display_path: String,
         /// Desired response format.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Format::is_json_ref")]
         format: Format,
         /// Whether this is the last segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
         /// Whether this is the first segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_first: bool,
         /// Previous segment's background color, for chevron transitions.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         prev_bg: Option<String>,
     },
 
@@ -137,20 +110,12 @@ pub enum Message {
         /// Shell whose live-time prompt token the render should embed.
         shell: crate::shell::Shell,
         /// Desired response format.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Format::is_json_ref")]
         format: Format,
         /// Whether this is the last segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
         /// Whether this is the first segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_first: bool,
         /// Previous segment's background color, for chevron transitions.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         prev_bg: Option<String>,
     },
 
@@ -159,20 +124,12 @@ pub enum Message {
         /// The command duration in milliseconds.
         duration_ms: u64,
         /// Desired response format.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Format::is_json_ref")]
         format: Format,
         /// Whether this is the last segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
         /// Whether this is the first segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_first: bool,
         /// Previous segment's background color, for chevron transitions.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         prev_bg: Option<String>,
     },
 
@@ -181,16 +138,10 @@ pub enum Message {
         /// Whether the last command succeeded (`true`) or failed (`false`).
         success: bool,
         /// Desired response format.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Format::is_json_ref")]
         format: Format,
         /// Whether this is the last segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
         /// Previous segment's background color, for chevron transitions.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         prev_bg: Option<String>,
     },
 
@@ -200,20 +151,12 @@ pub enum Message {
         /// The hostname string resolved by the client.
         hostname: String,
         /// Desired response format.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Format::is_json_ref")]
         format: Format,
         /// Whether this is the last segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
         /// Whether the client session is over SSH; absent means `false`.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_ssh: bool,
         /// Previous segment's background color, for chevron transitions.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         prev_bg: Option<String>,
     },
 
@@ -223,16 +166,10 @@ pub enum Message {
         /// The effective username string resolved by the client.
         username: String,
         /// Desired response format.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Format::is_json_ref")]
         format: Format,
         /// Whether this is the last segment in the prompt.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "is_false")]
         is_last: bool,
         /// Previous segment's background color, for chevron transitions.
-        #[serde(default)]
-        #[serde(skip_serializing_if = "Option::is_none")]
         prev_bg: Option<String>,
     },
 
@@ -388,11 +325,6 @@ impl Message {
             _ => None,
         }
     }
-}
-
-#[expect(clippy::trivially_copy_pass_by_ref, reason = "serde signature")]
-const fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 /// IPC response types

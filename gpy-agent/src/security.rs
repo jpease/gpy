@@ -3,14 +3,12 @@
 #[cfg(unix)]
 use crate::warn_log;
 use crate::{Error, Result};
-use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 /// A path that has passed [`PathValidator`] checks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(transparent)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SafePath(PathBuf);
 
 impl SafePath {
@@ -52,16 +50,6 @@ impl std::ops::Deref for SafePath {
     type Target = Path;
     fn deref(&self) -> &Self::Target {
         self.0.as_path()
-    }
-}
-
-impl<'de> Deserialize<'de> for SafePath {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Self::new(&s).map_err(serde::de::Error::custom)
     }
 }
 

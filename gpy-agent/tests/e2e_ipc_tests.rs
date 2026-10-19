@@ -67,7 +67,7 @@ async fn test_e2e_ping() -> Result<()> {
         .await
         .expect("Failed to connect to server")?;
 
-    stream.write_all(b"\"Ping\"\n").await?;
+    stream.write_all(b"{\"op\":\"ping\"}\n").await?;
 
     let response = read_ipc_response(&mut stream).await?;
     assert!(
@@ -98,7 +98,7 @@ async fn test_e2e_git_status() -> Result<()> {
         .expect("Failed to connect to server")?;
 
     let path_str = repo_path.to_str().unwrap().replace('\\', "\\\\");
-    let git_request = format!(r#"{{"RepositoryStatus":{{"path":"{path_str}"}}}}"#);
+    let git_request = format!(r#"{{"op":"git","cwd":"{path_str}"}}"#);
     stream.write_all(git_request.as_bytes()).await?;
     stream.write_all(b"\n").await?;
 
@@ -163,7 +163,7 @@ async fn test_e2e_skip_paths() -> Result<()> {
         .await
         .expect("Failed to connect to server")?;
 
-    let git_request = format!(r#"{{"RepositoryStatus":{{"path":"{escaped}"}}}}"#);
+    let git_request = format!(r#"{{"op":"git","cwd":"{escaped}"}}"#);
     stream.write_all(git_request.as_bytes()).await?;
     stream.write_all(b"\n").await?;
 

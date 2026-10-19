@@ -9,29 +9,17 @@ This directory contains JSON Schema files that define the IPC protocol between F
 
 ## Protocol Formats
 
-The protocol supports two message formats for backward compatibility:
-
-### Fish Shell Format (Legacy)
-
-Messages use an object with an `op` field to specify the operation:
+Every message is one JSON object with an `op` field naming the operation:
 
 ```json
 {"op":"git","cwd":"/path/to/repo","format":"ansi"}
-```
-
-### Native Rust Format
-
-Messages use Rust enum serialization:
-
-```json
-{"RepositoryStatus":{"path":"/path/to/repo","format":"json"}}
 ```
 
 ## Validation
 
 The schemas can be used with standard JSON Schema validators to ensure protocol compliance. `gpy-agent/tests/schema_validation.rs` checks them against the code: the `format` enum against `Format`, the ops against the `into_wire_message` dispatch table, and real agent replies against `response.json`.
 
-In the `op` form an unrecognized `format` silently falls back to `json`; in the native form it rejects the message.
+An unrecognized `format` silently falls back to `json`.
 
 ## Version Compatibility
 
