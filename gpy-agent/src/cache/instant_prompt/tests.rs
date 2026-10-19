@@ -157,6 +157,27 @@ fn test_write_cache_file_is_atomic_no_temp_leftovers() {
     assert_eq!(content, "hello world");
 }
 
+#[test]
+fn last_written_evicts_least_recently_written() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let cache = InstantPromptCache::new_in_dir(temp_dir.path().to_path_buf()).expect("cache");
+    let write = |key: &str, content: &str| {
+        cache
+            .write_cache_file(key, "git", PromptDialect::Ansi, content)
+            .expect("write")
+    };
+    // Oldest first: one past capacity evicts exactly the oldest record.
+    for i in 0..=INSTANT_PROMPT_LAST_WRITTEN_CAPACITY {
+        assert!(write(&format!("k{i:04}"), "c"));
+    }
+    let newest = format!("k{INSTANT_PROMPT_LAST_WRITTEN_CAPACITY:04}");
+
+    assert!(!write(&newest, "c"), "newest key is still recorded");
+    assert!(!write("k0512", "c"), "a middle key is still recorded");
+    assert!(write("k0000", "c"), "the oldest key was evicted");
+    assert!(write(&newest, "d"), "changed content is written");
+}
+
 /// Direct tests of [`write_atomic`].
 mod write_atomic_tests {
     use super::*;
@@ -431,8 +452,9 @@ impl CacheHarness {
                     .last_written
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
+                    .entries
                     .get(&format!("{key}:{suffix}.ansi"))
-                    .cloned()
+                    .map(|written| written.content.clone())
                     .expect("a concurrent write must be recorded");
                 assert!(
                     versions.contains(&recorded.as_str()),

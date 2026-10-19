@@ -5,7 +5,7 @@
 //! `{token}` the [`prev_bg_token`] (the ANSI bakes in the `fg:prev_bg`
 //! chevron), `{ext}` the [`PromptDialect::cache_ext`].
 
-use crate::cache::bounded::INSTANT_PROMPT_LAST_WRITTEN_CAPACITY;
+use crate::cache::bounded::{INSTANT_PROMPT_LAST_WRITTEN_CAPACITY, evict_to_capacity};
 use crate::config::Config;
 use crate::debug_log;
 use crate::formatter::{
@@ -68,12 +68,32 @@ const MAX_PREV_BG_CONTEXTS_PER_KEY: usize = 16;
 /// Per-key insertion-ordered set of `prev_bg` contexts (`None` = context-free).
 type SeenContexts = HashMap<String, Vec<Option<String>>>;
 
+/// Content last written to one cache file, with its write-recency tick.
+struct Written {
+    content: String,
+    tick: u64,
+}
+
+/// Write records plus the tick counter that orders them for eviction.
+struct LastWritten {
+    entries: HashMap<String, Written>,
+    tick: u64,
+}
+
+impl LastWritten {
+    /// Advance and return the write-recency tick.
+    const fn next_tick(&mut self) -> u64 {
+        self.tick = self.tick.wrapping_add(1);
+        self.tick
+    }
+}
+
 /// Manager for instant-prompt cache files.
 pub struct InstantPromptCache {
     cache_dir: PathBuf,
-    /// Content last written per `{cache_key}:{suffix}`, to skip redundant writes.
-    /// Invariant: an entry equals the file's content.
-    last_written: Mutex<HashMap<String, String>>,
+    /// Content and write-recency tick per `{cache_key}:{suffix}`.
+    /// Invariant: `content` equals the file's content.
+    last_written: Mutex<LastWritten>,
     /// `prev_bg` contexts seen per key; background writers refresh all of them.
     seen_contexts: RwLock<SeenContexts>,
     /// Keys whose filename cannot fit `NAME_MAX` even chunked; logged once each.
@@ -106,7 +126,10 @@ impl InstantPromptCache {
         let _ = prune_stale_entries(&cache_dir, SystemTime::now());
         Ok(Self {
             cache_dir,
-            last_written: Mutex::new(HashMap::new()),
+            last_written: Mutex::new(LastWritten {
+                entries: HashMap::new(),
+                tick: 0,
+            }),
             seen_contexts: RwLock::new(HashMap::new()),
             unwritable_keys: Mutex::new(HashSet::new()),
             suppressed_git: Mutex::new(HashMap::new()),
@@ -144,7 +167,10 @@ impl InstantPromptCache {
         std::fs::create_dir_all(&cache_dir)?;
         Ok(Self {
             cache_dir,
-            last_written: Mutex::new(HashMap::new()),
+            last_written: Mutex::new(LastWritten {
+                entries: HashMap::new(),
+                tick: 0,
+            }),
             seen_contexts: RwLock::new(HashMap::new()),
             unwritable_keys: Mutex::new(HashSet::new()),
             suppressed_git: Mutex::new(HashMap::new()),
@@ -340,7 +366,8 @@ impl InstantPromptCache {
         self.last_written
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .retain(|map_key, _content| {
+            .entries
+            .retain(|map_key, _written| {
                 // The cache key has no colon, so split on the first one.
                 let suffix = map_key.split_once(':').map_or("", |(_key, s)| s);
                 let is_language = bases.iter().any(|base| {
@@ -367,7 +394,7 @@ impl InstantPromptCache {
             .last_written
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        last_written.retain(|map_key, _content| {
+        last_written.entries.retain(|map_key, _written| {
             // `{key}:{base}.{token}.{ext}`; the cache key has no colon.
             !map_key.split_once(':').is_some_and(|(entry_key, tail)| {
                 entry_key == key
@@ -433,8 +460,10 @@ impl InstantPromptCache {
         {
             return Ok(false);
         }
-        if let Some(cached_content) = cache.get(&map_key)
-            && cached_content == content
+        if cache
+            .entries
+            .get(&map_key)
+            .is_some_and(|written| written.content == content)
         {
             // Unchanged: bump mtime for the shells' TTL; a vanished file is rewritten.
             match std::fs::File::options()
@@ -443,7 +472,13 @@ impl InstantPromptCache {
                 .and_then(|f| f.set_modified(SystemTime::now()))
             {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Ok(()) | Err(_) => return Ok(false),
+                Ok(()) | Err(_) => {
+                    let tick = cache.next_tick();
+                    if let Some(written) = cache.entries.get_mut(&map_key) {
+                        written.tick = tick;
+                    }
+                    return Ok(false);
+                }
             }
         }
 
@@ -457,17 +492,20 @@ impl InstantPromptCache {
             result => result?,
         }
 
-        cache.insert(map_key, content.to_owned());
-        // Keep the dedup table bounded.
-        if cache.len() > INSTANT_PROMPT_LAST_WRITTEN_CAPACITY {
-            let excess = cache
-                .len()
-                .saturating_sub(INSTANT_PROMPT_LAST_WRITTEN_CAPACITY);
-            let to_remove: Vec<String> = cache.keys().take(excess).cloned().collect();
-            for k in to_remove {
-                cache.remove(&k);
-            }
-        }
+        let tick = cache.next_tick();
+        cache.entries.insert(
+            map_key,
+            Written {
+                content: content.to_owned(),
+                tick,
+            },
+        );
+        // Keep the dedup table bounded; the least recently written go first.
+        evict_to_capacity(
+            &mut cache.entries,
+            INSTANT_PROMPT_LAST_WRITTEN_CAPACITY,
+            |written| written.tick,
+        );
         drop(cache);
 
         Ok(true)
