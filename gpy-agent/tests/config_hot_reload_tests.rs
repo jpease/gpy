@@ -8,9 +8,11 @@
 #![allow(clippy::missing_errors_doc)]
 
 use gpy_agent::config::manager::ConfigManager;
+#[cfg(unix)]
 use gpy_agent::ipc::ClientDirectory;
 use serial_test::serial;
 use std::fs;
+#[cfg(unix)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tempfile::TempDir;
@@ -19,13 +21,16 @@ mod common;
 use common::wait_until_async;
 
 /// How long a signalled reload gets to reach this process.
+#[cfg(unix)]
 const DELIVERY_DEADLINE: Duration = Duration::from_secs(5);
 
 #[cfg(unix)]
 use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
 
+#[cfg(unix)]
 static DOORBELL_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(unix)]
 fn get_doorbell_counter() -> &'static AtomicUsize {
     &DOORBELL_COUNTER
 }

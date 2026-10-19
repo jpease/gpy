@@ -363,6 +363,150 @@ function test_failed_restart_registration_retries_on_next_nudge
     return 0
 end
 
+# Predicate for poll_until: the restart nudge reached the client.
+function __restart_nudge_landed --argument-names flag pid registrations_before
+    test -e $flag; and return 0
+    set -l now (grep -c "Registering client: PID=$pid," $__gpy_test_debug_log)
+    test "$now" -gt "$registrations_before"
+end
+
+# Truncated directory display whose prefix is $symbol.
+function __write_truncated_directory_config --argument-names symbol
+    printf '[ui.directory]\ndisplay = "truncated"\ntruncation_length = 1\ntruncation_symbol = "%s"\n' $symbol >$XDG_CONFIG_HOME/gpy/config.toml
+end
+
+function test_restart_drops_memoized_directory_render
+    print_test_header "E2E Test: Re-registration Drops Memoized Agent Renders"
+    init_test_env
+
+    set -l repo (create_test_repo)
+    if test -z "$repo"
+        print_test_result "Create test repo" FAIL "Unable to create temporary git repo"
+        cleanup_test_files
+        return 1
+    end
+
+    mkdir -p $XDG_CONFIG_HOME/gpy
+    __write_truncated_directory_config OLD/
+    if start_test_agent
+        print_test_result "Agent Start" PASS
+    else
+        print_test_result "Agent Start" FAIL "gpy-agent failed to start"
+        cleanup_test_files
+        return 1
+    end
+    # Like an interactive shell, the client must source the export cache:
+    # without it, re-registration reloads the theme and clears every memo
+    # whether or not it drops them itself.
+    if not poll_until 5 test -f $XDG_CACHE_HOME/gpy/theme-export.fish
+        print_test_result "Theme export cache written" FAIL "no $XDG_CACHE_HOME/gpy/theme-export.fish"
+        cleanup_test_files
+        return 1
+    end
+
+    set -l before_file $__gpy_test_tmp_dir/memo_before
+    set -l go_marker $__gpy_test_tmp_dir/memo_go
+    set -l after_file $__gpy_test_tmp_dir/memo_after
+    rm -f $before_file $go_marker $after_file
+
+    # The directory memo is keyed on theme, PWD, position and prev_bg, never
+    # on config. The shell memoizes a render, the agent restarts with another
+    # truncation symbol (not in the theme export, so no `.reload` doorbell),
+    # and re-registration must drop the memo so the next render is the new
+    # agent's. Paths travel as $argv; XDG_* and GPY_AGENT_SOCKET_PATH are
+    # inherited from init_test_env.
+    fish -c '
+        set -l repo $argv[1]
+        set -l __gpy_root $argv[2]
+        set -l before_file $argv[3]
+        set -l go_marker $argv[4]
+        set -l after_file $argv[5]
+
+        source $__gpy_root/fish/core/init.fish >/dev/null 2>&1
+        cd $repo
+        __gpy_register_with_agent >/dev/null 2>&1
+        __gpy_shell_registry_file >$before_file.registry
+        set -q __gpy_theme_export_mtime[1]; and touch $before_file.sourced
+        # fish_prompt resets prev_bg each render; the memo key includes it.
+        set -g __gpy_last_segment_bg black
+        segment_directory_render "" true >$before_file
+
+        set -l waited 0
+        while not test -f $go_marker
+            if test $waited -ge 150
+                echo FAIL:go-marker-timeout >$after_file
+                exit 0
+            end
+            sleep 0.1
+            set waited (math "$waited + 1")
+        end
+
+        # The SIGURG handler may already have run on the nudge; if not, the
+        # flag is still there and this consumes it.
+        __gpy_doorbell_handler
+        set -g __gpy_last_segment_bg black
+        segment_directory_render "" true >$after_file
+    ' -- $repo $__gpy_root $before_file $go_marker $after_file >/dev/null 2>&1 &
+    set -l client_pid $last_pid
+    set -a __gpy_test_client_pids $client_pid
+
+    if not poll_until 10 test -s $before_file
+        print_test_result "Memoized the first directory render" FAIL "no render within 10 s"
+        kill -9 $client_pid 2>/dev/null
+        cleanup_test_files
+        return 1
+    end
+    print_test_result "Memoized the first directory render" PASS
+    if not test -e $before_file.sourced
+        print_test_result "Client sourced the theme export cache" FAIL "the fixture would reload the theme on re-registration"
+        kill -9 $client_pid 2>/dev/null
+        cleanup_test_files
+        return 1
+    end
+
+    set -l registry_file (cat $before_file.registry)
+    set -l registrations_before (grep -c "Registering client: PID=$client_pid," $__gpy_test_debug_log)
+    stop_test_agent >/dev/null
+    __write_truncated_directory_config TRUNC/
+    if not start_test_agent
+        print_test_result "Agent Restart" FAIL "Unable to restart gpy-agent"
+        kill -9 $client_pid 2>/dev/null
+        cleanup_test_files
+        return 1
+    end
+
+    # The restart nudge has landed: the flag is waiting, or the client's
+    # SIGURG handler already consumed it and re-registered.
+    if not poll_until 5 __restart_nudge_landed $registry_file.reregister $client_pid $registrations_before
+        print_test_result "Restart nudge" FAIL "no .reregister flag or re-registration for $client_pid"
+        kill -9 $client_pid 2>/dev/null
+        cleanup_test_files
+        return 1
+    end
+    touch $go_marker
+
+    poll_until 10 test -s $after_file
+    kill -9 $client_pid 2>/dev/null
+    remove_client_from_cleanup $client_pid
+
+    set -l before (cat $before_file 2>/dev/null)
+    set -l after (cat $after_file 2>/dev/null)
+    if not string match -q '*OLD/*' -- "$before"
+        print_test_result "Re-registration drops the directory memo" FAIL "the first render does not show the first config: '$before'"
+        cleanup_test_files
+        return 1
+    else if string match -q '*TRUNC/*' -- "$after"
+        print_test_result "Re-registration drops the directory memo" PASS
+    else
+        print_test_result "Re-registration drops the directory memo" FAIL "render after restart: '$after' (before: '$before')"
+        cleanup_test_files
+        return 1
+    end
+
+    cleanup_test_files
+    return 0
+end
+
 if not test_existing_client_reregisters
     exit 1
 end
@@ -372,6 +516,10 @@ if not test_autostart_exhausted_client_recovers_via_git_segment
 end
 
 if not test_failed_restart_registration_retries_on_next_nudge
+    exit 1
+end
+
+if not test_restart_drops_memoized_directory_render
     exit 1
 end
 

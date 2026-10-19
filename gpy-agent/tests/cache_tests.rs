@@ -9,6 +9,7 @@ use gpy_agent::git::cache::GitStatusCache;
 use gpy_agent::git::{RepositoryState, RepositoryStatus};
 use std::collections::HashMap;
 use std::path::PathBuf;
+#[cfg(unix)]
 use tempfile::TempDir;
 
 #[cfg(unix)]

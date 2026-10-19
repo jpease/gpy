@@ -11,7 +11,14 @@ retries = 0
 status-level = "retry"
 final-status-level = "flaky"
 
-# Hang guard for the blocking watcher threads: a missed wake hangs these tests.
+# Hang guard for the blocking watcher threads: a missed wake hangs these tests,
+# as would a stuck stop in any test that drops a real watcher.
 [[profile.default.overrides]]
-filter = '(kind(lib) & test(/^watcher::/) & test(/stop|drop|event_is_not_flushed_before_its_deadline|event_is_flushed_without_a_further_event/)) | (binary_id(gpy-agent::watcher_tests) & test(/stop|drop/)) | (binary_id(gpy-agent::theme_manager_tests) & test(/stop/))'
+filter = '(kind(lib) & test(/^watcher::/) & test(/stop|drop|event_is_not_flushed_before_its_deadline|event_is_flushed_without_a_further_event/)) | (kind(lib) & test(/^agent::tests::prune_reconcile_tests::/)) | (binary_id(gpy-agent::watcher_tests) & test(/stop|drop/)) | (binary_id(gpy-agent::theme_manager_tests) & test(/stop/))'
+slow-timeout = { period = "60s", terminate-after = 5 }
+
+# Windows leg (.github/workflows/windows-gate.yml): every test gets the hang
+# guard, so a hang is killed and named instead of running into the job's
+# 45-minute timeout.
+[profile.ci-windows]
 slow-timeout = { period = "60s", terminate-after = 5 }

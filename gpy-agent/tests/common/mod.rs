@@ -27,7 +27,11 @@ pub use endpoint::{endpoint_builder, endpoint_builder_with_config, wait_for_sock
 pub use env_guard::EnvGuard;
 
 #[allow(unused_imports)]
-pub use child_guard::{AgentStopGuard, KillOnDrop, PtyChild};
+pub use child_guard::{AgentStopGuard, KillOnDrop};
+
+#[allow(unused_imports)]
+#[cfg(unix)]
+pub use child_guard::PtyChild;
 
 #[allow(unused_imports)]
 pub use wait::{wait_until, wait_until_async};

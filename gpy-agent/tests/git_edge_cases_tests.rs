@@ -7,6 +7,7 @@ mod fixtures;
 use fixtures::TestRepo;
 use gpy_agent::git::CompleteStatus;
 use gpy_agent::git::status::load_repository_state;
+#[cfg(unix)]
 use std::time::Duration;
 
 #[test]

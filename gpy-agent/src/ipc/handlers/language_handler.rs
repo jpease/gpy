@@ -4,14 +4,14 @@ use super::{
     HandlerError, JobGuard, RenderDeps, RequestHandler, SharedJob, SingleFlight, notify_if_changed,
     spawn_detached,
 };
-use crate::ipc::{Message, Response};
+use crate::ipc::{LanguageInfo, Message, Response};
 use crate::language::DetectionCache;
 use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
-use crate::language::display::build_language_display_info_at;
+use crate::language::display::{build_language_display_info_at, cached_language_display_info_at};
 use crate::language::venv::PythonVenv;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Handler for programming language detection queries.
 pub struct LanguageHandler {
@@ -19,6 +19,8 @@ pub struct LanguageHandler {
     render: RenderDeps,
     language_cache: DetectionCache,
     in_flight: SingleFlight<PathBuf, Vec<crate::language::DetectedLanguage>>,
+    /// Version probes running off the request path, one per project root.
+    probes_in_flight: SingleFlight<PathBuf, ()>,
 }
 
 type LanguageJob = SharedJob<Vec<crate::language::DetectedLanguage>>;
@@ -32,14 +34,19 @@ impl LanguageHandler {
             render,
             language_cache,
             in_flight: SingleFlight::new(),
+            probes_in_flight: SingleFlight::new(),
         }
     }
 
     /// Handle language detection for a given path.
     ///
+    /// The whole request, detection and version probes included, waits at most
+    /// `agent.timeout_seconds`. A version probe that outlasts it keeps running,
+    /// then writes the instant cache and rings the shells itself.
+    ///
     /// # Errors
-    /// Fails if a cold miss exceeds the timeout budget; detection keeps running
-    /// and its result is served from cache next time.
+    /// Fails if a cold detection or version probe exceeds the timeout budget;
+    /// the work keeps running and its result is served from cache next time.
     fn handle_language_detection(
         &self,
         path: &crate::security::SafePath,
@@ -51,6 +58,7 @@ impl LanguageHandler {
         if !config.language.enabled {
             return Ok(Response::Language { languages: vec![] });
         }
+        let deadline = Instant::now() + Duration::from_secs(config.agent.timeout_seconds.get());
 
         let theme = self.render.theme_manager.get();
         let request_path = path.as_path();
@@ -88,8 +96,7 @@ impl LanguageHandler {
                 cached
             } else {
                 let job = self.language_detection_job(&repo_root);
-                let wait_budget = Duration::from_secs(config.agent.timeout_seconds.get());
-                let Some(detected) = job.wait_timeout(wait_budget) else {
+                let Some(detected) = job.wait_timeout(remaining(deadline)) else {
                     // Error rather than empty success, so a slow scan never
                     // clobbers a good prompt with a blank one.
                     return Err(HandlerError::TimedOut("Language detection"));
@@ -97,32 +104,83 @@ impl LanguageHandler {
                 detected
             };
 
-        // Refresh the instant cache and repaint other live shells on change.
-        let palette = self.render.palette_cache.get();
-        let result = self.render.instant_cache.write_language_variants(
-            cache_path,
-            &detected_languages,
-            &config,
-            &theme,
-            prev_bg,
-            &palette,
-            python_venv.as_ref(),
-        );
-        notify_if_changed(&self.render.client_registry, cache_path, result, "language");
+        // Versions come from the caches; a cold one is probed by a background
+        // job, waited on only for what is left of the budget.
+        let cached = || {
+            cached_language_display_info_at(
+                &detected_languages,
+                &theme,
+                &config.language,
+                Some(&repo_root),
+                python_venv.as_ref(),
+            )
+        };
+        let (languages, published) = if let Some(languages) = cached() {
+            (languages, false)
+        } else {
+            let (probe, started_here) = self.version_probe_job(
+                cache_path,
+                &repo_root,
+                &detected_languages,
+                python_venv.as_ref(),
+                prev_bg,
+            );
+            // Error rather than a version-less render, for the same reason as
+            // a slow detection. The job publishes when it finishes.
+            let languages = probe
+                .wait_timeout(remaining(deadline))
+                .and_then(|()| cached())
+                .ok_or(HandlerError::TimedOut("Language version probe"))?;
+            // A job this request started already published its inputs.
+            (languages, started_here)
+        };
 
-        if detected_languages.is_empty() {
-            return Ok(Response::Language { languages: vec![] });
+        // Refresh the instant cache and repaint other live shells on change.
+        if !published {
+            Self::publish_languages(&self.render, cache_path, &languages, prev_bg);
         }
 
-        let languages = build_language_display_info_at(
-            &detected_languages,
-            &theme,
-            &config.language,
-            Some(&repo_root),
-            python_venv.as_ref(),
-        );
-
         Ok(Response::Language { languages })
+    }
+
+    /// Probe `detected`'s cold versions off the request path, publish them for
+    /// `cache_path` (and `prev_bg`), repainting on change, then complete. One
+    /// job per project root; a request that finds another request's job
+    /// running waits for it, and is `false` in the returned pair.
+    fn version_probe_job(
+        &self,
+        cache_path: &Path,
+        repo_root: &Path,
+        detected: &[crate::language::DetectedLanguage],
+        python_venv: Option<&PythonVenv>,
+        prev_bg: Option<&str>,
+    ) -> (Arc<SharedJob<()>>, bool) {
+        let render = self.render.clone();
+        let cache_path = cache_path.to_path_buf();
+        let repo_root_owned = repo_root.to_path_buf();
+        let detected = detected.to_vec();
+        let python_venv = python_venv.cloned();
+        let prev_bg = prev_bg.map(str::to_owned);
+        let mut started = false;
+        let job = self
+            .probes_in_flight
+            .get_or_start(repo_root.to_path_buf(), (), |guard| {
+                started = true;
+                spawn_detached(move || {
+                    let config = render.config_manager.get();
+                    let theme = render.theme_manager.get();
+                    let languages = build_language_display_info_at(
+                        &detected,
+                        &theme,
+                        &config.language,
+                        Some(&repo_root_owned),
+                        python_venv.as_ref(),
+                    );
+                    Self::publish_languages(&render, &cache_path, &languages, prev_bg.as_deref());
+                    guard.finish(());
+                });
+            });
+        (job, started)
     }
 
     /// Start a background re-detection for a non-git cache hit older than
@@ -181,20 +239,40 @@ impl LanguageHandler {
     ) {
         let config = deps.config_manager.get();
         let theme = deps.theme_manager.get();
-        let palette = deps.palette_cache.get();
-        // No request context, so prev_bg is None; reuse the stashed venv.
+        // A background job, so a cold version is probed here. No request
+        // context, so prev_bg is None; reuse the stashed venv.
         let stashed_venv = crate::language::venv::stashed_project_venv(repo_root);
-        let result = deps.instant_cache.write_language_variants(
-            repo_root,
+        let languages = build_language_display_info_at(
             detected,
-            &config,
             &theme,
-            None,
-            &palette,
+            &config.language,
+            Some(repo_root),
             stashed_venv.as_ref(),
         );
-        notify_if_changed(&deps.client_registry, repo_root, result, "language");
+        Self::publish_languages(deps, repo_root, &languages, None);
     }
+
+    /// Write `languages` into the instant cache for `cache_path` and repaint
+    /// live shells there on change.
+    fn publish_languages(
+        deps: &RenderDeps,
+        cache_path: &Path,
+        languages: &[LanguageInfo],
+        prev_bg: Option<&str>,
+    ) {
+        let config = deps.config_manager.get();
+        let theme = deps.theme_manager.get();
+        let palette = deps.palette_cache.get();
+        let result = deps
+            .instant_cache
+            .write_language_variants(cache_path, languages, &config, &theme, prev_bg, &palette);
+        notify_if_changed(&deps.client_registry, cache_path, result, "language");
+    }
+}
+
+/// Time left until `deadline`, zero once it has passed.
+fn remaining(deadline: Instant) -> Duration {
+    deadline.saturating_duration_since(Instant::now())
 }
 
 impl RequestHandler for LanguageHandler {
@@ -413,6 +491,76 @@ mod tests {
         assert!(
             !project_log.exists(),
             "the project interpreter must not run"
+        );
+    }
+
+    /// A version probe that outlasts the request budget does not hold the
+    /// request: it fails within the budget, and the probe publishes its result
+    /// (instant cache written, shells rung) when it lands.
+    #[cfg(unix)]
+    #[test]
+    fn slow_version_probe_is_published_after_the_request_gives_up() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (handler, registry) = make_handler();
+        let mut config = (*handler.render.config_manager.get()).clone();
+        config.agent.timeout_seconds =
+            crate::config::types::AgentTimeout::new(1).expect("1 s timeout");
+        handler.render.config_manager.overwrite_for_tests(config);
+
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let repo_dir = temp_dir.path().join("repo");
+        std::fs::create_dir_all(repo_dir.join(".git")).expect("git dir");
+        let repo_root = std::fs::canonicalize(&repo_dir).expect("canonicalize repo root");
+        // A forwarded venv without a version in pyvenv.cfg: only its
+        // interpreter can answer, and it takes 2 s.
+        let forwarded = temp_dir.path().join("activated");
+        let python = crate::language::venv::venv_python_binary(&forwarded);
+        std::fs::create_dir_all(python.parent().expect("bin dir")).expect("bin dir");
+        std::fs::write(&python, "#!/bin/sh\nsleep 2\necho 'Python 3.7.4'\n").expect("python");
+        std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod python");
+        handler.language_cache.set(
+            &repo_root,
+            vec![DetectedLanguage {
+                name: "python".to_owned(),
+                confidence: 1.0,
+                file_count: 1,
+                total_bytes: 6,
+            }],
+        );
+        let request = language_detect_request_with_venv(&repo_root, Some(&forwarded));
+        let notified_before = registry.notify_invocations();
+
+        let started = std::time::Instant::now();
+        let result = handler.handle(&request);
+        let elapsed = started.elapsed();
+        assert!(
+            matches!(result, Err(HandlerError::TimedOut(_))),
+            "a cold probe past the budget must time out, got {result:?}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(1800),
+            "the request waited {elapsed:?} on a 2 s probe with a 1 s budget"
+        );
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while registry.notify_invocations() == notified_before
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            registry.notify_invocations() > notified_before,
+            "the probe's result must be published and rung"
+        );
+
+        let started = std::time::Instant::now();
+        let response = handler.handle(&request).expect("warm request");
+        assert_eq!(python_version(&response).as_deref(), Some("3.7.4"));
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "a warm request must not probe again"
         );
     }
 

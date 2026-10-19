@@ -43,8 +43,8 @@ __gpy_last_workspace=""
 # Directory whose workspace sync the agent rejected; not re-sent until $PWD changes
 __gpy_rejected_workspace=""
 
-# Character/directory render memo, cleared on reload. Only non-empty renders
-# are cached, so a down agent is retried next prompt.
+# Character/directory render memo, cleared on reload and re-registration. Only
+# non-empty renders are cached, so a down agent is retried next prompt.
 __gpy_char_cache_key=""
 __gpy_char_cache_val=""
 __gpy_dir_cache_key=""
@@ -382,9 +382,12 @@ __gpy_register_with_agent() {
 }
 
 # Safe at any time: a missing socket returns 1 and the next prompt retries.
+# The agent restarted, possibly with another config, so its renders are
+# dropped too.
 __gpy_reregister_with_agent() {
     __gpy_registered=""
     __gpy_last_workspace=""
+    __gpy_clear_render_memos
     __gpy_register_with_agent
 }
 

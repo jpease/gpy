@@ -5,8 +5,8 @@
 # format, the __gpy_json_flags_tail tail, and -- for `lang` only -- the
 # forwarded virtualenv. Read by all three implementations so the request bytes
 # cannot drift apart:
-#   - Bash:  __gpy_build_data_request  (tests/bash/data_request_vectors.test.bash)
-#   - Zsh:   __gpy_build_data_request  (tests/zsh/data_request_vectors.test.zsh)
+#   - Bash:  __gpy_build_data_request_into  (tests/bash/data_request_vectors.test.bash)
+#   - Zsh:   __gpy_build_data_request_into  (tests/zsh/data_request_vectors.test.zsh)
 #   - Fish:  __gpy_build_data_payload  (tests/fish/data_request_vectors.test.fish)
 # Which virtualenv is forwarded is pinned separately by
 # venv_forwarding_vectors.tsv; here only $VIRTUAL_ENV is set (CONDA_* unset).

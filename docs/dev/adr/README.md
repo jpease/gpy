@@ -36,6 +36,7 @@ What becomes easier or more difficult to do because of this change?
 - [ADR-0006](adr-0006-async-terminal-updates.md) - Async Terminal Updates and the Fish Repaint Pattern (postexec job removed)
 - [ADR-0007](adr-0007-sigurg-doorbell-notifications.md) - SIGURG Doorbell and Flag Files for Shell Notifications
 - [ADR-0008](adr-0008-fail-fast-on-panic.md) - Fail Fast on Panic
+- [ADR-0009](adr-0009-deferred-language-version-probes.md) - Deferred Language Version Probes
 
 ## Creating a New ADR
 

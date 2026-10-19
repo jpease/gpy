@@ -72,6 +72,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installed beside `gpy`, falling back to `PATH` only when there is none, so an
   older `gpy-agent` earlier on `PATH` is no longer used. `gpy doctor` shows
   which agent binary it checked.
+- A `lang` request never waits on a language version probe beyond
+  `agent.timeout_seconds`. A cold version is probed in the background, one
+  probe per project at a time, and the version reaches idle Fish and Zsh
+  prompts (and Bash at its next prompt) through the repaint doorbell
+  (ADR-0009).
+- Bash and Zsh build the flags tail, the forwarded virtualenv and the git and
+  language requests without forking a subshell.
 
 ### Removed
 
@@ -165,6 +172,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An error creating the runtime directory names the directory and the cause.
 - A theme file edit reloads once, within about a second, and rings shells
   exactly once.
+- After an agent restart, Fish, Bash and Zsh drop their memoized character and
+  directory renders when they re-register, so a config the restarted agent
+  loaded (a directory truncation symbol, say) shows at once.
+- At capacity, the agent forgets the least recently used repository's
+  `prev_bg` render contexts instead of an arbitrary one.
+- `scripts/bench.sh --ci` fails when `cargo bench` fails, and checks every
+  budget before reporting an over-budget one.
 
 ### Security
 

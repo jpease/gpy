@@ -334,14 +334,16 @@ mod prune_reconcile_tests {
     }
 
     /// Two canonical temp repos (the second with a subdirectory), registry, and watcher.
+    /// Fields drop in declaration order, so the watcher stops before the
+    /// temp dir it watches is deleted.
     struct Fixture {
-        _tmp: tempfile::TempDir,
         repos: Vec<PathBuf>,
         /// `(cwd, index into repos)`
         cwds: Vec<(PathBuf, usize)>,
         registry: ClientDirectory,
         slot: SharedWatcherSlot,
         watcher: Arc<MultiRepoWatcher>,
+        _tmp: tempfile::TempDir,
     }
 
     fn fixture() -> Fixture {
@@ -402,6 +404,9 @@ mod prune_reconcile_tests {
     proptest::proptest! {
         #![proptest_config(proptest::prelude::ProptestConfig {
             cases: 24,
+            // Each case builds two repos and a watcher; an unbounded shrink of
+            // a failure would run for many minutes before reporting it.
+            max_shrink_iters: 64,
             failure_persistence: None,
             ..proptest::prelude::ProptestConfig::default()
         })]

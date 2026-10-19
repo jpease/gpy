@@ -72,7 +72,10 @@ if [[ " $* " == *" --ci "* ]]; then
   fi
 
   cd "$AGENT_DIR"
-  BENCH_OUTPUT=$(cargo bench --workspace --quiet 2>&1 || true)
+  # A bench that fails to build or panics must fail --ci, even when the
+  # benches that did run printed results within budget.
+  BENCH_STATUS=0
+  BENCH_OUTPUT=$(cargo bench --workspace --quiet 2>&1) || BENCH_STATUS=$?
   cd "$PROJECT_ROOT"
 
   echo -e "\n--- Benchmark Results ---"
@@ -126,24 +129,31 @@ if [[ " $* " == *" --ci "* ]]; then
     TOLERANCE_PCT=15
   fi
 
+  # FAILURES=$((…)), not ((FAILURES++)): the latter returns 1 when FAILURES is
+  # 0, and set -e would end the run before the other budgets and the summary.
   FAILURES=0
 
-  check_budget "$BENCH_OUTPUT" "ipc_roundtrip" "$BUDGET_IPC_RTT" "IPC Roundtrip" || ((FAILURES++))
-  check_budget "$BENCH_OUTPUT" "git_status_cold" "$BUDGET_GIT_COLD" "Git Status (cold)" || ((FAILURES++))
-  check_budget "$BENCH_OUTPUT" "cache_write_new_entry" "$BUDGET_CACHE_OPS" "Cache Operations" || ((FAILURES++))
+  if [[ $BENCH_STATUS -ne 0 ]]; then
+    echo "Error: cargo bench exited with status $BENCH_STATUS"
+    FAILURES=$((FAILURES + 1))
+  fi
+
+  check_budget "$BENCH_OUTPUT" "ipc_roundtrip" "$BUDGET_IPC_RTT" "IPC Roundtrip" || FAILURES=$((FAILURES + 1))
+  check_budget "$BENCH_OUTPUT" "git_status_cold" "$BUDGET_GIT_COLD" "Git Status (cold)" || FAILURES=$((FAILURES + 1))
+  check_budget "$BENCH_OUTPUT" "cache_write_new_entry" "$BUDGET_CACHE_OPS" "Cache Operations" || FAILURES=$((FAILURES + 1))
 
   # Cold-start canaries (gpy-agent/benches/agent_startup_bench.rs).
-  check_budget "$BENCH_OUTPUT" "config_load_from_file" "$BUDGET_CONFIG_LOAD" "Config Load" || ((FAILURES++))
-  check_budget "$BENCH_OUTPUT" "theme_manager_load" "$BUDGET_THEME_LOAD" "Theme Manager Load" || ((FAILURES++))
-  check_budget "$BENCH_OUTPUT" "theme_export_write" "$BUDGET_THEME_EXPORT" "Theme Export Write" || ((FAILURES++))
-  check_budget "$BENCH_OUTPUT" "version_command_spawn" "$BUDGET_VERSION_SPAWN" "Version Command Spawn" || ((FAILURES++))
+  check_budget "$BENCH_OUTPUT" "config_load_from_file" "$BUDGET_CONFIG_LOAD" "Config Load" || FAILURES=$((FAILURES + 1))
+  check_budget "$BENCH_OUTPUT" "theme_manager_load" "$BUDGET_THEME_LOAD" "Theme Manager Load" || FAILURES=$((FAILURES + 1))
+  check_budget "$BENCH_OUTPUT" "theme_export_write" "$BUDGET_THEME_EXPORT" "Theme Export Write" || FAILURES=$((FAILURES + 1))
+  check_budget "$BENCH_OUTPUT" "version_command_spawn" "$BUDGET_VERSION_SPAWN" "Version Command Spawn" || FAILURES=$((FAILURES + 1))
 
   # 5k-file corpus (gpy-agent/benches/language_bench.rs).
-  check_budget "$BENCH_OUTPUT" "lang_detect_5k" "$BUDGET_LANG_DETECT" "Language Detection (5k-file corpus)" || ((FAILURES++))
+  check_budget "$BENCH_OUTPUT" "lang_detect_5k" "$BUDGET_LANG_DETECT" "Language Detection (5k-file corpus)" || FAILURES=$((FAILURES + 1))
 
   if echo "$BENCH_OUTPUT" | grep -q "budget exceeded"; then
     echo "Error: Performance budget exceeded in benchmark output"
-    ((FAILURES++))
+    FAILURES=$((FAILURES + 1))
   fi
 
   cat > "$PROJECT_ROOT/bench-results.json" << EOF

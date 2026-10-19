@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/bash/venv_forwarding_vectors.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# __gpy_forwarded_venv matches every row of tests/fixtures/venv_forwarding_vectors.tsv.
+# __gpy_forwarded_venv_into matches every row of tests/fixtures/venv_forwarding_vectors.tsv.
 
 # Each lookup runs in its own subshell on purpose, so the env never leaks.
 # shellcheck disable=SC2030,SC2031
@@ -33,8 +33,8 @@ while IFS=$'\t' read -r venv_col prefix_col env_col expected_col _rest; do
     expected="$(col "$expected_col")"
 
     # Empty and unset must behave alike: run both.
-    actual="$(export VIRTUAL_ENV="$venv" CONDA_PREFIX="$prefix" CONDA_DEFAULT_ENV="$conda_env"; __gpy_forwarded_venv)"
-    unset_actual="$(unset VIRTUAL_ENV CONDA_PREFIX CONDA_DEFAULT_ENV; [[ -n "$venv" ]] && export VIRTUAL_ENV="$venv"; [[ -n "$prefix" ]] && export CONDA_PREFIX="$prefix"; [[ -n "$conda_env" ]] && export CONDA_DEFAULT_ENV="$conda_env"; __gpy_forwarded_venv)"
+    actual="$(out=""; export VIRTUAL_ENV="$venv" CONDA_PREFIX="$prefix" CONDA_DEFAULT_ENV="$conda_env"; __gpy_forwarded_venv_into out; printf '%s' "$out")"
+    unset_actual="$(out=""; unset VIRTUAL_ENV CONDA_PREFIX CONDA_DEFAULT_ENV; [[ -n "$venv" ]] && export VIRTUAL_ENV="$venv"; [[ -n "$prefix" ]] && export CONDA_PREFIX="$prefix"; [[ -n "$conda_env" ]] && export CONDA_DEFAULT_ENV="$conda_env"; __gpy_forwarded_venv_into out; printf '%s' "$out")"
     for got in "$actual" "$unset_actual"; do
         if [[ "$got" == "$expected" ]]; then
             echo "PASS: case $CASE_COUNT ($venv_col|$prefix_col|$env_col)"

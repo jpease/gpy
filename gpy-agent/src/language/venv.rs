@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::cache::ttl_map::TtlMap;
+use crate::language::version::{ColdVersion, ProbePolicy};
 
 /// Candidate venv directory names probed under a project root, in order.
 const VENV_DIR_NAMES: [&str; 2] = [".venv", "venv"];
@@ -29,15 +30,28 @@ impl PythonVenv {
     /// only, a memoized interpreter probe.
     #[must_use]
     pub fn version(&self) -> Option<String> {
+        self.lookup_version(ProbePolicy::Spawn).ok().flatten()
+    }
+
+    /// [`Self::version`] under `policy`.
+    ///
+    /// # Errors
+    /// [`ColdVersion`] when only an interpreter probe could answer and
+    /// `policy` forbids running it.
+    pub fn lookup_version(&self, policy: ProbePolicy) -> Result<Option<String>, ColdVersion> {
         match self {
-            Self::Forwarded(dir) => read_pyvenv_cfg_version(dir).or_else(|| {
+            Self::Forwarded(dir) => {
+                if let Some(version) = read_pyvenv_cfg_version(dir) {
+                    return Ok(Some(version));
+                }
                 let python = venv_python_binary(dir);
-                python
-                    .is_file()
-                    .then(|| memoized_binary_version(&python))
-                    .flatten()
-            }),
-            Self::Discovered(dir) => read_pyvenv_cfg_version(dir),
+                if python.is_file() {
+                    memoized_binary_version(&python, policy)
+                } else {
+                    Ok(None)
+                }
+            }
+            Self::Discovered(dir) => Ok(read_pyvenv_cfg_version(dir)),
         }
     }
 }
@@ -116,13 +130,20 @@ static VENV_BINARY_VERSION_CACHE: TtlMap<(PathBuf, SystemTime), String> =
 static VENV_BINARY_FAILURE_CACHE: TtlMap<(PathBuf, SystemTime), SystemTime> =
     TtlMap::new(VENV_STASH_CAPACITY);
 
-/// Probe the venv interpreter for its version, memoizing the outcome.
-fn memoized_binary_version(python: &Path) -> Option<String> {
-    let canonical = python.canonicalize().ok()?;
-    let modified = std::fs::metadata(&canonical).ok()?.modified().ok()?;
-    let key = (canonical, modified);
+/// Probe the venv interpreter for its version, memoizing the outcome;
+/// [`ColdVersion`] when nothing is memoized and `policy` forbids the probe.
+fn memoized_binary_version(
+    python: &Path,
+    policy: ProbePolicy,
+) -> Result<Option<String>, ColdVersion> {
+    let Some(key) = python.canonicalize().ok().and_then(|canonical| {
+        let modified = std::fs::metadata(&canonical).ok()?.modified().ok()?;
+        Some((canonical, modified))
+    }) else {
+        return Ok(None);
+    };
     if let Some(version) = VENV_BINARY_VERSION_CACHE.get(&key) {
-        return Some(version);
+        return Ok(Some(version));
     }
     let recently_failed = VENV_BINARY_FAILURE_CACHE
         .get(&key)
@@ -132,15 +153,18 @@ fn memoized_binary_version(python: &Path) -> Option<String> {
                 .is_ok_and(|elapsed| elapsed < crate::language::version::VERSION_FAILURE_TTL)
         });
     if recently_failed {
-        return None;
+        return Ok(None);
+    }
+    if policy == ProbePolicy::CachedOnly {
+        return Err(ColdVersion);
     }
     if let Some(version) = crate::language::version::detect_python_binary_version(python) {
         VENV_BINARY_FAILURE_CACHE.remove(&key);
         VENV_BINARY_VERSION_CACHE.insert(key, version.clone());
-        Some(version)
+        Ok(Some(version))
     } else {
         VENV_BINARY_FAILURE_CACHE.insert(key, SystemTime::now());
-        None
+        Ok(None)
     }
 }
 

@@ -291,6 +291,19 @@ pub fn detect_language_release<P: ReleaseSource + ?Sized>(detector: &P) -> Optio
     detect_language_release_at(detector, None)
 }
 
+/// Whether a version lookup may run a probe command on a cache miss.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbePolicy {
+    /// Run the version command on a miss; it is bounded by its own timeout.
+    Spawn,
+    /// Answer from the caches only; a miss is [`ColdVersion`].
+    CachedOnly,
+}
+
+/// A version that is not cached, under a [`ProbePolicy`] that forbids probing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ColdVersion;
+
 /// Cached version detection in a project directory.
 ///
 /// The cwd is part of the cache key since version managers resolve per
@@ -301,22 +314,40 @@ pub fn detect_language_release_at<P: ReleaseSource + ?Sized>(
     detector: &P,
     cwd: Option<&Path>,
 ) -> Option<String> {
+    lookup_language_release_at(detector, cwd, ProbePolicy::Spawn)
+        .ok()
+        .flatten()
+}
+
+/// [`detect_language_release_at`] under `policy`; `Ok(None)` is no version
+/// (or a recent failure).
+///
+/// # Errors
+/// [`ColdVersion`] when nothing is cached and `policy` forbids the probe.
+pub fn lookup_language_release_at<P: ReleaseSource + ?Sized>(
+    detector: &P,
+    cwd: Option<&Path>,
+    policy: ProbePolicy,
+) -> std::result::Result<Option<String>, ColdVersion> {
     let cache_key = version_cache_key(detector.language_name(), cwd);
 
     if let Some(cached) = VERSION_CACHE.get(&cache_key) {
-        return Some(cached);
+        return Ok(Some(cached));
     }
     if has_recent_failure(&cache_key) {
-        return None;
+        return Ok(None);
+    }
+    if policy == ProbePolicy::CachedOnly {
+        return Err(ColdVersion);
     }
 
     if let Ok(Some(version)) = execute_version_command(detector, cwd) {
         VERSION_FAILURE_CACHE.remove(&cache_key);
         cache_version_result(&cache_key, version.clone());
-        Some(version)
+        Ok(Some(version))
     } else {
         VERSION_FAILURE_CACHE.insert(cache_key, SystemTime::now());
-        None
+        Ok(None)
     }
 }
 
@@ -1036,6 +1067,37 @@ mod tests {
         invalidate_language_release_cache_at(dir);
         assert_eq!(detect_language_release_at(&stub, Some(dir)), None);
         assert_eq!(spawn_count(&count), 2, "invalidation must force a re-probe");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial_test::serial(global_ttl)]
+    fn cached_only_lookup_never_spawns() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let dir = temp_dir.path();
+        let count = dir.join("count");
+        let stub = StubDetector {
+            name: "cached-only-test",
+            command: vec!["sh", "-c", "echo spawn >> count; echo v 1.2.3"],
+            fallbacks: vec![],
+        };
+
+        assert_eq!(
+            lookup_language_release_at(&stub, Some(dir), ProbePolicy::CachedOnly),
+            Err(ColdVersion),
+            "a cold version is reported, not probed"
+        );
+        assert_eq!(spawn_count(&count), 0);
+
+        assert_eq!(
+            detect_language_release_at(&stub, Some(dir)).as_deref(),
+            Some("1.2.3")
+        );
+        assert_eq!(
+            lookup_language_release_at(&stub, Some(dir), ProbePolicy::CachedOnly),
+            Ok(Some("1.2.3".to_owned()))
+        );
+        assert_eq!(spawn_count(&count), 1, "the cached-only read did not spawn");
     }
 
     #[test]

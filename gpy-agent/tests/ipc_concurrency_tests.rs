@@ -3,6 +3,8 @@
 //! saturated connection semaphore rejects fast, and slow clients hit the
 //! whole-connection deadline.
 
+// The agent's IPC is Unix-socket only; native Windows is CLI-only.
+#![cfg(unix)]
 #![allow(clippy::panic)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]

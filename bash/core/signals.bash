@@ -1,11 +1,17 @@
-# Runs when the agent left a `<pid>.reload` flag.
-__gpy_reload_config() {
-    __gpy_load_theme &>/dev/null
-    # A theme change can alter rendered templates even for a repeated input tuple.
+# Drop the agent-rendered character and directory memos. Their keys hold no
+# config, so a theme or config change (a reload, or an agent restarted with
+# another config) must not leave them serving the old render.
+__gpy_clear_render_memos() {
     __gpy_char_cache_key=""
     __gpy_char_cache_val=""
     __gpy_dir_cache_key=""
     __gpy_dir_cache_val=""
+}
+
+# Runs when the agent left a `<pid>.reload` flag.
+__gpy_reload_config() {
+    __gpy_load_theme &>/dev/null
+    __gpy_clear_render_memos
 }
 
 # The agent rings SIGURG and leaves `<pid>.reregister` or `<pid>.reload` next

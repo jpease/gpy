@@ -386,4 +386,4 @@ c.bench_function("my_bench", |b| {
 
 - `scripts/bench.sh --ci` - Rust micro-benchmark budgets
 - `gpy-agent/benches/` - Rust microbenchmarks
-- `docs/ARCHITECTURE.md` - System design and performance considerations
+- [Architecture](../architecture.md) - System design and performance considerations

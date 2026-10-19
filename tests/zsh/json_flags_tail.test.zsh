@@ -2,7 +2,7 @@
 # tests/zsh/json_flags_tail.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# __gpy_json_flags_tail is the one place the is_last/is_first/prev_bg JSON
+# __gpy_json_flags_tail_into is the one place the is_last/is_first/prev_bg JSON
 # tail is built for every IPC request builder in zsh/core/ipc.zsh. This
 # feeds it every row of tests/fixtures/json_flags_tail_vectors.tsv (also read
 # by the Bash and Fish tests), so the three shells' tails stay byte-identical.
@@ -43,7 +43,7 @@ while IFS=$'\t' read -r last_col first_col prev_col expected _rest; do
     prev_bg=${prev_bg%x}
     [[ "$expected" == '\e' ]] && expected=""
     label="vector $vector_count ($last_col $first_col $prev_col)"
-    actual=$(__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg")
+    __gpy_json_flags_tail_into actual "$is_last" "$is_first" "$prev_bg"
     if [[ "$actual" == "$expected" ]]; then
         pass "$label"
     else

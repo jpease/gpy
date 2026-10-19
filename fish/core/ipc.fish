@@ -829,9 +829,11 @@ function __gpy_refresh_registration_after_restart --description 'Forget this she
     end
 
     # Forget the stale registration; on failure the agent's re-nudge retries.
+    # The agent may have restarted with another config: drop its renders too.
     set -e __gpy_registered
     set -e __gpy_registered_pid
     set -e __gpy_last_workspace
+    __gpy_clear_render_memos
     __gpy_log_debug ipc "Re-registration requested by agent for PID $fish_pid"
     __gpy_register_with_agent >/dev/null 2>&1
     set -l register_status $status
@@ -1181,6 +1183,19 @@ function __gpy_doorbell_handler --on-signal SIGURG
     set -g __gpy_repaint_trigger (math (set -q __gpy_repaint_trigger; and echo $__gpy_repaint_trigger; or echo 0) + 1)
 end
 
+# Drop the agent-rendered memos. Their keys hold the theme name but no config,
+# so a theme or config change (a reload, an edited re-export, or an agent
+# restarted with another config) must not leave them serving the old render.
+function __gpy_clear_render_memos --description 'Forget memoized agent renders'
+    for var in (set -n | string match '__gpy_lang_cache_*')
+        set -e $var
+    end
+    set -e __gpy_char_cache_key
+    set -e __gpy_char_cache_val
+    set -e __gpy_dir_cache_key
+    set -e __gpy_dir_cache_val
+end
+
 function __gpy_apply_agent_reload --description 'Reload theme/config after the agent .reload doorbell'
     # The agent writes the export cache before ringing.
     __gpy_apply_theme_export
@@ -1190,16 +1205,7 @@ function __gpy_apply_agent_reload --description 'Reload theme/config after the a
     __gpy_initialize_icons
 
     __gpy_ensure_segments_loaded
-
-    for var in (set -n | string match '__gpy_lang_cache_*')
-        set -e $var
-    end
-
-    # A theme change can alter rendered templates.
-    set -e __gpy_char_cache_key
-    set -e __gpy_char_cache_val
-    set -e __gpy_dir_cache_key
-    set -e __gpy_dir_cache_val
+    __gpy_clear_render_memos
 end
 
 # Fish allows commandline -f repaint from variable handlers, not signal handlers.

@@ -83,11 +83,14 @@ string match -q -- "❯ " (plain (final_after_failure))
 check "on, no clock: the symbol alone" (test $status -eq 0; and echo 1)
 
 # --- off ---------------------------------------------------------------------
+# The two renders can straddle a minute boundary, so the time is replaced by a
+# placeholder before comparing; each render must still carry one.
 set -gx GPY_UI_TRANSIENT_PROMPT 0
 set -g __enabled_segments clock
-set -l final (plain (final_after_failure))
-set -l full (plain (false; fish_prompt 2>/dev/null | string collect))
-check "off: the final rendering is the full prompt" (test "$final" = "$full"; and string match -q '*STATUSFAIL*' -- $final; and echo 1)
+set -l clock_re '[0-9]{1,2}:[0-9]{2} [AP]M'
+set -l final (plain (final_after_failure) | string replace -r -- $clock_re TIME | string collect)
+set -l full (plain (false; fish_prompt 2>/dev/null | string collect) | string replace -r -- $clock_re TIME | string collect)
+check "off: the final rendering is the full prompt" (test "$final" = "$full"; and string match -q '*TIME*STATUSFAIL*' -- $final; and echo 1)
 
 # --- fish_transient_prompt ---------------------------------------------------
 set -e -g fish_transient_prompt

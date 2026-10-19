@@ -23,23 +23,29 @@ __gpy_escape_json() {
     printf '%s\n' "$__gpy_ej_out"
 }
 
-# $VIRTUAL_ENV, else $CONDA_PREFIX unless the conda env is `base`.
-__gpy_forwarded_venv() {
+# $VIRTUAL_ENV, else $CONDA_PREFIX unless the conda env is `base`, into
+# variable $1 (empty when neither applies). Writes via `printf -v`: no fork.
+__gpy_forwarded_venv_into() {
     if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-        printf '%s' "$VIRTUAL_ENV"
+        printf -v "$1" '%s' "$VIRTUAL_ENV"
     elif [[ -n "${CONDA_PREFIX:-}" && -n "${CONDA_DEFAULT_ENV:-}" && "$CONDA_DEFAULT_ENV" != "base" ]]; then
-        printf '%s' "$CONDA_PREFIX"
+        printf -v "$1" '%s' "$CONDA_PREFIX"
+    else
+        printf -v "$1" '%s' ""
     fi
 }
 
-# `,"virtual_env":"<venv>"` for a `lang` request, or nothing.
-__gpy_lang_venv_json() {
-    local venv venv_json
-    venv="$(__gpy_forwarded_venv)"
-    [[ -n "$venv" ]] || return 0
-    __gpy_escape_json_into venv_json "$venv"
-    printf ',"virtual_env":"%s"' "$venv_json"
-    return 0
+# `,"virtual_env":"<venv>"` for a `lang` request, or nothing, into variable
+# $1. Locals are __gpy_lvj_* so a caller's OUTVAR is not shadowed.
+__gpy_lang_venv_json_into() {
+    local __gpy_lvj_venv
+    __gpy_forwarded_venv_into __gpy_lvj_venv
+    if [[ -z "$__gpy_lvj_venv" ]]; then
+        printf -v "$1" '%s' ""
+        return 0
+    fi
+    __gpy_escape_json_into __gpy_lvj_venv "$__gpy_lvj_venv"
+    printf -v "$1" ',"virtual_env":"%s"' "$__gpy_lvj_venv"
 }
 
 # $HOME with a passwd fallback. Bash does not re-derive an unset $HOME, and
@@ -442,28 +448,29 @@ __gpy_read_instant_cache() {
     return "$__gpy_ric_status"
 }
 
-# Shared is_last/is_first/prev_bg JSON tail. Flags are "true" or ""; absent
-# flags are omitted (the agent defaults them to false).
-__gpy_json_flags_tail() {
-    local is_last="$1" is_first="$2" prev_bg="$3"
-    local tail="" prev_bg_json
-    [[ "$is_last" == "true" ]] && tail="${tail},\"is_last\":true"
-    [[ "$is_first" == "true" ]] && tail="${tail},\"is_first\":true"
-    if [[ -n "$prev_bg" ]]; then
-        __gpy_escape_json_into prev_bg_json "$prev_bg"
-        tail="${tail},\"prev_bg\":\"${prev_bg_json}\""
+# Shared is_last/is_first/prev_bg JSON tail into variable $1. Flags are "true"
+# or ""; absent flags are omitted (the agent defaults them to false). Locals
+# are __gpy_jft_* so a caller's OUTVAR is not shadowed.
+__gpy_json_flags_tail_into() {
+    local __gpy_jft_tail="" __gpy_jft_prev_bg
+    [[ "$2" == "true" ]] && __gpy_jft_tail="${__gpy_jft_tail},\"is_last\":true"
+    [[ "$3" == "true" ]] && __gpy_jft_tail="${__gpy_jft_tail},\"is_first\":true"
+    if [[ -n "$4" ]]; then
+        __gpy_escape_json_into __gpy_jft_prev_bg "$4"
+        __gpy_jft_tail="${__gpy_jft_tail},\"prev_bg\":\"${__gpy_jft_prev_bg}\""
     fi
-    printf '%s' "$tail"
+    printf -v "$1" '%s' "$__gpy_jft_tail"
 }
 
-# Shared git/lang request builder, including the activated virtualenv.
-__gpy_build_data_request() {
-    local op="$1" cwd="$2" format="${3:-bash-prompt}" is_last="${4:-}" prev_bg="${5:-}" is_first="${6:-}"
-    local json_cwd flags_tail venv_json=""
-    __gpy_escape_json_into json_cwd "$cwd"
-    flags_tail="$(__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg")"
-    [[ "$op" == "lang" ]] && venv_json="$(__gpy_lang_venv_json)"
-    printf '%s' "{\"op\":\"$op\",\"cwd\":\"$json_cwd\",\"format\":\"$format\"${flags_tail}${venv_json}}"
+# Shared git/lang request builder, including the activated virtualenv, into
+# variable $1. Locals are __gpy_bdr_* so a caller's OUTVAR is not shadowed.
+__gpy_build_data_request_into() {
+    local __gpy_bdr_op="$2" __gpy_bdr_format="${4:-bash-prompt}"
+    local __gpy_bdr_cwd __gpy_bdr_tail __gpy_bdr_venv=""
+    __gpy_escape_json_into __gpy_bdr_cwd "$3"
+    __gpy_json_flags_tail_into __gpy_bdr_tail "${5:-}" "${7:-}" "${6:-}"
+    [[ "$__gpy_bdr_op" == "lang" ]] && __gpy_lang_venv_json_into __gpy_bdr_venv
+    printf -v "$1" '%s' "{\"op\":\"$__gpy_bdr_op\",\"cwd\":\"$__gpy_bdr_cwd\",\"format\":\"$__gpy_bdr_format\"${__gpy_bdr_tail}${__gpy_bdr_venv}}"
 }
 
 # Direct IPC data op for background refreshes. No oneshot fallback: without a
@@ -473,16 +480,19 @@ __gpy_trigger_data_refresh() {
     local cwd="${2:-$PWD}"
     local is_last="${3:-false}"
     local prev_bg="${4:-}"
+    local request
 
-    __gpy_send_json "$(__gpy_build_data_request "$op" "$cwd" bash-prompt "$is_last" "$prev_bg" "")" >/dev/null 2>&1
+    __gpy_build_data_request_into request "$op" "$cwd" bash-prompt "$is_last" "$prev_bg" ""
+    __gpy_send_json "$request" >/dev/null 2>&1
 }
 
 # Bounded IPC-only query; oneshot is unbounded and would break the omit
 # budget. The agent writes its own cache, so success needs no refresh.
 __gpy_sync_data_request() {
     local op="$1" cwd="$2" is_last="${3:-}" prev_bg="${4:-}" is_first="${5:-}"
-    local response
-    response="$(__gpy_send_json "$(__gpy_build_data_request "$op" "$cwd" bash-prompt "$is_last" "$prev_bg" "$is_first")" 2>/dev/null)" || return 1
+    local request response
+    __gpy_build_data_request_into request "$op" "$cwd" bash-prompt "$is_last" "$prev_bg" "$is_first"
+    response="$(__gpy_send_json "$request" 2>/dev/null)" || return 1
     [[ -n "$response" ]] || return 1
     printf '%s' "$response"
 }
@@ -595,7 +605,7 @@ __gpy_request() {
     fi
 
     local request
-    request="$(__gpy_build_data_request "$op" "$context_path" "$format" "$is_last" "$prev_bg" "$is_first")"
+    __gpy_build_data_request_into request "$op" "$context_path" "$format" "$is_last" "$prev_bg" "$is_first"
 
     __gpy_send_json "$request"
     local send_status=$?
@@ -647,7 +657,7 @@ __gpy_request_clock() {
     local is_first="${3:-}"
 
     local flags_tail
-    flags_tail="$(__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg")"
+    __gpy_json_flags_tail_into flags_tail "$is_last" "$is_first" "$prev_bg"
     local request="{\"op\":\"clock\",\"shell\":\"bash\",\"format\":\"bash-prompt\"${flags_tail}}"
 
     local result
@@ -667,7 +677,7 @@ __gpy_request_duration() {
     local is_first="${4:-false}"
 
     local flags_tail
-    flags_tail="$(__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg")"
+    __gpy_json_flags_tail_into flags_tail "$is_last" "$is_first" "$prev_bg"
     local request="{\"op\":\"duration\",\"duration_ms\":${duration_ms},\"format\":\"bash-prompt\"${flags_tail}}"
 
     local result send_status used_oneshot=0
@@ -707,7 +717,7 @@ __gpy_request_character() {
     [[ "$success" == "1" ]] && success_val=true
 
     local flags_tail
-    flags_tail="$(__gpy_json_flags_tail "$is_last" "" "$prev_bg")"
+    __gpy_json_flags_tail_into flags_tail "$is_last" "" "$prev_bg"
     local request="{\"op\":\"character\",\"success\":${success_val},\"format\":\"bash-prompt\"${flags_tail}}"
 
     local result send_status used_oneshot=0
@@ -745,7 +755,7 @@ __gpy_request_hostname() {
 
     local json_hostname flags_tail ssh_json=""
     __gpy_escape_json_into json_hostname "$hostname"
-    flags_tail="$(__gpy_json_flags_tail "$is_last" "" "$prev_bg")"
+    __gpy_json_flags_tail_into flags_tail "$is_last" "" "$prev_bg"
     [[ "$is_ssh" == "1" ]] && ssh_json=',"is_ssh":true'
     local request="{\"op\":\"hostname\",\"hostname\":\"${json_hostname}\",\"format\":\"bash-prompt\"${flags_tail}${ssh_json}}"
 
@@ -765,7 +775,7 @@ __gpy_request_username() {
 
     local json_username flags_tail
     __gpy_escape_json_into json_username "$username"
-    flags_tail="$(__gpy_json_flags_tail "$is_last" "" "$prev_bg")"
+    __gpy_json_flags_tail_into flags_tail "$is_last" "" "$prev_bg"
     local request="{\"op\":\"username\",\"username\":\"${json_username}\",\"format\":\"bash-prompt\"${flags_tail}}"
 
     local result

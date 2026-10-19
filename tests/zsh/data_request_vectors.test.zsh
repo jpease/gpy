@@ -2,10 +2,10 @@
 # tests/zsh/data_request_vectors.test.zsh
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# __gpy_build_data_request builds the same git/lang request bytes as Bash's
-# __gpy_build_data_request and Fish's __gpy_build_data_payload for every row of
-# tests/fixtures/data_request_vectors.tsv (also read by the Bash and Fish
-# tests). See the fixture's header for the format.
+# __gpy_build_data_request_into builds the same git/lang request bytes as
+# Bash's __gpy_build_data_request_into and Fish's __gpy_build_data_payload for
+# every row of tests/fixtures/data_request_vectors.tsv (also read by the Bash
+# and Fish tests). See the fixture's header for the format.
 
 ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
@@ -46,7 +46,7 @@ while IFS=$'\t' read -r op cwd_col format last_col first_col prev_col venv_col e
     is_last=$(unescape_value "$last_col")
     is_first=$(unescape_value "$first_col")
     label="vector $vector_count ($op $cwd_col)"
-    actual=$(export VIRTUAL_ENV="$venv"; __gpy_build_data_request "$op" "$cwd" "$format" "$is_last" "$prev_bg" "$is_first")
+    actual=$(export VIRTUAL_ENV="$venv"; __gpy_build_data_request_into out "$op" "$cwd" "$format" "$is_last" "$prev_bg" "$is_first"; printf '%s' "$out")
     if [[ "$actual" == "$expected" ]]; then
         pass "$label"
     else

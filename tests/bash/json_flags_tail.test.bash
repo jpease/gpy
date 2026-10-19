@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/bash/json_flags_tail.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# __gpy_json_flags_tail must match tests/fixtures/json_flags_tail_vectors.tsv byte-for-byte.
+# __gpy_json_flags_tail_into must match tests/fixtures/json_flags_tail_vectors.tsv byte-for-byte.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tests/lib/shell_e2e.sh
@@ -39,7 +39,8 @@ while IFS=$'\t' read -r last_col first_col prev_col expected _rest; do
     prev_bg="${prev_bg%x}"
     [[ "$expected" == '\e' ]] && expected=""
     label="vector $vector_count ($last_col $first_col $prev_col)"
-    actual="$(__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg")"
+    actual=""
+    __gpy_json_flags_tail_into actual "$is_last" "$is_first" "$prev_bg"
     if [[ "$actual" == "$expected" ]]; then
         pass "$label"
     else

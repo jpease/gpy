@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/bash/data_request_vectors.test.bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# __gpy_build_data_request matches Zsh/Fish request bytes for every row of tests/fixtures/data_request_vectors.tsv.
+# __gpy_build_data_request_into matches Zsh/Fish request bytes for every row of tests/fixtures/data_request_vectors.tsv.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=tests/lib/shell_e2e.sh
@@ -43,7 +43,7 @@ while IFS=$'\t' read -r op cwd_col format last_col first_col prev_col venv_col e
     is_last="$(unescape_value "$last_col")"
     is_first="$(unescape_value "$first_col")"
     label="vector $vector_count ($op $cwd_col)"
-    actual="$(export VIRTUAL_ENV="$venv"; __gpy_build_data_request "$op" "$cwd" "$format" "$is_last" "$prev_bg" "$is_first")"
+    actual="$(out=""; export VIRTUAL_ENV="$venv"; __gpy_build_data_request_into out "$op" "$cwd" "$format" "$is_last" "$prev_bg" "$is_first"; printf '%s' "$out")"
     if [[ "$actual" == "$expected" ]]; then
         pass "$label"
     else

@@ -12,8 +12,7 @@ use crate::formatter::{
     FishAnsiFormatter, Formatter, IsFirst, IsLast, PromptDialect, RenderContext, SegmentPosition,
 };
 use crate::git::RepositoryStatus;
-use crate::ipc::Response;
-use crate::language::venv::PythonVenv;
+use crate::ipc::{LanguageInfo, Response};
 use crate::template::{Color, Palette, parse_color};
 use crate::theme::ThemeConfig;
 use crate::{Error, Result};
@@ -116,8 +115,18 @@ fn settle_variant_writes(wrote_any: bool, first_err: Option<Error>) -> Result<bo
 /// Maximum distinct `prev_bg` render contexts tracked per repository.
 const MAX_PREV_BG_CONTEXTS_PER_KEY: usize = 16;
 
-/// Per-key insertion-ordered set of `prev_bg` contexts (`None` = context-free).
-type SeenContexts = HashMap<String, Vec<Option<String>>>;
+/// Insertion-ordered `prev_bg` contexts of one key (`None` = context-free),
+/// with the key's use-recency tick.
+struct Contexts {
+    list: Vec<Option<String>>,
+    tick: u64,
+}
+
+/// Contexts per key plus the tick counter that orders keys for eviction.
+struct SeenContexts {
+    entries: HashMap<String, Contexts>,
+    tick: u64,
+}
 
 /// Content last written to one cache file, with its write-recency tick.
 struct Written {
@@ -181,7 +190,10 @@ impl InstantPromptCache {
                 entries: HashMap::new(),
                 tick: 0,
             }),
-            seen_contexts: RwLock::new(HashMap::new()),
+            seen_contexts: RwLock::new(SeenContexts {
+                entries: HashMap::new(),
+                tick: 0,
+            }),
             unwritable_keys: Mutex::new(HashSet::new()),
             suppressed_git: Mutex::new(HashMap::new()),
             #[cfg(test)]
@@ -222,7 +234,10 @@ impl InstantPromptCache {
                 entries: HashMap::new(),
                 tick: 0,
             }),
-            seen_contexts: RwLock::new(HashMap::new()),
+            seen_contexts: RwLock::new(SeenContexts {
+                entries: HashMap::new(),
+                tick: 0,
+            }),
             unwritable_keys: Mutex::new(HashSet::new()),
             suppressed_git: Mutex::new(HashMap::new()),
             #[cfg(test)]
@@ -284,6 +299,7 @@ impl InstantPromptCache {
     }
 
     /// Write the language cache for one position; returns `true` if content changed.
+    /// `languages` are resolved display entries, so writing never probes a version.
     /// # Errors
     /// Returns an error if prompt rendering or file writing fails.
     #[expect(
@@ -293,13 +309,12 @@ impl InstantPromptCache {
     pub(crate) fn write_language(
         &self,
         path: &Path,
-        languages: &[crate::language::DetectedLanguage],
+        languages: &[LanguageInfo],
         config: &Config,
         theme: &ThemeConfig,
         pos: SegmentPosition,
         prev_bg: Option<&str>,
         palette: &Palette,
-        python_venv: Option<&PythonVenv>,
     ) -> Result<bool> {
         let project_root = find_project_root(path);
         let key = path_to_cache_key(&project_root);
@@ -311,22 +326,14 @@ impl InstantPromptCache {
         for ctx_prev_bg in self.known_contexts(&key, prev_bg) {
             let token = prev_bg_token(ctx_prev_bg.as_deref());
             let color = ctx_prev_bg.as_deref().and_then(|s| parse_color(s).ok());
-            let prompts = match render_language_prompts(
-                languages,
-                config,
-                theme,
-                pos,
-                &project_root,
-                color,
-                palette,
-                python_venv,
-            ) {
-                Ok(prompts) => prompts,
-                Err(e) => {
-                    first_err.get_or_insert(e);
-                    continue;
-                }
-            };
+            let prompts =
+                match render_language_prompts(languages, config, theme, pos, color, palette) {
+                    Ok(prompts) => prompts,
+                    Err(e) => {
+                        first_err.get_or_insert(e);
+                        continue;
+                    }
+                };
             let base_token = format!("{base}.{token}");
             for (dialect, prompt) in prompts {
                 match self.write_cache_file(&key, &base_token, dialect, &prompt) {
@@ -343,33 +350,19 @@ impl InstantPromptCache {
     /// Write all four language variants; returns `true` if any content changed.
     /// # Errors
     /// Returns an error if prompt rendering or file writing fails.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "independent render inputs; a params struct would only rename them"
-    )]
     pub fn write_language_variants(
         &self,
         path: &Path,
-        languages: &[crate::language::DetectedLanguage],
+        languages: &[LanguageInfo],
         config: &Config,
         theme: &ThemeConfig,
         prev_bg: Option<&str>,
         palette: &Palette,
-        python_venv: Option<&PythonVenv>,
     ) -> Result<bool> {
         let mut wrote_any = false;
         let mut first_err = None;
         for pos in SEGMENT_POSITIONS {
-            match self.write_language(
-                path,
-                languages,
-                config,
-                theme,
-                pos,
-                prev_bg,
-                palette,
-                python_venv,
-            ) {
+            match self.write_language(path, languages, config, theme, pos, prev_bg, palette) {
                 Ok(wrote) => wrote_any |= wrote,
                 Err(e) => {
                     first_err.get_or_insert(e);
@@ -379,30 +372,37 @@ impl InstantPromptCache {
         settle_variant_writes(wrote_any, first_err)
     }
 
-    /// Record `prev_bg` for `key` and return all known contexts (oldest evicted past the cap).
+    /// Record `prev_bg` for `key` and return all known contexts. Past the caps
+    /// the oldest context of the key, and the least recently used key, go first.
     fn known_contexts(&self, key: &str, prev_bg: Option<&str>) -> Vec<Option<String>> {
         let requested = prev_bg.map(str::to_owned);
         let mut guard = self
             .seen_contexts
             .write()
             .unwrap_or_else(PoisonError::into_inner);
+        let seen = &mut *guard;
 
-        // Bound the number of repositories tracked.
-        if !guard.contains_key(key)
-            && guard.len() >= INSTANT_PROMPT_LAST_WRITTEN_CAPACITY
-            && let Some(victim) = guard.keys().next().cloned()
-        {
-            guard.remove(&victim);
-        }
-
-        let contexts = guard.entry(key.to_owned()).or_default();
-        if !contexts.contains(&requested) {
-            if contexts.len() >= MAX_PREV_BG_CONTEXTS_PER_KEY {
-                contexts.remove(0_usize);
+        seen.tick = seen.tick.wrapping_add(1);
+        let tick = seen.tick;
+        let contexts = seen.entries.entry(key.to_owned()).or_insert(Contexts {
+            list: Vec::new(),
+            tick,
+        });
+        contexts.tick = tick;
+        if !contexts.list.contains(&requested) {
+            if contexts.list.len() >= MAX_PREV_BG_CONTEXTS_PER_KEY {
+                contexts.list.remove(0_usize);
             }
-            contexts.push(requested);
+            contexts.list.push(requested);
         }
-        let known = contexts.clone();
+        let known = contexts.list.clone();
+
+        // Bound the number of repositories tracked; `key` holds the newest tick.
+        evict_to_capacity(
+            &mut seen.entries,
+            INSTANT_PROMPT_LAST_WRITTEN_CAPACITY,
+            |contexts| contexts.tick,
+        );
         drop(guard);
         known
     }
@@ -660,33 +660,21 @@ fn render_git_prompts(
 /// Render the language segment in every dialect.
 /// # Errors
 /// Returns an error if prompt rendering fails.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "independent render inputs; a params struct would only rename them"
-)]
 fn render_language_prompts(
-    languages: &[crate::language::DetectedLanguage],
+    languages: &[LanguageInfo],
     config: &Config,
     theme: &ThemeConfig,
     pos: SegmentPosition,
-    root: &Path,
     prev_bg: Option<Color>,
     palette: &Palette,
-    python_venv: Option<&PythonVenv>,
 ) -> Result<DialectPrompts> {
     let ctx = RenderContext::new(config, theme, pos)
         .with_palette(palette.clone())
         .with_prev_colors(None, prev_bg);
 
-    let langs = crate::language::display::build_language_display_info_at(
-        languages,
-        theme,
-        &config.language,
-        Some(root),
-        python_venv,
-    );
-
-    let response = Response::Language { languages: langs };
+    let response = Response::Language {
+        languages: languages.to_vec(),
+    };
     render_all_dialects(&response, &ctx)
 }
 

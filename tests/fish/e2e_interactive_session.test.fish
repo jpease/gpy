@@ -92,9 +92,10 @@ function session_size --argument-names dir
     python3 $__pty size $dir
 end
 
-# Predicate for poll_until: the transcript after $offset contains $needle.
+# Predicate for poll_until: the transcript after $offset contains $needle as
+# literal text (escaped, so a `?` or `*` in the needle is not a glob).
 function __session_has --argument-names dir needle offset
-    string match -q "*$needle*" -- (transcript_after $dir $offset)
+    string match -qr -- (string escape --style=regex -- $needle) (transcript_after $dir $offset)
 end
 
 # Wait until the transcript after $offset contains $needle (plain text,

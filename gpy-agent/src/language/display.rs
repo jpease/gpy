@@ -6,6 +6,7 @@ use crate::config::{LanguageSettings, LanguageTheme};
 use crate::ipc::LanguageInfo;
 use crate::language::detector::{DetectedLanguage, get_language_color_from_theme};
 use crate::language::venv::PythonVenv;
+use crate::language::version::{ColdVersion, ProbePolicy, ReleaseSource};
 use crate::theme::ThemeConfig;
 use std::collections::HashMap;
 use std::path::Path;
@@ -103,7 +104,8 @@ pub fn build_language_display_info(
 
 /// Like [`build_language_display_info`], resolving versions from `version_cwd`.
 /// Python uses `python_venv` when the caller already resolved one, else a
-/// project venv under `version_cwd`.
+/// project venv under `version_cwd`. Cold versions are probed, each bounded by
+/// its own timeout.
 ///
 /// # Panics
 /// If the constant fallback color fails to parse.
@@ -115,76 +117,105 @@ pub fn build_language_display_info_at(
     version_cwd: Option<&Path>,
     python_venv: Option<&PythonVenv>,
 ) -> Vec<LanguageInfo> {
+    display_info(
+        detected_languages,
+        theme,
+        language_cfg,
+        version_cwd,
+        python_venv,
+        ProbePolicy::Spawn,
+    )
+    .unwrap_or_default()
+}
+
+/// [`build_language_display_info_at`] from cached versions only: never runs a
+/// probe, and is `None` when any displayed language's version is cold.
+///
+/// # Panics
+/// If the constant fallback color fails to parse.
+#[must_use]
+pub fn cached_language_display_info_at(
+    detected_languages: &[DetectedLanguage],
+    theme: &ThemeConfig,
+    language_cfg: &LanguageSettings,
+    version_cwd: Option<&Path>,
+    python_venv: Option<&PythonVenv>,
+) -> Option<Vec<LanguageInfo>> {
+    display_info(
+        detected_languages,
+        theme,
+        language_cfg,
+        version_cwd,
+        python_venv,
+        ProbePolicy::CachedOnly,
+    )
+    .ok()
+}
+
+/// Display entries under `policy`; [`ColdVersion`] only under
+/// [`ProbePolicy::CachedOnly`].
+fn display_info(
+    detected_languages: &[DetectedLanguage],
+    theme: &ThemeConfig,
+    language_cfg: &LanguageSettings,
+    version_cwd: Option<&Path>,
+    python_venv: Option<&PythonVenv>,
+    policy: ProbePolicy,
+) -> Result<Vec<LanguageInfo>, ColdVersion> {
     if !language_cfg.enabled {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let displayed_languages: Vec<&DetectedLanguage> =
         select_display_languages(detected_languages, &theme.segments.language, language_cfg);
 
-    let probed_versions: Vec<Option<String>> = if language_cfg.show_versions {
+    let versions: Vec<Option<String>> = if language_cfg.show_versions {
         let version_detectors: HashMap<_, _> = crate::language::version::get_version_detectors()
             .iter()
             .map(|probe| (probe.language_name().to_owned(), probe.as_ref()))
             .collect();
+        let lookup = |detected_lang: &DetectedLanguage| {
+            language_version(
+                detected_lang,
+                version_detectors.get(&detected_lang.name).copied(),
+                version_cwd,
+                python_venv,
+                policy,
+            )
+        };
 
-        // Probe concurrently (each probe has its own timeout); slots keep order.
-        std::thread::scope(|scope| {
-            // Spawn eagerly before joining; a lazy iterator would serialize.
-            let mut probe_handles = Vec::with_capacity(displayed_languages.len());
-            for detected_lang in &displayed_languages {
-                let probe = version_detectors.get(&detected_lang.name).copied();
-                let is_python = detected_lang.name == "python";
-                let is_ruby = detected_lang.name == "ruby";
-                probe_handles.push(scope.spawn(move || {
-                    #[cfg(test)]
-                    PROBE_CALL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        match policy {
+            // Cache reads only: nothing to overlap.
+            ProbePolicy::CachedOnly => displayed_languages
+                .iter()
+                .map(|detected_lang| lookup(detected_lang))
+                .collect::<Result<Vec<_>, _>>()?,
+            // Probe concurrently (each probe has its own timeout); slots keep order.
+            ProbePolicy::Spawn => std::thread::scope(|scope| {
+                // Spawn eagerly before joining; a lazy iterator would serialize.
+                let mut probe_handles = Vec::with_capacity(displayed_languages.len());
+                for detected_lang in &displayed_languages {
+                    let lookup = &lookup;
+                    probe_handles.push(scope.spawn(move || {
+                        #[cfg(test)]
+                        PROBE_CALL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        lookup(detected_lang).ok().flatten()
+                    }));
+                }
 
-                    // The daemon never inherits an activated venv; prefer the project one.
-                    if is_python && let Some(cwd) = version_cwd {
-                        let discovered;
-                        let venv = if python_venv.is_some() {
-                            python_venv
-                        } else {
-                            discovered = crate::language::venv::resolve_python_venv(cwd, None);
-                            discovered.as_ref()
-                        };
-                        if let Some(venv) = venv {
-                            let version = venv.version();
-                            // Without a usable `pyvenv.cfg` a project venv shows no
-                            // version rather than the unrelated PATH interpreter's.
-                            if version.is_some() || matches!(venv, PythonVenv::Discovered(_)) {
-                                return version;
-                            }
-                        }
-                    }
-                    // Prefer `.ruby-version` when no mise config governs the dir: mise often
-                    // ignores idiomatic version files for ruby and reports the global one.
-                    if is_ruby
-                        && let Some(cwd) = version_cwd
-                        && let Some(version) =
-                            crate::language::version::resolve_ruby_version_file(cwd)
-                    {
-                        return Some(version);
-                    }
-                    probe.and_then(|source| {
-                        crate::language::version::detect_language_release_at(source, version_cwd)
-                    })
-                }));
-            }
-
-            probe_handles
-                .into_iter()
-                // A panicked probe degrades to "no version".
-                .map(|handle| handle.join().ok().flatten())
-                .collect()
-        })
+                probe_handles
+                    .into_iter()
+                    // A panicked probe degrades to "no version".
+                    .map(|handle| handle.join().ok().flatten())
+                    .collect()
+            }),
+        }
     } else {
         vec![None; displayed_languages.len()]
     };
 
     let mut languages_info: Vec<LanguageInfo> = Vec::with_capacity(displayed_languages.len());
-    for (detected_lang, version) in displayed_languages.iter().zip(probed_versions) {
+    for (detected_lang, version) in displayed_languages.iter().zip(versions) {
         let color_str =
             get_language_color_from_theme(&detected_lang.name, &theme.segments.language);
         #[expect(
@@ -203,7 +234,52 @@ pub fn build_language_display_info_at(
         });
     }
 
-    languages_info
+    Ok(languages_info)
+}
+
+/// One displayed language's version under `policy`; [`ColdVersion`] when only
+/// a probe `policy` forbids could answer.
+fn language_version(
+    detected_lang: &DetectedLanguage,
+    probe: Option<&(dyn ReleaseSource + Sync + Send)>,
+    version_cwd: Option<&Path>,
+    python_venv: Option<&PythonVenv>,
+    policy: ProbePolicy,
+) -> Result<Option<String>, ColdVersion> {
+    // The daemon never inherits an activated venv; prefer the project one.
+    if detected_lang.name == "python"
+        && let Some(cwd) = version_cwd
+    {
+        let discovered;
+        let venv = if python_venv.is_some() {
+            python_venv
+        } else {
+            discovered = crate::language::venv::resolve_python_venv(cwd, None);
+            discovered.as_ref()
+        };
+        if let Some(venv) = venv {
+            let version = venv.lookup_version(policy)?;
+            // Without a usable `pyvenv.cfg` a project venv shows no
+            // version rather than the unrelated PATH interpreter's.
+            if version.is_some() || matches!(venv, PythonVenv::Discovered(_)) {
+                return Ok(version);
+            }
+        }
+    }
+    // Prefer `.ruby-version` when no mise config governs the dir: mise often
+    // ignores idiomatic version files for ruby and reports the global one.
+    if detected_lang.name == "ruby"
+        && let Some(cwd) = version_cwd
+        && let Some(version) = crate::language::version::resolve_ruby_version_file(cwd)
+    {
+        return Ok(Some(version));
+    }
+    match probe {
+        Some(source) => {
+            crate::language::version::lookup_language_release_at(source, version_cwd, policy)
+        }
+        None => Ok(None),
+    }
 }
 
 #[cfg(test)]

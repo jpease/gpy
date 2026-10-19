@@ -34,7 +34,7 @@ A custom error enum with `thiserror`, propagated as `Result`, so a failure produ
 
 ### Async agent (Tokio)
 
-Concurrent requests from many shells, and non-blocking git and language work, keep a cached prompt render inside its budget (`prompt_render`: 20 ms target, 50 ms max).
+Concurrent requests from many shells, and non-blocking git and language work, keep a cached prompt render inside its budget (`prompt_render`: 20 ms target, 50 ms max). A request never runs a language version probe: a cold version is probed by a background job that repaints when it lands ([ADR-0009](adr/adr-0009-deferred-language-version-probes.md)).
 
 ### Native git subprocess
 
