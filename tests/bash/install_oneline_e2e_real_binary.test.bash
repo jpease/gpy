@@ -92,7 +92,7 @@ EOF
 }
 
 run_shell() {
-    shell="$1" uninstaller="$2"
+    shell="$1"
     echo "=== $shell ==="
     shell_e2e_init "$ROOT"
     export PATH="$HOME/.local/bin:$SHELL_E2E_ROOT/fakebin:$PATH"
@@ -183,11 +183,7 @@ run_shell() {
     cd "$SHELL_E2E_ROOT" || exit 1
 
     supervisor_pid="$(cat "$XDG_RUNTIME_DIR/gpy/supervisor.pid" 2>/dev/null || true)"
-    if [ "$uninstaller" = fish ]; then
-        printf '\n' | fish "$ROOT/scripts/uninstall.fish" >"$SHELL_E2E_ROOT/uninstall.log" 2>&1
-    else
-        printf '\n' | GPY_SHELL="$shell" sh "$ROOT/scripts/uninstall.sh" >"$SHELL_E2E_ROOT/uninstall.log" 2>&1
-    fi
+    printf '\n' | GPY_SHELL="$shell" sh "$ROOT/scripts/uninstall.sh" >"$SHELL_E2E_ROOT/uninstall.log" 2>&1
     rc=$?
     if [ "$rc" -eq 0 ]; then
         pass "$shell: the uninstaller exited 0"
@@ -220,8 +216,8 @@ run_shell() {
     trap - EXIT
 }
 
-run_shell fish fish
-run_shell zsh sh
-run_shell bash sh
+run_shell fish
+run_shell zsh
+run_shell bash
 
 test_finish "install-oneline.sh installs, renders a first prompt and uninstalls for fish, zsh and bash"

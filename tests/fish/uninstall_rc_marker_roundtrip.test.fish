@@ -14,8 +14,8 @@
 #   3. Removal does not spill into unrelated content that follows the block
 #      (e.g. another tool's config appended later).
 #
-# Runs the REAL install.sh / install-oneline.sh / uninstall.fish /
-# uninstall.sh against a sandboxed $HOME, with network calls stubbed out via
+# Runs the REAL install.sh / install-oneline.sh / uninstall.sh against a
+# sandboxed $HOME, with network calls stubbed out via
 # a fake `curl` on PATH, so no network access or fixture drift is required.
 
 set -l script_dir (dirname (status --filename))
@@ -195,9 +195,9 @@ else
         __gpy_test_fail "install.sh: not idempotent, found $marker_count_a marker occurrences after running twice"
     end
 
-    # Uninstall (fish's own uninstaller) and diff against the pristine original.
-    printf '\n' | env HOME=$home_a fish scripts/uninstall.fish >/dev/null 2>&1
-    __gpy_assert_byte_identical "install.sh -> uninstall.fish" "$original_a" "$home_a/.config/fish/config.fish"
+    # Uninstall and diff against the pristine original.
+    printf '\n' | env HOME=$home_a sh scripts/uninstall.sh >/dev/null 2>&1
+    __gpy_assert_byte_identical "install.sh -> uninstall.sh" "$original_a" "$home_a/.config/fish/config.fish"
 end
 
 rm -rf "$pkg_a"
@@ -205,7 +205,7 @@ rm -rf "$home_a"
 
 # --- install-oneline.sh (fish / zsh / bash) ---
 
-function __gpy_test_install_oneline_roundtrip --argument-names shell_name rc_relpath uninstaller_kind
+function __gpy_test_install_oneline_roundtrip --argument-names shell_name rc_relpath
     set -l home_b (mktemp -d)
     set -l fake_bin (mktemp -d)
     __gpy_write_fake_curl "$fake_bin"
@@ -245,20 +245,16 @@ function __gpy_test_install_oneline_roundtrip --argument-names shell_name rc_rel
     end
 
     # Uninstall
-    if test "$uninstaller_kind" = fish
-        printf '\n' | env HOME=$home_b fish scripts/uninstall.fish >/dev/null 2>&1
-    else
-        printf '\n' | env HOME=$home_b GPY_SHELL=$shell_name sh scripts/uninstall.sh >/dev/null 2>&1
-    end
+    printf '\n' | env HOME=$home_b GPY_SHELL=$shell_name sh scripts/uninstall.sh >/dev/null 2>&1
 
     __gpy_assert_byte_identical "install-oneline.sh ($shell_name) -> uninstall" "$original_b" "$rc_file"
 
     rm -rf "$home_b" "$fake_bin"
 end
 
-__gpy_test_install_oneline_roundtrip fish .config/fish/config.fish fish
-__gpy_test_install_oneline_roundtrip zsh .zshrc sh
-__gpy_test_install_oneline_roundtrip bash .bashrc sh
+__gpy_test_install_oneline_roundtrip fish .config/fish/config.fish
+__gpy_test_install_oneline_roundtrip zsh .zshrc
+__gpy_test_install_oneline_roundtrip bash .bashrc
 
 # --- Removal does not spill into unrelated trailing content ---
 #
@@ -280,7 +276,7 @@ printf '%s\n' \
     "# <<< gpy-init <<<" \
     "set -gx ANOTHER_TOOL after_gpy" >"$rc_file_fish"
 
-printf '\n' | env HOME=$home_c fish scripts/uninstall.fish >/dev/null 2>&1
+printf '\n' | env HOME=$home_c sh scripts/uninstall.sh >/dev/null 2>&1
 
 set -l expected_fish "$home_c/expected"
 printf '%s\n' \
@@ -288,11 +284,11 @@ printf '%s\n' \
     "set -gx ANOTHER_TOOL after_gpy" >"$expected_fish"
 
 if grep -qF gpy-init "$rc_file_fish"
-    __gpy_test_fail "uninstall.fish trailing-content: gpy-init block still present after removal"
+    __gpy_test_fail "uninstall.sh (fish) trailing-content: gpy-init block still present after removal"
 else
-    __gpy_test_pass "uninstall.fish trailing-content: gpy-init block removed"
+    __gpy_test_pass "uninstall.sh (fish) trailing-content: gpy-init block removed"
 end
-__gpy_assert_byte_identical "uninstall.fish trailing-content: surrounding content preserved" "$expected_fish" "$rc_file_fish"
+__gpy_assert_byte_identical "uninstall.sh (fish) trailing-content: surrounding content preserved" "$expected_fish" "$rc_file_fish"
 rm -rf "$home_c"
 
 set -l home_d (mktemp -d)
@@ -340,7 +336,7 @@ function __gpy_assert_no_default_config_dir --argument-names label home_dir
     end
 end
 
-# --- fish: install-oneline.sh + scripts/uninstall.fish ---
+# --- fish: install-oneline.sh + scripts/uninstall.sh ---
 set -l home_e (mktemp -d)
 set -l xdg_config_e "$home_e/xdg-config"
 set -l xdg_cache_e "$home_e/xdg-cache"
@@ -371,31 +367,31 @@ else
 
     # install-oneline.sh never creates the agent's own config/cache
     # directories itself (gpy-agent does that lazily on first run); simulate
-    # them under the XDG locations so uninstall.fish has something real to
+    # them under the XDG locations so uninstall.sh has something real to
     # remove there too.
     mkdir -p "$xdg_config_e/gpy" "$xdg_cache_e/gpy"
     touch "$xdg_config_e/gpy/config.toml" "$xdg_cache_e/gpy/agent.log"
 
     # Uninstall must target the same XDG-resolved fish config dir, and the
     # same XDG-resolved agent config/cache dirs.
-    printf '\n' | env HOME=$home_e XDG_CONFIG_HOME=$xdg_config_e XDG_CACHE_HOME=$xdg_cache_e fish scripts/uninstall.fish >/dev/null 2>&1
+    printf '\n' | env HOME=$home_e XDG_CONFIG_HOME=$xdg_config_e XDG_CACHE_HOME=$xdg_cache_e sh scripts/uninstall.sh >/dev/null 2>&1
 
     if test -d "$xdg_config_e/fish/gpy"
-        __gpy_test_fail "uninstall.fish (XDG_CONFIG_HOME): fish/gpy still present after uninstall"
+        __gpy_test_fail "uninstall.sh (XDG_CONFIG_HOME): fish/gpy still present after uninstall"
     else
-        __gpy_test_pass "uninstall.fish (XDG_CONFIG_HOME): fish/gpy removed"
+        __gpy_test_pass "uninstall.sh (XDG_CONFIG_HOME): fish/gpy removed"
     end
 
     if test -d "$xdg_config_e/gpy"
-        __gpy_test_fail "uninstall.fish (XDG_CONFIG_HOME): \$XDG_CONFIG_HOME/gpy still present after uninstall"
+        __gpy_test_fail "uninstall.sh (XDG_CONFIG_HOME): \$XDG_CONFIG_HOME/gpy still present after uninstall"
     else
-        __gpy_test_pass "uninstall.fish (XDG_CONFIG_HOME): \$XDG_CONFIG_HOME/gpy removed"
+        __gpy_test_pass "uninstall.sh (XDG_CONFIG_HOME): \$XDG_CONFIG_HOME/gpy removed"
     end
 
     if test -d "$xdg_cache_e/gpy"
-        __gpy_test_fail "uninstall.fish (XDG_CACHE_HOME): \$XDG_CACHE_HOME/gpy still present after uninstall"
+        __gpy_test_fail "uninstall.sh (XDG_CACHE_HOME): \$XDG_CACHE_HOME/gpy still present after uninstall"
     else
-        __gpy_test_pass "uninstall.fish (XDG_CACHE_HOME): \$XDG_CACHE_HOME/gpy removed"
+        __gpy_test_pass "uninstall.sh (XDG_CACHE_HOME): \$XDG_CACHE_HOME/gpy removed"
     end
 end
 
@@ -484,8 +480,8 @@ for gpy_shell_val in bash zsh
     rm -rf "$h_multi"
 end
 
-# --- 2. Fish + Bash + Zsh installed: run each entry point in separate fixtures ---
-for uninstaller_entry in "fish:scripts/uninstall.fish" "sh:scripts/uninstall.sh"
+# --- 2. Fish + Bash + Zsh installed: one global uninstall cleans them all ---
+for uninstaller_entry in "sh:scripts/uninstall.sh"
     set -l parts (string split ':' -- "$uninstaller_entry")
     set -l u_type $parts[1]
     set -l u_script $parts[2]
@@ -521,11 +517,7 @@ for uninstaller_entry in "fish:scripts/uninstall.fish" "sh:scripts/uninstall.sh"
     set -l custom_comp "$xdg_c_all/fish/completions/other.fish"
     printf '%s\n' "# other comp" >"$custom_comp"
 
-    if test "$u_type" = fish
-        printf '\n' | env HOME=$h_all XDG_CONFIG_HOME=$xdg_c_all XDG_CACHE_HOME=$xdg_cache_all XDG_RUNTIME_DIR=$xdg_rt_all GPY_CONFIG_PATH="$xdg_c_all/gpy/config.toml" GPY_AGENT_SOCKET_PATH="$xdg_rt_all/gpy.sock" fish "$u_script" >/dev/null 2>&1
-    else
-        printf '\n' | env HOME=$h_all XDG_CONFIG_HOME=$xdg_c_all XDG_CACHE_HOME=$xdg_cache_all XDG_RUNTIME_DIR=$xdg_rt_all GPY_CONFIG_PATH="$xdg_c_all/gpy/config.toml" GPY_AGENT_SOCKET_PATH="$xdg_rt_all/gpy.sock" sh "$u_script" >/dev/null 2>&1
-    end
+    printf '\n' | env HOME=$h_all XDG_CONFIG_HOME=$xdg_c_all XDG_CACHE_HOME=$xdg_cache_all XDG_RUNTIME_DIR=$xdg_rt_all GPY_CONFIG_PATH="$xdg_c_all/gpy/config.toml" GPY_AGENT_SOCKET_PATH="$xdg_rt_all/gpy.sock" sh "$u_script" >/dev/null 2>&1
 
     # Verify all 4 rc files cleaned of gpy-init
     set -l rcs_cleaned 1
@@ -559,7 +551,7 @@ for uninstaller_entry in "fish:scripts/uninstall.fish" "sh:scripts/uninstall.sh"
 end
 
 # --- 2b. Legacy install-dev.fish backup name is restored when newest ---
-for uninstaller_entry in "fish:scripts/uninstall.fish" "sh:scripts/uninstall.sh"
+for uninstaller_entry in "sh:scripts/uninstall.sh"
     set -l parts (string split ':' -- "$uninstaller_entry")
     set -l u_type $parts[1]
     set -l u_script $parts[2]
@@ -577,11 +569,7 @@ for uninstaller_entry in "fish:scripts/uninstall.fish" "sh:scripts/uninstall.sh"
     set -l legacy_backup "$xdg_c_leg/fish/functions/fish_prompt.fish.backup-20250101-000000"
     printf '%s\n' "function fish_prompt; echo legacy_restored; end" >"$legacy_backup"
 
-    if test "$u_type" = fish
-        printf '\n' | env HOME=$h_leg XDG_CONFIG_HOME=$xdg_c_leg XDG_CACHE_HOME=$xdg_cache_leg XDG_RUNTIME_DIR=$xdg_rt_leg GPY_AGENT_SOCKET_PATH="$xdg_rt_leg/gpy.sock" fish "$u_script" >/dev/null 2>&1
-    else
-        printf '\n' | env HOME=$h_leg XDG_CONFIG_HOME=$xdg_c_leg XDG_CACHE_HOME=$xdg_cache_leg XDG_RUNTIME_DIR=$xdg_rt_leg GPY_AGENT_SOCKET_PATH="$xdg_rt_leg/gpy.sock" GPY_SHELL=fish sh "$u_script" >/dev/null 2>&1
-    end
+    printf '\n' | env HOME=$h_leg XDG_CONFIG_HOME=$xdg_c_leg XDG_CACHE_HOME=$xdg_cache_leg XDG_RUNTIME_DIR=$xdg_rt_leg GPY_AGENT_SOCKET_PATH="$xdg_rt_leg/gpy.sock" GPY_SHELL=fish sh "$u_script" >/dev/null 2>&1
 
     set -l restored_prompt "$xdg_c_leg/fish/functions/fish_prompt.fish"
     if test -f "$restored_prompt"; and not test -L "$restored_prompt"; and test (cat "$restored_prompt") = "function fish_prompt; echo legacy_restored; end"; and not test -e "$legacy_backup"
@@ -659,8 +647,8 @@ end
 rm -rf "$h_space" "$xdg_c_space" "$xdg_cache_space" "$xdg_rt_space"
 
 # --- 6. Orphaned start marker before a complete block; symlinked rc file;
-# mode and missing trailing newline preserved. Run through both entry points.
-for uninstaller in "sh scripts/uninstall.sh" "fish --no-config scripts/uninstall.fish"
+# mode and missing trailing newline preserved.
+for uninstaller in "sh scripts/uninstall.sh"
     set -l h6 (mktemp -d)
     set -l c6 "$h6/xdg-config"
     mkdir -p "$c6" "$h6/dots"

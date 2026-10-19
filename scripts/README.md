@@ -45,7 +45,7 @@ Exit status is 0 when every check passed, 1 otherwise.
 |---|---|
 | `test_fish.sh` | Build the debug binaries and run `tests/fish/*.test.fish`. |
 | `check-active-toolchain.sh` | Fail unless the `rustc` active in `gpy-agent/` is the `rust-toolchain.toml` pin; names the override on a mismatch. |
-| `check-license-metadata.sh` | Cargo, Fisher, Homebrew and release metadata agree on the license. |
+| `check-license-metadata.sh` | `Cargo.toml`, `LICENSE` and every other license declaration agree on GPL-3.0-or-later. |
 | `check-privacy-patterns.sh` | No workstation paths, private identifiers or hardcoded sockets in tracked files. |
 | `check-doc-links.sh` | Every repository-relative Markdown link resolves. |
 | `cleanup-test-agents.sh` | Reap agents and sockets left by killed Rust test runs. |
@@ -63,7 +63,7 @@ Exit status is 0 when every check passed, 1 otherwise.
 | `wsl-smoke.sh [--contract \| --contract-only]` | Inside WSL: font detection via `gpy setup`, `gpy-agent oneshot git` on Linux and Windows-drive repos, and optionally the cross-shell contract suite. `GPY_AGENT_BIN` and `GPY_WSL_DRVFS_DIR` override paths. |
 | `test-windows-vm.sh` | Run `cargo test --locked --lib` over SSH on a local Windows VM; see below. |
 | `install-hooks.sh [--uninstall]` | Install (or remove) the prek git hooks from `.pre-commit-config.yaml`. |
-| `uninstall.sh`, `uninstall.fish` | Remove an installed GPY. |
+| `uninstall.sh` | Remove an installed GPY (every shell, Fish included). |
 
 ### test-windows-vm.sh
 

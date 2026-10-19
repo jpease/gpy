@@ -8,23 +8,20 @@
 # Invariant, asserted per row:
 #   after install, every shell the installer targets, started the way a user
 #   starts it (interactive login AND non-login), sources gpy exactly once and
-#   prints nothing on stderr; after uninstall (scripts/uninstall.sh or
-#   scripts/uninstall.fish) every rc file is byte-identical to before install.
+#   prints nothing on stderr; after uninstall (scripts/uninstall.sh) every rc
+#   file is byte-identical to before install.
 #   A row that expects `refuse` instead asserts the installer exits non-zero
 #   and no rc file (and no gpy file under XDG_CONFIG_HOME) was touched.
 #
 # Rows = installer x shell x hostile HOME layout:
 #
-#   row INSTALLER SHELL LAYOUT EXPECT [UNINSTALL]
+#   row INSTALLER SHELL LAYOUT EXPECT
 #     INSTALLER  oneline (install-oneline.sh, fake curl) | install.sh (staged
 #                release payload, fish only)
 #     SHELL      fish | zsh | bash
 #     LAYOUT     a `layout_<name>` function below; it sets HOME and
 #                XDG_CONFIG_HOME
 #     EXPECT     ok | refuse
-#     UNINSTALL  optional: `fish` runs scripts/uninstall.fish instead of the
-#                default (scripts/uninstall.sh for oneline, uninstall.fish for
-#                install.sh)
 #
 #
 # Paths are never interpolated into `-c` code: they travel as arguments or
@@ -243,8 +240,8 @@ check_start() {
 }
 
 row() {
-    installer="$1" shell="$2" layout="$3" expect="$4" uninstaller="${5:-}"
-    name="$installer/$shell/$layout/$expect${uninstaller:+/uninstall.$uninstaller}"
+    installer="$1" shell="$2" layout="$3" expect="$4"
+    name="$installer/$shell/$layout/$expect"
     echo "=== $name ==="
     shell_e2e_init "$ROOT"
     SB="$SHELL_E2E_ROOT"
@@ -263,11 +260,6 @@ row() {
     shell_e2e_build_shell_archive "$ROOT" "$SHELL_ARCHIVE" || { fail "$name: could not build the shell archive"; return; }
     write_fake_curl "$SB/fakebin"
     seed_user_files "$shell"
-    # fish writes its stock config.fish on first run; seed it so running
-    # uninstall.fish for a non-fish shell does not look like a leftover.
-    if [ "$uninstaller" = fish ] && [ "$shell" != fish ]; then
-        seed_user_files fish
-    fi
     before="$(rc_snapshot)"
 
     case "$installer" in
@@ -279,7 +271,7 @@ row() {
             mkdir -p "$PKG/bin" "$PKG/scripts"
             cp -R "$ROOT/fish" "$ROOT/zsh" "$ROOT/bash" "$PKG/"
             cp "$ROOT/install.sh" "$PKG/install.sh"
-            cp "$ROOT/scripts/uninstall.fish" "$ROOT/scripts/uninstall.sh" "$PKG/scripts/"
+            cp "$ROOT/scripts/uninstall.sh" "$PKG/scripts/"
             cp "$GPY_AGENT" "$PKG/bin/$AGENT_ASSET"
             cp "$GPY_CLI" "$PKG/bin/$CLI_ASSET"
             for asset in "$AGENT_ASSET" "$CLI_ASSET"; do
@@ -309,11 +301,7 @@ row() {
             if [ -n "$moved" ]; then pass "$name: foreign symlink moved aside as a symlink"; else fail "$name: no symlink backup of the user's prompt"; fi
         fi
         agent_stop
-        if [ "$uninstaller" = fish ] || { [ "$installer" = install.sh ] && [ "$shell" = fish ]; }; then
-            printf '\n' | fish "$ROOT/scripts/uninstall.fish" >"$SB/uninstall.log" 2>&1
-        else
-            printf '\n' | GPY_SHELL="$shell" sh "$ROOT/scripts/uninstall.sh" >"$SB/uninstall.log" 2>&1
-        fi
+        printf '\n' | GPY_SHELL="$shell" sh "$ROOT/scripts/uninstall.sh" >"$SB/uninstall.log" 2>&1
         urc=$?
         if [ "$urc" -eq 0 ]; then pass "$name: uninstaller exited 0"; else fail "$name: uninstaller exited $urc"; cat "$SB/uninstall.log"; fi
         if [ "$(rc_snapshot)" = "$before" ]; then
@@ -347,16 +335,13 @@ row oneline bash bash_nochain ok
 row install.sh bash bash_profile_only ok
 row install.sh bash bash_none ok
 
-# Zsh reads $ZDOTDIR/.zshrc; install and both uninstallers must use it
+# Zsh reads $ZDOTDIR/.zshrc; install and the uninstaller must use it
 row oneline zsh zdotdir ok
-row oneline zsh zdotdir ok fish
 row oneline zsh zdotdir_absent ok
-row oneline zsh zdotdir_absent ok fish
 row install.sh zsh zdotdir ok
 
 # A symlinked fish_prompt.fish survives install + uninstall
 row oneline fish fish_prompt_symlink ok
-row oneline fish fish_prompt_symlink ok fish
 row install.sh fish fish_prompt_symlink ok
 
 # Characters double quotes cannot protect are refused up front

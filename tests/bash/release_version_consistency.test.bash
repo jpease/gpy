@@ -2,7 +2,7 @@
 # tests/bash/release_version_consistency.test.bash
 # Every version declaration agrees with the newest released CHANGELOG
 # section, and scripts/release-notes.sh renders notes for it.
-# Asserts: (a) Cargo.toml, fisher.json and the CHANGELOG agree; (b) the heading
+# Asserts: (a) Cargo.toml and the CHANGELOG agree; (b) the heading
 # has a tag link reference; (c) its date is ISO or YYYY-MM-DD; (d) notes render;
 # (e) SECURITY.md names one series, the CHANGELOG minor.
 
@@ -13,7 +13,6 @@ cd "$ROOT" || exit 1
 
 CHANGELOG="CHANGELOG.md"
 MANIFEST="gpy-agent/Cargo.toml"
-FISHER="fish/fisher.json"
 
 if [[ ! -f "$CHANGELOG" ]]; then
     fail "$CHANGELOG not found"
@@ -30,17 +29,12 @@ fi
 
 echo "--- version declarations agree ---"
 CARGO_VERSION="$(grep -m1 '^version = ' "$MANIFEST" | sed 's/version = "\(.*\)"/\1/')"
-FISHER_VERSION="$(grep -m1 '"version"' "$FISHER" | sed 's/.*"version": *"\([^"]*\)".*/\1/')"
 
-for pair in "$MANIFEST:$CARGO_VERSION" "$FISHER:$FISHER_VERSION"; do
-    where="${pair%%:*}"
-    what="${pair#*:}"
-    if [[ -z "$what" ]]; then
-        fail "could not read a version from $where"
-    elif [[ "$what" != "$CHANGELOG_VERSION" ]]; then
-        fail "$where declares $what but $CHANGELOG declares $CHANGELOG_VERSION"
-    fi
-done
+if [[ -z "$CARGO_VERSION" ]]; then
+    fail "could not read a version from $MANIFEST"
+elif [[ "$CARGO_VERSION" != "$CHANGELOG_VERSION" ]]; then
+    fail "$MANIFEST declares $CARGO_VERSION but $CHANGELOG declares $CHANGELOG_VERSION"
+fi
 
 echo "--- CHANGELOG links the released version to its tag ---"
 grep -qE "^\[$CHANGELOG_VERSION\]:.*releases/tag/v$CHANGELOG_VERSION" "$CHANGELOG" ||

@@ -305,7 +305,7 @@ payload_files="$(awk '
     inside { gsub(/^ +| +$/, ""); if ($0 != "") print }
 ' "$WORKFLOW")"
 
-for asset in install-oneline.sh gpy-shell-files.tar.gz uninstall.sh uninstall.fish; do
+for asset in install-oneline.sh gpy-shell-files.tar.gz uninstall.sh; do
     grep -qxF "dist/$asset" <<<"$release_files" || fail "release.yml does not publish $asset"
     grep -qxF "dist/$asset" <<<"$subject_files" || fail "release.yml does not attest $asset"
     grep -qxF "package-out/$asset" <<<"$payload_files" || fail "release.yml does not upload $asset in the release payload"
@@ -318,10 +318,9 @@ grep -q 'gpy-shell-files.tar.gz' "$ONELINE" ||
 # shellcheck disable=SC2016  # the literal $VERSION in the installer source is what is matched
 grep -q 'UNINSTALL_URL=.*releases/download/\$VERSION"' "$ONELINE" ||
     fail "install-oneline.sh's uninstall hints are not built from the release's download URL"
-for uninstaller in uninstall.sh uninstall.fish; do
-    grep -qF "\$UNINSTALL_URL/$uninstaller" "$ONELINE" ||
-        fail "install-oneline.sh does not point its uninstall hint at the release's $uninstaller"
-done
+# shellcheck disable=SC2016  # the literal $UNINSTALL_URL in the installer source is what is matched
+grep -qF '$UNINSTALL_URL/uninstall.sh' "$ONELINE" ||
+    fail "install-oneline.sh does not point its uninstall hint at the release's uninstall.sh"
 
 # Nothing the user is told to run, and nothing the installer runs or installs,
 # may come from a branch: that is what makes the installer immutable per tag.

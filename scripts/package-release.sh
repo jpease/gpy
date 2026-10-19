@@ -26,12 +26,11 @@
 # Produces, in --out (which must not be the repository root: the published
 # install-oneline.sh would overwrite the source installer):
 #   gpy-release.tar.gz / gpy-release.zip  (binaries + all three shells + docs)
-#   fisher-gpy.tar.gz                     (Fish plugin tree for Fisher)
 #   gpy-shell-files.tar.gz                (fish/, zsh/, bash/ trees: the files
 #                                          install-oneline.sh installs)
 #   install-oneline.sh                    (the source installer with this
 #                                          release's tag stamped in)
-#   uninstall.sh / uninstall.fish         (the uninstallers, as release assets)
+#   uninstall.sh                          (the uninstaller, as a release asset)
 #   gpy-sbom.cdx.json                     (unless --no-sbom)
 #   <asset>.sha256                        (one per published file)
 #   SHA256SUMS                            (aggregate manifest)
@@ -80,8 +79,6 @@ elif [[ $SBOM_OPTED_OUT -eq 0 ]]; then
     die "one of --sbom <file> or --no-sbom is required (generate one with scripts/generate-sbom.sh)"
 fi
 
-BARE_VERSION="${VERSION#v}"
-
 ARTIFACTS_DIR="$(cd "$ARTIFACTS_DIR" && pwd)"
 [[ -z "$SBOM_SRC" ]] || SBOM_SRC="$(cd "$(dirname "$SBOM_SRC")" && pwd)/$(basename "$SBOM_SRC")"
 mkdir -p "$OUT_DIR"
@@ -124,8 +121,7 @@ EXPECTED_ASSETS=(
 )
 
 STAGE="$OUT_DIR/gpy-release"
-FISHER_STAGE="$OUT_DIR/fisher-gpy"
-rm -rf "$STAGE" "$FISHER_STAGE"
+rm -rf "$STAGE"
 mkdir -p "$STAGE"/{bin,config,docs}
 
 for asset in "${EXPECTED_ASSETS[@]}"; do
@@ -173,27 +169,15 @@ cp "$REPO_ROOT/install.sh" "$STAGE/install.sh"
 chmod +x "$STAGE/install.sh"
 
 mkdir -p "$STAGE/scripts"
-cp "$REPO_ROOT/scripts/uninstall.fish" "$REPO_ROOT/scripts/uninstall.sh" "$STAGE/scripts/"
-chmod +x "$STAGE/scripts/uninstall.fish" "$STAGE/scripts/uninstall.sh"
-
-# fisher.json version is stamped from the release tag.
-cp -R "$REPO_ROOT/fish" "$FISHER_STAGE"
-cp "$REPO_ROOT/README.md" "$REPO_ROOT/LICENSE" "$FISHER_STAGE/"
-
-sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$BARE_VERSION\"/" "$FISHER_STAGE/fisher.json"
-rm -f "$FISHER_STAGE/fisher.json.bak"
-grep -q "\"version\": \"$BARE_VERSION\"" "$FISHER_STAGE/fisher.json" ||
-    die "failed to stamp version $BARE_VERSION into fisher.json"
-grep -q '"license": "GPL-3.0-or-later"' "$FISHER_STAGE/fisher.json" ||
-    die "fisher.json does not declare GPL-3.0-or-later"
+cp "$REPO_ROOT/scripts/uninstall.sh" "$STAGE/scripts/"
+chmod +x "$STAGE/scripts/uninstall.sh"
 
 cd "$OUT_DIR"
-rm -f gpy-release.tar.gz gpy-release.zip fisher-gpy.tar.gz gpy-shell-files.tar.gz gpy-sbom.cdx.json SHA256SUMS
-rm -f install-oneline.sh uninstall.sh uninstall.fish
+rm -f gpy-release.tar.gz gpy-release.zip gpy-shell-files.tar.gz gpy-sbom.cdx.json SHA256SUMS
+rm -f install-oneline.sh uninstall.sh
 rm -f ./*.sha256
 tar -czf gpy-release.tar.gz gpy-release/
 zip -qr gpy-release.zip gpy-release/
-tar -czf fisher-gpy.tar.gz fisher-gpy/
 
 # Stamp the tag so the asset installs the release it was published with.
 sed "s/^RELEASE_VERSION=\"\"\$/RELEASE_VERSION=\"$VERSION\"/" "$REPO_ROOT/install-oneline.sh" >install-oneline.sh
@@ -204,11 +188,11 @@ chmod +x install-oneline.sh
 # Shell files the installer fetches as one checksummed archive.
 tar -czf gpy-shell-files.tar.gz -C gpy-release fish zsh bash
 
-cp "$REPO_ROOT/scripts/uninstall.sh" "$REPO_ROOT/scripts/uninstall.fish" .
-chmod +x uninstall.sh uninstall.fish
+cp "$REPO_ROOT/scripts/uninstall.sh" .
+chmod +x uninstall.sh
 
 # Binaries were already checksummed in gpy-release/bin/ (sidecars ship in the archive).
-PUBLISHED=(gpy-release.tar.gz gpy-release.zip fisher-gpy.tar.gz gpy-shell-files.tar.gz install-oneline.sh uninstall.sh uninstall.fish)
+PUBLISHED=(gpy-release.tar.gz gpy-release.zip gpy-shell-files.tar.gz install-oneline.sh uninstall.sh)
 
 if [[ -n "$SBOM_SRC" ]]; then
     cp "$SBOM_SRC" gpy-sbom.cdx.json
@@ -231,7 +215,6 @@ done
 # Assert against the archives, not the staging directory.
 RELEASE_REQUIRED=(
     install.sh
-    scripts/uninstall.fish
     scripts/uninstall.sh
     fish/core/init.fish
     fish/conf.d/gpy_init.fish
@@ -256,16 +239,6 @@ for asset in "${EXPECTED_ASSETS[@]}"; do
 done
 [[ -z "$SBOM_SRC" ]] || RELEASE_REQUIRED+=(sbom.cdx.json)
 
-FISHER_REQUIRED=(
-    fisher.json
-    conf.d/gpy_init.fish
-    core/init.fish
-    functions/fish_prompt.fish
-    segments/git.fish
-    completions/gpy-dynamic.fish
-    LICENSE
-)
-
 SHELL_FILES_REQUIRED=(
     fish/core/init.fish
     fish/conf.d/gpy_init.fish
@@ -284,7 +257,6 @@ SHELL_FILES_REQUIRED=(
 
 tar_listing="$(tar -tzf gpy-release.tar.gz)"
 zip_listing="$(unzip -Z1 gpy-release.zip 2>/dev/null || zipinfo -1 gpy-release.zip)"
-fisher_listing="$(tar -tzf fisher-gpy.tar.gz)"
 shell_files_listing="$(tar -tzf gpy-shell-files.tar.gz)"
 
 missing=0
@@ -299,9 +271,6 @@ require_entry() {
 for entry in "${RELEASE_REQUIRED[@]}"; do
     require_entry "$tar_listing" gpy-release.tar.gz "gpy-release/$entry"
     require_entry "$zip_listing" gpy-release.zip "gpy-release/$entry"
-done
-for entry in "${FISHER_REQUIRED[@]}"; do
-    require_entry "$fisher_listing" fisher-gpy.tar.gz "fisher-gpy/$entry"
 done
 for entry in "${SHELL_FILES_REQUIRED[@]}"; do
     require_entry "$shell_files_listing" gpy-shell-files.tar.gz "$entry"
@@ -334,9 +303,8 @@ manifest_lines="$(wc -l <SHA256SUMS | tr -d ' ')"
 echo "Packaged $VERSION in $OUT_DIR:"
 echo "  gpy-release.tar.gz  ($(tar -tzf gpy-release.tar.gz | wc -l | tr -d ' ') entries)"
 echo "  gpy-release.zip     ($(wc -l <<<"$zip_listing" | tr -d ' ') entries)"
-echo "  fisher-gpy.tar.gz   ($(tar -tzf fisher-gpy.tar.gz | wc -l | tr -d ' ') entries)"
 echo "  gpy-shell-files.tar.gz ($(wc -l <<<"$shell_files_listing" | tr -d ' ') entries)"
-echo "  install-oneline.sh, uninstall.sh, uninstall.fish"
+echo "  install-oneline.sh, uninstall.sh"
 if [[ -n "$SBOM_SRC" ]]; then
     echo "  gpy-sbom.cdx.json   (CycloneDX)"
 else

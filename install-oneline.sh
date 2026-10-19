@@ -379,14 +379,7 @@ echo "   • Check agent status: gpy-agent status"
 echo "   • View logs: tail -f $CACHE_HOME/gpy/agent.log"
 # Download-then-run, not `curl | sh`: the uninstaller reads confirmation from stdin.
 UNINSTALL_URL="https://github.com/$REPO/releases/download/$VERSION"
-case $CURRENT_SHELL in
-    fish)
-        echo "   • Uninstall: curl -fsSL $UNINSTALL_URL/uninstall.fish -o /tmp/gpy-uninstall.fish && fish /tmp/gpy-uninstall.fish"
-        ;;
-    *)
-        echo "   • Uninstall: curl -fsSL $UNINSTALL_URL/uninstall.sh -o /tmp/gpy-uninstall.sh && GPY_SHELL=$CURRENT_SHELL sh /tmp/gpy-uninstall.sh"
-        ;;
-esac
+echo "   • Uninstall: curl -fsSL $UNINSTALL_URL/uninstall.sh -o /tmp/gpy-uninstall.sh && GPY_SHELL=$CURRENT_SHELL sh /tmp/gpy-uninstall.sh"
 echo ""
 }
 

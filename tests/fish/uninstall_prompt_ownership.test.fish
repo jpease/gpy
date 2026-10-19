@@ -2,8 +2,8 @@
 # tests/fish/uninstall_prompt_ownership.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Both uninstallers (scripts/uninstall.sh and scripts/uninstall.fish) remove a
-# regular-file fish_prompt.fish only when it is a copy of GPY's own prompt. A
+# scripts/uninstall.sh removes a regular-file fish_prompt.fish only when it is
+# a copy of GPY's own prompt. A
 # user's prompt that merely mentions gpy (comment, string, function name)
 # survives byte-for-byte, as do its backups; GPY's prompt symlink and legacy
 # regular-file copies are still removed and the newest backup restored into
@@ -72,7 +72,6 @@ end
 function run_uninstaller --argument-names kind root
     set -l script $repo_root/scripts/uninstall.$kind
     set -l runner sh
-    test $kind = fish; and set runner fish --no-config
     printf '\n' | env -u ZDOTDIR -u GPY_BUNDLED_PLUGIN_DIR \
         HOME=$root/home \
         XDG_CONFIG_HOME=$root/config \
@@ -84,7 +83,7 @@ function run_uninstaller --argument-names kind root
     or fail "uninstall.$kind exited $status: "(cat $root/uninstall.log)
 end
 
-for kind in sh fish
+for kind in sh
     # Unrelated regular prompt mentioning gpy, plus a backup: both untouched.
     set -l root (new_root)
     set -l fn $root/config/fish/functions
@@ -161,4 +160,4 @@ end
 if test $failed -ne 0
     exit 1
 end
-echo "✅ both uninstallers remove only GPY's own fish_prompt.fish"
+echo "✅ uninstall.sh removes only GPY's own fish_prompt.fish"

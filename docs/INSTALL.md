@@ -428,7 +428,7 @@ cp -r /tmp/gpy/fish/* ~/.config/fish/gpy/
 # Add to config.fish. Source conf.d/gpy_init.fish, the same fail-safe
 # entry point the installers use (it checks the layout before loading and
 # disables GPY cleanly when something is missing); the marker lines are
-# what scripts/uninstall.fish removes.
+# what scripts/uninstall.sh removes.
 echo '
 # >>> gpy-init >>>
 # GPY Prompt Enhancement
@@ -613,8 +613,8 @@ bash --version
 
 ## Uninstallation
 
-Run either uninstall script (`fish scripts/uninstall.fish` or `sh scripts/uninstall.sh`).
-Uninstallation is **global for the current user's install**: either script stops
+Run the uninstall script (`sh scripts/uninstall.sh`); it removes the Fish, Zsh and Bash integration alike.
+Uninstallation is **global for the current user's install**: the script stops
 the agent and supervisor processes, removes the binaries and their upgrade backups
 from `~/.local/bin`, removes all shell integration files and completions (Fish,
 Zsh, Bash), cleans the `gpy-init` block from all supported startup files
@@ -624,14 +624,13 @@ and startup files are restored byte-for-byte (startup files the installer create
 
 ```bash
 # From a release archive or a clone of the repository
-fish scripts/uninstall.fish                 # Fish entry point (uninstalls globally)
 sh scripts/uninstall.sh                     # POSIX shell entry point (uninstalls globally)
 
 # Installed with the one-liner and no local copy? Download the script from the
 # release. Piping it straight into a shell would feed the confirmation prompt
 # the script itself:
 curl -fsSL https://github.com/jpease/gpy/releases/latest/download/uninstall.sh -o /tmp/gpy-uninstall.sh
-sh /tmp/gpy-uninstall.sh                    # or download uninstall.fish the same way
+sh /tmp/gpy-uninstall.sh
 ```
 
 ### Fish Prompt Restoration

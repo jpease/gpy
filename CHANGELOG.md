@@ -86,6 +86,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `scripts/update.fish`, which never detected a version change; run
   `just install` from the checkout.
+- `uninstall.fish` and the `fisher-gpy.tar.gz` release asset are gone. Use
+  `sh uninstall.sh`, which removes the Fish integration too (rc block, prompt
+  symlink, prompt restore). GPY was never installable through Fisher: the
+  plugin tree shipped no agent binary.
 
 ### Fixed
 

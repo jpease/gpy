@@ -72,19 +72,13 @@ jobs:
             exit 1
           fi
 
-          FISHER_VERSION="$(grep -m1 '"version"' fish/fisher.json | sed 's/.*"version": *"\([^"]*\)".*/\1/')"
-          if [ "$FISHER_VERSION" != "$BARE" ]; then
-            echo "::error::fish/fisher.json declares $FISHER_VERSION but the tag is $VERSION"
-            exit 1
-          fi
-
           if ! grep -q "^## \[$BARE\]" CHANGELOG.md; then
             echo "::error::CHANGELOG.md has no '## [$BARE]' section; release notes are generated from it"
             exit 1
           fi
 
           echo "version=$VERSION" >>"$GITHUB_OUTPUT"
-          echo "Version metadata is consistent across Cargo.toml, fisher.json, and CHANGELOG.md"
+          echo "Version metadata is consistent across Cargo.toml and CHANGELOG.md"
 
       - name: Install Rust toolchain
         # No `toolchain:` input: resolved from gpy-agent/rust-toolchain.toml.
@@ -283,11 +277,9 @@ jobs:
           path: |
             package-out/gpy-release.tar.gz
             package-out/gpy-release.zip
-            package-out/fisher-gpy.tar.gz
             package-out/gpy-shell-files.tar.gz
             package-out/install-oneline.sh
             package-out/uninstall.sh
-            package-out/uninstall.fish
             package-out/gpy-sbom.cdx.json
             package-out/SHA256SUMS
             package-out/*.sha256
@@ -374,11 +366,9 @@ jobs:
           subject-path: |
             dist/gpy-release.tar.gz
             dist/gpy-release.zip
-            dist/fisher-gpy.tar.gz
             dist/gpy-shell-files.tar.gz
             dist/install-oneline.sh
             dist/uninstall.sh
-            dist/uninstall.fish
             dist/gpy-sbom.cdx.json
             dist/gpy-release/bin/*
             !dist/gpy-release/bin/*.sha256
@@ -401,11 +391,9 @@ jobs:
           files: |
             dist/gpy-release.tar.gz
             dist/gpy-release.zip
-            dist/fisher-gpy.tar.gz
             dist/gpy-shell-files.tar.gz
             dist/install-oneline.sh
             dist/uninstall.sh
-            dist/uninstall.fish
             dist/gpy-sbom.cdx.json
             dist/SHA256SUMS
             dist/*.sha256

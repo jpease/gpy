@@ -15,7 +15,6 @@ handle_error() {
     echo "   2. Check that your config directory (\${XDG_CONFIG_HOME:-~/.config}) is writable"
     echo "   3. Run with bash -x install.sh for detailed output"
     echo ""
-    # Fisher is omitted: it ships no binary.
     echo "Alternative installation methods:"
     echo "   • One-line installer: curl -fsSL https://github.com/jpease/gpy/releases/latest/download/install-oneline.sh | sh"
     echo "   • Homebrew: brew install jpease/tap/gpy, then gpy setup"
@@ -218,4 +217,4 @@ echo "Test the installation:"
 echo "   gpy --version"
 echo "   gpy-agent --help"
 echo ""
-echo "Uninstall: sh scripts/uninstall.sh, or fish scripts/uninstall.fish (from this package; see docs/INSTALL.md)"
+echo "Uninstall: sh scripts/uninstall.sh (from this package; see docs/INSTALL.md)"

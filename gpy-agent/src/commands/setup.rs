@@ -269,10 +269,9 @@ fn install(
     check_sourceable(&shell_dir)?;
 
     let source = source_root.join(shell.as_str());
-    // Fish's completion glue is merged into the generated file below;
-    // `fisher.json` is the Fisher manifest.
+    // Fish's completion glue is merged into the generated file below.
     let skip: &[&str] = if shell == Shell::Fish {
-        &["completions", "fisher.json"]
+        &["completions"]
     } else {
         &[]
     };

@@ -146,4 +146,3 @@ See the [LICENSE](../LICENSE) file in the repository root for full details.
 ## Related Projects
 
 - [GPY](https://github.com/jpease/gpy) - The Fish shell prompt that uses this agent
-- [Fisher](https://github.com/jorgebucaran/fisher) - Plugin manager for Fish shell
