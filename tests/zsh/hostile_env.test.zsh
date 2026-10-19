@@ -96,15 +96,16 @@ scenario_nounset_runtime_only() {
 
 scenario_cache_dir_lifecycle() {
     local -a d
-    rm -rf "$SANDBOX"/gpy_cache_*(N)
+    local relay="$SANDBOX/gpy_relay_$UID"
+    rm -rf "$relay"
     run_child '' $'source "$GPY_TEST_ROOT/zsh/gpy.zsh"\nexit'
-    d=("$SANDBOX"/gpy_cache_*(N))
-    ((${#d} == 0)) && pass "re-source + exit leaves no gpy_cache_*" \
-        || fail "re-source + exit left ${#d} gpy_cache_* dir(s)"
+    d=("$relay"/<->_*(N))
+    ((${#d} == 0)) && pass "re-source + exit leaves no relay dir" \
+        || fail "re-source + exit left ${#d} relay dir(s)"
     run_child '' $'exec zsh -i -c true'
-    d=("$SANDBOX"/gpy_cache_*(N))
-    ((${#d} == 0)) && pass "exec leaves no gpy_cache_*" \
-        || fail "exec left ${#d} gpy_cache_* dir(s)"
+    d=("$relay"/<->_*(N))
+    ((${#d} == 0)) && pass "exec leaves no relay dir" \
+        || fail "exec left ${#d} relay dir(s)"
 }
 
 run_scenario nounset_no_xdg

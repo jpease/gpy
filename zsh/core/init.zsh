@@ -40,25 +40,30 @@ typeset -g __gpy_dir_cache_val=""
 # Relays live in a private `mktemp -d` dir (0700, unpredictable name) so no
 # local user can pre-create content read into $PROMPT. If mktemp fails, the
 # paths stay empty and memoization is disabled rather than insecure.
-# The name embeds our PID: re-source reuses our dir; otherwise sweep dirs of
-# this PID (exec runs no zshexit) and of dead PIDs. `(N/U)` lstats, so
-# symlinks never match.
+# The dirs sit in a per-user parent, `$TMPDIR/gpy_relay_<uid>`, used only if
+# it is a real directory we own with no group or other access. The startup
+# sweep reads that parent, not all of $TMPDIR, which can hold a million
+# entries other programs left. A dir's name starts with its shell's PID:
+# re-source reuses our dir; otherwise sweep dirs of this PID (exec runs no
+# zshexit) and of dead PIDs. Glob qualifiers lstat, so symlinks never match.
 typeset -g __gpy_cache_dir="${__gpy_cache_dir-}"
 typeset -g __gpy_char_cache_relay_path=""
 typeset -g __gpy_dir_cache_relay_path=""
 if [[ -z "$__gpy_cache_dir" || -L "$__gpy_cache_dir" || ! -d "$__gpy_cache_dir" || ! -O "$__gpy_cache_dir" ]]; then
     __gpy_cache_dir=""
     () {
-        local d pid
-        for d in "${TMPDIR:-/tmp}"/gpy_cache_<->_*(N/U); do
-            pid=${${d:t}#gpy_cache_}
-            pid=${pid%%_*}
+        local parent="${TMPDIR:-/tmp}/gpy_relay_${UID}" d pid
+        [[ -e "$parent" || -L "$parent" ]] || mkdir -m 700 -- "$parent" 2>/dev/null
+        local -a usable=("$parent"(N/Uf-077))
+        (( ${#usable} )) || return 0
+        for d in "$parent"/<->_*(N/U); do
+            pid=${${d:t}%%_*}
             if [[ $pid == $$ ]] || ! kill -0 "$pid" 2>/dev/null; then
                 rm -rf -- "$d" 2>/dev/null
             fi
         done
+        __gpy_cache_dir=$(mktemp -d "$parent/$$_XXXXXX" 2>/dev/null)
     }
-    __gpy_cache_dir=$(mktemp -d "${TMPDIR:-/tmp}/gpy_cache_$$_XXXXXX" 2>/dev/null)
 fi
 if [[ -n "$__gpy_cache_dir" ]]; then
     __gpy_char_cache_relay_path="$__gpy_cache_dir/char"

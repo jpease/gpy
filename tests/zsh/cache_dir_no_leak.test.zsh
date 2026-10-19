@@ -1,10 +1,11 @@
 #!/usr/bin/env zsh
 # tests/zsh/cache_dir_no_leak.test.zsh
 #
-# The private render-cache dir ($TMPDIR/gpy_cache_*) must not leak on
-# re-source, `exec zsh`, or a killed shell, and a live shell's dir must never
-# be removed by a sibling. Children never start an agent: none is on their
-# PATH. Paths reach children only as environment/argv.
+# The private render-cache dir ($TMPDIR/gpy_relay_<uid>/<pid>_*) must not
+# leak on re-source, `exec zsh`, or a killed shell, and a live shell's dir
+# must never be removed by a sibling. A parent other users can enter is not
+# used. Children never start an agent: none is on their PATH. Paths reach
+# children only as environment/argv.
 
 ROOT=${0:a:h:h:h}
 SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/gpy-cleak.XXXXXX") || exit 1
@@ -26,17 +27,18 @@ child_env() {
 
 run_zsh() { print -r -- "$1" | child_env zsh -i >/dev/null 2>&1; }
 
-leftovers() { local -a d; d=("$SANDBOX"/tmp/gpy_cache_*(N)); print -r -- ${#d}; }
+RELAY="$SANDBOX/tmp/gpy_relay_$UID"
+leftovers() { local -a d; d=("$RELAY"/<->_*(N)); print -r -- ${#d}; }
 # A native loop, not shell_e2e_poll: that helper runs under sticky `emulate sh`,
 # which disables the `(N)` glob qualifier `leftovers` relies on.
 wait_dir() { local i; for i in {1..50}; do (( $(leftovers) > 0 )) && return; sleep 0.1; done; }
 
 expect_zero() {
     local n; n=$(leftovers)
-    [[ $n == 0 ]] && pass "$1: no gpy_cache_* left" || fail "$1: $n gpy_cache_* left"
+    [[ $n == 0 ]] && pass "$1: no relay dir left" || fail "$1: $n relay dir(s) left"
 }
 
-rm -rf "$SANDBOX"/tmp/gpy_cache_*(N)
+rm -rf "$RELAY"
 run_zsh 'exit'
 expect_zero "normal exit"
 
@@ -55,8 +57,8 @@ print -r -- 'print ready' >&8
 wait_dir
 # $! may be the backgrounding subshell rather than zsh itself; kill the PID
 # the dir is named after, and wait until it is really gone before the sweep.
-kdirs=("$SANDBOX"/tmp/gpy_cache_*(N))
-kzsh=${${kdirs[1]:t}#gpy_cache_}; kzsh=${kzsh%%_*}
+kdirs=("$RELAY"/<->_*(N))
+kzsh=${${kdirs[1]:t}%%_*}
 kill -9 $kzsh $KPID 2>/dev/null; exec 8>&-; wait $KPID 2>/dev/null
 for i in {1..50}; do kill -0 $kzsh 2>/dev/null || break; sleep 0.1; done
 n=$(leftovers)
@@ -70,9 +72,9 @@ child_env zsh -i <"$SANDBOX/live.fifo" >/dev/null 2>&1 &
 LIVE_PID=$!
 exec 9>"$SANDBOX/live.fifo"
 wait_dir
-before=("$SANDBOX"/tmp/gpy_cache_*(N/))
+before=("$RELAY"/<->_*(N/))
 run_zsh 'exit'
-after=("$SANDBOX"/tmp/gpy_cache_*(N/))
+after=("$RELAY"/<->_*(N/))
 if (( ${#before} == 1 && ${#after} == 1 )) && [[ $before == $after ]]; then
     pass "live sibling: dir survives another shell"
 else
@@ -83,5 +85,12 @@ fi
 exec 9>&-
 wait $LIVE_PID 2>/dev/null; LIVE_PID=
 expect_zero "live shell after exit"
+
+# A parent group or others can enter is someone else's to fill: not used.
+chmod 755 "$RELAY"
+run_zsh 'exit'
+expect_zero "open relay parent"
+print -r -- 'print -r -- "relay=[${__gpy_cache_dir}]"' | child_env zsh -i 2>/dev/null | grep -q 'relay=\[\]' \
+    && pass "open relay parent: memoization off" || fail "open relay parent: a relay dir was used"
 
 test_finish
