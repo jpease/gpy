@@ -651,14 +651,6 @@ impl Agent {
         oneshot::handle_oneshot(request)
     }
 
-    /// Handle a parsed oneshot request in-process (CLI entry point).
-    ///
-    /// # Errors
-    /// Returns an error if the format is invalid or detection fails.
-    pub fn handle_oneshot_request(request: &oneshot::OneshotRequest) -> Result<String> {
-        oneshot::handle_oneshot_request(request)
-    }
-
     /// Create an Agent for integration testing with the watcher enabled.
     ///
     /// # Errors

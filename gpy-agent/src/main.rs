@@ -10,10 +10,9 @@ use clap::{Parser, Subcommand};
 use gpy_agent::{
     Result, VERSION,
     agent::{
-        Agent,
         lifecycle::SOCKET_OVERRIDE,
         lifecycle::start::start_background_agent,
-        oneshot::{OneshotKind, OneshotRequest},
+        oneshot::{OneshotKind, OneshotRequest, handle_oneshot_request},
     },
     config::schema,
 };
@@ -290,7 +289,7 @@ impl From<OneshotCommands> for OneshotRequest {
 fn handle_oneshot_command(command: OneshotCommands) {
     let request = OneshotRequest::from(command);
 
-    match Agent::handle_oneshot_request(&request) {
+    match handle_oneshot_request(&request) {
         Ok(response) => println!("{response}"),
         Err(e) => {
             eprintln!("{}", serde_json::json!({"error": e.to_string()}));

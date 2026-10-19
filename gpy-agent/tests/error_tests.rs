@@ -145,12 +145,6 @@ fn test_invalid_helper() {
 }
 
 #[test]
-fn test_timeout_helper() {
-    let err = Error::timeout("network request");
-    assert!(matches!(err, Error::Timeout { .. }));
-}
-
-#[test]
 fn test_result_question_mark_propagation() {
     fn inner_fn() -> Result<String> {
         Err(Error::git("inner error"))
@@ -256,11 +250,11 @@ fn test_error_is_sync() {
 
 #[test]
 fn test_error_debug_formatting() {
-    let err = Error::timeout("test operation");
+    let err = Error::invalid("test operation");
     let debug = format!("{err:?}");
 
     // Debug output should be readable
-    assert!(debug.contains("Timeout"));
+    assert!(debug.contains("Invalid"));
     assert!(debug.contains("test operation"));
 }
 
@@ -274,7 +268,6 @@ fn test_all_variants_have_proper_display() {
         Error::agent("agent"),
         Error::process("cmd", "msg"),
         Error::invalid("invalid"),
-        Error::timeout("timeout"),
         Error::from(io::Error::other("io")),
         Error::from(serde_json::from_str::<i32>("bad").unwrap_err()),
     ];
