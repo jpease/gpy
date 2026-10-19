@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removing about 150 wakeups per second from an idle agent.
 - `gpy-agent theme export --format bash`/`zsh` no longer emits
   `__gpy_plugin_segment_file_*` variables; plugin segment files are Fish-only.
+- Bash resolves the working directory once per `cd` instead of forking
+  `realpath` on every prompt. A directory re-pointed by a symlink change
+  without a `cd` keeps its old resolution until the next `cd`, as in Fish.
 
 ### Removed
 

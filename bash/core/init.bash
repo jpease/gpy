@@ -179,6 +179,9 @@ __gpy_precmd() {
         fi
     fi
 
+    # Once per directory change, before any render reads the memo.
+    __gpy_resolve_pwd
+
     # Before rendering, so a reload shows in this prompt.
     __gpy_consume_shell_flags
 

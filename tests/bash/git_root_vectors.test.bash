@@ -73,5 +73,14 @@ while IFS=$'\t' read -r kind c2 c3 c4 _rest; do
     esac
 done < "$FIXTURE"
 
+# The $PWD memo resolves a symlinked working directory like realpath does.
+cd "$S/link" || exit 1; __gpy_resolve_pwd
+actual=""; __gpy_find_git_root "$PWD" actual
+check "memoized symlinked \$PWD git root" "$S/repo" "$actual"
+cd "$S/link_plain" || exit 1; __gpy_resolve_pwd
+actual=""; __gpy_instant_cache_key_path lang "$PWD" actual
+check "memoized symlinked \$PWD lang key" "$S/plain/sub" "$actual"
+cd "$ROOT" || exit 1
+
 [[ "$vector_count" -gt 0 ]] || fail "no test vectors read from $FIXTURE"
 test_finish "all $vector_count git-root vectors"

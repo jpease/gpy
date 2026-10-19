@@ -6,8 +6,8 @@
 # fork beyond the external reads bash has no builtin for: a DEBUG trap
 # inherited via functrace logs every command run with BASH_SUBSHELL > 0 while
 # __gpy_read_instant_cache and the git and language segments serve hits. Only
-# `realpath` (symlink resolution of the cache key), `stat` (the entry's age)
-# and `date` (the clock on bash without a builtin epoch) may run there.
+# `stat` (the entry's age) and `date` (the clock on bash without a builtin
+# epoch) may run there; `realpath` is memoized per directory by __gpy_resolve_pwd.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
@@ -42,8 +42,9 @@ saved_debug_trap="$(trap -p DEBUG)"
 set -T
 text=""
 cd "$repo" || exit 1
-trap '(( BASH_SUBSHELL > 0 )) && [[ "$BASH_COMMAND" != realpath\ * && "$BASH_COMMAND" != stat\ * && "$BASH_COMMAND" != date\ * ]] && printf "%s\n" "${FUNCNAME[0]}: $BASH_COMMAND" >>"$forks"' DEBUG
-__gpy_read_instant_cache git_first_last "$repo" "#5277C3" text
+__gpy_resolve_pwd
+trap '(( BASH_SUBSHELL > 0 )) && [[ "$BASH_COMMAND" != stat\ * && "$BASH_COMMAND" != date\ * ]] && printf "%s\n" "${FUNCNAME[0]}: $BASH_COMMAND" >>"$forks"' DEBUG
+__gpy_read_instant_cache git_first_last "$PWD" "#5277C3" text
 status=$?
 __gpy_segment_git true "#5277C3" true >"$out"
 __gpy_segment_language true "#5277C3" true >>"$out"
@@ -54,6 +55,6 @@ eval "$saved_debug_trap"
 
 expect_eq "cache hit served" "$status:$text" "0:HIT"
 expect_eq "segments render their hits" "$(<"$out")" "HITLANG"
-expect_eq "bash $BASH_VERSION: no subshell beyond realpath/stat/date" "$(<"$forks")" ""
+expect_eq "bash $BASH_VERSION: no subshell beyond stat/date" "$(<"$forks")" ""
 
-test_finish "a cache-hit render forks only for realpath/stat/date"
+test_finish "a cache-hit render forks only for stat/date"

@@ -267,13 +267,25 @@ __gpy_check_protocol_version() {
     return 0
 }
 
+# $PWD resolved once per directory change (`__gpy_pwd_memo`, "" when realpath
+# fails), so a cache-hit render forks no realpath.
+__gpy_resolve_pwd() {
+    [[ "$PWD" == "${__gpy_pwd_memo_key-}" ]] && return 0
+    __gpy_pwd_memo_key="$PWD"
+    __gpy_pwd_memo="$(realpath "$PWD" 2>/dev/null)" || __gpy_pwd_memo=""
+}
+
 # Git root above $1 into variable $2; status 1 when there is none.
 __gpy_find_git_root() {
-    # Keep the realpath fork: the cache key must match the Rust writer's
-    # `path_to_cache_key` byte for byte, including symlink resolution, and
-    # bash has no builtin that resolves a path without changing directory.
-    local __gpy_fgr_dir
-    __gpy_fgr_dir=$(realpath "${1:-$PWD}" 2>/dev/null)
+    # The cache key must match the Rust writer's `path_to_cache_key` byte for byte,
+    # including symlink resolution, and only `realpath` resolves a path without
+    # changing directory. $PWD uses the per-`cd` memo; any other path still forks.
+    local __gpy_fgr_dir __gpy_fgr_start="${1:-$PWD}"
+    if [[ -n "${__gpy_pwd_memo_key-}" && "$__gpy_fgr_start" == "$__gpy_pwd_memo_key" ]]; then
+        __gpy_fgr_dir="${__gpy_pwd_memo-}"
+    else
+        __gpy_fgr_dir=$(realpath "$__gpy_fgr_start" 2>/dev/null)
+    fi
     [[ -z "$__gpy_fgr_dir" ]] && return 1
 
     while [[ "$__gpy_fgr_dir" != "/" ]]; do
@@ -338,7 +350,11 @@ __gpy_instant_cache_key_path() {
     local suffix="$1" cwd="$2" __gpy_kp=""
     __gpy_find_git_root "$cwd" __gpy_kp
     if [[ -z "$__gpy_kp" && "$suffix" == lang* ]]; then
-        __gpy_kp="$(realpath "$cwd" 2>/dev/null)"
+        if [[ -n "${__gpy_pwd_memo_key-}" && "$cwd" == "$__gpy_pwd_memo_key" ]]; then
+            __gpy_kp="${__gpy_pwd_memo-}"
+        else
+            __gpy_kp="$(realpath "$cwd" 2>/dev/null)"
+        fi
     fi
     printf -v "$3" '%s' "$__gpy_kp"
     [[ -n "$__gpy_kp" ]]
