@@ -79,6 +79,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Older dev installs may have `default.toml`, `starship.toml` and `text.toml`
   in `~/.config/gpy/themes` shadowing the built-ins; delete them.
 
+### Removed
+
+- `scripts/update.fish`, which never detected a version change; run
+  `just install` from the checkout.
+
 ### Fixed
 
 - `SECURITY.md` now lists 0.4.x, the current release series, as supported.

@@ -64,7 +64,6 @@ Exit status is 0 when every check passed, 1 otherwise.
 | `test-windows-vm.sh` | Run `cargo test --locked --lib` over SSH on a local Windows VM; see below. |
 | `install-hooks.sh [--uninstall]` | Install (or remove) the prek git hooks from `.pre-commit-config.yaml`. |
 | `uninstall.sh`, `uninstall.fish` | Remove an installed GPY. |
-| `update.fish` | Update the installed Fish scripts and config from this checkout. |
 
 ### test-windows-vm.sh
 

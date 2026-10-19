@@ -325,7 +325,7 @@ done
 
 # Nothing the user is told to run, and nothing the installer runs or installs,
 # may come from a branch: that is what makes the installer immutable per tag.
-for doc in install-oneline.sh install.sh scripts/update.fish scripts/release-notes.sh \
+for doc in install-oneline.sh install.sh scripts/release-notes.sh \
     README.md gpy-agent/README.md docs/INSTALL.md SECURITY.md; do
     if grep -q 'raw.githubusercontent.com' "$ROOT/$doc"; then
         fail "$doc still references raw.githubusercontent.com: $(grep -n 'raw.githubusercontent.com' "$ROOT/$doc" | head -n 3)"
