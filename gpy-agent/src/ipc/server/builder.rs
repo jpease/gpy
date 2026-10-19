@@ -1,9 +1,9 @@
 //! Builder for the IPC server endpoint; required collaborators come in
 //! [`EndpointDeps`] so a missing one is a compile error.
 
-#[cfg(unix)]
-use super::handle::DirRepair;
 use super::handle::{EndpointHandle, ServerDeps, WatcherRef};
+#[cfg(unix)]
+use super::socket_dir::DirRepair;
 use crate::{
     Result, config::manager::ConfigManager, git::cache::GitStatusCache, ipc::ClientDirectory,
     palette::PaletteCache, security::GuardSettings, theme::ThemeManager,

@@ -7,10 +7,12 @@ pub mod builder;
 mod connection;
 /// Core IPC server endpoint implementation and request handling.
 pub mod handle;
+#[cfg(unix)]
+pub(crate) mod socket_dir;
 #[cfg(test)]
 mod tests;
 
 pub use builder::{EndpointDeps, EndpointHandleBuilder};
-#[cfg(unix)]
-pub use handle::DirRepair;
 pub use handle::{EndpointHandle, WatcherRef};
+#[cfg(unix)]
+pub use socket_dir::DirRepair;
