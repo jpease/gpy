@@ -238,12 +238,16 @@ fn doctor_accepts_agent_disabled_via_config() {
 }
 
 /// `gpy` copied alone into a fresh directory: no sibling `gpy-agent`, so it
-/// must find the agent on `PATH`.
+/// must find the agent on `PATH`. Copied once per test environment: copying
+/// over a binary that already ran rewrites it in place, and macOS then kills
+/// the next exec of it (its cached code signature no longer matches).
 fn lone_gpy(env: &CliTestEnv) -> PathBuf {
     let dir = env.root().join("lone-gpy");
-    std::fs::create_dir_all(&dir).expect("create lone gpy dir");
     let gpy = dir.join("gpy");
-    std::fs::copy(env!("CARGO_BIN_EXE_gpy"), &gpy).expect("copy gpy");
+    if !gpy.exists() {
+        std::fs::create_dir_all(&dir).expect("create lone gpy dir");
+        std::fs::copy(env!("CARGO_BIN_EXE_gpy"), &gpy).expect("copy gpy");
+    }
     gpy
 }
 
