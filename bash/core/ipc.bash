@@ -41,6 +41,8 @@ __gpy_home() {
     if [[ -z "$__gpy_home_value" ]]; then
         __gpy_home_user="$(id -un 2>/dev/null)" || return 1
         [[ -n "$__gpy_home_user" ]] || return 1
+        # Only a plausible username may reach eval; a leading - would make ~- expand to $OLDPWD.
+        [[ "$__gpy_home_user" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || return 1
         # Assignment context tilde-expands "~user"; an unknown user stays
         # literal and the guard rejects it.
         eval "__gpy_home_value=~$__gpy_home_user" 2>/dev/null

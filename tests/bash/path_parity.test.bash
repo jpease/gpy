@@ -76,6 +76,32 @@ compare home_empty_cache_unset HOME= XDG_CONFIG_HOME="$tmp/config" XDG_RUNTIME_D
 compare home_unset_cache_unset XDG_CONFIG_HOME="$tmp/config" XDG_RUNTIME_DIR="$tmp/run"
 PARITY_SRC=bash/gpy.bash
 
+echo "--- __gpy_home never evals a hostile username ---"
+mkdir -p "$tmp/f11"
+# shellcheck disable=SC2329 # id() overrides the external command for __gpy_home.
+(
+    cd "$tmp/f11" || exit 2
+    HOME=
+    id() { echo 'x;touch PWNED'; }
+    # shellcheck source=bash/core/ipc.bash
+    source "$ROOT/bash/core/ipc.bash"
+    __gpy_home out
+)
+rc=$?
+if [[ "$rc" -ne 1 || -e "$tmp/f11/PWNED" ]]; then
+    fail "__gpy_home with a hostile username: rc=$rc (want 1), PWNED exists: $([[ -e "$tmp/f11/PWNED" ]] && echo yes || echo no)"
+fi
+# shellcheck disable=SC2329 # id() overrides the external command for __gpy_home.
+home_out="$(
+    HOME=
+    out=''
+    id() { command id "$@"; }
+    # shellcheck source=bash/core/ipc.bash
+    source "$ROOT/bash/core/ipc.bash"
+    __gpy_home out && printf '%s' "$out"
+)" || fail "__gpy_home failed for the real username"
+[[ "$home_out" == /* ]] || fail "__gpy_home for the real username gave '$home_out', not an absolute path"
+
 echo "--- cache key encoding ---"
 shell_e2e_init "$ROOT"
 # shell_e2e_init's EXIT trap replaced the one above; run both.
