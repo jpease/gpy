@@ -31,11 +31,12 @@ The request path never runs a version probe.
 - A `lang` request never waits on a version probe beyond `agent.timeout_seconds`.
 - Concurrent requests for one project share one probe job.
 - Writing the instant cache no longer probes, once per variant, inside the cache module.
+- The watcher's language refreshes (`agent/events/mod.rs`) all run on the blocking pool, so a marker edit that invalidates the version cache never holds the event thread on a probe.
 
 ### Negative
 
 - A cold probe slower than the budget costs one failed request before its result arrives through the repaint path.
-- The watcher's language refresh (`agent/events/mod.rs`) still probes inline on its event thread after it invalidates the version cache.
+- A request and a watcher refresh that find the same version cold at the same moment each probe it. Sharing the request's single-flight job would need a handle on the `LanguageHandler` inside the agent's event context; the duplicate is bounded by the probe timeout and the version cache absorbs every later lookup.
 
 ## References
 

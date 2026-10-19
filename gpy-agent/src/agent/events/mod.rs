@@ -137,15 +137,21 @@ pub fn handle_file_event(ctx: &AgentContext, event: &DebouncedEvent, config: &Co
 
             // A language marker changed, so version-release data may be stale too.
             invalidate_language_caches(ctx, &repo_root);
-            let theme = ctx.theme_manager.get();
-            refresh_language_for(
-                ctx,
-                &repo_root,
-                config,
-                LanguageRefreshMode::Immediate,
-                &theme,
-                None,
-            );
+            // Re-detection probes the now-cold versions (up to 10 s with mise),
+            // so it must not hold the event thread.
+            let refresh_ctx = ctx.clone();
+            let refresh_config = config.clone();
+            spawn_language_job(move || {
+                let theme = refresh_ctx.theme_manager.get();
+                refresh_language_for(
+                    &refresh_ctx,
+                    &repo_root,
+                    &refresh_config,
+                    LanguageRefreshMode::Immediate,
+                    &theme,
+                    None,
+                );
+            });
         }
         FileEvent::Config { path } => {
             debug_log!("agent", "Config event for: {}", path.display());
@@ -658,6 +664,12 @@ fn schedule_language_refresh_from_git_status(
         );
     };
 
+    spawn_language_job(job);
+}
+
+/// Run a language refresh on the blocking pool when a runtime is current, else
+/// on its own thread: it may probe versions, which must not hold the caller.
+fn spawn_language_job(job: impl FnOnce() + Send + 'static) {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         handle.spawn_blocking(job);
     } else {
@@ -1152,11 +1164,7 @@ fn schedule_language_cache_regen(ctx: &AgentContext, lang_root: &Path, config: &
         regen_language_caches(&regen_ctx, &root, &regen_config);
     };
 
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        handle.spawn_blocking(job);
-    } else {
-        std::thread::spawn(job);
-    }
+    spawn_language_job(job);
 }
 
 /// Synchronous body of [`schedule_language_cache_regen`]; returns `true` when a

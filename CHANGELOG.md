@@ -77,6 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   probe per project at a time, and the version reaches idle Fish and Zsh
   prompts (and Bash at its next prompt) through the repaint doorbell
   (ADR-0009).
+- Editing a language marker (`package.json`, `Cargo.toml`, ...) re-detects
+  languages and re-probes versions on a background thread, so the agent's
+  file-event handling no longer stalls for up to 10 s on a slow tool.
 - Bash and Zsh build the flags tail, the forwarded virtualenv and the git and
   language requests without forking a subshell.
 
