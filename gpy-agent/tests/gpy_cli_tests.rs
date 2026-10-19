@@ -153,9 +153,8 @@ fn test_completions_zsh() {
     );
 }
 
-/// `hide`-marked items (`__complete`, the deprecated `theme use --apply-layout`
-/// alias) must not leak into completions; `clap_complete` ignores `is_hide_set()`.
-/// The unrelated, visible `theme import --apply-layout` must still complete.
+/// `hide`-marked items (e.g. `__complete`) must not leak into completions; `clap_complete` ignores `is_hide_set()`.
+/// The visible `theme import --apply-layout` must still complete, confined to `theme import`.
 #[test]
 fn test_completions_omit_hidden_items() {
     for shell in ["fish", "bash", "zsh"] {

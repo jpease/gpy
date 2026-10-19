@@ -1,6 +1,5 @@
 //! Snapshots of the `gpy` and `gpy-agent` help surface. Hidden items
-//! (`__complete`, `theme use --apply-layout`) must
-//! never appear. Review changes with `cargo insta review`.
+//! (`__complete`) must never appear. Review changes with `cargo insta review`.
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
@@ -100,19 +99,6 @@ fn gpy_subcommand_help() {
             assert_snapshot!(name, help);
         });
     }
-}
-
-/// `theme use --apply-layout` is a deprecated alias for `--force` and is
-/// `hide = true`; `theme import --apply-layout` is a different, public flag.
-#[test]
-fn gpy_theme_use_hides_the_deprecated_alias() {
-    let env = CliTestEnv::new().expect("create isolated CLI test env");
-    let help = help_of(&env, &["theme", "use"]);
-    assert!(help.contains("--force"), "{help}");
-    assert!(
-        !help.contains("--apply-layout"),
-        "the deprecated alias must stay hidden:\n{help}"
-    );
 }
 
 #[test]

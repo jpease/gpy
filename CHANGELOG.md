@@ -64,6 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gpy-agent theme export --format bash`/`zsh` no longer emits
   `__gpy_plugin_segment_file_*` variables; plugin segment files are Fish-only.
 
+### Removed
+
+- The hidden, deprecated `gpy theme use --apply-layout` alias; use `--force`.
+  `gpy theme import --apply-layout` is unchanged.
+
 ### Fixed
 
 - `SECURITY.md` now lists 0.4.x, the current release series, as supported.

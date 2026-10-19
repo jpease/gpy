@@ -153,9 +153,6 @@ enum ThemeAction {
         /// explicitly configured.
         #[arg(long)]
         force: bool,
-        /// Deprecated alias for `--force`.
-        #[arg(long, hide = true)]
-        apply_layout: bool,
     },
     /// Show current theme
     Show,
@@ -317,16 +314,7 @@ enum DebugAction {
 fn run_theme(action: ThemeAction) -> Result<()> {
     match action {
         ThemeAction::List => commands::theme::list(),
-        ThemeAction::Use {
-            name,
-            force,
-            apply_layout,
-        } => {
-            if apply_layout {
-                commands::output::warn_stderr("--apply-layout is deprecated; use --force instead.");
-            }
-            commands::theme::use_theme(&name, force || apply_layout)
-        }
+        ThemeAction::Use { name, force } => commands::theme::use_theme(&name, force),
         ThemeAction::Show => commands::theme::show(),
         ThemeAction::New { name, from } => commands::theme::new(&name, from.as_deref()),
         ThemeAction::Save { name } => commands::theme::save(name.as_deref()),
