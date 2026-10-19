@@ -337,10 +337,13 @@ It:
    existing one aside.
 4. Picks an icon style for a fresh install (see [Icons and Nerd Fonts](#icons-and-nerd-fonts)).
 
-It is safe to re-run, and after an upgrade it refreshes the copied files. It
-finds the script trees via `--from`, then `GPY_SHARE_DIR`, then the `share/gpy`
-beside the binary (Homebrew), then the source checkout the binary was built in.
-Nothing in an rc file is touched until the files are in place.
+It is safe to re-run, and after an upgrade it refreshes the copied files: those
+of the shell it sets up, and those of every other shell set up earlier (their
+rc files are left alone). `gpy doctor` warns about a shell whose files an older
+`gpy` installed. It finds the script trees via `--from`, then `GPY_SHARE_DIR`,
+then the `share/gpy` beside the binary (Homebrew), then the source checkout the
+binary was built in. Nothing in an rc file is touched until the files are in
+place.
 
 ## Verifying Your Download
 

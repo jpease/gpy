@@ -23,28 +23,48 @@ function __gpy_reload_config() {
 # SIGURG is ignored by default, so a shell without TRAPURG yet (e.g. after
 # `exec zsh` under the same registered PID) is not killed. The message is in
 # flag files beside the tracking entry: <pid>.reregister, <pid>.reload.
-# A nudge during reregistration is dropped; the next precmd retries.
-# `zle reset-prompt` alone only redraws the old PROMPT string, so re-render
-# first with the last exit code to keep status colouring.
+# A nudge during reregistration is left for the next pass or precmd.
 __gpy_reregistering=""
-function TRAPURG() {
-    local base=${__gpy_shell_flag_base:-}
-    if [[ -n "$base" && -e "$base.reregister" && -z "$__gpy_reregistering" ]]; then
+
+# Act on the agent's flags: re-register, then reload. Returns 0 when one was
+# present. Also called from precmd, so a lost ring is picked up at the next
+# prompt, as in Bash.
+function __gpy_consume_shell_flags() {
+    local base=${__gpy_shell_flag_base:-} found=1
+    [[ -n "$base" ]] || return 1
+    if [[ -e "$base.reregister" && -z "$__gpy_reregistering" ]]; then
         rm -f "$base.reregister" 2>/dev/null
         __gpy_reregistering=1
         __gpy_reregister_with_agent &>/dev/null
         __gpy_reregistering=""
+        found=0
     fi
-    if [[ -n "$base" && -e "$base.reload" ]]; then
+    if [[ -e "$base.reload" ]]; then
         rm -f "$base.reload" 2>/dev/null
         __gpy_reload_config
+        found=0
     fi
-    if zle; then
-        __gpy_update_prompts "${__gpy_last_exit_code:-0}"
-        __gpy_load_cache_relay "$__gpy_char_cache_relay_path" __gpy_char_cache_key __gpy_char_cache_val
-        __gpy_load_cache_relay "$__gpy_dir_cache_relay_path" __gpy_dir_cache_key __gpy_dir_cache_val
-        zle reset-prompt
-    fi
+    return $found
+}
+
+# Zsh drops a SIGURG that arrives while this trap is still running (an agent
+# start rings `.reload`, then `.reregister`, back to back). The agent writes a
+# flag before it rings, so after acting and repainting the trap looks again,
+# and goes round while a flag arrived meanwhile (at most three passes).
+# `zle reset-prompt` alone only redraws the old PROMPT string, so re-render
+# first with the last exit code to keep status colouring.
+function TRAPURG() {
+    local base=${__gpy_shell_flag_base:-} pass
+    for pass in 1 2 3; do
+        __gpy_consume_shell_flags
+        if zle; then
+            __gpy_update_prompts "${__gpy_last_exit_code:-0}"
+            __gpy_load_cache_relay "$__gpy_char_cache_relay_path" __gpy_char_cache_key __gpy_char_cache_val
+            __gpy_load_cache_relay "$__gpy_dir_cache_relay_path" __gpy_dir_cache_key __gpy_dir_cache_val
+            zle reset-prompt
+        fi
+        [[ -n "$base" && ( -e "$base.reregister" || -e "$base.reload" ) ]] || break
+    done
     return 0
 }
 

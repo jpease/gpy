@@ -43,6 +43,7 @@ pub fn run() -> Result<()> {
     println!();
 
     all_ok &= check_binaries();
+    check_shell_integrations(&super::setup::installed_integrations());
 
     println!("\nSummary:");
     if all_ok {
@@ -341,6 +342,35 @@ fn print_suspect_patterns(segment: &str, content: &str) {
         println!(
             "      hint: if your prompt feels slow, disable `{segment}` first to confirm whether this plugin segment is responsible"
         );
+    }
+}
+
+/// Warn about installed shell scripts that an older `gpy` wrote: an upgrade
+/// run for one shell used to leave the others behind. Not a failure, since
+/// they still work against the same protocol.
+fn check_shell_integrations(installed: &[super::setup::InstalledIntegration]) {
+    for integration in installed {
+        let shell = integration.shell;
+        print!("  Checking {shell} integration... ");
+        match integration.version.as_deref() {
+            Some(version) if version == crate::VERSION => {
+                output::ok(format_args!("{version} ({})", integration.dir.display()));
+            }
+            found => {
+                let from = found.map_or_else(
+                    || "an older gpy".to_owned(),
+                    |version| format!("gpy {version}"),
+                );
+                output::warn(format_args!(
+                    "installed by {from}, but this is gpy {} ({})",
+                    crate::VERSION,
+                    integration.dir.display()
+                ));
+                println!(
+                    "  Remediation: run `gpy setup --shell {shell}` to install the current scripts."
+                );
+            }
+        }
     }
 }
 
