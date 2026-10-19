@@ -100,7 +100,6 @@ fn test_msg_deserialize_simple_ops_fish() {
     let cases: &[(&[u8], &str)] = &[
         (br#"{"op":"ping"}"#, "Ping"),
         (br#"{"op":"status"}"#, "Status"),
-        (br#"{"op":"theme","key":"prompt_close"}"#, "ThemeQuery"),
         (br#"{"op":"shutdown"}"#, "Shutdown"),
         (br#"{"op":"config_reload"}"#, "ConfigReload"),
     ];
@@ -171,11 +170,6 @@ fn test_response_deserialize_simple_variants() {
             r#"{"AgentStatus":{"version":"0.1.0","protocol_version":1,"watched_repos":5,"registered_clients":3,"cache_entries":12}}"#,
             "AgentStatus",
         ),
-        (r#"{"ThemeValue":{"value":""}}"#, "ThemeValue (delimiter)"),
-        (
-            r##"{"ThemeValue":{"value":"#ff6b6b"}}"##,
-            "ThemeValue (color)",
-        ),
         (
             r#"{"Error":{"message":"Failed to detect language: directory not found"}}"#,
             "Error (generic)",
@@ -229,9 +223,6 @@ fn test_message_roundtrip() {
         },
         Message::Ping,
         Message::Status,
-        Message::ThemeQuery {
-            key: "prompt_close".to_owned(),
-        },
         Message::Shutdown,
         Message::ConfigReload,
     ];
@@ -277,9 +268,6 @@ fn test_response_roundtrip() {
             watched_repos: 5,
             registered_clients: 3,
             cache_entries: 12,
-        },
-        Response::ThemeValue {
-            value: String::new(),
         },
         Response::Error {
             message: "Test error".to_owned(),
@@ -452,7 +440,7 @@ mod schema_files {
             .captures_iter(table)
             .map(|c| c[1].to_owned())
             .collect();
-        assert!(ops.len() >= 17, "op table parse found only {ops:?}");
+        assert!(ops.len() >= 15, "op table parse found only {ops:?}");
         ops
     }
 
@@ -472,7 +460,7 @@ mod schema_files {
             .map(|c| c[1].to_owned())
             .collect();
         assert!(
-            variants.len() >= 17,
+            variants.len() >= 15,
             "variant parse found only {variants:?}"
         );
         variants
@@ -663,8 +651,6 @@ mod schema_files {
             ),
             ("unregister", r#"{"op":"unregister","pid":123}"#),
             ("workspace", r#"{"op":"workspace","pid":123,"cwd":"."}"#),
-            ("theme", r#"{"op":"theme","key":"git.branch"}"#),
-            ("latency_stats", r#"{"op":"latency_stats"}"#),
         ];
         let sampled: BTreeSet<String> = shell.iter().map(|(op, _)| (*op).to_owned()).collect();
         assert_eq!(sampled, ops_from_code(), "add a sample for the new op");
@@ -693,8 +679,6 @@ mod schema_files {
             r#"{"WorkspaceUpdate":{"pid":123,"cwd":"."}}"#,
             r#""Ping""#,
             r#""Status""#,
-            r#"{"ThemeQuery":{"key":"k"}}"#,
-            r#""LatencyStats""#,
             r#""Shutdown""#,
             r#""ConfigReload""#,
         ];
@@ -792,12 +776,6 @@ mod schema_files {
                 }),
             ),
             (
-                "theme",
-                render_json(&Response::ThemeValue {
-                    value: "red".to_owned(),
-                }),
-            ),
-            (
                 "duration",
                 render_json(&Response::Duration { duration_ms: 3 }),
             ),
@@ -822,15 +800,6 @@ mod schema_files {
                 "clock",
                 render_json(&Response::Clock {
                     shell: gpy_agent::shell::Shell::Zsh,
-                }),
-            ),
-            (
-                "latency_stats",
-                render_json(&Response::LatencyStatsResult {
-                    min_ms: 1,
-                    max_ms: 15,
-                    avg_ms: 3,
-                    sample_count: 42,
                 }),
             ),
             (

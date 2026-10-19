@@ -14,7 +14,7 @@ use tokio::net::UnixStream;
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 
-fn build_server(socket_path: PathBuf, latency_samples: usize) -> EndpointHandle {
+fn build_server(socket_path: PathBuf) -> EndpointHandle {
     let security_config = GuardSettings {
         max_connections_per_second: 100_000,
         max_concurrent_connections: 1000,
@@ -28,7 +28,6 @@ fn build_server(socket_path: PathBuf, latency_samples: usize) -> EndpointHandle 
         ),
         theme_manager: Arc::new(gpy_agent::theme::ThemeManager::new("default").unwrap()),
         instant_cache: Arc::new(gpy_agent::cache::InstantPromptCache::new().unwrap()),
-        latency_tracker: Arc::new(gpy_agent::ipc::LatencyTracker::new(latency_samples)),
         language_cache: gpy_agent::language::DetectionCache::new(),
     })
     .socket_path(socket_path)
@@ -37,8 +36,8 @@ fn build_server(socket_path: PathBuf, latency_samples: usize) -> EndpointHandle 
     .unwrap()
 }
 
-fn start_and_wait(rt: &Runtime, socket_path: PathBuf, latency_samples: usize) {
-    let mut server = build_server(socket_path.clone(), latency_samples);
+fn start_and_wait(rt: &Runtime, socket_path: PathBuf) {
+    let mut server = build_server(socket_path.clone());
     rt.spawn(async move {
         server.start().await.unwrap();
     });
@@ -113,7 +112,7 @@ fn bench_ipc_ping(c: &mut Criterion) {
     let temp_dir = tempfile::tempdir().unwrap();
     let socket_path = temp_dir.path().join("gpy.sock");
 
-    start_and_wait(&rt, socket_path.clone(), 100);
+    start_and_wait(&rt, socket_path.clone());
 
     c.bench_function("ipc_roundtrip", |b| {
         b.to_async(&rt).iter(|| async {
@@ -133,7 +132,7 @@ fn bench_ipc_tail_latency_under_load(c: &mut Criterion) {
     let temp_dir = tempfile::tempdir().unwrap();
     let socket_path = temp_dir.path().join("gpy-tail.sock");
 
-    start_and_wait(&rt, socket_path.clone(), 1000);
+    start_and_wait(&rt, socket_path.clone());
 
     // Concurrent language-detect misses keep the blocking pool busy.
     let load_handle = spawn_load_generator(&rt, socket_path.clone());

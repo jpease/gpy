@@ -437,16 +437,6 @@ fn test_parse_wire_duration_is_a_plain_field_copy() {
 }
 
 #[test]
-fn test_parse_wire_theme_query_carries_key() {
-    let json = br#"{"op":"theme","key":"prompt_close"}"#;
-    let wire = parse_wire(json).expect("parse_wire failed");
-    match wire {
-        WireMessage::ThemeQuery { key } => assert_eq!(key, "prompt_close"),
-        _ => panic!("expected WireMessage::ThemeQuery"),
-    }
-}
-
-#[test]
 fn test_parse_wire_unit_ops() {
     assert!(matches!(
         parse_wire(br#"{"op":"ping"}"#).expect("parse_wire failed"),
@@ -455,10 +445,6 @@ fn test_parse_wire_unit_ops() {
     assert!(matches!(
         parse_wire(br#"{"op":"status"}"#).expect("parse_wire failed"),
         WireMessage::Status
-    ));
-    assert!(matches!(
-        parse_wire(br#"{"op":"latency_stats"}"#).expect("parse_wire failed"),
-        WireMessage::LatencyStats
     ));
 }
 

@@ -226,7 +226,7 @@ fn test_git_handler_writes_instant_cache_even_with_stale_git_cache() {
 #[serial]
 fn test_client_handler_triggers_initial_scan_on_registration() {
     use gpy_agent::ipc::handlers::ClientHandler;
-    use gpy_agent::ipc::{LatencyTracker, registry::ClientDirectory};
+    use gpy_agent::ipc::registry::ClientDirectory;
     use std::sync::Mutex;
 
     let repo = create_git_repo();
@@ -238,13 +238,11 @@ fn test_client_handler_triggers_initial_scan_on_registration() {
     let watcher = Arc::new(Mutex::new(None)); // No watcher for this test
     let _user_dirs = isolate_user_dirs();
     let instant_cache = Arc::new(InstantPromptCache::new().expect("instant cache"));
-    let latency_tracker = Arc::new(LatencyTracker::new(100));
 
     let handler = ClientHandler::new(
         render_deps(&config_manager, &instant_cache, &client_registry),
         Arc::clone(&git_cache),
         Arc::clone(&watcher),
-        Arc::clone(&latency_tracker),
     );
 
     // Canonicalize: macOS /var -> /private/var.

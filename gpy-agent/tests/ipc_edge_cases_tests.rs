@@ -147,9 +147,6 @@ fn test_all_message_types_serialize() {
             virtual_env: None,
         },
         Message::Status,
-        Message::ThemeQuery {
-            key: "git.branch".to_string(),
-        },
     ];
 
     for msg in messages {

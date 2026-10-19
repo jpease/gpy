@@ -7,8 +7,8 @@
 use gpy_agent::cache::InstantPromptCache;
 use gpy_agent::config::manager::ConfigManager;
 use gpy_agent::git::cache::GitStatusCache;
+use gpy_agent::ipc::ClientDirectory;
 use gpy_agent::ipc::server::{EndpointDeps, EndpointHandle, EndpointHandleBuilder};
-use gpy_agent::ipc::{ClientDirectory, LatencyTracker};
 use gpy_agent::language::DetectionCache;
 use gpy_agent::theme::ThemeManager;
 use std::path::{Path, PathBuf};
@@ -39,7 +39,6 @@ pub fn endpoint_builder_with_config(
             ThemeManager::builtin("default").expect("default theme should load"),
         ),
         instant_cache: Arc::new(InstantPromptCache::new_for_test()),
-        latency_tracker: Arc::new(LatencyTracker::new(100)),
         language_cache: DetectionCache::new(),
     })
     .socket_path(socket_path)

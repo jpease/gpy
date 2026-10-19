@@ -235,52 +235,6 @@
     {
       "type": "object",
       "required": [
-        "value"
-      ],
-      "properties": {
-        "value": {
-          "type": "string"
-        }
-      },
-      "title": "ThemeValue (theme)",
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "required": [
-        "min_ms",
-        "max_ms",
-        "avg_ms",
-        "sample_count"
-      ],
-      "properties": {
-        "min_ms": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "min_ms"
-        },
-        "max_ms": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "max_ms"
-        },
-        "avg_ms": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "avg_ms"
-        },
-        "sample_count": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "sample_count"
-        }
-      },
-      "title": "LatencyStatsResult (latency_stats)",
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "required": [
         "error"
       ],
       "properties": {

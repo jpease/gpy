@@ -33,6 +33,20 @@ Changes are listed newest-first within each release group.
 
 ---
 
+### IPC protocol — removed the theme and latency_stats ops (BREAKING)
+
+| Property | Value |
+|---|---|
+| Scope | `Message::ThemeQuery`, `Message::LatencyStats`, `Response::ThemeValue`, `Response::LatencyStatsResult`, shell ops `theme`/`latency_stats` and their `key` field |
+| Change type | BREAKING — IPC operations removed |
+| IPC protocol | `PROTOCOL_VERSION` unchanged; no shipped shell or CLI sends either op. They now get an `Unknown shell operation` error reply |
+| Config schema | Unchanged |
+
+**What changed.** Neither op had a sender. `latency_stats` reported whole-millisecond
+samples, most of which read 0.
+
+---
+
 ### IPC protocol — output formats reduced to four (BREAKING)
 
 | Property | Value |

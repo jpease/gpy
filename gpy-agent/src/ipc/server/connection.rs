@@ -26,13 +26,11 @@ pub(super) struct RouteResult {
     pub(super) prev_bg: Option<String>,
 }
 
-/// Result of [`ConnectionHandler::parse_and_route_blocking`]; `route_elapsed` is
-/// `None` when parsing failed.
+/// Result of [`ConnectionHandler::parse_and_route_blocking`].
 struct BlockingLineResult {
     response: Response,
     notify_path: Option<String>,
     should_shutdown: bool,
-    route_elapsed: Option<Duration>,
     payload: Result<String>,
 }
 
@@ -42,7 +40,6 @@ pub(super) struct ConnectionHandler {
     pub(super) config_manager: Arc<crate::config::manager::ConfigManager>,
     pub(super) theme_manager: Arc<ThemeManager>,
     pub(super) palette_cache: Arc<PaletteCache>,
-    pub(super) latency_tracker: Arc<crate::ipc::LatencyTracker>,
     pub(super) shutdown_tx: broadcast::Sender<()>,
     pub(super) handler_registry: Arc<HandlerRegistry>,
 }
@@ -178,12 +175,7 @@ impl ConnectionHandler {
         .await;
 
         match blocking_result {
-            Ok(result) => {
-                if let Some(elapsed) = result.route_elapsed {
-                    self.latency_tracker.record(elapsed);
-                }
-                result
-            }
+            Ok(result) => result,
             Err(join_err) => {
                 let response = Response::Error {
                     message: format!("Request processing failed: {join_err}"),
@@ -202,7 +194,6 @@ impl ConnectionHandler {
                     response,
                     notify_path: None,
                     should_shutdown: false,
-                    route_elapsed: None,
                     payload,
                 }
             }
@@ -224,7 +215,6 @@ impl ConnectionHandler {
             response,
             notify_path,
             should_shutdown,
-            route_elapsed: _,
             payload,
         } = self.route_line_blocking(line_data).await;
 
@@ -257,10 +247,8 @@ impl ConnectionHandler {
             Ok(message) => {
                 let is_shutdown = matches!(message, Message::Shutdown);
 
-                let start = std::time::Instant::now();
                 let route_result =
                     Self::route_request_secure(handler_registry, security_config, &message);
-                let elapsed = start.elapsed();
 
                 let response = route_result.response;
                 let position = SegmentPosition::new(
@@ -280,7 +268,6 @@ impl ConnectionHandler {
                     response,
                     notify_path: route_result.notify_path,
                     should_shutdown: is_shutdown,
-                    route_elapsed: Some(elapsed),
                     payload,
                 }
             }
@@ -303,7 +290,6 @@ impl ConnectionHandler {
                     response,
                     notify_path: None,
                     should_shutdown: false,
-                    route_elapsed: None,
                     payload,
                 }
             }
@@ -481,7 +467,6 @@ mod tests {
     use crate::formatter::Format;
     use crate::ipc::handlers::{
         ClientHandler, GitHandler, HandlerRegistry, LanguageHandler, MiscHandler, RenderDeps,
-        ThemeHandler,
     };
     use crate::ipc::registry::ClientDirectory;
     use crate::palette::PaletteCache;
@@ -502,7 +487,6 @@ mod tests {
         let language_cache = crate::language::DetectionCache::new();
         let client_registry = Arc::new(ClientDirectory::new());
         let watcher: crate::ipc::server::handle::WatcherRef = Arc::new(Mutex::new(None));
-        let latency_tracker = Arc::new(crate::ipc::LatencyTracker::new(100));
 
         let render = RenderDeps {
             config_manager: Arc::clone(&config_manager),
@@ -515,19 +499,16 @@ mod tests {
         let git_handler = Arc::new(GitHandler::new(render.clone(), Arc::clone(&git_cache)));
         let language_handler =
             Arc::new(LanguageHandler::new(render.clone(), language_cache.clone()));
-        let theme_handler = Arc::new(ThemeHandler::new(Arc::clone(&theme_manager)));
         let client_handler = Arc::new(ClientHandler::new(
             render,
             Arc::clone(&git_cache),
             Arc::clone(&watcher),
-            Arc::clone(&latency_tracker),
         ));
         let misc_handler = Arc::new(MiscHandler::new());
 
         let handler_registry = Arc::new(HandlerRegistry::new(
             git_handler,
             language_handler,
-            theme_handler,
             client_handler,
             misc_handler,
         ));
@@ -548,7 +529,6 @@ mod tests {
             config_manager,
             theme_manager,
             palette_cache,
-            latency_tracker: Arc::new(crate::ipc::LatencyTracker::new(100)),
             shutdown_tx,
             handler_registry,
         };

@@ -841,64 +841,6 @@
       "const": "Status"
     },
     {
-      "type": "object",
-      "required": [
-        "op",
-        "key"
-      ],
-      "properties": {
-        "op": {
-          "type": "string",
-          "const": "theme"
-        },
-        "key": {
-          "type": "string",
-          "maxLength": 256,
-          "description": "Theme setting key"
-        }
-      },
-      "title": "ThemeQuery (shell form)"
-    },
-    {
-      "title": "ThemeQuery (native form)",
-      "type": "object",
-      "required": [
-        "ThemeQuery"
-      ],
-      "properties": {
-        "ThemeQuery": {
-          "type": "object",
-          "required": [
-            "key"
-          ],
-          "properties": {
-            "key": {
-              "type": "string",
-              "maxLength": 256
-            }
-          }
-        }
-      }
-    },
-    {
-      "title": "LatencyStats (shell form)",
-      "type": "object",
-      "required": [
-        "op"
-      ],
-      "properties": {
-        "op": {
-          "type": "string",
-          "const": "latency_stats"
-        }
-      }
-    },
-    {
-      "title": "LatencyStats (native form)",
-      "type": "string",
-      "const": "LatencyStats"
-    },
-    {
       "title": "Shutdown (shell form)",
       "type": "object",
       "required": [

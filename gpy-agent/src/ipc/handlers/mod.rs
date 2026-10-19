@@ -292,7 +292,6 @@ where
 pub struct HandlerRegistry {
     git: Arc<dyn RequestHandler>,
     language: Arc<dyn RequestHandler>,
-    theme: Arc<dyn RequestHandler>,
     client: Arc<dyn RequestHandler>,
     misc: Arc<dyn RequestHandler>,
 }
@@ -302,14 +301,12 @@ impl HandlerRegistry {
     pub fn new(
         git: Arc<dyn RequestHandler>,
         language: Arc<dyn RequestHandler>,
-        theme: Arc<dyn RequestHandler>,
         client: Arc<dyn RequestHandler>,
         misc: Arc<dyn RequestHandler>,
     ) -> Self {
         Self {
             git,
             language,
-            theme,
             client,
             misc,
         }
@@ -329,15 +326,13 @@ impl HandlerRegistry {
             | Message::CharacterRequest { .. }
             | Message::HostnameRequest { .. }
             | Message::UsernameRequest { .. } => self.misc.handle(message),
-            Message::ThemeQuery { .. } => self.theme.handle(message),
             Message::Ping
             | Message::Status
             | Message::RegisterClient { .. }
             | Message::UnregisterClient { .. }
             | Message::WorkspaceUpdate { .. }
             | Message::Shutdown
-            | Message::ConfigReload
-            | Message::LatencyStats => self.client.handle(message),
+            | Message::ConfigReload => self.client.handle(message),
         }
     }
 }
@@ -350,14 +345,11 @@ pub mod git_handler;
 pub mod language_handler;
 /// Small self-contained segments (directory, duration, character, hostname, username).
 pub mod misc_handler;
-/// Theme query handler.
-pub mod theme_handler;
 
 pub use client_handler::ClientHandler;
 pub use git_handler::GitHandler;
 pub use language_handler::LanguageHandler;
 pub use misc_handler::MiscHandler;
-pub use theme_handler::ThemeHandler;
 
 #[cfg(test)]
 #[allow(clippy::missing_panics_doc)]

@@ -12,7 +12,6 @@ use crate::ipc::{
     ClientDirectory,
     handlers::{
         ClientHandler, GitHandler, HandlerRegistry, LanguageHandler, MiscHandler, RenderDeps,
-        ThemeHandler,
     },
 };
 use crate::palette::PaletteCache;
@@ -53,8 +52,6 @@ pub(crate) struct ServerDeps {
     pub theme_manager: Arc<ThemeManager>,
     /// On-disk cache the shell reads to render a prompt without any IPC.
     pub instant_cache: Arc<crate::cache::InstantPromptCache>,
-    /// Rolling request-latency samples reported by `Message::LatencyStats`.
-    pub latency_tracker: Arc<crate::ipc::LatencyTracker>,
     /// Per-repo language detection results shared with the agent event loop.
     pub language_cache: crate::language::DetectionCache,
     /// Cached active palette, so a reload is picked up without re-parsing per render.
@@ -258,7 +255,6 @@ pub struct EndpointHandle {
     )]
     pub(crate) watcher: WatcherRef,
     theme_manager: Arc<ThemeManager>,
-    latency_tracker: Arc<crate::ipc::LatencyTracker>,
     palette_cache: Arc<PaletteCache>,
     connection_semaphore: Arc<Semaphore>,
     shutdown_tx: broadcast::Sender<()>, // Used to signal shutdown to all listeners
@@ -342,18 +338,15 @@ impl EndpointHandle {
             render.clone(),
             deps.language_cache.clone(),
         ));
-        let theme_handler = Arc::new(ThemeHandler::new(Arc::clone(&deps.theme_manager)));
         let client_handler = Arc::new(ClientHandler::new(
             render,
             Arc::clone(&deps.git_cache),
             Arc::clone(&watcher),
-            Arc::clone(&deps.latency_tracker),
         ));
         let misc_handler = Arc::new(MiscHandler::new());
         let handler_registry = Arc::new(HandlerRegistry::new(
             git_handler,
             language_handler,
-            theme_handler,
             client_handler,
             misc_handler,
         ));
@@ -376,7 +369,6 @@ impl EndpointHandle {
             socket_dir_repair: DirRepair::Refuse,
             watcher,
             theme_manager: deps.theme_manager,
-            latency_tracker: deps.latency_tracker,
             palette_cache: deps.palette_cache,
             connection_semaphore,
             shutdown_tx,
@@ -617,7 +609,6 @@ impl EndpointHandle {
             config_manager: Arc::clone(&self.config_manager),
             theme_manager: Arc::clone(&self.theme_manager),
             palette_cache: Arc::clone(&self.palette_cache),
-            latency_tracker: Arc::clone(&self.latency_tracker),
             shutdown_tx: self.shutdown_tx.clone(),
             handler_registry: Arc::clone(&self.handler_registry),
         };
@@ -728,8 +719,6 @@ impl EndpointHandle {
 
         let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
 
-        let latency_tracker = Arc::new(crate::ipc::LatencyTracker::new(100_usize));
-
         let language_cache = crate::language::DetectionCache::new();
 
         let initial_config = config_manager.get();
@@ -743,7 +732,6 @@ impl EndpointHandle {
                 config_manager,
                 theme_manager,
                 instant_cache,
-                latency_tracker,
                 language_cache,
                 palette_cache,
             },
@@ -977,7 +965,6 @@ mod socket_ownership_tests {
     use crate::config::manager::ConfigManager;
     use crate::git::cache::GitStatusCache;
     use crate::ipc::ClientDirectory;
-    use crate::ipc::LatencyTracker;
     use crate::theme::ThemeManager;
     use std::os::unix::fs::MetadataExt;
     use std::os::unix::net::UnixListener;
@@ -992,7 +979,6 @@ mod socket_ownership_tests {
             config_manager: Arc::new(ConfigManager::with_defaults().expect("default config")),
             theme_manager: Arc::new(ThemeManager::builtin("default").expect("default theme")),
             instant_cache: Arc::new(crate::cache::InstantPromptCache::new_for_test()),
-            latency_tracker: Arc::new(LatencyTracker::new(100_usize)),
             language_cache: crate::language::DetectionCache::new(),
         }
     }

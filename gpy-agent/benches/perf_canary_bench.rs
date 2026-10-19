@@ -56,7 +56,6 @@ fn build_ipc_server(socket_path: &std::path::Path) -> EndpointHandle {
         ),
         theme_manager: Arc::new(gpy_agent::theme::ThemeManager::new("default").unwrap()),
         instant_cache: Arc::new(gpy_agent::cache::InstantPromptCache::new().unwrap()),
-        latency_tracker: Arc::new(gpy_agent::ipc::LatencyTracker::new(100)),
         language_cache: gpy_agent::language::DetectionCache::new(),
     })
     .socket_path(socket_path.to_path_buf())

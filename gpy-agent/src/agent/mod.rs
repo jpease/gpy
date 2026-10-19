@@ -324,16 +324,8 @@ impl Agent {
 
         Self::init_watcher(&initial_config, watcher_config, &ctx, &watcher_slot);
 
-        let latency_tracker = Arc::new(crate::ipc::LatencyTracker::new(100_usize));
-
         let socket_path = crate::agent::lifecycle::get_socket_path()?;
-        let server = Self::init_server(
-            &ctx,
-            &watcher_slot,
-            &latency_tracker,
-            language_cache,
-            socket_path,
-        )?;
+        let server = Self::init_server(&ctx, &watcher_slot, language_cache, socket_path)?;
 
         Ok(Self {
             server,
@@ -465,7 +457,6 @@ impl Agent {
     fn init_server(
         ctx: &events::AgentContext,
         watcher_slot: &SharedWatcherSlot,
-        latency_tracker: &Arc<crate::ipc::LatencyTracker>,
         language_cache: crate::language::DetectionCache,
         socket_path: std::path::PathBuf,
     ) -> Result<EndpointHandle> {
@@ -475,7 +466,6 @@ impl Agent {
             config_manager: Arc::clone(&ctx.config_manager),
             theme_manager: Arc::clone(&ctx.theme_manager),
             instant_cache: Arc::clone(&ctx.instant_cache),
-            latency_tracker: Arc::clone(latency_tracker),
             language_cache,
         })
         .socket_path(socket_path)

@@ -206,12 +206,10 @@ fn resolve(wire: WireMessage) -> Result<Message> {
             cwd: crate::security::SafePath::new(&cwd)
                 .map_err(|e| Error::ipc(format!("Invalid workspace path: {e}")))?,
         }),
-        WireMessage::ThemeQuery { key } => Ok(Message::ThemeQuery { key }),
         WireMessage::Ping => Ok(Message::Ping),
         WireMessage::Status => Ok(Message::Status),
         WireMessage::Shutdown => Ok(Message::Shutdown),
         WireMessage::ConfigReload => Ok(Message::ConfigReload),
-        WireMessage::LatencyStats => Ok(Message::LatencyStats),
     }
 }
 
@@ -281,17 +279,13 @@ pub fn validate_message_content(msg: &Message) -> Result<()> {
         Message::RegisterClient { shell_version, .. } => {
             validate_register_client(shell_version.as_deref())?;
         }
-        Message::ThemeQuery { key } => {
-            validate_string_field("key", key, 256)?;
-        }
         // `ClientPid` is range-checked at construction; liveness is probed at route time.
         Message::UnregisterClient { .. }
         | Message::WorkspaceUpdate { .. }
         | Message::Ping
         | Message::Shutdown
         | Message::Status
-        | Message::ConfigReload
-        | Message::LatencyStats => {}
+        | Message::ConfigReload => {}
     }
     Ok(())
 }
@@ -474,10 +468,6 @@ enum WireMessage {
     },
     Ping,
     Status,
-    ThemeQuery {
-        key: String,
-    },
-    LatencyStats,
     Shutdown,
     ConfigReload,
 }
@@ -499,8 +489,6 @@ impl WireMessage {
             | Self::WorkspaceUpdate { .. }
             | Self::Ping
             | Self::Status
-            | Self::ThemeQuery { .. }
-            | Self::LatencyStats
             | Self::Shutdown
             | Self::ConfigReload => None,
         }
@@ -514,7 +502,6 @@ struct ShellIpcMessage {
     cwd: Option<String>,
     pid: Option<u32>,
     format: Option<String>,
-    key: Option<String>,
     is_last: Option<bool>,
     #[serde(default)]
     is_first: Option<bool>,
@@ -539,7 +526,6 @@ struct ShellIpcMessage {
 
 impl ShellIpcMessage {
     /// Convert to [`WireMessage`], checking only wire shape; validation happens in [`resolve`].
-    #[expect(clippy::too_many_lines, reason = "one arm per shell op")]
     fn into_wire_message(self) -> Result<WireMessage> {
         // Unlike `Format::from_str`, a bad format defaults to JSON: shell IPC is best-effort.
         let format = self
@@ -644,12 +630,6 @@ impl ShellIpcMessage {
                     .ok_or_else(|| Error::ipc("Workspace update missing cwd".to_owned()))?;
                 Ok(WireMessage::WorkspaceUpdate { pid, cwd })
             }
-            "theme" => Ok(WireMessage::ThemeQuery {
-                key: self
-                    .key
-                    .ok_or_else(|| Error::ipc("Theme query missing key".to_owned()))?,
-            }),
-            "latency_stats" => Ok(WireMessage::LatencyStats),
             _ => Err(Error::ipc(format!("Unknown shell operation: {}", self.op))),
         }
     }

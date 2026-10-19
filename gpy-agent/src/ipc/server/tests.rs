@@ -40,7 +40,6 @@ fn notify_clients_respects_agent_live_updates_flag() {
     let theme_manager =
         Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
     let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
-    let latency_tracker = Arc::new(crate::ipc::LatencyTracker::new(100));
     let language_cache = crate::language::DetectionCache::new();
 
     let initial_config = config_manager.get();
@@ -53,7 +52,6 @@ fn notify_clients_respects_agent_live_updates_flag() {
             config_manager: Arc::clone(&config_manager),
             theme_manager: Arc::clone(&theme_manager),
             instant_cache,
-            latency_tracker: Arc::clone(&latency_tracker),
             language_cache,
             palette_cache,
         },
@@ -110,7 +108,6 @@ fn hot_reload_git_enabled_blocks_requests() {
     let theme_manager =
         Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
     let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
-    let latency_tracker = Arc::new(crate::ipc::LatencyTracker::new(100));
     let language_cache = crate::language::DetectionCache::new();
 
     let mut cfg = Config::default();
@@ -129,7 +126,6 @@ fn hot_reload_git_enabled_blocks_requests() {
             config_manager: Arc::clone(&config_manager),
             theme_manager: Arc::clone(&theme_manager),
             instant_cache,
-            latency_tracker: Arc::clone(&latency_tracker),
             language_cache,
             palette_cache: palette_cache_for_git,
         },
@@ -192,7 +188,6 @@ fn build_test_endpoint(
     let theme_manager =
         Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
     let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
-    let latency_tracker = Arc::new(crate::ipc::LatencyTracker::new(100));
     let language_cache = crate::language::DetectionCache::new();
     let mut cfg = Config::default();
     cfg.language.enabled = true;
@@ -208,7 +203,6 @@ fn build_test_endpoint(
             config_manager: Arc::clone(&config_manager),
             theme_manager: Arc::clone(&theme_manager),
             instant_cache,
-            latency_tracker: Arc::clone(&latency_tracker),
             language_cache,
             palette_cache,
         },
@@ -273,7 +267,6 @@ fn default_builder() -> EndpointHandleBuilder {
             ThemeManager::builtin("default").expect("default theme should load"),
         ),
         instant_cache: Arc::new(crate::cache::InstantPromptCache::new_for_test()),
-        latency_tracker: Arc::new(crate::ipc::LatencyTracker::new(100)),
         language_cache: crate::language::DetectionCache::new(),
     })
 }

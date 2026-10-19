@@ -1,7 +1,6 @@
 //! JSON IPC between shell clients and the agent over Unix domain sockets.
 
 pub mod handlers;
-pub mod latency;
 pub mod protocol;
 pub mod registry;
 pub mod server;
@@ -41,7 +40,6 @@ pub fn decode_wire_reply(text: &str) -> crate::Result<Response> {
         "Failed to parse agent response: not a Response: {body}"
     )))
 }
-pub use latency::LatencyTracker;
 pub use registry::ClientDirectory;
 
 use serde::{Deserialize, Serialize};
@@ -270,15 +268,6 @@ pub enum Message {
     /// Get detailed agent status (for debugging)
     Status,
 
-    /// Query theme setting
-    ThemeQuery {
-        /// The theme setting key to query (e.g., "`prompt_close`", "`prompt_open`", "prompt")
-        key: String,
-    },
-
-    /// Get IPC latency statistics
-    LatencyStats,
-
     /// Shutdown agent gracefully
     Shutdown,
 
@@ -474,24 +463,6 @@ pub enum Response {
         registered_clients: usize,
         /// Number of cache entries
         cache_entries: usize,
-    },
-
-    /// Theme setting value
-    ThemeValue {
-        /// The theme setting value
-        value: String,
-    },
-
-    /// IPC latency statistics
-    LatencyStatsResult {
-        /// Minimum response time in milliseconds
-        min_ms: u64,
-        /// Maximum response time in milliseconds
-        max_ms: u64,
-        /// Average response time in milliseconds
-        avg_ms: u64,
-        /// Number of samples in statistics (up to 100)
-        sample_count: usize,
     },
 
     /// Error response

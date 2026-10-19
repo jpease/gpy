@@ -9,7 +9,6 @@ use serde_json::{Map, Value};
 pub struct JsonFormatter;
 
 impl Formatter for JsonFormatter {
-    #[expect(clippy::too_many_lines, reason = "explicit per-variant field mapping")]
     fn render(&self, response: &Response, _ctx: &RenderContext<'_>) -> Result<String> {
         let json_value = match response {
             // Delegate to `Serialize` so no field can be silently dropped.
@@ -66,27 +65,6 @@ impl Formatter for JsonFormatter {
                 map.insert(
                     "cache_entries".to_owned(),
                     Value::Number((*cache_entries).into()),
-                );
-                Value::Object(map)
-            }
-            Response::ThemeValue { value } => {
-                let mut map = Map::new();
-                map.insert("value".to_owned(), Value::String(value.clone()));
-                Value::Object(map)
-            }
-            Response::LatencyStatsResult {
-                min_ms,
-                max_ms,
-                avg_ms,
-                sample_count,
-            } => {
-                let mut map = Map::new();
-                map.insert("min_ms".to_owned(), Value::Number((*min_ms).into()));
-                map.insert("max_ms".to_owned(), Value::Number((*max_ms).into()));
-                map.insert("avg_ms".to_owned(), Value::Number((*avg_ms).into()));
-                map.insert(
-                    "sample_count".to_owned(),
-                    Value::Number((*sample_count).into()),
                 );
                 Value::Object(map)
             }

@@ -23,8 +23,6 @@ pub struct EndpointDeps {
     pub theme_manager: Arc<ThemeManager>,
     /// On-disk cache the shell reads to render a prompt without any IPC.
     pub instant_cache: Arc<crate::cache::InstantPromptCache>,
-    /// Rolling request-latency samples reported by `Message::LatencyStats`.
-    pub latency_tracker: Arc<crate::ipc::LatencyTracker>,
     /// Per-repo language detection results shared with the agent event loop.
     pub language_cache: crate::language::DetectionCache,
 }
@@ -121,7 +119,6 @@ impl EndpointHandleBuilder {
             config_manager,
             theme_manager,
             instant_cache,
-            latency_tracker,
             language_cache,
         } = self.deps;
 
@@ -142,7 +139,6 @@ impl EndpointHandleBuilder {
                 config_manager,
                 theme_manager,
                 instant_cache,
-                latency_tracker,
                 language_cache,
                 palette_cache,
             },

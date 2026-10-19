@@ -4,7 +4,7 @@ use super::git_handler::publish_and_repaint;
 use super::{HandlerError, RenderDeps, RequestHandler, spawn_detached};
 use crate::git::CompleteStatus;
 use crate::git::cache::GitStatusCache;
-use crate::ipc::{LatencyTracker, Message, Response};
+use crate::ipc::{Message, Response};
 use crate::warn_log;
 use crate::watcher::multi_repo::MultiRepoWatcher;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -12,13 +12,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 /// Shared, lazily-set watcher handle.
 type WatcherRef = Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>;
 
-/// Handler for client lifecycle, status, config reload, latency, ping and shutdown.
+/// Handler for client lifecycle, status, config reload, ping and shutdown.
 pub struct ClientHandler {
     /// Publishing handles; see [`ClientHandler::trigger_initial_scan`].
     render: RenderDeps,
     git_cache: Arc<GitStatusCache>,
     watcher: WatcherRef,
-    latency_tracker: Arc<LatencyTracker>,
 }
 
 impl ClientHandler {
@@ -28,13 +27,11 @@ impl ClientHandler {
         render: RenderDeps,
         git_cache: Arc<GitStatusCache>,
         watcher: WatcherRef,
-        latency_tracker: Arc<LatencyTracker>,
     ) -> Self {
         Self {
             render,
             git_cache,
             watcher,
-            latency_tracker,
         }
     }
 
@@ -188,21 +185,6 @@ impl ClientHandler {
         Ok(Response::Ack)
     }
 
-    /// Handle latency statistics query.
-    ///
-    /// # Errors
-    /// Never fails; matches the dispatch signature.
-    #[expect(clippy::unnecessary_wraps, reason = "dispatch signature")]
-    fn handle_latency_stats(&self) -> Result<Response, HandlerError> {
-        let (min_ms, max_ms, avg_ms, sample_count) = self.latency_tracker.stats();
-        Ok(Response::LatencyStatsResult {
-            min_ms,
-            max_ms,
-            avg_ms,
-            sample_count,
-        })
-    }
-
     /// Handle ping request.
     ///
     /// # Errors
@@ -297,7 +279,6 @@ impl RequestHandler for ClientHandler {
             Message::WorkspaceUpdate { pid, cwd } => self.handle_workspace_update(*pid, cwd),
             Message::Status => self.handle_status(),
             Message::ConfigReload => self.handle_config_reload(),
-            Message::LatencyStats => self.handle_latency_stats(),
             Message::Ping => self.handle_ping(),
             Message::Shutdown => self.handle_shutdown(),
             _ => Err(HandlerError::UnexpectedMessage {
@@ -361,7 +342,6 @@ mod tests {
             render,
             Arc::new(GitStatusCache::new()),
             Arc::new(Mutex::new(None)),
-            Arc::new(LatencyTracker::new(16)),
         )
     }
 

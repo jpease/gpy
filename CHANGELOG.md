@@ -74,6 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The hidden, deprecated `gpy theme use --apply-layout` alias; use `--force`.
   `gpy theme import --apply-layout` is unchanged.
 - **Breaking:** `gpy-agent oneshot --format` and the IPC `format` field accept only `json`, `ansi`, `bash-prompt` and `zsh-prompt`. The unused `fish`, `fish-source` and `zsh` formats and the never-implemented `bash-source` and `zsh-source` are gone; no shipped shell sent them.
+- **Breaking:** the unused IPC operations `theme` and `latency_stats` are removed; no shipped shell or CLI sent them.
 - `just install` (`install-dev.fish`) installs Fish through `gpy setup`:
   `gpy_init.fish` is sourced once and built-in themes are no longer copied.
   Older dev installs may have `default.toml`, `starship.toml` and `text.toml`
