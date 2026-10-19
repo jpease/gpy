@@ -583,8 +583,8 @@ fn socket_lookalike_filename_is_not_filtered() {
 #[test]
 fn real_sock_file_is_still_filtered() {
     assert!(
-        filter_ignored(Path::new("/tmp/gpy-agent.sock")).is_none(),
-        "the well-known gpy-agent.sock file must still be filtered"
+        filter_ignored(Path::new("/tmp/gpy.sock")).is_none(),
+        "the agent's gpy.sock socket must be filtered by its .sock extension"
     );
     assert!(
         filter_ignored(Path::new("/tmp/project/other.sock")).is_none(),

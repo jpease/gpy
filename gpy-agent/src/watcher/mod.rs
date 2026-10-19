@@ -868,9 +868,7 @@ fn path_contains_git_subdir(path: &Path, subdir_components: &[&str]) -> bool {
 
 fn filter_ignored(path: &Path) -> Option<()> {
     // Match file names, not path substrings (`foo.socket.rs` must pass).
-    if path.file_name() == Some(OsStr::new("gpy-agent.log"))
-        || path.file_name() == Some(OsStr::new("gpy-agent.sock"))
-    {
+    if path.file_name() == Some(OsStr::new("gpy-agent.log")) {
         return None;
     }
     if path.extension() == Some(OsStr::new("sock")) {
