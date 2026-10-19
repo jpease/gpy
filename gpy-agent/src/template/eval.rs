@@ -104,12 +104,11 @@ impl<'a> RenderContext<'a> {
     /// Returns [`TemplateError::UnknownColor`] for a palette name not in `self.palette`.
     fn resolve_color(&self, color: &Color) -> Result<Color> {
         match color {
-            // Starship semantics: a palette entry shadows the ANSI name.
-            Color::Named(name) => Ok(self.palette.get(name).unwrap_or_else(|| color.clone())),
+            Color::Named(_) => Ok(self.palette.lookup(color).unwrap_or_else(|| color.clone())),
             // Self/cyclic references must error, not be dropped silently by an encoder.
             Color::Palette(name) => self
                 .palette
-                .get(name)
+                .lookup(color)
                 .filter(|resolved| !matches!(resolved, Color::Palette(_)))
                 .ok_or_else(|| TemplateError::UnknownColor { name: name.clone() }),
             Color::PrevFg => Ok(self.resolve_prev(self.prev_fg.as_ref())),

@@ -735,8 +735,9 @@ fn exported_index_and_role_colors_reach_real_set_color() {
     }
 }
 
-/// A palette entry shadows an ANSI name for shell-drawn colors, as it does in
-/// the agent's renderer; an ANSI index still names the terminal's own color.
+/// A palette entry shadows an ANSI name for shell-drawn colors, including its
+/// alias spellings, as it does in the agent's renderer; an ANSI index still
+/// names the terminal's own color. Checked on what each shell actually reads.
 #[test]
 fn exported_ansi_names_follow_the_palette_and_indices_do_not() {
     use crate::config::types::ColorSpec;
@@ -746,38 +747,82 @@ fn exported_ansi_names_follow_the_palette_and_indices_do_not() {
     let mut theme = ThemeConfig::default();
     theme.segments.clock.bg_color = ColorSpec::new("red").expect("named color");
     theme.segments.clock.text_color = ColorSpec::new("1").expect("index color");
-    let palette = Palette::new(HashMap::from([(
-        "red".to_owned(),
-        Color::Rgb {
-            r: 0xf3,
-            g: 0x8b,
-            b: 0xa8,
-        },
-    )]));
-    for shell in [Shell::Fish, Shell::Bash, Shell::Zsh] {
-        let export = theme_to_shell(
+    theme.segments.status.ok_bg_color = ColorSpec::new("magenta").expect("named color");
+    let palette = Palette::new(HashMap::from([
+        (
+            "red".to_owned(),
+            Color::Rgb {
+                r: 0xf3,
+                g: 0x8b,
+                b: 0xa8,
+            },
+        ),
+        // `magenta` reaches this entry only through the ANSI alias.
+        (
+            "purple".to_owned(),
+            Color::Rgb {
+                r: 0xcb,
+                g: 0xa6,
+                b: 0xf7,
+            },
+        ),
+    ]));
+    let export = |shell| {
+        theme_to_shell(
             &theme,
             "t",
             &Config::default(),
             shell,
             &palette,
             &BTreeMap::new(),
+        )
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    if shell_available(Shell::Fish) {
+        let path = dir.path().join("export.fish");
+        std::fs::write(&path, export(Shell::Fish)).expect("write fish export");
+        let output = Command::new("fish")
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .args([
+                "--no-config",
+                "-c",
+                "source $argv[1]; set -g fish_term24bit 1
+                 set_color -b $__color_clock_bg; set_color $__color_clock_fg
+                 set_color -b $__color_status_ok_bg",
+                "--",
+            ])
+            .arg(&path)
+            .output()
+            .expect("spawning fish");
+        assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "\x1b[48;2;243;139;168m\x1b[31m\x1b[48;2;203;166;247m",
+            "red and magenta take the palette's hex, index 1 stays the terminal's red"
         );
-        let clock_lines: Vec<&str> = export
-            .lines()
-            .filter(|line| line.contains("color_clock_"))
-            .collect();
-        assert!(
-            clock_lines
-                .iter()
-                .any(|l| l.contains("clock_bg") && l.contains("#f38ba8")),
-            "{shell:?}: red must take the palette's value: {clock_lines:?}"
-        );
-        assert!(
-            clock_lines
-                .iter()
-                .any(|l| l.contains("clock_fg") && !l.contains('#')),
-            "{shell:?}: index 1 must stay the terminal's color: {clock_lines:?}"
-        );
+    } else {
+        skip_shell_or_fail_under_ci(Shell::Fish);
+    }
+
+    for shell in [Shell::Bash, Shell::Zsh] {
+        if !shell_available(shell) {
+            skip_shell_or_fail_under_ci(shell);
+            continue;
+        }
+        let path = dir.path().join(format!("export.{shell:?}"));
+        std::fs::write(&path, export(shell)).expect("write export");
+        let vars = sourced_vars(shell, &[&path]);
+        for expected in [
+            "__color_clock_bg=#f38ba8",
+            "__color_clock_fg=1",
+            "__color_status_ok_bg=#cba6f7",
+        ] {
+            assert!(
+                vars.contains(&expected.to_owned()),
+                "{shell:?} export lacks {expected}"
+            );
+        }
     }
 }

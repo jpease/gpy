@@ -1,11 +1,11 @@
 //! Shell-export serialization: [`ThemeConfig`] → Fish/Bash/Zsh variable assignments.
 
-use crate::config::validation::colors::{PALETTE_ROLE_COLORS, canonical_color};
+use crate::config::validation::colors::{THEME_ONLY_COLORS, canonical_color};
 use crate::config::{Config, DelimiterConfig};
 use crate::formatter::separator::Glyphs;
 use crate::plugin::SegmentName;
 use crate::shell::{Shell, VariableSyntax};
-use crate::template::{Color, Palette, canonical_ansi_name};
+use crate::template::{Color, Palette, parse_color};
 use crate::theme::model::{PluginSegmentTheme, ThemeConfig};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -165,10 +165,10 @@ fn fish_ansi256_color(index: u8) -> String {
     }
 }
 
-/// Theme colors in the spelling the shell's own renderer draws. ANSI names and
-/// palette roles (`orange`, `brown`) resolve through the active palette, as they
-/// do for agent-rendered segments; ANSI indices keep the terminal's palette, and
-/// for Fish become `set_color` values.
+/// Theme colors in the spelling the shell's own renderer draws. Names resolve
+/// through the active palette by [`Palette::lookup`], the rule agent-rendered
+/// segments use; ANSI indices keep the terminal's palette, and for Fish become
+/// `set_color` values.
 #[derive(Clone, Copy)]
 struct ShellColors<'a> {
     shell: Shell,
@@ -178,19 +178,16 @@ struct ShellColors<'a> {
 impl ShellColors<'_> {
     /// `value` is a canonical theme color (see [`canonical_color`]).
     fn resolve(self, value: &str) -> Cow<'_, str> {
-        let resolved =
-            if PALETTE_ROLE_COLORS.contains(&value) || canonical_ansi_name(value).is_some() {
-                match self
-                    .palette
-                    .get(value)
-                    .and_then(|color| palette_color_value(&color))
-                {
-                    Some(color) => Cow::Owned(color),
-                    None => Cow::Borrowed(value),
-                }
-            } else {
-                Cow::Borrowed(value)
-            };
+        // `match_bg`/`match_text` are shell keywords, never palette names.
+        let looked_up = if THEME_ONLY_COLORS.contains(&value) {
+            None
+        } else {
+            parse_color(value)
+                .ok()
+                .and_then(|color| self.palette.lookup(&color))
+                .and_then(|color| palette_color_value(&color))
+        };
+        let resolved = looked_up.map_or(Cow::Borrowed(value), Cow::Owned);
         match resolved.parse::<u8>() {
             Ok(index) if self.shell == Shell::Fish => Cow::Owned(fish_ansi256_color(index)),
             _ => resolved,
