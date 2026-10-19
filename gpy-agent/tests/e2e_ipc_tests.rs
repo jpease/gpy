@@ -188,7 +188,9 @@ async fn test_e2e_agent_status_includes_version() -> Result<()> {
         .await
         .expect("Failed to connect to server")?;
 
-    stream.write_all(b"\"Status\"\n").await?;
+    stream
+        .write_all(b"{\"op\":\"status\",\"format\":\"json\"}\n")
+        .await?;
 
     let response_str = read_ipc_response(&mut stream).await?;
     let response_json: serde_json::Value = serde_json::from_str(&response_str)?;
@@ -221,6 +223,11 @@ async fn test_e2e_agent_status_includes_version() -> Result<()> {
     assert!(
         agent_status.get("cache_entries").is_some(),
         "AgentStatus should include cache_entries count field"
+    );
+    assert_eq!(
+        response_json.as_object().map(serde_json::Map::len),
+        Some(1),
+        "status reply must be exactly {{\"AgentStatus\":{{…}}}}: {response_str}"
     );
 
     server_handle.abort();

@@ -5,7 +5,7 @@ This directory contains JSON Schema files that define the IPC protocol between F
 ## Schema Files
 
 - **`message.json`**: Defines all message types that can be sent from Fish shell to the Agent
-- **`response.json`**: Defines the replies the Agent writes for `format: "json"` requests (flat objects, `{"status":"ok"}`, `{"error":"..."}`; only `AgentStatus` is wrapped). Any other format replies with one line of rendered text
+- **`response.json`**: Defines the replies the Agent writes for `format: "json"` requests (flat objects, `{"status":"ok"}`, `{"error":"..."}`; only `AgentStatus` is wrapped, as `{"AgentStatus":{...}}`, and a status request gets that JSON in every format). Any other format replies with one line of rendered text
 
 ## Protocol Formats
 

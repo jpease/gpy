@@ -68,6 +68,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without a `cd` keeps its old resolution until the next `cd`, as in Fish.
 - Bash and Zsh build agent requests without forking a subshell for each
   JSON-escaped value.
+- `{"op":"status"}` now replies through the JSON formatter, as
+  `{"AgentStatus":{...}}` in every format; the keys are unchanged and now
+  appear in alphabetical order.
 
 ### Removed
 

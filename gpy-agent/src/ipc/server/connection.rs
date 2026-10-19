@@ -352,8 +352,7 @@ impl ConnectionHandler {
         );
     }
 
-    /// Render a reply line. `AgentStatus` uses native protocol serialization
-    /// to keep the enum wrapper for backwards compatibility.
+    /// Render a reply line in the requested format.
     ///
     /// # Errors
     /// Fails if serialization fails.
@@ -366,12 +365,6 @@ impl ConnectionHandler {
         theme_manager: &ThemeManager,
         palette_cache: &PaletteCache,
     ) -> Result<String> {
-        if matches!(response, Response::AgentStatus { .. }) {
-            return match protocol::serialize_response(response) {
-                Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).into_owned()),
-                Err(e) => Err(Error::ipc(format!("Failed to serialize response: {e}"))),
-            };
-        }
         match Self::render_response(
             config_manager,
             theme_manager,

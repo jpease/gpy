@@ -319,7 +319,7 @@ mod schema_files {
     use gpy_agent::config::Config;
     use gpy_agent::formatter::{Format, RenderContext, SegmentPosition, create_formatter};
     use gpy_agent::git::{RepositoryState, RepositoryStatus};
-    use gpy_agent::ipc::protocol::{deserialize_message, serialize_response};
+    use gpy_agent::ipc::protocol::deserialize_message;
     use gpy_agent::ipc::{LanguageInfo, Response};
     use gpy_agent::theme::ThemeConfig;
     use serde_json::Value;
@@ -804,20 +804,13 @@ mod schema_files {
             ),
             (
                 "status",
-                // The socket sends AgentStatus through the native serializer.
-                json(
-                    &String::from_utf8(
-                        serialize_response(&Response::AgentStatus {
-                            version: "1.0.0".to_owned(),
-                            protocol_version: 2,
-                            watched_repos: 1,
-                            registered_clients: 2,
-                            cache_entries: 3,
-                        })
-                        .unwrap(),
-                    )
-                    .unwrap(),
-                ),
+                render_json(&Response::AgentStatus {
+                    version: "1.0.0".to_owned(),
+                    protocol_version: 2,
+                    watched_repos: 1,
+                    registered_clients: 2,
+                    cache_entries: 3,
+                }),
             ),
         ];
         for (label, reply) in &replies {

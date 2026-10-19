@@ -41,33 +41,9 @@ impl Formatter for JsonFormatter {
                 map.insert("status".to_owned(), Value::String("ok".to_owned()));
                 Value::Object(map)
             }
-            Response::AgentStatus {
-                version,
-                protocol_version,
-                watched_repos,
-                registered_clients,
-                cache_entries,
-            } => {
-                let mut map = Map::new();
-                map.insert("version".to_owned(), Value::String(version.clone()));
-                map.insert(
-                    "protocol_version".to_owned(),
-                    Value::Number((*protocol_version).into()),
-                );
-                map.insert(
-                    "watched_repos".to_owned(),
-                    Value::Number((*watched_repos).into()),
-                );
-                map.insert(
-                    "registered_clients".to_owned(),
-                    Value::Number((*registered_clients).into()),
-                );
-                map.insert(
-                    "cache_entries".to_owned(),
-                    Value::Number((*cache_entries).into()),
-                );
-                Value::Object(map)
-            }
+            // Wire shape is `{"AgentStatus":{…}}`, the same in every format.
+            Response::AgentStatus { .. } => serde_json::to_value(response)
+                .map_err(|e| crate::Error::ipc(format!("failed to serialize agent status: {e}")))?,
             Response::Directory { cwd, read_only } => {
                 let mut map = Map::new();
                 map.insert("cwd".to_owned(), Value::String(cwd.clone()));

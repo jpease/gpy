@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/jpease/gpy/schemas/response.json",
   "title": "GPY Agent IPC Response (format: json)",
-  "description": "Replies the agent writes, one JSON object per line, when the request's format is `json` (the default). Replies are flat objects, not serde enum wrappers, except AgentStatus. For every other format the reply is one line of rendered text, not JSON. A missing client-side format in the shell form falls back to json. Errors are {\"error\":...} for json requests.",
+  "description": "Replies the agent writes, one JSON object per line, when the request's format is `json` (the default). Replies are flat objects, not serde enum wrappers, except AgentStatus, which is always {\"AgentStatus\":{...}}. For every other format the reply is one line of rendered text, not JSON. A missing client-side format in the shell form falls back to json. Errors are {\"error\":...} for json requests.",
   "oneOf": [
     {
       "type": "object",
@@ -253,7 +253,7 @@
         "AgentStatus"
       ],
       "additionalProperties": false,
-      "description": "The only wrapped reply: sent with the native serializer regardless of the requested format.",
+      "description": "The only wrapped reply. Every format sends this same JSON shape for a status request.",
       "properties": {
         "AgentStatus": {
           "type": "object",
