@@ -107,12 +107,15 @@ impl ClientHandler {
             return Err(HandlerError::PidNotRegistered(pid.get()));
         }
 
-        // Best-effort: on watcher failure, scan immediately so the cache is fresh.
-        if let Some(watcher) = self
+        // Clone out first: in an `if let` chain the guard would live through
+        // the block, holding the slot across the watcher call and the scan.
+        let watcher = self
             .watcher
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+            .clone();
+        // Best-effort: on watcher failure, scan immediately so the cache is fresh.
+        if let Some(watcher) = watcher
             && let Err(e) = watcher.update_client(pid.get(), path_buf)
         {
             crate::debug::write_debug_log(
