@@ -909,10 +909,10 @@ fn test_theme_export_zsh_bash_include_plugin_segment_vars() {
         &gpy_agent::template::Palette::default(),
     );
     assert!(bash_output.contains("export GPY_UI_DIRECTORY_DISPLAY=\"basename\""));
-    assert!(bash_output.contains("export __gpy_segment_k8s_id=\"k8s\""));
-    assert!(bash_output.contains("export __gpy_segment_k8s_bg_color=\"#073642\""));
-    assert!(bash_output.contains("export __color_k8s_context=\"#326ce5\""));
-    assert!(bash_output.contains("export __icon_k8s_secondary=\"•\""));
+    assert!(bash_output.contains("__gpy_segment_k8s_id=\"k8s\""));
+    assert!(bash_output.contains("__gpy_segment_k8s_bg_color=\"#073642\""));
+    assert!(bash_output.contains("__color_k8s_context=\"#326ce5\""));
+    assert!(bash_output.contains("__icon_k8s_secondary=\"•\""));
 }
 
 #[test]

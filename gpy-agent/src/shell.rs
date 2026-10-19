@@ -31,23 +31,23 @@ impl Shell {
     pub const fn variable_syntax(self) -> VariableSyntax {
         match self {
             Self::Fish => VariableSyntax {
-                prefix: "set -g",
-                export_prefix: "set -gx",
-                unset_prefix: "set -e",
+                prefix: "set -g ",
+                export_prefix: "set -gx ",
+                unset_prefix: "set -e ",
                 separator: " ",
                 quote: "\"",
             },
             Self::Zsh => VariableSyntax {
-                prefix: "typeset -g",
-                export_prefix: "export",
-                unset_prefix: "unset",
+                prefix: "typeset -g ",
+                export_prefix: "export ",
+                unset_prefix: "unset ",
                 separator: "=",
                 quote: "\"",
             },
             Self::Bash => VariableSyntax {
-                prefix: "export",
-                export_prefix: "export",
-                unset_prefix: "unset",
+                prefix: "",
+                export_prefix: "export ",
+                unset_prefix: "unset ",
                 separator: "=",
                 quote: "\"",
             },
@@ -99,11 +99,11 @@ impl std::str::FromStr for Shell {
 /// Variable assignment syntax template.
 #[derive(Debug, Clone, Copy)]
 pub struct VariableSyntax {
-    /// Assignment command, e.g. `set -g`.
+    /// Assignment command with its trailing space, e.g. `set -g `; empty for a plain Bash assignment.
     pub prefix: &'static str,
-    /// Exported assignment command, e.g. `export`.
+    /// Exported assignment command with its trailing space, e.g. `export `.
     pub export_prefix: &'static str,
-    /// Erase command, e.g. `unset`.
+    /// Erase command with its trailing space, e.g. `unset `.
     pub unset_prefix: &'static str,
     /// Name/value separator.
     pub separator: &'static str,
@@ -116,7 +116,7 @@ impl VariableSyntax {
     #[must_use]
     pub fn format(self, name: &str, value: &str) -> String {
         format!(
-            "{} {}{}{}{}{}",
+            "{}{}{}{}{}{}",
             self.prefix, name, self.separator, self.quote, value, self.quote
         )
     }
@@ -125,7 +125,7 @@ impl VariableSyntax {
     #[must_use]
     pub fn format_export(self, name: &str, value: &str) -> String {
         format!(
-            "{} {}{}{}{}{}",
+            "{}{}{}{}{}{}",
             self.export_prefix, name, self.separator, self.quote, value, self.quote
         )
     }
@@ -133,6 +133,6 @@ impl VariableSyntax {
     /// Format a statement erasing a variable; harmless when unset.
     #[must_use]
     pub fn format_unset(self, name: &str) -> String {
-        format!("{} {}", self.unset_prefix, name)
+        format!("{}{}", self.unset_prefix, name)
     }
 }

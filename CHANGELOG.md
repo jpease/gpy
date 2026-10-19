@@ -78,6 +78,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gpy_init.fish` is sourced once and built-in themes are no longer copied.
   Older dev installs may have `default.toml`, `starship.toml` and `text.toml`
   in `~/.config/gpy/themes` shadowing the built-ins; delete them.
+- Bash: theme variables (`__gpy_*`, `__color_*`, `__icon_*`, `__prompt_*`,
+  `__enabled_segments`) are plain shell variables, no longer exported to every
+  child process. `GPY_*` settings are still exported.
 
 ### Removed
 

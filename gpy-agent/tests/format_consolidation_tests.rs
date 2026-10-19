@@ -35,19 +35,19 @@ fn test_shell_enum_parsing() {
 #[test]
 fn test_shell_variable_syntax() {
     let syntax = Shell::Fish.variable_syntax();
-    assert_eq!(syntax.prefix, "set -g");
+    assert_eq!(syntax.prefix, "set -g ");
     assert_eq!(syntax.separator, " ");
     assert_eq!(syntax.format("key", "value"), "set -g key \"value\"");
 
     let syntax = Shell::Zsh.variable_syntax();
-    assert_eq!(syntax.prefix, "typeset -g");
+    assert_eq!(syntax.prefix, "typeset -g ");
     assert_eq!(syntax.separator, "=");
     assert_eq!(syntax.format("key", "value"), "typeset -g key=\"value\"");
 
     let syntax = Shell::Bash.variable_syntax();
-    assert_eq!(syntax.prefix, "export");
+    assert_eq!(syntax.prefix, "");
     assert_eq!(syntax.separator, "=");
-    assert_eq!(syntax.format("key", "value"), "export key=\"value\"");
+    assert_eq!(syntax.format("key", "value"), "key=\"value\"");
 }
 
 #[test]

@@ -905,10 +905,7 @@ fn append_enabled_segments(output: &mut String, shell: Shell, config: &Config) {
             output,
             format_args!("typeset -g -a __enabled_segments=({segments})"),
         ),
-        Shell::Bash => push_line(
-            output,
-            format_args!("export __enabled_segments=\"{segments}\""),
-        ),
+        Shell::Bash => push_line(output, format_args!("__enabled_segments=\"{segments}\"")),
     }
 }
 
