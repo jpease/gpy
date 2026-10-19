@@ -1187,9 +1187,6 @@ end
 # so a theme or config change (a reload, an edited re-export, or an agent
 # restarted with another config) must not leave them serving the old render.
 function __gpy_clear_render_memos --description 'Forget memoized agent renders'
-    for var in (set -n | string match '__gpy_lang_cache_*')
-        set -e $var
-    end
     set -e __gpy_char_cache_key
     set -e __gpy_char_cache_val
     set -e __gpy_dir_cache_key

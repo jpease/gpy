@@ -2383,3 +2383,63 @@ fn incremental_refresh_matches_git_status_for_case_variant_edits() {
         }
     }
 }
+
+/// A language-marker event hands re-detection and its version probes to a
+/// background job: the event thread returns while a 2 s probe runs, and the
+/// probed version is published and rung when it lands.
+#[cfg(unix)]
+#[test]
+fn language_event_does_not_wait_on_a_version_probe() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_tmp, repo) = create_temp_repo();
+    fs::write(repo.join("main.py"), "print('hi')\n").expect("main.py");
+    fs::write(repo.join("lib.py"), "x = 1\n").expect("lib.py");
+    // A forwarded venv with no version in pyvenv.cfg: only its 2 s
+    // interpreter can answer.
+    let venv_tmp = tempdir().expect("venv dir");
+    let venv = venv_tmp.path().join("activated");
+    let python = crate::language::venv::venv_python_binary(&venv);
+    fs::create_dir_all(python.parent().expect("bin dir")).expect("bin dir");
+    fs::write(&python, "#!/bin/sh\nsleep 2\necho 'Python 3.7.4'\n").expect("python");
+    fs::set_permissions(&python, fs::Permissions::from_mode(0o755)).expect("chmod python");
+    crate::language::venv::stash_project_venv(&repo, &venv);
+
+    let cache_tmp = tempdir().expect("cache dir");
+    let ctx = make_hermetic_ctx(cache_tmp.path());
+    let notified_before = ctx.registry.notify_invocations();
+    let event = DebouncedEvent {
+        event: FileEvent::Language {
+            path: repo.join("main.py"),
+        },
+        repo: repo.clone(),
+    };
+
+    let started = std::time::Instant::now();
+    handle_file_event(&ctx, &event, &Config::default());
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(1000),
+        "the event thread waited {elapsed:?} on a 2 s version probe"
+    );
+
+    let published = || {
+        cache_file_names(cache_tmp.path()).iter().any(|name| {
+            name.contains(".lang")
+                && fs::read_to_string(cache_tmp.path().join(name))
+                    .is_ok_and(|content| content.contains("3.7.4"))
+        })
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !published() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        published(),
+        "the probed version must reach the instant cache"
+    );
+    assert!(
+        ctx.registry.notify_invocations() > notified_before,
+        "the publish must ring the shells"
+    );
+}
