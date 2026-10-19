@@ -83,15 +83,12 @@ const MAX_PATH_LENGTH: usize = 4096;
 /// Wire-size cap shared by the connection guard and `ipc::protocol`.
 pub(crate) const MAX_MESSAGE_SIZE: usize = 64 * 1024;
 
-const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 5;
 const DEFAULT_MAX_CONNECTIONS_PER_SEC: u32 = 1000;
 const DEFAULT_MAX_CONCURRENT_CONNECTIONS: usize = 200;
 
 /// Security limits for the IPC server.
 #[derive(Clone)]
 pub struct GuardSettings {
-    /// Per-request timeout.
-    pub request_timeout: Duration,
     /// Maximum message size in bytes.
     pub max_message_size: usize,
     /// Probe client PID liveness at route time.
@@ -105,7 +102,6 @@ pub struct GuardSettings {
 impl Default for GuardSettings {
     fn default() -> Self {
         Self {
-            request_timeout: Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS),
             max_message_size: MAX_MESSAGE_SIZE,
             validate_pids: true,
             max_connections_per_second: DEFAULT_MAX_CONNECTIONS_PER_SEC,

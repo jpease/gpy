@@ -78,6 +78,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking (library):** `gpy_agent::ipc::protocol::serialize_message` is
   removed, and `Message`, `SafePath` and `ClientPid` no longer implement
   `Serialize`/`Deserialize`.
+- The library's `GuardSettings` no longer has a `request_timeout` field; it
+  was never read. The IPC request timeout is still `agent.timeout_seconds`.
 
 ### Removed
 
