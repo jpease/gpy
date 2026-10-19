@@ -13,6 +13,6 @@ pub use manifest::{
     SegmentName, SegmentTokenCollision, first_token_collision,
 };
 pub use registry::{
-    DiscoveredPlugin, PluginDiagnostic, PluginDiscovery, PluginLoadStatus, PluginSource,
-    discover_plugins, user_plugins_dir,
+    DiscoveredPlugin, PluginDiagnostic, PluginDiscovery, PluginSource, discover_plugins,
+    user_plugins_dir,
 };

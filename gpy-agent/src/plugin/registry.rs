@@ -31,13 +31,6 @@ impl PluginSource {
     }
 }
 
-/// Load status for a discovered plugin entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PluginLoadStatus {
-    /// Plugin manifest parsed and accepted.
-    Ready,
-}
-
 /// A valid plugin discovered on disk.
 #[derive(Debug, Clone)]
 pub struct DiscoveredPlugin {
@@ -47,8 +40,6 @@ pub struct DiscoveredPlugin {
     pub root: PathBuf,
     /// Plugin source location.
     pub source: PluginSource,
-    /// Current plugin load status.
-    pub status: PluginLoadStatus,
 }
 
 /// A non-fatal plugin discovery/parse issue.
@@ -128,7 +119,6 @@ fn first_party_plugins() -> Vec<DiscoveredPlugin> {
         manifest,
         root: PathBuf::from("<first-party>"),
         source: PluginSource::FirstParty,
-        status: PluginLoadStatus::Ready,
     }]
 }
 
@@ -192,7 +182,6 @@ fn register_discovered_plugin(
         manifest,
         root: plugin_dir,
         source,
-        status: PluginLoadStatus::Ready,
     };
 
     let Some(existing) = winners.get(&plugin_id) else {

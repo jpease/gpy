@@ -24,9 +24,7 @@ pub use fish_ansi::FishAnsiFormatter;
 pub(crate) use fish_ansi::{get_language_display, select_languages};
 pub use fish_source::FishSourceFormatter;
 pub use json::JsonFormatter;
-pub use style_encoder::{
-    PromptDialect, encode_ansi, encode_bash_prompt, encode_zsh, encode_zsh_prompt,
-};
+pub use style_encoder::{PromptDialect, encode_ansi, encode_bash_prompt, encode_zsh_prompt};
 
 use crate::Result;
 use crate::config::Config;

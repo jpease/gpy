@@ -52,7 +52,7 @@ impl PaletteManager {
                 "invalid palette name '{name}': must not contain path separators, '..', or control characters"
             )));
         }
-        let user_path = Self::user_palette_path(name);
+        let user_path = Self::palette_path(name);
         let palette = if user_path.exists() {
             Self::load_from_path(&user_path, name)?
         } else {
@@ -108,10 +108,6 @@ impl PaletteManager {
     /// Return the canonical user path for a palette by name.
     #[must_use]
     pub fn palette_path(name: &str) -> PathBuf {
-        Self::user_palettes_dir().join(format!("{name}.toml"))
-    }
-
-    fn user_palette_path(name: &str) -> PathBuf {
         Self::user_palettes_dir().join(format!("{name}.toml"))
     }
 
