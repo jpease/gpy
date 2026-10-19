@@ -7,11 +7,14 @@
 #![allow(clippy::missing_panics_doc)]
 
 use gpy_agent::config::loader::{load_config_from_file, parse_config_toml, save_config};
-use gpy_agent::config::schema::{get_config_paths, get_example_config};
+use gpy_agent::config::schema::get_config_paths;
 use gpy_agent::config::validation::validate_config;
 use gpy_agent::config::{Config, types};
 use std::fs;
 use tempfile::TempDir;
+
+/// The example config shipped in release tarballs.
+const EXAMPLE_CONFIG: &str = include_str!("../../config/config.example.toml");
 
 #[test]
 fn test_config_default_enabled() {
@@ -32,14 +35,14 @@ fn test_parse_empty_toml() {
 
 #[test]
 fn test_parse_example_config() {
-    let example_toml = get_example_config();
+    let example_toml = EXAMPLE_CONFIG;
     let result = parse_config_toml(example_toml);
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_example_config_agent_values() {
-    let config = parse_config_toml(get_example_config()).unwrap();
+    let config = parse_config_toml(EXAMPLE_CONFIG).unwrap();
     assert!(config.agent.enabled);
     assert_eq!(config.agent.timeout_seconds.get(), 5);
     assert!(config.agent.live_updates);
@@ -50,7 +53,7 @@ fn test_example_config_agent_values() {
 
 #[test]
 fn test_example_config_git_values() {
-    let config = parse_config_toml(get_example_config()).unwrap();
+    let config = parse_config_toml(EXAMPLE_CONFIG).unwrap();
     assert!(config.git.enabled);
     assert!(config.git.show_upstream);
     assert_eq!(config.git.timeout_seconds.get(), 10);
@@ -58,7 +61,7 @@ fn test_example_config_git_values() {
 
 #[test]
 fn test_example_config_language_values() {
-    let config = parse_config_toml(get_example_config()).unwrap();
+    let config = parse_config_toml(EXAMPLE_CONFIG).unwrap();
     assert!(config.language.enabled);
     assert!(config.language.show_versions);
     assert_eq!(config.language.cache_ttl_hours.get(), 24);
@@ -67,7 +70,7 @@ fn test_example_config_language_values() {
 
 #[test]
 fn test_example_config_ui_values() {
-    let config = parse_config_toml(get_example_config()).unwrap();
+    let config = parse_config_toml(EXAMPLE_CONFIG).unwrap();
     assert!(config.ui.show_icons);
     assert_eq!(config.ui.theme.as_str(), "default");
     assert_eq!(
@@ -270,7 +273,7 @@ fn test_load_config_from_file_success() {
     let temp_dir = TempDir::new().unwrap();
     let config_file = temp_dir.path().join("test_config.toml");
 
-    fs::write(&config_file, get_example_config()).unwrap();
+    fs::write(&config_file, EXAMPLE_CONFIG).unwrap();
 
     let result = load_config_from_file(config_file.to_str().unwrap());
     assert!(result.is_ok());
@@ -342,7 +345,7 @@ fn test_config_boundary_values() {
 
 #[test]
 fn test_example_config_is_valid() {
-    let example_toml = get_example_config();
+    let example_toml = EXAMPLE_CONFIG;
     let config = parse_config_toml(example_toml).unwrap();
     let result = validate_config(&config);
     assert!(result.is_ok());
@@ -406,7 +409,7 @@ fn test_config_utf8_handling() {
     let temp_dir = TempDir::new().unwrap();
     let config_file = temp_dir.path().join("utf8_test.toml");
 
-    fs::write(&config_file, get_example_config()).unwrap();
+    fs::write(&config_file, EXAMPLE_CONFIG).unwrap();
 
     let result = load_config_from_file(config_file.to_str().unwrap());
     assert!(result.is_ok());
@@ -474,27 +477,28 @@ fn toml_leaf_paths(prefix: &str, table: &toml::Table, out: &mut Vec<String>) {
     }
 }
 
-/// Every key the shipped config sets is a `Config` leaf; serde ignores
+/// Every key the shipped configs set is a `Config` leaf; serde ignores
 /// unknown keys, so typos would go unnoticed. Icon maps are exempt.
 #[test]
 fn shipped_config_toml_sets_only_known_keys() {
-    let shipped_config_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/config.toml");
-    let raw: toml::Table = fs::read_to_string(shipped_config_path)
-        .unwrap()
-        .parse()
-        .unwrap();
     let mut known = Vec::new();
     let default_table = toml::Table::try_from(Config::default()).unwrap();
     toml_leaf_paths("", &default_table, &mut known);
-    let mut shipped = Vec::new();
-    toml_leaf_paths("", &raw, &mut shipped);
-    let unknown: Vec<&String> = shipped
-        .iter()
-        .filter(|path| !path.starts_with("language.icons.") && !path.starts_with("git.icons."))
-        .filter(|path| !known.contains(path))
-        .collect();
-    assert!(
-        unknown.is_empty(),
-        "config/config.toml sets keys Config does not have: {unknown:?}"
-    );
+    for path in [
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../config/config.toml"),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../config/config.example.toml"),
+    ] {
+        let raw: toml::Table = fs::read_to_string(path).unwrap().parse().unwrap();
+        let mut shipped = Vec::new();
+        toml_leaf_paths("", &raw, &mut shipped);
+        let unknown: Vec<&String> = shipped
+            .iter()
+            .filter(|key| !key.starts_with("language.icons.") && !key.starts_with("git.icons."))
+            .filter(|key| !known.contains(key))
+            .collect();
+        assert!(
+            unknown.is_empty(),
+            "{path} sets keys Config does not have: {unknown:?}"
+        );
+    }
 }

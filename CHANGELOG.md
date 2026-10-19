@@ -67,6 +67,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Idle prompts no longer repaint spuriously after the instant-prompt write
   cache overflows.
 
+- `config/config.example.toml` documents `git.max_ahead_behind` and
+  `git.watch_worktree`.
+
 - Bash and Zsh keep a newline in a segment `format` when the agent answers
   live, instead of cutting the segment at it. Agent replies now carry an
   embedded newline as the RS byte (`\x1e`) so each reply stays one line;

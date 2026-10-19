@@ -50,6 +50,10 @@ skip_paths = []
 # Long branch names will be truncated with an ellipsis (…)
 # Example: "feature/very-long-branch-name" → "feature/very-long-bra…"
 max_branch_length = 0
+# Maximum ahead/behind count to show (0 = unlimited); larger counts render as N+
+max_ahead_behind = 100
+# Watch the working tree, not just .git, so edits update the prompt instantly (GPY_WATCH_WORKTREE overrides)
+watch_worktree = true
 
 # Git icons (semantic indicators)
 [git.icons]
