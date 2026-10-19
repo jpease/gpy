@@ -1,7 +1,8 @@
 //! Fish integration: prompt startup with and without the agent, and agent
 //! stability across repeated fish runs. Uses the cargo-built agent binary.
-//! and agent stability across repeated fish invocations.
 
+// Spawns the daemonised agent over its Unix socket; native Windows is CLI-only.
+#![cfg(unix)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::panic)]

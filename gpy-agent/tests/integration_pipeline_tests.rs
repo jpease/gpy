@@ -2,6 +2,8 @@
 //!
 //! End-to-end tests for complete workflows through the agent.
 
+// The agent's IPC is Unix-socket only; native Windows is CLI-only.
+#![cfg(unix)]
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]

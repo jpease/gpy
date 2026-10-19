@@ -57,8 +57,10 @@ impl Drop for KillOnDrop {
 }
 
 /// Kills and reaps a pty-attached child on drop.
+#[cfg(unix)] // `portable_pty` is a Unix-only dev-dependency.
 pub struct PtyChild(Box<dyn portable_pty::Child + Send + Sync>);
 
+#[cfg(unix)]
 impl PtyChild {
     #[must_use]
     pub fn new(child: Box<dyn portable_pty::Child + Send + Sync>) -> Self {
@@ -66,6 +68,7 @@ impl PtyChild {
     }
 }
 
+#[cfg(unix)]
 impl Deref for PtyChild {
     type Target = dyn portable_pty::Child + Send + Sync;
 
@@ -74,12 +77,14 @@ impl Deref for PtyChild {
     }
 }
 
+#[cfg(unix)]
 impl DerefMut for PtyChild {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut *self.0
     }
 }
 
+#[cfg(unix)]
 impl Drop for PtyChild {
     fn drop(&mut self) {
         let _ = self.0.kill();

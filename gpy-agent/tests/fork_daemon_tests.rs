@@ -2,6 +2,8 @@
 //! assorted paths, repeated start/abort cycles, concurrent clients, and
 //! binding failures.
 
+// The agent's IPC is Unix-socket only; native Windows is CLI-only.
+#![cfg(unix)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::missing_errors_doc)]
@@ -19,7 +21,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::time::timeout;
 
-#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(2);
@@ -48,7 +49,6 @@ async fn test_socket_permissions() -> Result<()> {
 
     wait_for_socket(&socket_path, SOCKET_TIMEOUT).await;
 
-    #[cfg(unix)]
     {
         let metadata = std::fs::metadata(&socket_path)?;
         let mode = metadata.permissions().mode() & 0o777;
@@ -261,7 +261,6 @@ async fn test_socket_binding_errors() -> Result<()> {
     let readonly_dir = temp_dir.path().join("readonly");
     std::fs::create_dir_all(&readonly_dir)?;
 
-    #[cfg(unix)]
     {
         let mut perms = std::fs::metadata(&readonly_dir)?.permissions();
         perms.set_mode(0o444);

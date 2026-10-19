@@ -10,14 +10,19 @@
 
 mod common;
 
-use common::{EnvGuard, endpoint_builder, wait_for_socket};
+#[cfg(unix)]
+use common::wait_for_socket;
+use common::{EnvGuard, endpoint_builder};
 use gpy_agent::git::status::load_repository_state;
 use gpy_agent::language::version::{NodeDetector, detect_language_release, get_version_detectors};
 use std::fs;
+#[cfg(unix)]
 use std::sync::Arc;
+#[cfg(unix)]
 use std::time::Duration;
 use tempfile::TempDir;
 
+#[cfg(unix)]
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[test]
@@ -106,6 +111,7 @@ fn test_git_status_error_handling() {
 
 /// A request line longer than the 64 `KiB` limit makes the server drop the
 /// connection without replying.
+#[cfg(unix)] // The agent's IPC is Unix-socket only; native Windows is CLI-only.
 #[tokio::test]
 async fn test_message_size_limit_enforced() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -150,6 +156,7 @@ async fn test_message_size_limit_enforced() {
 /// `spawn_concurrent_connection_attempts`.
 ///
 /// A saturated semaphore closes without writing, so EOF before any byte means busy.
+#[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConnectionOutcome {
     /// Got a real ping ack; the handler held a semaphore permit.
@@ -165,6 +172,7 @@ enum ConnectionOutcome {
 /// server's response before classifying themselves as [`ConnectionOutcome`].
 ///
 /// An ack proves a permit is held; connect success only proves the OS backlog accepted it.
+#[cfg(unix)]
 #[allow(clippy::unused_async)]
 async fn spawn_concurrent_connection_attempts(
     socket_path: &std::path::Path,
@@ -265,6 +273,7 @@ fn ensure_min_open_file_limit(min_soft: libc::rlim_t) {
     }
 }
 
+#[cfg(unix)]
 #[tokio::test]
 #[serial_test::serial]
 async fn test_concurrent_connection_limit() {
@@ -349,6 +358,7 @@ async fn test_concurrent_connection_limit() {
 }
 
 /// Send a request and read the response.
+#[cfg(unix)]
 async fn send_and_read_response(
     stream: &mut tokio::net::UnixStream,
     request: &str,
@@ -376,6 +386,7 @@ async fn send_and_read_response(
 ///
 /// After an agent restart, shells are still registered client-side but not
 /// server-side; the error reply is what triggers them to re-register.
+#[cfg(unix)]
 #[tokio::test]
 async fn test_workspace_update_requires_registration() {
     use tokio::net::UnixStream;
@@ -431,6 +442,7 @@ async fn test_workspace_update_requires_registration() {
 
 /// Send one request line on a fresh connection and return the full reply
 /// line, including its trailing newline.
+#[cfg(unix)]
 async fn request_reply_line(socket_path: &std::path::Path, request: &str) -> String {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::time::timeout;
@@ -456,6 +468,7 @@ async fn request_reply_line(socket_path: &std::path::Path, request: &str) -> Str
 /// A failed prompt-segment request is answered with an empty line.
 ///
 /// Holds for every prompt format and failure stage; JSON clients still get `{"error": ...}`.
+#[cfg(unix)]
 #[tokio::test]
 #[serial_test::serial]
 async fn ansi_error_replies_are_empty_lines() {

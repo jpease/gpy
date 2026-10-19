@@ -10,25 +10,34 @@
 mod test_harness;
 
 use gpy_agent::agent::startup::clock_signal_decision;
+#[cfg(unix)]
 use gpy_agent::ipc::ClientDirectory;
+#[cfg(unix)]
 use serial_test::serial;
+#[cfg(unix)]
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(unix)]
 use test_harness::SignalCounter;
 
 #[cfg(unix)]
 use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
 
 // OnceLock so the counters are safely reachable from signal handlers.
+#[cfg(unix)]
 use std::sync::OnceLock;
 
+#[cfg(unix)]
 static REGISTERED_COUNTER: OnceLock<SignalCounter> = OnceLock::new();
+#[cfg(unix)]
 static UNREGISTERED_COUNTER: OnceLock<SignalCounter> = OnceLock::new();
 
+#[cfg(unix)]
 fn get_registered_counter() -> &'static SignalCounter {
     REGISTERED_COUNTER.get_or_init(SignalCounter::new)
 }
 
+#[cfg(unix)]
 fn get_unregistered_counter() -> &'static SignalCounter {
     UNREGISTERED_COUNTER.get_or_init(SignalCounter::new)
 }

@@ -257,15 +257,11 @@ fn test_find_repo_root_windows_junction() {
         return;
     }
 
-    let result = find_repo_root(&junction_path);
-    assert!(result.is_ok());
-
-    let root = result.unwrap();
-    assert!(root.is_some());
+    let root = find_repo_root(&junction_path).expect("junction should resolve to the repo root");
 
     // On Windows, canonicalize should resolve junctions similar to symlinks
     let canonical_original = fs::canonicalize(temp_path).expect("Failed to canonicalize original");
-    assert_eq!(root.unwrap(), canonical_original);
+    assert_eq!(root, canonical_original);
 }
 
 #[test]

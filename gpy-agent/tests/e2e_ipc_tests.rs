@@ -1,6 +1,8 @@
 //! End-to-end IPC tests: an in-process server on a real Unix socket answering
 //! ping, git status (including `skip_paths`), and agent status requests.
 
+// The agent's IPC is Unix-socket only; native Windows is CLI-only.
+#![cfg(unix)]
 #![allow(clippy::panic)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
