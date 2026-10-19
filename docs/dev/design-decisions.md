@@ -12,7 +12,7 @@ GPY is a prompt for Fish, Zsh and Bash on Unix-like systems. Evaluate a design c
 
 ### Cross-platform transports nobody uses
 
-The shells GPY integrates with run on Linux and macOS, and on Windows under WSL, all of which provide Unix domain sockets. GPY uses Unix domain sockets only. There is no Windows transport: `ipc/transport.rs` and the client/server entry points return `native_windows_unsupported()` on non-Unix targets, so native Windows is CLI-only and the prompt integration runs under WSL.
+The shells GPY integrates with run on Linux and macOS, and on Windows under WSL, all of which provide Unix domain sockets. GPY uses Unix domain sockets only. There is no Windows transport: the socket server and CLI client entry points return `native_windows_unsupported()` on non-Unix targets, so native Windows is CLI-only and the prompt integration runs under WSL.
 
 ### Unmeasured optimization
 

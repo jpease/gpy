@@ -1,6 +1,5 @@
 //! JSON IPC between shell clients and the agent over Unix domain sockets.
 
-pub mod client;
 pub mod handlers;
 pub mod latency;
 pub mod protocol;
@@ -8,7 +7,6 @@ pub mod registry;
 pub mod server;
 #[cfg(unix)]
 pub(crate) mod socket_identity;
-pub mod transport;
 
 pub use crate::formatter::Format;
 

@@ -422,9 +422,7 @@ error.rs (foundation)
   │
   ├── ipc/
   │   ├── protocol.rs (JSON serialization)
-  │   ├── transport.rs (socket I/O)
   │   ├── server.rs (request dispatcher)
-  │   ├── client.rs (client utilities)
   │   └── registry.rs (Fish PID tracking)
   │
   └── watcher/
