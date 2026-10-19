@@ -48,6 +48,11 @@ for round in 1 2 3; do
         lost=$((lost + 1))
         rm -f "$flag.reregister"
     fi
+    # Let the trap finish its repaint. A ring landing just after a trap
+    # returns was seen held until the shell's next input; that case is not
+    # covered here: the agent rings at most twice in a row, and the second
+    # ring is the one that lands during the first trap.
+    sleep 1
 done
 if [ "$lost" -eq 0 ]; then
     pass "a re-register ring that lands during the reload trap is answered (3 of 3)"

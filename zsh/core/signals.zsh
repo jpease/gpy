@@ -49,20 +49,22 @@ function __gpy_consume_shell_flags() {
 
 # Zsh drops a SIGURG that arrives while this trap is still running (an agent
 # start rings `.reload`, then `.reregister`, back to back). The agent writes a
-# flag before it rings, so the trap re-checks until no flag is left.
+# flag before it rings, so after acting and repainting the trap looks again,
+# and goes round while a flag arrived meanwhile (at most three passes).
 # `zle reset-prompt` alone only redraws the old PROMPT string, so re-render
 # first with the last exit code to keep status colouring.
 function TRAPURG() {
-    local pass
+    local base=${__gpy_shell_flag_base:-} pass
     for pass in 1 2 3; do
-        __gpy_consume_shell_flags || break
+        __gpy_consume_shell_flags
+        if zle; then
+            __gpy_update_prompts "${__gpy_last_exit_code:-0}"
+            __gpy_load_cache_relay "$__gpy_char_cache_relay_path" __gpy_char_cache_key __gpy_char_cache_val
+            __gpy_load_cache_relay "$__gpy_dir_cache_relay_path" __gpy_dir_cache_key __gpy_dir_cache_val
+            zle reset-prompt
+        fi
+        [[ -n "$base" && ( -e "$base.reregister" || -e "$base.reload" ) ]] || break
     done
-    if zle; then
-        __gpy_update_prompts "${__gpy_last_exit_code:-0}"
-        __gpy_load_cache_relay "$__gpy_char_cache_relay_path" __gpy_char_cache_key __gpy_char_cache_val
-        __gpy_load_cache_relay "$__gpy_dir_cache_relay_path" __gpy_dir_cache_key __gpy_dir_cache_val
-        zle reset-prompt
-    fi
     return 0
 }
 
