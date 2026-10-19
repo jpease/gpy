@@ -493,8 +493,8 @@ If you want to build GPY yourself or contribute to development:
 git clone https://github.com/jpease/gpy.git
 cd gpy
 
-# Build the agent. Use the release-dist profile: `release` is tuned for build
-# speed (opt-level 1), release-dist matches the shipped binaries.
+# Build the agent. Use the release-dist profile: `release` is opt-level 3 with
+# fat LTO and keeps symbols; release-dist matches the shipped binaries.
 (cd gpy-agent && cargo build --profile release-dist)
 
 # The binaries are now in gpy-agent/target/release-dist/
