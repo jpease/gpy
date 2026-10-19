@@ -21,13 +21,19 @@
 #      keypress (.reload flag + SIGURG doorbell);
 #   4. `exec fish` survives agent notifications: the exec'd shell keeps
 #      the registered PID and receives the agent's ring before it has
-#      installed any handler; it must stay alive and answer a command.
+#      installed any handler; it must stay alive and answer a command;
+#   5. idle-to-idle repaint across subdirectories: two idle sessions, one in
+#      the repo root and one in a subdirectory, both repaint on outside
+#      changes (edit, untracked file, commit, new branch, and a config.toml
+#      rewrite picked up by the watcher with no `config reload`). With
+#      GPY_E2E_LATENCY_LOG set, each timed step appends
+#      `e2e_interactive_session_s5 <step> <s5a|s5b> <ms>` to it.
 #
 # All waits are bounded polls on the transcript; the transcript tail is
 # printed on failure. Skips (via test_skip) when python3 is missing: exit 0
 # locally, exit 1 under CI.
 #
-# Expected runtime: ~20 seconds
+# Expected runtime: ~30 seconds
 
 source (dirname (status -f))/../lib/test_helpers.fish
 
@@ -421,6 +427,144 @@ function scenario_exec_survives_notifications --argument-names repo
     return 0
 end
 
+# The most recent render (text between prompt characters) after $offset in
+# a session's stripped transcript that contains the literal $needle.
+function __s5_latest_render --argument-names dir offset needle
+    transcript_after $dir $offset | string split ❯ | string match -er -- (string escape --style=regex -- $needle) | tail -1
+end
+
+function __s5_both_show --argument-names a off_a b off_b needle
+    test -n "$(__s5_latest_render $a $off_a $needle)"
+    and test -n "$(__s5_latest_render $b $off_b $needle)"
+end
+
+function __s5_both_match_raw --argument-names a off_a b off_b regex
+    python3 $__pty first-match-time $a $regex $off_a >/dev/null 2>&1
+    and python3 $__pty first-match-time $b $regex $off_b >/dev/null 2>&1
+end
+
+# Record each session's latency for $step: stamp to the chunk that completed
+# the first match of the raw $regex after that session's offset.
+function __s5_record --argument-names step regex stamp a off_a b off_b
+    for pair in "s5a $a $off_a" "s5b $b $off_b"
+        set -l f (string split ' ' -- $pair)
+        set -l t (python3 $__pty first-match-time $f[2] $regex $f[3])
+        if test -z "$t"
+            check "$step latency recorded for $f[1]" 0 "no timestamp for the $step repaint"
+            continue
+        end
+        set -l ms (math --scale=0 "floor(($t - $stamp) / 1000000)")
+        echo "latency $step $f[1]: $ms ms"
+        if set -q GPY_E2E_LATENCY_LOG; and test -n "$GPY_E2E_LATENCY_LOG"
+            echo "e2e_interactive_session_s5 $step $f[1] $ms" >>$GPY_E2E_LATENCY_LOG
+        end
+    end
+end
+
+function scenario_cross_dir_idle_repaint --argument-names repo
+    print_test_header "Scenario 5: idle-to-idle repaint across subdirectories"
+
+    write_config 'show_icons = false' 'theme = "text"' 'enabled_segments = ["directory", "git"]'
+    rm -f $XDG_CACHE_HOME/gpy/instant-prompts/*
+    mkdir -p $repo/sub
+    touch $repo/sub/.keep
+    git -C $repo add -A
+    git -C $repo commit -qm sub
+    set -l a (session_start s5a $repo)
+    set -l b (session_start s5b $repo/sub)
+    set -l ready_a (session_wait $a "❯" 10 0)
+    set -l ready_b (session_wait $b "❯" 10 0)
+    if test -z "$ready_a" -o -z "$ready_b"
+        check "both sessions rendered a prompt" 0
+        session_stop_all
+        return 1
+    end
+    check "both sessions rendered a prompt" 1
+    if poll_until 5 __clients_are 2
+        check "agent reports two registered clients" 1
+    else
+        check "agent reports two registered clients" 0 (registered_clients)
+    end
+
+    # No keystroke from here on: every change comes from this test process.
+    set -l stamp (python3 $__pty now)
+    set -l off_a (session_size $a)
+    set -l off_b (session_size $b)
+    echo x >>$repo/tracked.txt
+    if poll_until 15 __s5_both_show $a $off_a $b $off_b "✱1"
+        check "both idle sessions show the dirty marker" 1
+        __s5_record dirty "✱1" $stamp $a $off_a $b $off_b
+    else
+        check "both idle sessions show the dirty marker" 0 "no ✱1 render in both within 15 s"
+    end
+
+    set stamp (python3 $__pty now)
+    set off_a (session_size $a)
+    set off_b (session_size $b)
+    touch $repo/new_untracked
+    if poll_until 15 __s5_both_show $a $off_a $b $off_b "?1"
+        check "both idle sessions show the untracked marker" 1
+        __s5_record untracked '(?<!\[)\?1' $stamp $a $off_a $b $off_b
+    else
+        check "both idle sessions show the untracked marker" 0 "no ?1 render in both within 15 s"
+    end
+
+    # Correctness only: an absence has no positive match to time.
+    git -C $repo commit -qam m
+    function __s5_clean --inherit-variable a --inherit-variable b
+        set -l la (latest_segment_line $a)
+        set -l lb (latest_segment_line $b)
+        test -n "$la" -a -n "$lb"
+        and not string match -q -- "*✱1*" "$la"
+        and not string match -q -- "*✱1*" "$lb"
+    end
+    if poll_until 15 __s5_clean
+        check "after the commit neither session shows the dirty marker" 1
+    else
+        check "after the commit neither session shows the dirty marker" 0 "A: '$(latest_segment_line $a)' B: '$(latest_segment_line $b)'"
+    end
+
+    set stamp (python3 $__pty now)
+    set off_a (session_size $a)
+    set off_b (session_size $b)
+    git -C $repo checkout -q -b n2-latency
+    if poll_until 15 __s5_both_show $a $off_a $b $off_b n2-latency
+        check "both idle sessions show the new branch" 1
+        __s5_record branch n2-latency $stamp $a $off_a $b $off_b
+    else
+        check "both idle sessions show the new branch" 0 "no n2-latency render in both within 15 s"
+    end
+    set -l seg_a (__s5_latest_render $a $off_a n2-latency | string match -r 'n2-latency.*' | string trim)
+    set -l seg_b (__s5_latest_render $b $off_b n2-latency | string match -r 'n2-latency.*' | string trim)
+    if test -n "$seg_a"; and test "$seg_a" = "$seg_b"
+        check "both sessions show the same git segment" 1
+    else
+        check "both sessions show the same git segment" 0 "A: '$seg_a' B: '$seg_b'"
+    end
+
+    # The watcher path: config.toml rewritten directly, no `config reload`.
+    set stamp (python3 $__pty now)
+    set off_a (session_size $a)
+    set off_b (session_size $b)
+    printf '%s\n' '[ui]' 'show_icons = true' 'theme = "default"' 'enabled_segments = ["directory", "git"]' >$XDG_CONFIG_HOME/gpy/config.toml
+    function __s5_chevrons --inherit-variable a --inherit-variable b --inherit-variable off_a --inherit-variable off_b
+        transcript_has_chevrons $a $off_a; and transcript_has_chevrons $b $off_b
+    end
+    if poll_until 15 __s5_chevrons
+        check "both idle sessions repainted with powerline glyphs" 1
+        __s5_record theme '\xee\x82[\xb0-\xbf]' $stamp $a $off_a $b $off_b
+    else
+        check "both idle sessions repainted with powerline glyphs" 0 "no chevron in both within 15 s"
+    end
+
+    git -C $repo checkout -q main
+    session_send $a 'exit\r'
+    session_send $b 'exit\r'
+    poll_until 5 __clients_are 0
+    session_stop_all
+    return 0
+end
+
 if not command -q python3
     test_skip "python3 is required to drive a pseudo-terminal"
 end
@@ -455,6 +599,7 @@ scenario_idle_repaint $repo
 scenario_two_shells $repo
 scenario_config_reload $repo
 scenario_exec_survives_notifications $repo
+scenario_cross_dir_idle_repaint $repo
 
 session_stop_all
 stop_supervisor_loop
