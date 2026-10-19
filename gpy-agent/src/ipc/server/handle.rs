@@ -258,8 +258,9 @@ pub struct EndpointHandle {
     palette_cache: Arc<PaletteCache>,
     connection_semaphore: Arc<Semaphore>,
     shutdown_tx: broadcast::Sender<()>, // Used to signal shutdown to all listeners
-    // Keeps `shutdown_tx.send(())` from erroring for lack of receivers.
-    _shutdown_rx: broadcast::Receiver<()>,
+    /// Created with the channel and taken by `accept_loop` on entry, so a
+    /// shutdown sent before the loop starts is still received.
+    shutdown_rx: Option<broadcast::Receiver<()>>,
     pub(crate) handler_registry: Arc<HandlerRegistry>,
 }
 
@@ -372,7 +373,7 @@ impl EndpointHandle {
             palette_cache: deps.palette_cache,
             connection_semaphore,
             shutdown_tx,
-            _shutdown_rx: shutdown_rx,
+            shutdown_rx: Some(shutdown_rx),
             handler_registry,
         }
     }
@@ -477,12 +478,13 @@ impl EndpointHandle {
         use crate::debug_log;
 
         debug_log!("server", "Starting accept loop");
+        let mut shutdown_rx = self.shutdown_rx.take().ok_or_else(|| {
+            Error::ipc("accept loop already ran: no shutdown receiver".to_owned())
+        })?;
         let listener = self
             .listener
             .as_ref()
             .ok_or_else(|| Error::ipc("Server not started - no listener available".to_owned()))?;
-
-        let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         // A socket removed or rebound by another process makes us unreachable: exit like `Shutdown`.
         let mut ownership_timer = tokio::time::interval(self.socket_ownership_check);
@@ -663,39 +665,15 @@ impl EndpointHandle {
         notify_clients_for_response(&self.config_manager, client_registry, response, notify_path);
     }
 
-    /// Stop the server. On Unix the socket is removed only if still owned.
-    ///
-    /// # Errors
-    /// Fails if the socket file cannot be removed (non-Unix only).
-    #[cfg_attr(
-        unix,
-        expect(
-            clippy::unnecessary_wraps,
-            reason = "non-Unix path can fail; Unix body is always Ok"
-        )
-    )]
-    pub fn stop(&mut self) -> Result<()> {
-        #[cfg(unix)]
-        {
-            // Stop accepting, then remove the socket only if still ours.
-            self.listener.take();
-            self.unlink_socket_if_owned();
-        }
-
-        #[cfg(not(unix))]
-        {
-            if self.socket_path.exists() {
-                std::fs::remove_file(&self.socket_path)
-                    .map_err(|e| Error::ipc(format!("Failed to remove socket file: {e}")))?;
-            }
-        }
-
-        Ok(())
-    }
-
     /// Get the socket path being used.
     pub fn socket_path(&self) -> &str {
         self.socket_path.to_str().unwrap_or("")
+    }
+
+    /// Sender that stops the accept loop, for a caller that moved this handle into a task.
+    #[must_use]
+    pub fn shutdown_sender(&self) -> broadcast::Sender<()> {
+        self.shutdown_tx.clone()
     }
 
     /// Create an unbound `EndpointHandle` for tests.
@@ -996,39 +974,8 @@ mod socket_ownership_tests {
         std::fs::metadata(path).expect("metadata").ino()
     }
 
-    // stop() must not unlink a socket rebound by another process.
     #[tokio::test]
-    async fn stop_does_not_unlink_foreign_socket() {
-        let tmp = tempfile::tempdir().expect("temp dir");
-        let socket_path = tmp.path().join("gpy.sock");
-
-        let mut handle = build_handle(&socket_path);
-        handle.bind_socket().expect("bind");
-
-        // Simulate another agent rebinding the path (new inode).
-        handle.listener.take();
-        std::fs::remove_file(&socket_path).expect("remove ours");
-        let foreign = UnixListener::bind(&socket_path).expect("foreign bind");
-        let foreign_inode = inode_of(&socket_path);
-
-        handle
-            .stop()
-            .expect("stop is a successful no-op when not owner");
-
-        assert!(
-            socket_path.exists(),
-            "must not unlink a socket bound by another process"
-        );
-        assert_eq!(
-            inode_of(&socket_path),
-            foreign_inode,
-            "the foreign agent's socket inode must remain in place"
-        );
-        drop(foreign);
-    }
-
-    #[tokio::test]
-    async fn stop_unlinks_own_socket() {
+    async fn cleanup_socket_file_unlinks_own_socket() {
         let tmp = tempfile::tempdir().expect("temp dir");
         let socket_path = tmp.path().join("gpy.sock");
 
@@ -1036,7 +983,7 @@ mod socket_ownership_tests {
         handle.bind_socket().expect("bind");
         assert!(socket_path.exists(), "socket should exist after bind");
 
-        handle.stop().expect("stop");
+        handle.cleanup_socket_file();
 
         assert!(
             !socket_path.exists(),
@@ -1080,7 +1027,7 @@ mod socket_ownership_tests {
             .socket_ownership_check(std::time::Duration::from_millis(50))
             .build()
             .expect("handle build");
-        let shutdown = handle.shutdown_tx.clone();
+        let shutdown = handle.shutdown_sender();
         let task = tokio::spawn(async move { handle.start().await });
         for _ in 0_u32..200 {
             if socket_path.exists() {

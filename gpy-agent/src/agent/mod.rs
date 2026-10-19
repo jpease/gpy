@@ -104,25 +104,26 @@ async fn run_reconcile_scan<R, F>(
 }
 
 /// Prune dead clients from `registry` and unregister them from the watcher;
-/// returns the pruned PIDs. A free function because the `select!` loop holds
-/// a borrow of `self.server` and cannot call `&self` methods.
+/// returns the pruned PIDs. The watcher `Arc` is cloned out of the slot so
+/// the slot lock is not held across watcher calls.
 fn prune_dead_clients(registry: &ClientDirectory, watcher_slot: &SharedWatcherSlot) -> Vec<u32> {
     let mut pruned_pids = registry.prune_dead_clients();
 
-    {
-        let guard = watcher_slot.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(watcher) = guard.as_ref() {
-            for pid in &pruned_pids {
-                watcher.unregister_client(*pid);
-            }
+    let watcher = watcher_slot
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    if let Some(watcher) = watcher {
+        for pid in &pruned_pids {
+            watcher.unregister_client(*pid);
+        }
 
-            // Snapshot first so the watcher is never called with registry state held.
-            for pid in watcher.client_pids() {
-                if !registry.is_registered(pid) {
-                    watcher.unregister_client(pid);
-                    if !pruned_pids.contains(&pid) {
-                        pruned_pids.push(pid);
-                    }
+        // Snapshot first so the watcher is never called with registry state held.
+        for pid in watcher.client_pids() {
+            if !registry.is_registered(pid) {
+                watcher.unregister_client(pid);
+                if !pruned_pids.contains(&pid) {
+                    pruned_pids.push(pid);
                 }
             }
         }
@@ -137,6 +138,18 @@ fn prune_dead_clients(registry: &ClientDirectory, watcher_slot: &SharedWatcherSl
     }
 
     pruned_pids
+}
+
+/// Stop the repository, theme and config watchers.
+fn stop_watchers(watcher_slot: &SharedWatcherSlot, ctx: &events::AgentContext) {
+    {
+        let mut guard = watcher_slot.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(watcher) = guard.take() {
+            watcher.stop();
+        }
+    }
+    ctx.theme_manager.stop_watching();
+    ctx.config_manager.stop_watching();
 }
 
 /// Ring the clock repaint doorbell if this tick warrants it. Returns the
@@ -481,34 +494,27 @@ impl Agent {
         let _pruned_pids = prune_dead_clients(&self.ctx.registry, &self.watcher);
     }
 
-    /// Stop the repository, theme and config watchers.
-    fn stop_watchers(&self) {
-        {
-            let mut guard = self.watcher.lock().unwrap_or_else(PoisonError::into_inner);
-            if let Some(watcher) = guard.take() {
-                watcher.stop();
-            }
-        }
-        self.ctx.theme_manager.stop_watching();
-        self.ctx.config_manager.stop_watching();
-    }
-
     /// Start the agent in background mode.
     ///
     /// # Errors
-    /// Returns an error if signal setup fails or the IPC server fails to start or stop.
+    /// Returns an error if signal setup fails, or if the IPC server fails or its task panics.
     #[expect(
         clippy::too_many_lines,
         reason = "single ordered startup/shutdown orchestration"
     )]
-    pub async fn start_background(&mut self) -> Result<()> {
-        startup::startup_checks(self.server.socket_path());
+    pub async fn start_background(self) -> Result<()> {
+        let Self {
+            mut server,
+            watcher,
+            ctx,
+        } = self;
+        startup::startup_checks(server.socket_path());
 
         // Recovery nudge: only the daemon runs it, so each tracked shell is
         // nudged once to re-register after the socket accepts.
         #[cfg(unix)]
         {
-            let socket_path = self.server.socket_path().to_owned();
+            let socket_path = server.socket_path().to_owned();
             tokio::spawn(async move {
                 for _ in 0..100_u32 {
                     if std::os::unix::net::UnixStream::connect(&socket_path).is_ok() {
@@ -524,9 +530,9 @@ impl Agent {
         // racing requests fall back to `gpy-agent theme export`. If the export
         // changed, ring tracked shells with `.reload`.
         {
-            let theme_manager_for_export = Arc::clone(&self.ctx.theme_manager);
-            let config_for_export = self.ctx.config_manager.get();
-            let palette_for_export = self.ctx.palette_cache.get();
+            let theme_manager_for_export = Arc::clone(&ctx.theme_manager);
+            let config_for_export = ctx.config_manager.get();
+            let palette_for_export = ctx.palette_cache.get();
             tokio::task::spawn_blocking(move || {
                 #[cfg(unix)]
                 lifecycle::start::warm_theme_export_cache(
@@ -548,9 +554,9 @@ impl Agent {
             });
         }
 
-        let registry_for_clock = Arc::clone(&self.ctx.registry);
-        let registry_for_pruning = Arc::clone(&self.ctx.registry);
-        let watcher_for_pruning = Arc::clone(&self.watcher);
+        let registry_for_clock = Arc::clone(&ctx.registry);
+        let registry_for_pruning = Arc::clone(&ctx.registry);
+        let watcher_for_pruning = Arc::clone(&watcher);
         let mut clock_timer = startup::create_clock_timer();
         let mut pruning_timer = startup::create_pruning_timer();
         // Bounded per-PID re-nudge budget; see `lifecycle::start::ShellRenudger`.
@@ -566,13 +572,17 @@ impl Agent {
         let reconcile_in_flight = Arc::new(AtomicBool::new(false));
         // Set when a tick is skipped mid-scan; consumed by the catch-up pass.
         let reconcile_pending = Arc::new(AtomicBool::new(false));
-        let mut server_future = Box::pin(self.server.start());
+        let shutdown_tx = server.shutdown_sender();
+        let mut server_task = tokio::spawn(async move { server.start().await });
         let mut shutdown_signal = startup::create_shutdown_signal();
         let mut last_notified_minute = 0_u64;
 
         loop {
             tokio::select! {
-                result = &mut server_future => {
+                joined = &mut server_task => {
+                    let result = joined.unwrap_or_else(|join_error| {
+                        Err(Error::agent(format!("IPC server task failed: {join_error}")))
+                    });
                     // IPC `Shutdown` or a removed/rebound socket: expected exits.
                     match &result {
                         Ok(()) => {
@@ -582,30 +592,37 @@ impl Agent {
                             debug_log!("agent", "Server failed with error: {e}");
                         }
                     }
-                    drop(server_future);
-                    self.stop_watchers();
+                    stop_watchers(&watcher, &ctx);
                     return result;
                 }
                 shutdown_result = &mut shutdown_signal => {
-                    shutdown_result?;
-
-                    debug_log!("agent", "Received shutdown signal");
-
-                    // Drop the server future first: `stop()` needs its mutable
-                    // borrow to unlink the socket, which a signal would otherwise leak.
-                    drop(server_future);
-                    self.stop_watchers();
-                    if let Err(e) = self.server.stop() {
-                        debug_log!("agent", "Failed to stop IPC server cleanly: {e}");
+                    if shutdown_result.is_ok() {
+                        debug_log!("agent", "Received shutdown signal");
                     }
+                    // Ends the accept loop, which unlinks the socket if it is still ours.
+                    let _ = shutdown_tx.send(());
+                    match tokio::time::timeout(Duration::from_secs(5), &mut server_task).await {
+                        Ok(Ok(Err(e))) => {
+                            debug_log!("agent", "IPC server stopped with error: {e}");
+                        }
+                        Ok(Err(e)) => {
+                            debug_log!("agent", "IPC server task failed: {e}");
+                        }
+                        Err(_) => {
+                            debug_log!("agent", "IPC server did not stop within 5s");
+                        }
+                        Ok(Ok(Ok(()))) => {}
+                    }
+                    stop_watchers(&watcher, &ctx);
+                    shutdown_result?;
 
                     println!("GPY Agent stopped.");
 
                     return Ok(());
                 }
-                _ = clock_timer.tick(), if self.ctx.config_manager.get().agent.live_updates => {
+                _ = clock_timer.tick(), if ctx.config_manager.get().agent.live_updates => {
                     last_notified_minute =
-                        handle_clock_tick(&self.ctx, &registry_for_clock, last_notified_minute);
+                        handle_clock_tick(&ctx, &registry_for_clock, last_notified_minute);
                 }
                 _ = pruning_timer.tick() => {
                     let _pruned_pids =
@@ -619,11 +636,11 @@ impl Agent {
                         &registry_for_pruning,
                     );
                 }
-                _ = reconcile_timer.tick(), if self.ctx.config_manager.get().agent.live_updates => {
-                    let reconcile_config = self.ctx.config_manager.get();
+                _ = reconcile_timer.tick(), if ctx.config_manager.get().agent.live_updates => {
+                    let reconcile_config = ctx.config_manager.get();
                     spawn_reconcile_scan(
-                        &self.ctx,
-                        &self.watcher,
+                        &ctx,
+                        &watcher,
                         reconcile_config,
                         &reconcile_in_flight,
                         &reconcile_pending,

@@ -112,6 +112,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The agent keeps accepting shell connections while it prunes dead clients or
+  registers a shell's repository with the watcher, and it now stops its
+  watchers even when installing its signal handlers fails.
 - `SECURITY.md` now lists 0.4.x, the current release series, as supported.
 - Fish: `prompt_debug vars` reports the duration threshold the duration
   segment uses (`__duration_threshold_ms`).

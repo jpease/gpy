@@ -67,11 +67,12 @@ impl ClientHandler {
         if let Some(ref path) = sanitized {
             // Best-effort: watcher failures must not break registration; the
             // initial scan still fills the cache and TTL reconciles missed events.
-            if let Some(watcher) = self
+            let watcher = self
                 .watcher
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .as_ref()
+                .clone();
+            if let Some(watcher) = watcher
                 && let Err(e) = watcher.register_client(pid.get(), path)
             {
                 crate::debug::write_debug_log(
@@ -134,12 +135,12 @@ impl ClientHandler {
         pid: crate::config::types::ClientPid,
     ) -> Result<Response, HandlerError> {
         self.render.client_registry.unregister(pid.get());
-        if let Some(watcher) = self
+        let watcher = self
             .watcher
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-        {
+            .clone();
+        if let Some(watcher) = watcher {
             watcher.unregister_client(pid.get());
         }
 
