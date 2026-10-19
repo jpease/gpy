@@ -95,7 +95,9 @@ The top-level keys that shape the prompt as a whole map onto the theme's `[ui]`:
 
 Starship encodes color in `style` fields and inline `($style)` references.
 GPY's template grammar accepts the same token vocabulary (`bold`, `fg:`, `bg:`,
-named/hex/256-index colors, `prev_fg`, `prev_bg`), so the importer:
+named/hex/256-index colors, `prev_bg`, and `prev_fg`, which renders as the terminal default
+in the live prompt because only `prev_bg` is transferred; the wizard preview
+does show it), so the importer:
 
 1. Replaces `$style` and `$*_style` references in `format` strings with the
    module's literal style value (e.g. `style = "bold purple"` → `(bold purple)`).
