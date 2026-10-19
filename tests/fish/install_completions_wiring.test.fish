@@ -2,8 +2,8 @@
 # tests/fish/install_completions_wiring.test.fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Static/text-level guard: the installers (install-dev.fish, and install.sh and
-# install-oneline.sh via `gpy setup`) must wire up Fish shell completions
+# Static/text-level guard: the installers (install.sh and install-oneline.sh, via
+# `gpy setup`) must wire up Fish shell completions
 # for the `gpy` CLI when installing for Fish:
 #   1. Regenerate the STRUCTURAL completions (`gpy completions fish`) into
 #      the fish completions autoload directory on every run, guarded so a
@@ -59,14 +59,6 @@ __icw_check "install-oneline.sh: downloads the gpy-shell-files.tar.gz archive" i
     'gpy-shell-files\.tar\.gz'
 __icw_check "install-oneline.sh: hands the staged files to gpy setup" install-oneline.sh \
     '"\$INSTALL_DIR/gpy" setup --shell "\$CURRENT_SHELL" --from "\$STAGE_DIR"'
-
-# --- install-dev.fish ---
-__icw_check "install-dev.fish: regenerates structural completions" install-dev.fish \
-    'gpy_cli completions fish.*>.*fish_completions_dir/gpy\.fish'
-__icw_check "install-dev.fish: guards on the CLI binary being executable" install-dev.fish \
-    'test -x \$dev_gpy_cli'
-__icw_check "install-dev.fish: appends gpy-dynamic.fish to completions/gpy.fish" install-dev.fish \
-    'cat fish/completions/gpy-dynamic\.fish >>.*fish_completions_dir/gpy\.fish'
 
 if test $failed -eq 1
     exit 1

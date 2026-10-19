@@ -4,8 +4,7 @@
 #
 # install-dev.fish's _install_fish_files must never overwrite a user's
 # ~/.config/gpy/config.toml (a divergent config gets a config.toml.new
-# sibling instead), and the themes sync under --clean must never delete a
-# user-authored custom theme file.
+# sibling instead). Fish wiring itself is gpy setup's (a stub gpy here).
 #
 # Runs the REAL install-dev.fish script with --fish-only (no agent build,
 # no cargo install, no network) against a sandboxed $HOME/$XDG_CONFIG_HOME,
@@ -36,7 +35,7 @@ end
 # Expose tools, not their installation directories: Homebrew can also contain
 # the developer's live gpy-agent.
 set -l safe_path (mktemp -d)
-for tool in fish rsync mkdir cp cmp rm readlink grep date mv ln cat
+for tool in fish mkdir cp cmp rm readlink grep date mv ln cat
     set -l executable (command -s $tool)
     if test -z "$executable"
         __gpy_test_fail "sandbox: required tool $tool is unavailable"
@@ -51,6 +50,9 @@ function __gpy_cleanup_tool_path --on-event fish_exit --inherit-variable safe_pa
 end
 
 function __gpy_run_install_dev --argument-names home_dir safe_path extra_flag
+    mkdir -p "$home_dir/.local/bin"
+    printf '#!/bin/sh\nexit 0\n' >"$home_dir/.local/bin/gpy"
+    chmod +x "$home_dir/.local/bin/gpy"
     set -l flags --fish-only
     if test -n "$extra_flag"
         set -a flags $extra_flag
@@ -123,45 +125,6 @@ end
 
 rm -rf "$home1"
 
-# --- Test 3: a user-created theme file survives the themes sync under
-# --clean, and shipped themes are still copied/updated correctly. ---
-set -l home2 (mktemp -d)
-mkdir -p "$home2/.config/gpy/themes"
-set -l custom_theme_path "$home2/.config/gpy/themes/my-custom-theme.toml"
-printf '%s\n' "# my custom theme" "[colors]" 'foo = "bar"' >"$custom_theme_path"
-cp "$custom_theme_path" "$home2/original_custom_theme.toml"
-
-set -l out2 (__gpy_run_install_dev "$home2" "$safe_path" "--clean")
-set -l status2 $status
-
-if test $status2 -ne 0
-    __gpy_test_fail "install-dev.fish --fish-only --clean exited $status2: $out2"
-else
-    if test -f "$custom_theme_path"
-        if diff -q "$home2/original_custom_theme.toml" "$custom_theme_path" >/dev/null 2>&1
-            __gpy_test_pass "install-dev.fish --clean: custom theme file survives sync"
-        else
-            __gpy_test_fail "install-dev.fish --clean: custom theme file content changed"
-        end
-    else
-        __gpy_test_fail "install-dev.fish --clean: custom theme file was deleted"
-    end
-
-    set -l all_shipped_present 1
-    for f in "$repo_root"/config/themes/*
-        set -l base (path basename $f)
-        if not diff -q "$f" "$home2/.config/gpy/themes/$base" >/dev/null 2>&1
-            set all_shipped_present 0
-            __gpy_test_fail "install-dev.fish --clean: shipped theme $base missing or stale in destination"
-        end
-    end
-    if test $all_shipped_present -eq 1
-        __gpy_test_pass "install-dev.fish --clean: shipped themes still copied/updated correctly"
-    end
-end
-
-rm -rf "$home2"
-
 # --- Test 4: first-ever install (no existing config.toml) still creates
 # config.toml with the shipped default, and does not create a spurious .new. ---
 set -l home3 (mktemp -d)
@@ -186,71 +149,8 @@ end
 
 rm -rf "$home3"
 
-# --- Test 5: a custom regular-file prompt is backed up under the name both
-# uninstallers restore, `fish_prompt.fish.backup.<8>_<6>`, and a foreign
-# symlink prompt is moved aside still a symlink. ---
-set -l home5 (mktemp -d)
-mkdir -p "$home5/.config/fish/functions" "$home5/dotfiles"
-printf '%s\n' 'function fish_prompt; echo mine; end' >"$home5/.config/fish/functions/fish_prompt.fish"
-set -l out5 (__gpy_run_install_dev "$home5" "$safe_path" "")
-set -l backups5 (find "$home5/.config/fish/functions" -name 'fish_prompt.fish.backup*')
-if test (count $backups5) -eq 1; and string match -rq '/fish_prompt\.fish\.backup\.[0-9]{8}_[0-9]{6}$' -- $backups5[1]; and test (cat $backups5[1]) = 'function fish_prompt; echo mine; end'
-    __gpy_test_pass "install-dev.fish: custom prompt backed up as fish_prompt.fish.backup.<date>_<time>"
-else
-    __gpy_test_fail "install-dev.fish: unexpected prompt backup name(s): $backups5 ($out5)"
-end
-
-set -l home6 (mktemp -d)
-mkdir -p "$home6/.config/fish/functions" "$home6/dotfiles"
-printf '%s\n' 'function fish_prompt; echo mine; end' >"$home6/dotfiles/fish_prompt.fish"
-ln -s "$home6/dotfiles/fish_prompt.fish" "$home6/.config/fish/functions/fish_prompt.fish"
-set -l out6 (__gpy_run_install_dev "$home6" "$safe_path" "")
-set -l backups6 (find "$home6/.config/fish/functions" -name 'fish_prompt.fish.backup.*')
-if test (count $backups6) -eq 1; and test -L $backups6[1]; and test (readlink $backups6[1]) = "$home6/dotfiles/fish_prompt.fish"; and test -f "$home6/dotfiles/fish_prompt.fish"
-    __gpy_test_pass "install-dev.fish: foreign symlink prompt moved aside as a symlink"
-else
-    __gpy_test_fail "install-dev.fish: foreign symlink prompt not preserved: $backups6 ($out6)"
-end
-
-rm -rf "$home5" "$home6"
-
-# --- Test 7: a user prompt that merely mentions GPY (even
-# `__enabled_segments`) is the user's and is backed up byte-for-byte; a
-# regular-file copy of GPY's own prompt is replaced without a backup. ---
-set -l home7 (mktemp -d)
-mkdir -p "$home7/.config/fish/functions"
-set -l mentions_gpy "$home7/.config/fish/functions/fish_prompt.fish"
-printf '%s\n' '# Tried GPY once; kept my own. See __enabled_segments.' 'function fish_prompt' '    printf "mine> "' end >"$mentions_gpy"
-cp "$mentions_gpy" "$home7/original_prompt.fish"
-set -l out7 (__gpy_run_install_dev "$home7" "$safe_path" "")
-set -l backups7 (find "$home7/.config/fish/functions" -name 'fish_prompt.fish.backup*')
-if test (count $backups7) -eq 1; and cmp -s "$home7/original_prompt.fish" $backups7[1]
-    __gpy_test_pass "install-dev.fish: prompt mentioning GPY backed up byte-for-byte"
-else
-    __gpy_test_fail "install-dev.fish: prompt mentioning GPY not preserved: $backups7 ($out7)"
-end
-if test -L "$mentions_gpy"; and test (readlink "$mentions_gpy") = "$home7/.config/fish/gpy/functions/fish_prompt.fish"
-    __gpy_test_pass "install-dev.fish: GPY prompt installed after backing up the user's"
-else
-    __gpy_test_fail "install-dev.fish: GPY prompt symlink not installed ($out7)"
-end
-
-set -l home8 (mktemp -d)
-mkdir -p "$home8/.config/fish/functions"
-set -l copied_gpy "$home8/.config/fish/functions/fish_prompt.fish"
-cp "$repo_root/fish/functions/fish_prompt.fish" "$copied_gpy"
-set -l out8 (__gpy_run_install_dev "$home8" "$safe_path" "")
-set -l backups8 (find "$home8/.config/fish/functions" -name 'fish_prompt.fish.backup*')
-if test (count $backups8) -eq 0; and test -L "$copied_gpy"; and test (readlink "$copied_gpy") = "$home8/.config/fish/gpy/functions/fish_prompt.fish"
-    __gpy_test_pass "install-dev.fish: regular-file GPY prompt replaced without a backup"
-else
-    __gpy_test_fail "install-dev.fish: regular-file GPY prompt not replaced cleanly: $backups8 ($out8)"
-end
-
-rm -rf "$home7" "$home8"
-
 if test $failed -eq 1
     exit 1
 end
 
-echo "✅ install-dev.fish preserves customized config.toml and custom theme files"
+echo "✅ install-dev.fish preserves customized config.toml"

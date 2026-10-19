@@ -39,7 +39,7 @@ if test $show_help -eq 1
     echo "Options:"
     echo "  --fish-only     Skip agent build, only update Fish files (fast)"
     echo "  --no-build      Skip building, use existing agent binary"
-    echo "  --clean         Clean sync with rsync --delete"
+    echo "  --clean         Remove the installed Fish tree before setup"
     echo "  --help, -h      Show this help"
     echo ""
     echo "Note:"
@@ -61,14 +61,6 @@ function _check_repo_root
     if not test -d gpy-agent
         echo "Error: gpy-agent directory not found"
         echo "   Run this script from the GPY repository root"
-        return 1
-    end
-    return 0
-end
-
-function _check_rsync
-    if not command -q rsync
-        echo "Warning: rsync not found, falling back to cp"
         return 1
     end
     return 0
@@ -287,23 +279,9 @@ function _install_fish_files
         set gpy_config_dir "$HOME/.config/gpy"
     end
     set -l gpy_fish_dir "$fish_config_dir/gpy"
-    set -l fish_conf_d_dir "$fish_config_dir/conf.d"
 
     mkdir -p $gpy_config_dir
-    mkdir -p $gpy_fish_dir
-    mkdir -p $fish_conf_d_dir
-
-    set -l config_dirs config/themes
     set -l config_file config/config.toml
-
-    set -l fish_files fish/core fish/segments fish/conf.d fish/functions
-
-    for dir in $fish_files $config_dirs
-        if not test -d $dir
-            echo "Error: Source directory not found: $dir"
-            return 1
-        end
-    end
 
     if not test -f $config_file
         echo "Error: Source file not found: $config_file"
@@ -311,12 +289,6 @@ function _install_fish_files
     end
 
     echo "   Installing configuration files to $gpy_config_dir..."
-    # Never delete here, even under --clean: users' custom themes must survive.
-    if _check_rsync
-        rsync -a $config_dirs $gpy_config_dir/
-    else
-        cp -R $config_dirs $gpy_config_dir/
-    end
     # Never overwrite an existing config.toml; ship the new default beside it.
     if not test -e $gpy_config_dir/config.toml
         cp $config_file $gpy_config_dir/config.toml
@@ -326,77 +298,14 @@ function _install_fish_files
         echo "   Your existing config.toml was left untouched; review the .new file for any changes."
     end
 
-    echo "   Installing Fish files to $gpy_fish_dir..."
-    if test $clean_sync -eq 1; and _check_rsync
-        rsync -a --delete $fish_files $gpy_fish_dir/
-    else if _check_rsync
-        rsync -a $fish_files $gpy_fish_dir/
-    else
-        cp -R $fish_files $gpy_fish_dir/
+    # Legacy dev installs autoloaded this; gpy setup wires config.fish instead.
+    rm -f "$fish_config_dir/conf.d/gpy_init.fish"
+    if test $clean_sync -eq 1
+        rm -rf "$fish_config_dir/gpy"
     end
-
-    if test -f fish/conf.d/gpy_init.fish
-        cp fish/conf.d/gpy_init.fish "$fish_conf_d_dir/gpy_init.fish"
-    end
-
-    # Fish autoloads completions/<command>.fish only, so the generated structural
-    # completions and the gpy-dynamic.fish glue share completions/gpy.fish.
-    set -l fish_completions_dir "$fish_config_dir/completions"
-    mkdir -p $fish_completions_dir
-    rm -f "$fish_completions_dir/gpy-dynamic.fish"
-
-    set -l fish_completions_generated 0
-    set -l dev_gpy_cli "$HOME/.local/bin/gpy"
-    if test -x $dev_gpy_cli
-        if $dev_gpy_cli completions fish >"$fish_completions_dir/gpy.fish"
-            set fish_completions_generated 1
-            echo "Generated structural completions: $fish_completions_dir/gpy.fish"
-        else
-            echo "Warning: Could not generate gpy completions (gpy completions fish failed)"
-        end
-    else
-        echo "Warning: gpy CLI not installed; skipping structural shell completions"
-    end
-
-    if test -f fish/completions/gpy-dynamic.fish
-        if test $fish_completions_generated -eq 1
-            cat fish/completions/gpy-dynamic.fish >>"$fish_completions_dir/gpy.fish"
-        else
-            cat fish/completions/gpy-dynamic.fish >"$fish_completions_dir/gpy.fish"
-        end
-        echo "Installed dynamic completions glue into: $fish_completions_dir/gpy.fish"
-    end
-
-    if test -f fish/functions/fish_prompt.fish
-        mkdir -p "$fish_config_dir/functions"
-        set -l dest_prompt "$fish_config_dir/functions/fish_prompt.fish"
-        set -l source_prompt "$gpy_fish_dir/functions/fish_prompt.fish"
-        # Function scope: a `set -l` inside the block below is invisible after it.
-        set -l skip_symlink 0
-
-        # A foreign symlink (stow/yadm/chezmoi) is moved aside, never deleted. A
-        # regular file is deleted as GPY's only when it carries both segment
-        # dispatch lines every GPY prompt shipped with (the scripts/uninstall.*
-        # rule); any other prompt, even one that mentions GPY, is backed up.
-        if test -e $dest_prompt -o -L $dest_prompt
-            if test -L $dest_prompt; and test (readlink $dest_prompt) = "$source_prompt"
-                echo "fish_prompt symlink already correct"
-                set skip_symlink 1
-            else if test -f $dest_prompt -a ! -L $dest_prompt
-                and grep -Eq '^[[:space:]]*for segment in \$__enabled_segments[[:space:]]*$' $dest_prompt
-                and grep -Eq '^[[:space:]]*if functions -q segment_\{\$segment\}_render[[:space:]]*$' $dest_prompt
-                rm -f $dest_prompt
-            else
-                set -l backup_file "$dest_prompt.backup."(date +%Y%m%d_%H%M%S)
-                mv $dest_prompt $backup_file
-                echo "Warning: Backed up existing prompt to: $backup_file"
-            end
-        end
-
-        if test $skip_symlink -eq 0
-            ln -sf "$source_prompt" "$dest_prompt"
-            echo "Installed fish_prompt symlink"
-        end
+    if not "$HOME/.local/bin/gpy" setup --shell fish --from . --non-interactive
+        echo "Error: gpy setup failed"
+        return 1
     end
 
     if test -d "$HOME/.config/gpy/core"
@@ -515,6 +424,11 @@ else
             exit 1
         end
     end
+end
+
+if not test -x "$HOME/.local/bin/gpy"
+    echo "Error: gpy is not installed; run ./install-dev.fish without --fish-only first"
+    exit 1
 end
 
 if not _install_fish_files

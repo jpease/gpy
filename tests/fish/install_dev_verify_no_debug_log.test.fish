@@ -28,6 +28,9 @@ function __gpy_test_pass --argument-names msg
 end
 
 set -l home_dir (mktemp -d)
+mkdir -p "$home_dir/.local/bin"
+printf '#!/bin/sh\nexit 0\n' >"$home_dir/.local/bin/gpy"
+chmod +x "$home_dir/.local/bin/gpy"
 set -l stub_dir (mktemp -d)
 set -l fish_dir (path dirname (command -v fish))
 set -l safe_path /usr/bin:/bin:$fish_dir

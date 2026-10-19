@@ -54,6 +54,9 @@ end
 set -l agent_dir (path dirname "$agent_path")
 
 set -l home_dir (mktemp -d)
+mkdir -p "$home_dir/.local/bin"
+printf '#!/bin/sh\nexit 0\n' >"$home_dir/.local/bin/gpy"
+chmod +x "$home_dir/.local/bin/gpy"
 set -l safe_path /usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin
 set -l stub_dir (mktemp -d)
 set -l pkill_log "$home_dir/pkill.log"

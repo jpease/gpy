@@ -387,7 +387,7 @@ fn wire_fish(config_home: &Path, shell_dir: &Path) -> Result<(PathBuf, bool)> {
     Ok((config, added))
 }
 
-/// Make `target` a symlink to `source`, moving anything else aside first.
+/// Make `target` a symlink to `source`. An old regular-file copy of GPY's prompt is replaced; anything else is moved aside first.
 #[cfg(unix)]
 fn link_fish_prompt(target: &Path, source: &Path) -> Result<()> {
     if fs::read_link(target).is_ok_and(|current| current == source) {
@@ -396,20 +396,37 @@ fn link_fish_prompt(target: &Path, source: &Path) -> Result<()> {
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)?;
     }
-    if target.symlink_metadata().is_ok() {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_secs());
-        let mut backup = target.as_os_str().to_owned();
-        backup.push(format!(".backup.{}", backup_stamp(now)));
-        fs::rename(target, &backup)?;
-        println!(
-            "Moved your existing fish_prompt to {}",
-            PathBuf::from(backup).display()
-        );
+    if let Ok(meta) = target.symlink_metadata() {
+        if meta.is_file() && is_gpy_prompt_copy(target) {
+            fs::remove_file(target)?;
+        } else {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_secs());
+            let mut backup = target.as_os_str().to_owned();
+            backup.push(format!(".backup.{}", backup_stamp(now)));
+            fs::rename(target, &backup)?;
+            println!(
+                "Moved your existing fish_prompt to {}",
+                PathBuf::from(backup).display()
+            );
+        }
     }
     std::os::unix::fs::symlink(source, target)?;
     Ok(())
+}
+
+/// A regular-file copy of GPY's own prompt: both segment-dispatch lines every
+/// GPY prompt shipped with (the `scripts/uninstall.*` rule).
+#[cfg(unix)]
+fn is_gpy_prompt_copy(path: &Path) -> bool {
+    fs::read_to_string(path).is_ok_and(|text| {
+        text.lines()
+            .any(|l| l.trim_ascii() == "for segment in $__enabled_segments")
+            && text
+                .lines()
+                .any(|l| l.trim_ascii() == "if functions -q segment_{$segment}_render")
+    })
 }
 
 /// `YYYYMMDD_HHMMSS` (UTC), the suffix the installers write and
@@ -687,5 +704,103 @@ mod tests {
         assert!(check_sourceable(Path::new("/opt/a b/.config")).is_ok());
         assert!(check_sourceable(Path::new("/opt/$USER/.config")).is_err());
         assert!(check_sourceable(Path::new("/opt/a\"b")).is_err());
+    }
+
+    #[cfg(unix)]
+    fn prompt_fixture(dir: &Path) -> (PathBuf, PathBuf) {
+        let target = dir.join("fish/functions/fish_prompt.fish");
+        let source = dir.join("gpy/functions/fish_prompt.fish");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&source, "function fish_prompt; end\n").unwrap();
+        (target, source)
+    }
+
+    #[cfg(unix)]
+    fn prompt_backups(target: &Path) -> Vec<PathBuf> {
+        fs::read_dir(target.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("fish_prompt.fish.backup")
+            })
+            .collect()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn link_fish_prompt_backup_uses_timestamped_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let (target, source) = prompt_fixture(dir.path());
+        let original = "function fish_prompt; echo mine; end\n";
+        fs::write(&target, original).unwrap();
+        link_fish_prompt(&target, &source).unwrap();
+        assert_eq!(fs::read_link(&target).unwrap(), source);
+        let backups = prompt_backups(&target);
+        assert_eq!(backups.len(), 1);
+        let name = backups[0]
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let suffix = name.split(".backup.").nth(1).unwrap();
+        assert_eq!(suffix.len(), 15);
+        for (i, c) in suffix.chars().enumerate() {
+            if i == 8 {
+                assert_eq!(c, '_');
+            } else {
+                assert!(c.is_ascii_digit(), "{suffix}");
+            }
+        }
+        assert_eq!(fs::read_to_string(&backups[0]).unwrap(), original);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn link_fish_prompt_moves_foreign_symlink_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        let (target, source) = prompt_fixture(dir.path());
+        let dotfiles = dir.path().join("dotfiles/fish_prompt.fish");
+        fs::create_dir_all(dotfiles.parent().unwrap()).unwrap();
+        fs::write(&dotfiles, "function fish_prompt; end\n").unwrap();
+        std::os::unix::fs::symlink(&dotfiles, &target).unwrap();
+        link_fish_prompt(&target, &source).unwrap();
+        assert_eq!(fs::read_link(&target).unwrap(), source);
+        let backups = prompt_backups(&target);
+        assert_eq!(backups.len(), 1);
+        assert_eq!(fs::read_link(&backups[0]).unwrap(), dotfiles);
+        assert!(dotfiles.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn link_fish_prompt_backs_up_prompt_that_only_mentions_gpy() {
+        let dir = tempfile::tempdir().unwrap();
+        let (target, source) = prompt_fixture(dir.path());
+        let original = "# Tried GPY once; kept my own. See __enabled_segments.\nfunction fish_prompt\n    printf \"mine> \"\nend\n";
+        fs::write(&target, original).unwrap();
+        link_fish_prompt(&target, &source).unwrap();
+        assert_eq!(fs::read_link(&target).unwrap(), source);
+        let backups = prompt_backups(&target);
+        assert_eq!(backups.len(), 1);
+        assert_eq!(fs::read(&backups[0]).unwrap(), original.as_bytes());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn link_fish_prompt_replaces_old_gpy_copy_without_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let (target, source) = prompt_fixture(dir.path());
+        fs::write(
+            &target,
+            "function fish_prompt\n    for segment in $__enabled_segments\n        if functions -q segment_{$segment}_render\n            segment_{$segment}_render\n        end\n    end\nend\n",
+        )
+        .unwrap();
+        link_fish_prompt(&target, &source).unwrap();
+        assert_eq!(fs::read_link(&target).unwrap(), source);
+        assert_eq!(prompt_backups(&target), Vec::<PathBuf>::new());
     }
 }
