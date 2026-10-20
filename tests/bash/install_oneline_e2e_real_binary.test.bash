@@ -161,6 +161,13 @@ run_shell() {
         fail "$shell: the installed agent does not respond"
     fi
 
+    # The installer's --from is temporary; a later bare setup must still work.
+    if "$HOME/.local/bin/gpy" setup --shell "$shell" --non-interactive >"$SHELL_E2E_ROOT/resetup.log" 2>&1; then
+        pass "$shell: a bare gpy setup works after the install"
+    else
+        fail "$shell: a bare gpy setup failed after the install: $(tail -n 3 "$SHELL_E2E_ROOT/resetup.log")"
+    fi
+
     cd "$SHELL_E2E_REPO" || exit 1
     case "$shell" in
         fish) python3 "$SHELL_E2E_PTY" start "$SHELL_E2E_SESSION" -- fish -i ;;

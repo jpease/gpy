@@ -108,14 +108,27 @@ Everything below runs on `main`, with a clean tree.
     installs exactly that release.
 
 12. **Update the Homebrew tap.** The formula lives in `jpease/homebrew-tap`
-    (`Formula/gpy.rb`), not in this repository. Point `url` at the new tag
-    tarball, set `sha256` from the real digest, then check it installs:
+    (`Formula/gpy.rb`), not in this repository. On a branch there, point
+    `url` at the new tag tarball, set `sha256` from the real digest, and
+    open a pull request:
 
     ```sh
     curl -sL https://github.com/jpease/gpy/archive/refs/tags/vX.Y.Z.tar.gz | shasum -a 256
     brew style Formula/gpy.rb
-    brew install --build-from-source jpease/tap/gpy
     ```
+
+    The tap's `brew test-bot` workflow builds and tests bottles on macOS 15
+    (Apple Silicon and Intel) and Linux x86_64. Once it is green, publish them
+    instead of merging:
+
+    ```sh
+    gh workflow run publish.yml -R jpease/homebrew-tap -f pull_request=<number>
+    ```
+
+    `brew pr-pull` uploads the bottles to a release in the tap, commits the
+    `bottle do` block, pushes `main` and closes the pull request. Users then
+    install a prebuilt bottle; without one, Homebrew builds from source and
+    needs Rust.
 
 ## What the gate checks for you
 
@@ -155,7 +168,7 @@ project's fault to a first-time user.
   Do not restate that matrix here or anywhere else.
 
 - **Homebrew** — the personal tap `jpease/homebrew-tap`, installed with
-  `brew install jpease/tap/gpy` (Fish, Zsh and Bash via `gpy setup`; builds from the tag tarball). Every
+  `brew install jpease/tap/gpy` (Fish, Zsh and Bash via `gpy setup`; prebuilt bottles for macOS 15+ and Linux x86_64, else built from the tag tarball). Every
   reference must be tap-qualified — the bare `brew install <name>` form implies
   homebrew-core. homebrew-core itself needs 90
   forks, 90 watchers, 225 stars and a repo at least 30 days old; it is a

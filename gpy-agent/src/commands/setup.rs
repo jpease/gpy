@@ -137,6 +137,9 @@ pub fn run(options: &SetupOptions, completions: impl Fn(Shell) -> Result<Vec<u8>
         println!("GPY already configured in {}", outcome.rc_file.display());
     }
     refresh_other_shells(shell, &source_root, &env, &completions);
+    if options.from.is_some() || env.share_dir.is_some() {
+        keep_shell_trees(&source_root, &env);
+    }
     if let Err(err) = init::run(InitOptions {
         non_interactive: options.non_interactive,
         redetect: false,
@@ -147,6 +150,57 @@ pub fn run(options: &SetupOptions, completions: impl Fn(Shell) -> Result<Vec<u8>
     }
     print_next_steps(shell, &outcome.rc_file, env.login_shell.as_deref());
     Ok(())
+}
+
+/// Copy the shell trees from an explicit `source_root` to `share/gpy` beside
+/// the binary (`~/.local/share/gpy` for the installers), where a later bare
+/// `gpy setup` looks: the installers pass a temporary `--from`. Skipped when
+/// the binary lives in the source tree (a checkout's build) or the trees are
+/// already there; a failure is reported and setup still succeeds.
+fn keep_shell_trees(source_root: &Path, env: &Environment) {
+    let Some(prefix) = env
+        .exe
+        .as_deref()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+    else {
+        return;
+    };
+    let source = fs::canonicalize(source_root).unwrap_or_else(|_| source_root.to_path_buf());
+    let target = prefix.join("share").join("gpy");
+    if env
+        .exe
+        .as_deref()
+        .is_some_and(|exe| exe.starts_with(&source))
+        || fs::canonicalize(&target).is_ok_and(|dir| dir == source)
+    {
+        return;
+    }
+    let copy = || -> Result<()> {
+        for shell in SHELLS {
+            if !has_shell_tree(&source, shell) {
+                continue;
+            }
+            let dst = target.join(shell.as_str());
+            match fs::remove_dir_all(&dst) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.into()),
+            }
+            copy_tree(&source.join(shell.as_str()), &dst, &[])?;
+        }
+        Ok(())
+    };
+    match copy() {
+        Ok(()) => println!(
+            "Kept the shell scripts in {} for later `gpy setup` runs",
+            target.display()
+        ),
+        Err(err) => crate::commands::output::warn(format_args!(
+            "Could not keep the shell scripts in {} ({err}); a later `gpy setup` will need --from",
+            target.display()
+        )),
+    }
 }
 
 /// Refresh the files of every other shell already set up (its tree is

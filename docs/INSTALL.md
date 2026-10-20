@@ -300,8 +300,11 @@ GPY ships through a personal tap, `jpease/homebrew-tap` (not homebrew-core):
 brew install jpease/tap/gpy
 ```
 
-The formula builds `gpy` and `gpy-agent` from the tagged source tarball and
-installs the Fish, Zsh and Bash files under Homebrew's `share/gpy/{fish,zsh,bash}`.
+On macOS 15 or later (Apple Silicon or Intel) and Linux x86_64, Homebrew
+installs a prebuilt bottle; anywhere else the formula builds `gpy` and
+`gpy-agent` from the tagged source tarball, which pulls in Rust as a build
+dependency. Either way it installs the Fish, Zsh and Bash files under
+Homebrew's `share/gpy/{fish,zsh,bash}`.
 It depends on none of the three shells and does not modify your dotfiles.
 Finish with:
 
@@ -342,8 +345,10 @@ of the shell it sets up, and those of every other shell set up earlier (their
 rc files are left alone). `gpy doctor` warns about a shell whose files an older
 `gpy` installed. It finds the script trees via `--from`, then `GPY_SHARE_DIR`,
 then the `share/gpy` beside the binary (Homebrew), then the source checkout the
-binary was built in. Nothing in an rc file is touched until the files are in
-place.
+binary was built in. Given `--from` or `GPY_SHARE_DIR`, as the installers do,
+it also keeps a copy of the trees in that `share/gpy` (`~/.local/share/gpy` for
+the installers), so a later bare `gpy setup` works. Nothing in an rc file is
+touched until the files are in place.
 
 ## Verifying Your Download
 

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A bare `gpy setup` works after installing with the curl installer or the
+  release archive. Setup now keeps a copy of the shell scripts in
+  `~/.local/share/gpy` when the installer passes their temporary location;
+  before, it failed with "could not find GPY's fish files next to this
+  binary". `scripts/uninstall.sh` removes the copy.
+
 ## [0.5.0] - 2026-10-19
 
 ### Changed

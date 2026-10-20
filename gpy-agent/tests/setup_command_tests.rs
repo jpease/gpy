@@ -349,3 +349,37 @@ fn setup_refreshes_shells_set_up_earlier_and_doctor_flags_stale_ones() {
     let report = doctor(home.path());
     assert!(!report.contains("installed by"), "{report}");
 }
+
+/// The installers run setup with a temporary `--from`. The scripts must be
+/// kept beside the binary, so a later bare `gpy setup` finds them.
+#[test]
+fn installer_style_setup_keeps_the_scripts_for_a_bare_rerun() {
+    let home = TempDir::new().unwrap();
+    let prefix = TempDir::new().unwrap();
+    let bin = prefix.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let gpy = bin.join("gpy");
+    fs::copy(env!("CARGO_BIN_EXE_gpy"), &gpy).unwrap();
+    let run = |extra: &[&std::ffi::OsStr]| {
+        Command::new(&gpy)
+            .args(["setup", "--non-interactive", "--shell", "zsh"])
+            .args(extra)
+            .current_dir(home.path())
+            .env_clear()
+            .env("HOME", home.path())
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("GPY_NERD_FONT", "0")
+            .output()
+            .expect("failed to spawn gpy setup")
+    };
+
+    assert_ok(&run(&["--from".as_ref(), repo_root().as_os_str()]));
+    assert!(prefix.path().join("share/gpy/zsh/gpy.zsh").is_file());
+    assert!(
+        prefix
+            .path()
+            .join("share/gpy/fish/conf.d/gpy_init.fish")
+            .is_file()
+    );
+    assert_ok(&run(&[]));
+}
