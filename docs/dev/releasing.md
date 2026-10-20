@@ -118,7 +118,8 @@ Everything below runs on `main`, with a clean tree.
     ```
 
     The tap's `brew test-bot` workflow builds and tests bottles on macOS 15
-    (Apple Silicon and Intel) and Linux x86_64. Once it is green, publish them
+    (Apple Silicon) and Linux x86_64; homebrew-core has no Intel macOS `rust`
+    bottle, so there is no Intel bottle. Once it is green, publish them
     instead of merging:
 
     ```sh
@@ -168,7 +169,7 @@ project's fault to a first-time user.
   Do not restate that matrix here or anywhere else.
 
 - **Homebrew** — the personal tap `jpease/homebrew-tap`, installed with
-  `brew install jpease/tap/gpy` (Fish, Zsh and Bash via `gpy setup`; prebuilt bottles for macOS 15+ and Linux x86_64, else built from the tag tarball). Every
+  `brew install jpease/tap/gpy` (Fish, Zsh and Bash via `gpy setup`; prebuilt bottles for Apple Silicon macOS 15+ and Linux x86_64, else built from the tag tarball). Every
   reference must be tap-qualified — the bare `brew install <name>` form implies
   homebrew-core. homebrew-core itself needs 90
   forks, 90 watchers, 225 stars and a repo at least 30 days old; it is a

@@ -300,11 +300,12 @@ GPY ships through a personal tap, `jpease/homebrew-tap` (not homebrew-core):
 brew install jpease/tap/gpy
 ```
 
-On macOS 15 or later (Apple Silicon or Intel) and Linux x86_64, Homebrew
-installs a prebuilt bottle; anywhere else the formula builds `gpy` and
-`gpy-agent` from the tagged source tarball, which pulls in Rust as a build
-dependency. Either way it installs the Fish, Zsh and Bash files under
-Homebrew's `share/gpy/{fish,zsh,bash}`.
+On Apple Silicon Macs running macOS 15 or later, and on Linux x86_64, Homebrew
+installs a prebuilt bottle. Anywhere else, Intel Macs included, the formula
+builds `gpy` and `gpy-agent` from the tagged source tarball, which pulls in
+Rust as a build dependency (the curl installer has prebuilt Intel binaries).
+Either way it installs the Fish, Zsh and Bash files under Homebrew's
+`share/gpy/{fish,zsh,bash}`.
 It depends on none of the three shells and does not modify your dotfiles.
 Finish with:
 
