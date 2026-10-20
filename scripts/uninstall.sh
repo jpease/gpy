@@ -15,6 +15,7 @@ gpy_cache_dir="$cache_home/gpy"
 bin_dir="$HOME/.local/bin"
 agent_binary="$bin_dir/gpy-agent"
 cli_binary="$bin_dir/gpy"
+share_dir="$HOME/.local/share/gpy"
 
 # Absolute XDG_RUNTIME_DIR, else the cache root (as paths.rs).
 runtime_root="$gpy_cache_dir"
@@ -172,6 +173,7 @@ echo "    - Zsh: $gpy_config_dir/zsh"
 echo "    - Fish: $fish_prompt_dir, $fish_conf_d, $fish_completions_dir/gpy*.fish"
 echo "  - Agent binary: $agent_binary (and gpy-agent.backup.* copies)"
 echo "  - CLI binary: $cli_binary (and gpy.backup.* copies)"
+echo "  - Kept shell scripts: $share_dir"
 echo "  - Configuration: $gpy_config_dir"
 echo "  - Cache: $gpy_cache_dir"
 echo "  - Runtime: $runtime_root"
@@ -322,6 +324,7 @@ done
 if [ "$removed_backups" -gt 0 ]; then
     echo "Removed $removed_backups binary backup(s) from $bin_dir"
 fi
+remove_dir "$share_dir" "Removed kept shell scripts: $share_dir"
 
 remove_dir "$gpy_config_dir" "Removed configuration: $gpy_config_dir" "Configuration directory not found"
 remove_dir "$gpy_cache_dir" "Removed cache: $gpy_cache_dir" "Cache directory not found"
