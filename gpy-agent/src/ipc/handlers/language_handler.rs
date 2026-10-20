@@ -7,7 +7,10 @@ use super::{
 use crate::ipc::{LanguageInfo, Message, Response};
 use crate::language::DetectionCache;
 use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
-use crate::language::display::{build_language_display_info_at, cached_language_display_info_at};
+use crate::language::display::{
+    build_language_display_info_at, cached_language_display_info_at,
+    settled_language_display_info_at,
+};
 use crate::language::venv::PythonVenv;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -126,10 +129,21 @@ impl LanguageHandler {
                 prev_bg,
             );
             // Error rather than a version-less render, for the same reason as
-            // a slow detection. The job publishes when it finishes.
+            // a slow detection. The job publishes when it finishes, and has
+            // cached every result, so a version still cold afterwards (its
+            // entry already expired, or the wall clock stepped back) shows
+            // as none rather than failing a request that is in budget.
             let languages = probe
                 .wait_timeout(remaining(deadline))
-                .and_then(|()| cached())
+                .map(|()| {
+                    settled_language_display_info_at(
+                        &detected_languages,
+                        &theme,
+                        &config.language,
+                        Some(&repo_root),
+                        python_venv.as_ref(),
+                    )
+                })
                 .ok_or(HandlerError::TimedOut("Language version probe"))?;
             // A job this request started already published its inputs.
             (languages, started_here)

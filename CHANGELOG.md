@@ -189,13 +189,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/bench.sh --ci` fails when `cargo bench` fails, and checks every
   budget before reporting an over-budget one.
 - An idle Zsh shell no longer misses the agent's re-register ring when it
-  arrives while the trap for the reload ring is still running, as it does when
-  an upgraded agent starts. The shell used to go without live repaints until
-  the agent re-nudged it a minute later. Zsh also acts on a pending ring at its
-  next prompt now, as Bash does.
+  arrives while the trap for the reload ring is still running. The shell used
+  to go without live repaints until the agent re-nudged it a minute later. Zsh
+  also acts on a pending ring at its next prompt now, as Bash does. A starting
+  agent now rings each shell once for both `.reload` and `.reregister`, so
+  Zsh shells still running older scripts re-register at once after an
+  upgrade too.
 - Upgrading through the installer for one shell refreshes the scripts of every
   other shell set up earlier, instead of leaving them on the old version.
   `gpy doctor` warns about a shell whose scripts an older `gpy` installed.
+- Zsh startup no longer reads the whole of `$TMPDIR` to sweep stale render
+  memo directories. Those directories now live in a private per-user parent,
+  `$TMPDIR/gpy_relay_<uid>`, which is all the sweep reads. A `$TMPDIR` holding
+  many entries from other programs used to add a second or more to every Zsh
+  start, and over ten seconds on a loaded machine.
+- Finding a directory's language project root no longer lists every entry of
+  each ancestor directory. Marker files are looked up by name first, and
+  other spellings only within a directory's first 1024 entries, so a prompt
+  under a directory with many files (a crowded `$TMPDIR` or downloads
+  folder) no longer times out the language segment.
+- A language request whose version probe finished in time no longer fails
+  when the version's cache entry is already gone again (expired, or read as
+  stale after the system clock stepped back); the language shows without a
+  version.
 
 ### Security
 

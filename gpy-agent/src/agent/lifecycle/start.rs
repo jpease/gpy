@@ -373,67 +373,49 @@ impl StartupReport {
     }
 }
 
+/// Announce a started agent to every alive tracked shell, pruning dead ones:
+/// warm the theme-export cache, then raise `.reload` if the export changed
+/// (config edited while no agent ran) and `.reregister`, and ring each shell
+/// once. One ring for both flags matters because Zsh drops a ring that lands
+/// while its trap for the previous one runs, and a shell from an older
+/// release has no backstop for that. Call once the socket accepts.
 #[cfg(unix)]
-/// Notify tracked shells that a new agent is ready, so they re-register
-/// instead of keeping a stale registration until the next prompt.
-pub(crate) fn notify_existing_shells_of_restart() {
-    nudge_all_tracked_shells_in(&default_shell_dir());
-}
-
-/// Warm the theme-export cache and, if it changed, flag every alive tracked
-/// shell to reload: config changes made while no agent ran are otherwise
-/// unseen, and the just-started registry is empty.
-#[cfg(unix)]
-pub(crate) fn warm_theme_export_cache(
+pub(crate) fn announce_start_to_tracked_shells(
     theme_manager: &crate::theme::ThemeManager,
     config: &crate::config::Config,
     palette: &crate::template::Palette,
 ) {
-    warm_theme_export_cache_with(&default_shell_dir(), || {
+    announce_start_in(&default_shell_dir(), || {
         crate::cache::write_theme_export_cache(theme_manager, config, palette)
     });
 }
 
-/// [`warm_theme_export_cache`] with injectable export write and tracking dir.
+/// [`announce_start_to_tracked_shells`] with injectable export write and
+/// tracking dir. Reuses [`ShellRenudger::pids_to_nudge`] with
+/// `is_registered = false` (the announcement goes to everyone) and a fresh
+/// renudger, so [`MAX_RENUDGE_ATTEMPTS`] never suppresses it.
 #[cfg(unix)]
-fn warm_theme_export_cache_with(
-    shell_dir: &std::path::Path,
-    write_export: impl FnOnce() -> Result<bool>,
-) {
-    match write_export() {
-        Ok(true) => flag_all_tracked_shells_in(shell_dir, ShellFlag::Reload),
-        Ok(false) => {}
-        Err(e) => {
-            debug_log!(
-                "agent",
-                "Warning: Failed to write initial theme export cache ({e})"
-            );
-        }
-    }
-}
-
-/// Request re-registration from every alive tracked shell, pruning dead ones.
-#[cfg(unix)]
-fn nudge_all_tracked_shells_in(shell_dir: &std::path::Path) {
-    flag_all_tracked_shells_in(shell_dir, ShellFlag::Reregister);
-}
-
-/// Raise `flag` for every alive tracked shell, pruning dead ones. Reuses
-/// [`ShellRenudger::pids_to_nudge`] with `is_registered = false` (startup
-/// notifications go to everyone) and a fresh renudger, so
-/// [`MAX_RENUDGE_ATTEMPTS`] never suppresses them.
-#[cfg(unix)]
-fn flag_all_tracked_shells_in(shell_dir: &std::path::Path, flag: ShellFlag) {
+fn announce_start_in(shell_dir: &std::path::Path, write_export: impl FnOnce() -> Result<bool>) {
+    let reload = write_export().unwrap_or_else(|e| {
+        debug_log!(
+            "agent",
+            "Warning: Failed to write initial theme export cache ({e})"
+        );
+        false
+    });
     let mut renudger = ShellRenudger::default();
     let pids = renudger.pids_to_nudge(shell_dir, |_| false, tracked_shell_liveness());
 
     for pid in pids {
         debug_log!(
             "agent",
-            "Raising {} for tracked shell {pid} after agent start",
-            flag.suffix()
+            "Announcing agent start to tracked shell {pid} (reload: {reload})"
         );
-        raise_shell_flag(shell_dir, pid, flag);
+        if reload && let Err(e) = write_shell_flag(shell_dir, pid, ShellFlag::Reload) {
+            debug_log!("agent", "Failed to write reload flag for {pid}: {e}");
+        }
+        // Writes `.reregister`, then rings once for both flags.
+        raise_shell_flag(shell_dir, pid, ShellFlag::Reregister);
     }
 }
 
@@ -678,7 +660,7 @@ mod tests {
             std::fs::write(dir.path().join(name), "").expect("seed flag");
         }
 
-        super::nudge_all_tracked_shells_in(dir.path());
+        super::announce_start_in(dir.path(), || Ok(false));
 
         let leftovers: Vec<_> = std::fs::read_dir(dir.path())
             .expect("read dir")
@@ -732,7 +714,7 @@ mod tests {
             .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1000))
             .expect("backdate tracking file");
 
-        super::nudge_all_tracked_shells_in(dir.path());
+        super::announce_start_in(dir.path(), || Ok(false));
 
         assert!(
             !dir.path().join(format!("{pid}.reregister")).exists(),
@@ -891,7 +873,7 @@ mod tests {
         let pid = child.id();
         track_shells(dir.path(), &[pid]);
 
-        super::nudge_all_tracked_shells_in(dir.path());
+        super::announce_start_in(dir.path(), || Ok(false));
         // Give an unhandled SIGURG time to kill the child, if it would.
         std::thread::sleep(std::time::Duration::from_millis(200));
 
@@ -933,7 +915,7 @@ mod tests {
         track_shells(shell_dir.path(), &[pid]);
         let reload_flag = shell_dir.path().join(format!("{pid}.reload"));
 
-        super::warm_theme_export_cache_with(shell_dir.path(), || {
+        super::announce_start_in(shell_dir.path(), || {
             crate::cache::theme_export::write_theme_export_to_dir(
                 cache.path(),
                 &default_theme,
@@ -943,7 +925,7 @@ mod tests {
         });
         let flagged_on_unchanged = reload_flag.exists();
 
-        super::warm_theme_export_cache_with(shell_dir.path(), || {
+        super::announce_start_in(shell_dir.path(), || {
             crate::cache::theme_export::write_theme_export_to_dir(
                 cache.path(),
                 &text_theme,
@@ -962,6 +944,43 @@ mod tests {
         assert!(
             flagged_on_changed,
             "a changed export must write the tracked shell's reload flag"
+        );
+    }
+
+    /// A start that changed the export rings each shell once, with `.reload`
+    /// and `.reregister` both already written: Zsh drops a second ring that
+    /// lands while its trap for the first is running.
+    #[cfg(unix)]
+    #[test]
+    fn announce_start_rings_once_for_reload_and_reregister() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let mark = dir.path().join("rings.mark");
+        let script = format!(
+            "trap 'if [ -e \"{dir}/$$.reload\" ] && [ -e \"{dir}/$$.reregister\" ]; then echo both >>\"{mark}\"; else echo partial >>\"{mark}\"; fi' URG; while :; do sleep 0.05; done",
+            dir = dir.path().display(),
+            mark = mark.display(),
+        );
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .spawn()
+            .expect("spawn stand-in shell");
+        // Let sh install its trap before the doorbell rings.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        track_shells(dir.path(), &[child.id()]);
+
+        super::announce_start_in(dir.path(), || Ok(true));
+        let rang = wait_for(&mark);
+        // Room for a second ring to show up, if one were sent.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert!(rang, "the shell must be rung");
+        assert_eq!(
+            std::fs::read_to_string(&mark).expect("read mark"),
+            "both\n",
+            "one ring, after both flags were written"
         );
     }
 
