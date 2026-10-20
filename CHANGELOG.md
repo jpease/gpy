@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-19
+
 ### Changed
 
 - Language markers under gitignored directories (e.g.
@@ -232,6 +234,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   created owner-only (`0600`), in a `0700` `instant-prompts` directory.
 - Bash no longer `eval`s an unvalidated username when `$HOME` is empty.
 
+### Upgrading from 0.4.0
+
+- Run the installer as before. It restarts the agent on the new version and
+  refreshes the scripts of every shell set up earlier, not only the one it
+  detects. Shells already open keep working against the new agent and
+  re-register with it at once; new shells load the new scripts.
+- `gpy doctor` warns about any shell whose scripts an older `gpy` installed;
+  `gpy setup --shell <shell>` refreshes them.
+- A `GPY_AGENT_SOCKET_PATH` directly in a shared directory such as `/tmp` is
+  now refused; point it into a private directory.
+
 ## [0.4.0] - 2026-10-16
 
 First public release. Versions 0.1.0–0.3.1 were released before the
@@ -310,5 +323,6 @@ repository was public; their notes are not carried over.
 - `install-oneline.sh` installs the Fish, Zsh and Bash scripts from one archive, `gpy-shell-files.tar.gz`, after checking its published SHA-256, instead of downloading each script from a branch or tag unverified. `GPY_VERSION` can therefore only name 0.4.0 or later.
 - Releases also publish `install-oneline.sh`, `uninstall.sh` and `uninstall.fish` (checksummed and attested like every other asset); the installer's uninstall hint points at them.
 
-[Unreleased]: https://github.com/jpease/gpy/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/jpease/gpy/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/jpease/gpy/releases/tag/v0.5.0
 [0.4.0]: https://github.com/jpease/gpy/releases/tag/v0.4.0
