@@ -616,8 +616,13 @@ mod tests {
         let manager = ConfigManager::from_path(&config_path).expect("manager");
         let reloads = Arc::new(AtomicUsize::new(0));
         let counted = Arc::clone(&reloads);
-        manager.set_reload_callback(Arc::new(move |_old: &Config, _new: &Config| {
-            counted.fetch_add(1, Ordering::SeqCst);
+        // FSEvents may replay the fixture writes made just before the stream
+        // started, firing reloads of unchanged content. Count only reloads that
+        // change `git.enabled`: the config edit does, a theme edit never could.
+        manager.set_reload_callback(Arc::new(move |old: &Config, new: &Config| {
+            if old.git.enabled != new.git.enabled {
+                counted.fetch_add(1, Ordering::SeqCst);
+            }
             Ok(())
         }));
         manager
