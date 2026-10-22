@@ -48,6 +48,7 @@ Exit status is 0 when every check passed, 1 otherwise.
 | `check-license-metadata.sh` | `Cargo.toml`, `LICENSE` and every other license declaration agree on GPL-3.0-or-later. |
 | `check-privacy-patterns.sh` | No workstation paths, private identifiers or hardcoded sockets in tracked files. |
 | `check-doc-links.sh` | Every repository-relative Markdown link resolves. |
+| `check_new_allows.py [--staged \| <base-rev>]` | Fail when a change adds an `allow` attribute without `reason = "..."`; existing allows are not checked. Run at pre-commit (`--staged`) and by the `new-allows` job in `pr-gate.yml`. |
 | `cleanup-test-agents.sh` | Reap agents and sockets left by killed Rust test runs. |
 | `bench.sh --ci` | Rust micro-benchmark budgets from `tests/performance-baselines.json` (part of `just bench-ci`). |
 | `ci-bench.sh` | End-to-end prompt-latency and agent-memory budgets (`just bench-ci`). |
