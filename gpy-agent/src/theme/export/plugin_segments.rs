@@ -1,0 +1,225 @@
+//! Assignments for plugin and community segments: styles, delimiters, properties and file paths.
+
+use super::shell_assignment::{
+    ShellAssignment, append_shell_assignment, append_shell_assignments, sanitize_property_token,
+};
+use super::shell_colors::ShellColors;
+use crate::config::DelimiterConfig;
+use crate::config::validation::colors::canonical_color;
+use crate::plugin::SegmentName;
+use crate::shell::Shell;
+use crate::theme::model::{PluginSegmentTheme, ThemeConfig};
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+
+/// Style assignments for one plugin segment, emitted both namespaced
+/// (`__gpy_segment_<token>_*`) and flat (`__color_<token>_*`) so either contract works.
+fn plugin_segment_style_assignments(
+    colors: ShellColors<'_>,
+    segment_name: &str,
+    segment_token: &str,
+    segment_theme: &PluginSegmentTheme,
+) -> Vec<ShellAssignment> {
+    let gpy_prefix = format!("__gpy_segment_{segment_token}");
+    let mut assignments = vec![ShellAssignment::local(
+        format!("{gpy_prefix}_id"),
+        segment_name,
+    )];
+
+    if let Some(bg_color) = segment_theme.bg_color.as_deref() {
+        let bg_color = colors.resolve(bg_color);
+        assignments.push(ShellAssignment::local(
+            format!("{gpy_prefix}_bg_color"),
+            bg_color.as_ref(),
+        ));
+        assignments.push(ShellAssignment::local(
+            format!("__color_{segment_token}_bg"),
+            bg_color,
+        ));
+    }
+
+    if let Some(text_color) = segment_theme.text_color.as_deref() {
+        let text_color = colors.resolve(text_color);
+        assignments.push(ShellAssignment::local(
+            format!("{gpy_prefix}_text_color"),
+            text_color.as_ref(),
+        ));
+        assignments.push(ShellAssignment::local(
+            format!("__color_{segment_token}_fg"),
+            text_color,
+        ));
+    }
+
+    if let Some(icon) = segment_theme.icon.as_ref() {
+        assignments.push(ShellAssignment::local(
+            format!("{gpy_prefix}_icon"),
+            icon.as_str(),
+        ));
+        assignments.push(ShellAssignment::local(
+            format!("__icon_{segment_token}"),
+            icon.as_str(),
+        ));
+    }
+
+    assignments.extend(plugin_segment_delimiter_assignments(
+        colors,
+        &gpy_prefix,
+        "open",
+        segment_theme.open.as_ref(),
+    ));
+    assignments.extend(plugin_segment_delimiter_assignments(
+        colors,
+        &gpy_prefix,
+        "close",
+        segment_theme.close.as_ref(),
+    ));
+
+    assignments
+}
+
+/// Delimiter triple for one `side` (`"open"`/`"close"`) of a plugin segment, if set.
+fn plugin_segment_delimiter_assignments(
+    colors: ShellColors<'_>,
+    gpy_prefix: &str,
+    side: &str,
+    delimiter: Option<&DelimiterConfig>,
+) -> Vec<ShellAssignment> {
+    let Some(config) = delimiter else {
+        return Vec::new();
+    };
+    vec![
+        ShellAssignment::local(format!("{gpy_prefix}_{side}_icon"), config.icon.as_str()),
+        ShellAssignment::local(
+            format!("{gpy_prefix}_{side}_icon_color"),
+            colors.resolve(&config.icon_color),
+        ),
+        ShellAssignment::local(
+            format!("{gpy_prefix}_{side}_bg_color"),
+            colors.resolve(&config.bg_color),
+        ),
+    ]
+}
+
+/// Plugin segment `properties`, sorted; `*_color`/`*_icon` also get a flat alias.
+fn plugin_segment_property_assignments(
+    colors: ShellColors<'_>,
+    segment_token: &str,
+    segment_theme: &PluginSegmentTheme,
+) -> Vec<ShellAssignment> {
+    let gpy_prefix = format!("__gpy_segment_{segment_token}");
+    let mut assignments = Vec::new();
+
+    let mut property_names: Vec<_> = segment_theme.properties.keys().collect();
+    property_names.sort_unstable();
+    for property_name in property_names {
+        let Some(raw_value) = segment_theme
+            .properties
+            .get(property_name)
+            .map(String::as_str)
+        else {
+            continue;
+        };
+        let property_token = sanitize_property_token(property_name);
+        if property_token.is_empty() {
+            continue;
+        }
+        let is_color = property_name.ends_with("_color");
+        // Theme validation accepted `*_color` values; export them in the spelling typed colors use.
+        let value = if is_color {
+            canonical_color(raw_value).map_or(Cow::Borrowed(raw_value), |canonical| {
+                Cow::Owned(colors.resolve(&canonical).into_owned())
+            })
+        } else {
+            Cow::Borrowed(raw_value)
+        };
+
+        assignments.push(ShellAssignment::local(
+            format!("{gpy_prefix}_{property_token}"),
+            value.as_ref(),
+        ));
+
+        if is_color {
+            let base = property_name.trim_end_matches("_color");
+            let base_token = sanitize_property_token(base);
+            if !base_token.is_empty() {
+                assignments.push(ShellAssignment::local(
+                    format!("__color_{segment_token}_{base_token}"),
+                    value.as_ref(),
+                ));
+            }
+        }
+        if property_name.ends_with("_icon") {
+            let base = property_name.trim_end_matches("_icon");
+            let base_token = sanitize_property_token(base);
+            if !base_token.is_empty() {
+                assignments.push(ShellAssignment::local(
+                    format!("__icon_{segment_token}_{base_token}"),
+                    value.as_ref(),
+                ));
+            }
+        }
+    }
+
+    assignments
+}
+
+/// Plugin/community segment style exports, in sorted segment-name order.
+pub(super) fn append_plugin_segment_assignments(
+    output: &mut String,
+    colors: ShellColors<'_>,
+    theme: &ThemeConfig,
+) {
+    let mut plugin_segments: Vec<_> = theme.segments.plugin.iter().collect();
+    plugin_segments.sort_unstable_by_key(|(left_name, _)| *left_name);
+
+    for (raw_name, segment_theme) in plugin_segments {
+        // Theme validation rejects keys that are not segment names.
+        let Ok(segment_name) = SegmentName::new(raw_name) else {
+            continue;
+        };
+        let segment_token = segment_name.variable_token();
+
+        append_shell_assignments(
+            output,
+            colors.shell,
+            plugin_segment_style_assignments(
+                colors,
+                segment_name.as_str(),
+                &segment_token,
+                segment_theme,
+            ),
+        );
+        append_shell_assignments(
+            output,
+            colors.shell,
+            plugin_segment_property_assignments(colors, &segment_token, segment_theme),
+        );
+    }
+}
+
+/// Export plugin segment file paths (Fish only) so fish can source community segments.
+pub(super) fn append_plugin_segment_file_assignments(
+    output: &mut String,
+    shell: Shell,
+    plugin_segment_files: &BTreeMap<String, String>,
+) {
+    if !matches!(shell, Shell::Fish) {
+        return;
+    }
+    for (segment_name, segment_file) in plugin_segment_files {
+        let Ok(segment_name) = SegmentName::new(segment_name) else {
+            continue;
+        };
+        append_shell_assignment(
+            output,
+            shell,
+            ShellAssignment::local(
+                format!(
+                    "__gpy_plugin_segment_file_{}",
+                    segment_name.variable_token()
+                ),
+                segment_file.as_str(),
+            ),
+        );
+    }
+}
