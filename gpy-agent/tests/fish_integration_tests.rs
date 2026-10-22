@@ -133,7 +133,7 @@ async fn test_agent_handles_rapid_fish_restarts() {
         "agent socket {socket_path} did not appear after start"
     );
 
-    for i in 0..5 {
+    for i in 0_u32..5 {
         let output = isolate_user_dirs(&mut Command::new("fish"), socket_dir.path())
             .arg("-c")
             .arg(format!("echo 'Iteration {i}'"))

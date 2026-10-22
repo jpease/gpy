@@ -21,6 +21,10 @@ const REQUEST_TIMEOUT_MS: u64 = 500;
 
 /// Send one newline-delimited JSON request and return its round-trip time.
 #[cfg(unix)]
+#[allow(
+    clippy::map_err_ignore,
+    reason = "the request-timeout Elapsed carries no detail and attaching it would append to the CLI error text"
+)]
 async fn send_request(stream: &mut UnixStream, msg: &serde_json::Value) -> Result<Duration> {
     let timeout_duration = Duration::from_millis(REQUEST_TIMEOUT_MS);
 
@@ -51,10 +55,16 @@ async fn send_request(stream: &mut UnixStream, msg: &serde_json::Value) -> Resul
                 return Err(crate::Error::ipc("Connection closed by agent".to_owned()));
             }
 
-            buffer.extend_from_slice(&chunk[..n]);
+            let received = chunk.get(..n).ok_or_else(|| {
+                crate::Error::ipc("read reported more bytes than the buffer holds".to_owned())
+            })?;
+            buffer.extend_from_slice(received);
 
-            if let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
-                let line = &buffer[..pos];
+            if let Some(line) = buffer
+                .iter()
+                .position(|&b| b == b'\n')
+                .and_then(|pos| buffer.get(..pos))
+            {
                 // The server sends formatted output, not a `Response`; only check it is JSON.
                 let _json: serde_json::Value = serde_json::from_slice(line).map_err(|e| {
                     let line_str = String::from_utf8_lossy(line);
@@ -81,6 +91,14 @@ async fn send_request(stream: &mut UnixStream, msg: &serde_json::Value) -> Resul
     reason = "this is an interactive CLI debug command; its whole output is timing results printed to stdout"
 )]
 #[cfg(unix)]
+#[allow(
+    clippy::use_debug,
+    reason = "Duration has no Display impl; the `{:.2?}` timings are this command's user-facing output"
+)]
+#[allow(
+    clippy::map_err_ignore,
+    reason = "the connect-timeout Elapsed carries no detail and attaching it would append to the CLI error text"
+)]
 pub fn prompt() -> Result<()> {
     let socket_path = get_socket_path()?;
     if !socket_path.exists() {

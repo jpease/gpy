@@ -43,6 +43,7 @@ impl VariableResolver for UsernameResolver<'_> {
                     .username
                     .icon
                     .as_deref()
+                    .and_then(|icon| self.glyphs.icon(icon))
                     .unwrap_or("")
                     .to_owned(),
             ),
@@ -61,6 +62,7 @@ mod tests {
     #![allow(clippy::missing_errors_doc)]
 
     use super::UsernameResolver;
+    use crate::formatter::separator::Glyphs;
     use crate::formatter::{IsFirst, IsLast, SegmentPosition};
     use crate::template::VariableResolver;
     use crate::theme::ThemeConfig;
@@ -102,6 +104,24 @@ mod tests {
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(res.resolve("symbol").unwrap(), "");
+    }
+
+    #[test]
+    fn symbol_drops_private_use_icon_with_plain_glyphs() {
+        let mut thr = theme();
+        thr.segments.username.icon = Some(crate::config::types::Icon::new("\u{f007}").unwrap());
+        let res = |glyphs| {
+            UsernameResolver::new(
+                "root".to_owned(),
+                &thr,
+                SegmentPosition::new(IsLast::No, IsFirst::No),
+            )
+            .with_glyphs(glyphs)
+            .resolve("symbol")
+            .unwrap()
+        };
+        assert_eq!(res(Glyphs::Nerd), "\u{f007}");
+        assert_eq!(res(Glyphs::Plain), "");
     }
 
     #[test]

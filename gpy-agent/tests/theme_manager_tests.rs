@@ -8,6 +8,10 @@
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
+#![allow(
+    unsafe_code,
+    reason = "installing and restoring a SIGURG handler needs `nix::sys::signal::sigaction`, an unsafe fn"
+)]
 
 #[path = "common/env_guard.rs"]
 mod env_guard;
@@ -247,7 +251,7 @@ fn test_theme_manager_loads_custom_theme() {
     assert_eq!(theme.segments.clock.text_color, "yellow");
     assert_eq!(
         theme.segments.clock.time_format,
-        Some("%H:%M:%S".to_string())
+        Some("%H:%M:%S".to_owned())
     );
     assert_eq!(theme.segments.clock.show_seconds, Some(true));
     assert_eq!(
@@ -276,11 +280,7 @@ fn test_theme_manager_export_fish_format() {
 
     // Export to Fish format
     let mut config = gpy_agent::config::Config::default();
-    config.ui.enabled_segments = vec![
-        "clock".to_string(),
-        "directory".to_string(),
-        "git".to_string(),
-    ];
+    config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned(), "git".to_owned()];
     let fish_output = manager.export(
         Shell::Fish,
         &config,
@@ -388,11 +388,7 @@ fn test_disabled_git_removed_from_segment_list() {
     let manager = ThemeManager::new("disabled_git").unwrap();
     let mut config = gpy_agent::config::Config::default();
     config.git.enabled = false;
-    config.ui.enabled_segments = vec![
-        "clock".to_string(),
-        "directory".to_string(),
-        "git".to_string(),
-    ];
+    config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned(), "git".to_owned()];
 
     let fish_output = manager.export(
         Shell::Fish,
@@ -500,8 +496,8 @@ fn test_theme_manager_start_stop_watching() {
     assert!(result.is_ok());
 
     // Starting again should be a no-op
-    let result = manager.start_watching(Duration::from_millis(100));
-    assert!(result.is_ok());
+    let second = manager.start_watching(Duration::from_millis(100));
+    assert!(second.is_ok());
 
     // Stop watching
     manager.stop_watching();
@@ -574,12 +570,12 @@ fn test_theme_manager_export_includes_all_segments() {
 
     // Export with all segments
     let all_segments = vec![
-        "clock".to_string(),
-        "directory".to_string(),
-        "duration".to_string(),
-        "status".to_string(),
-        "git".to_string(),
-        "language".to_string(),
+        "clock".to_owned(),
+        "directory".to_owned(),
+        "duration".to_owned(),
+        "status".to_owned(),
+        "git".to_owned(),
+        "language".to_owned(),
     ];
     let mut config = gpy_agent::config::Config::default();
     config.ui.enabled_segments = all_segments;
@@ -743,6 +739,9 @@ fn test_theme_change_sends_reload() {
         SaFlags::empty(),
         SigSet::empty(),
     );
+    // SAFETY: the handler only does a relaxed `fetch_add` on a static atomic, which is
+    // async-signal-safe, and the test is `#[serial]`, so no other test changes the
+    // SIGURG disposition while it is installed.
     let previous =
         unsafe { sigaction(Signal::SIGURG, &doorbell_handler) }.expect("install SIGURG handler");
 
@@ -836,8 +835,9 @@ fail_text_color = "white"
     // Stop watching
     manager.stop_watching();
 
-    // SIGURG's default disposition is ignore, so restoring it is safe even if a
-    // late doorbell is still in flight from the watcher thread.
+    // SAFETY: reinstalls the disposition saved at install time. SIGURG's default
+    // disposition is ignore, so restoring it is safe even if a late doorbell is
+    // still in flight from the watcher thread.
     unsafe {
         sigaction(Signal::SIGURG, &previous).expect("restore SIGURG");
     }
@@ -1069,6 +1069,9 @@ fn test_switch_theme_preserves_reload_notifications() {
         SaFlags::empty(),
         SigSet::empty(),
     );
+    // SAFETY: the handler only does a relaxed `fetch_add` on a static atomic, which is
+    // async-signal-safe, and the test is `#[serial]`, so no other test changes the
+    // SIGURG disposition while it is installed.
     let previous =
         unsafe { sigaction(Signal::SIGURG, &doorbell_handler) }.expect("install SIGURG handler");
 
@@ -1135,8 +1138,9 @@ fn test_switch_theme_preserves_reload_notifications() {
     manager.stop_watching();
     client_registry.unregister(std::process::id());
 
-    // SIGURG's default disposition is ignore, so restoring it is safe even if a
-    // late doorbell is still in flight.
+    // SAFETY: reinstalls the disposition saved at install time. SIGURG's default
+    // disposition is ignore, so restoring it is safe even if a late doorbell is
+    // still in flight.
     unsafe {
         sigaction(Signal::SIGURG, &previous).expect("restore SIGURG");
     }
@@ -1279,7 +1283,7 @@ fn save_user_theme_materializes_a_user_source_copy() {
     // After writing, `default` resolves to the user copy under XDG.
     let after = ThemeManager::discover_available_themes()
         .into_iter()
-        .find(|theme| theme.name == "default")
+        .find(|entry| entry.name == "default")
         .expect("default still discoverable");
     assert_eq!(after.source, ThemeSource::User);
     assert_eq!(

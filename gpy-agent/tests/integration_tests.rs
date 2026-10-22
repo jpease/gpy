@@ -5,7 +5,10 @@
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
-#![allow(unsafe_code)]
+#![allow(
+    unsafe_code,
+    reason = "raising RLIMIT_NOFILE for the 250-connection test needs libc::getrlimit/setrlimit"
+)]
 #![allow(clippy::missing_panics_doc)] // Test functions panic on assertion failures
 
 mod common;

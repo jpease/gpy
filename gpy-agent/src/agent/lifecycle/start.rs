@@ -298,7 +298,7 @@ fn wait_for_agent_ready(
 fn startup_failed(reason: Option<&str>) -> Error {
     let message = reason.map_or_else(
         || "Agent process exited before it was ready".to_owned(),
-        |reason| format!("Agent process failed before it was ready: {reason}"),
+        |detail| format!("Agent process failed before it was ready: {detail}"),
     );
     Error::process("startup_failed".to_owned(), message)
 }

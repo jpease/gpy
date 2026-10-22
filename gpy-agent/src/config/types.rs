@@ -694,11 +694,7 @@ impl ThemeName {
     /// Returns `None` unless [`is_safe_config_name`].
     #[must_use]
     pub fn new(value: String) -> Option<Self> {
-        if is_safe_config_name(&value) {
-            Some(Self(value))
-        } else {
-            None
-        }
+        is_safe_config_name(&value).then_some(Self(value))
     }
 
     /// Get the inner value
@@ -745,11 +741,7 @@ impl PaletteName {
     /// Returns `None` unless [`is_safe_config_name`].
     #[must_use]
     pub fn new(value: String) -> Option<Self> {
-        if is_safe_config_name(&value) {
-            Some(Self(value))
-        } else {
-            None
-        }
+        is_safe_config_name(&value).then_some(Self(value))
     }
 
     /// Get the inner value
@@ -1045,6 +1037,10 @@ impl fmt::Display for LanguageFilter {
 impl FromStr for LanguageFilter {
     type Err = String;
 
+    #[allow(
+        clippy::map_err_ignore,
+        reason = "Err is a String with no source slot; the message already quotes the rejected value"
+    )]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "all" => Ok(Self::All),

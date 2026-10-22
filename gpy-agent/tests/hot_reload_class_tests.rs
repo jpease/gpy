@@ -15,6 +15,10 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
 #![allow(clippy::missing_panics_doc)]
+#![allow(
+    unsafe_code,
+    reason = "installing and restoring a SIGURG handler needs `nix::sys::signal::sigaction`, an unsafe fn"
+)]
 #![cfg(unix)]
 
 #[path = "common/env_guard.rs"]
@@ -295,6 +299,9 @@ impl Harness {
             SaFlags::empty(),
             SigSet::empty(),
         );
+        // SAFETY: the handler only does a relaxed `fetch_add` on a static atomic, which
+        // is async-signal-safe; every harness test is `#[serial]`, so no other test
+        // changes the SIGURG disposition while it is installed.
         let prev_sigurg = unsafe { sigaction(Signal::SIGURG, &handler) }.expect("install SIGURG");
         let harness = Self {
             _temp: temp,

@@ -40,6 +40,13 @@ repos:
         files: '\.rs$'
         pass_filenames: false
         stages: [pre-commit]
+    -   id: file-size
+        name: file-size
+        description: Rust files stay under 800 lines; listed larger files may not grow
+        entry: python3 scripts/check_file_size.py
+        language: system
+        files: '\.rs$|file-size-allowlist\.txt$'
+        pass_filenames: false
     -   id: fish-check
         name: fish-check
         description: Run Fish shell syntax and formatting checks

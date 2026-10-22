@@ -9,6 +9,10 @@ use crate::plugin::{SegmentName, first_token_collision};
 /// # Errors
 /// Returns an error if any segment name is invalid or two names share a shell
 /// variable token (e.g. `a-b` and `a_b`).
+#[allow(
+    clippy::map_err_ignore,
+    reason = "ValidationError has no source field; InvalidSegmentName already carries the rejected value"
+)]
 fn parse_enabled_segments(segments: &[String]) -> Result<Vec<SegmentName>> {
     let mut names = Vec::with_capacity(segments.len());
     for (i, segment) in segments.iter().enumerate() {
@@ -80,8 +84,8 @@ pub fn validate_config(config: &crate::config::Config) -> Result<()> {
 pub fn normalize_config(config: &mut crate::config::Config) -> Result<()> {
     let names = parse_enabled_segments(&config.ui.enabled_segments)?;
     let mut canonical: Vec<String> = Vec::with_capacity(names.len());
-    for name in names {
-        let name = String::from(name);
+    for parsed in names {
+        let name = String::from(parsed);
         if !canonical.contains(&name) {
             canonical.push(name);
         }

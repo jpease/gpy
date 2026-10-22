@@ -349,8 +349,9 @@ mod schema_files {
             );
         }
 
-        let listed: Vec<&str> = schema["definitions"]["Format"]["enum"]
-            .as_array()
+        let listed: Vec<&str> = schema
+            .pointer("/definitions/Format/enum")
+            .and_then(serde_json::Value::as_array)
             .unwrap()
             .iter()
             .map(|v| v.as_str().unwrap())
@@ -400,7 +401,10 @@ mod schema_files {
         let schema = load("message.json");
         let mut schema_ops = BTreeSet::new();
         for entry in one_of(&schema) {
-            let op = entry["properties"]["op"]["const"].as_str().unwrap();
+            let op = entry
+                .pointer("/properties/op/const")
+                .and_then(serde_json::Value::as_str)
+                .unwrap();
             assert!(schema_ops.insert(op.to_owned()), "duplicate op entry {op}");
         }
         assert_eq!(
@@ -729,11 +733,20 @@ mod schema_files {
                 .unwrap()
         };
         let ack = find("Ack");
-        assert_eq!(ack["required"], json(r#"["status"]"#));
-        assert_eq!(ack["properties"]["status"]["const"], "ok");
+        assert_eq!(ack.get("required"), Some(&json(r#"["status"]"#)));
+        assert_eq!(
+            ack.pointer("/properties/status/const")
+                .and_then(serde_json::Value::as_str),
+            Some("ok")
+        );
         let error = find("Error");
-        assert_eq!(error["required"], json(r#"["error"]"#));
-        assert_eq!(error["properties"]["error"]["type"], "string");
+        assert_eq!(error.get("required"), Some(&json(r#"["error"]"#)));
+        assert_eq!(
+            error
+                .pointer("/properties/error/type")
+                .and_then(serde_json::Value::as_str),
+            Some("string")
+        );
 
         // The retired enum-wrapped shapes must not validate.
         for stale in [

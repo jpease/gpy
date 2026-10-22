@@ -7,6 +7,10 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
 #![allow(clippy::missing_panics_doc)]
+#![allow(
+    unsafe_code,
+    reason = "installing and restoring a SIGURG handler needs `nix::sys::signal::sigaction`, an unsafe fn"
+)]
 
 mod common;
 

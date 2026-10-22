@@ -61,6 +61,10 @@ impl LanguageHandler {
         if !config.language.enabled {
             return Ok(Response::Language { languages: vec![] });
         }
+        #[allow(
+            clippy::arithmetic_side_effects,
+            reason = "AgentTimeout caps timeout_seconds at 300, so now plus it cannot overflow Instant"
+        )]
         let deadline = Instant::now() + Duration::from_secs(config.agent.timeout_seconds.get());
 
         let theme = self.render.theme_manager.get();
@@ -170,11 +174,11 @@ impl LanguageHandler {
         prev_bg: Option<&str>,
     ) -> (Arc<SharedJob<()>>, bool) {
         let render = self.render.clone();
-        let cache_path = cache_path.to_path_buf();
+        let cache_path_owned = cache_path.to_path_buf();
         let repo_root_owned = repo_root.to_path_buf();
-        let detected = detected.to_vec();
-        let python_venv = python_venv.cloned();
-        let prev_bg = prev_bg.map(str::to_owned);
+        let detected_owned = detected.to_vec();
+        let python_venv_owned = python_venv.cloned();
+        let prev_bg_owned = prev_bg.map(str::to_owned);
         let mut started = false;
         let job = self
             .probes_in_flight
@@ -184,13 +188,18 @@ impl LanguageHandler {
                     let config = render.config_manager.get();
                     let theme = render.theme_manager.get();
                     let languages = build_language_display_info_at(
-                        &detected,
+                        &detected_owned,
                         &theme,
                         &config.language,
                         Some(&repo_root_owned),
-                        python_venv.as_ref(),
+                        python_venv_owned.as_ref(),
                     );
-                    Self::publish_languages(&render, &cache_path, &languages, prev_bg.as_deref());
+                    Self::publish_languages(
+                        &render,
+                        &cache_path_owned,
+                        &languages,
+                        prev_bg_owned.as_deref(),
+                    );
                     guard.finish(());
                 });
             });
@@ -491,13 +500,16 @@ mod tests {
             "the project interpreter must not run"
         );
 
-        let response = handler
+        let forwarded_response = handler
             .handle(&language_detect_request_with_venv(
                 &repo_root,
                 Some(&forwarded),
             ))
             .expect("request with forwarded venv");
-        assert_eq!(python_version(&response).as_deref(), Some("3.8.2"));
+        assert_eq!(
+            python_version(&forwarded_response).as_deref(),
+            Some("3.8.2")
+        );
         assert!(
             forwarded_log.exists(),
             "the forwarded interpreter is probed"
@@ -569,11 +581,11 @@ mod tests {
             "the probe's result must be published and rung"
         );
 
-        let started = std::time::Instant::now();
+        let warm_start = std::time::Instant::now();
         let response = handler.handle(&request).expect("warm request");
         assert_eq!(python_version(&response).as_deref(), Some("3.7.4"));
         assert!(
-            started.elapsed() < Duration::from_millis(500),
+            warm_start.elapsed() < Duration::from_millis(500),
             "a warm request must not probe again"
         );
     }

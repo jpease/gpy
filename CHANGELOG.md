@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `gpy-agent oneshot character --exit-code -1` is accepted and renders as a
+  failed command; before, a negative value was rejected as an unknown flag
+  unless written as `--exit-code=-1`.
+- When the agent cannot parse a prompt request (for example an operation it
+  does not know), it answers in the format the shell asked for, so the prompt
+  shows an empty segment instead of printing a JSON error.
+- With `ui.show_icons = false`, Nerd Font status icons (the default theme's
+  ok/fail glyphs) are replaced by `ok`/`err`, and Nerd Font hostname and
+  username icons are dropped, so they no longer show as boxes in plain fonts.
+
 ## [0.5.1] - 2026-10-19
 
 ### Fixed

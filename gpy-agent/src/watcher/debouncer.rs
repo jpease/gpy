@@ -169,7 +169,7 @@ impl DebounceEngine {
                 let quiet = entry.last_seen.checked_add(self.debounce_duration);
                 let cap = entry.first_seen.checked_add(self.max_delay);
                 let due = match (quiet, cap) {
-                    (Some(quiet), Some(cap)) => quiet.min(cap),
+                    (Some(quiet_at), Some(cap_at)) => quiet_at.min(cap_at),
                     (Some(due), None) | (None, Some(due)) => due,
                     (None, None) => return None,
                 };

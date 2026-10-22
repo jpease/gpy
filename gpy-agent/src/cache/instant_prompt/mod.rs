@@ -399,7 +399,7 @@ impl InstantPromptCache {
         evict_to_capacity(
             &mut seen.entries,
             INSTANT_PROMPT_LAST_WRITTEN_CAPACITY,
-            |contexts| contexts.tick,
+            |entry| entry.tick,
         );
         drop(guard);
         known

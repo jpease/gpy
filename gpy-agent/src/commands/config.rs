@@ -171,7 +171,7 @@ pub fn list(filter: Option<&str>) {
         println!("    {}", meta.description);
         println!();
 
-        count += 1_i32;
+        count = count.saturating_add(1_i32);
     }
 
     if count == 0_i32 {

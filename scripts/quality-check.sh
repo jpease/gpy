@@ -155,6 +155,14 @@ stop_shell_test_agents() {
 SHELL_TEST_XDG_ROOT=""
 SHELL_TEST_AGENT_DIR=""
 
+# The parts --shell-only runs: `checks` (repo checks, Fish lint, shellcheck)
+# and one entry per suite. CI shards the shell gate by part; the shard list
+# in pr-gate.yml must cover every part (tests/bash/ci_gate_shape).
+SHELL_PARTS_ALL="checks,fish,bash,zsh"
+SHELL_PARTS="$SHELL_PARTS_ALL"
+
+shell_part() { [[ ",$SHELL_PARTS," == *",$1,"* ]]; }
+
 # Idempotent: also runs from the traps while a test file is running.
 shell_test_root_end() {
     [[ -n "$SHELL_TEST_XDG_ROOT" ]] || return 0
@@ -197,6 +205,7 @@ run_shell_suite() {
 # Fish, Bash and Zsh suites against this checkout's debug agent. They run
 # whenever the shells or the agent change, since they check rendered output.
 run_shell_tests() {
+    shell_part fish || shell_part bash || shell_part zsh || return 0
     # The suites must never touch this repo; fail loudly if they did.
     local head_before worktrees_before head_after worktrees_after
     head_before="$(git rev-parse HEAD 2>/dev/null || echo none)"
@@ -206,14 +215,20 @@ run_shell_tests() {
     if ! run_check "Build debug binaries" "(cd gpy-agent && cargo build --quiet --bin gpy --bin gpy-agent)"; then
         return 0
     fi
-    run_check "Fish tests" "./scripts/test_fish.sh" || true
+    if shell_part fish; then
+        run_check "Fish tests" "./scripts/test_fish.sh" || true
+    fi
 
     SHELL_TEST_AGENT_DIR="${CARGO_TARGET_DIR:-$PWD/gpy-agent/target}/debug"
     trap 'shell_test_root_end' EXIT
     trap 'shell_test_root_end; exit 130' INT
     trap 'shell_test_root_end; exit 143' TERM
-    run_shell_suite "Bash" "$GPY_BASH" "tests/bash/*.test.bash"
-    run_shell_suite "Zsh" "zsh" "tests/zsh/*.test.zsh"
+    if shell_part bash; then
+        run_shell_suite "Bash" "$GPY_BASH" "tests/bash/*.test.bash"
+    fi
+    if shell_part zsh; then
+        run_shell_suite "Zsh" "zsh" "tests/zsh/*.test.zsh"
+    fi
     trap - EXIT INT TERM
 
     head_after="$(git rev-parse HEAD 2>/dev/null || echo none)"
@@ -248,6 +263,7 @@ run_repo_checks() {
     run_check "License metadata" "./scripts/check-license-metadata.sh" || true
     run_check "Privacy patterns" "./scripts/check-privacy-patterns.sh" || true
     run_check "Documentation links" "./scripts/check-doc-links.sh" || true
+    run_check "File size" "python3 ./scripts/check_file_size.py" || true
 }
 
 run_fish_lint() {
@@ -256,8 +272,10 @@ run_fish_lint() {
 }
 
 run_shell_checks() {
-    run_fish_lint
-    run_check "Shellcheck" "check_shellcheck" || true
+    if shell_part checks; then
+        run_fish_lint
+        run_check "Shellcheck" "check_shellcheck" || true
+    fi
     run_shell_tests
 }
 
@@ -343,7 +361,11 @@ Usage: $0 [OPTION]
     (none)        Full gate: repo checks, shell lint and suites, Rust checks
     --fast        Repo checks, Fish syntax, shellcheck, parity tests, Rust lint and tests
     --rust-only   fmt, clippy, tests, doc tests, audit, deny, release build
-    --shell-only  Fish lint, shellcheck and the Fish/Bash/Zsh suites (no Rust checks)
+    --shell-only [PARTS]
+                  Fish lint, shellcheck and the Fish/Bash/Zsh suites (no Rust
+                  checks). PARTS limits it to a comma-separated subset of
+                  $SHELL_PARTS_ALL; \`checks\` is the repo checks, Fish lint
+                  and shellcheck
     --fish-only   Fish syntax and formatting
     --fix         Apply fish_indent, cargo fmt and clippy fixes, then run the full gate
     -h, --help    Show this help
@@ -398,7 +420,19 @@ case "${1:-}" in
         finish_report "Rust"
         ;;
     --shell-only)
-        run_repo_checks
+        if [[ -n "${2:-}" ]]; then
+            IFS=, read -r -a parts <<<"$2"
+            for part in "${parts[@]}"; do
+                if [[ ",$SHELL_PARTS_ALL," != *",$part,"* ]]; then
+                    echo "Unknown --shell-only part: '$part' (one of $SHELL_PARTS_ALL)" >&2
+                    exit 1
+                fi
+            done
+            SHELL_PARTS="$2"
+        fi
+        if shell_part checks; then
+            run_repo_checks
+        fi
         run_shell_checks
         finish_report "Shell"
         ;;

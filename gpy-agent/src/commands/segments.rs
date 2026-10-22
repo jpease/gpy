@@ -93,6 +93,10 @@ pub fn list() -> Result<()> {
 }
 
 /// Canonicalize a segment name.
+#[allow(
+    clippy::map_err_ignore,
+    reason = "the message already names the rejected segment; attaching the cause would append to the CLI error text"
+)]
 fn canonicalize_segment(segment: &str) -> Result<String> {
     let normalized = if segment == "lang" {
         "language"

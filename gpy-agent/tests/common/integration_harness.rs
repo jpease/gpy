@@ -119,11 +119,21 @@ pub struct GitStatus {
     pub untracked: i64,
 }
 
+/// Reads `key` as a `u32`, saturating values that do not fit; missing keys read as 0.
+fn u32_field(value: &serde_json::Value, key: &str) -> u32 {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .map_or(0, |n| u32::try_from(n).unwrap_or(u32::MAX))
+}
+
 impl IntegrationTestServer {
     async fn send_request_to_socket(socket_path: &Path, msg: &Message) -> io::Result<Response> {
         let mut stream = timeout(Duration::from_secs(5), UnixStream::connect(socket_path))
             .await
-            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Connection timeout"))?
+            .map_err(|e| {
+                io::Error::new(io::ErrorKind::TimedOut, format!("Connection timeout: {e}"))
+            })?
             .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
 
         let json = op_line(msg);
@@ -134,7 +144,9 @@ impl IntegrationTestServer {
         let mut response_buf = vec![0_u8; 8192];
         let n = timeout(Duration::from_secs(10), stream.read(&mut response_buf))
             .await
-            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Response timeout"))??;
+            .map_err(|e| {
+                io::Error::new(io::ErrorKind::TimedOut, format!("Response timeout: {e}"))
+            })??;
 
         if n == 0 {
             return Err(io::Error::new(
@@ -143,7 +155,8 @@ impl IntegrationTestServer {
             ));
         }
 
-        Self::parse_response_bytes(&response_buf[..n])
+        response_buf.truncate(n);
+        Self::parse_response_bytes(&response_buf)
     }
 
     fn parse_response_bytes(response_buf: &[u8]) -> io::Result<Response> {
@@ -170,20 +183,34 @@ impl IntegrationTestServer {
 
         if response_str.contains(r#""branch":"#) && response_str.contains(r#""ahead":"#) {
             if let Ok(status_val) = serde_json::from_str::<serde_json::Value>(response_str) {
-                let state =
-                    std::str::FromStr::from_str(status_val["state"].as_str().unwrap_or_default())
-                        .unwrap_or(gpy_agent::git::RepositoryState::InProgress);
+                let state = std::str::FromStr::from_str(
+                    status_val
+                        .get("state")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default(),
+                )
+                .unwrap_or(gpy_agent::git::RepositoryState::InProgress);
 
                 let status = gpy_agent::git::RepositoryStatus {
-                    branch: status_val["branch"].as_str().unwrap_or_default().to_owned(),
-                    ahead: status_val["ahead"].as_u64().unwrap_or(0) as u32,
-                    behind: status_val["behind"].as_u64().unwrap_or(0) as u32,
-                    ahead_capped: status_val["ahead_capped"].as_bool().unwrap_or(false),
-                    behind_capped: status_val["behind_capped"].as_bool().unwrap_or(false),
-                    staged: status_val["staged"].as_u64().unwrap_or(0) as u32,
-                    unstaged: status_val["unstaged"].as_u64().unwrap_or(0) as u32,
-                    untracked: status_val["untracked"].as_u64().unwrap_or(0) as u32,
-                    conflicts: status_val["conflicts"].as_u64().unwrap_or(0) as u32,
+                    branch: status_val
+                        .get("branch")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    ahead: u32_field(&status_val, "ahead"),
+                    behind: u32_field(&status_val, "behind"),
+                    ahead_capped: status_val
+                        .get("ahead_capped")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                    behind_capped: status_val
+                        .get("behind_capped")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                    staged: u32_field(&status_val, "staged"),
+                    unstaged: u32_field(&status_val, "unstaged"),
+                    untracked: u32_field(&status_val, "untracked"),
+                    conflicts: u32_field(&status_val, "conflicts"),
                     state,
                     stash_count: 0,
                     detached: false,
@@ -369,9 +396,9 @@ impl IntegrationTestServer {
         match response {
             Response::RepositoryStatus(s) => Ok(GitStatus {
                 branch: s.branch,
-                staged: s.staged as i64,
-                unstaged: s.unstaged as i64,
-                untracked: s.untracked as i64,
+                staged: i64::from(s.staged),
+                unstaged: i64::from(s.unstaged),
+                untracked: i64::from(s.untracked),
             }),
             Response::Error { message } => Err(io::Error::new(io::ErrorKind::Other, message)),
             _ => Err(io::Error::new(
@@ -403,7 +430,7 @@ impl IntegrationTestServer {
     }
 
     /// Get reference to the test configuration
-    pub fn config(&self) -> &TestConfig {
+    pub const fn config(&self) -> &TestConfig {
         &self.config
     }
 
@@ -613,19 +640,19 @@ mod tests {
         )
         .await;
 
-        let status = expect_git_status(&server, "Initial git status should succeed").await;
+        let initial = expect_git_status(&server, "Initial git status should succeed").await;
         assert_eq!(
-            status.untracked, 0,
+            initial.untracked, 0,
             "Initial repository should have 0 untracked files"
         );
 
         server
-            .trigger_git_change(GitChange::AddUntracked("test.txt".to_string()))
+            .trigger_git_change(GitChange::AddUntracked("test.txt".to_owned()))
             .expect("Adding untracked file should succeed");
 
         // Poll up to 6s for the watcher-driven update.
         let mut status = expect_git_status(&server, "Git status after adding file").await;
-        for _ in 0..30 {
+        for _ in 0_u32..30 {
             if status.untracked == 1 {
                 break;
             }
@@ -639,11 +666,11 @@ mod tests {
         );
 
         server
-            .trigger_git_change(GitChange::StageFile("test.txt".to_string()))
+            .trigger_git_change(GitChange::StageFile("test.txt".to_owned()))
             .expect("Staging file should succeed");
 
         status = expect_git_status(&server, "Git status after staging file").await;
-        for _ in 0..30 {
+        for _ in 0_u32..30 {
             if status.staged == 1 {
                 break;
             }

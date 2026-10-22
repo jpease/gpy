@@ -163,10 +163,10 @@ fn render_segment(
     format: Option<&str>,
     build: impl FnOnce(&str) -> crate::template::Result<String>,
 ) -> String {
-    let Some(format) = format else {
+    let Some(template) = format else {
         return String::new();
     };
-    render_or_warn(component, build(format))
+    render_or_warn(component, build(template))
 }
 
 /// Select up to three languages to show. With `show_versions`, versionless ones

@@ -270,11 +270,16 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         get: |c| c.language.display.to_string(),
         set: Some(|c, v| {
             // Plain text: keeps the allowed-values hint `InvalidValue` can't express.
-            c.language.display = v.parse().map_err(|_| {
+            #[allow(
+                clippy::map_err_ignore,
+                reason = "the message quotes the rejected value and lists the allowed ones; a cause would append to it"
+            )]
+            let display = v.parse().map_err(|_| {
                 Error::config(format!(
                     "Invalid language.display '{v}'. Use 'icon' or 'text'"
                 ))
             })?;
+            c.language.display = display;
             Ok(())
         }),
         description: "Display mode: 'icon' or 'text'",
@@ -293,6 +298,10 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "language.confidence_threshold",
         get: |c| c.language.confidence_threshold.to_string(),
         set: Some(|c, v| {
+            #[allow(
+                clippy::map_err_ignore,
+                reason = "ValidationError has no source field; the message already quotes the rejected value"
+            )]
             let threshold = v
                 .parse::<f32>()
                 .map_err(|_| invalid_value("language.confidence_threshold", "threshold", v))?;
@@ -476,6 +485,10 @@ pub fn get_config_value(config: &Config, key: &str) -> Result<String> {
 ///
 /// # Errors
 /// Returns an error if the config key is unknown, read-only, or the value is invalid.
+#[allow(
+    clippy::map_err_ignore,
+    reason = "ValidationError has no source field; the message already quotes the rejected icon"
+)]
 pub fn set_config_value(config: &mut Config, key: &str, value: &str) -> Result<()> {
     for meta in CONFIG_KEYS {
         if meta.key == key {
@@ -517,6 +530,10 @@ fn parse_bool_field(s: &str, field_path: &'static str) -> Result<bool> {
 
 /// # Errors
 /// Returns an error if the value is not a valid u64.
+#[allow(
+    clippy::map_err_ignore,
+    reason = "ValidationError has no source field; the message already quotes the rejected value"
+)]
 fn parse_u64_field(s: &str, field_path: &'static str) -> Result<u64> {
     s.parse()
         .map_err(|_| invalid_value(field_path, "u64 value", s))
@@ -524,6 +541,10 @@ fn parse_u64_field(s: &str, field_path: &'static str) -> Result<u64> {
 
 /// # Errors
 /// Returns an error if the value is not a valid u32.
+#[allow(
+    clippy::map_err_ignore,
+    reason = "ValidationError has no source field; the message already quotes the rejected value"
+)]
 fn parse_u32_field(s: &str, field_path: &'static str) -> Result<u32> {
     s.parse()
         .map_err(|_| invalid_value(field_path, "u32 value", s))
@@ -531,6 +552,10 @@ fn parse_u32_field(s: &str, field_path: &'static str) -> Result<u32> {
 
 /// # Errors
 /// Returns an error if the value is not a valid usize.
+#[allow(
+    clippy::map_err_ignore,
+    reason = "ValidationError has no source field; the message already quotes the rejected value"
+)]
 fn parse_usize_field(s: &str, field_path: &'static str) -> Result<usize> {
     s.parse()
         .map_err(|_| invalid_value(field_path, "usize value", s))

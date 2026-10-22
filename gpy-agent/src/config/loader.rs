@@ -60,11 +60,11 @@ pub fn save_config(
     updated: &Config,
     explicit_keys: &[&str],
 ) -> Result<()> {
-    let mut updated = updated.clone();
-    validation::normalize_config(&mut updated)?;
+    let mut normalized = updated.clone();
+    validation::normalize_config(&mut normalized)?;
 
     let original_leaves = config_leaves(original)?;
-    let updated_leaves = config_leaves(&updated)?;
+    let updated_leaves = config_leaves(&normalized)?;
 
     let target = resolve_write_target(Path::new(path))?;
     let existing = read_existing(&target)?;

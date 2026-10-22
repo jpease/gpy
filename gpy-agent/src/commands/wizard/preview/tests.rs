@@ -941,3 +941,40 @@ fn preview_status_pill_uses_fail_variant_and_theme_fallback_icon() {
     let ok_text = line_text(ok_lines.first().expect("chain line"));
     assert!(ok_text.contains('✔'), "ok pill, got {ok_text:?}");
 }
+
+/// With `ui.show_icons` off, the default theme's Nerd Font status icons give
+/// way to the shells' ASCII fallback.
+#[test]
+fn preview_status_pill_drops_private_use_icon_when_icons_are_off() {
+    let has_private_use = |text: &str| text.chars().any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c));
+    let theme = crate::theme::ThemeManager::builtin("default")
+        .expect("default theme should always load")
+        .get();
+    let render = |show_icons: bool, success: bool| {
+        let mut config = make_config(
+            &["status"],
+            GitLanguageFlags {
+                git: false,
+                language: false,
+            },
+        );
+        config.ui.show_icons = show_icons;
+        let state = test_state(config.clone());
+        let mut facts = make_facts();
+        facts.sample_character_success = success;
+        let lines = render_preview_line(&state, &config, &theme, &Palette::default(), &facts);
+        line_text(lines.first().expect("chain line"))
+    };
+
+    assert!(
+        has_private_use(&render(true, true)),
+        "show_icons=true control must draw the theme's glyph"
+    );
+    for (success, fallback) in [(true, "ok"), (false, "err")] {
+        let off = render(false, success);
+        assert!(
+            off.contains(fallback) && !has_private_use(&off),
+            "show_icons=false status pill must show {fallback:?}, got {off:?}"
+        );
+    }
+}

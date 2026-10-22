@@ -63,11 +63,14 @@ fn assert_only_sgr_escapes(rendered: &str, context: &str) {
         "{context}: BEL survived: {rendered:?}"
     );
     for (index, _) in rendered.match_indices('\u{1b}') {
-        let sequence = rendered.get(index + 1..).unwrap_or_default();
+        let sequence = index
+            .checked_add(1)
+            .and_then(|start| rendered.get(start..))
+            .unwrap_or_default();
         let params_end = sequence
             .strip_prefix('[')
             .and_then(|rest| rest.find(|c: char| !c.is_ascii_digit() && c != ';'))
-            .map(|offset| offset + 1);
+            .and_then(|offset| offset.checked_add(1));
         assert!(
             params_end.is_some_and(|end| sequence
                 .get(end..)
@@ -85,7 +88,7 @@ fn theme_literal_terminal_controls_fail_validation_and_never_render() {
 
     let validation = validate_audit_theme(&env);
     assert_ne!(
-        validation.exit_code, 0,
+        validation.exit_code, 0_i32,
         "theme with ESC/BEL in its format must fail validation\nstdout:\n{}\nstderr:\n{}",
         validation.stdout, validation.stderr
     );
@@ -186,7 +189,7 @@ fn repeated_hash_hex_color_fails_validation() {
     let env = env_with_theme(&color_theme("##112233"));
     let validation = validate_audit_theme(&env);
     assert_ne!(
-        validation.exit_code, 0,
+        validation.exit_code, 0_i32,
         "'##112233' must fail validation\nstdout:\n{}\nstderr:\n{}",
         validation.stdout, validation.stderr
     );

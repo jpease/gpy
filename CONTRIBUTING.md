@@ -77,10 +77,25 @@ Shell scripts must be shellcheck-clean or carry an inline
 `# shellcheck disable=` with a reason on the line beneath it. A bare disable
 will be asked about in review.
 
-Lint policy lives in the `[lints]` table of `gpy-agent/Cargo.toml`: warnings
-and `clippy::pedantic` are denied, plus a short list of restriction lints
-(`unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented`, `dbg_macro`,
-`print_stdout`, `print_stderr`). Run it with `just lint`.
+macOS never compiles the Linux- or Windows-only `cfg` branches. Before pushing
+a change that touches `cfg`-gated code, run `just check-platforms` (needs
+Docker): it runs Linux `cargo clippy --all-targets --all-features` and Windows
+(mingw) `cargo check` for `--lib`, `--locked` and `--profile test --tests` on
+`HEAD` in a container. Pass `--worktree` to include uncommitted changes.
+
+Lint policy lives in the `[lints]` tables of `gpy-agent/Cargo.toml`. Every
+entry is `warn` and `warnings = "deny"` turns each into an error. They cover
+the `clippy::pedantic` group plus restriction and nursery lints in five
+groups: panics and stray output (`unwrap_used`, `expect_used`, `panic`,
+`print_stdout`, `exit`, ...), documented and isolated `unsafe` (`unsafe_code`,
+`undocumented_unsafe_blocks`), lost information (`map_err_ignore`,
+`use_debug`, ...), numeric conversions, arithmetic and indexing
+(`as_conversions`, `arithmetic_side_effects`, `indexing_slicing`), and
+readability (`shadow_*`, `str_to_string`, `missing_const_for_fn`, ...).
+`gpy-agent/.clippy.toml` relaxes the panic and print lints in test code and
+forbids `std::panic::catch_unwind`. Run it with `just lint`; while fixing many
+hits at once, `cargo clippy --all-targets --all-features -- --cap-lints warn`
+reports every target instead of stopping at the first failing one.
 
 A new `#[allow(...)]` must say why, with `reason = "..."` naming the specific
 cause at that site (`#[allow(clippy::cast_possible_truncation, reason = "value
@@ -89,12 +104,21 @@ the lines a change adds: the `new-allows` pre-commit hook runs it on staged
 changes and the `new-allows` CI job on the pull request's diff. Allows that
 already exist are not back-filled.
 
+A Rust source file stays under 800 lines, not counting its inline test
+modules (`scripts/check_file_size.py`, run by the `file-size` hook and
+`quality-check.sh`). The files already over the cap are listed with their
+size in `scripts/file-size-allowlist.txt` and may not grow. When you work in a
+listed file, split it, and lower or remove its entry with
+`python3 scripts/check_file_size.py --update` in the same commit; the check
+fails until a shrunk file's entry is lowered.
+
 Faster subsets for local iteration:
 
 ```bash
 ./scripts/quality-check.sh --fast        # skip slow audits and the release build
 ./scripts/quality-check.sh --rust-only   # Rust toolchain checks only
 ./scripts/quality-check.sh --shell-only  # Fish/Bash/Zsh integration suites only
+./scripts/quality-check.sh --shell-only bash  # one part: checks, fish, bash or zsh (comma-separated)
 ./scripts/quality-check.sh --fish-only   # Fish syntax + formatting only
 ```
 

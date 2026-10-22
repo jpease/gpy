@@ -225,8 +225,8 @@ impl GitStatusCache {
         started: Option<Instant>,
     ) -> bool {
         let mut entries = self.entries.lock_or_recover();
-        if let Some(started) = started
-            && entries.get(key).is_some_and(|e| e.cached_at > started)
+        if let Some(started_at) = started
+            && entries.get(key).is_some_and(|e| e.cached_at > started_at)
         {
             debug_log!("cache", "Kept newer status for {}", key.display());
             return false;

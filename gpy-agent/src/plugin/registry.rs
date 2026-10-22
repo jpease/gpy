@@ -244,9 +244,9 @@ fn discover_plugins_in_roots(roots: &[(PluginSource, PathBuf)]) -> PluginDiscove
         }
     }
 
-    let mut plugins: Vec<DiscoveredPlugin> = winners.into_values().collect();
-    plugins.sort_by(|a, b| a.manifest.id.as_str().cmp(b.manifest.id.as_str()));
-    let plugins = reject_token_collisions(plugins, &mut diagnostics);
+    let mut sorted: Vec<DiscoveredPlugin> = winners.into_values().collect();
+    sorted.sort_by(|a, b| a.manifest.id.as_str().cmp(b.manifest.id.as_str()));
+    let plugins = reject_token_collisions(sorted, &mut diagnostics);
 
     PluginDiscovery {
         plugins,

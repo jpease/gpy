@@ -13,6 +13,11 @@ for tool in cargo jq; do
     fi
 done
 
+# An empty RUSTC_WRAPPER overrides a global `build.rustc-wrapper` (as CI does),
+# so a user's wrapper (e.g. a shim unresolvable under the gate's sandboxed
+# XDG_CONFIG_HOME) cannot break `cargo metadata`.
+export RUSTC_WRAPPER=
+
 WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT

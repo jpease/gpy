@@ -12,13 +12,15 @@ The local quality gate.
 ./scripts/quality-check.sh --fast        # repo checks, Fish syntax, shellcheck, parity tests, Rust lint and tests
 ./scripts/quality-check.sh --rust-only   # fmt, clippy, tests, doc tests, audit, deny, release build
 ./scripts/quality-check.sh --shell-only  # Fish lint, shellcheck, Fish/Bash/Zsh suites
+./scripts/quality-check.sh --shell-only bash,zsh  # a subset of checks,fish,bash,zsh (CI shards by it)
 ./scripts/quality-check.sh --fish-only   # Fish syntax and formatting
 ./scripts/quality-check.sh --fix         # fish_indent, cargo fmt, clippy --fix, then the full gate
 ```
 
 It checks:
 
-- **Repository:** license metadata, privacy patterns, documentation links.
+- **Repository:** license metadata, privacy patterns, documentation links,
+  Rust file size (`check_file_size.py`).
 - **Fish:** syntax of every `.fish` file; formatting with `fish_indent`.
 - **Shell scripts:** `shellcheck -x` over the installers, `scripts/*.sh`,
   `tests/bash/*.test.bash`, `benchmarks/*/*.sh` and the shipped `bash/` tree,
@@ -48,7 +50,9 @@ Exit status is 0 when every check passed, 1 otherwise.
 | `check-license-metadata.sh` | `Cargo.toml`, `LICENSE` and every other license declaration agree on GPL-3.0-or-later. |
 | `check-privacy-patterns.sh` | No workstation paths, private identifiers or hardcoded sockets in tracked files. |
 | `check-doc-links.sh` | Every repository-relative Markdown link resolves. |
+| `check-platforms.sh [--worktree \| <rev>]` | Compile `<rev>` (default `HEAD`; `--worktree` adds uncommitted changes) in a Docker container: Linux `cargo clippy --all-targets --all-features` and Windows (mingw) `cargo check` for `--lib`, `--locked`, `--profile test --tests`. Exit 1 on a failure, 2 when Docker is unreachable. `just check-platforms`. |
 | `check_new_allows.py [--staged \| <base-rev>]` | Fail when a change adds an `allow` attribute without `reason = "..."`; existing allows are not checked. Run at pre-commit (`--staged`) and by the `new-allows` job in `pr-gate.yml`. |
+| `check_file_size.py [--update \| --init]` | Fail when a Rust source file (inline test modules excluded) exceeds 800 lines, or a file listed in `file-size-allowlist.txt` grew or shrank without its entry being lowered (`--update`). Run by the `file-size` hook and `quality-check.sh`. |
 | `cleanup-test-agents.sh` | Reap agents and sockets left by killed Rust test runs. |
 | `bench.sh --ci` | Rust micro-benchmark budgets from `tests/performance-baselines.json` (part of `just bench-ci`). |
 | `ci-bench.sh` | End-to-end prompt-latency and agent-memory budgets (`just bench-ci`). |

@@ -7,6 +7,8 @@
 #   (b) `gate-result` always runs and `needs` every gating job (every job
 #       except itself and the continue-on-error ones), so a red leg fails the
 #       one required check
+#   (c) the shell job's shards run every `quality-check.sh --shell-only`
+#       part exactly once, so sharding cannot drop a suite
 #
 # Text-level checks: no YAML parser is guaranteed where the shell gate runs.
 
@@ -72,5 +74,20 @@ while IFS= read -r job; do
     fi
 done < <(job_ids "$PR_GATE")
 [[ "$gating" -gt 0 ]] || fail "found no gating jobs in $PR_GATE"
+
+echo "--- (c) the shell shards cover every --shell-only part once ---"
+all_parts="$(sed -n 's/^SHELL_PARTS_ALL="\(.*\)"$/\1/p' scripts/quality-check.sh)"
+shard_line="$(job_block "$PR_GATE" shell | grep -E '^        parts: \[' | head -n 1)"
+if [[ -z "$all_parts" || -z "$shard_line" ]]; then
+    fail "could not read SHELL_PARTS_ALL from quality-check.sh or the shell job's 'parts:' matrix line"
+else
+    want="$(tr ',' '\n' <<<"$all_parts" | sort)"
+    have="$(sed -E 's/^ *parts: \[//; s/\][[:space:]]*$//; s/[" ]//g' <<<"$shard_line" | tr ',' '\n' | sort)"
+    if [[ "$have" == "$want" ]]; then
+        pass "the shell shards run each of $all_parts exactly once"
+    else
+        fail "the shell shards run [$(tr '\n' ' ' <<<"$have")] but each of [$(tr '\n' ' ' <<<"$want")] must run exactly once: $shard_line"
+    fi
+fi
 
 test_finish "the CI gate keeps its shape"

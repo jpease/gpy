@@ -88,6 +88,10 @@ impl NativeGitBackend {
     }
 
     /// Deadline for a standalone git query outside a status operation.
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "now plus the 10 s GitTimeout::DEFAULT cannot overflow Instant"
+    )]
     fn default_deadline() -> Instant {
         Instant::now() + Duration::from_secs(GitTimeout::DEFAULT)
     }
@@ -486,7 +490,9 @@ impl NativeGitBackend {
             return Ok(None);
         };
 
-        let deadline = Instant::now() + timeout;
+        let deadline = Instant::now().checked_add(timeout).ok_or_else(|| {
+            crate::Error::git("status timeout is too large for the clock".to_owned())
+        })?;
         let (status_v2_res, state_opt, stash_count) = Self::run_parallel_captures(
             &repo_root,
             paths,

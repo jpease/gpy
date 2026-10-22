@@ -450,6 +450,10 @@ fn main() -> ExitCode {
 
 /// Exit 0 quietly when stdout's reader goes away (`gpy segments | head -1`).
 /// `unsafe` is forbidden, so `SIGPIPE` cannot be reset to its default.
+#[allow(
+    clippy::exit,
+    reason = "a panic hook cannot return an exit code; a broken stdout pipe must end the process with status 0"
+)]
 fn install_broken_pipe_hook() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {

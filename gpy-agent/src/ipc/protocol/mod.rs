@@ -17,14 +17,15 @@ pub fn deserialize_message(data: &[u8]) -> Result<Message> {
     message
 }
 
-/// Deserialize a message, also returning the requested format when parsing got far enough.
+/// Deserialize a message, also returning the requested format when it can be read.
 ///
-/// The format is read before path resolution so a request failing later (e.g. a
-/// denylisted `cwd`) can still be answered in the client's format.
+/// The format is read before op dispatch and path resolution, so a request that
+/// fails later (an unknown op, a missing field, a denylisted `cwd`) can still be
+/// answered in the client's format.
 pub fn deserialize_message_with_format(data: &[u8]) -> (Option<super::Format>, Result<Message>) {
     let wire = match parse_wire(data) {
         Ok(wire) => wire,
-        Err(e) => return (None, Err(e)),
+        Err(e) => return (requested_format(data), Err(e)),
     };
     let format = wire.format();
     let message = resolve(wire).and_then(|msg| {
@@ -34,7 +35,27 @@ pub fn deserialize_message_with_format(data: &[u8]) -> (Option<super::Format>, R
     (format, message)
 }
 
+/// Best-effort read of `format` from a request that failed to parse; `None`
+/// when the payload is oversize, not JSON, or names no known format.
+fn requested_format(data: &[u8]) -> Option<super::Format> {
+    #[derive(Deserialize)]
+    struct FormatOnly {
+        format: Option<String>,
+    }
+
+    validate_message_size(data).ok()?;
+    serde_json::from_slice::<FormatOnly>(data)
+        .ok()?
+        .format?
+        .parse()
+        .ok()
+}
+
 /// Parse wire bytes into a [`WireMessage`] with zero I/O.
+#[allow(
+    clippy::map_err_ignore,
+    reason = "the fixed deserialize message is the IPC error text clients see; serde's detail is kept out of it"
+)]
 fn parse_wire(data: &[u8]) -> Result<WireMessage> {
     validate_message_size(data)?;
     let json = std::str::from_utf8(data)

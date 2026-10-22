@@ -1,3 +1,5 @@
+//! `should_trigger_update` filtering of file-system watch events.
+
 use gpy_agent::watcher::{WatchRegistry, should_trigger_update};
 use std::path::Path;
 

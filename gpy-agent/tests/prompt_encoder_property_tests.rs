@@ -342,6 +342,10 @@ fn check_batch(dialect: PromptDialect, batch: &[Vec<Span>]) -> Result<(), String
         }
         if let Err(reason) = check_drawing(&judged, spans) {
             let mut report = String::new();
+            #[allow(
+                clippy::use_debug,
+                reason = "the failure report must show the escaped bytes of spans, encoding and expansion"
+            )]
             let _ = write!(
                 report,
                 "{dialect:?}: {reason}\n  spans: {spans:?}\n  encoded: {encoding:?}\n  shown: {expansion:?}"

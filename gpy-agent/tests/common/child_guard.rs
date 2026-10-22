@@ -12,7 +12,7 @@ pub struct KillOnDrop(Option<Child>);
 
 impl KillOnDrop {
     #[must_use]
-    pub fn new(child: Child) -> Self {
+    pub const fn new(child: Child) -> Self {
         Self(Some(child))
     }
 
@@ -105,7 +105,7 @@ pub struct AgentStopGuard {
 
 impl AgentStopGuard {
     #[must_use]
-    pub fn new(command: Command, socket: PathBuf) -> Self {
+    pub const fn new(command: Command, socket: PathBuf) -> Self {
         Self { command, socket }
     }
 }

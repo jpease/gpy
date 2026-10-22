@@ -125,7 +125,7 @@ fn test_symlink_loop_handling() {
 fn test_large_repository_performance() {
     let repo = TestRepo::new().with_initial_commit();
 
-    for i in 0..1000 {
+    for i in 0_u32..1000 {
         repo.create_file(&format!("file{i}.txt"), "content");
     }
 
@@ -150,7 +150,7 @@ fn test_large_repository_performance() {
 fn test_repository_with_binary_files() {
     let repo = TestRepo::new().with_initial_commit();
 
-    let binary_data: Vec<u8> = (0..256).map(|i| u8::try_from(i).unwrap()).collect();
+    let binary_data: Vec<u8> = (0_i32..256_i32).map(|i| u8::try_from(i).unwrap()).collect();
     std::fs::write(repo.path().join("binary.dat"), binary_data)
         .expect("Failed to write binary file");
 
@@ -187,11 +187,11 @@ fn test_file_permission_changes() {
 
     repo.stage_file("script.sh").commit("Add executable script");
 
-    let mut perms = std::fs::metadata(&script_path)
+    let mut non_exec_perms = std::fs::metadata(&script_path)
         .expect("Failed to get metadata")
         .permissions();
-    perms.set_mode(0o644); // Remove execute bit
-    std::fs::set_permissions(&script_path, perms).expect("Failed to set permissions");
+    non_exec_perms.set_mode(0o644); // Remove execute bit
+    std::fs::set_permissions(&script_path, non_exec_perms).expect("Failed to set permissions");
 
     let result = load_repository_state(repo.path(), None, 0, true);
     assert!(result.is_ok(), "Should handle permission changes");

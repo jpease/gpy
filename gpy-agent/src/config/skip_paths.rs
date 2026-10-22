@@ -209,12 +209,12 @@ mod tests {
     #[test]
     fn matcher_cache_re_resolves_created_and_retargeted_roots_after_ttl() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let first = tmp.path().join("first");
-        let second = tmp.path().join("second");
-        std::fs::create_dir_all(&first).unwrap();
-        std::fs::create_dir_all(&second).unwrap();
-        let first = std::fs::canonicalize(first).unwrap();
-        let second = std::fs::canonicalize(second).unwrap();
+        let first_dir = tmp.path().join("first");
+        let second_dir = tmp.path().join("second");
+        std::fs::create_dir_all(&first_dir).unwrap();
+        std::fs::create_dir_all(&second_dir).unwrap();
+        let first = std::fs::canonicalize(first_dir).unwrap();
+        let second = std::fs::canonicalize(second_dir).unwrap();
         let link = tmp.path().join("link");
         let entries = vec![link.to_string_lossy().into_owned()];
         let cache = MatcherCache::new();

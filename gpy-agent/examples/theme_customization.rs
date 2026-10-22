@@ -34,8 +34,7 @@ fn main() -> Result<()> {
         println!("  - {theme_name}");
     }
 
-    if available_themes.len() > 1 {
-        let second_theme = &available_themes[1];
+    if let Some(second_theme) = available_themes.get(1) {
         println!("\nSwitching to theme: {second_theme}");
         theme_manager.switch_theme(second_theme)?;
         println!("✓ Theme switched successfully");

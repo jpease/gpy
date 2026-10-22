@@ -164,17 +164,18 @@ pub(crate) fn theme_to_shell(
 ) -> String {
     let mut output = String::new();
     let colors = ShellColors { shell, palette };
+    let glyphs = Glyphs::from(&config.ui);
 
     append_header(&mut output, shell, theme_name);
     append_global_assignments(&mut output, shell, theme, theme_name, config);
     append_prompt_assignments(&mut output, colors, theme);
 
     append_builtin_segment_assignments(&mut output, colors, theme);
-    append_hostname_assignments(&mut output, colors, theme);
-    append_username_assignments(&mut output, colors, theme);
-    append_status_assignments(&mut output, colors, theme);
+    append_hostname_assignments(&mut output, colors, theme, glyphs);
+    append_username_assignments(&mut output, colors, theme, glyphs);
+    append_status_assignments(&mut output, colors, theme, glyphs);
     append_git_language_color_assignments(&mut output, colors, theme);
-    append_delimiter_assignments(&mut output, colors, theme, Glyphs::from(&config.ui));
+    append_delimiter_assignments(&mut output, colors, theme, glyphs);
 
     append_plugin_segment_assignments(&mut output, colors, theme);
 

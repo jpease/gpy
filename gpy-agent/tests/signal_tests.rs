@@ -1,6 +1,12 @@
+//! SIGURG doorbell delivery from `ClientDirectory::notify_repaint`.
+
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::missing_panics_doc)]
+#![allow(
+    unsafe_code,
+    reason = "installing and restoring a SIGURG handler needs `nix::sys::signal::sigaction`, an unsafe fn"
+)]
 
 #[cfg(unix)]
 mod unix {
@@ -25,6 +31,9 @@ mod unix {
             SaFlags::empty(),
             SigSet::empty(),
         );
+        // SAFETY: the handler only does a relaxed store to a static atomic, which is
+        // async-signal-safe, and this is the only test in this binary, so nothing
+        // else changes the SIGURG disposition while it is installed.
         let previous = unsafe { sigaction(Signal::SIGURG, &handler) }.expect("install handler");
 
         let shell_dir = tempfile::TempDir::new().expect("temp shell dir");
@@ -35,7 +44,7 @@ mod unix {
 
         registry.notify_repaint(Some(&cwd));
 
-        let mut waited = 0;
+        let mut waited = 0_u32;
         while !HANDLED.load(Ordering::Relaxed) && waited < 10 {
             thread::sleep(Duration::from_millis(10));
             waited += 1;
@@ -50,6 +59,7 @@ mod unix {
             "repaint must not write a reload flag"
         );
 
+        // SAFETY: reinstalls the disposition saved at install time, from the same test.
         unsafe {
             sigaction(Signal::SIGURG, &previous).expect("restore handler");
         }

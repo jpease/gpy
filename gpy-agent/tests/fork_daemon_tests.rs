@@ -75,18 +75,18 @@ async fn test_socket_binding_variations() -> Result<()> {
     // Nested directory path
     let nested_dir = temp_dir.path().join("nested").join("deep");
     std::fs::create_dir_all(&nested_dir)?;
-    let server = endpoint_builder(nested_dir.join("test.sock"))
+    let nested_server = endpoint_builder(nested_dir.join("test.sock"))
         .build()
         .expect("server build");
-    drop(server);
+    drop(nested_server);
 
     // Path with spaces
     let spaced_dir = temp_dir.path().join("path with spaces");
     std::fs::create_dir_all(&spaced_dir)?;
-    let server = endpoint_builder(spaced_dir.join("test.sock"))
+    let spaced_server = endpoint_builder(spaced_dir.join("test.sock"))
         .build()
         .expect("server build");
-    drop(server);
+    drop(spaced_server);
 
     Ok(())
 }

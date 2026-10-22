@@ -409,7 +409,7 @@ mod tests {
         let collision = first_token_collision(&names).unwrap();
         assert_eq!(collision.first.as_str(), "a-b");
         assert_eq!(collision.second.as_str(), "a_b");
-        assert!(first_token_collision(names.get(..3).unwrap()).is_none());
+        assert!(first_token_collision(names.iter().take(3)).is_none());
     }
 
     #[test]

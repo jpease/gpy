@@ -43,8 +43,8 @@ pub fn validate_segment_templates(
         ("hostname", &s.hostname.format),
         ("username", &s.username.format),
     ] {
-        if let Some(format) = format.as_deref() {
-            validate_one(name, format, palette)?;
+        if let Some(template) = format.as_deref() {
+            validate_one(name, template, palette)?;
         }
     }
     validate_style_values(

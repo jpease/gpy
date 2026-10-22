@@ -326,7 +326,7 @@ impl Default for UsernameTheme {
 /// Clock segment colors
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClockTheme {
-    /// Agent-side template. Unset: shell renders locally (Fish only; Bash/Zsh get an uncapped clock).
+    /// Agent template; the reply embeds each shell's live time token. Unset: every shell draws it locally.
     #[serde(default)]
     pub format: Option<String>,
     /// Open delimiter configuration (supports fg/bg colors)

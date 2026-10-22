@@ -84,7 +84,7 @@ impl EndpointHandleBuilder {
 
     /// Set the security configuration (defaults to [`GuardSettings::default`]).
     #[must_use]
-    pub fn security_config(mut self, config: GuardSettings) -> Self {
+    pub const fn security_config(mut self, config: GuardSettings) -> Self {
         self.security_config = config;
         self
     }

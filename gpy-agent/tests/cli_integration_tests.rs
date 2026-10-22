@@ -101,7 +101,7 @@ fn assert_delimiter_usage(output: &str, is_last: bool, segment_name: &str) {
 fn run_gpy_agent(args: &[&str]) -> (i32, String, String) {
     match SharedCliTestEnv::instance().run_gpy_agent(args) {
         Ok(output) => (output.exit_code, output.stdout, output.stderr),
-        Err(e) => (-1, String::new(), format!("spawn error: {e}")),
+        Err(e) => (-1_i32, String::new(), format!("spawn error: {e}")),
     }
 }
 
@@ -112,7 +112,7 @@ fn run_gpy_agent_with_config(config_toml: &str, args: &[&str]) -> (i32, String, 
     };
     match env.run_gpy_agent(args) {
         Ok(output) => (output.exit_code, output.stdout, output.stderr),
-        Err(e) => (-1, String::new(), format!("spawn error: {e}")),
+        Err(e) => (-1_i32, String::new(), format!("spawn error: {e}")),
     }
 }
 
@@ -308,7 +308,7 @@ fn assert_config_get(key: &str, expected: &str) {
     let (exit_code, stdout, stderr) =
         match SharedCliTestEnv::instance().run_gpy(&["config", "get", key]) {
             Ok(output) => (output.exit_code, output.stdout, output.stderr),
-            Err(e) => (-1, String::new(), format!("spawn error: {e}")),
+            Err(e) => (-1_i32, String::new(), format!("spawn error: {e}")),
         };
     assert_eq!(exit_code, 0_i32, "config get {key} failed: {stderr}");
     assert_eq!(stdout.trim(), expected);
@@ -620,6 +620,23 @@ fn test_cli_oneshot_invalid_operation() {
 
     assert_ne!(exit_code, 0_i32);
     assert_ne!(stderr, "");
+}
+
+/// A negative exit code is a value, not a flag, and counts as failure.
+#[test]
+fn test_cli_oneshot_character_accepts_negative_exit_code() {
+    let (exit_code, stdout, stderr) = run_gpy_agent(&[
+        "oneshot",
+        "character",
+        "--exit-code",
+        "-1",
+        "--format",
+        "json",
+    ]);
+
+    assert_eq!(exit_code, 0_i32, "oneshot character failed: {stderr}");
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json.get("success"), Some(&serde_json::json!(false)));
 }
 
 #[test]
@@ -1652,8 +1669,9 @@ fn test_oneshot_lang_relative_cwd_matches_absolute_cwd() {
 
     let rel: serde_json::Value = serde_json::from_str(&rel_stdout).expect("relative JSON");
     let abs: serde_json::Value = serde_json::from_str(&abs_stdout).expect("absolute JSON");
-    let detected: Vec<&str> = rel["languages"]
-        .as_array()
+    let detected: Vec<&str> = rel
+        .get("languages")
+        .and_then(serde_json::Value::as_array)
         .expect("languages array")
         .iter()
         .filter_map(|lang| lang["name"].as_str())

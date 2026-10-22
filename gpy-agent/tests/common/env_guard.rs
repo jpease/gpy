@@ -3,6 +3,10 @@
 //! Restores on drop (including unwinding); callers must still be `#[serial]`.
 
 #![allow(dead_code)]
+#![allow(
+    unsafe_code,
+    reason = "edition 2024 makes env::set_var/remove_var unsafe; mutating the process env is this guard's purpose"
+)]
 
 use std::ffi::{OsStr, OsString};
 
@@ -34,15 +38,17 @@ impl EnvGuard {
     /// Set `key` to `value`, snapshotting its original value the first time it is touched.
     pub fn set(&mut self, key: &'static str, value: impl AsRef<OsStr>) {
         self.snapshot(key);
-        // SAFETY: callers serialize env-mutating tests, so no other thread reads
-        // the environment concurrently.
+        // SAFETY: every test that builds an `EnvGuard` is serialized (`#[serial]`, or
+        // the binary's own env lock in `stale_socket_tests`), so no other test thread
+        // reads or writes the environment while this runs.
         unsafe { std::env::set_var(key, value) };
     }
 
     /// Remove `key`, snapshotting its original value the first time it is touched.
     pub fn remove(&mut self, key: &'static str) {
         self.snapshot(key);
-        // SAFETY: see `set`.
+        // SAFETY: as in `set`, env-mutating tests are serialized, so no other
+        // thread touches the environment concurrently.
         unsafe { std::env::remove_var(key) };
     }
 
@@ -56,9 +62,11 @@ impl EnvGuard {
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         for (key, original) in &self.saved {
-            // SAFETY: see `EnvGuard::set`.
             match original {
+                // SAFETY: the guard is dropped inside the same serialized test that
+                // created it, so no other thread touches the environment.
                 Some(value) => unsafe { std::env::set_var(key, value) },
+                // SAFETY: as above, the owning serialized test is the only env user.
                 None => unsafe { std::env::remove_var(key) },
             }
         }

@@ -347,7 +347,7 @@ fn skip_root_created_or_retargeted_while_running_takes_effect() {
     let env = CliTestEnv::new().expect("cli env");
     let target = create_repo(&env, "targetrepo");
     let elsewhere = env.root().join("elsewhere");
-    std::fs::create_dir(&elsewhere).expect("create retarget dir");
+    std::fs::create_dir_all(&elsewhere).expect("create retarget dir");
     let link = env.root().join("skiplink");
     write_config(&env, &format!("skip_paths = [\"{}\"]", link.display()));
 
@@ -364,16 +364,17 @@ fn skip_root_created_or_retargeted_while_running_takes_effect() {
     );
 
     drop(daemon);
-    let daemon = Daemon::start(&env);
+    let fresh_daemon = Daemon::start(&env);
     assert!(
-        daemon.git_skipped(&target),
+        fresh_daemon.git_skipped(&target),
         "control: a fresh agent with identical config skips the repo too"
     );
 
     std::fs::remove_file(&link).expect("remove skip root");
     std::os::unix::fs::symlink(&elsewhere, &link).expect("retarget skip root");
     assert!(
-        wait_until(WAIT_TIMEOUT, POLL_INTERVAL, || !daemon.git_skipped(&target)),
+        wait_until(WAIT_TIMEOUT, POLL_INTERVAL, || !fresh_daemon
+            .git_skipped(&target)),
         "a retargeted skip root must stop matching its old target"
     );
 }
@@ -387,7 +388,7 @@ fn skip_paths_matches_the_repository_root() {
     let root_entry = create_repo(&env, "rootentry");
     let sub_entry = create_repo(&env, "subentry");
     for repo in [&root_entry, &sub_entry] {
-        std::fs::create_dir(repo.join("sub")).expect("create subdirectory");
+        std::fs::create_dir_all(repo.join("sub")).expect("create subdirectory");
     }
     write_config(
         &env,

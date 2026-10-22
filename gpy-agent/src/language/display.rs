@@ -212,7 +212,7 @@ fn display_info(
     } else {
         ProbePolicy::CachedOnly
     };
-    let versions: Vec<Option<String>> = if language_cfg.show_versions {
+    let version_slots: Vec<Option<String>> = if language_cfg.show_versions {
         let version_detectors: HashMap<_, _> = crate::language::version::get_version_detectors()
             .iter()
             .map(|probe| (probe.language_name().to_owned(), probe.as_ref()))
@@ -242,11 +242,11 @@ fn display_info(
                 // Spawn eagerly before joining; a lazy iterator would serialize.
                 let mut probe_handles = Vec::with_capacity(displayed_languages.len());
                 for detected_lang in &displayed_languages {
-                    let lookup = &lookup;
+                    let lookup_ref = &lookup;
                     probe_handles.push(scope.spawn(move || {
                         #[cfg(test)]
                         PROBE_CALL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        lookup(detected_lang).ok().flatten()
+                        lookup_ref(detected_lang).ok().flatten()
                     }));
                 }
 
@@ -262,7 +262,7 @@ fn display_info(
     };
 
     let mut languages_info: Vec<LanguageInfo> = Vec::with_capacity(displayed_languages.len());
-    for (detected_lang, version) in displayed_languages.iter().zip(versions) {
+    for (detected_lang, version) in displayed_languages.iter().zip(version_slots) {
         let color_str =
             get_language_color_from_theme(&detected_lang.name, &theme.segments.language);
         #[expect(
@@ -298,13 +298,13 @@ fn language_version(
         && let Some(cwd) = version_cwd
     {
         let discovered;
-        let venv = if python_venv.is_some() {
+        let candidate = if python_venv.is_some() {
             python_venv
         } else {
             discovered = crate::language::venv::resolve_python_venv(cwd, None);
             discovered.as_ref()
         };
-        if let Some(venv) = venv {
+        if let Some(venv) = candidate {
             let version = venv.lookup_version(policy)?;
             // Without a usable `pyvenv.cfg` a project venv shows no
             // version rather than the unrelated PATH interpreter's.
@@ -321,12 +321,9 @@ fn language_version(
     {
         return Ok(Some(version));
     }
-    match probe {
-        Some(source) => {
-            crate::language::version::lookup_language_release_at(source, version_cwd, policy)
-        }
-        None => Ok(None),
-    }
+    probe.map_or(Ok(None), |source| {
+        crate::language::version::lookup_language_release_at(source, version_cwd, policy)
+    })
 }
 
 #[cfg(test)]

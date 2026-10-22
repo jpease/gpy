@@ -452,3 +452,33 @@ fn test_parse_wire_rejects_payload_without_op() {
         "unexpected error text"
     );
 }
+
+#[test]
+fn test_requested_format_survives_unknown_operation() {
+    let (format, message) =
+        deserialize_message_with_format(br#"{"op":"teleport","format":"ansi"}"#);
+    assert!(message.is_err(), "unknown op must fail");
+    assert_eq!(format, Some(Format::Ansi));
+}
+
+#[test]
+fn test_requested_format_survives_wire_shape_error() {
+    // `pid` has the wrong type, so the full message fails to deserialize.
+    let (format, message) =
+        deserialize_message_with_format(br#"{"op":"register","pid":"x","format":"ansi"}"#);
+    assert!(message.is_err(), "mistyped field must fail");
+    assert_eq!(format, Some(Format::Ansi));
+}
+
+#[test]
+fn test_requested_format_is_none_for_unparseable_requests() {
+    for data in [
+        &b"not json"[..],
+        br#"{"op":"teleport"}"#,
+        br#"{"op":"teleport","format":"bogus"}"#,
+    ] {
+        let (format, message) = deserialize_message_with_format(data);
+        assert!(message.is_err(), "request must fail");
+        assert_eq!(format, None);
+    }
+}

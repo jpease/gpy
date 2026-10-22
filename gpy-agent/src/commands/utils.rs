@@ -9,6 +9,10 @@ use std::path::{Path, PathBuf};
 ///
 /// # Errors
 /// Returns an error if no candidate path can be constructed.
+#[allow(
+    clippy::map_err_ignore,
+    reason = "into_string's error is the OsString itself, which is not an Error and cannot be a source"
+)]
 pub fn active_config_path() -> Result<String> {
     let paths = config::schema::get_config_paths();
 

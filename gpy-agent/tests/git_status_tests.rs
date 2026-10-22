@@ -629,8 +629,8 @@ fn test_ahead_only_commits() {
         .output()
         .expect("git clone failed");
 
-    let temp_path = work_repo.to_str().unwrap();
-    let repo_path = Path::new(temp_path);
+    let work_path = work_repo.to_str().unwrap();
+    let repo_path = Path::new(work_path);
 
     git::git(repo_path, &["config", "user.email", "test@example.com"]);
     git::git(repo_path, &["config", "user.name", "Test User"]);
@@ -641,7 +641,7 @@ fn test_ahead_only_commits() {
     git::git(repo_path, &["commit", "-m", "Initial commit"]);
     git::git(repo_path, &["push", "-u", "origin", "main"]);
 
-    for i in 1..=3 {
+    for i in 1_u32..=3 {
         fs::write(
             repo_path.join(format!("file{}.txt", i + 1)),
             format!("content {i}"),
@@ -651,7 +651,7 @@ fn test_ahead_only_commits() {
         git::git(repo_path, &["commit", "-m", &format!("Commit {i}")]);
     }
 
-    let result = load_repository_state(temp_path, None, 0, true);
+    let result = load_repository_state(work_path, None, 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");
@@ -774,8 +774,8 @@ fn test_behind_only_commits() {
         .output()
         .expect("git clone failed");
 
-    let temp_path = work_repo.to_str().unwrap();
-    let repo_path = Path::new(temp_path);
+    let work_path = work_repo.to_str().unwrap();
+    let repo_path = Path::new(work_path);
 
     git::git(repo_path, &["config", "user.email", "test@example.com"]);
     git::git(repo_path, &["config", "user.name", "Test User"]);
@@ -794,7 +794,7 @@ fn test_behind_only_commits() {
             bare_repo.to_str().unwrap(),
             other_repo.to_str().unwrap(),
         ])
-        .current_dir(temp_path)
+        .current_dir(work_path)
         .output()
         .expect("git clone failed");
 
@@ -807,7 +807,7 @@ fn test_behind_only_commits() {
     git::git(other_repo_path, &["config", "user.name", "Test User"]);
     git::git(other_repo_path, &["config", "commit.gpgsign", "false"]);
 
-    for i in 1..=2 {
+    for i in 1_u32..=2 {
         fs::write(
             other_repo.join(format!("remote{i}.txt")),
             format!("remote {i}"),
@@ -823,7 +823,7 @@ fn test_behind_only_commits() {
 
     git::git(repo_path, &["fetch"]);
 
-    let result = load_repository_state(temp_path, None, 0, true);
+    let result = load_repository_state(work_path, None, 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");
@@ -857,8 +857,8 @@ fn test_ahead_and_behind_commits() {
         .output()
         .expect("git clone failed");
 
-    let temp_path = work_repo.to_str().unwrap();
-    let repo_path = Path::new(temp_path);
+    let work_path = work_repo.to_str().unwrap();
+    let repo_path = Path::new(work_path);
 
     git::git(repo_path, &["config", "user.email", "test@example.com"]);
     git::git(repo_path, &["config", "user.name", "Test User"]);
@@ -869,7 +869,7 @@ fn test_ahead_and_behind_commits() {
     git::git(repo_path, &["commit", "-m", "Base commit"]);
     git::git(repo_path, &["push", "-u", "origin", "main"]);
 
-    for i in 1..=2 {
+    for i in 1_u32..=2 {
         fs::write(
             repo_path.join(format!("local{i}.txt")),
             format!("local {i}"),
@@ -886,7 +886,7 @@ fn test_ahead_and_behind_commits() {
             bare_repo.to_str().unwrap(),
             other_repo.to_str().unwrap(),
         ])
-        .current_dir(temp_path)
+        .current_dir(work_path)
         .output()
         .expect("git clone failed");
 
@@ -899,7 +899,7 @@ fn test_ahead_and_behind_commits() {
     git::git(other_repo_path, &["config", "user.name", "Test User"]);
     git::git(other_repo_path, &["config", "commit.gpgsign", "false"]);
 
-    for i in 1..=3 {
+    for i in 1_u32..=3 {
         fs::write(
             other_repo_path.join(format!("remote{i}.txt")),
             format!("remote {i}"),
@@ -915,7 +915,7 @@ fn test_ahead_and_behind_commits() {
 
     git::git(repo_path, &["fetch"]);
 
-    let result = load_repository_state(temp_path, None, 0, true);
+    let result = load_repository_state(work_path, None, 0, true);
     let status = result
         .expect("load_repository_state should succeed")
         .expect("path should resolve to a git repository");

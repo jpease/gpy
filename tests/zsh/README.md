@@ -15,6 +15,7 @@ and Bash is a row of `tests/fixtures/shell_scenarios/scenarios.tsv`, run by
 
 ```bash
 just check-shell                            # everything, as the gate runs it
+just check-shell zsh                        # the Zsh suite only
 zsh tests/zsh/e2e_agent_autostart.test.zsh  # one file
 ```
 

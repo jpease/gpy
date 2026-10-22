@@ -54,6 +54,14 @@ mod tests {
         (config, theme)
     }
 
+    /// Looks up `pointer` in `value`, panicking with the pointer when absent.
+    fn field(value: &serde_json::Value, pointer: &str) -> serde_json::Value {
+        value
+            .pointer(pointer)
+            .cloned()
+            .unwrap_or_else(|| panic!("missing JSON field {pointer}"))
+    }
+
     #[test]
     fn test_json_formatter_repository_status() {
         let formatter = JsonFormatter;
@@ -80,14 +88,14 @@ mod tests {
 
         let parsed: serde_json::Value = serde_json::from_str(&output).expect("invalid JSON output");
 
-        assert_eq!(parsed["branch"], "main");
-        assert_eq!(parsed["ahead"], 2_i32);
-        assert_eq!(parsed["behind"], 1_i32);
-        assert_eq!(parsed["staged"], 3_i32);
-        assert_eq!(parsed["unstaged"], 4_i32);
-        assert_eq!(parsed["untracked"], 5_i32);
-        assert_eq!(parsed["conflicts"], 0_i32);
-        assert_eq!(parsed["state"], "clean");
+        assert_eq!(field(&parsed, "/branch"), "main");
+        assert_eq!(field(&parsed, "/ahead"), 2_i32);
+        assert_eq!(field(&parsed, "/behind"), 1_i32);
+        assert_eq!(field(&parsed, "/staged"), 3_i32);
+        assert_eq!(field(&parsed, "/unstaged"), 4_i32);
+        assert_eq!(field(&parsed, "/untracked"), 5_i32);
+        assert_eq!(field(&parsed, "/conflicts"), 0_i32);
+        assert_eq!(field(&parsed, "/state"), "clean");
     }
 
     #[test]
@@ -118,20 +126,20 @@ mod tests {
         let output = formatter.render(&response, &ctx).expect("render failed");
         let parsed: serde_json::Value = serde_json::from_str(&output).expect("invalid JSON output");
 
-        assert_eq!(parsed["branch"], "feature/thing");
-        assert_eq!(parsed["ahead"], 7_i32);
-        assert_eq!(parsed["behind"], 9_i32);
-        assert_eq!(parsed["ahead_capped"], true);
-        assert_eq!(parsed["behind_capped"], true);
-        assert_eq!(parsed["staged"], 1_i32);
-        assert_eq!(parsed["unstaged"], 2_i32);
-        assert_eq!(parsed["untracked"], 3_i32);
-        assert_eq!(parsed["conflicts"], 4_i32);
-        assert_eq!(parsed["state"], "rebasing");
-        assert_eq!(parsed["stash_count"], 6_i32);
-        assert_eq!(parsed["detached"], true);
-        assert_eq!(parsed["rebase_progress"]["step"], 2_i32);
-        assert_eq!(parsed["rebase_progress"]["total"], 5_i32);
+        assert_eq!(field(&parsed, "/branch"), "feature/thing");
+        assert_eq!(field(&parsed, "/ahead"), 7_i32);
+        assert_eq!(field(&parsed, "/behind"), 9_i32);
+        assert_eq!(field(&parsed, "/ahead_capped"), true);
+        assert_eq!(field(&parsed, "/behind_capped"), true);
+        assert_eq!(field(&parsed, "/staged"), 1_i32);
+        assert_eq!(field(&parsed, "/unstaged"), 2_i32);
+        assert_eq!(field(&parsed, "/untracked"), 3_i32);
+        assert_eq!(field(&parsed, "/conflicts"), 4_i32);
+        assert_eq!(field(&parsed, "/state"), "rebasing");
+        assert_eq!(field(&parsed, "/stash_count"), 6_i32);
+        assert_eq!(field(&parsed, "/detached"), true);
+        assert_eq!(field(&parsed, "/rebase_progress/step"), 2_i32);
+        assert_eq!(field(&parsed, "/rebase_progress/total"), 5_i32);
     }
 
     #[test]
@@ -152,10 +160,10 @@ mod tests {
 
         let parsed: serde_json::Value = serde_json::from_str(&output).expect("invalid JSON output");
 
-        assert!(parsed["languages"].is_array());
-        assert_eq!(parsed["languages"][0]["name"], "Rust");
-        assert_eq!(parsed["languages"][0]["version"], "1.75.0");
-        assert_eq!(parsed["languages"][0]["color"], "#dea584");
+        assert!(field(&parsed, "/languages").is_array());
+        assert_eq!(field(&parsed, "/languages/0/name"), "Rust");
+        assert_eq!(field(&parsed, "/languages/0/version"), "1.75.0");
+        assert_eq!(field(&parsed, "/languages/0/color"), "#dea584");
     }
 
     #[test]
@@ -169,7 +177,7 @@ mod tests {
 
         let parsed: serde_json::Value = serde_json::from_str(&output).expect("invalid JSON output");
 
-        assert_eq!(parsed["status"], "ok");
+        assert_eq!(field(&parsed, "/status"), "ok");
     }
 
     fn pinned_cases() -> Vec<(Response, &'static str)> {

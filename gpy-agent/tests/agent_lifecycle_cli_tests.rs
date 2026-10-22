@@ -268,7 +268,7 @@ fn doctor_with_agent_path(sandbox: &AgentSandbox, bin_dir: &Path) -> CliCommandR
 fn doctor_fails_a_gpy_agent_whose_version_probe_fails() {
     let sandbox = AgentSandbox::new();
     let bin_dir = sandbox.env.root().join("broken-bin");
-    std::fs::create_dir(&bin_dir).unwrap();
+    std::fs::create_dir_all(&bin_dir).unwrap();
     let agent = bin_dir.join("gpy-agent");
     std::fs::write(&agent, "#!/bin/sh\necho 'loader failed' >&2\nexit 42\n").unwrap();
     std::fs::set_permissions(&agent, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
@@ -287,7 +287,7 @@ fn doctor_fails_a_gpy_agent_whose_version_probe_fails() {
     );
 
     let empty_dir = sandbox.env.root().join("empty-bin");
-    std::fs::create_dir(&empty_dir).unwrap();
+    std::fs::create_dir_all(&empty_dir).unwrap();
     let missing = doctor_with_agent_path(&sandbox, &empty_dir);
     assert_eq!(missing.exit_code, 1_i32, "{missing:?}");
     assert_ne!(
@@ -656,7 +656,7 @@ fn sigkill_leaves_a_stale_socket_that_start_replaces() {
         .env
         .run_gpy_agent(&["status", "--socket", &socket])
         .expect("spawn gpy-agent status");
-    assert_eq!(status.exit_code, 0, "status after restart: {status:?}");
+    assert_eq!(status.exit_code, 0_i32, "status after restart: {status:?}");
 
     sandbox
         .env
@@ -859,14 +859,14 @@ fn start_refuses_an_explicit_socket_in_an_owned_world_writable_dir() {
     let socket_arg = socket.to_string_lossy().into_owned();
     let _stopper = SocketStopper(&env, socket.clone());
 
-    for result in [
+    for spawned in [
         env.run_gpy_agent_with_env(&["start"], &[("GPY_AGENT_SOCKET_PATH", &socket)]),
         env.run_gpy_agent_with_env(
             &["start", "--socket", &socket_arg],
             &[("GPY_AGENT_SOCKET_PATH", "")],
         ),
     ] {
-        let result = result.expect("spawn gpy-agent");
+        let result = spawned.expect("spawn gpy-agent");
         assert_eq!(result.exit_code, 1_i32, "{result:?}");
         assert!(
             result.stderr.contains(&dir.path().display().to_string()),

@@ -6,6 +6,10 @@
 #![allow(clippy::panic)]
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::missing_errors_doc)]
+#![allow(
+    unsafe_code,
+    reason = "installing and restoring a SIGURG handler needs `nix::sys::signal::sigaction`, an unsafe fn"
+)]
 
 mod test_harness;
 
@@ -61,12 +65,15 @@ fn test_minute_boundary_detection() {
     assert!(send, "Should send when minute advanced");
     assert_eq!(new_min, minute);
 
-    let (send, new_min) = clock_signal_decision(false, minute, minute);
-    assert!(!send, "Should not resend same minute");
-    assert_eq!(new_min, minute, "last_notified_minute must be unchanged");
+    let (resend, unchanged_min) = clock_signal_decision(false, minute, minute);
+    assert!(!resend, "Should not resend same minute");
+    assert_eq!(
+        unchanged_min, minute,
+        "last_notified_minute must be unchanged"
+    );
 
-    let (send, _) = clock_signal_decision(true, minute, minute);
-    assert!(send, "show_seconds=true always sends");
+    let (seconds_send, _) = clock_signal_decision(true, minute, minute);
+    assert!(seconds_send, "show_seconds=true always sends");
 }
 
 /// A 1-second interval ticks at ~1s against the wall clock.
@@ -105,6 +112,9 @@ async fn test_clock_signals_sent_to_clients() {
         SaFlags::empty(),
         SigSet::empty(),
     );
+    // SAFETY: the handler only bumps a `'static` `SignalCounter` (initialized above,
+    // before install), and the test is `#[serial]`, so no other test changes the
+    // SIGURG disposition while this handler is installed.
     let previous = unsafe { sigaction(Signal::SIGURG, &handler) }.expect("install handler");
 
     let registry = Arc::new(ClientDirectory::new());
@@ -120,13 +130,15 @@ async fn test_clock_signals_sent_to_clients() {
     assert_eq!(counter.get(), 1, "Should have received exactly one SIGURG");
 
     registry.notify_repaint(None);
-    let received = counter.wait_for_count(2, Duration::from_secs(1)).await;
+    let received_second = counter.wait_for_count(2, Duration::from_secs(1)).await;
     assert!(
-        received,
+        received_second,
         "Should have received second SIGURG within timeout"
     );
     assert_eq!(counter.get(), 2, "Should have received two SIGURG signals");
 
+    // SAFETY: reinstalls the disposition `sigaction` returned at install time; the
+    // test is `#[serial]`, so nothing else changed SIGURG in between.
     unsafe {
         sigaction(Signal::SIGURG, &previous).expect("restore handler");
     }
@@ -145,6 +157,9 @@ async fn test_unregistered_clients_dont_receive_signals() {
         SaFlags::empty(),
         SigSet::empty(),
     );
+    // SAFETY: the handler only bumps a `'static` `SignalCounter` (initialized above,
+    // before install), and the test is `#[serial]`, so no other test changes the
+    // SIGURG disposition while this handler is installed.
     let previous = unsafe { sigaction(Signal::SIGURG, &handler) }.expect("install handler");
 
     let registry = Arc::new(ClientDirectory::new());
@@ -160,6 +175,8 @@ async fn test_unregistered_clients_dont_receive_signals() {
         "Unregistered clients should not receive signals"
     );
 
+    // SAFETY: reinstalls the disposition `sigaction` returned at install time; the
+    // test is `#[serial]`, so nothing else changed SIGURG in between.
     unsafe {
         sigaction(Signal::SIGURG, &previous).expect("restore handler");
     }
@@ -211,9 +228,9 @@ fn test_minute_boundary_detection_with_epochs() {
         );
 
         let mid_minute = at_boundary + 30;
-        let seconds_into_minute = mid_minute % 60;
+        let mid_seconds = mid_minute % 60;
         assert_eq!(
-            seconds_into_minute, 30,
+            mid_seconds, 30,
             "Epoch {mid_minute} should be at :30 seconds"
         );
     }

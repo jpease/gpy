@@ -1,3 +1,5 @@
+//! Theme schema loading, validation errors, preset hints, and export variables.
+
 #![allow(clippy::panic)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
