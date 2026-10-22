@@ -12,6 +12,7 @@ The local quality gate.
 ./scripts/quality-check.sh --fast        # repo checks, Fish syntax, shellcheck, parity tests, Rust lint and tests
 ./scripts/quality-check.sh --rust-only   # fmt, clippy, tests, doc tests, audit, deny, release build
 ./scripts/quality-check.sh --shell-only  # Fish lint, shellcheck, Fish/Bash/Zsh suites
+./scripts/quality-check.sh --shell-only bash,zsh  # a subset of checks,fish,bash,zsh (CI shards by it)
 ./scripts/quality-check.sh --fish-only   # Fish syntax and formatting
 ./scripts/quality-check.sh --fix         # fish_indent, cargo fmt, clippy --fix, then the full gate
 ```

@@ -25,9 +25,9 @@ check-rust:
 check-fish:
     ./{{scripts_dir}}/quality-check.sh --fish-only
 
-# Run shell checks only (Fish/Bash/Zsh integration suites; skips Rust toolchain)
-check-shell:
-    ./{{scripts_dir}}/quality-check.sh --shell-only
+# Run shell checks only (skips Rust); optional comma-separated parts: checks,fish,bash,zsh
+check-shell parts="":
+    ./{{scripts_dir}}/quality-check.sh --shell-only {{parts}}
 
 # Compile for Linux (clippy) and Windows (mingw) in Docker; needs Docker
 check-platforms *args:

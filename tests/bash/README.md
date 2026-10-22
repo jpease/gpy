@@ -16,6 +16,7 @@ Repository invariants belong in tests; doc wording and source text do not.
 
 ```bash
 just check-shell                                  # everything, as the gate runs it
+just check-shell bash                             # the Bash suite only
 bash tests/bash/e2e_agent_autostart.test.bash     # one file
 bash tests/bash/install_e2e_real_binary.test.bash # one installer end-to-end
 ```

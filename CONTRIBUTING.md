@@ -118,6 +118,7 @@ Faster subsets for local iteration:
 ./scripts/quality-check.sh --fast        # skip slow audits and the release build
 ./scripts/quality-check.sh --rust-only   # Rust toolchain checks only
 ./scripts/quality-check.sh --shell-only  # Fish/Bash/Zsh integration suites only
+./scripts/quality-check.sh --shell-only bash  # one part: checks, fish, bash or zsh (comma-separated)
 ./scripts/quality-check.sh --fish-only   # Fish syntax + formatting only
 ```
 
