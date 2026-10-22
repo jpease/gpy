@@ -18,7 +18,8 @@ The local quality gate.
 
 It checks:
 
-- **Repository:** license metadata, privacy patterns, documentation links.
+- **Repository:** license metadata, privacy patterns, documentation links,
+  Rust file size (`check_file_size.py`).
 - **Fish:** syntax of every `.fish` file; formatting with `fish_indent`.
 - **Shell scripts:** `shellcheck -x` over the installers, `scripts/*.sh`,
   `tests/bash/*.test.bash`, `benchmarks/*/*.sh` and the shipped `bash/` tree,
@@ -49,6 +50,7 @@ Exit status is 0 when every check passed, 1 otherwise.
 | `check-privacy-patterns.sh` | No workstation paths, private identifiers or hardcoded sockets in tracked files. |
 | `check-doc-links.sh` | Every repository-relative Markdown link resolves. |
 | `check_new_allows.py [--staged \| <base-rev>]` | Fail when a change adds an `allow` attribute without `reason = "..."`; existing allows are not checked. Run at pre-commit (`--staged`) and by the `new-allows` job in `pr-gate.yml`. |
+| `check_file_size.py [--update \| --init]` | Fail when a Rust source file (inline test modules excluded) exceeds 800 lines, or a file listed in `file-size-allowlist.txt` grew or shrank without its entry being lowered (`--update`). Run by the `file-size` hook and `quality-check.sh`. |
 | `cleanup-test-agents.sh` | Reap agents and sockets left by killed Rust test runs. |
 | `bench.sh --ci` | Rust micro-benchmark budgets from `tests/performance-baselines.json` (part of `just bench-ci`). |
 | `ci-bench.sh` | End-to-end prompt-latency and agent-memory budgets (`just bench-ci`). |

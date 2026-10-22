@@ -98,6 +98,14 @@ the lines a change adds: the `new-allows` pre-commit hook runs it on staged
 changes and the `new-allows` CI job on the pull request's diff. Allows that
 already exist are not back-filled.
 
+A Rust source file stays under 800 lines, not counting its inline test
+modules (`scripts/check_file_size.py`, run by the `file-size` hook and
+`quality-check.sh`). The files already over the cap are listed with their
+size in `scripts/file-size-allowlist.txt` and may not grow. When you work in a
+listed file, split it, and lower or remove its entry with
+`python3 scripts/check_file_size.py --update` in the same commit; the check
+fails until a shrunk file's entry is lowered.
+
 Faster subsets for local iteration:
 
 ```bash
