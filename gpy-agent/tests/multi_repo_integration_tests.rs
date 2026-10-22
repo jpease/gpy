@@ -1747,7 +1747,7 @@ fn failed_recursive_watch_leaves_no_live_watches_after_unregister() {
     let temp = tempdir().expect("create temp dir");
     let repo = fs::canonicalize(create_git_repo(temp.path(), "partial")).expect("canonical repo");
     for index in 0_u8..5_u8 {
-        fs::create_dir(repo.join(format!("dir{index}"))).expect("create subdirectory");
+        fs::create_dir_all(repo.join(format!("dir{index}"))).expect("create subdirectory");
     }
     let _locked = UnreadableDir::create(repo.join("locked"));
 
