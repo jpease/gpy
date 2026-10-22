@@ -36,12 +36,12 @@ impl TestConfig {
     }
 
     /// Get a reference to the configuration
-    pub fn config(&self) -> &Config {
+    pub const fn config(&self) -> &Config {
         &self.config
     }
 
     /// Get a mutable reference to the configuration
-    pub fn config_mut(&mut self) -> &mut Config {
+    pub const fn config_mut(&mut self) -> &mut Config {
         &mut self.config
     }
 
@@ -55,28 +55,28 @@ impl TestConfig {
 
     /// Create a configuration with git disabled
     #[must_use]
-    pub fn with_git_disabled(mut self) -> Self {
+    pub const fn with_git_disabled(mut self) -> Self {
         self.config.git.enabled = false;
         self
     }
 
     /// Create a configuration with language detection disabled
     #[must_use]
-    pub fn with_language_disabled(mut self) -> Self {
+    pub const fn with_language_disabled(mut self) -> Self {
         self.config.language.enabled = false;
         self
     }
 
     /// Create a configuration with live updates disabled
     #[must_use]
-    pub fn with_live_updates_disabled(mut self) -> Self {
+    pub const fn with_live_updates_disabled(mut self) -> Self {
         self.config.agent.live_updates = false;
         self
     }
 
     /// Create a configuration with a custom timeout
     #[must_use]
-    pub fn with_git_timeout(mut self, seconds: u64) -> Self {
+    pub const fn with_git_timeout(mut self, seconds: u64) -> Self {
         self.config.git.timeout_seconds =
             gpy_agent::config::types::GitTimeout::new(seconds).expect("Valid git timeout");
         self
@@ -93,7 +93,7 @@ impl TestConfig {
     #[must_use]
     pub fn with_theme(mut self, theme: &str) -> Self {
         self.config.ui.theme =
-            gpy_agent::config::types::ThemeName::new(theme.to_string()).expect("Valid theme name");
+            gpy_agent::config::types::ThemeName::new(theme.to_owned()).expect("Valid theme name");
         self
     }
 
@@ -134,7 +134,7 @@ show_icons = true
 theme = "default"
 directory.max_length = 80
 "#
-    .to_string()
+    .to_owned()
 }
 
 /// Create a TOML configuration with invalid syntax
@@ -143,7 +143,7 @@ pub fn invalid_config_toml() -> String {
 [agent
 enabled = true  # Missing closing bracket
 "
-    .to_string()
+    .to_owned()
 }
 
 /// Create a TOML configuration with missing required fields
@@ -153,7 +153,7 @@ pub fn incomplete_config_toml() -> String {
 enabled = true
 # Missing other required fields
 "
-    .to_string()
+    .to_owned()
 }
 
 #[cfg(test)]

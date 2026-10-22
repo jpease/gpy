@@ -487,6 +487,10 @@ impl ConfigManager {
     ///
     /// # Errors
     /// Returns an error if the active file fails to load or the lock is poisoned.
+    #[allow(
+        clippy::map_err_ignore,
+        reason = "PoisonError borrows the lock guard, so it cannot be boxed as a 'static error source"
+    )]
     pub fn reload_now(&self) -> Result<()> {
         let _serialized = Self::enter_reload(&self.reload_gate);
         let old_config = self

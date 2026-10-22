@@ -16,7 +16,7 @@ const STRIPPED_SUFFIX_EXTENSIONS: [&str; 2] = [".bak", ".example"];
 
 /// Language detector over `gengo-language`'s matcher tables.
 #[derive(Default)]
-pub struct Detector {}
+pub struct Detector;
 
 impl Detector {
     /// Detect languages in a directory, aggregated by normalized name.
@@ -333,6 +333,10 @@ fn strip_suffix_extensions(path: &Path) -> Option<std::path::PathBuf> {
 /// Whether a walk entry is a regular file, following symlinks. Directory
 /// symlinks are skipped (hyperpolyglot parity), and FIFOs, sockets and devices
 /// never reach a content read. Only symlinks cost a `stat`.
+#[allow(
+    clippy::filetype_is_file,
+    reason = "only regular files (direct or via a symlink) are content-read; FIFOs, sockets and devices are excluded on purpose"
+)]
 fn is_regular_file(entry: &ignore::DirEntry) -> bool {
     entry.file_type().is_some_and(|file_type| {
         file_type.is_file()
@@ -388,6 +392,10 @@ fn aggregate_totals<'a>(metrics: impl IntoIterator<Item = &'a LanguageMetrics>) 
 
 #[expect(clippy::cast_precision_loss, reason = "display-only ranking")]
 #[expect(clippy::cast_possible_truncation, reason = "ratio is in [0.0, 1.0]")]
+#[allow(
+    clippy::as_conversions,
+    reason = "u64/usize to f64 and f64 to f32 have no From impl; the precision loss is covered by the expects above"
+)]
 fn confidence_for(metrics: LanguageMetrics, totals: LanguageMetrics) -> f32 {
     if totals.file_count == 0_usize || totals.total_bytes == 0_u64 {
         return 0.0_f32;
@@ -413,6 +421,10 @@ const CONTENT_SCAN_FILE_BUDGET: usize = 20_000;
 
 /// Whether `path` has more than `budget` files, stopping early. Omits the
 /// exclusion overrides, so it is an upper bound.
+#[allow(
+    clippy::filetype_is_file,
+    reason = "the budget counts regular files only, matching the files a content scan reads"
+)]
 fn exceeds_file_budget(path: &Path, budget: usize) -> bool {
     ignore::WalkBuilder::new(path)
         .build()

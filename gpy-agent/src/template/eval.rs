@@ -684,7 +684,9 @@ mod tests {
         let ctx = RenderContext::new(&resolver);
         let spans = render("\u{1b}]0;title\u{7}[$path\r\n](bold red)>", &ctx).unwrap();
         assert_eq!(text_of(&spans), "]0;title~\n>");
-        let styled = spans.get(1_usize).unwrap();
+        let [_, styled, ..] = spans.as_slice() else {
+            panic!("expected at least two spans, got {spans:?}");
+        };
         assert_eq!(styled.style.fg, Some(Color::Named("red".to_owned())));
         assert_eq!(styled.style.attrs, vec![Attr::Bold]);
     }

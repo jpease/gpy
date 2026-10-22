@@ -38,19 +38,19 @@ impl MockConfig {
     }
 
     #[must_use]
-    pub fn with_git_enabled(mut self, enabled: bool) -> Self {
+    pub const fn with_git_enabled(mut self, enabled: bool) -> Self {
         self.config.git.enabled = enabled;
         self
     }
 
     #[must_use]
-    pub fn with_language_enabled(mut self, enabled: bool) -> Self {
+    pub const fn with_language_enabled(mut self, enabled: bool) -> Self {
         self.config.language.enabled = enabled;
         self
     }
 
     #[must_use]
-    pub fn with_timeout(mut self, seconds: u64) -> Self {
+    pub const fn with_timeout(mut self, seconds: u64) -> Self {
         self.config.agent.timeout_seconds =
             gpy_agent::config::types::AgentTimeout::new(seconds).expect("Valid timeout");
         self
@@ -103,8 +103,8 @@ pub fn create_temp_socket_path() -> std::io::Result<PathBuf> {
     let temp_dir = tempfile::Builder::new().prefix("sock-").tempdir_in(&root)?;
     let socket_path = temp_dir.path().join("gpy-test.sock");
 
-    // Leaked so the dir outlives this function.
-    std::mem::forget(temp_dir);
+    // Kept so the dir outlives this function.
+    let _ = temp_dir.keep();
 
     Ok(socket_path)
 }
@@ -129,32 +129,39 @@ pub fn wait_for_agent_ready(socket_path: &Path, timeout: Duration) -> std::io::R
 
 /// Aborts the wrapped server task on drop, including during panic unwinding.
 pub struct ServerGuard<T> {
-    handle: tokio::task::JoinHandle<T>,
+    /// Always `Some` until `into_inner` takes it.
+    handle: Option<tokio::task::JoinHandle<T>>,
 }
 
 impl<T> ServerGuard<T> {
     #[must_use]
-    pub fn new(handle: tokio::task::JoinHandle<T>) -> Self {
-        Self { handle }
+    pub const fn new(handle: tokio::task::JoinHandle<T>) -> Self {
+        Self {
+            handle: Some(handle),
+        }
     }
 
     /// Consumes the guard without aborting the task.
     #[must_use]
-    pub fn into_inner(self) -> tokio::task::JoinHandle<T> {
-        let handle = unsafe { std::ptr::read(std::ptr::addr_of!(self.handle)) };
-        std::mem::forget(self);
-        handle
+    pub fn into_inner(mut self) -> tokio::task::JoinHandle<T> {
+        self.handle
+            .take()
+            .expect("ServerGuard handle is present until into_inner")
     }
 
     #[must_use]
     pub fn is_finished(&self) -> bool {
-        self.handle.is_finished()
+        self.handle
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished)
     }
 }
 
 impl<T> Drop for ServerGuard<T> {
     fn drop(&mut self) {
-        self.handle.abort();
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+        }
     }
 }
 

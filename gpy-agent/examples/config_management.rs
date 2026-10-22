@@ -35,7 +35,13 @@ fn main() -> Result<()> {
     println!("\nUI Settings:");
     println!("  Theme: {}", config.ui.theme);
     println!("  Show icons: {}", config.ui.show_icons);
-    println!("  Enabled segments: {:?}", config.ui.enabled_segments);
+    #[allow(
+        clippy::use_debug,
+        reason = "the example prints the segment list in its bracketed, quoted Debug form"
+    )]
+    {
+        println!("  Enabled segments: {:?}", config.ui.enabled_segments);
+    }
     println!("  Max path length: {}", config.ui.directory.max_length);
 
     println!("\nAgent Settings:");

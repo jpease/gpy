@@ -1012,7 +1012,7 @@ pub(super) fn handle_config_reload(
     // Loaded before the theme switch so a rejected palette leaves nothing half-applied.
     let palette = reload_palette(old_config, new_config)?;
     let theme_switched = switch_renamed_theme(&ctx.theme_manager, old_config, new_config)?;
-    let palette_changed = palette.is_some_and(|palette| ctx.palette_cache.replace(palette));
+    let palette_changed = palette.is_some_and(|loaded| ctx.palette_cache.replace(loaded));
 
     let (theme_changed, export_changed) = {
         let _announcing = ctx.announce_gate.lock_or_recover();

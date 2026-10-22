@@ -1,4 +1,10 @@
+//! Plugin discovery stays within its time budget as the plugin count grows.
+
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::missing_panics_doc)]
+#![allow(
+    unsafe_code,
+    reason = "edition 2024 makes env::set_var/remove_var unsafe; plugin discovery reads XDG_CONFIG_HOME from the process env"
+)]
 
 use gpy_agent::plugin::discover_plugins;
 use serial_test::serial;
@@ -33,6 +39,8 @@ fn run_discovery_with_plugins(plugin_count: usize) -> (Duration, usize, Vec<Stri
     fs::create_dir_all(&plugins_root).expect("create plugins root");
     create_plugins(&plugins_root, plugin_count);
 
+    // SAFETY: only the `#[serial]` tests in this binary call this, so no other thread
+    // reads the environment while it is mutated.
     unsafe {
         std::env::set_var("XDG_CONFIG_HOME", xdg.path());
         std::env::remove_var("GPY_BUNDLED_PLUGIN_DIR");
@@ -42,6 +50,7 @@ fn run_discovery_with_plugins(plugin_count: usize) -> (Duration, usize, Vec<Stri
     let discovery = discover_plugins();
     let elapsed = start.elapsed();
 
+    // SAFETY: as above, the caller is a `#[serial]` test.
     unsafe {
         std::env::remove_var("XDG_CONFIG_HOME");
     }

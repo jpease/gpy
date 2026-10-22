@@ -35,6 +35,10 @@ pub fn deserialize_message_with_format(data: &[u8]) -> (Option<super::Format>, R
 }
 
 /// Parse wire bytes into a [`WireMessage`] with zero I/O.
+#[allow(
+    clippy::map_err_ignore,
+    reason = "the fixed deserialize message is the IPC error text clients see; serde's detail is kept out of it"
+)]
 fn parse_wire(data: &[u8]) -> Result<WireMessage> {
     validate_message_size(data)?;
     let json = std::str::from_utf8(data)

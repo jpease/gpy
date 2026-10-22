@@ -106,9 +106,9 @@ async fn test_client_registration_flow() {
     );
 
     // Query agent status
-    let response = server.agent_status().await.expect("Status request failed");
+    let status_response = server.agent_status().await.expect("Status request failed");
 
-    match response {
+    match status_response {
         Response::AgentStatus {
             registered_clients, ..
         } => {
@@ -121,12 +121,12 @@ async fn test_client_registration_flow() {
     }
 
     // Unregister client
-    let response = server
+    let unregister_response = server
         .send_request(Message::UnregisterClient { pid })
         .await
         .expect("Request failed");
     assert!(
-        matches!(response, Response::Ack),
+        matches!(unregister_response, Response::Ack),
         "Unregistration should succeed"
     );
 }
@@ -147,9 +147,9 @@ async fn test_concurrent_git_status_requests() {
     // Send 5 concurrent requests
     let mut handles = Vec::new();
     let safe_path = SafePath::new(&path).unwrap();
-    for _ in 0..5 {
+    for _ in 0_u32..5 {
         let path_clone = safe_path.clone();
-        let server_clone = server.clone();
+        let server_clone = std::sync::Arc::clone(&server);
         handles.push(tokio::spawn(async move {
             server_clone
                 .send_request(Message::RepositoryStatus {

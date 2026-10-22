@@ -653,13 +653,15 @@ impl WatchCoordinator {
                 }
                 // A kick sent after the lock was released stays queued, so
                 // no wakeup is lost between the drain and this wait.
-                let disconnected = match deadline {
-                    None => kick_rx.recv().is_err(),
-                    Some(at) => matches!(
-                        kick_rx.recv_timeout(at.saturating_duration_since(Instant::now())),
-                        Err(mpsc::RecvTimeoutError::Disconnected)
-                    ),
-                };
+                let disconnected = deadline.map_or_else(
+                    || kick_rx.recv().is_err(),
+                    |at| {
+                        matches!(
+                            kick_rx.recv_timeout(at.saturating_duration_since(Instant::now())),
+                            Err(mpsc::RecvTimeoutError::Disconnected)
+                        )
+                    },
+                );
                 if disconnected {
                     break;
                 }

@@ -1,8 +1,15 @@
+//! End-to-end plugin tests: discovery, theme export, and Fish runtime loading.
+
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::missing_panics_doc)]
+#![allow(
+    unsafe_code,
+    reason = "edition 2024 makes env::set_var/remove_var unsafe; plugin discovery reads XDG_CONFIG_HOME from the process env"
+)]
 
 use gpy_agent::config::Config;
 use gpy_agent::shell::Shell;
 use gpy_agent::theme::{ThemeManager, ThemeSource};
+use serial_test::serial;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -218,11 +225,14 @@ fn verify_missing_plugin_file_is_graceful(
 }
 
 #[test]
+#[serial]
 fn e2e_plugin_segment_and_theme_discovery_and_export() {
     let xdg = TempDir::new().expect("xdg tempdir");
     install_plugin(xdg.path(), true);
     write_config(xdg.path(), "community", &["clock", "k8s_tools"]);
 
+    // SAFETY: every test in this binary is `#[serial]`, so no other thread reads the
+    // environment (directly or by spawning a process) while it is mutated.
     unsafe {
         std::env::set_var("XDG_CONFIG_HOME", xdg.path());
         std::env::remove_var("GPY_BUNDLED_PLUGIN_DIR");
@@ -248,12 +258,14 @@ fn e2e_plugin_segment_and_theme_discovery_and_export() {
     assert!(fish_export.contains("set -g __gpy_segment_k8s_tools_bg_color \"#073642\""));
     assert!(fish_export.contains("set -g __gpy_plugin_segment_file_k8s_tools"));
 
+    // SAFETY: as above, the `#[serial]` tests leave no other thread using the environment.
     unsafe {
         std::env::remove_var("XDG_CONFIG_HOME");
     }
 }
 
 #[test]
+#[serial]
 fn e2e_plugin_runtime_loading_and_missing_file_graceful() {
     // Fish-4-only script; skip on older fish (e.g. Ubuntu CI's 3.7).
     if !has_fish_4() {
@@ -352,6 +364,7 @@ const FISH_RENDER_PROBE: &str = "if functions -q segment_{$SEGMENT}_render; \
      echo LOADED; segment_{$SEGMENT}_render last; echo; else; echo MISSING; end";
 
 #[test]
+#[serial]
 fn e2e_scaffolded_segments_with_repeated_or_edge_separators_load_in_fish() {
     if !has_fish_4() {
         skip::skip_test("fish 4 is not installed; init.fish sourcing needs Fish 4");
@@ -379,16 +392,17 @@ fn e2e_scaffolded_segments_with_repeated_or_edge_separators_load_in_fish() {
              > $XDG_CONFIG_HOME/gpy/config.toml; __gpy_reload_theme; {FISH_RENDER_PROBE}"
         );
         let reloaded = sandbox.fish(&reload_script, segment);
-        let stdout = String::from_utf8_lossy(&reloaded.stdout);
+        let reloaded_stdout = String::from_utf8_lossy(&reloaded.stdout);
         assert!(
-            stdout.contains("LOADED") && stdout.contains(&format!("* {segment}")),
-            "'{segment}' not loaded on reload.\nstdout:\n{stdout}\nstderr:\n{}",
+            reloaded_stdout.contains("LOADED") && reloaded_stdout.contains(&format!("* {segment}")),
+            "'{segment}' not loaded on reload.\nstdout:\n{reloaded_stdout}\nstderr:\n{}",
             String::from_utf8_lossy(&reloaded.stderr)
         );
     }
 }
 
 #[test]
+#[serial]
 fn e2e_colliding_segment_tokens_are_rejected_not_redirected() {
     let sandbox = FishSandbox::new();
     assert_success(

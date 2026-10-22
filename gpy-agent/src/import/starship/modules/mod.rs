@@ -175,26 +175,25 @@ fn collapse_granular_status_flags(format: &str, warnings: &mut Warnings) -> Stri
         .into_iter()
         .filter_map(|token| match token {
             Token::Literal(text) => Some(text.to_owned()),
-            Token::Var { name, raw } => {
-                if let Some(flag) = GRANULAR_STATUS_FLAGS
-                    .iter()
-                    .copied()
-                    .find(|&candidate| candidate == name)
-                {
-                    // First granular token → `$status`; later ones dropped.
-                    if !found.contains(&flag) {
-                        found.push(flag);
-                    }
-                    if collapsed_first {
-                        None
-                    } else {
-                        collapsed_first = true;
-                        Some("$status".to_owned())
-                    }
-                } else {
-                    Some(raw.to_owned())
-                }
-            }
+            Token::Var { name, raw } => GRANULAR_STATUS_FLAGS
+                .iter()
+                .copied()
+                .find(|&candidate| candidate == name)
+                .map_or_else(
+                    || Some(raw.to_owned()),
+                    |flag| {
+                        // First granular token → `$status`; later ones dropped.
+                        if !found.contains(&flag) {
+                            found.push(flag);
+                        }
+                        if collapsed_first {
+                            None
+                        } else {
+                            collapsed_first = true;
+                            Some("$status".to_owned())
+                        }
+                    },
+                ),
         })
         .collect();
     if !found.is_empty() {
@@ -420,6 +419,10 @@ pub enum StyleColor {
 
 /// Resolve a Starship `style`'s colors, mapping palette references through `palette`.
 #[must_use]
+#[allow(
+    clippy::map_err_ignore,
+    reason = "StyleColor::Invalid reports the offending token, which replaces ColorSpec's error by design"
+)]
 pub fn style_color<S: BuildHasher>(
     style: &str,
     palette: Option<&HashMap<String, String, S>>,

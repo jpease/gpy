@@ -1,3 +1,5 @@
+//! `ConfigWatcher` notices on-disk config edits.
+
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 

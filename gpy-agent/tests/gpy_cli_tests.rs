@@ -396,16 +396,16 @@ enabled_segments = ["directory", "clock"]
 "#;
     fs::write(env.config_path(), config_content).expect("Failed to write config");
 
-    let output = env
+    let enable = env
         .run_gpy(&["enable", "status"])
         .expect("Failed to run gpy enable status");
-    output.assert_success("gpy enable status");
+    enable.assert_success("gpy enable status");
 
-    let output = env
+    let segments = env
         .run_gpy(&["config", "get", "ui.enabled_segments"])
         .expect("Failed to run gpy config get");
-    output.assert_success("gpy config get ui.enabled_segments");
-    assert_eq!(output.stdout.trim(), "directory clock status");
+    segments.assert_success("gpy config get ui.enabled_segments");
+    assert_eq!(segments.stdout.trim(), "directory clock status");
 }
 
 #[test]
@@ -428,13 +428,13 @@ enabled_segments = ["duration", "language", "directory", "git"]
 "#;
     fs::write(&config_path, config_content).expect("Failed to write config");
 
-    let output = env
+    let enable = env
         .run_gpy(&["enable", "clock"])
         .expect("Failed to run gpy enable clock");
-    output.assert_success("gpy enable clock");
-    let stdout = output.stdout;
+    enable.assert_success("gpy enable clock");
+    let enable_stdout = enable.stdout;
     assert!(
-        stdout.contains("Enabled clock"),
+        enable_stdout.contains("Enabled clock"),
         "Should confirm clock segment enabled"
     );
 
@@ -444,13 +444,13 @@ enabled_segments = ["duration", "language", "directory", "git"]
         "Config should now contain clock segment"
     );
 
-    let output = env
+    let disable = env
         .run_gpy(&["disable", "clock"])
         .expect("Failed to run gpy disable clock");
-    output.assert_success("gpy disable clock");
-    let stdout = output.stdout;
+    disable.assert_success("gpy disable clock");
+    let disable_stdout = disable.stdout;
     assert!(
-        stdout.contains("Disabled clock"),
+        disable_stdout.contains("Disabled clock"),
         "Should confirm clock segment disabled"
     );
 }
@@ -464,19 +464,19 @@ fn test_enable_hostname_segment() {
     )
     .expect("Failed to write config");
 
-    let output = env
+    let enable = env
         .run_gpy(&["enable", "hostname"])
         .expect("Failed to run gpy enable hostname");
-    output.assert_success("gpy enable hostname");
+    enable.assert_success("gpy enable hostname");
 
-    let output = env
+    let segments = env
         .run_gpy(&["config", "get", "ui.enabled_segments"])
         .expect("Failed to run gpy config get ui.enabled_segments");
-    output.assert_success("gpy config get ui.enabled_segments");
+    segments.assert_success("gpy config get ui.enabled_segments");
     assert!(
-        output.stdout.contains("hostname"),
+        segments.stdout.contains("hostname"),
         "ui.enabled_segments should list hostname: {:?}",
-        output.stdout
+        segments.stdout
     );
 }
 
@@ -489,14 +489,16 @@ fn test_doctor_accepts_starship_recommended_segments() {
     let env = CliTestEnv::with_config("[ui]\ntheme = \"default\"\n")
         .expect("Failed to create isolated CLI test environment");
 
-    let output = env
+    let theme_use = env
         .run_gpy(&["theme", "use", "starship", "--force"])
         .expect("Failed to run gpy theme use starship --force");
-    output.assert_success("gpy theme use starship --force");
+    theme_use.assert_success("gpy theme use starship --force");
     assert!(
-        output.stdout.contains("segment order (username, hostname"),
+        theme_use
+            .stdout
+            .contains("segment order (username, hostname"),
         "starship layout should have been applied: {:?}",
-        output.stdout
+        theme_use.stdout
     );
 
     // No agent runs in CliTestEnv, so doctor's exit code is not asserted.
@@ -943,22 +945,22 @@ enabled_segments = ["language", "directory", "git"]
 "#;
     fs::write(&config_path, config_content).expect("Failed to write config");
 
-    let output = env
+    let set = env
         .run_gpy(&["config", "set", "ui.directory.max_length", "120"])
         .expect("Failed to run gpy config set");
-    output.assert_success("gpy config set ui.directory.max_length 120");
-    let stdout = output.stdout;
+    set.assert_success("gpy config set ui.directory.max_length 120");
+    let set_stdout = set.stdout;
     assert!(
-        stdout.contains("Set ui.directory.max_length = 120"),
+        set_stdout.contains("Set ui.directory.max_length = 120"),
         "Should confirm value set"
     );
 
-    let output = env
+    let get = env
         .run_gpy(&["config", "get", "ui.directory.max_length"])
         .expect("Failed to run gpy config get");
-    output.assert_success("gpy config get ui.directory.max_length");
-    let stdout = output.stdout;
-    assert_eq!(stdout.trim(), "120", "Should return the updated value");
+    get.assert_success("gpy config get ui.directory.max_length");
+    let get_stdout = get.stdout;
+    assert_eq!(get_stdout.trim(), "120", "Should return the updated value");
 }
 
 #[test]
@@ -974,22 +976,21 @@ enabled_segments = ["directory", "git"]
 "#;
     fs::write(&config_path, config_content).expect("Failed to write config");
 
-    let output = env
+    let set = env
         .run_gpy(&["config", "set", "ui.directory.display", "abbreviated"])
         .expect("Failed to run gpy config set");
-    output.assert_success("gpy config set ui.directory.display abbreviated");
+    set.assert_success("gpy config set ui.directory.display abbreviated");
     assert!(
-        output
-            .stdout
+        set.stdout
             .contains("Set ui.directory.display = abbreviated"),
         "Should confirm directory display mode set"
     );
 
-    let output = env
+    let get = env
         .run_gpy(&["config", "get", "ui.directory.display"])
         .expect("Failed to run gpy config get");
-    output.assert_success("gpy config get ui.directory.display");
-    assert_eq!(output.stdout.trim(), "abbreviated");
+    get.assert_success("gpy config get ui.directory.display");
+    assert_eq!(get.stdout.trim(), "abbreviated");
 }
 
 #[test]

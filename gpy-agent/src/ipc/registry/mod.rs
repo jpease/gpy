@@ -84,6 +84,10 @@ pub(crate) fn write_shell_flag(shell_dir: &Path, pid: u32, flag: ShellFlag) -> s
 /// # Errors
 /// Returns the `kill` error (`ESRCH` for a PID that does not fit `i32`).
 #[cfg(unix)]
+#[allow(
+    clippy::map_err_ignore,
+    reason = "the documented contract maps a PID that does not fit i32 to ESRCH; Errno has no source slot"
+)]
 pub(crate) fn ring_doorbell(pid: u32) -> nix::Result<()> {
     let pid_i32 = i32::try_from(pid).map_err(|_| nix::errno::Errno::ESRCH)?;
     kill(Pid::from_raw(pid_i32), DOORBELL)

@@ -25,18 +25,70 @@ exclude = [
 
 [lints.rust]
 warnings = "deny"
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.rustdoc]
+broken_intra_doc_links = "warn"
+missing_crate_level_docs = "warn"
 
 [lints.clippy]
-# priority = -1 so a per-item #[allow]/#[expect] still overrides the group.
-pedantic = { level = "deny", priority = -1 }
-dbg_macro = "deny"
-expect_used = "deny"
-panic = "deny"
-print_stderr = "deny"
-print_stdout = "deny"
-todo = "deny"
-unimplemented = "deny"
-unwrap_used = "deny"
+# The whole pedantic group. priority = -1 lets the named entries below and
+# per-item allows override it.
+pedantic = { level = "warn", priority = -1 }
+
+# Panics, stray output and unfinished code.
+dbg_macro = "warn"
+exit = "warn"
+expect_used = "warn"
+get_unwrap = "warn"
+panic = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+todo = "warn"
+unimplemented = "warn"
+unreachable = "warn"
+unwrap_used = "warn"
+
+# Unsafe code and memory: every unsafe block states why it is sound.
+clone_on_ref_ptr = "warn"
+mem_forget = "warn"
+rc_buffer = "warn"
+undocumented_unsafe_blocks = "warn"
+
+# Lost information and likely bugs.
+create_dir = "warn"
+filetype_is_file = "warn"
+float_cmp_const = "warn"
+lossy_float_literal = "warn"
+map_err_ignore = "warn"
+use_debug = "warn"
+
+# Numeric conversions, arithmetic and indexing.
+arithmetic_side_effects = "warn"
+as_conversions = "warn"
+default_numeric_fallback = "warn"
+indexing_slicing = "warn"
+
+# Readability.
+cognitive_complexity = "warn"
+empty_structs_with_brackets = "warn"
+if_then_some_else_none = "warn"
+multiple_inherent_impl = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+same_name_method = "warn"
+self_named_module_files = "warn"
+shadow_reuse = "warn"
+shadow_same = "warn"
+shadow_unrelated = "warn"
+str_to_string = "warn"
+string_add = "warn"
+
+# Nursery lints adopted individually.
+empty_enums = "warn"
+fallible_impl_from = "warn"
+missing_const_for_fn = "warn"
+option_if_let_else = "warn"
 
 [dependencies]
 clap = { version = "4.6", features = ["derive", "string"] }

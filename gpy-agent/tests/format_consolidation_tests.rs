@@ -34,20 +34,20 @@ fn test_shell_enum_parsing() {
 
 #[test]
 fn test_shell_variable_syntax() {
-    let syntax = Shell::Fish.variable_syntax();
-    assert_eq!(syntax.prefix, "set -g ");
-    assert_eq!(syntax.separator, " ");
-    assert_eq!(syntax.format("key", "value"), "set -g key \"value\"");
+    let fish = Shell::Fish.variable_syntax();
+    assert_eq!(fish.prefix, "set -g ");
+    assert_eq!(fish.separator, " ");
+    assert_eq!(fish.format("key", "value"), "set -g key \"value\"");
 
-    let syntax = Shell::Zsh.variable_syntax();
-    assert_eq!(syntax.prefix, "typeset -g ");
-    assert_eq!(syntax.separator, "=");
-    assert_eq!(syntax.format("key", "value"), "typeset -g key=\"value\"");
+    let zsh = Shell::Zsh.variable_syntax();
+    assert_eq!(zsh.prefix, "typeset -g ");
+    assert_eq!(zsh.separator, "=");
+    assert_eq!(zsh.format("key", "value"), "typeset -g key=\"value\"");
 
-    let syntax = Shell::Bash.variable_syntax();
-    assert_eq!(syntax.prefix, "");
-    assert_eq!(syntax.separator, "=");
-    assert_eq!(syntax.format("key", "value"), "key=\"value\"");
+    let bash = Shell::Bash.variable_syntax();
+    assert_eq!(bash.prefix, "");
+    assert_eq!(bash.separator, "=");
+    assert_eq!(bash.format("key", "value"), "key=\"value\"");
 }
 
 #[test]

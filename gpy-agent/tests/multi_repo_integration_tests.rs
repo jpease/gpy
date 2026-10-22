@@ -1570,7 +1570,7 @@ fn rebase_operation_state_transitions_refresh_repository() {
     let_watch_arm_then_drain(&events);
 
     let rebase_apply = repo.join(".git").join("rebase-apply");
-    fs::create_dir(&rebase_apply).expect("create rebase-apply dir");
+    fs::create_dir_all(&rebase_apply).expect("create rebase-apply dir");
     fs::write(rebase_apply.join("applying"), "").expect("write applying marker");
 
     assert!(
@@ -1604,7 +1604,7 @@ fn rebase_high_churn_file_wakes_zero_times() {
     let_watch_arm_then_drain(&events);
 
     let rebase_merge = repo.join(".git").join("rebase-merge");
-    fs::create_dir(&rebase_merge).expect("create rebase-merge dir");
+    fs::create_dir_all(&rebase_merge).expect("create rebase-merge dir");
     assert!(
         wait_for_repo(&events, &canonical_repo, Duration::from_secs(20)),
         "setup: creating rebase-merge must refresh the repository"

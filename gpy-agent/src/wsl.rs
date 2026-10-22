@@ -18,6 +18,10 @@ pub fn detect(kernel_release: Option<&str>, distro: Option<&str>) -> bool {
 
 /// Whether this process runs inside WSL; always `false` off Linux.
 #[must_use]
+#[allow(
+    clippy::missing_const_for_fn,
+    reason = "const only off Linux; the Linux body reads a LazyLock, which is not const"
+)]
 pub fn is_wsl() -> bool {
     #[cfg(target_os = "linux")]
     {

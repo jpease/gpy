@@ -119,17 +119,17 @@ fn racing_theme_and_config_reloads_ring_once() {
     // Stands in for a swap that left the (empty) export stale; the config
     // reload starts mid-swap and, ungated, would write that export and ring.
     let swap = || {
-        let (ctx, config) = (ctx.clone(), config.clone());
+        let (thread_ctx, thread_config) = (ctx.clone(), config.clone());
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         *racer.lock().expect("racer lock") = Some(thread::spawn(move || {
             let slot: SharedWatcherSlot = Arc::new(Mutex::new(None));
             handle_config_reload(
-                &ctx,
+                &thread_ctx,
                 &slot,
                 WatcherConfig::default(),
                 true,
-                &config,
-                &config,
+                &thread_config,
+                &thread_config,
             )
             .expect("config reload should succeed");
             let _ = done_tx.send(());

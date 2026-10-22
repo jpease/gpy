@@ -346,8 +346,11 @@ fn setup_refreshes_shells_set_up_earlier_and_doctor_flags_stale_ones() {
         !home.path().join(".config/fish").exists(),
         "a shell never set up is not installed"
     );
-    let report = doctor(home.path());
-    assert!(!report.contains("installed by"), "{report}");
+    let refreshed_report = doctor(home.path());
+    assert!(
+        !refreshed_report.contains("installed by"),
+        "{refreshed_report}"
+    );
 }
 
 /// The installers run setup with a temporary `--from`. The scripts must be

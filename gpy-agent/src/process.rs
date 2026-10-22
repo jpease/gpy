@@ -20,6 +20,10 @@ pub enum WaitError {
 }
 
 impl std::fmt::Display for WaitError {
+    #[allow(
+        clippy::use_debug,
+        reason = "Duration has no Display impl; `{:?}` gives the existing readable form (e.g. 2s) in this error text"
+    )]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Io(e) => write!(f, "I/O error: {e}"),

@@ -27,26 +27,26 @@ fn plugin_segment_style_assignments(
     )];
 
     if let Some(bg_color) = segment_theme.bg_color.as_deref() {
-        let bg_color = colors.resolve(bg_color);
+        let resolved_bg = colors.resolve(bg_color);
         assignments.push(ShellAssignment::local(
             format!("{gpy_prefix}_bg_color"),
-            bg_color.as_ref(),
+            resolved_bg.as_ref(),
         ));
         assignments.push(ShellAssignment::local(
             format!("__color_{segment_token}_bg"),
-            bg_color,
+            resolved_bg,
         ));
     }
 
     if let Some(text_color) = segment_theme.text_color.as_deref() {
-        let text_color = colors.resolve(text_color);
+        let resolved_text = colors.resolve(text_color);
         assignments.push(ShellAssignment::local(
             format!("{gpy_prefix}_text_color"),
-            text_color.as_ref(),
+            resolved_text.as_ref(),
         ));
         assignments.push(ShellAssignment::local(
             format!("__color_{segment_token}_fg"),
-            text_color,
+            resolved_text,
         ));
     }
 
@@ -207,17 +207,14 @@ pub(super) fn append_plugin_segment_file_assignments(
         return;
     }
     for (segment_name, segment_file) in plugin_segment_files {
-        let Ok(segment_name) = SegmentName::new(segment_name) else {
+        let Ok(parsed_name) = SegmentName::new(segment_name) else {
             continue;
         };
         append_shell_assignment(
             output,
             shell,
             ShellAssignment::local(
-                format!(
-                    "__gpy_plugin_segment_file_{}",
-                    segment_name.variable_token()
-                ),
+                format!("__gpy_plugin_segment_file_{}", parsed_name.variable_token()),
                 segment_file.as_str(),
             ),
         );

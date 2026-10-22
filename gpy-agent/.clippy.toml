@@ -12,7 +12,7 @@ upper-case-acronyms-aggressive = true
 # Also flag `use super::*` and prelude-style imports.
 warn-on-all-wildcard-imports = true
 
-# Restriction lints denied in Cargo.toml, relaxed in test code.
+# Panic and output lints from Cargo.toml [lints], relaxed in test code.
 allow-expect-in-tests = true
 allow-unwrap-in-tests = true
 allow-panic-in-tests = true
@@ -24,3 +24,9 @@ msrv = "1.99"
 
 # The library has no semver guarantee, so lints may suggest signature changes.
 avoid-breaking-exported-api = false
+
+# Catching a panic is only for keeping it from crossing an `extern "C"` boundary. The FFI
+# panic guard carries #[allow(clippy::disallowed_methods, reason = "...")] on its function.
+disallowed-methods = [
+    { path = "std::panic::catch_unwind", reason = "only at an extern \"C\" boundary" },
+]

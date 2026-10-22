@@ -40,8 +40,9 @@ fn test_confidence_single_language() {
     let langs = Detector::detect_directory(dir.path());
 
     assert_eq!(langs.len(), 1);
-    assert_eq!(langs[0].name, "rust");
-    assert!((langs[0].confidence - 1.0).abs() < 0.01);
+    let top = langs.first().expect("one detected language");
+    assert_eq!(top.name, "rust");
+    assert!((top.confidence - 1.0).abs() < 0.01);
 }
 
 #[test]
@@ -68,8 +69,9 @@ fn test_confidence_file_count_matters() {
     ]);
     let langs = Detector::detect_directory(dir.path());
 
-    assert_eq!(langs[0].name, "node");
-    assert!(langs[0].confidence > 0.5);
+    let top = langs.first().expect("a detected language");
+    assert_eq!(top.name, "node");
+    assert!(top.confidence > 0.5);
 }
 
 #[test]
@@ -169,7 +171,7 @@ fn test_filter_mode_primary() {
     let theme = gpy_agent::theme::ThemeConfig::default();
     let display = build_language_display_info(&languages, &theme, &config.language);
     assert_eq!(display.len(), 1);
-    assert_eq!(display[0].name, "rust");
+    assert_eq!(display.first().expect("first entry").name, "rust");
 }
 
 #[test]
@@ -201,8 +203,8 @@ fn test_filter_mode_top_n() {
     let theme = gpy_agent::theme::ThemeConfig::default();
     let display = build_language_display_info(&languages, &theme, &config.language);
     assert_eq!(display.len(), 2);
-    assert_eq!(display[0].name, "rust");
-    assert_eq!(display[1].name, "node");
+    assert_eq!(display.first().expect("first entry").name, "rust");
+    assert_eq!(display.get(1).expect("second entry").name, "node");
 }
 
 #[test]
@@ -235,7 +237,7 @@ fn test_confidence_threshold() {
     let theme = gpy_agent::theme::ThemeConfig::default();
     let display = build_language_display_info(&languages, &theme, &config.language);
     assert_eq!(display.len(), 1, "Only Rust should pass 0.25 threshold");
-    assert_eq!(display[0].name, "rust");
+    assert_eq!(display.first().expect("first entry").name, "rust");
 }
 
 #[test]
@@ -276,8 +278,8 @@ fn test_combined_threshold_and_filter() {
     let theme = gpy_agent::theme::ThemeConfig::default();
     let display = build_language_display_info(&languages, &theme, &config.language);
     assert_eq!(display.len(), 2);
-    assert_eq!(display[0].name, "rust");
-    assert_eq!(display[1].name, "node");
+    assert_eq!(display.first().expect("first entry").name, "rust");
+    assert_eq!(display.get(1).expect("second entry").name, "node");
 }
 
 #[test]
@@ -642,7 +644,7 @@ fn test_language_aggregation_js_ts_to_node() {
         "JavaScript and TypeScript should aggregate to single 'node' entry"
     );
 
-    let node_lang = node_entries[0];
+    let node_lang = *node_entries.first().expect("one node entry");
     assert_eq!(
         node_lang.file_count, 2,
         "Node entry should have 2 files (JS + TS)"
@@ -663,7 +665,7 @@ fn test_detection_reports_file_count_and_bytes() {
     let temp_dir = tempdir().expect("Failed to create temp dir");
     let temp_path = temp_dir.path();
 
-    for i in 0..10 {
+    for i in 0_u32..10 {
         let file_path = temp_path.join(format!("test{i}.js"));
         fs::write(&file_path, "console.log('test');").expect("Failed to write file");
     }

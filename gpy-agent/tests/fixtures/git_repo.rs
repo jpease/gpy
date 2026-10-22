@@ -150,9 +150,8 @@ impl TestRepo {
     /// Add a worktree for `branch` in a fresh temp dir and return its path.
     pub fn with_worktree(&self, branch: &str, _relative_path: &str) -> PathBuf {
         let worktree_dir = TempDir::new().expect("Failed to create worktree dir");
-        let worktree_path = worktree_dir.path().to_path_buf();
-        // Leaked so the worktree outlives this call.
-        std::mem::forget(worktree_dir);
+        // Kept so the worktree outlives this call.
+        let worktree_path = worktree_dir.keep();
 
         let output = Command::new("git")
             .args(["worktree", "add", worktree_path.to_str().unwrap(), branch])
@@ -212,7 +211,7 @@ impl TestRepo {
         self.path
             .to_str()
             .expect("Repository path should be valid UTF-8")
-            .to_string()
+            .to_owned()
     }
 
     /// Create a file with the given content.
@@ -341,7 +340,7 @@ impl TestRepo {
             .output()
             .expect("Failed to get commit hash");
 
-        let commit_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let commit_hash = String::from_utf8_lossy(&output.stdout).trim().to_owned();
 
         Command::new("git")
             .args(["checkout", &commit_hash])

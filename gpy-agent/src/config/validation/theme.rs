@@ -45,11 +45,15 @@ fn validate_plugin_segment_themes(
 ///
 /// # Errors
 /// Returns the first invalid or colliding section name, in sorted order.
+#[allow(
+    clippy::map_err_ignore,
+    reason = "ValidationError has no source field; InvalidSegmentName already carries the rejected key"
+)]
 fn validate_plugin_segment_names<'a>(keys: impl Iterator<Item = &'a String>) -> Result<()> {
-    let mut keys: Vec<&String> = keys.collect();
-    keys.sort_unstable();
-    let mut names: Vec<SegmentName> = Vec::with_capacity(keys.len());
-    for key in keys {
+    let mut sorted: Vec<&String> = keys.collect();
+    sorted.sort_unstable();
+    let mut names: Vec<SegmentName> = Vec::with_capacity(sorted.len());
+    for key in sorted {
         let name = SegmentName::new(key).map_err(|_| ValidationError {
             field_path: format!("segments.{key}"),
             kind: ValidationErrorKind::InvalidSegmentName { value: key.clone() },
@@ -66,14 +70,13 @@ fn validate_plugin_segment_names<'a>(keys: impl Iterator<Item = &'a String>) -> 
         }
         names.push(name);
     }
-    match first_token_collision(&names) {
-        Some(collision) => Err(ValidationError {
+    first_token_collision(&names).map_or(Ok(()), |collision| {
+        Err(ValidationError {
             field_path: "segments".to_owned(),
             kind: ValidationErrorKind::SegmentTokenCollision { collision },
         }
-        .into()),
-        None => Ok(()),
-    }
+        .into())
+    })
 }
 
 #[cfg(test)]
@@ -104,7 +107,7 @@ mod tests {
     fn plugin_section_names_must_be_segment_names() {
         let theme = theme_with_sections("[segments.\"k8s ctx\"]\n");
         assert!(validate_theme_config(&theme, "test").is_err());
-        let theme = theme_with_sections("[segments.my--seg]\n[segments.seg_]\n");
-        assert!(validate_theme_config(&theme, "test").is_ok());
+        let tolerated = theme_with_sections("[segments.my--seg]\n[segments.seg_]\n");
+        assert!(validate_theme_config(&tolerated, "test").is_ok());
     }
 }

@@ -126,7 +126,7 @@ fn test_all_message_types_parse_in_op_form() {
 #[test]
 fn test_response_error_messages() {
     let error_response = Response::Error {
-        message: "Test error message".to_string(),
+        message: "Test error message".to_owned(),
     };
 
     assert!(is_error_response(&error_response));
@@ -151,7 +151,7 @@ fn test_protocol_version_field() {
     assert!(PROTOCOL_VERSION > 0, "Protocol version should be positive");
 
     let status = Response::AgentStatus {
-        version: "1.0.0".to_string(),
+        version: "1.0.0".to_owned(),
         protocol_version: PROTOCOL_VERSION,
         watched_repos: 0,
         registered_clients: 0,

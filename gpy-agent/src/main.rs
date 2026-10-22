@@ -184,6 +184,10 @@ enum ConfigCommands {
 /// Log panics through `warn_log!` (the daemon's stderr is `/dev/null`), and
 /// exit 0 when a CLI pipeline closes stdout early: `unsafe` is forbidden, so
 /// `SIGPIPE` cannot be reset to its default.
+#[allow(
+    clippy::exit,
+    reason = "a panic hook cannot return an exit code; a broken stdout pipe must end the process with status 0"
+)]
 fn install_panic_handler() {
     std::panic::set_hook(Box::new(|panic_info| {
         let message = panic_info
@@ -286,6 +290,10 @@ impl From<OneshotCommands> for OneshotRequest {
 
 /// Render the requested segment and print it; a failure is printed as JSON on
 /// stderr and exits 1.
+#[allow(
+    clippy::exit,
+    reason = "oneshot failure must exit 1 after printing its JSON error; the caller returns no exit code"
+)]
 fn handle_oneshot_command(command: OneshotCommands) {
     let request = OneshotRequest::from(command);
 

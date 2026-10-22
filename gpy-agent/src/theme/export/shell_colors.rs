@@ -27,6 +27,11 @@ const FISH_ANSI16_NAMES: [&str; 16] = [
 
 /// An ANSI index as Fish's `set_color`, which rejects bare indices, accepts it:
 /// 0–15 by name, 16–255 as the xterm-256 hex.
+#[allow(
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    reason = "the match arms bound every step: 0..=15 indexes the 16 names, cube < 216 keeps each CUBE_LEVELS index < 6, and 232..=255 keeps the gray level at most 238"
+)]
 fn fish_ansi256_color(index: u8) -> String {
     const CUBE_LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
     match index {

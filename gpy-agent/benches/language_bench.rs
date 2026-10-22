@@ -9,7 +9,7 @@ use std::hint::black_box;
 use tempfile::TempDir;
 
 /// One representative snippet per common extension, so corpora look like real source.
-const REALISTIC_SNIPPETS: &[(&str, &str)] = &[
+const REALISTIC_SNIPPETS: [(&str, &str); 10] = [
     (
         "rs",
         "use std::collections::HashMap;\n\npub fn process(input: &str) -> HashMap<String, usize> {\n    let mut map = HashMap::new();\n    for (i, word) in input.split_whitespace().enumerate() {\n        map.insert(word.to_string(), i);\n    }\n    map\n}\n",
@@ -68,16 +68,16 @@ fn setup_realistic_small_project() -> TempDir {
     let root = dir.path();
     write_realistic_file(root, "Cargo", "toml", REALISTIC_SNIPPETS[7].1, 1);
     write_realistic_file(root, "README", "md", REALISTIC_SNIPPETS[5].1, 2);
-    for i in 0..15 {
+    for i in 0_usize..15 {
         write_realistic_file(
             root,
             &format!("src/mod_{i}"),
             "rs",
             REALISTIC_SNIPPETS[0].1,
-            1 + i % 3,
+            (i % 3).saturating_add(1),
         );
     }
-    for i in 0..8 {
+    for i in 0_usize..8 {
         write_realistic_file(
             root,
             &format!("scripts/tool_{i}"),
@@ -86,7 +86,7 @@ fn setup_realistic_small_project() -> TempDir {
             1,
         );
     }
-    for i in 0..5 {
+    for i in 0_usize..5 {
         write_realistic_file(
             root,
             &format!("web/component_{i}"),
@@ -105,10 +105,14 @@ fn setup_realistic_small_project() -> TempDir {
 fn setup_realistic_medium_project(file_count: usize) -> TempDir {
     let dir = TempDir::new().unwrap();
     let root = dir.path();
-    for i in 0..file_count {
-        let (ext, body) = REALISTIC_SNIPPETS[i % REALISTIC_SNIPPETS.len()];
+    for (i, (ext, body)) in REALISTIC_SNIPPETS
+        .into_iter()
+        .cycle()
+        .take(file_count)
+        .enumerate()
+    {
         let subdir = i / 40; // ~40 files per directory, several directories
-        let repeat = 1 + (i % 5);
+        let repeat = (i % 5).saturating_add(1);
         write_realistic_file(root, &format!("pkg_{subdir}/file_{i}"), ext, body, repeat);
     }
     dir
@@ -118,10 +122,14 @@ fn setup_realistic_medium_project(file_count: usize) -> TempDir {
 fn setup_realistic_large_project(file_count: usize) -> TempDir {
     let dir = TempDir::new().unwrap();
     let root = dir.path();
-    for i in 0..file_count {
-        let (ext, body) = REALISTIC_SNIPPETS[i % REALISTIC_SNIPPETS.len()];
+    for (i, (ext, body)) in REALISTIC_SNIPPETS
+        .into_iter()
+        .cycle()
+        .take(file_count)
+        .enumerate()
+    {
         let subdir = i / 200; // ~200 files per directory, many directories
-        let repeat = 1 + (i % 7);
+        let repeat = (i % 7).saturating_add(1);
         write_realistic_file(root, &format!("pkg_{subdir}/file_{i}"), ext, body, repeat);
     }
     dir

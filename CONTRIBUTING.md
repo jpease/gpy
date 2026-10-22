@@ -77,10 +77,19 @@ Shell scripts must be shellcheck-clean or carry an inline
 `# shellcheck disable=` with a reason on the line beneath it. A bare disable
 will be asked about in review.
 
-Lint policy lives in the `[lints]` table of `gpy-agent/Cargo.toml`: warnings
-and `clippy::pedantic` are denied, plus a short list of restriction lints
-(`unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented`, `dbg_macro`,
-`print_stdout`, `print_stderr`). Run it with `just lint`.
+Lint policy lives in the `[lints]` tables of `gpy-agent/Cargo.toml`. Every
+entry is `warn` and `warnings = "deny"` turns each into an error. They cover
+the `clippy::pedantic` group plus restriction and nursery lints in five
+groups: panics and stray output (`unwrap_used`, `expect_used`, `panic`,
+`print_stdout`, `exit`, ...), documented and isolated `unsafe` (`unsafe_code`,
+`undocumented_unsafe_blocks`), lost information (`map_err_ignore`,
+`use_debug`, ...), numeric conversions, arithmetic and indexing
+(`as_conversions`, `arithmetic_side_effects`, `indexing_slicing`), and
+readability (`shadow_*`, `str_to_string`, `missing_const_for_fn`, ...).
+`gpy-agent/.clippy.toml` relaxes the panic and print lints in test code and
+forbids `std::panic::catch_unwind`. Run it with `just lint`; while fixing many
+hits at once, `cargo clippy --all-targets --all-features -- --cap-lints warn`
+reports every target instead of stopping at the first failing one.
 
 A new `#[allow(...)]` must say why, with `reason = "..."` naming the specific
 cause at that site (`#[allow(clippy::cast_possible_truncation, reason = "value

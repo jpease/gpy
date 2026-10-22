@@ -558,7 +558,9 @@ fn oneshot_lang_json(cwd: &Path, home: &TempDir, config_path: &Path) -> serde_js
         .stderr(std::process::Stdio::piped());
     configure_command_env(&mut command, home, config_path);
     let mut child = command.spawn().expect("Failed to execute gpy-agent");
-    let deadline = std::time::Instant::now() + OPERATION_BUDGET;
+    let deadline = std::time::Instant::now()
+        .checked_add(OPERATION_BUDGET)
+        .expect("deadline fits in Instant");
     while child.try_wait().expect("poll gpy-agent").is_none() {
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
@@ -703,8 +705,8 @@ fn test_fifo_repository_files_do_not_hang_oneshot() {
 
     let fifo_repo = home_env.path().join("fifo-repo");
     write_fifo_git_repo(&fifo_repo);
-    let json = oneshot_lang_json(&fifo_repo, &home_env, &config_path);
-    python_entry(&json);
+    let fifo_repo_json = oneshot_lang_json(&fifo_repo, &home_env, &config_path);
+    python_entry(&fifo_repo_json);
 }
 
 /// Send one newline-framed request and return the reply line.
@@ -715,7 +717,11 @@ fn ipc_request(socket_path: &Path, request: &str) -> String {
 
     let mut stream = UnixStream::connect(socket_path).expect("connect to agent");
     stream
-        .set_read_timeout(Some(OPERATION_BUDGET * 2))
+        .set_read_timeout(Some(
+            OPERATION_BUDGET
+                .checked_mul(2)
+                .expect("read timeout fits in Duration"),
+        ))
         .expect("set read timeout");
     stream
         .write_all(request.as_bytes())

@@ -6,6 +6,10 @@
 #![allow(clippy::panic)]
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::missing_errors_doc)]
+#![allow(
+    unsafe_code,
+    reason = "installing and restoring a SIGURG handler needs `nix::sys::signal::sigaction`, an unsafe fn"
+)]
 
 use gpy_agent::config::manager::ConfigManager;
 #[cfg(unix)]
@@ -50,11 +54,16 @@ fn install_doorbell() -> SigAction {
         SaFlags::empty(),
         SigSet::empty(),
     );
+    // SAFETY: the handler only does a relaxed `fetch_add` on a static atomic, which is
+    // async-signal-safe; every caller is a `#[serial]` test, so no other test changes
+    // the SIGURG disposition while it is installed.
     unsafe { sigaction(Signal::SIGURG, &handler) }.expect("install SIGURG handler")
 }
 
 #[cfg(unix)]
 fn restore_doorbell(previous: SigAction) {
+    // SAFETY: reinstalls the disposition `install_doorbell` returned, from the same
+    // `#[serial]` test that installed it.
     unsafe { sigaction(Signal::SIGURG, &previous) }.expect("restore SIGURG");
 }
 
@@ -207,11 +216,7 @@ fn test_theme_export_updates_enabled_segments_when_git_disabled() {
 
     let mut config = Config::default();
     config.git.enabled = false;
-    config.ui.enabled_segments = vec![
-        "clock".to_string(),
-        "directory".to_string(),
-        "git".to_string(),
-    ];
+    config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned(), "git".to_owned()];
 
     let theme_manager = ThemeManager::builtin("default").expect("load default theme");
     let fish_output = theme_manager.export(
@@ -243,11 +248,7 @@ fn test_theme_export_includes_git_when_enabled() {
 
     let mut config = Config::default();
     config.git.enabled = true;
-    config.ui.enabled_segments = vec![
-        "clock".to_string(),
-        "directory".to_string(),
-        "git".to_string(),
-    ];
+    config.ui.enabled_segments = vec!["clock".to_owned(), "directory".to_owned(), "git".to_owned()];
 
     let theme_manager = ThemeManager::builtin("default").expect("load default theme");
     let fish_output = theme_manager.export(
@@ -276,10 +277,10 @@ fn test_theme_export_updates_enabled_segments_when_language_disabled() {
     let mut config = Config::default();
     config.language.enabled = false;
     config.ui.enabled_segments = vec![
-        "clock".to_string(),
-        "language".to_string(),
-        "directory".to_string(),
-        "git".to_string(),
+        "clock".to_owned(),
+        "language".to_owned(),
+        "directory".to_owned(),
+        "git".to_owned(),
     ];
 
     let theme_manager = ThemeManager::builtin("default").expect("load default theme");
@@ -311,10 +312,10 @@ fn test_theme_export_updates_enabled_segments_when_both_disabled() {
     config.git.enabled = false;
     config.language.enabled = false;
     config.ui.enabled_segments = vec![
-        "clock".to_string(),
-        "language".to_string(),
-        "directory".to_string(),
-        "git".to_string(),
+        "clock".to_owned(),
+        "language".to_owned(),
+        "directory".to_owned(),
+        "git".to_owned(),
     ];
 
     let theme_manager = ThemeManager::builtin("default").expect("load default theme");

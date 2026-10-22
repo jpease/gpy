@@ -401,11 +401,11 @@ impl ConnectionHandler {
     ) -> Result<()> {
         use tokio::io::AsyncWriteExt;
 
-        let payload = payload?;
+        let rendered = payload?;
 
         let write_result = timeout(self.request_timeout(), async {
             writer
-                .write_all(protocol::encode_reply_newlines(&payload).as_bytes())
+                .write_all(protocol::encode_reply_newlines(&rendered).as_bytes())
                 .await?;
             writer.write_all(b"\n").await?;
             writer.flush().await

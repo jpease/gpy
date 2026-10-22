@@ -237,6 +237,10 @@ impl PidValidator {
     /// # Errors
     /// Returns an error on unexpected `errno`.
     #[cfg(unix)]
+    #[allow(
+        clippy::map_err_ignore,
+        reason = "the message already names the oversized PID; a TryFromIntError cause would append to the error text"
+    )]
     fn check_process_exists(pid: u32) -> Result<bool> {
         use nix::sys::signal::kill;
         use nix::unistd::Pid;

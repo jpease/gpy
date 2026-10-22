@@ -16,6 +16,7 @@ pub struct SignalCounter {
 }
 
 impl SignalCounter {
+    /// Creates a counter at zero.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -24,16 +25,19 @@ impl SignalCounter {
         }
     }
 
+    /// Adds one and wakes every waiter.
     pub fn increment(&self) {
         self.count.fetch_add(1, Ordering::Relaxed);
         self.notifier.notify_waiters();
     }
 
+    /// Current count.
     #[must_use]
     pub fn get(&self) -> u32 {
         self.count.load(Ordering::Relaxed)
     }
 
+    /// Sets the count back to zero.
     pub fn reset(&self) {
         self.count.store(0, Ordering::Relaxed);
     }
@@ -74,6 +78,7 @@ pub struct EventFlag {
 }
 
 impl EventFlag {
+    /// Creates an unset flag.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -82,15 +87,18 @@ impl EventFlag {
         }
     }
 
+    /// Sets the flag and wakes every waiter.
     pub fn set(&self) {
         self.flag.store(true, Ordering::Relaxed);
         self.notifier.notify_waiters();
     }
 
+    /// Unsets the flag.
     pub fn clear(&self) {
         self.flag.store(false, Ordering::Relaxed);
     }
 
+    /// Whether the flag is set.
     #[must_use]
     pub fn is_set(&self) -> bool {
         self.flag.load(Ordering::Relaxed)

@@ -57,10 +57,10 @@ pub fn get_version_file_path() -> PathBuf {
         .get()
         .cloned()
         .or_else(crate::paths::socket_path_override);
-    match socket_override {
-        Some(socket) => version_file_for(Some(&socket), Path::new("")),
-        None => version_file_for(None, &crate::paths::runtime_dir()),
-    }
+    socket_override.map_or_else(
+        || version_file_for(None, &crate::paths::runtime_dir()),
+        |socket| version_file_for(Some(&socket), Path::new("")),
+    )
 }
 
 /// Version marker path for `socket_override`, or the default under `runtime_dir`.
@@ -209,6 +209,10 @@ macro_rules! ping_outcome {
 
 /// Record which way a connect failed, when the probe is compiled in.
 #[cfg(unix)]
+#[allow(
+    clippy::missing_const_for_fn,
+    reason = "const only in non-test builds; the test build records the errno through non-const probe calls"
+)]
 fn record_connect_failure(e: &std::io::Error) {
     #[cfg(test)]
     {
@@ -360,6 +364,10 @@ const fn is_ack(response: &crate::ipc::Response) -> bool {
 /// Returns an error if the exchange fails, the budget elapses, the agent
 /// closes without replying, or the reply does not decode.
 #[cfg(unix)]
+#[allow(
+    clippy::map_err_ignore,
+    reason = "the budget's Elapsed carries no detail and attaching it would append to the CLI error text"
+)]
 async fn request(
     socket_path: &std::path::Path,
     message: &str,
@@ -527,6 +535,10 @@ pub struct AgentStatusInfo {
 /// # Errors
 /// Returns an error if the socket connection fails or the response cannot be parsed.
 #[cfg(unix)]
+#[allow(
+    clippy::map_err_ignore,
+    reason = "the timeouts' Elapsed carries no detail and attaching it would append to the CLI error text"
+)]
 pub async fn query_agent_status() -> Result<AgentStatusInfo> {
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

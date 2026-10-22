@@ -28,7 +28,7 @@ impl TestIpcClient {
     }
 
     /// Get the socket path
-    pub fn socket_path(&self) -> &PathBuf {
+    pub const fn socket_path(&self) -> &PathBuf {
         &self.socket_path
     }
 
@@ -73,7 +73,7 @@ impl TestIpcClient {
     }
 
     /// Create a Status message
-    pub fn status_message() -> Message {
+    pub const fn status_message() -> Message {
         Message::Status
     }
 }
@@ -85,17 +85,17 @@ impl Default for TestIpcClient {
 }
 
 /// Whether `response` is `Response::Error`.
-pub fn is_error_response(response: &Response) -> bool {
+pub const fn is_error_response(response: &Response) -> bool {
     matches!(response, Response::Error { .. })
 }
 
 /// Whether `response` is `Response::Ack`.
-pub fn is_ack_response(response: &Response) -> bool {
+pub const fn is_ack_response(response: &Response) -> bool {
     matches!(response, Response::Ack)
 }
 
 /// Whether `response` is `Response::RepositoryStatus`.
-pub fn is_repository_status_response(response: &Response) -> bool {
+pub const fn is_repository_status_response(response: &Response) -> bool {
     matches!(response, Response::RepositoryStatus(_))
 }
 
@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn test_register_message() {
         let current_pid = std::process::id();
-        let msg = TestIpcClient::register_message(current_pid, Some("/test/path".to_string()));
+        let msg = TestIpcClient::register_message(current_pid, Some("/test/path".to_owned()));
         if let Message::RegisterClient {
             pid: message_pid,
             cwd,
@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn test_is_error_response() {
         let error = Response::Error {
-            message: "Test error".to_string(),
+            message: "Test error".to_owned(),
         };
         assert!(is_error_response(&error));
 
@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn test_extract_error_message() {
         let error = Response::Error {
-            message: "Test error".to_string(),
+            message: "Test error".to_owned(),
         };
         assert_eq!(extract_error_message(&error), Some("Test error"));
 

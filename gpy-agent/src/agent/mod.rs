@@ -110,8 +110,8 @@ async fn run_reconcile_scan<R, F>(
 fn prune_dead_clients(registry: &ClientDirectory, watcher_slot: &SharedWatcherSlot) -> Vec<u32> {
     let mut pruned_pids = registry.prune_dead_clients();
 
-    let watcher = watcher_slot.lock_or_recover().clone();
-    if let Some(watcher) = watcher {
+    let current_watcher = watcher_slot.lock_or_recover().clone();
+    if let Some(watcher) = current_watcher {
         for pid in &pruned_pids {
             watcher.unregister_client(*pid);
         }
@@ -476,8 +476,10 @@ impl Agent {
         .watcher_slot(Arc::clone(watcher_slot))
         .palette_cache(Arc::clone(&ctx.palette_cache));
         #[cfg(unix)]
-        let builder = builder.socket_dir_repair(crate::agent::lifecycle::socket_dir_repair());
-        builder.build()
+        let configured = builder.socket_dir_repair(crate::agent::lifecycle::socket_dir_repair());
+        #[cfg(not(unix))]
+        let configured = builder;
+        configured.build()
     }
 
     /// Prune dead clients from the registry and clean up the watcher.

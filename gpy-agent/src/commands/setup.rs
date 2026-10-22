@@ -282,6 +282,10 @@ fn installed_integrations_in(config_home: &Path) -> Vec<InstalledIntegration> {
 ///
 /// # Errors
 /// Fails on an unsupported value, or when nothing identifies a shell.
+#[allow(
+    clippy::map_err_ignore,
+    reason = "Error::Invalid has no source field and the message already quotes the rejected shell name"
+)]
 pub fn detect_shell(
     flag: Option<Shell>,
     gpy_shell: Option<&str>,
@@ -464,6 +468,10 @@ fn install_files(
 
 /// Recursively copy `src` to `dst`, skipping top-level entries named in
 /// `skip` and any symlink.
+#[allow(
+    clippy::filetype_is_file,
+    reason = "only regular files are copied; symlinks, sockets and FIFOs are skipped on purpose"
+)]
 fn copy_tree(src: &Path, dst: &Path, skip: &[&str]) -> Result<()> {
     fs::create_dir_all(dst)?;
     for dirent in fs::read_dir(src)? {
@@ -587,6 +595,10 @@ fn is_gpy_prompt_copy(path: &Path) -> bool {
 /// `YYYYMMDD_HHMMSS` (UTC), the suffix the installers write and
 /// `scripts/uninstall.*` restore. Civil-from-days after Howard Hinnant.
 #[cfg(unix)]
+#[allow(
+    clippy::arithmetic_side_effects,
+    reason = "days is at most u64::MAX / 86_400, so no step overflows, and each subtraction is non-negative by the civil-from-days algorithm"
+)]
 fn backup_stamp(epoch_secs: u64) -> String {
     let days = epoch_secs / 86_400;
     let secs_of_day = epoch_secs % 86_400;
@@ -665,14 +677,21 @@ fn sources_bashrc(text: &str) -> bool {
     text.lines().any(|line| {
         let words = shell_words(line);
         words.windows(2).enumerate().any(|(index, pair)| {
-            let in_command_position = index == 0
-                || matches!(
-                    words[index - 1],
-                    ";" | "&" | "|" | "(" | ")" | "{" | "then" | "else" | "do"
-                );
-            let path = pair[1].trim_matches(['"', '\'']);
+            let in_command_position = index
+                .checked_sub(1)
+                .and_then(|previous| words.get(previous))
+                .is_none_or(|word| {
+                    matches!(
+                        *word,
+                        ";" | "&" | "|" | "(" | ")" | "{" | "then" | "else" | "do"
+                    )
+                });
+            let &[command, argument] = pair else {
+                return false;
+            };
+            let path = argument.trim_matches(['"', '\'']);
             in_command_position
-                && matches!(pair[0], "." | "source")
+                && matches!(command, "." | "source")
                 && (path == ".bashrc" || path.ends_with("/.bashrc"))
         })
     })
@@ -896,7 +915,9 @@ mod tests {
         assert_eq!(fs::read_link(&target).unwrap(), source);
         let backups = prompt_backups(&target);
         assert_eq!(backups.len(), 1);
-        let name = backups[0]
+        let name = backups
+            .first()
+            .unwrap()
             .file_name()
             .unwrap()
             .to_string_lossy()
@@ -910,7 +931,10 @@ mod tests {
                 assert!(c.is_ascii_digit(), "{suffix}");
             }
         }
-        assert_eq!(fs::read_to_string(&backups[0]).unwrap(), original);
+        assert_eq!(
+            fs::read_to_string(backups.first().unwrap()).unwrap(),
+            original
+        );
     }
 
     #[cfg(unix)]
@@ -926,7 +950,7 @@ mod tests {
         assert_eq!(fs::read_link(&target).unwrap(), source);
         let backups = prompt_backups(&target);
         assert_eq!(backups.len(), 1);
-        assert_eq!(fs::read_link(&backups[0]).unwrap(), dotfiles);
+        assert_eq!(fs::read_link(backups.first().unwrap()).unwrap(), dotfiles);
         assert!(dotfiles.exists());
     }
 
@@ -941,7 +965,10 @@ mod tests {
         assert_eq!(fs::read_link(&target).unwrap(), source);
         let backups = prompt_backups(&target);
         assert_eq!(backups.len(), 1);
-        assert_eq!(fs::read(&backups[0]).unwrap(), original.as_bytes());
+        assert_eq!(
+            fs::read(backups.first().unwrap()).unwrap(),
+            original.as_bytes()
+        );
     }
 
     #[cfg(unix)]

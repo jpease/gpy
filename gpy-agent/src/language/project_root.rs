@@ -79,7 +79,10 @@ fn memoized_non_git_root(path: &Path, home: impl FnOnce() -> Option<PathBuf>) ->
 pub(crate) fn age_non_git_root_for_test(path: &Path, age: std::time::Duration) {
     let dir = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     if let Some(root) = NON_GIT_ROOT_CACHE.get(&dir) {
-        NON_GIT_ROOT_CACHE.insert_at(dir, root, std::time::SystemTime::now() - age);
+        let backdated = std::time::SystemTime::now()
+            .checked_sub(age)
+            .expect("test age must not predate the clock's range");
+        NON_GIT_ROOT_CACHE.insert_at(dir, root, backdated);
     }
 }
 
