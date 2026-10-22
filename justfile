@@ -29,6 +29,10 @@ check-fish:
 check-shell:
     ./{{scripts_dir}}/quality-check.sh --shell-only
 
+# Compile for Linux (clippy) and Windows (mingw) in Docker; needs Docker
+check-platforms *args:
+    ./{{scripts_dir}}/check-platforms.sh {{args}}
+
 # Apply auto-fixes (formatting, clippy fixes)
 fix:
     ./{{scripts_dir}}/quality-check.sh --fix

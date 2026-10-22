@@ -77,6 +77,12 @@ Shell scripts must be shellcheck-clean or carry an inline
 `# shellcheck disable=` with a reason on the line beneath it. A bare disable
 will be asked about in review.
 
+macOS never compiles the Linux- or Windows-only `cfg` branches. Before pushing
+a change that touches `cfg`-gated code, run `just check-platforms` (needs
+Docker): it runs Linux `cargo clippy --all-targets --all-features` and Windows
+(mingw) `cargo check` for `--lib`, `--locked` and `--profile test --tests` on
+`HEAD` in a container. Pass `--worktree` to include uncommitted changes.
+
 Lint policy lives in the `[lints]` tables of `gpy-agent/Cargo.toml`. Every
 entry is `warn` and `warnings = "deny"` turns each into an error. They cover
 the `clippy::pedantic` group plus restriction and nursery lints in five
