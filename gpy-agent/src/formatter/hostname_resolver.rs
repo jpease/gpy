@@ -63,6 +63,7 @@ impl VariableResolver for HostnameResolver<'_> {
                     .hostname
                     .icon
                     .as_deref()
+                    .and_then(|icon| self.glyphs.icon(icon))
                     .unwrap_or("")
                     .to_owned()
             } else {
@@ -83,6 +84,7 @@ mod tests {
     #![allow(clippy::missing_errors_doc)]
 
     use super::HostnameResolver;
+    use crate::formatter::separator::Glyphs;
     use crate::formatter::{IsFirst, IsLast, SegmentPosition};
     use crate::template::VariableResolver;
     use crate::theme::ThemeConfig;
@@ -157,6 +159,25 @@ mod tests {
                 thr.segments.hostname.icon
             );
         }
+    }
+
+    #[test]
+    fn symbol_drops_private_use_icon_with_plain_glyphs() {
+        let mut thr = theme();
+        thr.segments.hostname.icon = Some(crate::config::types::Icon::new("\u{f108}").unwrap());
+        let res = |glyphs| {
+            HostnameResolver::new(
+                "host".to_owned(),
+                true,
+                &thr,
+                SegmentPosition::new(IsLast::No, IsFirst::No),
+            )
+            .with_glyphs(glyphs)
+            .resolve("symbol")
+            .unwrap()
+        };
+        assert_eq!(res(Glyphs::Nerd), "\u{f108}");
+        assert_eq!(res(Glyphs::Plain), "");
     }
 
     #[test]

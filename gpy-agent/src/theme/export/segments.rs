@@ -237,11 +237,13 @@ pub(super) fn append_builtin_segment_assignments(
 }
 
 /// Hostname segment colors, trimming, and template-path flags.
-/// `format`/`icon` are always assigned (empty when `None`) so the shell can `test -n`.
+/// `format`/`icon` are always assigned (empty when `None`) so the shell can `test -n`;
+/// [`Glyphs::Plain`] empties a private-use icon.
 pub(super) fn append_hostname_assignments(
     output: &mut String,
     colors: ShellColors<'_>,
     theme: &ThemeConfig,
+    glyphs: Glyphs,
 ) {
     let shell = colors.shell;
 
@@ -282,18 +284,21 @@ pub(super) fn append_hostname_assignments(
                     .hostname
                     .icon
                     .as_ref()
-                    .map_or("", |icon| icon.as_str()),
+                    .and_then(|icon| glyphs.icon(icon.as_str()))
+                    .unwrap_or(""),
             ),
         ],
     );
 }
 
 /// Username segment colors and template-path flags.
-/// `__username_format` is a presence flag only, same rationale as `__hostname_format`.
+/// `__username_format` is a presence flag only, same rationale as `__hostname_format`;
+/// the icon is handled as the hostname's.
 pub(super) fn append_username_assignments(
     output: &mut String,
     colors: ShellColors<'_>,
     theme: &ThemeConfig,
+    glyphs: Glyphs,
 ) {
     let shell = colors.shell;
 
@@ -328,7 +333,8 @@ pub(super) fn append_username_assignments(
                     .username
                     .icon
                     .as_ref()
-                    .map_or("", |icon| icon.as_str()),
+                    .and_then(|icon| glyphs.icon(icon.as_str()))
+                    .unwrap_or(""),
             ),
         ],
     );

@@ -171,8 +171,8 @@ pub(crate) fn theme_to_shell(
     append_prompt_assignments(&mut output, colors, theme);
 
     append_builtin_segment_assignments(&mut output, colors, theme);
-    append_hostname_assignments(&mut output, colors, theme);
-    append_username_assignments(&mut output, colors, theme);
+    append_hostname_assignments(&mut output, colors, theme, glyphs);
+    append_username_assignments(&mut output, colors, theme, glyphs);
     append_status_assignments(&mut output, colors, theme, glyphs);
     append_git_language_color_assignments(&mut output, colors, theme);
     append_delimiter_assignments(&mut output, colors, theme, glyphs);
