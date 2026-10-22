@@ -236,12 +236,34 @@ jobs:
   windows-gate:
     uses: ./.github/workflows/windows-gate.yml
 
+  new-allows:
+    # A new `allow` must say why (`reason = "..."`); existing ones are left.
+    # A dispatch run has no PR base, so it checks against the merge base
+    # with main.
+    name: Reasons on new allows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check added allow attributes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          base="${BASE_SHA:-$(git merge-base origin/main HEAD)}"
+          python3 scripts/check_new_allows.py "$base"
+
   gate-result:
     # `always()` so a failed or cancelled leg turns this red instead of
     # skipped. List every gating job in `needs` (tests/bash/ci_gate_shape).
     name: gate-result
     if: ${{ always() }}
-    needs: [rust, shell, fresh-install, windows-gate]
+    needs: [rust, shell, fresh-install, windows-gate, new-allows]
     runs-on: ubuntu-latest
     permissions: {}
     steps:

@@ -82,6 +82,13 @@ and `clippy::pedantic` are denied, plus a short list of restriction lints
 (`unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented`, `dbg_macro`,
 `print_stdout`, `print_stderr`). Run it with `just lint`.
 
+A new `#[allow(...)]` must say why, with `reason = "..."` naming the specific
+cause at that site (`#[allow(clippy::cast_possible_truncation, reason = "value
+is clamped to u16::MAX above")]`). `scripts/check_new_allows.py` checks only
+the lines a change adds: the `new-allows` pre-commit hook runs it on staged
+changes and the `new-allows` CI job on the pull request's diff. Allows that
+already exist are not back-filled.
+
 Faster subsets for local iteration:
 
 ```bash
@@ -152,8 +159,8 @@ Every test tier and the command that runs it is in
 
 Installs `prek` shims so `git commit` and `git push` run the relevant checks
 automatically: `pre-commit` runs fast, file-type-scoped checks (the `clippy`
-hook, rustfmt, Fish syntax/formatting, secret scan); `pre-push` repeats the
-Clippy pass. The heavy gates (the Rust toolchain gate, the
+hook, rustfmt, reasons on new allows, Fish syntax/formatting, secret scan);
+`pre-push` repeats the Clippy pass. The heavy gates (the Rust toolchain gate, the
 Fish/Bash/Zsh suites and the performance job) run in CI on every pull request;
 run `just check-rust`, `just check-shell` or `just perf-canary` yourself when
 you want them locally. `.pre-commit-config.yaml` defines the hooks.

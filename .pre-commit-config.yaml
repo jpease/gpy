@@ -32,6 +32,14 @@ repos:
         language: system
         files: '(\.rs$|(^|/)Cargo\.(toml|lock)$|(^|/)\.clippy\.toml$)'
         pass_filenames: false
+    -   id: new-allows
+        name: new-allows
+        description: Reject a newly added allow attribute that has no reason
+        entry: python3 scripts/check_new_allows.py --staged
+        language: system
+        files: '\.rs$'
+        pass_filenames: false
+        stages: [pre-commit]
     -   id: fish-check
         name: fish-check
         description: Run Fish shell syntax and formatting checks
