@@ -6,13 +6,14 @@ use super::{
     FileSystemWatcher, is_directory_create, is_in_git_dir, is_poll_directory_mtime_noise,
     path_is_gitignored,
 };
+use crate::sync_ext::MutexExt;
 use crate::{Error, Result};
 use notify::event::{EventKind, RemoveKind};
 use notify::{Event, PollWatcher, RecommendedWatcher, Watcher};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Which notify backend is armed.
@@ -417,7 +418,7 @@ pub(super) fn track_poll_expansion(
         }
         // Files are never expansion targets.
         EventKind::Remove(kind) if kind != RemoveKind::File => {
-            let mut backend_guard = backend.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut backend_guard = backend.lock_or_recover();
             for path in &event.paths {
                 backend_guard.drop_poll_expansion(path);
             }
@@ -434,10 +435,7 @@ pub(super) fn expand_poll_into(
     backend: &Mutex<WatcherBackend>,
     registry: &Arc<WatchRegistry>,
 ) {
-    let owners = backend
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .poll_expansion_owners(dir);
+    let owners = backend.lock_or_recover().poll_expansion_owners(dir);
     if owners.is_empty() {
         return;
     }
@@ -448,8 +446,5 @@ pub(super) fn expand_poll_into(
             (root, dirs)
         })
         .collect();
-    backend
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .extend_poll_expansion(expansions);
+    backend.lock_or_recover().extend_poll_expansion(expansions);
 }

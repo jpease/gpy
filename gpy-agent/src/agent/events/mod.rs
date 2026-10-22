@@ -10,6 +10,7 @@ use crate::git::{CompleteStatus, RepositoryStatus};
 use crate::ipc::ClientDirectory;
 use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
 use crate::palette::PaletteCache;
+use crate::sync_ext::MutexExt;
 use crate::theme::{ThemeConfig, ThemeManager};
 use crate::watcher::{
     DebouncedEvent, FileEvent, GitPaths, WatcherConfig, multi_repo::MultiRepoWatcher,
@@ -17,7 +18,7 @@ use crate::watcher::{
 use crate::{Error, Result};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// Shared thread-safe storage for the file watcher, allowing it to be replaced or stopped
@@ -62,15 +63,10 @@ pub struct RepoRefreshCoordinator {
 }
 
 impl RepoRefreshCoordinator {
-    /// Recovers from poison: the lock only guards `HashMap` bookkeeping.
-    fn lock(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<PathBuf, bool>> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
     /// Returns `true` if the caller now owns the repo's refresh; otherwise records
     /// a pending follow-up for the current owner.
     fn try_start(&self, repo: &Path) -> bool {
-        let mut guard = self.lock();
+        let mut guard = self.state.lock_or_recover();
         match guard.entry(repo.to_path_buf()) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
                 *entry.get_mut() = true;
@@ -85,7 +81,7 @@ impl RepoRefreshCoordinator {
 
     /// Returns `true` if exactly one more pass is needed; otherwise drops the entry.
     fn finish(&self, repo: &Path) -> bool {
-        let mut guard = self.lock();
+        let mut guard = self.state.lock_or_recover();
         if let Some(pending) = guard.get_mut(repo)
             && *pending
         {
@@ -98,7 +94,7 @@ impl RepoRefreshCoordinator {
 
     /// Release the slot ignoring any pending follow-up; used only by the follow-up cap.
     fn abandon(&self, repo: &Path) {
-        self.lock().remove(repo);
+        self.state.lock_or_recover().remove(repo);
     }
 }
 
@@ -929,7 +925,7 @@ fn sync_watcher_state(
     new_config: &Config,
     reload_required: bool,
 ) {
-    let mut watcher_guard = watcher_slot.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut watcher_guard = watcher_slot.lock_or_recover();
 
     if !new_config.agent.live_updates || !(new_config.git.enabled || new_config.language.enabled) {
         if let Some(watcher) = watcher_guard.take() {
@@ -1019,10 +1015,7 @@ pub(super) fn handle_config_reload(
     let palette_changed = palette.is_some_and(|palette| ctx.palette_cache.replace(palette));
 
     let (theme_changed, export_changed) = {
-        let _announcing = ctx
-            .announce_gate
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let _announcing = ctx.announce_gate.lock_or_recover();
         let theme_changed = theme_switched || reload_active_theme(&ctx.theme_manager, new_config);
         // Theme export must be on disk before the reload doorbell.
         (theme_changed, write_theme_export(ctx, new_config))
@@ -1081,10 +1074,7 @@ fn write_theme_export(ctx: &AgentContext, config: &Config) -> bool {
 /// change a concurrent config reload already applied, and rang for, reads as
 /// unchanged here; otherwise refresh the export and caches, then ring.
 pub(super) fn handle_theme_reload(ctx: &AgentContext, reload: &dyn Fn() -> bool) {
-    let _announcing = ctx
-        .announce_gate
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
+    let _announcing = ctx.announce_gate.lock_or_recover();
     if !reload() {
         return;
     }

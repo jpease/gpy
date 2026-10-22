@@ -13,6 +13,7 @@ use crate::formatter::{
 };
 use crate::git::RepositoryStatus;
 use crate::ipc::{LanguageInfo, Response};
+use crate::sync_ext::{MutexExt, RwLockExt};
 use crate::template::{Color, Palette, parse_color};
 use crate::theme::ThemeConfig;
 use crate::{Error, Result};
@@ -22,7 +23,7 @@ use std::io::Write as _;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, PoisonError, RwLock};
+use std::sync::{Mutex, RwLock};
 use std::time::{Duration, SystemTime};
 
 /// Per-process temp-file counter so concurrent writers never share a temp path.
@@ -376,10 +377,7 @@ impl InstantPromptCache {
     /// the oldest context of the key, and the least recently used key, go first.
     fn known_contexts(&self, key: &str, prev_bg: Option<&str>) -> Vec<Option<String>> {
         let requested = prev_bg.map(str::to_owned);
-        let mut guard = self
-            .seen_contexts
-            .write()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut guard = self.seen_contexts.write_or_recover();
         let seen = &mut *guard;
 
         seen.tick = seen.tick.wrapping_add(1);
@@ -415,8 +413,7 @@ impl InstantPromptCache {
         clear_unrefreshable_files_in(&self.cache_dir, &bases);
 
         self.last_written
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .entries
             .retain(|map_key, _written| {
                 // The cache key has no colon, so split on the first one.
@@ -441,10 +438,7 @@ impl InstantPromptCache {
         let (dir, prefix) = cache_file_parts(&self.cache_dir, &key, "");
 
         // Held across the deletion so the record keeps matching the disk.
-        let mut last_written = self
-            .last_written
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut last_written = self.last_written.lock_or_recover();
         last_written.entries.retain(|map_key, _written| {
             // `{key}:{base}.{token}.{ext}`; the cache key has no colon.
             !map_key.split_once(':').is_some_and(|(entry_key, tail)| {
@@ -456,8 +450,7 @@ impl InstantPromptCache {
         });
         remove_git_files_in(&dir, &prefix, &bases);
         self.suppressed_git
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .insert(key, find_project_root(path));
         drop(last_written);
     }
@@ -465,13 +458,9 @@ impl InstantPromptCache {
     /// Let git writes through again for every repo [`Self::remove_git`]
     /// suppressed that `enabled` now accepts (given the repo root).
     pub fn release_git_suppression(&self, enabled: impl Fn(&Path) -> bool) {
-        let _last_written = self
-            .last_written
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let _last_written = self.last_written.lock_or_recover();
         self.suppressed_git
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .retain(|_key, root| !enabled(root));
     }
 
@@ -498,17 +487,8 @@ impl InstantPromptCache {
         let cache_file = dir.join(&file_name);
 
         // Held across check, touch, write and record so the record equals disk.
-        let mut cache = self
-            .last_written
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if suffix.starts_with("git")
-            && self
-                .suppressed_git
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .contains_key(key)
-        {
+        let mut cache = self.last_written.lock_or_recover();
+        if suffix.starts_with("git") && self.suppressed_git.lock_or_recover().contains_key(key) {
             return Ok(false);
         }
         if cache
@@ -565,10 +545,7 @@ impl InstantPromptCache {
 
     /// Log once per root that `key`'s files exceed `NAME_MAX` and are skipped.
     fn note_unwritable_key(&self, key: &str) {
-        let mut seen = self
-            .unwritable_keys
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut seen = self.unwritable_keys.lock_or_recover();
         if seen.len() < INSTANT_PROMPT_LAST_WRITTEN_CAPACITY && seen.insert(key.to_owned()) {
             debug_log!(
                 "cache",

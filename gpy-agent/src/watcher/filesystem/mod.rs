@@ -11,6 +11,7 @@ use super::{
 use crate::Result;
 use crate::cache::bounded::IGNORE_CACHE_CAPACITY;
 use crate::git::native::NativeGitBackend;
+use crate::sync_ext::MutexExt;
 use backend::{
     BackendKind, WatcherBackend, build_native_watcher, build_poll_watcher, poll_watch_targets,
     track_poll_expansion,
@@ -24,7 +25,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -211,16 +212,12 @@ impl FileSystemWatcher {
         loop {
             // Release the lock before `poll_watch_targets`: it can walk the tree and
             // run `git ls-files`, and this mutex is shared by every repo.
-            let kind = self
-                .backend
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .kind;
+            let kind = self.backend.lock_or_recover().kind;
 
             let poll_targets = (kind == BackendKind::Poll && is_dir)
                 .then(|| poll_watch_targets(&path_buf, &self.registry));
 
-            let mut backend_guard = self.backend.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut backend_guard = self.backend.lock_or_recover();
             // The probe may have swapped native -> poll meanwhile (at most once); retry.
             if backend_guard.kind != kind {
                 drop(backend_guard);
@@ -236,7 +233,7 @@ impl FileSystemWatcher {
     /// # Errors
     /// Returns an error if the path cannot be watched.
     pub fn watch_shallow<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let mut backend_guard = self.backend.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut backend_guard = self.backend.lock_or_recover();
         backend_guard.acquire(path.as_ref(), WatchMode::Shallow, None)
     }
 
@@ -245,16 +242,13 @@ impl FileSystemWatcher {
     /// `FSEventStream`, which can drop its first event.
     #[must_use]
     pub fn covers<P: AsRef<Path>>(&self, path: P) -> bool {
-        self.backend
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .covers(path.as_ref())
+        self.backend.lock_or_recover().covers(path.as_ref())
     }
 
     /// Test snapshot of registrations with owner counts and armed OS watches.
     #[cfg(test)]
     pub(crate) fn held_watches(&self) -> HeldWatches {
-        let guard = self.backend.lock().unwrap_or_else(PoisonError::into_inner);
+        let guard = self.backend.lock_or_recover();
         let owners = guard
             .registrations
             .iter()
@@ -269,8 +263,7 @@ impl FileSystemWatcher {
     /// Returns an error if `path` is not watched recursively.
     pub fn unwatch<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         self.backend
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .release(path.as_ref(), WatchMode::Recursive)
     }
 
@@ -280,8 +273,7 @@ impl FileSystemWatcher {
     /// Returns an error if `path` is not watched shallowly.
     pub fn unwatch_shallow<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         self.backend
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .release(path.as_ref(), WatchMode::Shallow)
     }
 
@@ -510,10 +502,7 @@ impl FileSystemWatcher {
         self.stop_flag.store(true, Ordering::Relaxed);
 
         // Scoped: the probe may block on this mutex mid-swap, so release before joining.
-        self.backend
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .watcher = None;
+        self.backend.lock_or_recover().watcher = None;
 
         if let Some(tx) = self.event_tx.take() {
             let _ = tx.send(Event::new(EventKind::Other));
@@ -881,11 +870,7 @@ fn force_added_set(repo_root: &Path, registry: &Arc<WatchRegistry>) -> Arc<HashS
     let index_signature = fingerprint_file(&repo_root.join(".git/index"));
 
     let (files, refresh) = {
-        let mut cache = registry
-            .ignore()
-            .force_added
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut cache = registry.ignore().force_added.lock_or_recover();
         let cached = cache
             .entry(repo_root.to_path_buf())
             .or_insert_with(CachedForceAdded::placeholder);
@@ -936,7 +921,7 @@ fn refresh_force_added(repo_root: &Path, cache_slot: &ForceAddedCache) -> Arc<Ha
             .collect(),
     );
 
-    let mut cache = cache_slot.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut cache = cache_slot.lock_or_recover();
     let cached = cache
         .entry(repo_root.to_path_buf())
         .or_insert_with(CachedForceAdded::placeholder);
@@ -955,8 +940,7 @@ fn compute_tracked_ignored_files(repo_root: &Path) -> Vec<PathBuf> {
     {
         // Release the table lock before running the hook.
         let hook = tracked_ignored_test_hooks()
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .get(repo_root)
             .map(Arc::clone);
         if let Some(hook_fn) = hook {
@@ -1010,11 +994,7 @@ fn path_is_gitignored(repo_root: &Path, path: &Path, registry: &Arc<WatchRegistr
     let chain = ancestor_gitignore_dirs(repo_root, dir);
     let signature = nested_ignore_signature(repo_root, &chain);
     let matcher = {
-        let mut cache = registry
-            .ignore()
-            .repo_ignore
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut cache = registry.ignore().repo_ignore.lock_or_recover();
         let cached = cache
             .entry(dir.to_path_buf())
             .or_insert_with(|| CachedIgnore {

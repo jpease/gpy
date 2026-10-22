@@ -1,6 +1,7 @@
 //! Cached active palette, replaced only by a successfully loaded palette.
 
 use crate::config::Config;
+use crate::sync_ext::RwLockExt;
 use crate::template::Palette;
 use std::sync::{Arc, RwLock};
 
@@ -24,18 +25,13 @@ impl PaletteCache {
     /// Return a clone of the cached palette; a poisoned lock is recovered.
     #[must_use]
     pub fn get(&self) -> Palette {
-        self.inner
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+        self.inner.read_or_recover().clone()
     }
 
     /// Store `palette` and report whether its contents differ from the cached one.
+    #[must_use]
     pub fn replace(&self, palette: Palette) -> bool {
-        let mut guard = self
-            .inner
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = self.inner.write_or_recover();
         let changed = *guard != palette;
         if changed {
             *guard = palette;

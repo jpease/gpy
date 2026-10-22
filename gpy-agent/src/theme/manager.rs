@@ -7,6 +7,7 @@ use crate::config::types::is_safe_config_name;
 use crate::debug_log;
 use crate::plugin::discover_plugins;
 use crate::shell::Shell;
+use crate::sync_ext::{MutexExt, RwLockExt};
 use crate::template::Palette;
 use crate::theme::export;
 use crate::theme::model::ThemeConfig;
@@ -17,7 +18,7 @@ use crate::watcher::{WatchCoordinator, WatchRegistry};
 use crate::{Error, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 /// Builtin themes: name → embedded TOML content. Single source for all builtin lookups.
@@ -119,11 +120,7 @@ struct ReloadTarget {
 impl ReloadTarget {
     /// Reload via the registered hook, else just swap in the reloaded theme.
     fn reload_and_apply(&self, context: &str) {
-        let registered = self
-            .on_reload
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
+        let registered = self.on_reload.lock_or_recover().clone();
         let reload = || self.reload_step(context);
         match registered {
             // Called outside every lock: the hook reads `get()` and may re-register.
@@ -160,14 +157,10 @@ impl ReloadTarget {
         };
         let wanted = self
             .state
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
+            .read_or_recover()
             .location
             .watch_paths(&ThemeManager::user_themes_dir());
-        let mut armed = self
-            .source_watches
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut armed = self.source_watches.lock_or_recover();
         ThemeManager::rearm_source_watches(coordinator, &mut armed, wanted);
     }
 }
@@ -245,7 +238,7 @@ impl ThemeManager {
 
     /// Consistent snapshot of name, location, and content.
     fn state(&self) -> Arc<ThemeState> {
-        let guard = self.state.read().unwrap_or_else(PoisonError::into_inner);
+        let guard = self.state.read_or_recover();
         Arc::clone(&guard)
     }
 
@@ -259,10 +252,7 @@ impl ThemeManager {
     /// path from a theme reload to the shell doorbell; without it a reload just
     /// swaps the theme. Not run on [`switch_theme`](Self::switch_theme).
     pub fn set_reload_callback(&self, callback: ThemeReloadCallback) {
-        *self
-            .on_reload
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(callback);
+        *self.on_reload.lock_or_recover() = Some(callback);
     }
 
     /// Reload the active theme from wherever its name now resolves (user, then
@@ -292,16 +282,12 @@ impl ThemeManager {
         state_lock: &RwLock<Arc<ThemeState>>,
         reload_gate: &Mutex<()>,
     ) -> Result<Reloaded> {
-        let _serialized = reload_gate.lock().unwrap_or_else(PoisonError::into_inner);
-        let name = state_lock
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .name
-            .clone();
+        let _serialized = reload_gate.lock_or_recover();
+        let name = state_lock.read_or_recover().name.clone();
         let location = ThemeLocation::resolve(&name);
         let (theme, fingerprint) = Self::load_source(&location)?;
 
-        let mut guard = state_lock.write().unwrap_or_else(PoisonError::into_inner);
+        let mut guard = state_lock.write_or_recover();
         let reloaded = if guard.name != name {
             Reloaded::Unchanged
         } else if guard.location != location {
@@ -343,10 +329,7 @@ impl ThemeManager {
     fn rearm_source_watches_now(&self) {
         let target = self.reload_target();
         // Not a watcher thread, so blocking on the slot cannot self-deadlock.
-        let mut slot = target
-            .watcher
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut slot = target.watcher.lock_or_recover();
         target.rearm(&mut slot);
     }
 
@@ -446,10 +429,7 @@ impl ThemeManager {
                     &e,
                 );
             }
-            let mut armed = self
-                .source_watches
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+            let mut armed = self.source_watches.lock_or_recover();
             armed.clear();
             let wanted = self.state().location.watch_paths(&user_themes_dir);
             Self::rearm_source_watches(&mut watcher, &mut armed, wanted);
@@ -468,10 +448,7 @@ impl ThemeManager {
     /// Stop watching the theme's sources.
     pub fn stop_watching(&self) {
         self.hot_reload.stop();
-        self.source_watches
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+        self.source_watches.lock_or_recover().clear();
     }
 
     fn reload_target(&self) -> ReloadTarget {
@@ -513,10 +490,7 @@ impl ThemeManager {
     #[cfg(feature = "test-support")]
     #[must_use]
     pub fn watch_registry_for_test(&self) -> Option<Arc<WatchRegistry>> {
-        self.watch_registry
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+        self.watch_registry.lock_or_recover().clone()
     }
 
     /// Export the theme for `shell` from one consistent state snapshot, with
@@ -728,11 +702,7 @@ impl ThemeManager {
 
         PollTarget {
             path_of: Box::new(move || {
-                let name = path_state
-                    .read()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .name
-                    .clone();
+                let name = path_state.read_or_recover().name.clone();
                 Some(ThemeLocation::resolve(&name).path)
             }),
             reload: Box::new(move |_path: &Path| target.reload_and_apply("poll fallback")),

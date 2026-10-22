@@ -1,10 +1,11 @@
 //! A bounded, TTL-expiring cache primitive. Instances share one
 //! runtime-adjustable TTL unless built with their own fixed TTL.
 
+use crate::sync_ext::MutexExt;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock, PoisonError};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use super::bounded::evict_to_capacity;
@@ -93,7 +94,7 @@ where
     {
         let ttl = self.ttl();
         let now = SystemTime::now();
-        let mut map = self.map().lock().unwrap_or_else(PoisonError::into_inner);
+        let mut map = self.map().lock_or_recover();
         let entry = map.get(key)?;
         let (value, inserted_at) = (entry.0.clone(), entry.1);
         if is_fresh(inserted_at, now, ttl) {
@@ -105,7 +106,7 @@ where
 
     /// Insert `value` stamped with now, then evict down to capacity.
     pub fn insert(&self, key: K, value: V) {
-        let mut map = self.map().lock().unwrap_or_else(PoisonError::into_inner);
+        let mut map = self.map().lock_or_recover();
         map.insert(key, (value, SystemTime::now()));
         evict_to_capacity(&mut map, self.capacity, |(_value, inserted_at)| {
             *inserted_at
@@ -119,10 +120,7 @@ where
         K: std::borrow::Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        self.map()
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(key);
+        self.map().lock_or_recover().remove(key);
     }
 
     /// Retain only entries whose key satisfies `predicate`.
@@ -131,8 +129,7 @@ where
         F: FnMut(&K) -> bool,
     {
         self.map()
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .retain(|key, _value| predicate(key));
     }
 }
@@ -145,24 +142,18 @@ where
 {
     /// Remove every entry.
     pub fn clear(&self) {
-        self.map()
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+        self.map().lock_or_recover().clear();
     }
 
     /// Current entry count, ignoring freshness.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.map()
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .len()
+        self.map().lock_or_recover().len()
     }
 
     /// Like [`TtlMap::insert`] but with an explicit timestamp.
     pub fn insert_at(&self, key: K, value: V, inserted_at: SystemTime) {
-        let mut map = self.map().lock().unwrap_or_else(PoisonError::into_inner);
+        let mut map = self.map().lock_or_recover();
         map.insert(key, (value, inserted_at));
         evict_to_capacity(&mut map, self.capacity, |(_value, entry_inserted_at)| {
             *entry_inserted_at

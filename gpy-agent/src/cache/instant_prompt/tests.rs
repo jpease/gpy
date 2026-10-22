@@ -1,4 +1,5 @@
 use super::*;
+use crate::sync_ext::MutexExt;
 
 /// A resolved Rust entry, so language writes never probe a real `rustc`.
 fn rust_languages() -> Vec<crate::ipc::LanguageInfo> {
@@ -544,8 +545,7 @@ impl CacheHarness {
                 let recorded = self
                     .cache
                     .last_written
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
+                    .lock_or_recover()
                     .entries
                     .get(&format!("{key}:{suffix}.ansi"))
                     .map(|written| written.content.clone())
@@ -877,14 +877,7 @@ fn write_cache_file_skips_a_flat_key_over_name_max() {
                 .expect("an unrepresentable name is skipped, not an error")
         );
     }
-    assert_eq!(
-        cache
-            .unwritable_keys
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .len(),
-        1
-    );
+    assert_eq!(cache.unwritable_keys.lock_or_recover().len(), 1);
 }
 
 /// The Windows arm escapes the reserved filename characters `? * < > " |`.

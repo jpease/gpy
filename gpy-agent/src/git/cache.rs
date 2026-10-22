@@ -12,10 +12,11 @@ use crate::cache::bounded::{
 use crate::debug_log;
 use crate::git::native::resolve_overall_state;
 use crate::git::{FileStatus, RepositoryStatus, StatusAggregate};
+use crate::sync_ext::MutexExt;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Cached status plus file-level details for incremental updates.
@@ -129,8 +130,7 @@ impl GitStatusCache {
     pub fn get_canonical(&self, key: &Path) -> Option<RepositoryStatus> {
         let (aggregates, cached_at) = self
             .entries
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .get(key)
             .map(|e| (e.data.aggregates.clone(), e.cached_at))?;
 
@@ -164,8 +164,7 @@ impl GitStatusCache {
     #[must_use]
     pub fn get_any_canonical(&self, key: &Path) -> Option<RepositoryStatus> {
         self.entries
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .get(key)
             .map(|e| e.data.aggregates.clone())
     }
@@ -177,8 +176,7 @@ impl GitStatusCache {
         key: &Path,
     ) -> Option<(RepositoryStatus, std::time::Duration)> {
         self.entries
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .get(key)
             .map(|e| (e.data.aggregates.clone(), e.cached_at.elapsed()))
     }
@@ -226,7 +224,7 @@ impl GitStatusCache {
         files: HashMap<PathBuf, FileStatus>,
         started: Option<Instant>,
     ) -> bool {
-        let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut entries = self.entries.lock_or_recover();
         if let Some(started) = started
             && entries.get(key).is_some_and(|e| e.cached_at > started)
         {
@@ -284,7 +282,7 @@ impl GitStatusCache {
         results: &HashMap<PathBuf, FileStatus>,
         ignore_case: bool,
     ) -> Option<RepositoryStatus> {
-        let mut guard = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut guard = self.entries.lock_or_recover();
         let entry = guard.get_mut(key)?;
 
         if !entry.files_complete {
@@ -342,8 +340,7 @@ impl GitStatusCache {
     #[must_use]
     pub fn is_fresh_canonical(&self, key: &Path) -> bool {
         self.entries
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .get(key)
             .is_some_and(|entry| entry.cached_at.elapsed() < self.policy.cooldown())
     }
@@ -356,27 +353,18 @@ impl GitStatusCache {
     /// [`invalidate`](Self::invalidate) for an already-canonical key.
     pub fn invalidate_canonical(&self, key: &Path) {
         debug_log!("cache", "Invalidating cache for {}", key.display());
-        self.entries
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(key);
+        self.entries.lock_or_recover().remove(key);
     }
 
     /// Clear all cached entries
     pub fn clear(&self) {
-        self.entries
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+        self.entries.lock_or_recover().clear();
     }
 
     /// Number of cached repositories.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.entries
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .len()
+        self.entries.lock_or_recover().len()
     }
 
     /// Whether the cache is empty.
@@ -388,12 +376,7 @@ impl GitStatusCache {
     /// Backdate an entry's `cached_at` by `age`.
     #[cfg(test)]
     pub(crate) fn age_entry_for_test(&self, key: &Path, age: std::time::Duration) {
-        if let Some(entry) = self
-            .entries
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get_mut(key)
-        {
+        if let Some(entry) = self.entries.lock_or_recover().get_mut(key) {
             entry.cached_at = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
         }
     }
@@ -402,8 +385,7 @@ impl GitStatusCache {
     #[cfg(test)]
     pub(crate) fn files_for_test(&self, key: &Path) -> Option<HashMap<PathBuf, FileStatus>> {
         self.entries
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .get(key)
             .map(|entry| entry.data.files.clone())
     }

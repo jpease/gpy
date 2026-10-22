@@ -5,9 +5,10 @@ use super::{HandlerError, RenderDeps, RequestHandler, spawn_detached};
 use crate::git::CompleteStatus;
 use crate::git::cache::GitStatusCache;
 use crate::ipc::{Message, Response};
+use crate::sync_ext::MutexExt;
 use crate::warn_log;
 use crate::watcher::multi_repo::MultiRepoWatcher;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 /// Shared, lazily-set watcher handle.
 type WatcherRef = Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>;
@@ -67,11 +68,7 @@ impl ClientHandler {
         if let Some(ref path) = sanitized {
             // Best-effort: watcher failures must not break registration; the
             // initial scan still fills the cache and TTL reconciles missed events.
-            let watcher = self
-                .watcher
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone();
+            let watcher = self.watcher.lock_or_recover().clone();
             if let Some(watcher) = watcher
                 && let Err(e) = watcher.register_client(pid.get(), path)
             {
@@ -109,11 +106,7 @@ impl ClientHandler {
 
         // Clone out first: in an `if let` chain the guard would live through
         // the block, holding the slot across the watcher call and the scan.
-        let watcher = self
-            .watcher
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
+        let watcher = self.watcher.lock_or_recover().clone();
         // Best-effort: on watcher failure, scan immediately so the cache is fresh.
         if let Some(watcher) = watcher
             && let Err(e) = watcher.update_client(pid.get(), path_buf)
@@ -138,11 +131,7 @@ impl ClientHandler {
         pid: crate::config::types::ClientPid,
     ) -> Result<Response, HandlerError> {
         self.render.client_registry.unregister(pid.get());
-        let watcher = self
-            .watcher
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
+        let watcher = self.watcher.lock_or_recover().clone();
         if let Some(watcher) = watcher {
             watcher.unregister_client(pid.get());
         }
@@ -158,8 +147,7 @@ impl ClientHandler {
     fn handle_status(&self) -> Result<Response, HandlerError> {
         let watched_repos = self
             .watcher
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .as_ref()
             .map_or(0, |w| w.watched_repo_count());
         let registered_clients = self.render.client_registry.len();

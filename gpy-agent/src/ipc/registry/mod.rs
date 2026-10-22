@@ -6,10 +6,11 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::debug_log;
+use crate::sync_ext::MutexExt;
 
 #[cfg(unix)]
 use nix::sys::signal::{Signal, kill};
@@ -166,8 +167,7 @@ impl ClientDirectory {
     #[must_use]
     pub fn get_registered_repos(&self) -> Vec<(u32, PathBuf)> {
         self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .iter()
             .filter_map(|(pid, info)| info.cwd.as_ref().map(|cwd| (*pid, cwd.clone())))
             .collect()
@@ -202,22 +202,19 @@ impl ClientDirectory {
         let started_at = self.process_start_time(pid);
         // Store canonical so `paths_related` doesn't rely on caller canonicalization.
         let stored_cwd = cwd.map(|p| std::fs::canonicalize(&p).unwrap_or(p));
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(
-                pid,
-                ClientInfo {
-                    cwd: stored_cwd,
-                    started_at,
-                },
-            );
+        self.inner.lock_or_recover().insert(
+            pid,
+            ClientInfo {
+                cwd: stored_cwd,
+                started_at,
+            },
+        );
     }
 
     /// Start time of the process occupying `pid`, if determinable.
     #[cfg(unix)]
     fn process_start_time(&self, pid: u32) -> Option<u64> {
-        let mut sys = self.sysinfo.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut sys = self.sysinfo.lock_or_recover();
         process_start_time_secs(&mut sys, pid)
     }
 
@@ -271,18 +268,12 @@ impl ClientDirectory {
     /// Whether `pid` is currently in the registry.
     #[must_use]
     pub fn is_registered(&self, pid: u32) -> bool {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .contains_key(&pid)
+        self.inner.lock_or_recover().contains_key(&pid)
     }
 
     /// Remove a client PID from the registry.
     pub fn unregister(&self, pid: u32) {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&pid);
+        self.inner.lock_or_recover().remove(&pid);
     }
 
     /// Update the tracked workspace; returns `false` if `pid` is not registered.
@@ -291,14 +282,10 @@ impl ClientDirectory {
         // Same canonical-cwd invariant as `register`.
         let canonical_cwd = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
         let mut updated = false;
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .entry(pid)
-            .and_modify(|info| {
-                info.cwd = Some(canonical_cwd);
-                updated = true;
-            });
+        self.inner.lock_or_recover().entry(pid).and_modify(|info| {
+            info.cwd = Some(canonical_cwd);
+            updated = true;
+        });
         updated
     }
 
@@ -327,8 +314,7 @@ impl ClientDirectory {
     fn prune_throttle_map(&self) {
         let expiry = Duration::from_secs(3600);
         self.last_notify
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .retain(|_, record| record.at.elapsed() < expiry);
     }
 
@@ -347,7 +333,7 @@ impl ClientDirectory {
         }
 
         if !dead_pids.is_empty() {
-            let mut guard = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut guard = self.inner.lock_or_recover();
             for pid in &dead_pids {
                 guard.remove(pid);
             }
@@ -393,8 +379,7 @@ impl ClientDirectory {
     /// Copy clients out so the broadcast loop never holds the lock during syscalls.
     fn client_snapshots(&self) -> Vec<ClientSnapshot> {
         self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .iter()
             .map(|(pid, info)| ClientSnapshot {
                 pid: *pid,
@@ -461,7 +446,7 @@ impl ClientDirectory {
             }
 
             if !stale.is_empty() {
-                let mut guard = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+                let mut guard = self.inner.lock_or_recover();
                 for pid in stale {
                     guard.remove(&pid);
                 }
@@ -521,7 +506,7 @@ impl ClientDirectory {
     /// shares [`Self::paths_related`] so it cannot drift from delivery.
     #[must_use]
     pub fn has_subscriber(&self, repo: &Path) -> bool {
-        let guard = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let guard = self.inner.lock_or_recover();
         guard.values().any(|info| {
             info.cwd
                 .as_deref()
@@ -532,10 +517,7 @@ impl ClientDirectory {
     /// Number of registered clients.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .len()
+        self.inner.lock_or_recover().len()
     }
 
     /// Whether the registry is empty.
@@ -548,12 +530,7 @@ impl ClientDirectory {
     #[cfg(test)]
     #[must_use]
     pub fn clients(&self) -> Vec<u32> {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .keys()
-            .copied()
-            .collect()
+        self.inner.lock_or_recover().keys().copied().collect()
     }
 
     /// Register with an explicit `started_at`, to test PID-recycle handling.
@@ -565,8 +542,7 @@ impl ClientDirectory {
         started_at: Option<u64>,
     ) {
         self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .insert(pid, ClientInfo { cwd, started_at });
     }
 
@@ -617,10 +593,7 @@ impl ClientDirectory {
 
         let window = Duration::from_millis(throttle_ms);
         let now = Instant::now();
-        let mut guard = self
-            .last_notify
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut guard = self.last_notify.lock_or_recover();
         let prev = guard.get(repo).copied();
         let (allow, record) = Self::throttle_decision(prev, now, window, token);
         guard.insert(repo.to_path_buf(), record);

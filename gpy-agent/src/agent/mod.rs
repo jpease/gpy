@@ -18,6 +18,7 @@ use crate::ipc::{
     ClientDirectory,
     server::{EndpointDeps, EndpointHandle},
 };
+use crate::sync_ext::MutexExt;
 use crate::theme::ThemeManager;
 use crate::watcher::hot_reload::HOT_RELOAD_DEBOUNCE;
 use crate::watcher::{WatcherConfig, multi_repo::MultiRepoWatcher};
@@ -26,7 +27,7 @@ use events::SharedWatcherSlot;
 use std::env;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 fn matches_ignore_case(value: &str, truthy: &[&str]) -> bool {
@@ -109,10 +110,7 @@ async fn run_reconcile_scan<R, F>(
 fn prune_dead_clients(registry: &ClientDirectory, watcher_slot: &SharedWatcherSlot) -> Vec<u32> {
     let mut pruned_pids = registry.prune_dead_clients();
 
-    let watcher = watcher_slot
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .clone();
+    let watcher = watcher_slot.lock_or_recover().clone();
     if let Some(watcher) = watcher {
         for pid in &pruned_pids {
             watcher.unregister_client(*pid);
@@ -143,7 +141,7 @@ fn prune_dead_clients(registry: &ClientDirectory, watcher_slot: &SharedWatcherSl
 /// Stop the repository, theme and config watchers.
 fn stop_watchers(watcher_slot: &SharedWatcherSlot, ctx: &events::AgentContext) {
     {
-        let mut guard = watcher_slot.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut guard = watcher_slot.lock_or_recover();
         if let Some(watcher) = guard.take() {
             watcher.stop();
         }
@@ -219,8 +217,7 @@ fn spawn_reconcile_scan(
     }
 
     let repos = watcher_slot
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+        .lock_or_recover()
         .as_ref()
         .map_or_else(Vec::new, |w| w.watched_roots());
     if repos.is_empty() {
@@ -242,8 +239,7 @@ fn spawn_reconcile_scan(
     };
     let roots_fn = move || {
         watcher_for_reconcile
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .as_ref()
             .map_or_else(Vec::new, |w| w.watched_roots())
     };
@@ -269,12 +265,7 @@ impl Agent {
     where
         F: FnOnce(&MultiRepoWatcher),
     {
-        if let Some(watcher) = self
-            .watcher
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-        {
+        if let Some(watcher) = self.watcher.lock_or_recover().as_ref() {
             f(watcher);
         }
     }
@@ -444,8 +435,7 @@ impl Agent {
         {
             match events::create_watcher(watcher_config, ctx) {
                 Ok(initial_watcher) => {
-                    *watcher_slot.lock().unwrap_or_else(PoisonError::into_inner) =
-                        Some(initial_watcher);
+                    *watcher_slot.lock_or_recover() = Some(initial_watcher);
                 }
                 Err(err) => {
                     debug_log!(
@@ -674,10 +664,7 @@ impl Agent {
         let events = Arc::new(Mutex::new(Vec::new()));
         let events_clone = Arc::clone(&events);
         let callback: Box<dyn Fn(DebouncedEvent) + Send + Sync> = Box::new(move |event| {
-            events_clone
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push(event);
+            events_clone.lock_or_recover().push(event);
         });
         let watcher = Arc::new(
             MultiRepoWatcher::builder()
@@ -748,8 +735,7 @@ impl Agent {
     #[doc(hidden)]
     pub fn watcher_repo_count(&self) -> usize {
         self.watcher
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .as_ref()
             .map_or(0, |w| w.watched_repo_count())
     }
