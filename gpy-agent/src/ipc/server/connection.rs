@@ -567,6 +567,33 @@ mod tests {
         );
     }
 
+    /// An op the agent does not know is answered in the requested format, not a JSON error line.
+    #[test]
+    fn ansi_request_with_unknown_op_keeps_ansi_format() {
+        let (registry, _instant_cache, _language_cache) = test_handler_registry();
+        let config_manager = ConfigManager::with_defaults().expect("config");
+        let theme_manager = ThemeManager::builtin("default").expect("theme");
+        let palette_cache = PaletteCache::from_config(&config_manager.get());
+        let result = ConnectionHandler::parse_and_route_blocking(
+            br#"{"op":"teleport","format":"ansi"}"#,
+            &registry,
+            &GuardSettings::default(),
+            &config_manager,
+            &theme_manager,
+            &palette_cache,
+        );
+        let payload = result.payload.expect("rendered");
+        assert!(
+            !payload.trim_start().starts_with('{'),
+            "unknown-op ANSI request must not get a JSON line, got {payload:?}"
+        );
+        assert!(
+            matches!(result.response, Response::Error { .. }),
+            "unknown op must still be an error, got {:?}",
+            result.response
+        );
+    }
+
     /// One `LanguageDetect` writes each variant file once per dialect. The cache is
     /// pre-seeded so the background detection job (which also writes) doesn't race.
     #[test]
