@@ -42,10 +42,17 @@ impl Glyphs {
     /// A theme delimiter as drawn with this glyph set; `Plain` drops private-use text.
     #[must_use]
     pub fn delimiter(self, text: &str) -> &str {
+        self.icon(text).unwrap_or("")
+    }
+
+    /// A theme icon as drawn with this glyph set; `None` when `Plain` must drop
+    /// its private-use text, so the caller falls back to a plain default.
+    #[must_use]
+    pub fn icon(self, text: &str) -> Option<&str> {
         if self == Self::Plain && text.chars().any(is_private_use) {
-            ""
+            None
         } else {
-            text
+            Some(text)
         }
     }
 }

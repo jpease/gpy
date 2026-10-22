@@ -280,6 +280,50 @@ fn export_drops_private_use_delimiters_when_icons_are_off() {
     }
 }
 
+/// `ui.show_icons = false` erases the default theme's Nerd Font status icons so
+/// the shells draw their ASCII fallback; with icons on they are exported.
+#[test]
+fn export_erases_private_use_status_icons_when_icons_are_off() {
+    let has_private_use = |text: &str| text.chars().any(|c| ('\u{e000}'..='\u{f8ff}').contains(&c));
+    let theme = crate::theme::ThemeManager::builtin("default")
+        .expect("default theme should always load")
+        .get();
+    let export = |show_icons: bool, shell: Shell| {
+        let mut config = Config::default();
+        config.ui.show_icons = show_icons;
+        theme_to_shell(
+            &theme,
+            "default",
+            &config,
+            shell,
+            &Palette::default(),
+            &BTreeMap::new(),
+        )
+    };
+    for shell in [Shell::Fish, Shell::Bash, Shell::Zsh] {
+        let on = export(true, shell);
+        let off = export(false, shell);
+        for name in ["__icon_status_ok", "__icon_status_fail"] {
+            let line_of = |script: &str| {
+                script
+                    .lines()
+                    .find(|l| l.split([' ', '=']).any(|word| word == name))
+                    .unwrap_or_else(|| panic!("{shell}: no `{name}` line in export"))
+                    .to_owned()
+            };
+            assert!(
+                has_private_use(&line_of(&on)),
+                "{shell}: show_icons=true control: {name} must keep its glyph"
+            );
+            let off_line = line_of(&off);
+            assert!(
+                off_line.trim_end().ends_with(name) && !has_private_use(&off_line),
+                "{shell}: show_icons=false must erase {name}, got {off_line:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn fish_export_matches_golden() {
     insta::assert_snapshot!("fish_export", golden_export(Shell::Fish));

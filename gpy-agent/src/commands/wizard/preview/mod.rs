@@ -310,6 +310,7 @@ fn render_segment(
             theme,
             facts.sample_character_success,
             ctx.position,
+            Glyphs::from(&config.ui),
         )),
         // Clock renders shell-side against wall-clock time; show a demo time.
         BuiltinSegment::Clock => Some(clock_demo_spans(
@@ -362,17 +363,20 @@ fn clock_demo_spans(theme: &ThemeConfig, is_first: IsFirst, is_last: IsLast) -> 
     )
 }
 
-/// Exit-status pill, mirroring `fish/segments/status.fish`.
+/// Exit-status pill, mirroring `fish/segments/status.fish`: a Nerd Font icon
+/// under [`Glyphs::Plain`] gives way to the shells' ASCII fallback.
 fn status_pill_spans(
     theme: &ThemeConfig,
     success: bool,
     position: SegmentPosition,
+    glyphs: Glyphs,
 ) -> Vec<TemplateSpan> {
     let status = &theme.segments.status;
-    let (icon, fallback, bg, fg) = if success {
+    let (icon, nerd_fallback, plain_fallback, bg, fg) = if success {
         (
             status.ok_icon.as_ref(),
             "✔",
+            "ok",
             status.ok_bg_color.as_str(),
             status.ok_text_color.as_str(),
         )
@@ -380,12 +384,18 @@ fn status_pill_spans(
         (
             status.fail_icon.as_ref(),
             "✖",
+            "err",
             status.fail_bg_color.as_str(),
             status.fail_text_color.as_str(),
         )
     };
+    let fallback = match glyphs {
+        Glyphs::Nerd => nerd_fallback,
+        Glyphs::Plain => plain_fallback,
+    };
     let text = icon
-        .map_or(fallback, |configured| configured.as_str())
+        .and_then(|configured| glyphs.icon(configured.as_str()))
+        .unwrap_or(fallback)
         .to_owned();
     standalone_pill_spans(text, bg, fg, theme, position)
 }

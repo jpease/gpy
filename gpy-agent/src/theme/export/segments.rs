@@ -334,30 +334,31 @@ pub(super) fn append_username_assignments(
     );
 }
 
-/// Status segment icons (erased when unset) and the ok/fail colors.
+/// Status segment icons and the ok/fail colors. An icon is erased when unset, or
+/// when [`Glyphs::Plain`] drops it, so the shell draws its ASCII fallback.
 pub(super) fn append_status_assignments(
     output: &mut String,
     colors: ShellColors<'_>,
     theme: &ThemeConfig,
+    glyphs: Glyphs,
 ) {
     let shell = colors.shell;
+    let status = &theme.segments.status;
 
-    append_shell_assignment(
-        output,
-        shell,
-        theme.segments.status.ok_icon.as_ref().map_or_else(
-            || ShellAssignment::unset("__icon_status_ok"),
-            |icon| ShellAssignment::local("__icon_status_ok", icon.as_str()),
-        ),
-    );
-    append_shell_assignment(
-        output,
-        shell,
-        theme.segments.status.fail_icon.as_ref().map_or_else(
-            || ShellAssignment::unset("__icon_status_fail"),
-            |icon| ShellAssignment::local("__icon_status_fail", icon.as_str()),
-        ),
-    );
+    for (name, icon) in [
+        ("__icon_status_ok", status.ok_icon.as_ref()),
+        ("__icon_status_fail", status.fail_icon.as_ref()),
+    ] {
+        append_shell_assignment(
+            output,
+            shell,
+            icon.and_then(|configured| glyphs.icon(configured.as_str()))
+                .map_or_else(
+                    || ShellAssignment::unset(name),
+                    |text| ShellAssignment::local(name, text),
+                ),
+        );
+    }
     append_shell_assignments(
         output,
         shell,
