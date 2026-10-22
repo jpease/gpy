@@ -130,7 +130,7 @@ enum OneshotCommands {
     /// Render the character segment (❯ prompt symbol, colored by exit status).
     Character {
         /// Last command exit code (0 = success, non-zero = error).
-        #[arg(long, default_value_t = 0_i32)]
+        #[arg(long, default_value_t = 0_i32, allow_negative_numbers = true)]
         exit_code: i32,
         #[command(flatten)]
         segment: SegmentArgs,

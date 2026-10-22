@@ -622,6 +622,23 @@ fn test_cli_oneshot_invalid_operation() {
     assert_ne!(stderr, "");
 }
 
+/// A negative exit code is a value, not a flag, and counts as failure.
+#[test]
+fn test_cli_oneshot_character_accepts_negative_exit_code() {
+    let (exit_code, stdout, stderr) = run_gpy_agent(&[
+        "oneshot",
+        "character",
+        "--exit-code",
+        "-1",
+        "--format",
+        "json",
+    ]);
+
+    assert_eq!(exit_code, 0_i32, "oneshot character failed: {stderr}");
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
+    assert_eq!(json.get("success"), Some(&serde_json::json!(false)));
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_git_invalid_path() {
