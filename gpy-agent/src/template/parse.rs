@@ -1,11 +1,12 @@
 //! Recursive-descent parser: template string -> AST.
 
 use crate::cache::bounded::evict_to_capacity;
+use crate::sync_ext::RwLockExt;
 use crate::template::ast::Node;
 use crate::template::{Result, TemplateError};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock, PoisonError, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 /// Maximum group-nesting depth; deeper input errors instead of overflowing the stack.
 const MAX_DEPTH: usize = 128_usize;
@@ -51,7 +52,7 @@ pub fn parse(input: &str) -> Result<Vec<Node>> {
 /// Propagates any [`TemplateError`] from [`parse`].
 pub fn parse_cached(input: &str) -> Result<Arc<[Node]>> {
     {
-        let guard = ast_cache().read().unwrap_or_else(PoisonError::into_inner);
+        let guard = ast_cache().read_or_recover();
         if let Some(entry) = guard.get(input) {
             return Ok(Arc::clone(&entry.nodes));
         }
@@ -60,7 +61,7 @@ pub fn parse_cached(input: &str) -> Result<Arc<[Node]>> {
     // Miss: parse outside any lock; errors are never memoized.
     let nodes: Arc<[Node]> = parse(input)?.into();
 
-    let mut guard = ast_cache().write().unwrap_or_else(PoisonError::into_inner);
+    let mut guard = ast_cache().write_or_recover();
     guard.insert(
         input.to_owned(),
         CachedAst {

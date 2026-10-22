@@ -10,11 +10,12 @@
 use super::watch_set::WatchMode;
 use super::{EventCallback, WatchCoordinator, WatchRegistry, WatcherConfig};
 use crate::debug_log;
+use crate::sync_ext::MutexExt;
 use crate::{Error, Result};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
 struct WatchedRepo {
@@ -114,7 +115,7 @@ impl MultiRepoWatcher {
     /// # Errors
     /// Returns an error if the repository cannot be discovered or watched.
     pub fn register_client(&self, pid: u32, cwd: &Path) -> Result<()> {
-        let _ops_guard = self.ops_lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let _ops_guard = self.ops_lock.lock_or_recover();
         self.attach_pid_to(pid, cwd)
     }
 
@@ -180,7 +181,7 @@ impl MultiRepoWatcher {
 
     /// Remove a client and stop watching the repository if no clients remain.
     pub fn unregister_client(&self, pid: u32) {
-        let _ops_guard = self.ops_lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let _ops_guard = self.ops_lock.lock_or_recover();
         self.detach_pid_except(pid, None);
     }
 
@@ -188,10 +189,7 @@ impl MultiRepoWatcher {
     fn detach_pid_except(&self, pid: u32, keep: Option<&Path>) {
         let mut repos_to_remove = Vec::new();
         {
-            let mut repos = self
-                .watched_repos
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+            let mut repos = self.watched_repos.lock_or_recover();
 
             for repo in repos.values_mut() {
                 if keep.is_some_and(|kept| kept == repo.git_root) {
@@ -208,12 +206,7 @@ impl MultiRepoWatcher {
 
     /// Stop watching `repos` (already client-free) and drop their state.
     fn tear_down_repos(&self, repos_to_remove: &[WatchedRepo]) {
-        if let Some(w) = self
-            .watcher
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_mut()
-        {
+        if let Some(w) = self.watcher.lock_or_recover().as_mut() {
             for repo in repos_to_remove {
                 for path in &repo.armed {
                     Self::unwatch_logged(w, path, WatchMode::Recursive);
@@ -222,10 +215,7 @@ impl MultiRepoWatcher {
         }
 
         {
-            let mut repos = self
-                .watched_repos
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+            let mut repos = self.watched_repos.lock_or_recover();
             for repo in repos_to_remove {
                 repos.remove(&repo.git_root);
             }
@@ -246,23 +236,20 @@ impl MultiRepoWatcher {
     /// Returns an error if the new repository cannot be discovered or watched;
     /// the client is then attached to no repository.
     pub fn update_client(&self, pid: u32, new_cwd: &Path) -> Result<()> {
-        let _ops_guard = self.ops_lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let _ops_guard = self.ops_lock.lock_or_recover();
         self.attach_pid_to(pid, new_cwd)
     }
 
     /// Stop watching all repositories and clear state.
     pub fn stop(&self) {
         {
-            let mut watcher = self.watcher.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut watcher = self.watcher.lock_or_recover();
             if let Some(mut w) = watcher.take() {
                 w.stop();
             }
         }
         {
-            let mut repos = self
-                .watched_repos
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+            let mut repos = self.watched_repos.lock_or_recover();
             for repo in repos.values() {
                 self.registry.unregister_external_gitdir(&repo.git_dir);
             }
@@ -270,10 +257,7 @@ impl MultiRepoWatcher {
         }
         self.registry.clear_roots();
         // The coordinator already dropped every OS watch; only bookkeeping remains.
-        let mut common = self
-            .common_watches
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut common = self.common_watches.lock_or_recover();
         for (common_dir, entry) in common.drain() {
             for root in &entry.dependents {
                 self.registry.unregister_common_gitdir(&common_dir, root);
@@ -296,10 +280,7 @@ impl MultiRepoWatcher {
     ) -> Result<bool> {
         // ops_lock serializes us, so the snapshot cannot go stale.
         let tracked = {
-            let repos = self
-                .watched_repos
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+            let repos = self.watched_repos.lock_or_recover();
             repos.get(git_root).map(|repo| {
                 (
                     repo.git_dir.clone(),
@@ -324,10 +305,7 @@ impl MultiRepoWatcher {
         }
 
         {
-            let mut repos = self
-                .watched_repos
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+            let mut repos = self.watched_repos.lock_or_recover();
             if let Some(repo) = repos.get_mut(git_root) {
                 debug_log!(
                     "watcher",
@@ -364,21 +342,14 @@ impl MultiRepoWatcher {
         );
 
         let stale = {
-            let repos = self
-                .watched_repos
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+            let repos = self.watched_repos.lock_or_recover();
             repos
                 .get(git_root)
                 .map(|repo| (repo.git_dir.clone(), repo.armed.clone()))
         };
 
         if let Some((_, stale_armed)) = &stale
-            && let Some(w) = self
-                .watcher
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .as_mut()
+            && let Some(w) = self.watcher.lock_or_recover().as_mut()
         {
             for path in stale_armed {
                 Self::unwatch_logged(w, path, WatchMode::Recursive);
@@ -396,10 +367,7 @@ impl MultiRepoWatcher {
         self.register_external_gitdir_if_needed(git_dir, git_root);
 
         {
-            let mut repos = self
-                .watched_repos
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+            let mut repos = self.watched_repos.lock_or_recover();
             if let Some(repo) = repos.get_mut(git_root) {
                 repo.git_dir = git_dir.to_path_buf();
                 repo.git_dir_id = dir_identity(git_dir);
@@ -454,7 +422,7 @@ impl MultiRepoWatcher {
         git_dir: &Path,
         watch_worktree: bool,
     ) -> Result<RepoWatches> {
-        let mut watcher_guard = self.watcher.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut watcher_guard = self.watcher.lock_or_recover();
         let Some(w) = watcher_guard.as_mut() else {
             return Err(Error::watcher(
                 "No watch coordinator available; repository would not actually be watched",
@@ -563,10 +531,7 @@ impl MultiRepoWatcher {
         };
 
         {
-            let mut guard = self
-                .common_watches
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+            let mut guard = self.common_watches.lock_or_recover();
             let entry = guard.entry(common_dir.clone()).or_default();
             let first_dependent = entry.dependents.is_empty();
             entry.dependents.insert(git_root.to_path_buf());
@@ -629,10 +594,7 @@ impl MultiRepoWatcher {
         // Release `common_watches` before taking the watcher lock: acquire
         // takes them in the opposite order.
         {
-            let mut guard = self
-                .common_watches
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+            let mut guard = self.common_watches.lock_or_recover();
             guard.retain(|common_dir, entry| {
                 if entry.dependents.remove(git_root) {
                     self.registry.unregister_common_gitdir(common_dir, git_root);
@@ -658,12 +620,7 @@ impl MultiRepoWatcher {
         }
 
         let mut rearmed: Vec<(PathBuf, ArmedWatches)> = Vec::new();
-        if let Some(w) = self
-            .watcher
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_mut()
-        {
+        if let Some(w) = self.watcher.lock_or_recover().as_mut() {
             for (path, mode) in &to_unwatch {
                 Self::unwatch_logged(w, path, *mode);
             }
@@ -678,10 +635,7 @@ impl MultiRepoWatcher {
         if rearmed.is_empty() {
             return;
         }
-        let mut guard = self
-            .common_watches
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut guard = self.common_watches.lock_or_recover();
         for (common_dir, armed) in rearmed {
             if let Some(entry) = guard.get_mut(&common_dir) {
                 entry.armed = armed;
@@ -734,10 +688,7 @@ impl MultiRepoWatcher {
         self.register_external_gitdir_if_needed(&git_dir, &git_root);
 
         {
-            let mut repos = self
-                .watched_repos
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+            let mut repos = self.watched_repos.lock_or_recover();
 
             repos.insert(
                 root_key.clone(),
@@ -821,14 +772,11 @@ impl MultiRepoWatcher {
     /// current setting. Best-effort: failures are logged and skipped so one
     /// repo exhausting the watch budget cannot block the rest.
     pub fn resync_watch_worktree(&self) {
-        let _ops_guard = self.ops_lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let _ops_guard = self.ops_lock.lock_or_recover();
 
         let desired = self.registry.worktree_enabled();
 
-        let repos = self
-            .watched_repos
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let repos = self.watched_repos.lock_or_recover();
         let stale: Vec<(PathBuf, PathBuf)> = repos
             .values()
             .filter(|repo| repo.worktree.requested() != desired)
@@ -856,10 +804,7 @@ impl MultiRepoWatcher {
     /// Number of repositories currently being watched.
     #[must_use]
     pub fn watched_repo_count(&self) -> usize {
-        self.watched_repos
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .len()
+        self.watched_repos.lock_or_recover().len()
     }
 
     /// Sorted, deduplicated PIDs across all watched repos.
@@ -867,8 +812,7 @@ impl MultiRepoWatcher {
     pub fn client_pids(&self) -> Vec<u32> {
         let mut pids: Vec<u32> = self
             .watched_repos
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .values()
             .flat_map(|repo| repo.clients.iter().copied())
             .collect();
@@ -881,8 +825,7 @@ impl MultiRepoWatcher {
     #[must_use]
     pub fn watched_roots(&self) -> Vec<PathBuf> {
         self.watched_repos
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .keys()
             .cloned()
             .collect()

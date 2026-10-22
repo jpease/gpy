@@ -21,13 +21,14 @@ pub mod multi_repo;
 mod watch_set;
 
 use crate::Result;
+use crate::sync_ext::{MutexExt, RwLockExt};
 use std::collections::HashSet;
 use std::env;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -219,15 +220,12 @@ impl WatchRegistry {
 
     /// Record `root` as a watched git root.
     pub(crate) fn insert_root(&self, root: PathBuf) {
-        self.roots
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(root);
+        self.roots.lock_or_recover().insert(root);
     }
 
     /// Drop every root in `roots` from the watched set, under one lock.
     pub(crate) fn remove_roots<'a>(&self, roots: impl IntoIterator<Item = &'a Path>) {
-        let mut guard = self.roots.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut guard = self.roots.lock_or_recover();
         for root in roots {
             guard.remove(root);
         }
@@ -235,33 +233,22 @@ impl WatchRegistry {
 
     /// Forget every watched root.
     pub(crate) fn clear_roots(&self) {
-        self.roots
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+        self.roots.lock_or_recover().clear();
     }
 
     /// Whether `root` is a registered watched root.
     pub(crate) fn root_is_registered(&self, root: &Path) -> bool {
-        self.roots
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .contains(root)
+        self.roots.lock_or_recover().contains(root)
     }
 
     /// Every watched root.
     pub(crate) fn root_snapshot(&self) -> Vec<PathBuf> {
-        self.roots
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .cloned()
-            .collect()
+        self.roots.lock_or_recover().iter().cloned().collect()
     }
 
     /// The longest watched root that is a prefix of `path`.
     pub(crate) fn longest_root_prefix(&self, path: &Path) -> Option<PathBuf> {
-        let guard = self.roots.lock().unwrap_or_else(PoisonError::into_inner);
+        let guard = self.roots.lock_or_recover();
         guard
             .iter()
             .filter(|root| path.starts_with(root))
@@ -271,7 +258,7 @@ impl WatchRegistry {
 
     /// The subset of `candidates` that are registered watched roots.
     pub(crate) fn filter_registered_roots(&self, candidates: Vec<PathBuf>) -> Vec<PathBuf> {
-        let guard = self.roots.lock().unwrap_or_else(PoisonError::into_inner);
+        let guard = self.roots.lock_or_recover();
         let registered = candidates
             .into_iter()
             .filter(|candidate| guard.contains(candidate))
@@ -281,20 +268,14 @@ impl WatchRegistry {
     }
 
     pub(crate) fn register_config_path(&self, path: &Path) {
-        let mut guard = self
-            .config_paths
-            .write()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut guard = self.config_paths.write_or_recover();
         for entry in normalize_config_paths(path) {
             guard.insert(entry);
         }
     }
 
     pub(crate) fn unregister_config_path(&self, path: &Path) {
-        let mut guard = self
-            .config_paths
-            .write()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut guard = self.config_paths.write_or_recover();
         for entry in normalize_config_paths(path) {
             guard.remove(&entry);
         }
@@ -304,35 +285,25 @@ impl WatchRegistry {
     /// normalization: event paths are absolute and registration stores both
     /// canonical and absolute spellings.
     pub(crate) fn is_registered_config_path(&self, path: &Path) -> bool {
-        self.config_paths
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .contains(path)
+        self.config_paths.read_or_recover().contains(path)
     }
 
     /// Record an external gitdir → working-root mapping; both paths canonical.
     pub(crate) fn register_external_gitdir(&self, git_dir: &Path, git_root: &Path) {
         self.external_gitdirs
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
+            .write_or_recover()
             .insert(git_dir.to_path_buf(), git_root.to_path_buf());
     }
 
     /// Remove a previously registered external gitdir mapping (no-op if absent).
     pub(crate) fn unregister_external_gitdir(&self, git_dir: &Path) {
-        self.external_gitdirs
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(git_dir);
+        self.external_gitdirs.write_or_recover().remove(git_dir);
     }
 
     /// The working root of the longest registered external gitdir prefixing
     /// `path`, if the remainder is git-significant.
     pub(crate) fn attribute_external_gitdir(&self, path: &Path) -> Option<PathBuf> {
-        let guard = self
-            .external_gitdirs
-            .read()
-            .unwrap_or_else(PoisonError::into_inner);
+        let guard = self.external_gitdirs.read_or_recover();
         let (git_dir, git_root) = guard
             .iter()
             .filter(|(git_dir, _)| path.starts_with(git_dir))
@@ -348,8 +319,7 @@ impl WatchRegistry {
     /// the shared metadata in `common_dir` (canonical). Idempotent.
     pub(crate) fn register_common_gitdir(&self, common_dir: &Path, git_root: &Path) {
         self.common_gitdirs
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
+            .write_or_recover()
             .entry(common_dir.to_path_buf())
             .or_default()
             .insert(git_root.to_path_buf());
@@ -358,10 +328,7 @@ impl WatchRegistry {
     /// Drop one dependent working root, removing the whole entry once the last one
     /// is gone (no-op if absent).
     pub(crate) fn unregister_common_gitdir(&self, common_dir: &Path, git_root: &Path) {
-        let mut guard = self
-            .common_gitdirs
-            .write()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut guard = self.common_gitdirs.write_or_recover();
         if let Some(dependents) = guard.get_mut(common_dir) {
             dependents.remove(git_root);
             if dependents.is_empty() {
@@ -373,10 +340,7 @@ impl WatchRegistry {
     /// Linked-worktree roots that must refresh because shared metadata at `path`
     /// changed. Longest common-dir prefix wins, so a submodule's beats its super's.
     pub(crate) fn attribute_common_gitdir(&self, path: &Path) -> Vec<PathBuf> {
-        let guard = self
-            .common_gitdirs
-            .read()
-            .unwrap_or_else(PoisonError::into_inner);
+        let guard = self.common_gitdirs.read_or_recover();
         let Some((common_dir, dependents)) = guard
             .iter()
             .filter(|(common_dir, _)| path.starts_with(common_dir))
@@ -398,8 +362,7 @@ impl WatchRegistry {
     /// Whether `path` lies under any registered common git directory.
     pub(crate) fn is_under_registered_common_gitdir(&self, path: &Path) -> bool {
         self.common_gitdirs
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
+            .read_or_recover()
             .keys()
             .any(|common_dir| path.starts_with(common_dir))
     }
@@ -417,10 +380,7 @@ impl WatchRegistry {
         };
 
         let mut parents = vec![super_root];
-        let guard = self
-            .external_gitdirs
-            .read()
-            .unwrap_or_else(PoisonError::into_inner);
+        let guard = self.external_gitdirs.read_or_recover();
         parents.extend(
             guard
                 .iter()
@@ -603,10 +563,7 @@ fn ingest(
     kick: &mpsc::Sender<()>,
     pending: PendingEvent,
 ) {
-    debouncer
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .handle_event(pending);
+    debouncer.lock_or_recover().handle_event(pending);
     let _ = kick.send(());
 }
 
@@ -657,8 +614,7 @@ impl WatchCoordinator {
         let kick_for_schedule = flush_kick.clone();
         let schedule_delayed: DelayedEventScheduler = Arc::new(move |pending, due| {
             debouncer_for_schedule
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
+                .lock_or_recover()
                 .handle_event_due(pending, due);
             let _ = kick_for_schedule.send(());
         });
@@ -683,9 +639,7 @@ impl WatchCoordinator {
                     break;
                 }
                 let (expired, deadline) = {
-                    let mut engine = debouncer_for_thread
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner);
+                    let mut engine = debouncer_for_thread.lock_or_recover();
                     (engine.drain_expired_events(), engine.next_deadline())
                 };
                 // Dispatch each event on its own thread, off the flush loop
@@ -770,8 +724,7 @@ impl WatchCoordinator {
     pub fn unwatch_directory<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
         #[cfg(test)]
         self.unwatch_calls
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .push(path.as_ref().to_path_buf());
         if let Some(watcher) = &mut self.watcher {
             watcher.unwatch(path)?;
@@ -787,8 +740,7 @@ impl WatchCoordinator {
     pub fn unwatch_directory_shallow<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
         #[cfg(test)]
         self.unwatch_calls
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .push(path.as_ref().to_path_buf());
         if let Some(watcher) = &mut self.watcher {
             watcher.unwatch_shallow(path)?;
@@ -799,10 +751,7 @@ impl WatchCoordinator {
     /// Every path this instance was asked to unwatch, in call order.
     #[cfg(test)]
     pub fn unwatch_calls(&self) -> Vec<PathBuf> {
-        self.unwatch_calls
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+        self.unwatch_calls.lock_or_recover().clone()
     }
 
     /// Logical registrations (with owner counts) and the OS watches beneath them.
@@ -827,20 +776,13 @@ impl WatchCoordinator {
             let _ = handle.join();
         }
 
-        self.debouncer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+        self.debouncer.lock_or_recover().clear();
     }
 
     /// Deliver pending debounced events synchronously; the callback runs
     /// after the debouncer lock is released.
     pub fn flush_pending_events(&self) {
-        let expired = self
-            .debouncer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .drain_expired_events();
+        let expired = self.debouncer.lock_or_recover().drain_expired_events();
         for event in expired {
             (self.callback)(event);
         }

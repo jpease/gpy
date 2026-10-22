@@ -3,8 +3,9 @@
 //! Resolution hits the filesystem, so it's cached per distinct list and
 //! redone after [`RESOLVE_TTL`].
 
+use crate::sync_ext::MutexExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::GitSettings;
@@ -82,7 +83,7 @@ impl MatcherCache {
     /// every other Git gate check.
     fn matcher(&self, entries: &[String], home: Option<&str>, now: Instant) -> Arc<SkipMatcher> {
         {
-            let guard = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            let guard = self.0.lock_or_recover();
             if let Some(cached) = guard.as_ref().filter(|c| {
                 c.entries == entries
                     && c.home.as_deref() == home
@@ -92,7 +93,7 @@ impl MatcherCache {
             }
         }
         let matcher = Arc::new(SkipMatcher::new(entries, home.map(Path::new)));
-        let mut guard = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut guard = self.0.lock_or_recover();
         // A concurrent resolver may have stored a newer result meanwhile; keep it.
         let newer_stored = guard.as_ref().is_some_and(|c| {
             c.entries == entries && c.home.as_deref() == home && c.resolved_at > now

@@ -3,13 +3,14 @@
 use super::super::WatchRegistry;
 use super::super::watch_set::{WatchMode, WatchSet};
 use super::backend::{BackendKind, WatcherBackend, build_poll_watcher, poll_watch_targets};
+use crate::sync_ext::MutexExt;
 use notify::event::{EventKind, Flag};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -142,7 +143,7 @@ pub(super) fn poll_swap_snapshot(
     backend: &Arc<Mutex<WatcherBackend>>,
     stop_flag: &AtomicBool,
 ) -> Option<Vec<PathBuf>> {
-    let snapshot_guard = backend.lock().unwrap_or_else(PoisonError::into_inner);
+    let snapshot_guard = backend.lock_or_recover();
     if stop_flag.load(Ordering::Relaxed) || snapshot_guard.watcher.is_none() {
         return None;
     }
@@ -168,7 +169,7 @@ pub(super) fn apply_poll_swap(
     registry: &Arc<WatchRegistry>,
     precomputed: &HashMap<PathBuf, Vec<PathBuf>>,
 ) -> Option<Vec<PathBuf>> {
-    let mut backend_guard = backend.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut backend_guard = backend.lock_or_recover();
     if stop_flag.load(Ordering::Relaxed) || backend_guard.watcher.is_none() {
         return None;
     }

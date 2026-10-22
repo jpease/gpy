@@ -6,6 +6,7 @@ use super::probe::{
     native_backend_delivers_events,
 };
 use super::*;
+use crate::sync_ext::MutexExt;
 use crate::watcher::{FileEvent, GitPaths, PendingCallback, PendingEvent};
 use notify::event::{
     AccessKind, AccessMode, CreateKind, DataChange, EventAttributes, EventKind, Flag, MetadataKind,
@@ -19,10 +20,7 @@ use std::time::Instant;
 impl FileSystemWatcher {
     /// The backend currently armed.
     fn backend_kind(&self) -> BackendKind {
-        self.backend
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .kind
+        self.backend.lock_or_recover().kind
     }
 
     /// Swap to the polling backend on demand via the production swap path.
@@ -45,16 +43,14 @@ fn set_tracked_ignored_hook_for_test(
     hook: impl Fn(&Path) -> Vec<PathBuf> + Send + Sync + 'static,
 ) {
     tracked_ignored_test_hooks()
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+        .lock_or_recover()
         .insert(repo_root.to_path_buf(), Arc::new(hook));
 }
 
 /// Remove the stand-in backend for `repo_root`, restoring the real one.
 fn clear_tracked_ignored_hook_for_test(repo_root: &Path) {
     tracked_ignored_test_hooks()
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+        .lock_or_recover()
         .remove(repo_root);
 }
 

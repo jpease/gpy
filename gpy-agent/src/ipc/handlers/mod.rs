@@ -2,6 +2,7 @@
 //! behind the [`RequestHandler`] trait.
 
 use crate::ipc::{ClientDirectory, Message, Response};
+use crate::sync_ext::MutexExt;
 use crate::warn_log;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -140,7 +141,7 @@ impl<V> SharedJob<V> {
 
     /// Complete the job and wake all waiters.
     pub(super) fn complete(&self, value: V) {
-        *self.result.lock().unwrap_or_else(PoisonError::into_inner) = Some(value);
+        *self.result.lock_or_recover() = Some(value);
         self.ready.notify_all();
     }
 
@@ -150,7 +151,7 @@ impl<V> SharedJob<V> {
     where
         V: Clone,
     {
-        let mut result = self.result.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut result = self.result.lock_or_recover();
         loop {
             if let Some(value) = result.as_ref() {
                 return value.clone();
@@ -170,7 +171,7 @@ impl<V> SharedJob<V> {
     where
         V: Clone,
     {
-        let result_guard = self.result.lock().unwrap_or_else(PoisonError::into_inner);
+        let result_guard = self.result.lock_or_recover();
         let (final_guard, _timed_out) = self
             .ready
             .wait_timeout_while(result_guard, timeout, |result| result.is_none())
@@ -204,10 +205,7 @@ where
     pub(super) fn finish(mut self, value: V) {
         self.fallback = None;
         if let Some(key) = self.key.take() {
-            self.jobs
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .remove(&key);
+            self.jobs.lock_or_recover().remove(&key);
         }
         self.shared_job.complete(value);
     }
@@ -224,10 +222,7 @@ where
     fn drop(&mut self) {
         // No-op if `finish` already ran.
         if let Some(key) = self.key.take() {
-            self.jobs
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .remove(&key);
+            self.jobs.lock_or_recover().remove(&key);
         }
         if let Some(fallback) = self.fallback.take() {
             self.shared_job.complete(fallback);
@@ -258,7 +253,7 @@ where
         F: FnOnce(JobGuard<K, V>),
     {
         let job = {
-            let mut jobs = self.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut jobs = self.jobs.lock_or_recover();
             if let Some(job) = jobs.get(&key) {
                 return Arc::clone(job);
             }

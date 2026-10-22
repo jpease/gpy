@@ -4,11 +4,12 @@
 
 use crate::config::schema::{get_config_paths, resolve_active_config};
 use crate::config::{Config, loader::load_config_from_file};
+use crate::sync_ext::{MutexExt, RwLockExt};
 use crate::watcher::hot_reload::{HotReloadSlot, PollTarget};
 use crate::watcher::{WatchCoordinator, WatchRegistry};
 use crate::{Error, Result, debug_log};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 /// Runs before a reload commits; an error aborts it and keeps the old config.
@@ -103,10 +104,7 @@ impl ConfigManager {
 
     /// Set the callback run before each reload commits.
     pub fn set_reload_callback(&self, callback: ConfigReloadCallback) {
-        *self
-            .on_reload
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(callback);
+        *self.on_reload.lock_or_recover() = Some(callback);
     }
 
     #[cfg(test)]
@@ -115,12 +113,7 @@ impl ConfigManager {
     /// # Panics
     /// Panics when the callback returns an error.
     pub fn trigger_reload_for_tests(&self, old_config: &Config, new_config: &Config) {
-        if let Some(callback) = self
-            .on_reload
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-        {
+        if let Some(callback) = self.on_reload.lock_or_recover().as_ref() {
             callback(old_config, new_config).expect("reload callback should succeed");
         }
     }
@@ -128,7 +121,7 @@ impl ConfigManager {
     #[cfg(test)]
     /// Overwrite the in-memory config.
     pub fn overwrite_for_tests(&self, new_config: Config) {
-        *self.config.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(new_config);
+        *self.config.write_or_recover() = Arc::new(new_config);
     }
 
     /// Current config (cheap `Arc` clone); recovers from a poisoned lock.
@@ -163,11 +156,7 @@ impl ConfigManager {
         registry: &Arc<WatchRegistry>,
     ) -> Result<()> {
         let started = self.hot_reload.start_watcher(|| {
-            let on_reload_option = self
-                .on_reload
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone();
+            let on_reload_option = self.on_reload.lock_or_recover().clone();
             let rearm: Box<dyn Fn() + Send + Sync + 'static> = {
                 let candidates = Arc::clone(&self.candidates);
                 let watcher = self.hot_reload.watcher_handle();
@@ -198,10 +187,7 @@ impl ConfigManager {
             for candidate in self.candidates.iter() {
                 Self::register_candidate(registry, candidate);
             }
-            *self
-                .watch_registry
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(registry));
+            *self.watch_registry.lock_or_recover() = Some(Arc::clone(registry));
             Ok(coordinator)
         })?;
 
@@ -272,14 +258,11 @@ impl ConfigManager {
         debug_log!("config", "Config file changed, reloading...");
 
         let _serialized = Self::enter_reload(reload_gate);
-        let old_config = config
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
+        let old_config = config.read_or_recover().clone();
 
         match Self::try_reload(candidates, on_reload, &old_config) {
             Ok(new_config) => {
-                *config.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(new_config);
+                *config.write_or_recover() = Arc::new(new_config);
                 debug_log!("config", "Config reloaded successfully");
             }
             Err(e) => {
@@ -323,10 +306,7 @@ impl ConfigManager {
         };
         match coordinator.watch_directory_shallow(&dir) {
             Ok(()) => {
-                *self
-                    .canonical_watch
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner) = Some(dir);
+                *self.canonical_watch.lock_or_recover() = Some(dir);
             }
             Err(e) => {
                 debug_log!("config", "Failed to watch {}: {}", dir.display(), e);
@@ -354,7 +334,7 @@ impl ConfigManager {
         let next = Self::active_path(candidates)
             .as_deref()
             .and_then(Self::canonical_watch_dir);
-        let mut current = canonical_dir.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut current = canonical_dir.lock_or_recover();
         if *current == next {
             return;
         }
@@ -382,7 +362,7 @@ impl ConfigManager {
 
     /// Recover a poisoned gate so a panicking callback doesn't wedge later reloads.
     fn enter_reload(reload_gate: &Mutex<()>) -> std::sync::MutexGuard<'_, ()> {
-        reload_gate.lock().unwrap_or_else(PoisonError::into_inner)
+        reload_gate.lock_or_recover()
     }
 
     fn poll_target(&self) -> PollTarget {
@@ -390,11 +370,7 @@ impl ConfigManager {
         let candidates_for_reload = Arc::clone(&self.candidates);
         let config_arc = Arc::clone(&self.config);
         let reload_gate = Arc::clone(&self.reload_gate);
-        let on_reload_option = self
-            .on_reload
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
+        let on_reload_option = self.on_reload.lock_or_recover().clone();
 
         PollTarget {
             path_of: Box::new(move || Self::active_path(&candidates_for_poll)),
@@ -498,20 +474,13 @@ impl ConfigManager {
             debug_log!("config", "Stopped watching config file");
         }
         // May be the agent's shared registry, not a private one.
-        let started_with = self
-            .watch_registry
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
+        let started_with = self.watch_registry.lock_or_recover().take();
         if let Some(registry) = started_with {
             for candidate in self.candidates.iter() {
                 Self::unregister_candidate(&registry, candidate);
             }
         }
-        *self
-            .canonical_watch
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = None;
+        *self.canonical_watch.lock_or_recover() = None;
     }
 
     /// Re-resolve and reload now, serialized with watcher/poll reloads.
@@ -526,11 +495,7 @@ impl ConfigManager {
             .map_err(|_| Error::config("Config lock poisoned".to_owned()))?
             .clone();
 
-        let on_reload_option = self
-            .on_reload
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
+        let on_reload_option = self.on_reload.lock_or_recover().clone();
         let new_config =
             Self::try_reload(&self.candidates, on_reload_option.as_ref(), &old_config)?;
 

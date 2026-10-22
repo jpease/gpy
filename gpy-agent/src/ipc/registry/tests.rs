@@ -1,6 +1,8 @@
 use super::ClientDirectory;
 #[cfg(unix)]
 use super::ThrottleRecord;
+#[cfg(unix)]
+use crate::sync_ext::MutexExt;
 use std::path::Path;
 #[cfg(unix)]
 use std::path::PathBuf;
@@ -13,8 +15,7 @@ use std::time::Instant;
 impl ClientDirectory {
     fn client_cwd(&self, pid: u32) -> Option<PathBuf> {
         self.inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .lock_or_recover()
             .get(&pid)
             .and_then(|info| info.cwd.clone())
     }

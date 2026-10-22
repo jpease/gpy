@@ -2,10 +2,11 @@
 //! OS notifications plus an optional polling fallback.
 
 use crate::Result;
+use crate::sync_ext::MutexExt;
 use crate::watcher::WatchCoordinator;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -123,7 +124,7 @@ impl HotReloadSlot {
     where
         F: FnOnce() -> Result<WatchCoordinator>,
     {
-        let mut watcher_guard = self.watcher.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut watcher_guard = self.watcher.lock_or_recover();
         if watcher_guard.is_some() {
             return Ok(false);
         }
@@ -161,10 +162,7 @@ impl HotReloadSlot {
         target: PollTarget,
     ) {
         let PollTarget { path_of, reload } = target;
-        let mut handle_guard = self
-            .poll_handle
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut handle_guard = self.poll_handle.lock_or_recover();
         if handle_guard.is_some() {
             return;
         }
@@ -223,16 +221,13 @@ impl HotReloadSlot {
     pub fn stop(&self) -> bool {
         self.poll_stop.store(true, Ordering::Relaxed);
         {
-            let mut handle_guard = self
-                .poll_handle
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
+            let mut handle_guard = self.poll_handle.lock_or_recover();
             if let Some(handle) = handle_guard.take() {
                 let _ = handle.join();
             }
         }
 
-        let mut watcher_guard = self.watcher.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut watcher_guard = self.watcher.lock_or_recover();
         watcher_guard
             .take()
             .map(|mut watcher| watcher.stop())
@@ -249,7 +244,8 @@ mod tests {
     #![allow(missing_docs)]
 
     use super::{HotReloadSlot, PollTarget, content_fingerprint, parse_poll_interval_ms};
-    use std::sync::{Arc, Mutex, PoisonError};
+    use crate::sync_ext::MutexExt;
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     /// A same-length rewrite landing right after spawn (before the first tick)
@@ -271,10 +267,7 @@ mod tests {
                 path_of: Box::new(move || Some(watched.clone())),
                 reload: Box::new(move |path| {
                     let content = std::fs::read_to_string(path).unwrap_or_default();
-                    recorded
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .push(content);
+                    recorded.lock_or_recover().push(content);
                 }),
             },
         );
@@ -283,8 +276,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(6);
         let seen = loop {
             let seen = reloads
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
+                .lock_or_recover()
                 .iter()
                 .any(|content| content.contains("black"));
             if seen || Instant::now() > deadline {

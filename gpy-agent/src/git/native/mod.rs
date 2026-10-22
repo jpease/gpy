@@ -7,12 +7,13 @@ use crate::Error;
 use crate::Result;
 use crate::config::types::GitTimeout;
 use crate::profiling::Timer;
+use crate::sync_ext::MutexExt;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Git output parsing logic.
@@ -103,8 +104,7 @@ impl NativeGitBackend {
     /// [`Self::ignores_case`], with the uncached read finishing by `deadline`.
     fn ignores_case_until(repo_path: &Path, deadline: Instant) -> bool {
         let cached = IGNORE_CASE
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .as_ref()
             .and_then(|known| known.get(repo_path).copied());
         if let Some(ignore_case) = cached {
@@ -129,8 +129,7 @@ impl NativeGitBackend {
         };
         let ignore_case = value.trim() == "true";
         IGNORE_CASE
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .get_or_insert_with(HashMap::new)
             .insert(repo_path.to_path_buf(), ignore_case);
         ignore_case
@@ -169,8 +168,7 @@ impl NativeGitBackend {
         let repo_path_buf = repo_path.to_path_buf();
 
         let already_checked = UNTRACKED_CACHE_CHECKED
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .lock_or_recover()
             .get_or_insert_with(HashSet::new)
             .contains(&repo_path_buf);
 
@@ -182,11 +180,7 @@ impl NativeGitBackend {
             let _ = Self::enable_untracked_cache(repo_path, deadline);
         }
 
-        if let Some(set) = UNTRACKED_CACHE_CHECKED
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_mut()
-        {
+        if let Some(set) = UNTRACKED_CACHE_CHECKED.lock_or_recover().as_mut() {
             set.insert(repo_path_buf);
         }
     }

@@ -50,6 +50,8 @@ pub mod profiling;
 pub mod security;
 /// Shell identification and syntax templates.
 pub mod shell;
+/// Poison-recovering lock acquisition (ADR-0008).
+mod sync_ext;
 /// Starship-compatible prompt template engine (parser + evaluator).
 pub mod template;
 /// Theme management with hot-reload support.
