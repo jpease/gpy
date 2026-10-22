@@ -736,23 +736,25 @@ function __gpy_request_clock() {
 }
 
 # Only for a Starship-style `__hostname_format`. No oneshot fallback by
-# design: a dead daemon yields no segment rather than a per-prompt fork.
+# design: with a dead daemon (or an error reply) this returns 1 and the
+# segment draws its local pill rather than fork per prompt.
 function __gpy_request_hostname() {
     local hostname=$1
     local is_last=$2
     local prev_bg=${3:-}
     local is_ssh=${4:-}
+    local is_first=${5:-}
 
     local json_hostname flags_tail ssh_json=""
     __gpy_escape_json_into json_hostname "$hostname"
-    __gpy_json_flags_tail_into flags_tail "$is_last" "" "$prev_bg"
+    __gpy_json_flags_tail_into flags_tail "$is_last" "$is_first" "$prev_bg"
     [[ "$is_ssh" == "1" ]] && ssh_json=',"is_ssh":true'
     local request="{\"op\":\"hostname\",\"hostname\":\"${json_hostname}\",\"format\":\"zsh-prompt\"${flags_tail}${ssh_json}}"
 
     local result
     result=$(__gpy_send_json "$request")
 
-    if [[ -n "$result" ]]; then
+    if [[ -n "$result" && "$result" != '{"error"'* ]]; then
         print -r -- "$result"
         return 0
     fi
@@ -764,16 +766,44 @@ function __gpy_request_username() {
     local username=$1
     local is_last=$2
     local prev_bg=${3:-}
+    local is_first=${4:-}
 
     local json_username flags_tail
     __gpy_escape_json_into json_username "$username"
-    __gpy_json_flags_tail_into flags_tail "$is_last" "" "$prev_bg"
+    __gpy_json_flags_tail_into flags_tail "$is_last" "$is_first" "$prev_bg"
     local request="{\"op\":\"username\",\"username\":\"${json_username}\",\"format\":\"zsh-prompt\"${flags_tail}}"
 
     local result
     result=$(__gpy_send_json "$request")
 
-    if [[ -n "$result" ]]; then
+    if [[ -n "$result" && "$result" != '{"error"'* ]]; then
+        print -r -- "$result"
+        return 0
+    fi
+    return 1
+}
+
+# Exit-status pill request ("exit_status": the bare "status" op is the agent
+# health check). success is a 0/1 flag (1 == exit status 0). No oneshot
+# fallback: the status segment draws the pill locally instead. An error reply
+# (an older agent without the op) counts as no reply.
+function __gpy_request_exit_status() {
+    local success=$1
+    local is_last=${2:-}
+    local prev_bg=${3:-}
+    local is_first=${4:-}
+
+    local success_val=false
+    [[ "$success" == "1" ]] && success_val=true
+
+    local flags_tail
+    __gpy_json_flags_tail_into flags_tail "$is_last" "$is_first" "$prev_bg"
+    local request="{\"op\":\"exit_status\",\"success\":${success_val},\"format\":\"zsh-prompt\"${flags_tail}}"
+
+    local result
+    result=$(__gpy_send_json "$request")
+
+    if [[ -n "$result" && "$result" != '{"error"'* ]]; then
         print -r -- "$result"
         return 0
     fi

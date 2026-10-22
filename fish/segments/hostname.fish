@@ -14,27 +14,31 @@ function segment_hostname_detect
     __gpy_hostname_should_show $__gpy_is_ssh $__hostname_show_always
 end
 
-function segment_hostname_render --argument-names is_last
-    if test -n "$__hostname_format"
+function segment_hostname_render --argument-names is_last is_first
+    # The agent draws the pill when the theme has a format; no reply (agent
+    # down, disabled, or an error) falls through to the local pill.
+    if test -n "$__hostname_format"; and functions -q __gpy_request_hostname
         # Format content is presence-only; the agent re-derives it.
-        # One-token local: an empty-list binding would shift prev_bg.
+        # One-token locals: an empty-list binding would shift prev_bg.
         set -l is_last_value ""
         test "$is_last" = true; and set is_last_value true
-        set -l result (__gpy_request_hostname $hostname $is_last_value "$__gpy_last_segment_bg" "$__gpy_is_ssh" | string collect)
+        set -l is_first_value ""
+        test "$is_first" = true; and set is_first_value true
+        set -l result (__gpy_request_hostname $hostname $is_last_value "$__gpy_last_segment_bg" "$__gpy_is_ssh" $is_first_value | string collect)
         if test -n "$result"
             printf '%s' "$result"
-            # Only track bg when a pill rendered.
             set -g __gpy_last_segment_bg $__color_hostname_bg
+            return
         end
-        return
     end
 
+    # No format (or no reply): draw locally, with the one leading space every pill has.
     # Unset trim delimiter means `.`; explicit empty means "no trim".
     set -l trim_at .
     set -q __hostname_trim_at; and set trim_at "$__hostname_trim_at"
     set -l name (__gpy_hostname_trim $hostname "$trim_at")
-    set -l label "$name"
-    test "$__gpy_is_ssh" = 1; and test -n "$__icon_hostname"; and set label "$__icon_hostname $name"
+    set -l label " $name"
+    test "$__gpy_is_ssh" = 1; and test -n "$__icon_hostname"; and set label " $__icon_hostname $name"
     gpy_section_standalone $__color_hostname_bg $__color_hostname_fg "$label" $is_last
     set -g __gpy_last_segment_bg $__color_hostname_bg
 end

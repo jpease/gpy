@@ -10,6 +10,7 @@ use crate::formatter::duration_resolver::DurationResolver;
 use crate::formatter::git_resolver::GitResolver;
 use crate::formatter::hostname_resolver::HostnameResolver;
 use crate::formatter::separator::Glyphs;
+use crate::formatter::status_resolver::StatusResolver;
 use crate::formatter::username_resolver::UsernameResolver;
 use crate::formatter::{Formatter, PromptDialect, RenderContext};
 use crate::ipc::{LanguageInfo, Response, protocol};
@@ -80,39 +81,12 @@ impl Formatter for FishAnsiFormatter {
                     render_via_template(&resolver, ctx, dialect, f)
                 },
             )),
-            Response::Character { success } => Ok(render_segment(
-                "character segment",
-                ctx.theme.segments.character.format.as_deref(),
-                |f| {
-                    let resolver = CharacterResolver::new(*success, ctx.theme, ctx.position)
-                        .with_glyphs(Glyphs::from(&ctx.config.ui));
-                    render_via_template(&resolver, ctx, dialect, f)
-                },
-            )),
-            Response::Hostname { hostname, is_ssh } => Ok(render_segment(
-                "hostname segment",
-                ctx.theme.segments.hostname.format.as_deref(),
-                |f| {
-                    let resolver = HostnameResolver::new(
-                        hostname.to_owned(),
-                        *is_ssh,
-                        ctx.theme,
-                        ctx.position,
-                    )
-                    .with_glyphs(Glyphs::from(&ctx.config.ui));
-                    render_via_template(&resolver, ctx, dialect, f)
-                },
-            )),
-            Response::Username { username } => Ok(render_segment(
-                "username segment",
-                ctx.theme.segments.username.format.as_deref(),
-                |f| {
-                    let resolver =
-                        UsernameResolver::new(username.to_owned(), ctx.theme, ctx.position)
-                            .with_glyphs(Glyphs::from(&ctx.config.ui));
-                    render_via_template(&resolver, ctx, dialect, f)
-                },
-            )),
+            Response::Character { success } => Ok(render_character(*success, ctx, dialect)),
+            Response::ExitStatus { success } => Ok(render_exit_status(*success, ctx, dialect)),
+            Response::Hostname { hostname, is_ssh } => {
+                Ok(render_hostname(hostname, *is_ssh, ctx, dialect))
+            }
+            Response::Username { username } => Ok(render_username(username, ctx, dialect)),
             // The reply is printed verbatim into the prompt, so protocol JSON must never reach it.
             Response::Error { message } => {
                 crate::debug_log!("formatter", "omitting segment after error: {message}");
@@ -127,6 +101,61 @@ impl Formatter for FishAnsiFormatter {
                 }),
         }
     }
+}
+
+/// Character, status, hostname and username: segments whose data the client supplies.
+fn render_character(success: bool, ctx: &RenderContext<'_>, dialect: PromptDialect) -> String {
+    render_segment(
+        "character segment",
+        ctx.theme.segments.character.format.as_deref(),
+        |f| {
+            let resolver = CharacterResolver::new(success, ctx.theme, ctx.position)
+                .with_glyphs(Glyphs::from(&ctx.config.ui));
+            render_via_template(&resolver, ctx, dialect, f)
+        },
+    )
+}
+
+fn render_exit_status(success: bool, ctx: &RenderContext<'_>, dialect: PromptDialect) -> String {
+    render_segment(
+        "status segment",
+        ctx.theme.segments.status.format.as_deref(),
+        |f| {
+            let resolver = StatusResolver::new(success, ctx.theme, ctx.position)
+                .with_glyphs(Glyphs::from(&ctx.config.ui));
+            render_via_template(&resolver, ctx, dialect, f)
+        },
+    )
+}
+
+fn render_hostname(
+    hostname: &str,
+    is_ssh: bool,
+    ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
+) -> String {
+    render_segment(
+        "hostname segment",
+        ctx.theme.segments.hostname.format.as_deref(),
+        |f| {
+            let resolver =
+                HostnameResolver::new(hostname.to_owned(), is_ssh, ctx.theme, ctx.position)
+                    .with_glyphs(Glyphs::from(&ctx.config.ui));
+            render_via_template(&resolver, ctx, dialect, f)
+        },
+    )
+}
+
+fn render_username(username: &str, ctx: &RenderContext<'_>, dialect: PromptDialect) -> String {
+    render_segment(
+        "username segment",
+        ctx.theme.segments.username.format.as_deref(),
+        |f| {
+            let resolver = UsernameResolver::new(username.to_owned(), ctx.theme, ctx.position)
+                .with_glyphs(Glyphs::from(&ctx.config.ui));
+            render_via_template(&resolver, ctx, dialect, f)
+        },
+    )
 }
 
 /// Render `resolver` with `format`, inheriting `ctx`'s prev colors and palette, and encode.

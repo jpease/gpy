@@ -27,7 +27,9 @@ impl Formatter for JsonFormatter {
             Response::Directory { cwd, read_only } => json!({"cwd": cwd, "read_only": read_only}),
             Response::Clock { shell } => json!({"shell": shell.as_str()}),
             Response::Duration { duration_ms } => json!({"duration_ms": duration_ms}),
-            Response::Character { success } => json!({"success": success}),
+            Response::Character { success } | Response::ExitStatus { success } => {
+                json!({"success": success})
+            }
             Response::Hostname { hostname, is_ssh } => {
                 json!({"hostname": hostname, "is_ssh": is_ssh})
             }
@@ -248,6 +250,10 @@ mod tests {
             (
                 Response::Character { success: false },
                 r#"{"success":false}"#,
+            ),
+            (
+                Response::ExitStatus { success: true },
+                r#"{"success":true}"#,
             ),
             (
                 Response::Hostname {

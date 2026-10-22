@@ -10,6 +10,7 @@ pub(crate) mod hostname_resolver;
 mod json;
 pub(crate) mod language_resolver;
 pub(crate) mod separator;
+pub(crate) mod status_resolver;
 mod style_encoder;
 pub(crate) mod username_resolver;
 

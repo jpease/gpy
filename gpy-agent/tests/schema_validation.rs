@@ -558,6 +558,14 @@ mod schema_files {
                 r#"{"op":"hostname","hostname":"box","format":"ansi","is_ssh":true}"#,
             ),
             (
+                "hostname",
+                r#"{"op":"hostname","hostname":"box","format":"ansi","is_first":true}"#,
+            ),
+            (
+                "exit_status",
+                r#"{"op":"exit_status","success":false,"format":"zsh-prompt","is_last":true,"is_first":true,"prev_bg":"red"}"#,
+            ),
+            (
                 "username",
                 r#"{"op":"username","username":"me","format":"ansi"}"#,
             ),
@@ -684,6 +692,10 @@ mod schema_files {
             (
                 "character",
                 render_json(&Response::Character { success: true }),
+            ),
+            (
+                "exit_status",
+                render_json(&Response::ExitStatus { success: false }),
             ),
             (
                 "hostname",

@@ -7,17 +7,23 @@ function __gpy_segment_hostname() {
     local prev_bg=${2:-}
     local is_first=${3:-}
 
-    if [[ -n "${__hostname_format:-}" ]]; then
-        __gpy_request_hostname "$HOST" "$is_last" "$prev_bg" "${__gpy_is_ssh:-0}"
-        return
+    # The agent draws the pill when the theme has a format; no reply (agent
+    # down, disabled, or an error) falls through to the local pill.
+    if [[ -n "${__hostname_format:-}" ]] && (( $+functions[__gpy_request_hostname] )); then
+        local rendered
+        if rendered=$(__gpy_request_hostname "$HOST" "$is_last" "$prev_bg" "${__gpy_is_ssh:-0}" "$is_first"); then
+            print -r -- "$rendered"
+            return 0
+        fi
     fi
 
+    # No format (or no reply): draw locally, with the one leading space every pill has.
     # No-colon `${var-.}`: an explicit empty trim_at means "no trim".
     local delim=${__hostname_trim_at-.}
     local name=$HOST
     [[ -n "$delim" ]] && name=${HOST%%"$delim"*}   # trim at first delim; empty delim = no trim
-    local label=$name
-    [[ "${__gpy_is_ssh:-0}" == "1" && -n "${__icon_hostname:-}" ]] && label="$__icon_hostname $name"
+    local label=" $name"
+    [[ "${__gpy_is_ssh:-0}" == "1" && -n "${__icon_hostname:-}" ]] && label=" $__icon_hostname $name"
 
     __gpy_prompt_escape "$label" label
     __gpy_section_standalone "${__color_hostname_bg:-}" "${__color_hostname_fg:-}" \

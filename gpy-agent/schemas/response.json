@@ -185,7 +185,8 @@
           "type": "boolean"
         }
       },
-      "title": "Character",
+      "title": "Character / ExitStatus",
+      "description": "Same shape for the character and the status (ExitStatus) segments",
       "additionalProperties": false
     },
     {

@@ -42,6 +42,7 @@ pub fn validate_segment_templates(
         ("clock", &s.clock.format),
         ("hostname", &s.hostname.format),
         ("username", &s.username.format),
+        ("status", &s.status.format),
     ] {
         if let Some(template) = format.as_deref() {
             validate_one(name, template, palette)?;

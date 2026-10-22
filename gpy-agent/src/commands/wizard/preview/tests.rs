@@ -978,3 +978,74 @@ fn preview_status_pill_drops_private_use_icon_when_icons_are_off() {
         );
     }
 }
+
+/// Hostname, username and status draw like every default-theme pill: first in
+/// the chain they start with exactly one space and no opening cap.
+#[test]
+fn preview_default_theme_pills_lead_with_one_space_when_first() {
+    let theme = crate::theme::ThemeManager::builtin("default")
+        .expect("default theme should always load")
+        .get();
+    let config = make_config(
+        &[],
+        GitLanguageFlags {
+            git: false,
+            language: false,
+        },
+    );
+    let facts = make_facts();
+    for (segment, content) in [
+        ("hostname", "host"),
+        ("username", "tester"),
+        ("status", "\u{f058}"),
+    ] {
+        let first = FormatterRenderContext::new(&config, &theme, SegmentPosition::FIRST);
+        let first_text: String = render_segment(segment, &config, &theme, &facts, &first)
+            .unwrap_or_else(|| panic!("{segment} renders with the default theme"))
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect();
+        assert!(
+            first_text.starts_with(&format!(" {content}")) && !first_text.contains('\u{e0ba}'),
+            "{segment}: first pill must start with one space and no cap, got {first_text:?}"
+        );
+
+        let middle = FormatterRenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
+        let middle_text: String = render_segment(segment, &config, &theme, &facts, &middle)
+            .unwrap_or_else(|| panic!("{segment} renders with the default theme"))
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect();
+        assert!(
+            middle_text.starts_with(&format!("\u{e0ba} {content}")),
+            "{segment}: non-first pill opens with the cap then one space, got {middle_text:?}"
+        );
+    }
+}
+
+/// A `format` on the status segment drives the preview pill, in the failure color too.
+#[test]
+fn preview_status_format_uses_the_outcome_colors() {
+    let config = make_config(
+        &["status"],
+        GitLanguageFlags {
+            git: false,
+            language: false,
+        },
+    );
+    let state = test_state(config.clone());
+    let mut theme = ThemeConfig::default();
+    theme.segments.status.format = Some("[ $symbol]($style)".to_owned());
+    theme.segments.status.ok_icon = Some(Icon::new("OK").expect("valid icon"));
+    theme.segments.status.fail_icon = Some(Icon::new("NO").expect("valid icon"));
+    let mut facts = make_facts();
+
+    let text_for = |sample: &PreviewFacts| {
+        let lines = render_preview_line(&state, &config, &theme, &Palette::default(), sample);
+        line_text(lines.first().expect("chain line"))
+    };
+    facts.sample_character_success = true;
+    assert_eq!(text_for(&facts).trim_end(), " OK");
+    facts.sample_character_success = false;
+    assert_eq!(text_for(&facts).trim_end(), " NO");
+}

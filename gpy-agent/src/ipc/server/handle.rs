@@ -749,6 +749,7 @@ mod route_prev_bg_tests {
             hostname: "h".to_owned(),
             format: Format::Json,
             is_last: false,
+            is_first: false,
             is_ssh: true,
             prev_bg: None,
         };
@@ -770,6 +771,7 @@ mod route_prev_bg_tests {
             hostname: "my-host".to_owned(),
             format: Format::Ansi,
             is_last: true,
+            is_first: true,
             is_ssh: false,
             prev_bg: Some("blue".to_owned()),
         };
@@ -785,6 +787,10 @@ mod route_prev_bg_tests {
         assert_eq!(result.format, Format::Ansi);
         assert_eq!(result.notify_path, None);
         assert!(result.is_last);
+        assert!(
+            result.is_first,
+            "is_first must reach the formatter for hostname"
+        );
         assert_eq!(result.prev_bg, Some("blue".to_owned()));
     }
 
@@ -795,6 +801,7 @@ mod route_prev_bg_tests {
             username: "u".to_owned(),
             format: Format::Json,
             is_last: false,
+            is_first: false,
             prev_bg: None,
         };
         let response = registry.route(&msg).expect("routing must succeed");
@@ -814,6 +821,7 @@ mod route_prev_bg_tests {
             username: "my-user".to_owned(),
             format: Format::Ansi,
             is_last: true,
+            is_first: true,
             prev_bg: Some("blue".to_owned()),
         };
         let result = ConnectionHandler::route_request_secure(&registry, &security_config, &msg);
@@ -827,6 +835,50 @@ mod route_prev_bg_tests {
         assert_eq!(result.format, Format::Ansi);
         assert_eq!(result.notify_path, None);
         assert!(result.is_last);
+        assert!(
+            result.is_first,
+            "is_first must reach the formatter for username"
+        );
+        assert_eq!(result.prev_bg, Some("blue".to_owned()));
+    }
+
+    #[test]
+    fn handler_registry_routes_exit_status_request_to_exit_status_response() {
+        let registry = make_handler_registry();
+        let msg = Message::ExitStatusRequest {
+            success: false,
+            format: Format::Json,
+            is_last: false,
+            is_first: false,
+            prev_bg: None,
+        };
+        let response = registry.route(&msg).expect("routing must succeed");
+        match response {
+            crate::ipc::Response::ExitStatus { success } => assert!(!success),
+            other => panic!("expected Response::ExitStatus, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn route_request_secure_threads_exit_status_request_position_and_prev_bg() {
+        let registry = make_handler_registry();
+        let security_config = GuardSettings::default();
+        let msg = Message::ExitStatusRequest {
+            success: true,
+            format: Format::Ansi,
+            is_last: false,
+            is_first: true,
+            prev_bg: Some("blue".to_owned()),
+        };
+        let result = ConnectionHandler::route_request_secure(&registry, &security_config, &msg);
+
+        match result.response {
+            crate::ipc::Response::ExitStatus { success } => assert!(success),
+            other => panic!("expected Response::ExitStatus, got {other:?}"),
+        }
+        assert_eq!(result.format, Format::Ansi);
+        assert!(result.is_first);
+        assert!(!result.is_last);
         assert_eq!(result.prev_bg, Some("blue".to_owned()));
     }
 }

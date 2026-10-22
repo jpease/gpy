@@ -109,8 +109,8 @@ if [[ -z "$output" ]]; then
     exit 1
 fi
 # black text (30) on the green ok background (42), icon between the caps
-if [[ "$output" != *"30;42m"*"OK"* ]]; then
-    echo "FAIL: Status segment should draw the ok pill (black on green); got: $output"
+if [[ "$output" != *"30;42m"*" OK"* ]]; then
+    echo "FAIL: Status segment should draw the ok pill (black on green, one leading space); got: $output"
     exit 1
 fi
 echo "PASS: Status success"
@@ -122,11 +122,46 @@ if [[ -z "$output" ]]; then
     exit 1
 fi
 # white text (37) on the red fail background (41)
-if [[ "$output" != *"37;41m"*"NO"* || "$output" == *"OK"* ]]; then
-    echo "FAIL: Status segment should draw the fail pill (white on red); got: $output"
+if [[ "$output" != *"37;41m"*" NO"* || "$output" == *"OK"* ]]; then
+    echo "FAIL: Status segment should draw the fail pill (white on red, one leading space); got: $output"
     exit 1
 fi
 echo "PASS: Status failure"
+
+# With a __status_format the agent draws the pill: success, is_last, prev_bg and
+# is_first reach __gpy_request_exit_status in their own slots (empty flags stay
+# in place), and an empty reply falls back to the local pill.
+__gpy_test_real_exit_status=$(declare -f __gpy_request_exit_status)
+__gpy_request_exit_status() {
+    printf 'AGENT[%s|%s|%s|%s|argc=%s]' "$1" "$2" "$3" "$4" "$#"
+}
+__status_format=1
+__gpy_last_status=0
+output=$(__gpy_segment_status true cyan true)
+if [[ "$output" != "AGENT[1|true|cyan|true|argc=4]" ]]; then
+    echo "FAIL: Status agent-path args incorrect (want success|is_last|prev_bg|is_first): $output"
+    exit 1
+fi
+__gpy_last_status=3
+output=$(__gpy_segment_status "" "" "")
+if [[ "$output" != "AGENT[0||||argc=4]" ]]; then
+    echo "FAIL: Status agent-path should keep empty flags in place on failure: $output"
+    exit 1
+fi
+echo "PASS: Status dual-path routes to the agent renderer with correctly-ordered args"
+
+__gpy_request_exit_status() {
+    return 1
+}
+__gpy_last_status=0
+output=$(__gpy_segment_status "" "" "true")
+if [[ "$output" != *"30;42m"*" OK"* ]]; then
+    echo "FAIL: Status with an empty agent reply should fall back to the local pill; got: $output"
+    exit 1
+fi
+echo "PASS: Status falls back to the local pill when the agent replies nothing"
+eval "$__gpy_test_real_exit_status"
+unset __gpy_test_real_exit_status __status_format
 
 # The next chevron follows the exit status, with fish's fallbacks when unset.
 __gpy_last_status=0
@@ -668,16 +703,71 @@ if [[ "$output" != '{"op":"hostname","hostname":"h","format":"bash-prompt"}' ]];
 fi
 echo "PASS: Hostname request payload carries is_ssh only over SSH"
 
+# is_first/is_last ride in the shared flags tail, before is_ssh; the exit_status op
+# is distinct from the agent health-check "status" op.
+output=$(function __gpy_send_json() { printf '%s' "$1"; }; __gpy_request_hostname h true "" 1 true)
+if [[ "$output" != '{"op":"hostname","hostname":"h","format":"bash-prompt","is_last":true,"is_first":true,"is_ssh":true}' ]]; then
+    echo "FAIL: Hostname request should carry is_first: $output"
+    exit 1
+fi
+output=$(function __gpy_send_json() { printf '%s' "$1"; }; __gpy_request_username u "" "" true)
+if [[ "$output" != '{"op":"username","username":"u","format":"bash-prompt","is_first":true}' ]]; then
+    echo "FAIL: Username request should carry is_first: $output"
+    exit 1
+fi
+output=$(function __gpy_send_json() { printf '%s' "$1"; }; __gpy_request_exit_status 1 true "" true)
+if [[ "$output" != '{"op":"exit_status","success":true,"format":"bash-prompt","is_last":true,"is_first":true}' ]]; then
+    echo "FAIL: Exit-status request payload incorrect: $output"
+    exit 1
+fi
+output=$(function __gpy_send_json() { printf '%s' "$1"; }; __gpy_request_exit_status 0 "" "blue" "")
+if [[ "$output" != '{"op":"exit_status","success":false,"format":"bash-prompt","prev_bg":"blue"}' ]]; then
+    echo "FAIL: Exit-status failure request payload incorrect: $output"
+    exit 1
+fi
+echo "PASS: is_first and exit_status request payloads"
+
+# With a format set but no usable agent reply — agent unreachable (the send
+# fails) or an older agent answering the unknown op with {"error":...} —
+# hostname, username and status draw the local pill (one leading space) rather
+# than vanishing or printing the JSON. Earlier sections left an always-Ack
+# __gpy_send_json, so each case stubs it in the subshell; locals keep the
+# segment inputs out of the ambient state.
+__gpy_test_render_fallback_pills() {
+    local __hostname_format=1 __username_format=1 __status_format=1
+    local __gpy_is_ssh=0 HOSTNAME=box.example.com __hostname_trim_at=. USER=root __icon_username=""
+    local __gpy_last_status=0
+    printf '%s\x1f%s\x1f%s' \
+        "$(visible_text "$(__gpy_segment_hostname "" "" true)")" \
+        "$(visible_text "$(__gpy_segment_username "" "")")" \
+        "$(visible_text "$(__gpy_segment_status true "")")"
+}
+for gpy_test_reply in unreachable error; do
+    if [[ "$gpy_test_reply" == error ]]; then
+        output=$(__gpy_send_json() { printf '%s\n' '{"error":"Parse error: IPC communication failed: Unknown shell operation: exit_status"}'; }; __gpy_test_render_fallback_pills)
+    else
+        output=$(__gpy_send_json() { return 1; }; __gpy_test_render_fallback_pills)
+    fi
+    IFS=$'\x1f' read -r gpy_test_host gpy_test_user gpy_test_status <<<"$output"
+    if [[ "$gpy_test_host" != *" box"* || "$gpy_test_user" != *" root"* || "$gpy_test_status" != *" OK"* || "$output" == *error* ]]; then
+        echo "FAIL: Agent $gpy_test_reply with formats set should draw local hostname/username/status pills with one leading space; got: $output"
+        exit 1
+    fi
+done
+unset -f __gpy_test_render_fallback_pills
+unset gpy_test_reply gpy_test_host gpy_test_user gpy_test_status
+echo "PASS: Hostname, username and status fall back to the local pill when the agent is unreachable or replies with an error"
+
 # A non-empty __hostname_format routes to the agent renderer with every arg quoted.
 # The stub runs in a subshell, so it encodes received args in its stdout.
 __gpy_request_hostname() {
-    printf 'AGENT[%s|%s|%s|%s|argc=%s]' "$1" "$2" "$3" "$4" "$#"
+    printf 'AGENT[%s|%s|%s|%s|%s|argc=%s]' "$1" "$2" "$3" "$4" "$5" "$#"
 }
 __hostname_format="{hostname}"
 __gpy_is_ssh=0
 output=$(__gpy_segment_hostname true "cyan")
-if [[ "$output" != "AGENT[host.example.com|true|cyan|0|argc=4]" ]]; then
-    echo "FAIL: Hostname agent-path args incorrect (want hostname|is_last|prev_bg|is_ssh): $output"
+if [[ "$output" != "AGENT[host.example.com|true|cyan|0||argc=5]" ]]; then
+    echo "FAIL: Hostname agent-path args incorrect (want hostname|is_last|prev_bg|is_ssh|is_first): $output"
     exit 1
 fi
 echo "PASS: Hostname dual-path routes to agent renderer with correctly-ordered args"
@@ -685,7 +775,7 @@ echo "PASS: Hostname dual-path routes to agent renderer with correctly-ordered a
 # The 4th arg carries __gpy_is_ssh for an SSH session too.
 __gpy_is_ssh=1
 output=$(__gpy_segment_hostname true "cyan")
-if [[ "$output" != "AGENT[host.example.com|true|cyan|1|argc=4]" ]]; then
+if [[ "$output" != "AGENT[host.example.com|true|cyan|1||argc=5]" ]]; then
     echo "FAIL: Hostname agent-path should forward __gpy_is_ssh=1 as the 4th arg: $output"
     exit 1
 fi
@@ -693,11 +783,19 @@ echo "PASS: Hostname dual-path forwards __gpy_is_ssh as the 4th arg"
 
 # is_last stays "" (not "false"); argc=4 proves the empty prev_bg was passed.
 output=$(__gpy_segment_hostname "" "")
-if [[ "$output" != "AGENT[host.example.com|||1|argc=4]" ]]; then
+if [[ "$output" != "AGENT[host.example.com|||1||argc=5]" ]]; then
     echo "FAIL: Hostname agent-path args incorrect for not-last/empty-prev_bg: $output"
     exit 1
 fi
 echo "PASS: Hostname dual-path threads empty is_last and empty prev_bg correctly"
+
+# is_first rides in the 5th slot: "true" for the first pill, "" (kept in place) otherwise.
+output=$(__gpy_segment_hostname "" "" true)
+if [[ "$output" != "AGENT[host.example.com|||1|true|argc=5]" ]]; then
+    echo "FAIL: Hostname agent-path should forward is_first as the 5th arg: $output"
+    exit 1
+fi
+echo "PASS: Hostname dual-path forwards is_first as the 5th arg"
 
 unset __hostname_format
 unset -f __gpy_request_hostname
@@ -823,23 +921,31 @@ echo "PASS: Username icon omitted when unset"
 
 # A non-empty __username_format routes to the agent renderer with every arg quoted.
 __gpy_request_username() {
-    printf 'AGENT[%s|%s|%s|argc=%s]' "$1" "$2" "$3" "$#"
+    printf 'AGENT[%s|%s|%s|%s|argc=%s]' "$1" "$2" "$3" "$4" "$#"
 }
 __username_format="{username}"
 output=$(__gpy_segment_username true "cyan")
-if [[ "$output" != "AGENT[root|true|cyan|argc=3]" ]]; then
-    echo "FAIL: Username agent-path args incorrect (want username|is_last|prev_bg): $output"
+if [[ "$output" != "AGENT[root|true|cyan||argc=4]" ]]; then
+    echo "FAIL: Username agent-path args incorrect (want username|is_last|prev_bg|is_first): $output"
     exit 1
 fi
 echo "PASS: Username dual-path routes to agent renderer with correctly-ordered args"
 
 # is_last stays "" (not "false"); empty prev_bg still lands in the 3rd slot.
 output=$(__gpy_segment_username "" "")
-if [[ "$output" != "AGENT[root|||argc=3]" ]]; then
+if [[ "$output" != "AGENT[root||||argc=4]" ]]; then
     echo "FAIL: Username agent-path args incorrect for not-last/empty-prev_bg: $output"
     exit 1
 fi
 echo "PASS: Username dual-path threads empty is_last and empty prev_bg correctly"
+
+# is_first rides in the 4th slot: "true" for the first pill, "" (kept in place) otherwise.
+output=$(__gpy_segment_username "" "" true)
+if [[ "$output" != "AGENT[root|||true|argc=4]" ]]; then
+    echo "FAIL: Username agent-path should forward is_first as the 4th arg: $output"
+    exit 1
+fi
+echo "PASS: Username dual-path forwards is_first as the 4th arg"
 
 unset __username_format
 unset -f __gpy_request_username

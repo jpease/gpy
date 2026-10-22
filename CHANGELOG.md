@@ -18,6 +18,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With `ui.show_icons = false`, Nerd Font status icons (the default theme's
   ok/fail glyphs) are replaced by `ok`/`err`, and Nerd Font hostname and
   username icons are dropped, so they no longer show as boxes in plain fonts.
+### Added
+
+- The `status` segment is drawn by the agent from a new optional
+  `[segments.status] format`, like the other pills. The shells ask for it with
+  a new `exit_status` IPC op (`gpy-agent oneshot status --exit-code N` shows
+  the result). The bare `status` op is still the agent health check. A theme
+  without the format keeps the shell-drawn pill.
+
+### Changed
+
+- Every pill now has one leading space inside it, in Fish, Bash and Zsh. The
+  default theme gives `hostname`, `username` and `status` a `format` like the
+  clock's, so they open with a space and no opening cap when first in the
+  prompt. A theme without a `format` for one of them still gets the shell's
+  local pill, which now carries the same leading space (before, it had none).
+  With the agent down, disabled or answering with an error (an older agent
+  that lacks `exit_status`), `hostname`, `username` and `status` fall back to
+  that local pill instead of disappearing, so the SSH hostname and the
+  root/sudo username still show.
+- The `hostname` and `username` IPC requests accept `is_first`, and their
+  `format` can use `$sep_open`, `$sep_gap`, `$sep_close`, `$style` and `$bg`
+  like the clock's. Their separators are now chained like the clock's rather
+  than terminal: a custom format using `$sep_close` now also draws the closing
+  cap when the pill is not last, and `$sep_open`/`$sep_gap`, which used to
+  resolve to nothing, now resolve. The Starship theme's formats use none of
+  them and render as before. On the agent path `$symbol` is the segment's
+  `icon` verbatim, so give an icon its own trailing space; the shell's local
+  pill always puts a space between icon and text, so an icon without one
+  (e.g. `"🌐"`) looks different on the two paths. The default theme leaves a
+  local session without a doubled space.
 
 ## [0.5.1] - 2026-10-19
 

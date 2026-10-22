@@ -147,14 +147,14 @@ unset __username_format __hostname_format
 __color_username_bg="red" __color_username_fg="white" __icon_username=""
 for hostile in '$(echo GPY_EXPANDED)' 'tick`echo GPY_TICK`' 'a\u\hb' '100%_done' 'x!y' '\\\\' '${HOME}'; do
     USER="$hostile"
-    check "username '$hostile' shows literally" true "$(contains "$(shown "$(__gpy_segment_username true "" true)")" "<$hostile)")"
+    check "username '$hostile' shows literally" true "$(contains "$(shown "$(__gpy_segment_username true "" true)")" "< $hostile)")"
     HOSTNAME="$hostile" __hostname_trim_at="" __icon_hostname="" __gpy_is_ssh=1
-    check "hostname '$hostile' shows literally" true "$(contains "$(shown "$(__gpy_segment_hostname true "" true)")" "<$hostile)")"
+    check "hostname '$hostile' shows literally" true "$(contains "$(shown "$(__gpy_segment_hostname true "" true)")" "< $hostile)")"
 done
 __icon_username='$(echo ICON)`'
 USER="u"
 check "an icon with shell metacharacters shows literally" true \
-    "$(contains "$(shown "$(__gpy_segment_username true "" true)")" '<$(echo ICON)` u)')"
+    "$(contains "$(shown "$(__gpy_segment_username true "" true)")" '< $(echo ICON)` u)')"
 
 if [[ $FAILED -ne 0 ]]; then
     echo "=== FAILED ==="

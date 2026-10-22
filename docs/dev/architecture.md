@@ -670,7 +670,19 @@ GPY uses a **JSON-based request/response protocol** over Unix domain sockets. Th
 Each request is one newline-terminated JSON object with an `op`:
 
 `git` `lang` `directory` `clock` `duration` `character` `hostname` `username`
-`ping` `status` `shutdown` `config_reload` `register` `unregister` `workspace`
+`exit_status` `ping` `status` `shutdown` `config_reload` `register` `unregister` `workspace`
+
+`exit_status` renders the status segment's pill from the previous command's exit
+status; `status` is the agent health check.
+
+The segment ops that draw a pill (`git`, `lang`, `directory`, `clock`, `duration`,
+`hostname`, `username`, `exit_status`) all carry `is_last`, `is_first` and
+`prev_bg`, so the agent can drop the opening cap of the first pill and shape the
+closing cap of the last. A theme without a `format` for `clock`, `hostname`,
+`username` or `status` gets the shell's local pill instead, which draws the same
+leading space; so does a themed pill when the agent gives no reply (no oneshot
+fork for these four), and for `hostname`/`username`/`status` when it replies
+`{"error":...}` (an older agent without `exit_status`).
 
 Per-op fields, `format` values and reply shapes:
 [`gpy-agent/schemas/README.md`](../../gpy-agent/schemas/README.md).

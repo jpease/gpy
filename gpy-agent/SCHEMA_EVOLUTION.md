@@ -194,8 +194,9 @@ of the segment chain instead of the closing one: a new `formatter::IsFirst` newt
 to `IsLast`), a `$sep_open` template variable resolved by the `duration`/`directory`/`git`/
 `language` resolvers (`None` when first — suppressing the opening powerline cap — a glyph
 otherwise), and `is_first: bool` on the four `Message` variants whose theme formats can use
-`$sep_open`. `Message::CharacterRequest`/`HostnameRequest`/`UsernameRequest` do not gain the
-field — their formats have no unconditional opening-cap literal to make conditional. Whichever
+`$sep_open`. Hostname, username and the exit-status pill gained the field later (next entry).
+`Message::CharacterRequest` does not gain it — its format has no unconditional opening-cap
+literal to make conditional. Whichever
 segment ends up first in the shell's enabled-and-rendering chain is determined purely by
 position (mirroring `fish_prompt.fish`'s `current_idx -eq 1` check for `is_last`), never by
 segment identity — fixes the wizard/theme inconsistency where disabling the `clock` segment
@@ -220,6 +221,38 @@ also gained a `--first` flag (mirroring `--not-last`), threaded through the Fish
 `__gpy_oneshot_fallback`/`__gpy_fallback_oneshot` daemon-unreachable path, alongside a matching
 fix for a pre-existing gap where the Bash/Zsh `git`/`language` segments never threaded
 `is_last`/`is_first` into `__gpy_request` at all (the Fish implementation already did).
+
+#### IPC protocol — `is_first` on hostname/username, `exit_status` op; theme — `segments.status.format` (MINOR)
+
+| Property | Value |
+|---|---|
+| Scope | `Message::HostnameRequest`, `Message::UsernameRequest` (gain `is_first`), new `Message::ExitStatusRequest` / `Response::ExitStatus` (wire op `exit_status`), `StatusTheme.format`, `HostnameResolver`/`UsernameResolver` (`$style`, `$bg`, chained `$sep_*`), new `StatusResolver`, `__status_format` shell export, `gpy-agent oneshot status`, `config/themes/default.toml` |
+| Change type | MINOR — additive wire field and op, additive theme key |
+| IPC protocol | Additive — `PROTOCOL_VERSION` stays 2. `is_first` is optional and defaults to `false`; `exit_status` is a new op (the bare `status` op stays the agent health check). An older agent fails to parse `exit_status` and replies `{"error":"… Unknown shell operation: exit_status"}` in JSON, whatever `format` was asked for. The shells' `__gpy_request_hostname`/`__gpy_request_username`/`__gpy_request_exit_status` treat a reply starting with `{"error"` as no reply, so the segment draws its local pill. Not bumped: a new op is MINOR under the rules above, and a bump would make every fish shell meeting a v2 agent print the mismatch banner and stop/start the agent at its first prompt, and keep a bash shell's supervisor treating a same-crate-version agent as not running, to fix a case the error-reply check already degrades to the local pill |
+| Config schema | Additive — `[segments.status] format` (optional) |
+
+**What changed.** Every pill segment is now agent-rendered from a theme `format`, so they all
+share one leading space inside the pill and the same opening-cap rule. The hostname and username
+requests carry `is_first` like `clock`/`duration`, their resolvers switched from the terminal to
+the chained separator style (`$sep_open`/`$sep_gap`/`$sep_close` all resolve) and gained `$style`
+(`fg:<text_color> bg:<bg_color>`) and `$bg`. The status pill, previously drawn only by the shell,
+is an `exit_status` request carrying `success`; `StatusResolver` resolves `$symbol` (the
+`ok_icon`/`fail_icon`, else `✔`/`✖`, or `ok`/`err` when `ui.show_icons` is off — the shells'
+fallbacks), `$style`, `$bg` and the separators from the ok or fail colors. The Starship
+theme's hostname/username formats have no separator variables, so their output is unchanged.
+
+The default theme gained `format` for `hostname`, `username` and `status`
+(`([$sep_open](fg:$bg bg:default))[ $symbol$hostname]($style)…`). `__hostname_format`,
+`__username_format` and the new `__status_format` stay presence flags. A theme without the
+format, or a prompt where the agent gives no usable reply (down, disabled, late, or an error
+reply), gets the shells' local pill (now also with the leading space), so the SSH hostname and
+root/sudo username still show with no agent. The two paths differ on icon spacing: the agent
+writes `$symbol` verbatim (the icon needs its own trailing space), the local pill always puts a
+space between icon and text.
+
+Threaded through Fish, Bash and Zsh (`__gpy_request_hostname`/`__gpy_request_username` gained a
+trailing `is_first` argument, `__gpy_request_exit_status` is new), the wizard preview, the JSON
+schemas and `theme export`.
 
 #### Theme schema — `$sep_open` in default theme format strings (MINOR)
 

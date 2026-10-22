@@ -686,13 +686,11 @@ fn separator_bearing_responses() -> Vec<Response> {
     ]
 }
 
-/// Default theme with `$sep_close` formats added so every variant can draw caps.
+/// Default theme with a `$sep_close` character format so every variant can draw caps.
 fn default_theme_with_terminal_caps() -> ThemeConfig {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/themes/default.toml");
     let mut theme = crate::config::loader::load_theme_from_path(path).expect("default theme");
     let cap = "([$sep_close](fg:white bg:default))";
-    theme.segments.hostname.format = Some(format!("[ $hostname](fg:white bg:black){cap}"));
-    theme.segments.username.format = Some(format!("[ $username](fg:white bg:red){cap}"));
     theme.segments.character.format = Some(format!("[$symbol](fg:green){cap}"));
     theme
 }
@@ -743,4 +741,165 @@ fn show_icons_false_renders_no_private_use_glyphs() {
             }
         }
     }
+}
+
+/// The bundled default theme, whose pills all come from agent-side formats.
+fn bundled_default_theme() -> ThemeConfig {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/themes/default.toml");
+    crate::config::loader::load_theme_from_path(path).expect("default theme")
+}
+
+/// Rendered text with the SGR sequences removed.
+fn plain_text(ansi: &str) -> String {
+    let mut text = String::new();
+    let mut chars = ansi.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            for escape_char in chars.by_ref() {
+                if escape_char == 'm' {
+                    break;
+                }
+            }
+        } else {
+            text.push(c);
+        }
+    }
+    text
+}
+
+const OPEN_CAP: char = '\u{e0ba}';
+const CLOSE_CAP: char = '\u{e0bc}';
+const LAST_CAP: char = '\u{e0b4}';
+
+/// Plain text of `response` rendered with the default theme at `position`.
+fn default_theme_text(
+    response: &Response,
+    theme: &ThemeConfig,
+    position: SegmentPosition,
+) -> String {
+    let config = Config::default();
+    let rc = RenderContext::new(&config, theme, position);
+    let ansi = FishAnsiFormatter::default()
+        .render(response, &rc)
+        .expect("render");
+    plain_text(&ansi)
+}
+
+/// Hostname, username and status draw the same pill as the clock: one leading
+/// space inside it, no opening cap when first, the cap otherwise.
+#[test]
+fn default_theme_pills_have_one_leading_space_and_position_caps() {
+    let theme = bundled_default_theme();
+    let ok_icon = theme.segments.status.ok_icon.as_deref().unwrap().to_owned();
+    let responses = [
+        (
+            Response::Hostname {
+                hostname: "host.example.com".to_owned(),
+                is_ssh: false,
+            },
+            "host".to_owned(),
+        ),
+        (
+            Response::Username {
+                username: "ada".to_owned(),
+            },
+            "ada".to_owned(),
+        ),
+        (Response::ExitStatus { success: true }, ok_icon),
+    ];
+    for (response, content) in &responses {
+        let at = |position| default_theme_text(response, &theme, position);
+        assert_eq!(
+            at(SegmentPosition::FIRST),
+            format!(" {content} {CLOSE_CAP}"),
+            "{response:?} first: no opening cap"
+        );
+        assert_eq!(
+            at(SegmentPosition::MIDDLE),
+            format!("{OPEN_CAP} {content} {CLOSE_CAP}"),
+            "{response:?} middle: opening cap"
+        );
+        assert_eq!(
+            at(SegmentPosition::LAST),
+            format!("{OPEN_CAP} {content}{LAST_CAP}"),
+            "{response:?} last: closing half circle"
+        );
+        assert_eq!(
+            at(SegmentPosition::ONLY),
+            format!(" {content}{LAST_CAP}"),
+            "{response:?} only: no opening cap, closing half circle"
+        );
+    }
+}
+
+/// `$symbol` carries the SSH icon with its own spacing: a local session reads
+/// `" host"`, an SSH one `" 🌐 host"`, never a doubled leading space.
+#[test]
+fn default_theme_hostname_symbol_adds_no_extra_space_locally() {
+    let mut theme = bundled_default_theme();
+    theme.segments.hostname.icon = Some(crate::config::types::Icon::new("🌐 ").unwrap());
+    let at = |is_ssh| {
+        default_theme_text(
+            &Response::Hostname {
+                hostname: "box".to_owned(),
+                is_ssh,
+            },
+            &theme,
+            SegmentPosition::ONLY,
+        )
+    };
+    assert_eq!(at(false), format!(" box{LAST_CAP}"));
+    assert_eq!(at(true), format!(" 🌐 box{LAST_CAP}"));
+}
+
+/// The pill's colors follow the outcome: ok_* on success, fail_* otherwise.
+#[test]
+fn status_pill_colors_follow_the_exit_outcome() {
+    let mut theme = bundled_default_theme();
+    theme.segments.status.ok_bg_color = crate::config::types::ColorSpec::new("cyan").unwrap();
+    theme.segments.status.fail_bg_color = crate::config::types::ColorSpec::new("magenta").unwrap();
+    let config = Config::default();
+    let render = |success| {
+        let rc = RenderContext::new(&config, &theme, SegmentPosition::ONLY);
+        FishAnsiFormatter::default()
+            .render(&Response::ExitStatus { success }, &rc)
+            .expect("render")
+    };
+    // 46 = cyan background, 45 = magenta background.
+    assert!(render(true).contains("46"), "ok bg: {:?}", render(true));
+    assert!(render(false).contains("45"), "fail bg: {:?}", render(false));
+}
+
+/// An unset icon falls back to the glyph or the ASCII word, like the shells' local pill.
+#[test]
+fn status_pill_unset_icon_falls_back_by_show_icons() {
+    let mut theme = bundled_default_theme();
+    theme.segments.status.ok_icon = None;
+    theme.segments.status.fail_icon = None;
+    let text = |success, show_icons| {
+        let mut config = Config::default();
+        config.ui.show_icons = show_icons;
+        let rc = RenderContext::new(&config, &theme, SegmentPosition::FIRST);
+        plain_text(
+            &FishAnsiFormatter::default()
+                .render(&Response::ExitStatus { success }, &rc)
+                .expect("render"),
+        )
+    };
+    assert_eq!(text(true, true), format!(" ✔ {CLOSE_CAP}"));
+    assert_eq!(text(false, true), format!(" ✖ {CLOSE_CAP}"));
+    assert_eq!(text(true, false), " ok ");
+    assert_eq!(text(false, false), " err ");
+}
+
+/// No status `format` → the agent emits nothing and the shell draws the pill.
+#[test]
+fn status_without_format_emits_empty() {
+    let (config, theme) = ctx();
+    assert!(theme.segments.status.format.is_none());
+    let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
+    let got = FishAnsiFormatter::default()
+        .render(&Response::ExitStatus { success: true }, &rc)
+        .expect("render");
+    assert_eq!(got, "");
 }

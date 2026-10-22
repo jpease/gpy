@@ -110,15 +110,15 @@ test "$__refresh_calls" = lang; or echo "  refresh calls: $__refresh_calls"
 set -g __enabled_segments directory language status
 set out (render_plain | string collect)
 check "omitted middle segment: directory stays first, not last" (string match -q 'DIR[|true]*' -- $out; and echo pass; or echo fail)
-check "omitted middle segment: status follows directory with delim_start" (string match -q 'DIR[|true]SOK*' -- $out; and echo pass; or echo fail)
-string match -q 'DIR[|true]SOK*' -- $out; or echo "  got: "(string escape -- $out)
+check "omitted middle segment: status follows directory with delim_start" (string match -q 'DIR[|true]S OK*' -- $out; and echo pass; or echo fail)
+string match -q 'DIR[|true]S OK*' -- $out; or echo "  got: "(string escape -- $out)
 
 # --- Every agent segment omitted: the shell-rendered status opens the line ---
 cd $repo
 set -g __enabled_segments language git status
 set out (render_plain | string collect)
-check "all agent segments omitted: status opens with delim_first" (string match -q 'FOK*' -- $out; and echo pass; or echo fail)
-string match -q 'FOK*' -- $out; or echo "  got: "(string escape -- $out)
+check "all agent segments omitted: status opens with delim_first" (string match -q 'F OK*' -- $out; and echo pass; or echo fail)
+string match -q 'F OK*' -- $out; or echo "  got: "(string escape -- $out)
 
 # --- Warm cache: git renders and keeps the last position ---
 set -l cache_dir (__gpy_instant_cache_dir)

@@ -31,6 +31,8 @@ pub enum OneshotKind {
     Hostname,
     /// Username rendering.
     Username,
+    /// Status (exit-status pill) rendering.
+    ExitStatus,
 }
 
 /// Oneshot request as parsed from CLI args or JSON.
@@ -60,7 +62,7 @@ pub struct OneshotRequest {
     /// Duration in milliseconds for `duration` requests; 0 for all other operations.
     #[serde(default)]
     pub duration_ms: u64,
-    /// Whether the last command succeeded; `None` (non-character requests) means `false`.
+    /// Whether the last command succeeded; `None` (non-character/status requests) means `false`.
     #[serde(default)]
     pub success: Option<bool>,
     /// The hostname to render; `None` (non-hostname requests) means empty.
@@ -95,6 +97,7 @@ pub fn handle_oneshot_request(request: &OneshotRequest) -> Result<String> {
         OneshotKind::Character => handle_oneshot_character_parsed(request),
         OneshotKind::Hostname => handle_oneshot_hostname_parsed(request),
         OneshotKind::Username => handle_oneshot_username_parsed(request),
+        OneshotKind::ExitStatus => handle_oneshot_exit_status_parsed(request),
     }
 }
 
@@ -298,6 +301,18 @@ fn handle_oneshot_hostname_parsed(request: &OneshotRequest) -> Result<String> {
     let response = Response::Hostname {
         hostname: request.hostname.clone().unwrap_or_default(),
         is_ssh: request.is_ssh,
+    };
+    render_response(&response, format, &config, &theme, position)
+}
+
+/// Handle a oneshot status request.
+fn handle_oneshot_exit_status_parsed(request: &OneshotRequest) -> Result<String> {
+    let format = parse_format(&request.format)?;
+    let position = request_position(request);
+    let (config, theme) = load_config_and_theme(format);
+
+    let response = Response::ExitStatus {
+        success: request.success.unwrap_or(false),
     };
     render_response(&response, format, &config, &theme, position)
 }

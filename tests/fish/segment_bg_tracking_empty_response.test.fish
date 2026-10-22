@@ -1,10 +1,9 @@
 #!/usr/bin/env fish
-# Test: hostname/username agent-resolved render paths must NOT advance
-# __gpy_last_segment_bg (the powerline chevron tracker) when the agent
-# returns an empty response. An empty/failed optional segment emits nothing,
-# so the next segment's opening chevron must still blend against whatever
-# segment actually rendered before it — not silently recolor against a
-# segment that produced no visible output.
+# Test: hostname/username agent-resolved render paths with no usable agent
+# reply. An empty reply (agent down, disabled or late) or an `{"error":...}`
+# reply (an older agent) must draw the local pill — with its one leading
+# space — and advance __gpy_last_segment_bg to that pill's background, so the
+# segment never vanishes and the next chevron blends against what rendered.
 #
 # Both segments are opt-in (never in a theme's default __enabled_segments),
 # so this sources each segment file directly and drives it with stubbed
@@ -26,104 +25,125 @@ function check --argument-names label result
     end
 end
 
-# --- hostname: agent path, empty response ---
+function gpy_section_standalone --argument-names bg fg content is_last
+    set -g __test_pill_bg "$bg"
+    set -g __test_pill_content "$content"
+    printf LOCAL_PILL
+end
 
 source "$repo_root/fish/segments/hostname.fish"
-
-function __gpy_request_hostname --argument-names host is_last prev_bg
-    # Simulate an agent-down / failed render: no output at all.
-end
-
-set -g __hostname_format some-opaque-agent-side-value
-set -g __color_hostname_bg blue
-set -g __gpy_last_segment_bg unchanged
-
-set -l empty_output (segment_hostname_render last | string collect)
-
-if test -z "$empty_output"
-    check "hostname agent path: empty IPC response emits no output" pass
-else
-    check "hostname agent path: empty IPC response emits no output (got: '$empty_output')" fail
-end
-
-if test "$__gpy_last_segment_bg" = unchanged
-    check "hostname agent path: empty IPC response preserves the previous __gpy_last_segment_bg" pass
-else
-    check "hostname agent path: empty IPC response preserves the previous __gpy_last_segment_bg (got: '$__gpy_last_segment_bg')" fail
-end
-
-# --- hostname: agent path, non-empty response still updates the tracker ---
-
-function __gpy_request_hostname --argument-names host is_last prev_bg
-    printf SENTINEL
-end
-
-set -g __gpy_last_segment_bg unchanged
-set -l real_output (segment_hostname_render last | string collect)
-
-if test "$real_output" = SENTINEL
-    check "hostname agent path: non-empty IPC response is emitted" pass
-else
-    check "hostname agent path: non-empty IPC response is emitted (got: '$real_output')" fail
-end
-
-if test "$__gpy_last_segment_bg" = blue
-    check "hostname agent path: non-empty IPC response still updates __gpy_last_segment_bg" pass
-else
-    check "hostname agent path: non-empty IPC response still updates __gpy_last_segment_bg (got: '$__gpy_last_segment_bg')" fail
-end
-
-functions -e __gpy_request_hostname
-set -e __hostname_format
-
-# --- username: agent path, empty response ---
-
 source "$repo_root/fish/segments/username.fish"
 
-function __gpy_request_username --argument-names user is_last prev_bg
-    # Simulate an agent-down / failed render: no output at all.
-end
-
-set -g __username_format some-opaque-agent-side-value
+set -g __gpy_is_ssh 0
+# Empty delimiter: no trim, so the local label is exactly " $hostname".
+set -g __hostname_trim_at ""
+set -g __icon_hostname ""
+set -g __color_hostname_bg blue
+set -g __color_hostname_fg white
+set -g __icon_username ""
 set -g __color_username_bg red
-set -g __gpy_last_segment_bg unchanged
+set -g __color_username_fg white
+set -g USER root
+set -g __hostname_format some-opaque-agent-side-value
+set -g __username_format some-opaque-agent-side-value
 
-set -l empty_output (segment_username_render last | string collect)
+# Renders hostname then username; records each output and the tracker after it.
+function __test_render_pair
+    set -g __test_pill_content ""
+    set -g __gpy_last_segment_bg unchanged
+    set -g __test_host_out (segment_hostname_render "" | string collect)
+    segment_hostname_render "" >/dev/null
+    set -g __test_host_content "$__test_pill_content"
+    set -g __test_host_bg "$__gpy_last_segment_bg"
 
-if test -z "$empty_output"
-    check "username agent path: empty IPC response emits no output" pass
+    set -g __test_pill_content ""
+    set -g __gpy_last_segment_bg unchanged
+    set -g __test_user_out (segment_username_render last | string collect)
+    segment_username_render last >/dev/null
+    set -g __test_user_content "$__test_pill_content"
+    set -g __test_user_bg "$__gpy_last_segment_bg"
+end
+
+function __test_assert_local --argument-names label
+    if test "$__test_host_out" = LOCAL_PILL; and test "$__test_host_content" = " $hostname"
+        check "$label: hostname draws the local pill with one leading space" pass
+    else
+        check "$label: hostname draws the local pill with one leading space (got: '$__test_host_out' / '$__test_host_content')" fail
+    end
+    if test "$__test_host_bg" = blue
+        check "$label: hostname advances __gpy_last_segment_bg to its pill" pass
+    else
+        check "$label: hostname advances __gpy_last_segment_bg to its pill (got: '$__test_host_bg')" fail
+    end
+    if test "$__test_user_out" = LOCAL_PILL; and test "$__test_user_content" = " root"
+        check "$label: username draws the local pill with one leading space" pass
+    else
+        check "$label: username draws the local pill with one leading space (got: '$__test_user_out' / '$__test_user_content')" fail
+    end
+    if test "$__test_user_bg" = red
+        check "$label: username advances __gpy_last_segment_bg to its pill" pass
+    else
+        check "$label: username advances __gpy_last_segment_bg to its pill (got: '$__test_user_bg')" fail
+    end
+end
+
+# --- no ipc.fish (agent disabled): the request helpers do not exist ---
+
+__test_render_pair
+__test_assert_local "agent disabled"
+
+# --- real request helpers, agent unreachable (empty IPC reply) ---
+
+source "$repo_root/fish/core/constants.fish"
+source "$repo_root/fish/core/util.fish"
+source "$repo_root/fish/core/ipc.fish"
+
+function __gpy_ipc_send --argument-names payload timeout_ms
+end
+
+__test_render_pair
+__test_assert_local "agent unreachable"
+
+# --- real request helpers, older agent answers with an error ---
+
+function __gpy_ipc_send --argument-names payload timeout_ms
+    echo '{"error":"Parse error: IPC communication failed: Unknown shell operation: exit_status"}'
+end
+
+__test_render_pair
+__test_assert_local "error reply"
+
+if not __gpy_request_hostname box "" "" 0 "" >/dev/null
+    check "__gpy_request_hostname: an error reply returns nonzero" pass
 else
-    check "username agent path: empty IPC response emits no output (got: '$empty_output')" fail
+    check "__gpy_request_hostname: an error reply returns nonzero" fail
 end
-
-if test "$__gpy_last_segment_bg" = unchanged
-    check "username agent path: empty IPC response preserves the previous __gpy_last_segment_bg" pass
+if not __gpy_request_username root "" "" "" >/dev/null
+    check "__gpy_request_username: an error reply returns nonzero" pass
 else
-    check "username agent path: empty IPC response preserves the previous __gpy_last_segment_bg (got: '$__gpy_last_segment_bg')" fail
+    check "__gpy_request_username: an error reply returns nonzero" fail
 end
 
-# --- username: agent path, non-empty response still updates the tracker ---
+# --- a rendered reply is still emitted verbatim and tracked ---
 
-function __gpy_request_username --argument-names user is_last prev_bg
-    printf SENTINEL
+function __gpy_ipc_send --argument-names payload timeout_ms
+    echo SENTINEL
 end
 
-set -g __gpy_last_segment_bg unchanged
-set -l real_output (segment_username_render last | string collect)
-
-if test "$real_output" = SENTINEL
-    check "username agent path: non-empty IPC response is emitted" pass
+__test_render_pair
+if test "$__test_host_out" = SENTINEL; and test -z "$__test_host_content"; and test "$__test_host_bg" = blue
+    check "rendered reply: hostname emits the agent pill and tracks its bg" pass
 else
-    check "username agent path: non-empty IPC response is emitted (got: '$real_output')" fail
+    check "rendered reply: hostname emits the agent pill and tracks its bg (got: '$__test_host_out' / '$__test_host_content' / '$__test_host_bg')" fail
 end
-
-if test "$__gpy_last_segment_bg" = red
-    check "username agent path: non-empty IPC response still updates __gpy_last_segment_bg" pass
+if test "$__test_user_out" = SENTINEL; and test -z "$__test_user_content"; and test "$__test_user_bg" = red
+    check "rendered reply: username emits the agent pill and tracks its bg" pass
 else
-    check "username agent path: non-empty IPC response still updates __gpy_last_segment_bg (got: '$__gpy_last_segment_bg')" fail
+    check "rendered reply: username emits the agent pill and tracks its bg (got: '$__test_user_out' / '$__test_user_content' / '$__test_user_bg')" fail
 end
 
-functions -e __gpy_request_username
+functions -e __gpy_ipc_send gpy_section_standalone
+set -e __hostname_format
 set -e __username_format
 
 if test $fail_count -gt 0

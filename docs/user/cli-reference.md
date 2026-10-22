@@ -378,8 +378,8 @@ Activate with: gpy theme use mytheme
 Validate a theme and print actionable diagnostics.
 
 Validates theme schema fields, icon definitions, and segment format templates
-across all eight supported agent-rendered segments (`git`, `language`, `directory`,
-`duration`, `character`, `clock`, `hostname`, `username`) against the active palette,
+across all nine supported agent-rendered segments (`git`, `language`, `directory`,
+`duration`, `character`, `clock`, `hostname`, `username`, `status`) against the active palette,
 verifying that all color tokens resolve to valid ANSI colors or defined palette roles.
 
 If `target` is omitted, validates the currently active theme from config.
@@ -568,7 +568,7 @@ A segment renders when it is listed in `ui.enabled_segments`; `git` and `languag
 - `clock` - Current time
 - `duration` - Command execution time
 - `directory` - Current working directory
-- `status` - Previous command exit status pill (✔/✖)
+- `status` - Previous command exit status pill (✔/✖); coloured by `segments.status.ok_*`/`fail_*` and drawn by the agent through `segments.status.format`
 - `username` - Current user name; shown only as root or under sudo (opt-in)
 - `hostname` - Machine hostname; shown only over SSH unless `segments.hostname.show_always` is set (opt-in). Its icon (`segments.hostname.icon`, Starship's `ssh_symbol`) shows only in SSH sessions
 
@@ -1146,7 +1146,7 @@ commands rather than internals:
 |---|---|
 | `gpy-agent start [--socket <path>]` | Start the daemon in the background (idempotent; evicts an older version). `--socket` overrides the socket path, mainly for tests. |
 | `gpy-agent stop` / `gpy-agent status` | Same behaviour and exit codes as the `gpy` equivalents above. Restarting is only available as `gpy restart`. |
-| `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|hostname\|username> [--cwd <dir>] [--format json\|ansi\|bash-prompt\|zsh-prompt]` | Render one segment once, with no daemon. The shells use it as the fallback when the agent is down; it is also the quickest way to see what a segment produces for a directory. |
+| `gpy-agent oneshot <git\|lang\|directory\|duration\|character\|hostname\|username\|status> [--cwd <dir>] [--format json\|ansi\|bash-prompt\|zsh-prompt]` | Render one segment once, with no daemon. The shells use it as the fallback when the agent is down; it is also the quickest way to see what a segment produces for a directory. |
 | `gpy-agent theme export --format fish\|zsh\|bash` | Print the active theme as shell variable assignments. Each shell sources this on init (cached under `$XDG_CACHE_HOME/gpy/theme-export.<shell>`). |
 | `gpy-agent config reload` | Ask the running agent to reload `config.toml` from disk. Exits `0` when the agent applied it, or when no agent is running (the config applies at the next start). Exits `1` with an `Error:` line when the agent rejects the config, carrying its reason (the agent keeps its previous configuration), or when a running agent does not answer. |
 

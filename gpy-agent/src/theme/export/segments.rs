@@ -340,8 +340,9 @@ pub(super) fn append_username_assignments(
     );
 }
 
-/// Status segment icons and the ok/fail colors. An icon is erased when unset, or
-/// when [`Glyphs::Plain`] drops it, so the shell draws its ASCII fallback.
+/// Status segment icons, the ok/fail colors and the template presence flag. An
+/// icon is erased when unset, or when [`Glyphs::Plain`] drops it, so the shell
+/// draws its ASCII fallback.
 pub(super) fn append_status_assignments(
     output: &mut String,
     colors: ShellColors<'_>,
@@ -384,6 +385,15 @@ pub(super) fn append_status_assignments(
             ShellAssignment::local(
                 "__color_status_fail_fg",
                 colors.resolve(&theme.segments.status.fail_text_color),
+            ),
+            // PRESENCE FLAG ONLY, like `__hostname_format`: the agent re-derives the template.
+            ShellAssignment::local(
+                "__status_format",
+                if theme.segments.status.format.is_some() {
+                    "1"
+                } else {
+                    ""
+                },
             ),
         ],
     );

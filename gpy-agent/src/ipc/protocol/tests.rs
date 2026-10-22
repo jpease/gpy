@@ -39,7 +39,7 @@ fn test_prev_bg_validation_too_long() {
 
 #[test]
 fn test_hostname_into_message_with_is_last_and_prev_bg() {
-    let json = r#"{"op":"hostname","hostname":"myhost","format":"ansi","is_last":true,"prev_bg":"blue","is_ssh":true}"#;
+    let json = r#"{"op":"hostname","hostname":"myhost","format":"ansi","is_last":true,"is_first":true,"prev_bg":"blue","is_ssh":true}"#;
     let shell_msg: ShellIpcMessage = serde_json::from_str(json).expect("parse failed");
     let wire = shell_msg
         .into_wire_message()
@@ -50,12 +50,14 @@ fn test_hostname_into_message_with_is_last_and_prev_bg() {
             hostname,
             format,
             is_last,
+            is_first,
             is_ssh,
             prev_bg,
         } => {
             assert_eq!(hostname, "myhost");
             assert_eq!(format, Format::Ansi);
             assert!(is_last);
+            assert!(is_first);
             assert!(is_ssh);
             assert_eq!(prev_bg, Some("blue".to_owned()));
         }
@@ -75,12 +77,14 @@ fn test_hostname_into_message_without_is_last_and_prev_bg() {
         Message::HostnameRequest {
             hostname,
             is_last,
+            is_first,
             is_ssh,
             prev_bg,
             ..
         } => {
             assert_eq!(hostname, "myhost");
             assert!(!is_last);
+            assert!(!is_first, "an absent is_first must default to false");
             assert!(!is_ssh, "an absent is_ssh must default to false");
             assert_eq!(prev_bg, None);
         }
@@ -94,6 +98,7 @@ fn test_hostname_validation_accepts_valid_request() {
         hostname: "my-host".to_owned(),
         format: Format::Ansi,
         is_last: false,
+        is_first: false,
         is_ssh: false,
         prev_bg: None,
     };
@@ -107,6 +112,7 @@ fn test_hostname_validation_rejects_too_long_hostname() {
         hostname: long_hostname,
         format: Format::Ansi,
         is_last: false,
+        is_first: false,
         is_ssh: false,
         prev_bg: None,
     };
@@ -120,6 +126,7 @@ fn test_hostname_validation_rejects_control_chars() {
         hostname: hostname_with_control,
         format: Format::Ansi,
         is_last: false,
+        is_first: false,
         is_ssh: false,
         prev_bg: None,
     };
@@ -128,8 +135,7 @@ fn test_hostname_validation_rejects_control_chars() {
 
 #[test]
 fn test_username_into_message_with_is_last_and_prev_bg() {
-    let json =
-        r#"{"op":"username","username":"root","format":"ansi","is_last":true,"prev_bg":"blue"}"#;
+    let json = r#"{"op":"username","username":"root","format":"ansi","is_last":true,"is_first":true,"prev_bg":"blue"}"#;
     let shell_msg: ShellIpcMessage = serde_json::from_str(json).expect("parse failed");
     let wire = shell_msg
         .into_wire_message()
@@ -140,11 +146,13 @@ fn test_username_into_message_with_is_last_and_prev_bg() {
             username,
             format,
             is_last,
+            is_first,
             prev_bg,
         } => {
             assert_eq!(username, "root");
             assert_eq!(format, Format::Ansi);
             assert!(is_last);
+            assert!(is_first);
             assert_eq!(prev_bg, Some("blue".to_owned()));
         }
         other => panic!("expected UsernameRequest, got {other:?}"),
@@ -163,11 +171,13 @@ fn test_username_into_message_without_is_last_and_prev_bg() {
         Message::UsernameRequest {
             username,
             is_last,
+            is_first,
             prev_bg,
             ..
         } => {
             assert_eq!(username, "root");
             assert!(!is_last);
+            assert!(!is_first, "an absent is_first must default to false");
             assert_eq!(prev_bg, None);
         }
         other => panic!("expected UsernameRequest, got {other:?}"),
@@ -180,6 +190,7 @@ fn test_username_validation_accepts_valid_request() {
         username: "root".to_owned(),
         format: Format::Ansi,
         is_last: false,
+        is_first: false,
         prev_bg: None,
     };
     assert!(validate_message_content(&msg).is_ok());
@@ -192,6 +203,7 @@ fn test_username_validation_rejects_too_long_username() {
         username: long_username,
         format: Format::Ansi,
         is_last: false,
+        is_first: false,
         prev_bg: None,
     };
     assert!(validate_message_content(&msg).is_err());
@@ -204,9 +216,84 @@ fn test_username_validation_rejects_control_chars() {
         username: username_with_control,
         format: Format::Ansi,
         is_last: false,
+        is_first: false,
         prev_bg: None,
     };
     assert!(validate_message_content(&msg).is_err());
+}
+
+#[test]
+fn test_exit_status_into_message_carries_position_and_outcome() {
+    let json = r#"{"op":"exit_status","success":true,"format":"ansi","is_last":true,"is_first":true,"prev_bg":"blue"}"#;
+    let msg = deserialize_message(json.as_bytes()).expect("deserialize failed");
+    match msg {
+        Message::ExitStatusRequest {
+            success,
+            format,
+            is_last,
+            is_first,
+            prev_bg,
+        } => {
+            assert!(success);
+            assert_eq!(format, Format::Ansi);
+            assert!(is_last);
+            assert!(is_first);
+            assert_eq!(prev_bg, Some("blue".to_owned()));
+        }
+        other => panic!("expected ExitStatusRequest, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_exit_status_defaults_to_failure_without_flags() {
+    let msg = deserialize_message(br#"{"op":"exit_status"}"#).expect("deserialize failed");
+    match msg {
+        Message::ExitStatusRequest {
+            success,
+            is_last,
+            is_first,
+            prev_bg,
+            ..
+        } => {
+            assert!(!success, "an absent success must default to false");
+            assert!(!is_last);
+            assert!(!is_first);
+            assert_eq!(prev_bg, None);
+        }
+        other => panic!("expected ExitStatusRequest, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_exit_status_validation_rejects_long_prev_bg() {
+    let msg = Message::ExitStatusRequest {
+        success: true,
+        format: Format::Ansi,
+        is_last: false,
+        is_first: false,
+        prev_bg: Some("x".repeat(65_usize)),
+    };
+    assert!(validate_message_content(&msg).is_err());
+}
+
+/// The agent health check keeps the bare `status` op; the exit-status pill is `exit_status`.
+#[test]
+fn test_status_op_is_still_the_agent_health_check() {
+    let msg = deserialize_message(br#"{"op":"status"}"#).expect("deserialize failed");
+    assert!(matches!(msg, Message::Status));
+}
+
+#[test]
+fn test_request_meta_reports_is_first_for_hostname_username_and_exit_status() {
+    for json in [
+        r#"{"op":"hostname","hostname":"h","is_first":true}"#,
+        r#"{"op":"username","username":"u","is_first":true}"#,
+        r#"{"op":"exit_status","success":true,"is_first":true}"#,
+    ] {
+        let msg = deserialize_message(json.as_bytes()).expect("deserialize failed");
+        let meta = msg.request_meta().expect("segment request has meta");
+        assert!(meta.is_first, "{json}");
+    }
 }
 
 #[test]

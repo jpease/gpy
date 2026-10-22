@@ -77,6 +77,9 @@ text_color = "white"
 bg_color = "black"
 
 [segments.status]
+# Agent-rendered like the other pills; `$symbol`, `$style` and `$bg` follow the
+# previous command's outcome (the ok_* or fail_* values below).
+format = "([$sep_open](fg:$bg bg:default))[ $symbol]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
 ok_icon = ""
 ok_text_color = "black"
 ok_bg_color = "green"
@@ -85,7 +88,7 @@ fail_text_color = "black"
 fail_bg_color = "red"
 
 # The agent renders the final prompt symbol via the `character` segment
-# (Response::Character). `[segments.status]` above feeds the shell-side status box.
+# (Response::Character); the exit-status pill is the `status` segment above.
 [segments.character]
 format = "[ ](fg:prev_bg)[$symbol]($style) "
 
@@ -109,6 +112,10 @@ in_progress_text_color = "white"
 in_progress_bg_color = "magenta"
 
 [segments.hostname]
+# One leading space inside the pill, like every other powerline segment.
+# `$symbol` is the theme `icon` over SSH only (it carries its own trailing
+# space, if any), so a local session reads " host" with no double space.
+format = "([$sep_open](fg:$bg bg:default))[ $symbol$hostname]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
 bg_color = "black"
 text_color = "white"
 # icon, trim_at, show_always: defaults
@@ -118,6 +125,9 @@ text_color = "white"
 # Hidden for normal users (show_always defaults to false); a red pill flags
 # elevated (root/sudo) sessions, mirroring Starship's bold-red `username`.
 [segments.username]
+# One leading space inside the pill, like every other powerline segment.
+# `$symbol` is the theme `icon` (it carries its own trailing space, if any).
+format = "([$sep_open](fg:$bg bg:default))[ $symbol$username]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
 bg_color = "red"
 text_color = "white"
 # icon, show_always: defaults
