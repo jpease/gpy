@@ -124,6 +124,9 @@ set -gx HOME $SP_ISO
 # Cache and runtime roots follow the sandboxed HOME, never the caller's.
 set -e XDG_CACHE_HOME XDG_RUNTIME_DIR
 set -gx MISE_DISABLE 1
+# Off-SSH baseline: Starship shows the username and ssh_symbol whenever
+# SSH_CONNECTION is set, and GPY keys its SSH state on all three variables.
+set -e SSH_CONNECTION SSH_CLIENT SSH_TTY
 # Pinned Rust toolchain view for the `clean-rust` fixture. Starship resolves
 # rustc through $RUSTUP_TOOLCHAIN, $RUSTUP_HOME and `rustup`, GPY runs `rustc`
 # from PATH, so a caller's toolchain pin or shim manager (e.g. a mise shim that

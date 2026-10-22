@@ -162,6 +162,9 @@ set -gx HOME $SPI_ISO
 # Cache and runtime roots follow the sandboxed HOME, never the caller's.
 set -e XDG_CACHE_HOME XDG_RUNTIME_DIR
 set -gx MISE_DISABLE 1
+# Off-SSH baseline: Starship shows the username and ssh_symbol whenever
+# SSH_CONNECTION is set, and GPY keys its SSH state on all three variables.
+set -e SSH_CONNECTION SSH_CLIENT SSH_TTY
 
 if not $spi_gpy_bin theme import $spi_match_cfg --name pure-preset --force --apply-layout >/dev/null 2>&1
     echo "❌ 'gpy theme import' failed in isolated config"
