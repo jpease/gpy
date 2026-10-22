@@ -1205,6 +1205,11 @@ show_always = true
 #[test]
 fn test_cli_oneshot_hostname_empty_without_format_template() {
     let env = CliTestEnv::new().expect("failed to create CLI test env");
+    fs::write(
+        env.themes_dir().join("default.toml"),
+        "[ui]\n\n[segments.hostname]\ntext_color = \"white\"\n",
+    )
+    .expect("failed to write format-less hostname theme");
 
     let output = env
         .run_gpy_agent(&[
@@ -1268,6 +1273,11 @@ format = "[$username](bold red) in "
 #[test]
 fn test_cli_oneshot_username_empty_without_format_template() {
     let env = CliTestEnv::new().expect("failed to create CLI test env");
+    fs::write(
+        env.themes_dir().join("default.toml"),
+        "[ui]\n\n[segments.username]\ntext_color = \"white\"\n",
+    )
+    .expect("failed to write format-less username theme");
 
     let output = env
         .run_gpy_agent(&[
@@ -1285,6 +1295,66 @@ fn test_cli_oneshot_username_empty_without_format_template() {
         output.stdout.trim().is_empty(),
         "expected empty output with no format template configured: {}",
         output.stdout
+    );
+}
+
+/// Plain text of a default-theme `oneshot <segment>` render with `extra` flags.
+fn default_theme_pill_text(env: &CliTestEnv, args: &[&str], extra: &[&str]) -> String {
+    let mut all = vec!["oneshot"];
+    all.extend_from_slice(args);
+    all.extend_from_slice(&["--format", "ansi"]);
+    all.extend_from_slice(extra);
+    let output = env
+        .run_gpy_agent(&all)
+        .expect("failed to run gpy-agent oneshot");
+    output.assert_success("oneshot pill");
+    strip_ansi_codes(output.stdout.trim_end_matches('\n'))
+}
+
+/// Every default-theme pill carries exactly one leading space inside the pill:
+/// first position has no opening cap, any other position opens with the cap.
+#[test]
+fn test_cli_oneshot_default_theme_pills_have_one_leading_space() {
+    let env = CliTestEnv::new().expect("failed to create CLI test env");
+    let open = '\u{e0ba}';
+    let close = '\u{e0bc}';
+    let gap = ' ';
+    let cases: [(&[&str], &str); 5] = [
+        (&["hostname", "--hostname", "myhost.example.com"], "myhost"),
+        (&["username", "--username", "root"], "root"),
+        (&["status", "--exit-code", "0"], "\u{f058}"),
+        (&["status", "--exit-code", "2"], "\u{f057}"),
+        // A negative value parses as a value, not a flag, and is a failure.
+        (&["status", "--exit-code", "-1"], "\u{f057}"),
+    ];
+    for (args, content) in cases {
+        let first = default_theme_pill_text(&env, args, &["--first", "--not-last"]);
+        assert_eq!(
+            first,
+            format!(" {content}{gap}{close}"),
+            "first pill: one leading space, no opening cap ({args:?})"
+        );
+        let middle = default_theme_pill_text(&env, args, &["--not-last"]);
+        assert_eq!(
+            middle,
+            format!("{open} {content}{gap}{close}"),
+            "non-first pill opens with the cap then one space ({args:?})"
+        );
+    }
+}
+
+/// The SSH icon rides in `$symbol`, so a local session has no double space.
+#[test]
+fn test_cli_oneshot_hostname_leading_space_not_doubled_by_empty_symbol() {
+    let env = CliTestEnv::new().expect("failed to create CLI test env");
+    let local = default_theme_pill_text(
+        &env,
+        &["hostname", "--hostname", "box"],
+        &["--first", "--not-last"],
+    );
+    assert!(
+        local.starts_with(" box") && !local.starts_with("  "),
+        "local first pill must read ' box': {local:?}"
     );
 }
 

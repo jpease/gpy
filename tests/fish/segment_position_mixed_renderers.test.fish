@@ -69,16 +69,16 @@ end
 
 set -g __enabled_segments agentx status
 set -l out (render_plain | string collect)
-check "agent segment then status: status opens with delim_start" (string match -q '*AGENTSOK*' -- $out; and echo pass; or echo fail)
-check "agent segment then status: no first-delimiter before status" (string match -q '*AGENTFOK*' -- $out; and echo fail; or echo pass)
-if not string match -q '*AGENTSOK*' -- $out
+check "agent segment then status: status opens with delim_start" (string match -q '*AGENTS OK*' -- $out; and echo pass; or echo fail)
+check "agent segment then status: no first-delimiter before status" (string match -q '*AGENTF OK*' -- $out; and echo fail; or echo pass)
+if not string match -q '*AGENTS OK*' -- $out
     echo "  got: "(string escape -- $out)
 end
 
 set -g __enabled_segments status agentx
 set out (render_plain | string collect)
-check "status then agent segment: status opens with delim_first" (string match -q 'FOK*' -- $out; and echo pass; or echo fail)
-if not string match -q 'FOK*' -- $out
+check "status then agent segment: status opens with delim_first" (string match -q 'F OK*' -- $out; and echo pass; or echo fail)
+if not string match -q 'F OK*' -- $out
     echo "  got: "(string escape -- $out)
 end
 

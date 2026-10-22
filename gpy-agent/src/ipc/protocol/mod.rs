@@ -157,12 +157,14 @@ fn resolve(wire: WireMessage) -> Result<Message> {
             hostname,
             format,
             is_last,
+            is_first,
             is_ssh,
             prev_bg,
         } => Ok(Message::HostnameRequest {
             hostname,
             format,
             is_last,
+            is_first,
             is_ssh,
             prev_bg,
         }),
@@ -170,11 +172,26 @@ fn resolve(wire: WireMessage) -> Result<Message> {
             username,
             format,
             is_last,
+            is_first,
             prev_bg,
         } => Ok(Message::UsernameRequest {
             username,
             format,
             is_last,
+            is_first,
+            prev_bg,
+        }),
+        WireMessage::ExitStatusRequest {
+            success,
+            format,
+            is_last,
+            is_first,
+            prev_bg,
+        } => Ok(Message::ExitStatusRequest {
+            success,
+            format,
+            is_last,
+            is_first,
             prev_bg,
         }),
         WireMessage::RegisterClient {
@@ -264,7 +281,8 @@ pub fn validate_message_content(msg: &Message) -> Result<()> {
         | Message::DirectoryRequest { prev_bg, .. }
         | Message::ClockRequest { prev_bg, .. }
         | Message::DurationRequest { prev_bg, .. }
-        | Message::CharacterRequest { prev_bg, .. } => {
+        | Message::CharacterRequest { prev_bg, .. }
+        | Message::ExitStatusRequest { prev_bg, .. } => {
             if let Some(bg) = prev_bg {
                 validate_string_field("prev_bg", bg, 64)?;
             }
@@ -410,6 +428,7 @@ enum WireMessage {
         hostname: String,
         format: super::Format,
         is_last: bool,
+        is_first: bool,
         is_ssh: bool,
         prev_bg: Option<String>,
     },
@@ -417,6 +436,14 @@ enum WireMessage {
         username: String,
         format: super::Format,
         is_last: bool,
+        is_first: bool,
+        prev_bg: Option<String>,
+    },
+    ExitStatusRequest {
+        success: bool,
+        format: super::Format,
+        is_last: bool,
+        is_first: bool,
         prev_bg: Option<String>,
     },
     RegisterClient {
@@ -449,7 +476,8 @@ impl WireMessage {
             | Self::DurationRequest { format, .. }
             | Self::CharacterRequest { format, .. }
             | Self::HostnameRequest { format, .. }
-            | Self::UsernameRequest { format, .. } => Some(*format),
+            | Self::UsernameRequest { format, .. }
+            | Self::ExitStatusRequest { format, .. } => Some(*format),
             Self::RegisterClient { .. }
             | Self::UnregisterClient { .. }
             | Self::WorkspaceUpdate { .. }
@@ -492,6 +520,7 @@ struct ShellIpcMessage {
 
 impl ShellIpcMessage {
     /// Convert to [`WireMessage`], checking only wire shape; validation happens in [`resolve`].
+    #[expect(clippy::too_many_lines, reason = "one arm per shell op")]
     fn into_wire_message(self) -> Result<WireMessage> {
         // Unlike `Format::from_str`, a bad format defaults to JSON: shell IPC is best-effort.
         let format = self
@@ -553,6 +582,7 @@ impl ShellIpcMessage {
                 hostname: self.hostname.unwrap_or_default(),
                 format,
                 is_last: self.is_last.unwrap_or(false),
+                is_first: self.is_first.unwrap_or(false),
                 is_ssh: self.is_ssh.unwrap_or(false),
                 prev_bg: self.prev_bg,
             }),
@@ -560,6 +590,15 @@ impl ShellIpcMessage {
                 username: self.username.unwrap_or_default(),
                 format,
                 is_last: self.is_last.unwrap_or(false),
+                is_first: self.is_first.unwrap_or(false),
+                prev_bg: self.prev_bg,
+            }),
+            // Not "status": that op is the agent health check.
+            "exit_status" => Ok(WireMessage::ExitStatusRequest {
+                success: self.success.unwrap_or(false),
+                format,
+                is_last: self.is_last.unwrap_or(false),
+                is_first: self.is_first.unwrap_or(false),
                 prev_bg: self.prev_bg,
             }),
             "ping" => Ok(WireMessage::Ping),

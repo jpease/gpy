@@ -159,6 +159,14 @@ enum OneshotCommands {
         #[command(flatten)]
         segment: SegmentArgs,
     },
+    /// Render the status segment (exit-status pill, when a format template is configured).
+    Status {
+        /// Last command exit code (0 = success, non-zero = failure).
+        #[arg(long, default_value_t = 0_i32, allow_negative_numbers = true)]
+        exit_code: i32,
+        #[command(flatten)]
+        segment: SegmentArgs,
+    },
 }
 
 /// `$USER`/`$USERNAME`, or empty. The shells always pass `--username`.
@@ -283,6 +291,10 @@ impl From<OneshotCommands> for OneshotRequest {
             OneshotCommands::Username { username, segment } => Self {
                 username: Some(username),
                 ..base_oneshot_request(OneshotKind::Username, String::new(), segment)
+            },
+            OneshotCommands::Status { exit_code, segment } => Self {
+                success: Some(exit_code == 0_i32),
+                ..base_oneshot_request(OneshotKind::ExitStatus, String::new(), segment)
             },
         }
     }

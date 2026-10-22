@@ -907,8 +907,8 @@ mod tests {
             "default theme should export __hostname_show_always as 0. Got:\n{output}"
         );
         assert!(
-            output.contains("set -g __hostname_format \"\""),
-            "__hostname_format must be present but empty when format is None. Got:\n{output}"
+            output.contains("set -g __hostname_format \"1\""),
+            "__hostname_format must be the presence flag \"1\" for the default theme. Got:\n{output}"
         );
         assert!(
             output.contains("set -g __icon_hostname \"\""),
@@ -938,8 +938,8 @@ mod tests {
             "default theme should export __username_show_always as 0. Got:\n{output}"
         );
         assert!(
-            output.contains("set -g __username_format \"\""),
-            "__username_format must be present but empty when format is None. Got:\n{output}"
+            output.contains("set -g __username_format \"1\""),
+            "__username_format must be the presence flag \"1\" for the default theme. Got:\n{output}"
         );
         assert!(
             output.contains("set -g __icon_username \"\""),
@@ -965,6 +965,33 @@ mod tests {
             !output.contains("$username"),
             "the raw username format string must never be exported. Got:\n{output}"
         );
+    }
+
+    /// The default theme is fully agent-rendered; a theme without formats keeps the
+    /// presence flags empty so the shells draw the pills locally.
+    #[test]
+    fn theme_export_format_presence_flags_follow_the_theme() {
+        let export = |name: &str| {
+            ThemeManager::builtin(name)
+                .expect("builtin theme should load")
+                .export(
+                    Shell::Fish,
+                    &Config::default(),
+                    &crate::template::Palette::default(),
+                )
+        };
+        let default = export("default");
+        let text = export("text");
+        for flag in ["__hostname_format", "__username_format", "__status_format"] {
+            assert!(
+                default.contains(&format!("set -g {flag} \"1\"")),
+                "default theme has a {flag} format -> presence flag \"1\". Got:\n{default}"
+            );
+            assert!(
+                text.contains(&format!("set -g {flag} \"\"")),
+                "text theme has no {flag} format -> empty flag. Got:\n{text}"
+            );
+        }
     }
 
     /// Every `BUILTIN_THEMES` entry loads via `builtin`, the loader fallback, and discovery.

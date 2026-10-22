@@ -9,13 +9,19 @@ __gpy_segment_username() {
     local prev_bg="${2:-}"
     local is_first="${3:-}"
 
-    if [[ -n "${__username_format:-}" ]]; then
-        __gpy_request_username "${USER:-}" "$is_last" "$prev_bg"
-        return
+    # The agent draws the pill when the theme has a format; no reply (agent
+    # down, disabled, or an error) falls through to the local pill.
+    if [[ -n "${__username_format:-}" ]] && declare -F __gpy_request_username >/dev/null 2>&1; then
+        local rendered
+        if rendered="$(__gpy_request_username "${USER:-}" "$is_last" "$prev_bg" "$is_first")"; then
+            echo "$rendered"
+            return 0
+        fi
     fi
 
-    local label="${USER:-}"
-    [[ -n "${__icon_username:-}" ]] && label="$__icon_username ${USER:-}"
+    # No format (or no reply): draw locally, with the one leading space every pill has.
+    local label=" ${USER:-}"
+    [[ -n "${__icon_username:-}" ]] && label=" $__icon_username ${USER:-}"
 
     __gpy_prompt_escape "$label" label
     __gpy_section_standalone "${__color_username_bg:-}" "${__color_username_fg:-}" \

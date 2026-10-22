@@ -1,7 +1,6 @@
-# Fixture theme for the cross-shell segment golden test: the clock,
+# Fixture theme for the cross-shell segment golden test: the clock, status,
 # hostname and username carry `format` templates, so the agent renders them
-# (`$time` resolves to each shell's own live-time token); the status pill is
-# always drawn by the shell.
+# (`$time` resolves to each shell's own live-time token).
 
 [ui]
 prompt_icon = "❯"
@@ -37,6 +36,7 @@ show_leading_zero = false
 show_seconds = false
 
 [segments.status]
+format = "([$sep_open](fg:$bg bg:default))[ $symbol]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
 ok_icon = "✔"
 ok_text_color = "black"
 ok_bg_color = "green"

@@ -16,6 +16,7 @@ use crate::formatter::git_resolver::GitResolver;
 use crate::formatter::hostname_resolver::HostnameResolver;
 use crate::formatter::language_resolver::LanguageResolver;
 use crate::formatter::separator::Glyphs;
+use crate::formatter::status_resolver::StatusResolver;
 use crate::formatter::username_resolver::UsernameResolver;
 use crate::plugin::BuiltinSegment;
 use crate::template::{
@@ -306,12 +307,22 @@ fn render_segment(
                 .with_glyphs(Glyphs::from(&config.ui));
             crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
         }
-        BuiltinSegment::Status => Some(status_pill_spans(
-            theme,
-            facts.sample_character_success,
-            ctx.position,
-            Glyphs::from(&config.ui),
-        )),
+        BuiltinSegment::Status => theme.segments.status.format.as_deref().map_or_else(
+            || {
+                Some(status_pill_spans(
+                    theme,
+                    facts.sample_character_success,
+                    ctx.position,
+                    Glyphs::from(&config.ui),
+                ))
+            },
+            |format| {
+                let resolver =
+                    StatusResolver::new(facts.sample_character_success, theme, ctx.position)
+                        .with_glyphs(Glyphs::from(&config.ui));
+                crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
+            },
+        ),
         // Clock renders shell-side against wall-clock time; show a demo time.
         BuiltinSegment::Clock => Some(clock_demo_spans(
             theme,
@@ -363,8 +374,8 @@ fn clock_demo_spans(theme: &ThemeConfig, is_first: IsFirst, is_last: IsLast) -> 
     )
 }
 
-/// Exit-status pill, mirroring `fish/segments/status.fish`: a Nerd Font icon
-/// under [`Glyphs::Plain`] gives way to the shells' ASCII fallback.
+/// Exit-status pill drawn without a theme `format`, mirroring the shells' local
+/// fallback; a Nerd Font icon under [`Glyphs::Plain`] gives way to the ASCII fallback.
 fn status_pill_spans(
     theme: &ThemeConfig,
     success: bool,
@@ -393,10 +404,12 @@ fn status_pill_spans(
         Glyphs::Nerd => nerd_fallback,
         Glyphs::Plain => plain_fallback,
     };
-    let text = icon
-        .and_then(|configured| glyphs.icon(configured.as_str()))
-        .unwrap_or(fallback)
-        .to_owned();
+    // The leading space matches the format-rendered pill and the shell fallback.
+    let text = format!(
+        " {}",
+        icon.and_then(|configured| glyphs.icon(configured.as_str()))
+            .unwrap_or(fallback)
+    );
     standalone_pill_spans(text, bg, fg, theme, position)
 }
 

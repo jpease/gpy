@@ -190,6 +190,17 @@ gpy config set ui.show_icons false
 
 `show_icons` lives in `config.toml`, not the theme file — it's a display toggle that applies across whichever theme is active, so you don't need to touch the theme file for it.
 
+**Pill formats for `hostname`, `username` and `status`:**
+
+Like `clock`, `directory`, `duration`, `git` and `language`, these three are drawn by the agent from a `format` string in the theme, so a themed pill reads the same in every shell. The built-in `default` theme gives each one a single leading space inside the pill:
+
+```toml
+[segments.hostname]
+format = "([$sep_open](fg:$bg bg:default))[ $symbol$hostname]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
+```
+
+`$symbol` is the segment's `icon`. It is written as-is, so give an icon its own trailing space (`icon = "🌐 "`) and a missing icon leaves no gap. `$style` and `$bg` come from the segment's `text_color` and `bg_color` (for `status`, from `ok_*` or `fail_*` according to the previous command's exit status), and `$sep_open` is left out on the first pill in the prompt. `status` also has `$symbol` (its `ok_icon`/`fail_icon`, or `✔`/`✖` when unset). A theme without a `format` for one of these still renders: the shell draws a plain pill, with the same single leading space. The shell draws that pill too whenever the agent gives no reply (down, disabled, or an older agent answering with an error), so the pill never disappears. The plain pill always puts a space between the icon and the text, so an icon without a trailing space looks different there.
+
 > A related trap: `config.toml` has no `ui.delimiter_style`/`ui.delimiters` keys. Segment separators are theme-only — edit the theme file's `[ui.segment_open]` / `[ui.segment_close]` tables or a segment's own `format` string instead — see [Configuration Examples: Build a powerline-style prompt](configuration-examples.md#goal-build-a-powerline-style-prompt) for a worked example.
 
 After editing, validate before activating:
@@ -198,7 +209,7 @@ After editing, validate before activating:
 gpy theme validate mytheme
 gpy theme use mytheme
 ```
-`gpy theme validate` checks theme schema fields, icon glyphs, and segment format templates across all eight supported agent-rendered segments (`git`, `language`, `directory`, `duration`, `character`, `clock`, `hostname`, `username`), reporting the failing field, the invalid value, and remediation guidance if something's wrong (bad color name, empty icon glyph, malformed TOML). It also checks the free-form style strings (`<lang>_style` overrides and `[segments.git.git_style]` values), naming the offending field (e.g. `segments.language.rust_style`) when one cannot be parsed or uses a color the palette cannot resolve. Format templates and style strings may not contain terminal control characters (ESC, BEL, carriage return, …); newline is the only control character a format may carry, and the agent strips any other control character from template text at render time. Both `theme validate` and `theme use` share this validator.
+`gpy theme validate` checks theme schema fields, icon glyphs, and segment format templates across all nine supported agent-rendered segments (`git`, `language`, `directory`, `duration`, `character`, `clock`, `hostname`, `username`, `status`), reporting the failing field, the invalid value, and remediation guidance if something's wrong (bad color name, empty icon glyph, malformed TOML). It also checks the free-form style strings (`<lang>_style` overrides and `[segments.git.git_style]` values), naming the offending field (e.g. `segments.language.rust_style`) when one cannot be parsed or uses a color the palette cannot resolve. Format templates and style strings may not contain terminal control characters (ESC, BEL, carriage return, …); newline is the only control character a format may carry, and the agent strips any other control character from template text at render time. Both `theme validate` and `theme use` share this validator.
 ### Already using Starship?
 
 If you're migrating from [Starship](https://starship.rs/) and want to start from your existing look rather than the GPY default theme, `gpy theme import` converts a `starship.toml` into a matching GPY palette + theme pair in one step:

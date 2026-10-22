@@ -383,10 +383,10 @@ end
 # Unlike character/duration, there is NO oneshot fallback here. A `oneshot
 # hostname` CLI subcommand does exist (added for the starship-parity test
 # harness), but this segment intentionally does not call it: under the
-# starship theme with a dead daemon, the hostname segment should render
-# nothing until the daemon comes back up, rather than silently paying a
-# per-prompt subprocess cost as a fallback. If IPC is unavailable the caller
-# renders nothing for this segment on this prompt.
+# starship theme with a dead daemon, the hostname segment draws its local pill
+# until the daemon comes back up, rather than paying a per-prompt subprocess
+# cost as a fallback. If IPC is unavailable (or the agent replies with an
+# error) this returns 1 and the caller draws the local pill.
 #
 # Arguments:
 #   host     — the hostname string ($hostname, fish's builtin variable). Named
@@ -398,35 +398,36 @@ end
 #   is_ssh   — "1" in an SSH session ($__gpy_is_ssh), anything else otherwise.
 #              Sent as "is_ssh":true so the agent draws the theme icon only
 #              over SSH; omitted (agent default false) otherwise.
-function __gpy_request_hostname --argument-names host is_last prev_bg is_ssh --description 'Send hostname render request to agent'
+#   is_first — "true" if this is the first prompt segment, "" otherwise (no opening cap).
+function __gpy_request_hostname --argument-names host is_last prev_bg is_ssh is_first --description 'Send hostname render request to agent'
     set -l format ansi
     set -l escaped_host (__gpy_json_escape "$host")
 
     set -l payload (string join '' '{"op":"hostname","hostname":"' $escaped_host '","format":"' $format '"')
-    set payload (string join '' $payload (__gpy_json_flags_tail "$is_last" '' "$prev_bg"))
+    set payload (string join '' $payload (__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg"))
     test "$is_ssh" = 1; and set payload (string join '' $payload ',"is_ssh":true')
     set payload (string join '' $payload '}')
 
     set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
 
-    if test -z "$result"
+    if test -z "$result"; or string match -q '{"error"*' -- "$result[1]"
         return 1
     end
     printf '%s\n' $result
 end
 
-# No oneshot fallback: a dead daemon renders nothing rather than forking per prompt.
-function __gpy_request_username --argument-names user is_last prev_bg --description 'Send username render request to agent'
+# No oneshot fallback: no reply (or an error) returns 1 and the caller draws the local pill.
+function __gpy_request_username --argument-names user is_last prev_bg is_first --description 'Send username render request to agent'
     set -l format ansi
     set -l escaped_user (__gpy_json_escape "$user")
 
     set -l payload (string join '' '{"op":"username","username":"' $escaped_user '","format":"' $format '"')
-    set payload (string join '' $payload (__gpy_json_flags_tail "$is_last" '' "$prev_bg"))
+    set payload (string join '' $payload (__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg"))
     set payload (string join '' $payload '}')
 
     set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
 
-    if test -z "$result"
+    if test -z "$result"; or string match -q '{"error"*' -- "$result[1]"
         return 1
     end
     printf '%s\n' $result
@@ -440,6 +441,24 @@ function __gpy_request_clock --argument-names is_last is_first prev_bg --descrip
     set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
 
     if test -z "$result"
+        return 1
+    end
+    printf '%s\n' $result
+end
+
+# Exit-status pill request ("exit_status": the bare "status" op is the agent health
+# check). success is 1 when the last command exited 0. No oneshot fallback:
+# segment_status_render draws the pill locally instead. An error reply (an older
+# agent without the op) counts as no reply.
+function __gpy_request_exit_status --argument-names success is_last is_first prev_bg --description 'Send status render request to agent'
+    set -l success_val false
+    test "$success" = 1; and set success_val true
+
+    set -l payload (string join '' '{"op":"exit_status","success":' $success_val ',"format":"ansi"' (__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg") '}')
+
+    set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)
+
+    if test -z "$result"; or string match -q '{"error"*' -- "$result[1]"
         return 1
     end
     printf '%s\n' $result

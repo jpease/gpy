@@ -320,7 +320,8 @@ impl HandlerRegistry {
             | Message::DurationRequest { .. }
             | Message::CharacterRequest { .. }
             | Message::HostnameRequest { .. }
-            | Message::UsernameRequest { .. } => self.misc.handle(message),
+            | Message::UsernameRequest { .. }
+            | Message::ExitStatusRequest { .. } => self.misc.handle(message),
             Message::Ping
             | Message::Status
             | Message::RegisterClient { .. }

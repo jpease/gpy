@@ -70,6 +70,11 @@ template-fail	golden-template	clock,status,hostname,username	1	-	-
 template-root	golden-template	clock,status,username	0	-	root
 starship-flat	starship	clock,status	0	-	-
 template-clock-12h-seconds	golden-template-12h	clock	0	-	mask_seconds
+# Agent-rendered pills in first position: no opening cap, one leading space inside the pill
+# (a token cannot hold a space, so `prompt!~=bg=X]'<content>` proves the content is not unpadded).
+template-status-first	golden-template	status,hostname	3	SSH_CONNECTION=10.0.0.1	-	up	-	-	-	prompt!~=[fg=red]'\ue0ba' prompt!~=bg=red]'✖ prompt~=[fg=yellow]'\ue0ba'
+template-hostname-first	golden-template	hostname,status	0	SSH_CONNECTION=10.0.0.1	-	up	-	-	-	prompt!~=[fg=yellow]'\ue0ba' prompt!~=bg=yellow]'@ prompt~=[fg=green]'\ue0ba'
+template-username-first	golden-template	username,status	0	-	root	up	-	-	-	prompt!~=[fg=red]'\ue0ba' prompt~=[fg=green]'\ue0ba'
 
 # --- behaviour rows: integration behaviour every shell must share
 # agent disabled: the prompt still renders (oneshot), nothing is started or registered

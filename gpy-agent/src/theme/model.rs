@@ -263,10 +263,10 @@ pub struct HostnameTheme {
     /// SSH symbol shown before the hostname, SSH sessions only (Starship `ssh_symbol`).
     #[serde(default)]
     pub icon: Option<types::Icon>,
-    /// Pill background color (shell path only).
+    /// Pill background color (`$bg`/`$style` in the format; shell path when no format).
     #[serde(default = "default_color_black")]
     pub bg_color: types::ColorSpec,
-    /// Pill text color (shell path only).
+    /// Pill text color (`$style` in the format; shell path when no format).
     #[serde(default = "default_color_white")]
     pub text_color: types::ColorSpec,
     /// Trim at the first occurrence of this delimiter (default "."); empty disables.
@@ -300,10 +300,10 @@ pub struct UsernameTheme {
     /// Icon/symbol shown before the username (default: none, matching Starship)
     #[serde(default)]
     pub icon: Option<types::Icon>,
-    /// Pill background color (shell path only; default red).
+    /// Pill background color (`$bg`/`$style` in the format; shell path when no format).
     #[serde(default = "default_color_red")]
     pub bg_color: types::ColorSpec,
-    /// Pill text color (shell path only).
+    /// Pill text color (`$style` in the format; shell path when no format).
     #[serde(default = "default_color_white")]
     pub text_color: types::ColorSpec,
     /// Show for normal users too (default: false).
@@ -439,6 +439,10 @@ impl Default for DurationTheme {
 /// Status segment colors
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusTheme {
+    /// Starship-style template for the exit-status pill. `None` lets the shell
+    /// draw the pill locally; `Some` makes the agent render it.
+    #[serde(default)]
+    pub format: Option<String>,
     /// Icon for successful command (exit code 0) (default: "✔")
     #[serde(default)]
     pub ok_icon: Option<types::Icon>,
@@ -462,6 +466,7 @@ pub struct StatusTheme {
 impl Default for StatusTheme {
     fn default() -> Self {
         Self {
+            format: None,
             ok_icon: None,
             ok_bg_color: default_status_ok_bg(),
             ok_text_color: default_status_ok_text(),

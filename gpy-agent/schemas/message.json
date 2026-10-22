@@ -245,6 +245,11 @@
           "default": false,
           "description": "Whether this is the last segment in the prompt"
         },
+        "is_first": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is the first segment in the prompt (opening-cap suppression)"
+        },
         "is_ssh": {
           "type": "boolean",
           "default": false,
@@ -280,6 +285,11 @@
           "default": false,
           "description": "Whether this is the last segment in the prompt"
         },
+        "is_first": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is the first segment in the prompt (opening-cap suppression)"
+        },
         "prev_bg": {
           "type": "string",
           "maxLength": 64,
@@ -287,6 +297,43 @@
         }
       },
       "title": "UsernameRequest (shell form)"
+    },
+    {
+      "type": "object",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "type": "string",
+          "const": "exit_status",
+          "description": "The status pill; the bare \"status\" op is the agent health check"
+        },
+        "success": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether the last command succeeded"
+        },
+        "format": {
+          "$ref": "#/definitions/Format"
+        },
+        "is_last": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is the last segment in the prompt"
+        },
+        "is_first": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this is the first segment in the prompt (opening-cap suppression)"
+        },
+        "prev_bg": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Previous segment's background colour for powerline transitions"
+        }
+      },
+      "title": "ExitStatusRequest (shell form)"
     },
     {
       "type": "object",

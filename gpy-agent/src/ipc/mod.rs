@@ -154,6 +154,8 @@ pub enum Message {
         format: Format,
         /// Whether this is the last segment in the prompt.
         is_last: bool,
+        /// Whether this is the first segment in the prompt.
+        is_first: bool,
         /// Whether the client session is over SSH; absent means `false`.
         is_ssh: bool,
         /// Previous segment's background color, for chevron transitions.
@@ -169,6 +171,23 @@ pub enum Message {
         format: Format,
         /// Whether this is the last segment in the prompt.
         is_last: bool,
+        /// Whether this is the first segment in the prompt.
+        is_first: bool,
+        /// Previous segment's background color, for chevron transitions.
+        prev_bg: Option<String>,
+    },
+
+    /// Request status segment render: the pill showing the previous command's exit status.
+    /// Distinct from [`Message::Status`], the agent health check.
+    ExitStatusRequest {
+        /// Whether the last command succeeded (`true`) or failed (`false`).
+        success: bool,
+        /// Desired response format.
+        format: Format,
+        /// Whether this is the last segment in the prompt.
+        is_last: bool,
+        /// Whether this is the first segment in the prompt.
+        is_first: bool,
         /// Previous segment's background color, for chevron transitions.
         prev_bg: Option<String>,
     },
@@ -271,6 +290,27 @@ impl Message {
                 is_first,
                 prev_bg,
                 ..
+            }
+            | Self::HostnameRequest {
+                format,
+                is_last,
+                is_first,
+                prev_bg,
+                ..
+            }
+            | Self::UsernameRequest {
+                format,
+                is_last,
+                is_first,
+                prev_bg,
+                ..
+            }
+            | Self::ExitStatusRequest {
+                format,
+                is_last,
+                is_first,
+                prev_bg,
+                ..
             } => (*format, *is_last, *is_first, prev_bg),
             _ => return None,
         };
@@ -283,33 +323,21 @@ impl Message {
         })
     }
 
-    /// [`RequestMeta`] for the variants that carry no `is_first`.
+    /// [`RequestMeta`] for the variant that carries no `is_first` (the prompt character).
     fn capless_request_meta(&self) -> Option<RequestMeta> {
-        let (format, is_last, prev_bg) = match self {
-            Self::CharacterRequest {
-                format,
-                is_last,
-                prev_bg,
-                ..
-            }
-            | Self::HostnameRequest {
-                format,
-                is_last,
-                prev_bg,
-                ..
-            }
-            | Self::UsernameRequest {
-                format,
-                is_last,
-                prev_bg,
-                ..
-            } => (*format, *is_last, prev_bg),
-            _ => return None,
+        let Self::CharacterRequest {
+            format,
+            is_last,
+            prev_bg,
+            ..
+        } = self
+        else {
+            return None;
         };
 
         Some(RequestMeta {
-            format,
-            is_last,
+            format: *format,
+            is_last: *is_last,
             is_first: false,
             prev_bg: prev_bg.clone(),
         })
@@ -361,6 +389,12 @@ pub enum Response {
 
     /// Character segment data returned by the agent when format is set.
     Character {
+        /// Whether the last command succeeded (`true`) or failed (`false`).
+        success: bool,
+    },
+
+    /// Status segment data returned by the agent when a status format is set.
+    ExitStatus {
         /// Whether the last command succeeded (`true`) or failed (`false`).
         success: bool,
     },

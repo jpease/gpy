@@ -107,10 +107,10 @@ set -g __gpy_last_segment_bg black
 
 segment_username_render true
 
-if test "$__test_username_content" = root
-    check "pure-fish render: renders \$USER and omits the icon when unset" pass
+if test "$__test_username_content" = " root"
+    check "pure-fish render: renders \$USER with one leading space and omits the icon when unset" pass
 else
-    check "pure-fish render: renders \$USER and omits the icon when unset (got: '$__test_username_content')" fail
+    check "pure-fish render: renders \$USER with one leading space and omits the icon when unset (got: '$__test_username_content')" fail
 end
 
 if test "$__test_username_bg" = red; and test "$__test_username_fg" = white
@@ -142,7 +142,7 @@ set -g __icon_username ICON
 set -g __gpy_last_segment_bg black
 segment_username_render true
 
-if test "$__test_username_content" = "ICON root"
+if test "$__test_username_content" = " ICON root"
     check "pure-fish render: includes the icon when __icon_username is set" pass
 else
     check "pure-fish render: includes the icon when __icon_username is set (got: '$__test_username_content')" fail
@@ -152,7 +152,7 @@ set -g __icon_username ""
 set -g __gpy_last_segment_bg black
 segment_username_render true
 
-if test "$__test_username_content" = root
+if test "$__test_username_content" = " root"
     check "pure-fish render: omits the icon again once __icon_username is cleared" pass
 else
     check "pure-fish render: omits the icon again once __icon_username is cleared (got: '$__test_username_content')" fail
@@ -163,10 +163,11 @@ end
 # __username_format's CONTENT is presence-only (the agent re-derives the real
 # format server-side) — the branch must fire purely because the var is
 # non-empty, regardless of what it contains.
-function __gpy_request_username --argument-names user is_last prev_bg
+function __gpy_request_username --argument-names user is_last prev_bg is_first
     set -g __test_username_arg_user "$user"
     set -g __test_username_arg_is_last "$is_last"
     set -g __test_username_arg_prev_bg "$prev_bg"
+    set -g __test_username_arg_is_first "$is_first"
     printf AGENT_SENTINEL
 end
 
@@ -219,6 +220,25 @@ if test -z "$__test_username_arg_is_last"
     check "agent path (not last): is_last is forwarded as empty, not shifted" pass
 else
     check "agent path (not last): is_last is forwarded as empty, not shifted (got: '$__test_username_arg_is_last')" fail
+end
+
+# is_first rides in the 4th slot: "true" when first, "" (not shifted) otherwise, so
+# the agent can drop the opening cap of the first pill.
+set -g __gpy_last_segment_bg green
+set -e __test_username_arg_is_first
+segment_username_render "" true >/dev/null
+if test "$__test_username_arg_is_first" = true
+    check "agent path: is_first=true reaches __gpy_request_username as the 4th arg" pass
+else
+    check "agent path: is_first=true reaches __gpy_request_username as the 4th arg (got: '$__test_username_arg_is_first')" fail
+end
+
+set -g __test_username_arg_is_first sentinel
+segment_username_render true >/dev/null
+if test -z "$__test_username_arg_is_first"
+    check "agent path: a non-first username forwards is_first as empty" pass
+else
+    check "agent path: a non-first username forwards is_first as empty (got: '$__test_username_arg_is_first')" fail
 end
 
 functions -e __gpy_request_username
@@ -281,6 +301,20 @@ if not string match -q '*prev_bg*' -- "$__test_username_payload"
     check "__gpy_request_username: omits prev_bg when empty" pass
 else
     check "__gpy_request_username: omits prev_bg when empty (got: $__test_username_payload)" fail
+end
+
+__gpy_request_username user4 "" "" true >/dev/null
+if string match -q '*"is_first":true*' -- "$__test_username_payload"
+    check "__gpy_request_username: is_first=true emits \"is_first\":true" pass
+else
+    check "__gpy_request_username: is_first=true emits \"is_first\":true (got: $__test_username_payload)" fail
+end
+
+__gpy_request_username user5 "" "" "" >/dev/null
+if not string match -q '*is_first*' -- "$__test_username_payload"
+    check "__gpy_request_username: is_first='' omits is_first" pass
+else
+    check "__gpy_request_username: is_first='' omits is_first (got: $__test_username_payload)" fail
 end
 
 functions -e __gpy_ipc_send

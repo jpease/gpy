@@ -108,7 +108,7 @@ Under Windows Subsystem for Linux, a repository on a Windows drive (`/mnt/c`, `/
 
 ## Zsh-Specific Issues
 
-Zsh uses a native `TRAPURG` function and `precmd`/`preexec` hooks rather than Fish's `--on-signal`/`--on-event`, but the underlying contract (agent-rendered `directory`/`duration`/`git`/`language` segments, shell-rendered `clock`/`status`) is identical across Fish, Zsh, and Bash.
+Zsh uses a native `TRAPURG` function and `precmd`/`preexec` hooks rather than Fish's `--on-signal`/`--on-event`, but the underlying contract is identical across Fish, Zsh, and Bash: `directory`/`duration`/`git`/`language` are agent-rendered, and `clock`/`hostname`/`username`/`status` are agent-rendered when the theme sets a `format` and drawn locally by the shell otherwise or whenever the agent gives no reply.
 
 Zsh is at parity with Fish for live updates: `TRAPURG` re-renders `PROMPT` and calls `zle reset-prompt`, so an idle prompt shows a git change with no keystroke (asserted on a real pty by `tests/zsh/e2e_git_live_content.test.zsh`), a restarted agent's re-register nudge re-registers the shell (`tests/zsh/e2e_reregister_after_restart.test.zsh`), and a dead agent is restarted from the next prompt by the periodic supervisor check. If you hit a Zsh-only issue, it's worth filing as a gap in this doc.
 

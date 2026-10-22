@@ -1,4 +1,5 @@
-//! Maps the username to Starship-exact `username` variables: `username`, `symbol`, `sep_close`.
+//! Maps the username to Starship-exact `username` variables (`username`, `symbol`) plus the
+//! powerline variables `style`, `bg`, `sep_open`, `sep_gap` and `sep_close`.
 //! (The importer renames Starship's `$user` to `$username`.)
 
 use crate::formatter::SegmentPosition;
@@ -31,6 +32,13 @@ impl<'a> UsernameResolver<'a> {
     pub fn with_glyphs(self, glyphs: Glyphs) -> Self {
         Self { glyphs, ..self }
     }
+
+    /// Style string: `fg:<text_color> bg:<bg_color>`.
+    fn style(&self) -> String {
+        let fg = self.theme.segments.username.text_color.as_str();
+        let bg = self.theme.segments.username.bg_color.as_str();
+        format!("fg:{fg} bg:{bg}")
+    }
 }
 
 impl VariableResolver for UsernameResolver<'_> {
@@ -47,8 +55,10 @@ impl VariableResolver for UsernameResolver<'_> {
                     .unwrap_or("")
                     .to_owned(),
             ),
+            "style" => Some(self.style()),
+            "bg" => Some(self.theme.segments.username.bg_color.as_str().to_owned()),
             "sep_gap" | "sep_open" | "sep_close" => {
-                separator_var(name, self.pos, SeparatorStyle::Terminal, self.glyphs)
+                separator_var(name, self.pos, SeparatorStyle::Chained, self.glyphs)
             }
             _ => None,
         }
@@ -135,40 +145,54 @@ mod tests {
         assert_eq!(res.resolve("nonsuch"), None);
     }
 
-    #[test]
-    fn sep_close_some_when_is_last_true() {
-        let thr = theme();
-        let res = UsernameResolver::new(
+    fn at(is_last: IsLast, is_first: IsFirst, thr: &ThemeConfig) -> UsernameResolver<'_> {
+        UsernameResolver::new(
             "root".to_owned(),
-            &thr,
-            SegmentPosition::new(IsLast::Yes, IsFirst::No),
-        );
-        assert_eq!(res.resolve("sep_close"), Some("\u{e0b4}".to_owned()));
+            thr,
+            SegmentPosition::new(is_last, is_first),
+        )
     }
 
     #[test]
-    fn sep_close_none_when_is_last_false() {
+    fn sep_close_is_half_circle_when_last_and_triangle_otherwise() {
         let thr = theme();
-        let res = UsernameResolver::new(
-            "root".to_owned(),
-            &thr,
-            SegmentPosition::new(IsLast::No, IsFirst::No),
-        );
-        assert_eq!(res.resolve("sep_close"), None);
-    }
-
-    #[test]
-    fn style_is_none_for_username_segment() {
-        let thr = theme();
-        let res = UsernameResolver::new(
-            "root".to_owned(),
-            &thr,
-            SegmentPosition::new(IsLast::No, IsFirst::No),
+        assert_eq!(
+            at(IsLast::Yes, IsFirst::No, &thr).resolve("sep_close"),
+            Some("\u{e0b4}".to_owned())
         );
         assert_eq!(
-            res.resolve("style"),
-            None,
-            "username segment has no $style variable — format strings hardcode literal colors"
+            at(IsLast::No, IsFirst::No, &thr).resolve("sep_close"),
+            Some("\u{e0bc}".to_owned())
         );
+    }
+
+    #[test]
+    fn sep_open_absent_when_first_present_otherwise() {
+        let thr = theme();
+        assert_eq!(at(IsLast::No, IsFirst::Yes, &thr).resolve("sep_open"), None);
+        assert_eq!(
+            at(IsLast::No, IsFirst::No, &thr).resolve("sep_open"),
+            Some("\u{e0ba}".to_owned())
+        );
+    }
+
+    #[test]
+    fn sep_gap_only_when_not_last() {
+        let thr = theme();
+        assert_eq!(
+            at(IsLast::No, IsFirst::No, &thr).resolve("sep_gap"),
+            Some(" ".to_owned())
+        );
+        assert_eq!(at(IsLast::Yes, IsFirst::No, &thr).resolve("sep_gap"), None);
+    }
+
+    #[test]
+    fn style_and_bg_come_from_the_username_theme_colors() {
+        let mut thr = theme();
+        thr.segments.username.bg_color = crate::config::types::ColorSpec::new("blue").unwrap();
+        thr.segments.username.text_color = crate::config::types::ColorSpec::new("yellow").unwrap();
+        let res = at(IsLast::No, IsFirst::No, &thr);
+        assert_eq!(res.resolve("style").unwrap(), "fg:yellow bg:blue");
+        assert_eq!(res.resolve("bg").unwrap(), "blue");
     }
 }

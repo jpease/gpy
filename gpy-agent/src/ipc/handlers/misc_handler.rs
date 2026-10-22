@@ -1,5 +1,5 @@
 //! IPC handler for segment requests that carry their own response data
-//! (directory, duration, character, hostname, username); the agent echoes it
+//! (directory, duration, character, hostname, username, exit status); the agent echoes it
 //! back, plus a writability `stat` for directories.
 
 use super::{HandlerError, RequestHandler};
@@ -52,6 +52,9 @@ impl RequestHandler for MiscHandler {
             Message::UsernameRequest { username, .. } => Ok(Response::Username {
                 username: username.clone(),
             }),
+            Message::ExitStatusRequest { success, .. } => {
+                Ok(Response::ExitStatus { success: *success })
+            }
             _ => Err(HandlerError::UnexpectedMessage {
                 handler: "MiscHandler",
                 qualifier: "unsupported",
