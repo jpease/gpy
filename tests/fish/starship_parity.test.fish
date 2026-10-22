@@ -124,6 +124,18 @@ set -gx HOME $SP_ISO
 # Cache and runtime roots follow the sandboxed HOME, never the caller's.
 set -e XDG_CACHE_HOME XDG_RUNTIME_DIR
 set -gx MISE_DISABLE 1
+# Pinned Rust toolchain view for the `clean-rust` fixture. Starship resolves
+# rustc through $RUSTUP_TOOLCHAIN, $RUSTUP_HOME and `rustup`, GPY runs `rustc`
+# from PATH, so a caller's toolchain pin or shim manager (e.g. a mise shim that
+# cannot resolve under the sandboxed HOME) makes them disagree. Both tools see
+# one stub rustc instead; the stub rustup fails so Starship falls back to it.
+mkdir -p $SP_ISO/toolchain/bin $SP_ISO/toolchain/rustup
+printf '#!/bin/sh\necho "rustc 1.2.3 (0123456789 2020-01-01)"\n' >$SP_ISO/toolchain/bin/rustc
+printf '#!/bin/sh\nexit 1\n' >$SP_ISO/toolchain/bin/rustup
+chmod +x $SP_ISO/toolchain/bin/rustc $SP_ISO/toolchain/bin/rustup
+set -gx PATH $SP_ISO/toolchain/bin $PATH
+set -gx RUSTUP_HOME $SP_ISO/toolchain/rustup
+set -e RUSTUP_TOOLCHAIN
 
 if not $gpy_bin theme use starship --force >/dev/null 2>&1
     echo "❌ 'gpy theme use starship --force' failed in isolated config"
