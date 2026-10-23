@@ -45,6 +45,7 @@ Exit status is 0 when every check passed, 1 otherwise.
 
 | Script | Purpose |
 |---|---|
+| `gpy-dev.sh [--release] [--ref REV \| --pr N \| --bin DIR] [--reset] [--sync-config]` | Run an unreleased build in an isolated fish shell (own config, fish scripts, caches and agent socket under `~/.local/share/gpy-dev`) and leave your installed release untouched; `exit` returns to it. The prompt shows `[gpy-dev <version> <ref>]`. `just dev`. |
 | `test_fish.sh` | Build the debug binaries and run `tests/fish/*.test.fish`. |
 | `check-active-toolchain.sh` | Fail unless the `rustc` active in `gpy-agent/` is the `rust-toolchain.toml` pin; names the override on a mismatch. |
 | `check-license-metadata.sh` | `Cargo.toml`, `LICENSE` and every other license declaration agree on GPL-3.0-or-later. |

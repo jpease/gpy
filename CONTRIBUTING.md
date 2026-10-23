@@ -60,6 +60,21 @@ cd gpy
 ./install-dev.fish
 ```
 
+`./install-dev.fish` installs into `~/.local/bin` and `~/.config`, so it refuses
+to run when a packaged gpy (for example Homebrew's) is already on `PATH`; pass
+`--allow-shadow` to override. To try a build without touching an installed
+release, run it in an isolated shell instead:
+
+```bash
+./scripts/gpy-dev.sh                 # this checkout
+./scripts/gpy-dev.sh --pr 123        # a pull request
+./scripts/gpy-dev.sh --ref v0.7.0-rc1
+./scripts/gpy-dev.sh --bin ./dist    # prebuilt gpy + gpy-agent, no build
+```
+
+`exit` returns to the installed release. See
+[`scripts/README.md`](scripts/README.md) for the flags.
+
 ## Quality Gates
 
 Run before pushing — this is what CI also runs:
