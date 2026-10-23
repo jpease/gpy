@@ -31,6 +31,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every cache. An agent that answers nothing is now restarted after two
   checks in a row, each allowed a second; one that is gone is still restarted
   at the next check.
+- The protocol-mismatch hint, printed by the agent and by the Fish
+  integration, now says to update gpy and re-run `gpy setup`. It used to
+  point at `./install-dev.fish`, which only exists in a source checkout.
+
+### Added
+
+- `scripts/gpy-dev.sh` (`just dev`) runs an unreleased build in an isolated
+  fish shell: its own config, fish scripts, caches and agent socket, so an
+  installed release is untouched and `exit` returns to it. Build the
+  checkout, a `--ref`, a `--pr`, or use prebuilt binaries with `--bin`.
+
+### Changed
+
+- `./install-dev.fish` now exits when a gpy outside `$HOME` (for example
+  Homebrew's) is on `PATH`, since it would shadow that install and replace
+  the Fish files `gpy setup` manages. Pass `--allow-shadow` to install anyway.
+- `./install-dev.fish` no longer removes `conf.d/gpy_init.fish` or warns about
+  `~/.config/gpy/core`, and the Fish integration no longer looks for
+  `gpy-agent` in `~/.config/gpy/bin`; no installer writes those paths.
 
 ## [0.6.0] - 2026-10-22
 
