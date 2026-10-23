@@ -327,26 +327,12 @@ function _install_fish_files
         echo "   Your existing config.toml was left untouched; review the .new file for any changes."
     end
 
-    # Legacy dev installs autoloaded this; gpy setup wires config.fish instead.
-    rm -f "$fish_config_dir/conf.d/gpy_init.fish"
     if test $clean_sync -eq 1
         rm -rf "$fish_config_dir/gpy"
     end
     if not "$HOME/.local/bin/gpy" setup --shell fish --from . --non-interactive
         echo "Error: gpy setup failed"
         return 1
-    end
-
-    if test -d "$HOME/.config/gpy/core"
-        echo ""
-        echo "Warning: Old installation detected with Fish files in ~/.config/gpy/"
-        echo "   GPY now separates configuration and implementation:"
-        echo "   - Configuration: ~/.config/gpy/ (themes, config)"
-        echo "   - Fish files: ~/.config/fish/gpy/ (core, segments, functions)"
-        echo ""
-        echo "   You can safely remove the old Fish files:"
-        echo "   rm -rf ~/.config/gpy/{core,segments,conf.d,functions}"
-        echo ""
     end
 
     echo "Configuration installed to $gpy_config_dir"

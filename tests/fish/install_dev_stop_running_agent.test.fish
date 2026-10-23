@@ -74,7 +74,7 @@ set -l driver "$home_dir/driver.fish"
 printf '%s\n' \
     "cd '$repo_root'" \
     "set -gx PATH '$safe_path'" \
-    "source install-dev.fish --fish-only >/dev/null 2>&1" \
+    "source install-dev.fish --fish-only --allow-shadow >/dev/null 2>&1" \
     "" \
     "set -gx PATH '$stub_dir' '$agent_dir' '$safe_path'" \
     "set -e XDG_RUNTIME_DIR" \
