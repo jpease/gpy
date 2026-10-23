@@ -67,6 +67,8 @@ pub fn save_config(
     let updated_leaves = config_leaves(&normalized)?;
 
     let target = resolve_write_target(Path::new(path))?;
+    // Held through the rename: a second writer must read this one's result.
+    let _lock = lock_for_save(&target)?;
     let existing = read_existing(&target)?;
     let mut document: toml_edit::DocumentMut = match existing.as_deref() {
         Some(text) => text
@@ -278,6 +280,27 @@ fn read_existing(path: &Path) -> Result<Option<String>> {
             path.display()
         ))),
     }
+}
+
+/// Longest a save waits for another writer; one save takes about 15 ms.
+const SAVE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Lock `target` against concurrent saves, creating its directory first.
+///
+/// # Errors
+/// Returns an error if the directory or lock file cannot be created, or the
+/// lock stays held past [`SAVE_LOCK_WAIT`].
+fn lock_for_save(target: &Path) -> Result<crate::fs_util::PathLock> {
+    if let Some(parent) = target.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| Error::config(format!("Failed to create config directory: {e}")))?;
+    }
+    crate::fs_util::lock_beside(target, SAVE_LOCK_WAIT).map_err(|e| {
+        Error::config(format!(
+            "Failed to lock config file {}: {e}",
+            target.display()
+        ))
+    })
 }
 
 /// Temp-file-and-rename write, keeping existing permissions.
