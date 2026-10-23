@@ -33,19 +33,20 @@ pub fn validate_segment_templates(
     palette: &Palette,
 ) -> Result<(), ValidationError> {
     let s = &theme.segments;
-    for (name, format) in [
-        ("git", &s.git.format),
-        ("language", &s.language.format),
-        ("directory", &s.directory.format),
-        ("duration", &s.duration.format),
-        ("character", &s.character.format),
-        ("clock", &s.clock.format),
-        ("hostname", &s.hostname.format),
-        ("username", &s.username.format),
-        ("status", &s.status.format),
+    for (name, field, format) in [
+        ("git", "format", &s.git.format),
+        ("language", "format", &s.language.format),
+        ("directory", "format", &s.directory.format),
+        ("duration", "format", &s.duration.format),
+        ("character", "format", &s.character.format),
+        ("clock", "format", &s.clock.format),
+        ("hostname", "format", &s.hostname.format),
+        ("username", "format", &s.username.format),
+        ("username", "user_format", &s.username.user_format),
+        ("status", "format", &s.status.format),
     ] {
         if let Some(template) = format.as_deref() {
-            validate_one(name, template, palette)?;
+            validate_one(name, field, template, palette)?;
         }
     }
     validate_style_values(
@@ -100,6 +101,7 @@ fn validate_style_values(
 /// Returns `Err` with the segment name and template error if either check fails.
 fn validate_one(
     segment: &'static str,
+    field: &str,
     format: &str,
     palette: &Palette,
 ) -> Result<(), ValidationError> {
@@ -108,7 +110,7 @@ fn validate_one(
     check_template_controls(format)
         .and_then(|()| render(format, &ctx).map(drop))
         .map_err(|error| ValidationError {
-            field_path: format!("segments.{segment}.format"),
+            field_path: format!("segments.{segment}.{field}"),
             kind: ValidationErrorKind::TemplateRenderFailed {
                 segment,
                 template: escape_controls(format),

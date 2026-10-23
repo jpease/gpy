@@ -38,6 +38,12 @@
 #   a local run exercises `<hostname> in ` with the icon suppressed on both
 #   sides.
 #
+#   SSH pass: every fixture is compared again with SSH_CONNECTION set for both
+#   tools. Starship then shows `username` (style_user for a non-root run) and
+#   the hostname's ssh_symbol; the GPY side applies the shells' visibility
+#   predicates with is_ssh=1 and passes `--is-ssh` / `--is-root` the way the
+#   shells' IPC requests carry them. The off-SSH pass stays the baseline.
+#
 # DELIBERATE EXCLUSION
 #   * package module: Starship shows `is 📦 v1.2.3`; GPY does not emulate it, so
 #     the baseline config disables it (see the fixture header).
@@ -126,7 +132,15 @@ set -e XDG_CACHE_HOME XDG_RUNTIME_DIR
 set -gx MISE_DISABLE 1
 # Off-SSH baseline: Starship shows the username and ssh_symbol whenever
 # SSH_CONNECTION is set, and GPY keys its SSH state on all three variables.
+# The SSH pass re-adds SSH_CONNECTION to Starship's env only (see __sp_starship).
 set -e SSH_CONNECTION SSH_CLIENT SSH_TTY
+set -g SP_SSH 0
+# euid 0 picks Starship's style_root / GPY's root style, as the shells do.
+set -g SP_IS_ROOT 0
+test (id -u) = 0; and set -g SP_IS_ROOT 1
+# The shells' visibility predicate, so the GPY side gates username exactly as
+# segment_username_detect does.
+source $repo_root/fish/segments/username.fish
 # Pinned Rust toolchain view for the `clean-rust` fixture. Starship resolves
 # rustc through $RUSTUP_TOOLCHAIN, $RUSTUP_HOME and `rustup`, GPY runs `rustc`
 # from PATH, so a caller's toolchain pin or shim manager (e.g. a mise shim that
@@ -201,7 +215,16 @@ function __sp_seg --argument-names seg dir
         case hostname
             # Fish's builtin $hostname; native starship reads the same machine
             # hostname, so both sides render identical text.
-            set out ($agent_bin oneshot hostname --hostname $hostname --format ansi --not-last 2>/dev/null | string collect)
+            set -l ssh_flag
+            test "$SP_SSH" = 1; and set ssh_flag --is-ssh
+            set out ($agent_bin oneshot hostname --hostname $hostname $ssh_flag --format ansi --not-last 2>/dev/null | string collect)
+        case username
+            # The shell-side gate (segment_username_detect): root, SSH, or the
+            # theme's show_always (false in the shipped preset). No sudo here.
+            __gpy_username_should_show $SP_IS_ROOT 0 $SP_SSH 0; or return 0
+            set -l root_flag
+            test "$SP_IS_ROOT" = 1; and set root_flag --is-root
+            set out ($agent_bin oneshot username --username $USER $root_flag --format ansi --not-last 2>/dev/null | string collect)
     end
     test -n "$out"; or return 0
     # Skip JSON error responses (e.g. "Not in a git repository").
@@ -214,7 +237,7 @@ end
 # directly (`set x $x(sub)`) would collapse the whole value to empty in fish.
 function __sp_gpy_modules --argument-names dir
     set -l parts
-    for seg in hostname directory git lang duration
+    for seg in username hostname directory git lang duration
         set -l part (__sp_seg $seg $dir)
         test -n "$part"; and set -a parts $part
     end
@@ -233,7 +256,9 @@ end
 # fish `pushd` so changing directory does not fire fish PWD-change hooks (e.g.
 # mise) that would spam the report with unrelated errors.
 function __sp_starship --argument-names dir
-    sh -c 'cd "$1" || exit 1; term="${TERM:-xterm-256color}"; [ "$term" != "dumb" ] || term="xterm-256color"; TERM="$term" STARSHIP_CONFIG="$2" starship prompt --status "$3" --cmd-duration "$4" --terminal-width 80' \
+    set -l ssh_env
+    test "$SP_SSH" = 1; and set ssh_env SSH_CONNECTION='10.0.0.1 22 10.0.0.2 22'
+    env $ssh_env sh -c 'cd "$1" || exit 1; term="${TERM:-xterm-256color}"; [ "$term" != "dumb" ] || term="xterm-256color"; TERM="$term" STARSHIP_CONFIG="$2" starship prompt --status "$3" --cmd-duration "$4" --terminal-width 80' \
         sh $dir $match_cfg $SP_STATUS $SP_DURATION 2>/dev/null
 end
 
@@ -358,13 +383,19 @@ echo new >$fx_dirty/untracked.txt
 set -g SP_FAILURES 0
 
 echo "=== Gating fixtures ==="
-for pair in "plain non-git dir|$fx_plain" "clean git repo|$fx_clean" "dirty git repo|$fx_dirty"
-    set -l label (string split -m1 '|' -- $pair)[1]
-    set -l dir (string split -m1 '|' -- $pair)[2]
-    __sp_compare $label $dir
-    test "$SP_MOD_MATCH" = 1; and __sp_gate ok "module parity"; or __sp_gate fail "module parity"
-    test "$SP_CHR_MATCH" = 1; and __sp_gate ok "character parity"; or __sp_gate fail "character parity"
+for ssh in 0 1
+    set -g SP_SSH $ssh
+    set -l pass_label off-SSH
+    test $ssh = 1; and set pass_label SSH
+    for pair in "plain non-git dir|$fx_plain" "clean git repo|$fx_clean" "dirty git repo|$fx_dirty"
+        set -l label (string split -m1 '|' -- $pair)[1]
+        set -l dir (string split -m1 '|' -- $pair)[2]
+        __sp_compare "$label ($pass_label)" $dir
+        test "$SP_MOD_MATCH" = 1; and __sp_gate ok "module parity"; or __sp_gate fail "module parity"
+        test "$SP_CHR_MATCH" = 1; and __sp_gate ok "character parity"; or __sp_gate fail "character parity"
+    end
 end
+set -g SP_SSH 0
 
 if test (count $argv) -gt 0
     echo

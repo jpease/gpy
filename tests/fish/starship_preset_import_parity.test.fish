@@ -262,8 +262,11 @@ function __spi_gpy_seg --argument-names seg dir
             __gpy_hostname_should_show 0 (__spi_theme_flag hostname show_always); or return 0
             set out ($spi_agent_bin oneshot hostname --hostname $spi_hostname --format ansi --not-last 2>/dev/null | string collect)
         case username
-            __gpy_username_should_show $spi_is_root 0 (__spi_theme_flag username show_always); or return 0
-            set out ($spi_agent_bin oneshot username --username $spi_username --format ansi --not-last 2>/dev/null | string collect)
+            # Local session: is_ssh=0, no sudo.
+            __gpy_username_should_show $spi_is_root 0 0 (__spi_theme_flag username show_always); or return 0
+            set -l root_flag
+            test "$spi_is_root" = 1; and set root_flag --is-root
+            set out ($spi_agent_bin oneshot username --username $spi_username $root_flag --format ansi --not-last 2>/dev/null | string collect)
         case character
             set out ($spi_agent_bin oneshot character --exit-code $SPI_STATUS --format ansi 2>/dev/null | string collect)
     end

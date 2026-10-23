@@ -1,6 +1,8 @@
 //! Maps the username to Starship-exact `username` variables (`username`, `symbol`) plus the
 //! powerline variables `style`, `bg`, `sep_open`, `sep_gap` and `sep_close`.
-//! (The importer renames Starship's `$user` to `$username`.)
+//! (The importer renames Starship's `$user` to `$username`.) `style` and `bg` take the
+//! root colors for a root session and the user colors otherwise, as Starship's
+//! `style_root`/`style_user`.
 
 use crate::formatter::SegmentPosition;
 use crate::formatter::separator::{Glyphs, SeparatorStyle, separator_var};
@@ -10,17 +12,24 @@ use crate::theme::ThemeConfig;
 /// Resolves Starship-exact username variable names.
 pub struct UsernameResolver<'a> {
     username: String,
+    is_root: bool,
     theme: &'a ThemeConfig,
     pos: SegmentPosition,
     glyphs: Glyphs,
 }
 
 impl<'a> UsernameResolver<'a> {
-    /// Build a resolver for one username segment render.
+    /// Build a resolver for one username segment render; `is_root` picks the colors.
     #[must_use]
-    pub const fn new(username: String, theme: &'a ThemeConfig, pos: SegmentPosition) -> Self {
+    pub const fn new(
+        username: String,
+        is_root: bool,
+        theme: &'a ThemeConfig,
+        pos: SegmentPosition,
+    ) -> Self {
         Self {
             username,
+            is_root,
             theme,
             pos,
             glyphs: Glyphs::Nerd,
@@ -33,11 +42,25 @@ impl<'a> UsernameResolver<'a> {
         Self { glyphs, ..self }
     }
 
-    /// Style string: `fg:<text_color> bg:<bg_color>`.
+    /// Background color for the session.
+    fn bg(&self) -> &str {
+        let username = &self.theme.segments.username;
+        if self.is_root {
+            username.bg_color.as_str()
+        } else {
+            username.user_bg_color.as_str()
+        }
+    }
+
+    /// Style string: `fg:<text color> bg:<bg color>` for the session.
     fn style(&self) -> String {
-        let fg = self.theme.segments.username.text_color.as_str();
-        let bg = self.theme.segments.username.bg_color.as_str();
-        format!("fg:{fg} bg:{bg}")
+        let username = &self.theme.segments.username;
+        let fg = if self.is_root {
+            username.text_color.as_str()
+        } else {
+            username.user_text_color.as_str()
+        };
+        format!("fg:{fg} bg:{}", self.bg())
     }
 }
 
@@ -56,7 +79,7 @@ impl VariableResolver for UsernameResolver<'_> {
                     .to_owned(),
             ),
             "style" => Some(self.style()),
-            "bg" => Some(self.theme.segments.username.bg_color.as_str().to_owned()),
+            "bg" => Some(self.bg().to_owned()),
             "sep_gap" | "sep_open" | "sep_close" => {
                 separator_var(name, self.pos, SeparatorStyle::Chained, self.glyphs)
             }
@@ -86,6 +109,7 @@ mod tests {
         let thr = theme();
         let res = UsernameResolver::new(
             "root".to_owned(),
+            true,
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -98,6 +122,7 @@ mod tests {
         thr.segments.username.icon = Some(crate::config::types::Icon::new("⚡").unwrap());
         let res = UsernameResolver::new(
             "root".to_owned(),
+            true,
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -110,6 +135,7 @@ mod tests {
         assert!(thr.segments.username.icon.is_none());
         let res = UsernameResolver::new(
             "root".to_owned(),
+            true,
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -123,6 +149,7 @@ mod tests {
         let res = |glyphs| {
             UsernameResolver::new(
                 "root".to_owned(),
+                true,
                 &thr,
                 SegmentPosition::new(IsLast::No, IsFirst::No),
             )
@@ -139,6 +166,7 @@ mod tests {
         let thr = theme();
         let res = UsernameResolver::new(
             "root".to_owned(),
+            true,
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -148,6 +176,7 @@ mod tests {
     fn at(is_last: IsLast, is_first: IsFirst, thr: &ThemeConfig) -> UsernameResolver<'_> {
         UsernameResolver::new(
             "root".to_owned(),
+            true,
             thr,
             SegmentPosition::new(is_last, is_first),
         )
@@ -187,12 +216,24 @@ mod tests {
     }
 
     #[test]
-    fn style_and_bg_come_from_the_username_theme_colors() {
+    fn style_and_bg_follow_root_or_user_colors() {
         let mut thr = theme();
-        thr.segments.username.bg_color = crate::config::types::ColorSpec::new("blue").unwrap();
-        thr.segments.username.text_color = crate::config::types::ColorSpec::new("yellow").unwrap();
-        let res = at(IsLast::No, IsFirst::No, &thr);
-        assert_eq!(res.resolve("style").unwrap(), "fg:yellow bg:blue");
-        assert_eq!(res.resolve("bg").unwrap(), "blue");
+        let color = |name| crate::config::types::ColorSpec::new(name).unwrap();
+        thr.segments.username.bg_color = color("blue");
+        thr.segments.username.text_color = color("yellow");
+        thr.segments.username.user_bg_color = color("green");
+        thr.segments.username.user_text_color = color("black");
+        let res = |is_root| {
+            UsernameResolver::new(
+                "ada".to_owned(),
+                is_root,
+                &thr,
+                SegmentPosition::new(IsLast::No, IsFirst::No),
+            )
+        };
+        assert_eq!(res(true).resolve("style").unwrap(), "fg:yellow bg:blue");
+        assert_eq!(res(true).resolve("bg").unwrap(), "blue");
+        assert_eq!(res(false).resolve("style").unwrap(), "fg:black bg:green");
+        assert_eq!(res(false).resolve("bg").unwrap(), "green");
     }
 }

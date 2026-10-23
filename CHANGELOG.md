@@ -18,8 +18,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With `ui.show_icons = false`, Nerd Font status icons (the default theme's
   ok/fail glyphs) are replaced by `ok`/`err`, and Nerd Font hostname and
   username icons are dropped, so they no longer show as boxes in plain fonts.
+- The `username` segment now shows in SSH sessions too (`SSH_CONNECTION`,
+  `SSH_CLIENT` or `SSH_TTY` set), as Starship's does, besides root, sudo and
+  `show_always`.
+- `gpy theme import` gives a `[username]` module without a `format`
+  Starship's default `[$user]($style) in `; before, the trailing `in` was
+  missing.
+
 ### Added
 
+- `[segments.username]` gains `user_format`, `user_bg_color` (default
+  `yellow`) and `user_text_color` (default `black`) for sessions not running as
+  root, like Starship's `style_user`; `gpy theme import` maps `style_user` onto
+  `user_format`.
 - The `status` segment is drawn by the agent from a new optional
   `[segments.status] format`, like the other pills. The shells ask for it with
   a new `exit_status` IPC op (`gpy-agent oneshot status --exit-code N` shows

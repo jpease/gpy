@@ -44,6 +44,7 @@ set -g __icon_username ""
 set -g __color_username_bg red
 set -g __color_username_fg white
 set -g USER root
+set -g __gpy_is_root 1
 set -g __hostname_format some-opaque-agent-side-value
 set -g __username_format some-opaque-agent-side-value
 
@@ -118,7 +119,7 @@ if not __gpy_request_hostname box "" "" 0 "" >/dev/null
 else
     check "__gpy_request_hostname: an error reply returns nonzero" fail
 end
-if not __gpy_request_username root "" "" "" >/dev/null
+if not __gpy_request_username root "" "" 1 "" >/dev/null
     check "__gpy_request_username: an error reply returns nonzero" pass
 else
     check "__gpy_request_username: an error reply returns nonzero" fail

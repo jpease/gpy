@@ -86,7 +86,9 @@ impl Formatter for FishAnsiFormatter {
             Response::Hostname { hostname, is_ssh } => {
                 Ok(render_hostname(hostname, *is_ssh, ctx, dialect))
             }
-            Response::Username { username } => Ok(render_username(username, ctx, dialect)),
+            Response::Username { username, is_root } => {
+                Ok(render_username(username, *is_root, ctx, dialect))
+            }
             // The reply is printed verbatim into the prompt, so protocol JSON must never reach it.
             Response::Error { message } => {
                 crate::debug_log!("formatter", "omitting segment after error: {message}");
@@ -146,13 +148,19 @@ fn render_hostname(
     )
 }
 
-fn render_username(username: &str, ctx: &RenderContext<'_>, dialect: PromptDialect) -> String {
+fn render_username(
+    username: &str,
+    is_root: bool,
+    ctx: &RenderContext<'_>,
+    dialect: PromptDialect,
+) -> String {
     render_segment(
         "username segment",
-        ctx.theme.segments.username.format.as_deref(),
+        ctx.theme.segments.username.format_for(is_root),
         |f| {
-            let resolver = UsernameResolver::new(username.to_owned(), ctx.theme, ctx.position)
-                .with_glyphs(Glyphs::from(&ctx.config.ui));
+            let resolver =
+                UsernameResolver::new(username.to_owned(), is_root, ctx.theme, ctx.position)
+                    .with_glyphs(Glyphs::from(&ctx.config.ui));
             render_via_template(&resolver, ctx, dialect, f)
         },
     )

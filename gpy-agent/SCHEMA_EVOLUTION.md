@@ -33,6 +33,25 @@ Changes are listed newest-first within each release group.
 
 ---
 
+### IPC protocol and theme schema — username over SSH, `is_root`, user style (MINOR)
+
+| Property | Value |
+|---|---|
+| Scope | `UsernameRequest`/`Response::Username` (`is_root`), `oneshot username --is-root`, `UsernameTheme.user_format`/`user_bg_color`/`user_text_color`, exports `__color_username_user_bg`/`_fg` |
+| Change type | MINOR — optional `is_root` (absent = `false`), optional theme fields |
+| IPC protocol | Additive; `PROTOCOL_VERSION` stays 2 |
+| Config schema | Additive — defaults `user_format = None` (uses `format`), `user_bg_color = "yellow"`, `user_text_color = "black"` |
+
+**What changed.** As in Starship, the shells also show the username over SSH and send
+`"is_root":true` for root. Root renders `format` with `bg_color`/`text_color`; any other
+session renders `user_format` (else `format`) with the user colors, as Starship's
+`style_root`/`style_user`. The importer maps `style_user` onto `user_format`.
+
+**Version skew.** An old agent ignores `is_root` and draws everyone in the root style; an old
+shell omits it, so a new agent draws root in the user style, and still hides the username over SSH.
+
+---
+
 ### IPC protocol — removed the theme and latency_stats ops (BREAKING)
 
 | Property | Value |

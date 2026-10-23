@@ -50,6 +50,10 @@ enum Scenario {
     /// The `hostname` module in an SSH session: `SSH_CONNECTION` for
     /// Starship, `--is-ssh` for the agent (the shells' `__gpy_is_ssh`).
     HostnameSsh,
+    /// The `username` module in an SSH session: `SSH_CONNECTION` for Starship,
+    /// which then shows the user it runs as; the shells' predicate shows it too,
+    /// and passes `--is-root` only as root, as Starship decides by euid.
+    UsernameSsh,
     /// The `character` module after a command that exited with this status.
     Character(i32),
     /// Blank-line-before and two-line layout: Starship's `starship prompt` vs the
@@ -67,6 +71,7 @@ impl Scenario {
             Self::Directory(_) => "directory",
             Self::Duration(_) => "cmd_duration",
             Self::Hostname | Self::HostnameSsh => "hostname",
+            Self::UsernameSsh => "username",
             Self::Character(_) => "character",
             Self::Layout => "prompt",
             Self::Git => "git_branch",
@@ -98,6 +103,13 @@ impl Scenario {
                 hostname.to_owned(),
                 "--is-ssh".to_owned(),
             ]),
+            Self::UsernameSsh => {
+                args.extend(["username".to_owned(), "--username".to_owned()]);
+                args.push(id_output("-un"));
+                if id_output("-u") == "0" {
+                    args.push("--is-root".to_owned());
+                }
+            }
             Self::Character(status) => args.extend([
                 "character".to_owned(),
                 "--exit-code".to_owned(),
@@ -147,6 +159,13 @@ fn machine_hostname(home: &Path) -> String {
         .to_owned()
 }
 
+/// `id <flag>`, trimmed: the user Starship's `username` module reads and its euid.
+fn id_output(flag: &str) -> String {
+    let output = Command::new("id").arg(flag).output().expect("run `id`");
+    assert!(output.status.success(), "`id {flag}` failed");
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
 /// Render `scenario` with the real `starship` binary using `config`.
 fn render_with_starship(env: &CliTestEnv, config: &Path, scenario: Scenario, cwd: &Path) -> String {
     if matches!(scenario, Scenario::Git) {
@@ -186,8 +205,12 @@ fn render_with_starship(env: &CliTestEnv, config: &Path, scenario: Scenario, cwd
     if let Scenario::Character(status) = scenario {
         command.args(["--status", &status.to_string()]);
     }
-    if matches!(scenario, Scenario::HostnameSsh) {
+    if matches!(scenario, Scenario::HostnameSsh | Scenario::UsernameSsh) {
         command.env("SSH_CONNECTION", SSH_CONNECTION);
+    }
+    if matches!(scenario, Scenario::UsernameSsh) {
+        let user = id_output("-un");
+        command.env("USER", &user).env("LOGNAME", &user);
     }
     let output = command.output().expect("run starship");
     assert!(
@@ -304,6 +327,7 @@ fn check_row(name: &str, config: &str, scenario: Scenario) {
         Scenario::Duration(_)
         | Scenario::Hostname
         | Scenario::HostnameSsh
+        | Scenario::UsernameSsh
         | Scenario::Character(_)
         | Scenario::Layout
         | Scenario::Git => env.root().to_path_buf(),
@@ -429,6 +453,9 @@ parity_rows! {
     hostname_not_ssh_only_over_ssh: Scenario::HostnameSsh, "[hostname]\nssh_only = false\n";
     // Starship's default `ssh_symbol` (a globe) shows over SSH.
     hostname_default_ssh_symbol_over_ssh: Scenario::HostnameSsh, "[hostname]\nstyle = \"bold green\"\n";
+    // Over SSH Starship shows the username, in `style_user` unless running as root.
+    username_default_styles_over_ssh: Scenario::UsernameSsh, "[username]\n";
+    username_custom_styles_over_ssh: Scenario::UsernameSsh, "[username]\nstyle_user = \"bold green\"\nstyle_root = \"italic red\"\nformat = \"[$user]($style) on \"\n";
     // Character symbols with trailing text or several groups.
     character_success_capitalized_bold: Scenario::Character(0), "[character]\nsuccess_symbol = \"[❯](Bold green)\"\nerror_symbol = \"[✗](Bold red)\"\n";
     character_success_trailing_space: Scenario::Character(0), "[character]\nsuccess_symbol = \"[➜](bold green) \"\nerror_symbol = \"[✗](bold red) \"\n";

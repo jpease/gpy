@@ -802,12 +802,14 @@ mod route_prev_bg_tests {
             format: Format::Json,
             is_last: false,
             is_first: false,
+            is_root: true,
             prev_bg: None,
         };
         let response = registry.route(&msg).expect("routing must succeed");
         match response {
-            crate::ipc::Response::Username { username } => {
+            crate::ipc::Response::Username { username, is_root } => {
                 assert_eq!(username, "u");
+                assert!(is_root, "the handler must echo the request's is_root");
             }
             other => panic!("expected Response::Username, got {other:?}"),
         }
@@ -822,13 +824,15 @@ mod route_prev_bg_tests {
             format: Format::Ansi,
             is_last: true,
             is_first: true,
+            is_root: false,
             prev_bg: Some("blue".to_owned()),
         };
         let result = ConnectionHandler::route_request_secure(&registry, &security_config, &msg);
 
         match result.response {
-            crate::ipc::Response::Username { username } => {
+            crate::ipc::Response::Username { username, is_root } => {
                 assert_eq!(username, "my-user");
+                assert!(!is_root);
             }
             other => panic!("expected Response::Username, got {other:?}"),
         }

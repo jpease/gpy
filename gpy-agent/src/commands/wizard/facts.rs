@@ -20,6 +20,8 @@ pub struct PreviewFacts {
     pub(crate) sample_character_success: bool,
     /// Render hostname as over SSH, since the preview always shows it.
     pub(crate) sample_is_ssh: bool,
+    /// Render username in its root style, the elevated-session warning.
+    pub(crate) sample_is_root: bool,
 }
 
 /// Gather preview facts for `cwd`, honoring the same config settings as the prompt.
@@ -74,6 +76,7 @@ pub fn gather(cwd: &Path, config: &Config, theme: &ThemeConfig) -> crate::Result
         sample_duration_ms: 128,
         sample_character_success: true,
         sample_is_ssh: true,
+        sample_is_root: true,
     })
 }
 

@@ -290,6 +290,11 @@
           "default": false,
           "description": "Whether this is the first segment in the prompt (opening-cap suppression)"
         },
+        "is_root": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether the client session runs as root (picks the root or user format and colours)"
+        },
         "prev_bg": {
           "type": "string",
           "maxLength": 64,

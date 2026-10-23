@@ -51,6 +51,8 @@ __hostname_format="1"
 __icon_hostname="host\\"
 __color_username_bg="red"
 __color_username_fg="white"
+__color_username_user_bg="yellow"
+__color_username_user_fg="black"
 __username_show_always="1"
 __username_format="1"
 __icon_username="user\`x\`"
@@ -113,7 +115,13 @@ __gpy_segment_bg() {
         duration) __gpy_sbg="${__color_duration_bg:-}" ;;
         clock) __gpy_sbg="${__color_clock_bg:-}" ;;
         hostname) __gpy_sbg="${__color_hostname_bg:-}" ;;
-        username) __gpy_sbg="${__color_username_bg:-}" ;;
+        username)
+            if [[ "${__gpy_is_root:-0}" == "1" ]]; then
+                __gpy_sbg="${__color_username_bg:-}"
+            else
+                __gpy_sbg="${__color_username_user_bg:-}"
+            fi
+            ;;
         status)
             if [[ "${__gpy_last_status:-0}" -eq 0 ]]; then
                 __gpy_sbg="${__color_status_ok_bg:-green}"

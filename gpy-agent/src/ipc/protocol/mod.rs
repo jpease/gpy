@@ -173,12 +173,14 @@ fn resolve(wire: WireMessage) -> Result<Message> {
             format,
             is_last,
             is_first,
+            is_root,
             prev_bg,
         } => Ok(Message::UsernameRequest {
             username,
             format,
             is_last,
             is_first,
+            is_root,
             prev_bg,
         }),
         WireMessage::ExitStatusRequest {
@@ -437,6 +439,7 @@ enum WireMessage {
         format: super::Format,
         is_last: bool,
         is_first: bool,
+        is_root: bool,
         prev_bg: Option<String>,
     },
     ExitStatusRequest {
@@ -514,6 +517,9 @@ struct ShellIpcMessage {
     is_ssh: Option<bool>,
     #[serde(default)]
     username: Option<String>,
+    /// Absent means `false`.
+    #[serde(default)]
+    is_root: Option<bool>,
     #[serde(default)]
     virtual_env: Option<String>,
 }
@@ -591,6 +597,7 @@ impl ShellIpcMessage {
                 format,
                 is_last: self.is_last.unwrap_or(false),
                 is_first: self.is_first.unwrap_or(false),
+                is_root: self.is_root.unwrap_or(false),
                 prev_bg: self.prev_bg,
             }),
             // Not "status": that op is the agent health check.

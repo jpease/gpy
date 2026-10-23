@@ -524,6 +524,26 @@ fn hostname_malformed_format_emits_empty() {
     assert_eq!(got, "", "broken format → silent fallback → empty");
 }
 
+/// Root renders `format`; everyone else `user_format`, or `format` when that is unset.
+#[test]
+fn username_format_follows_root_with_user_format_fallback() {
+    let formatter = FishAnsiFormatter::default();
+    let (config, mut theme) = ctx();
+    theme.segments.username.format = Some("[$username](bold red)".to_owned());
+    let render = |themed: &ThemeConfig, is_root| {
+        let rc = RenderContext::new(&config, themed, SegmentPosition::MIDDLE);
+        let response = Response::Username {
+            username: "ada".to_owned(),
+            is_root,
+        };
+        formatter.render(&response, &rc).expect("render")
+    };
+    assert_eq!(render(&theme, false), "\u{1b}[1;31mada\u{1b}[0m");
+    theme.segments.username.user_format = Some("[$username](bold yellow)".to_owned());
+    assert_eq!(render(&theme, true), "\u{1b}[1;31mada\u{1b}[0m");
+    assert_eq!(render(&theme, false), "\u{1b}[1;33mada\u{1b}[0m");
+}
+
 #[test]
 fn git_format_resolves_through_attached_palette() {
     use crate::template::{Color, Palette};
@@ -682,6 +702,7 @@ fn separator_bearing_responses() -> Vec<Response> {
         },
         Response::Username {
             username: "ada".to_owned(),
+            is_root: false,
         },
     ]
 }
@@ -802,6 +823,7 @@ fn default_theme_pills_have_one_leading_space_and_position_caps() {
         (
             Response::Username {
                 username: "ada".to_owned(),
+                is_root: false,
             },
             "ada".to_owned(),
         ),

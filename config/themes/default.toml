@@ -120,16 +120,20 @@ bg_color = "black"
 text_color = "white"
 # icon, trim_at, show_always: defaults
 
-# Username: root/sudo warning prefix. Opt-in — not in the default
+# Username. Opt-in — not in the default
 # enabled_segments; add "username" to config.ui.enabled_segments to show it.
-# Hidden for normal users (show_always defaults to false); a red pill flags
-# elevated (root/sudo) sessions, mirroring Starship's bold-red `username`.
+# Shown as root, under sudo or over SSH (show_always defaults to false), as
+# Starship's `username`: a red pill flags a root session (Starship's bold-red
+# `style_root`), a yellow one everyone else (`style_user`). `$style` and `$bg`
+# follow the session; `user_format` (unset) would replace `format` for non-root.
 [segments.username]
 # One leading space inside the pill, like every other powerline segment.
 # `$symbol` is the theme `icon` (it carries its own trailing space, if any).
 format = "([$sep_open](fg:$bg bg:default))[ $symbol$username]($style)([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
 bg_color = "red"
 text_color = "white"
+user_bg_color = "yellow"
+user_text_color = "black"
 # icon, show_always: defaults
 
 [segments.language]

@@ -51,7 +51,13 @@ function __gpy_segment_bg() {
         duration) __gpy_sbg="${__color_duration_bg:-}" ;;
         clock) __gpy_sbg="${__color_clock_bg:-}" ;;
         hostname) __gpy_sbg="${__color_hostname_bg:-}" ;;
-        username) __gpy_sbg="${__color_username_bg:-}" ;;
+        username)
+            if [[ "${__gpy_is_root:-0}" == "1" ]]; then
+                __gpy_sbg="${__color_username_bg:-}"
+            else
+                __gpy_sbg="${__color_username_user_bg:-}"
+            fi
+            ;;
         status)
             if [[ "${__gpy_last_status:-0}" -eq 0 ]]; then
                 __gpy_sbg="${__color_status_ok_bg:-green}"
