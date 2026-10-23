@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `gpy config wizard` saves a theme by writing a temp file and renaming it
+  into place, as `config.toml` already was. Before, it truncated the theme
+  file first, so a save that failed partway (disk full, crash) left a broken
+  theme and the prompt fell back to the default. A symlinked theme file stays
+  a symlink.
+
 ## [0.6.0] - 2026-10-22
 
 ### Fixed

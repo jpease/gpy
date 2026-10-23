@@ -619,6 +619,8 @@ impl ThemeManager {
     }
 
     /// Write `theme` as a user override under `user_themes_dir()`; never touches builtin/plugin files.
+    /// The file is replaced atomically, so a failed save keeps the previous theme, and a symlinked
+    /// theme file is written through.
     ///
     /// # Errors
     /// Returns an error on an unsafe name, serialization failure, or I/O failure.
@@ -640,7 +642,7 @@ impl ThemeManager {
         let content_with_header = format!(
             "# GPY Theme: {theme_name}\n# Written by `gpy config wizard` — edit carefully\n\n{toml_content}"
         );
-        std::fs::write(&target_path, content_with_header)
+        crate::fs_util::write_atomically(&target_path, content_with_header.as_bytes())
             .map_err(|e| Error::config(format!("Failed to write theme file: {e}")))?;
 
         Ok(target_path)

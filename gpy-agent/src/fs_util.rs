@@ -43,6 +43,45 @@ pub fn read_regular_file_capped(path: &Path, cap: usize) -> std::io::Result<Vec<
     Ok(buf)
 }
 
+/// Replace `path` with `contents` through a temp file in the same directory
+/// and a rename, so a failed write (disk full, crash) leaves the previous file
+/// whole. A symlinked `path` is resolved first so the link survives, and an
+/// existing file's permissions carry over. The parent directory must exist.
+///
+/// # Errors
+/// Returns an error if a symlink cannot be resolved or the temp file cannot be
+/// written or renamed into place; the temp file is removed on failure.
+pub fn write_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+
+    let target = match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => std::fs::canonicalize(path)?,
+        _ => path.to_path_buf(),
+    };
+    let parent = target
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = target
+        .file_name()
+        .map_or_else(|| "file".into(), |n| n.to_string_lossy().into_owned());
+    let temp = parent.join(format!(".{file_name}.tmp.{}", std::process::id()));
+
+    let result = (|| -> std::io::Result<()> {
+        let mut file = std::fs::File::create(&temp)?;
+        file.write_all(contents)?;
+        if let Ok(meta) = std::fs::metadata(&target) {
+            file.set_permissions(meta.permissions())?;
+        }
+        file.sync_all()?;
+        std::fs::rename(&temp, &target)
+    })();
+    if result.is_err() {
+        drop(std::fs::remove_file(&temp));
+    }
+    result
+}
+
 /// Whether the current user cannot write `path`. Uses `access(2)`, not mode
 /// bits, so ownership and ACLs count; fails closed.
 #[cfg(unix)]
@@ -165,5 +204,31 @@ mod tests {
         // `TempDir::drop` needs write access to clean up.
         std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o755))
             .expect("restore temp dir permissions before drop");
+    }
+
+    /// A write that cannot complete must leave the previous file intact. An
+    /// in-place write would succeed here (the file itself is writable) and is
+    /// exactly the truncate-then-fail shape this guards against.
+    #[test]
+    #[cfg(unix)]
+    fn write_atomically_failure_leaves_previous_file_intact() {
+        use super::write_atomically;
+        use std::os::unix::fs::PermissionsExt;
+
+        if nix::unistd::Uid::effective().is_root() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("theme.toml");
+        std::fs::write(&path, "previous").unwrap();
+        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let result = write_atomically(&path, b"replacement");
+        let entries = std::fs::read_dir(tmp.path()).unwrap().count();
+        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(result.is_err(), "a read-only directory must fail the write");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous");
+        assert_eq!(entries, 1, "no temp file may be left behind");
     }
 }
