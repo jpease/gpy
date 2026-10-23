@@ -37,7 +37,7 @@ What becomes easier or more difficult to do because of this change?
 - [ADR-0007](adr-0007-sigurg-doorbell-notifications.md) - SIGURG Doorbell and Flag Files for Shell Notifications
 - [ADR-0008](adr-0008-fail-fast-on-panic.md) - Fail Fast on Panic
 - [ADR-0009](adr-0009-deferred-language-version-probes.md) - Deferred Language Version Probes
-- [ADR-0011](adr-0011-plugin-shell-coverage.md) - Plugin Segments Beyond Fish
+- [ADR-0011](adr-0011-plugin-shell-coverage.md) - Plugin Segments Across Shells
 
 ## Creating a New ADR
 
