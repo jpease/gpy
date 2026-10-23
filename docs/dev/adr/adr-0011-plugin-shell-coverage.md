@@ -110,16 +110,36 @@ The `$AWS_PROFILE` segment took 8 lines of Fish plus a 5-line Bash/Zsh file (D),
 | F, agent-rendered template | 22.58 (22.43-25.72) | 7.58 (7.25-8.08) | 13.84 (12.25-18.16) |
 
 Load average was 23.5 at the start and 22.8 at the end (16 cores); two earlier full runs (load 11 to 34) ranked the four cases the same way in every shell. Per segment: D adds about 1.5 ms in Bash (one subshell) and 1.0 ms in Zsh; in Fish the difference is within noise (the ranges overlap). E adds the commands' own runtime, measured alone with `hyperfine -N` at 26.7 ms for the kubectl script (20.8 ms for `kubectl config current-context`) and 4.0 ms for the `sh` script. F adds one IPC request per segment: about 7.8 ms in Bash and 5.3 ms in Fish, which fork `socat` per request, and 2.5 ms in Zsh (`zsocket`). The per-render budgets in `tests/performance-baselines.json` are Bash 37 ms target, 111 ms max and Zsh 13 ms target, 39 ms max.
-Not measured: E with the agent running the command off the request path and caching it (the ADR-0009 pattern; not built); one batched request for all plugin segments under F; F's agent-free fallback; D's theme-switch reload in Bash and Zsh; plugin code that forks; Bash 3.2/4.x; Linux.
+Not measured here: one batched request for all plugin segments under F; F's agent-free fallback; D's theme-switch reload in Bash and Zsh; Bash 3.2/4.x; Linux.
+
+**Cached command (E-cached).** A second prototype, built at the maintainer's request, moves the command off the prompt path the way ADR-0009 moved version probes. A new IPC operation `plugin_cmd` carries the segment, the shell's `$PWD` and the variables the plugin lists. The agent runs one job per (segment, cwd, forwarded variables): it runs the command, writes the first output line to `$XDG_CACHE_HOME/gpy/plugin-cache/<segment>.<cwd key>.<variables key>`, rings the shells in that directory through the existing SIGURG repaint (`notify_repaint_force`, ADR-0007), re-runs every `ttl_secs` while a registered shell is still there, and deletes the entry when none is. The shell's detect function only reads that file with builtins; on a miss it sends one detached request and hides the segment. The command ran with a cleared environment (the agent's `PATH` and `HOME` plus the listed variables), the shell's cwd validated by the existing `SafePath`, no stdin, stderr discarded, a 2 s timeout with kill, output capped at 256 bytes, first line only, control characters stripped; no sandbox and no resource or concurrency limit. For the Kubernetes segment the author writes the 2-line E script above plus `segments/k8s_context.cmd.toml`:
+
+```toml
+command = "bin/k8s-context"
+env = ["KUBECONFIG"]
+ttl_secs = 5
+```
+
+A day-of-week segment is `bin/dow` (`date +%a`) plus a 2-line TOML. Under D the same segment needs a different builtin per shell to avoid a fork on every prompt (`printf '%(%a)T'` in Bash, `strftime` in Zsh); Fish has none, so its D file forks `date` every prompt. Measured with a 25 ms `sleep` stand-in and with the kubectl script; same methodology, 100 renders per sample, 7 interleaved rounds, two full runs:
+
+| Measurement | Bash | Zsh | Fish |
+|---|---|---|---|
+| Cache hit, median ms per render, A / D / E-cached | 7.93 / 9.65 / 9.75; 9.14 / 11.40 / 11.55 | 3.62 / 4.18 / 4.12; 3.15 / 4.53 / 4.33 | 3.69 / 3.69 / 4.12; 4.23 / 4.38 / 4.39 |
+| Miss (new directory every render), A → E-cached | 20.96 → 22.01; 23.00 → 25.35 | 10.61 → 11.61; 11.36 → 12.57 | 8.93 → 10.12; 9.90 → 11.08 |
+| Value shown after the miss prompt (5 runs each) | at the next prompt | repaint after 27-29 ms (kubectl), 33-38 ms (stand-in) | 34-38 ms, 41-46 ms |
+| Context edited in place, TTL 5 s | first prompt drawn after the refresh (2 s) | repaint 4.07 s after the edit | repaint 4.07 s after the edit |
+| `KUBECONFIG` exported (new key) | at the next prompt | repaint after 43 ms | repaint after 34 ms |
+
+Load average was 18 to 37 on 16 cores; on a hit, D and E-cached differ by less than the run-to-run spread in every shell, and in Fish A, D and E-cached are all within noise. The commands alone under that load (`hyperfine -N`): kubectl script 40.6 and 46.8 ms, stand-in 39.4 and 49.2 ms, `date +%a` 14.6 and 15.2 ms, all off the prompt path. With the agent stopped, Bash and Zsh kept showing the cached value in an already visited directory (not checked in Fish), and all three shells showed no segment in a new directory and printed nothing. After the agent restarted, Bash and Zsh still showed the old context 8 s after it changed: a hit never contacts the agent, and the prototype has no invalidation at agent start. Not measured for E-cached: invalidation when a watched file such as the kubeconfig changes (not built), many concurrent keys (one thread each), Linux.
 
 ## Decision
 
 Proposed, from the measurements:
 
 1. **Interim, whatever the long-term choice: Option B.** Say "plugin segments load in Fish only" in [Build a Segment Plugin](../build-segment-plugin.md), [Plugin + Theme Authoring](../plugin-theme-authoring.md) and the [developer docs index](../README.md); add a "Plugin segments" row to the [shell feature matrix](../../INSTALL.md#shell-feature-matrix) and narrow its opening sentence to the built-in segments; print one line in `gpy plugin new`, `validate` and `list`; and at `gpy enable <segment>` for a plugin segment with a Bash or Zsh integration installed, note that those prompts skip it, with the remediation `gpy disable <segment>` or use Fish.
-2. **Long term: Option D.** It is the only design measured with no IPC change and no approval-gated work, it keeps the `v1` names in every shell, it rendered without the agent (checked in Bash), and it is the cheapest per segment in all three shells. Its cost is a second author file for Bash and Zsh (the prototype's one file served both) and plugin code running in two more shells, as it already does in Fish.
+2. **Long term: Option D.** On a cache hit, E-cached costs the same as D in every shell (within noise), so latency does not separate them. The rest of the evidence favors D: it needs no approval-gated change, while E-cached adds external process execution from the daemon, a `Message` variant, new path validation (the command path, variable names and cache-file names) and a dependency from `plugin` on `ipc::registry`, plus refresh threads the agent's shutdown must own; D is never stale, while E-cached lagged an in-place context change by up to its TTL (4.07 s with 5 s) and kept serving old values with the agent down and after a restart; D draws the segment on the first prompt in a new directory, while E-cached hides it until a repaint 27-46 ms later in Zsh and Fish and until the next prompt in Bash; and D renders without the agent. Its cost is a second author file for Bash and Zsh (the prototype's one file served both), shell-specific knowledge to stay fork-free, and plugin code running in two more shells, as it already does in Fish.
 
-F is the alternative if the maintainer prefers plugins without code execution over latency and agent-free operation. E is rejected: its cost is the command's runtime on every prompt in every shell, which on its own exceeds the Zsh target. No hybrid was added: both prototype segments were expressible as D and as F, so the prototypes showed no need for a declarative-plus-command mix.
+E-cached's measured advantage is for authors: one executable in any language plus a 3-line TOML serves every shell, and the segment can use the tool itself (`kubectl`) instead of reimplementing it in shell. It is the candidate to add later, with maintainer approval, for segments whose state only a tool can compute, once cache invalidation at agent start (and, ideally, on watched-file changes) is designed. Uncached E stays rejected: its cost is the command's runtime on every prompt in every shell, which on its own exceeds the Zsh target. F is the alternative if plugins without code execution matter more than latency and agent-free operation. No hybrid was added: both prototype segments were expressible as D, E-cached and F.
 
 ## Alternatives Considered
 
@@ -127,6 +147,7 @@ F is the alternative if the maintainer prefers plugins without code execution ov
 |---|---|---|---|---|---|
 | D | Fish file + one Bash/Zsh file | ~22 per Bash/Zsh, 0 Fish; theme export for all shells | No | Yes; agent-free in Bash | 1.5 / 1.0 / noise ms |
 | E | one executable | ~13 per Bash/Zsh, ~18 Fish | Yes, external process execution | Yes; agent-free in Bash | command runtime (27 ms kubectl) |
+| E-cached | one executable + 3-line TOML | ~34 per Bash/Zsh, ~48 Fish; ~250 Rust | Yes: process execution, `Message`, path validation | Yes; stale or absent without the agent | hit: same as D; first prompt in a new directory: +1 to 2.4 ms, value after a repaint |
 | F | one TOML file | ~20 per Bash/Zsh, ~29 Fish; ~240 Rust | Yes, `Message`/`Response` | Yes; needs the agent | 7.8 / 2.5 / 5.3 ms |
 
 ### Option A
@@ -147,7 +168,7 @@ Port the loader. The prototype exported the per-shell file path to every shell, 
 
 ### Option E
 
-Activate `entry_type = "command"`. The prototype ran the plugin executable from each shell's segment function; the agent-side variant (spawn off the request path, cache, repaint) was not built and would add an IPC operation. Privilege: new external process execution on every prompt, approval-gated. Lost: latency equal to the tool's runtime in every shell, every prompt (kubectl alone 20.8 ms against a 13 ms Zsh target). `v1`: `command` is already reserved, so activation is additive.
+Activate `entry_type = "command"`, in two variants. Uncached: each shell's segment function runs the plugin executable on every prompt; rejected, since the latency equals the tool's runtime in every shell (kubectl alone 20.8 ms against a 13 ms Zsh target). Cached (E-cached, measured above): the agent runs the command off the request path, caches the first line per (segment, cwd, forwarded variables), repaints through SIGURG and refreshes every TTL. Privilege: the daemon spawns plugin-chosen executables with the user's privileges on every miss and every TTL while a shell sits in that directory, with the agent's `PATH` rather than the shell's. Against the contributor rules' approval list it adds external process execution, changes the IPC `Message` enum (one variant; `Response` reused `Ack`), needs new file path validation (the prototype reused `SafePath` for the cwd without touching `security.rs`, but the command path must stay inside the plugin root, and variable and cache-file names need checks) and adds a cross-module dependency (`plugin` on `ipc::registry`); it did not touch the `tokio::select!` loop. Lost: freshness (up to the TTL; stale while the agent is down and after a restart in the prototype) and the segment on the first prompt in a new directory or environment. `v1`: `command` is already reserved, so activation is additive; the TOML fields are new.
 
 ### Option F
 
@@ -161,9 +182,9 @@ Declarative trigger plus template, evaluated by the pure `template` engine. The 
 
 ### Negative
 
-- Under D, plugin authors write a second file and plugin code runs in Bash and Zsh shells.
+- Under D, plugin authors write a second file, need shell-specific builtins to stay fork-free, and plugin code runs in Bash and Zsh shells; E-cached's single-executable authoring is deferred.
 - B and D are production code: if accepted, each is tracked as a separate work item.
 
 ## References
 
-- [Plugin Framework](../plugins.md); [CLI Reference: Plugin Commands](../../user/cli-reference.md#plugin-commands); [ADR-0009](adr-0009-deferred-language-version-probes.md) (commands kept off the request path)
+- [Plugin Framework](../plugins.md); [CLI Reference: Plugin Commands](../../user/cli-reference.md#plugin-commands); [ADR-0007](adr-0007-sigurg-doorbell-notifications.md) (SIGURG repaint); [ADR-0009](adr-0009-deferred-language-version-probes.md) (commands kept off the request path)
