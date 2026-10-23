@@ -291,9 +291,9 @@ pub(super) fn append_hostname_assignments(
     );
 }
 
-/// Username segment colors and template-path flags.
-/// `__username_format` is a presence flag only, same rationale as `__hostname_format`;
-/// the icon is handled as the hostname's.
+/// Username segment colors (root, then user) and template-path flags.
+/// `__username_format` is a presence flag only, same rationale as `__hostname_format`,
+/// set when either the root or the user format exists; the icon is handled as the hostname's.
 pub(super) fn append_username_assignments(
     output: &mut String,
     colors: ShellColors<'_>,
@@ -301,26 +301,26 @@ pub(super) fn append_username_assignments(
     glyphs: Glyphs,
 ) {
     let shell = colors.shell;
+    let username = &theme.segments.username;
 
     append_shell_assignments(
         output,
         shell,
         [
+            ShellAssignment::local("__color_username_bg", colors.resolve(&username.bg_color)),
+            ShellAssignment::local("__color_username_fg", colors.resolve(&username.text_color)),
             ShellAssignment::local(
-                "__color_username_bg",
-                colors.resolve(&theme.segments.username.bg_color),
+                "__color_username_user_bg",
+                colors.resolve(&username.user_bg_color),
             ),
             ShellAssignment::local(
-                "__color_username_fg",
-                colors.resolve(&theme.segments.username.text_color),
+                "__color_username_user_fg",
+                colors.resolve(&username.user_text_color),
             ),
-            ShellAssignment::local(
-                "__username_show_always",
-                flag(theme.segments.username.show_always),
-            ),
+            ShellAssignment::local("__username_show_always", flag(username.show_always)),
             ShellAssignment::local(
                 "__username_format",
-                if theme.segments.username.format.is_some() {
+                if username.format.is_some() || username.user_format.is_some() {
                     "1"
                 } else {
                     ""
@@ -328,9 +328,7 @@ pub(super) fn append_username_assignments(
             ),
             ShellAssignment::local(
                 "__icon_username",
-                theme
-                    .segments
-                    .username
+                username
                     .icon
                     .as_ref()
                     .and_then(|icon| glyphs.icon(icon.as_str()))

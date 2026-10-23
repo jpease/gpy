@@ -84,7 +84,8 @@ fn append_lang_marker_files(output: &mut String, shell: Shell) {
 }
 
 /// Chevron-relevant segments and their `__color_*_bg` var, in Bash/Zsh case-arm order.
-/// `status` is handled separately: its bg depends on the previous exit status.
+/// `status` and `username` are handled separately: their bg depends on the previous
+/// exit status and on whether the session runs as root.
 pub(crate) const SEGMENT_BG_VARS: &[(&str, &str)] = &[
     ("git", "__color_git_clean_bg"),
     ("language", "__color_language_bg"),
@@ -92,14 +93,13 @@ pub(crate) const SEGMENT_BG_VARS: &[(&str, &str)] = &[
     ("duration", "__color_duration_bg"),
     ("clock", "__color_clock_bg"),
     ("hostname", "__color_hostname_bg"),
-    ("username", "__color_username_bg"),
 ];
 
 /// Emit `__gpy_segment_bg` for Bash/Zsh (no-op for Fish).
 ///
 /// `__gpy_segment_bg SEG` prints to stdout; `__gpy_segment_bg SEG VAR` uses
 /// `printf -v` to avoid a subshell fork on the hot path.
-/// `status` picks ok/fail bg by `__gpy_last_status`.
+/// `status` picks ok/fail bg by `__gpy_last_status`, `username` root/user bg by `__gpy_is_root`.
 fn append_segment_bg_function(output: &mut String, shell: Shell) {
     if matches!(shell, Shell::Fish) {
         return;
@@ -115,6 +115,22 @@ fn append_segment_bg_function(output: &mut String, shell: Shell) {
             format_args!("        {segment}) __gpy_sbg=\"${{{var}:-}}\" ;;"),
         );
     }
+    push_line(output, format_args!("        username)"));
+    push_line(
+        output,
+        format_args!("            if [[ \"${{__gpy_is_root:-0}}\" == \"1\" ]]; then"),
+    );
+    push_line(
+        output,
+        format_args!("                __gpy_sbg=\"${{__color_username_bg:-}}\""),
+    );
+    push_line(output, format_args!("            else"));
+    push_line(
+        output,
+        format_args!("                __gpy_sbg=\"${{__color_username_user_bg:-}}\""),
+    );
+    push_line(output, format_args!("            fi"));
+    push_line(output, format_args!("            ;;"));
     push_line(output, format_args!("        status)"));
     let (status_var, ok_var, fail_var) = (
         "__gpy_last_status",

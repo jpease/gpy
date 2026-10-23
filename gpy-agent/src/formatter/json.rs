@@ -33,7 +33,9 @@ impl Formatter for JsonFormatter {
             Response::Hostname { hostname, is_ssh } => {
                 json!({"hostname": hostname, "is_ssh": is_ssh})
             }
-            Response::Username { username } => json!({"username": username}),
+            Response::Username { username, is_root } => {
+                json!({"username": username, "is_root": is_root})
+            }
             Response::Error { message } => json!({"error": message}),
         };
 
@@ -265,8 +267,9 @@ mod tests {
             (
                 Response::Username {
                     username: "me".to_owned(),
+                    is_root: true,
                 },
-                r#"{"username":"me"}"#,
+                r#"{"is_root":true,"username":"me"}"#,
             ),
             (
                 Response::Error {

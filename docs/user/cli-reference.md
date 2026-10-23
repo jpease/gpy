@@ -569,7 +569,7 @@ A segment renders when it is listed in `ui.enabled_segments`; `git` and `languag
 - `duration` - Command execution time
 - `directory` - Current working directory
 - `status` - Previous command exit status pill (✔/✖); coloured by `segments.status.ok_*`/`fail_*` and drawn by the agent through `segments.status.format`
-- `username` - Current user name; shown only as root or under sudo (opt-in)
+- `username` - Current user name; shown only as root, under sudo or over SSH unless `segments.username.show_always` is set (opt-in). Root sessions use the theme's `format` and `bg_color`/`text_color`, others `user_format` and `user_bg_color`/`user_text_color`, like Starship's `style_root`/`style_user`
 - `hostname` - Machine hostname; shown only over SSH unless `segments.hostname.show_always` is set (opt-in). Its icon (`segments.hostname.icon`, Starship's `ssh_symbol`) shows only in SSH sessions
 
 **Example:**

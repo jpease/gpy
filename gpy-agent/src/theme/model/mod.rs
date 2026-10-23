@@ -2,10 +2,10 @@
 
 use crate::config::defaults::{
     default_character_error_color, default_character_error_symbol, default_character_success_color,
-    default_character_success_symbol, default_color_black, default_color_red, default_color_white,
-    default_duration_threshold, default_hostname_trim_at, default_status_fail_bg,
-    default_status_fail_text, default_status_ok_bg, default_status_ok_text, default_true,
-    default_ui_prompt, default_ui_prompt_close, default_ui_prompt_open, default_ui_root_prompt,
+    default_character_success_symbol, default_color_black, default_color_white,
+    default_duration_threshold, default_status_fail_bg, default_status_fail_text,
+    default_status_ok_bg, default_status_ok_text, default_true, default_ui_prompt,
+    default_ui_prompt_close, default_ui_prompt_open, default_ui_root_prompt,
     default_ui_root_prompt_color, default_ui_segment_close_delimiter,
     default_ui_segment_open_delimiter,
 };
@@ -17,6 +17,9 @@ use crate::config::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+mod identity;
+pub use identity::{HostnameTheme, UsernameTheme};
 
 /// Theme configuration loaded from ~/.config/gpy/themes/{theme}.toml
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -250,75 +253,6 @@ impl Default for CharacterTheme {
             error_symbol: default_character_error_symbol(),
             success_color: default_character_success_color(),
             error_color: default_character_error_color(),
-        }
-    }
-}
-
-/// Hostname segment configuration; `None` format = shell fast path, `Some` = agent-rendered.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HostnameTheme {
-    /// Starship format template; `None` lets the shell render the hostname.
-    #[serde(default)]
-    pub format: Option<String>,
-    /// SSH symbol shown before the hostname, SSH sessions only (Starship `ssh_symbol`).
-    #[serde(default)]
-    pub icon: Option<types::Icon>,
-    /// Pill background color (`$bg`/`$style` in the format; shell path when no format).
-    #[serde(default = "default_color_black")]
-    pub bg_color: types::ColorSpec,
-    /// Pill text color (`$style` in the format; shell path when no format).
-    #[serde(default = "default_color_white")]
-    pub text_color: types::ColorSpec,
-    /// Trim at the first occurrence of this delimiter (default "."); empty disables.
-    #[serde(default = "default_hostname_trim_at")]
-    pub trim_at: String,
-    /// Show on local (non-SSH) sessions too (default: false).
-    #[serde(default)]
-    pub show_always: bool,
-}
-
-impl Default for HostnameTheme {
-    fn default() -> Self {
-        Self {
-            format: None,
-            icon: None,
-            bg_color: default_color_black(),
-            text_color: default_color_white(),
-            trim_at: default_hostname_trim_at(),
-            show_always: false,
-        }
-    }
-}
-
-/// Username segment (Starship parity), shown under root/sudo; gated shell-side.
-/// `None` format = shell fast path, `Some` = agent-rendered.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UsernameTheme {
-    /// Starship format template; `None` lets the shell render the username.
-    #[serde(default)]
-    pub format: Option<String>,
-    /// Icon/symbol shown before the username (default: none, matching Starship)
-    #[serde(default)]
-    pub icon: Option<types::Icon>,
-    /// Pill background color (`$bg`/`$style` in the format; shell path when no format).
-    #[serde(default = "default_color_red")]
-    pub bg_color: types::ColorSpec,
-    /// Pill text color (`$style` in the format; shell path when no format).
-    #[serde(default = "default_color_white")]
-    pub text_color: types::ColorSpec,
-    /// Show for normal users too (default: false).
-    #[serde(default)]
-    pub show_always: bool,
-}
-
-impl Default for UsernameTheme {
-    fn default() -> Self {
-        Self {
-            format: None,
-            icon: None,
-            bg_color: default_color_red(),
-            text_color: default_color_white(),
-            show_always: false,
         }
     }
 }

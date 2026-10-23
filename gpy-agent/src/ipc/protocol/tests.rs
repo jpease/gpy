@@ -135,7 +135,7 @@ fn test_hostname_validation_rejects_control_chars() {
 
 #[test]
 fn test_username_into_message_with_is_last_and_prev_bg() {
-    let json = r#"{"op":"username","username":"root","format":"ansi","is_last":true,"is_first":true,"prev_bg":"blue"}"#;
+    let json = r#"{"op":"username","username":"root","format":"ansi","is_last":true,"is_first":true,"is_root":true,"prev_bg":"blue"}"#;
     let shell_msg: ShellIpcMessage = serde_json::from_str(json).expect("parse failed");
     let wire = shell_msg
         .into_wire_message()
@@ -147,12 +147,14 @@ fn test_username_into_message_with_is_last_and_prev_bg() {
             format,
             is_last,
             is_first,
+            is_root,
             prev_bg,
         } => {
             assert_eq!(username, "root");
             assert_eq!(format, Format::Ansi);
             assert!(is_last);
             assert!(is_first);
+            assert!(is_root);
             assert_eq!(prev_bg, Some("blue".to_owned()));
         }
         other => panic!("expected UsernameRequest, got {other:?}"),
@@ -172,12 +174,14 @@ fn test_username_into_message_without_is_last_and_prev_bg() {
             username,
             is_last,
             is_first,
+            is_root,
             prev_bg,
             ..
         } => {
             assert_eq!(username, "root");
             assert!(!is_last);
             assert!(!is_first, "an absent is_first must default to false");
+            assert!(!is_root, "an absent is_root must default to false");
             assert_eq!(prev_bg, None);
         }
         other => panic!("expected UsernameRequest, got {other:?}"),
@@ -191,6 +195,7 @@ fn test_username_validation_accepts_valid_request() {
         format: Format::Ansi,
         is_last: false,
         is_first: false,
+        is_root: false,
         prev_bg: None,
     };
     assert!(validate_message_content(&msg).is_ok());
@@ -204,6 +209,7 @@ fn test_username_validation_rejects_too_long_username() {
         format: Format::Ansi,
         is_last: false,
         is_first: false,
+        is_root: false,
         prev_bg: None,
     };
     assert!(validate_message_content(&msg).is_err());
@@ -217,6 +223,7 @@ fn test_username_validation_rejects_control_chars() {
         format: Format::Ansi,
         is_last: false,
         is_first: false,
+        is_root: false,
         prev_bg: None,
     };
     assert!(validate_message_content(&msg).is_err());

@@ -58,7 +58,9 @@ fn segment_detail(segment: &str) -> SegmentDetail {
         Ok(BuiltinSegment::Username) => SegmentDetail {
             config_field: "ui.enabled_segments",
             preview_contribution: "Shows the current user name.",
-            caveat: Some("Shown only when running as root or under sudo."),
+            caveat: Some(
+                "Shown only as root, under sudo or over SSH unless `segments.username.show_always` is set; the preview uses the root style.",
+            ),
         },
         Err(()) => SegmentDetail {
             config_field: "ui.enabled_segments",

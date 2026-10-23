@@ -195,9 +195,14 @@ pub(crate) fn default_color_black() -> ColorSpec {
     color("black")
 }
 
-/// Default red color (username segment root/sudo warning pill)
+/// Default red color (username segment root warning pill)
 pub(crate) fn default_color_red() -> ColorSpec {
     color("red")
+}
+
+/// Default yellow color (username segment pill for non-root users, Starship's `style_user`)
+pub(crate) fn default_color_yellow() -> ColorSpec {
+    color("yellow")
 }
 
 /// Default hostname trim delimiter: trims at the first `.` (FQDN -> short name).

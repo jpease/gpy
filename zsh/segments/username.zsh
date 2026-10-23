@@ -1,7 +1,8 @@
-# Starship `username` parity: shown when root or under sudo.
+# Starship `username` parity: shown when root, under sudo, or over SSH.
+# Root (euid 0) draws the theme's root colours; everyone else the user colours.
 
 function __gpy_segment_username_detect() {
-    [[ "${__gpy_is_root:-0}" == "1" || "${__gpy_is_sudo:-0}" == "1" || "${__username_show_always:-0}" == "1" ]]
+    [[ "${__gpy_is_root:-0}" == "1" || "${__gpy_is_sudo:-0}" == "1" || "${__gpy_is_ssh:-0}" == "1" || "${__username_show_always:-0}" == "1" ]]
 }
 
 function __gpy_segment_username() {
@@ -13,7 +14,7 @@ function __gpy_segment_username() {
     # down, disabled, or an error) falls through to the local pill.
     if [[ -n "${__username_format:-}" ]] && (( $+functions[__gpy_request_username] )); then
         local rendered
-        if rendered=$(__gpy_request_username "${USER:-}" "$is_last" "$prev_bg" "$is_first"); then
+        if rendered=$(__gpy_request_username "${USER:-}" "$is_last" "$prev_bg" "${__gpy_is_root:-0}" "$is_first"); then
             print -r -- "$rendered"
             return 0
         fi
@@ -24,6 +25,10 @@ function __gpy_segment_username() {
     [[ -n "${__icon_username:-}" ]] && label=" $__icon_username ${USER:-}"
 
     __gpy_prompt_escape "$label" label
-    __gpy_section_standalone "${__color_username_bg:-}" "${__color_username_fg:-}" \
-        "$label" "$is_last" "$is_first"
+    local bg=${__color_username_user_bg:-} fg=${__color_username_user_fg:-}
+    if [[ "${__gpy_is_root:-0}" == "1" ]]; then
+        bg=${__color_username_bg:-}
+        fg=${__color_username_fg:-}
+    fi
+    __gpy_section_standalone "$bg" "$fg" "$label" "$is_last" "$is_first"
 }

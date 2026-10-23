@@ -49,8 +49,11 @@ impl RequestHandler for MiscHandler {
                 hostname: hostname.clone(),
                 is_ssh: *is_ssh,
             }),
-            Message::UsernameRequest { username, .. } => Ok(Response::Username {
+            Message::UsernameRequest {
+                username, is_root, ..
+            } => Ok(Response::Username {
                 username: username.clone(),
+                is_root: *is_root,
             }),
             Message::ExitStatusRequest { success, .. } => {
                 Ok(Response::ExitStatus { success: *success })

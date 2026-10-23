@@ -897,41 +897,54 @@ fn translate_username_maps_show_always() {
     let hidden = table("");
     assert!(
         !translate_username(&hidden, &mut warnings).show_always,
-        "show_always absent defaults to false (root/sudo only)"
+        "show_always absent defaults to false (root/sudo/SSH only)"
     );
 }
 
 #[test]
-fn translate_username_renames_user_and_inlines_style_root() {
+fn translate_username_renames_user_and_inlines_root_and_user_styles() {
     use super::translate_username;
     let module = table(
-        "format = \"[$user]($style) in \"\nstyle_root = \"bold red\"\nstyle_user = \"bold yellow\"\n",
+        "format = \"[$user]($style) in \"\nstyle_root = \"bold red\"\nstyle_user = \"green\"\n",
     );
     let mut warnings = Warnings::new();
     let theme = translate_username(&module, &mut warnings);
     assert_eq!(theme.format.as_deref(), Some("[$username](bold red) in "));
+    assert_eq!(theme.user_format.as_deref(), Some("[$username](green) in "));
     assert!(warnings.is_empty());
 }
 
 #[test]
-fn translate_username_defaults_style_root_when_absent() {
+fn translate_username_defaults_styles_when_absent() {
     use super::translate_username;
     let module = table("");
     let mut warnings = Warnings::new();
     let theme = translate_username(&module, &mut warnings);
-    assert_eq!(theme.format.as_deref(), Some("[$username](bold red) "));
+    assert_eq!(theme.format.as_deref(), Some("[$username](bold red) in "));
+    assert_eq!(
+        theme.user_format.as_deref(),
+        Some("[$username](bold yellow) in ")
+    );
 }
 
 #[test]
-fn translate_username_drops_unknown_vars() {
+fn translate_username_drops_unknown_vars_and_warns_once() {
     use super::translate_username;
     let module = table("format = \"[$user$sep_close]($style) \"\n");
     let mut warnings = Warnings::new();
     let theme = translate_username(&module, &mut warnings);
-    let format = theme.format.expect("username format produced");
-    assert!(format.contains("$username"));
-    assert!(!format.contains("sep_close"));
-    assert!(warnings.iter().any(|w| w.message.contains("sep_close")));
+    for produced in [theme.format, theme.user_format] {
+        let format = produced.expect("username format produced");
+        assert!(format.contains("$username"));
+        assert!(!format.contains("sep_close"));
+    }
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|w| w.message.contains("sep_close"))
+            .count(),
+        1
+    );
 }
 
 #[test]

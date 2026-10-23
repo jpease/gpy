@@ -573,9 +573,19 @@ if [[ "$output" != '{"op":"hostname","hostname":"h","format":"zsh-prompt","is_la
     echo "FAIL: Hostname request should carry is_first: $output"
     exit 1
 fi
-output=$(function __gpy_send_json() { print -rn -- "$1"; }; __gpy_request_username u "" "" true)
+output=$(function __gpy_send_json() { print -rn -- "$1"; }; __gpy_request_username u "" "" "" true)
 if [[ "$output" != '{"op":"username","username":"u","format":"zsh-prompt","is_first":true}' ]]; then
     echo "FAIL: Username request should carry is_first: $output"
+    exit 1
+fi
+output=$(function __gpy_send_json() { print -rn -- "$1"; }; __gpy_request_username u true "" 1 true)
+if [[ "$output" != '{"op":"username","username":"u","format":"zsh-prompt","is_last":true,"is_first":true,"is_root":true}' ]]; then
+    echo "FAIL: Username request should carry is_root for a root session: $output"
+    exit 1
+fi
+output=$(function __gpy_send_json() { print -rn -- "$1"; }; __gpy_request_username u "" "" 0)
+if [[ "$output" != '{"op":"username","username":"u","format":"zsh-prompt"}' ]]; then
+    echo "FAIL: Username request should omit is_root for a non-root session: $output"
     exit 1
 fi
 output=$(function __gpy_send_json() { print -rn -- "$1"; }; __gpy_request_exit_status 1 true "" true)
@@ -735,10 +745,13 @@ __gpy_username_test_had_icon=${+__icon_username}
 __gpy_username_test_saved_icon=$__icon_username
 __gpy_username_test_had_format=${+__username_format}
 __gpy_username_test_saved_format=$__username_format
+__gpy_username_test_had_is_ssh=${+__gpy_is_ssh}
+__gpy_username_test_saved_is_ssh=$__gpy_is_ssh
 
 # detect: root session shows regardless of sudo/show_always
 __gpy_is_root=1
 __gpy_is_sudo=0
+__gpy_is_ssh=0
 __username_show_always=0
 if ! __gpy_segment_username_detect; then
     echo "FAIL: Username detect should show for root"
@@ -765,6 +778,15 @@ if __gpy_segment_username_detect; then
 fi
 echo "PASS: Username detect hides for normal user"
 
+# detect: an SSH session shows (Starship parity)
+__gpy_is_ssh=1
+if ! __gpy_segment_username_detect; then
+    echo "FAIL: Username detect should show over SSH"
+    exit 1
+fi
+__gpy_is_ssh=0
+echo "PASS: Username detect shows over SSH"
+
 # detect: show_always forces display even for a normal user
 __username_show_always=1
 if ! __gpy_segment_username_detect; then
@@ -772,6 +794,26 @@ if ! __gpy_segment_username_detect; then
     exit 1
 fi
 echo "PASS: Username detect shows with show_always"
+
+# Local pill colours: root style for euid 0, user style otherwise.
+function __gpy_test_username_colours() {
+    local __username_format="" __color_username_bg=ROOTBG __color_username_fg=ROOTFG
+    local __color_username_user_bg=USERBG __color_username_user_fg=USERFG
+    function __gpy_section_standalone() { print -rn -- "$1/$2"; }
+    __gpy_segment_username
+}
+output=$(__gpy_is_root=1; __gpy_test_username_colours)
+if [[ "$output" != "ROOTBG/ROOTFG" ]]; then
+    echo "FAIL: Username local pill should use root colours for root: $output"
+    exit 1
+fi
+output=$(__gpy_is_root=0; __gpy_test_username_colours)
+if [[ "$output" != "USERBG/USERFG" ]]; then
+    echo "FAIL: Username local pill should use user colours for non-root: $output"
+    exit 1
+fi
+unfunction __gpy_test_username_colours
+echo "PASS: Username local pill colours follow root vs user style"
 
 # Pure-zsh render path: renders $USER, no fork
 unset __username_format
@@ -815,43 +857,54 @@ echo "PASS: Username wraps its SGR in %{ %}"
 # is_last is forwarded as-is ("true"/""), never converted to a
 # "true"/"false" string.
 function __gpy_request_username() {
-    printf 'AGENT[%s|%s|%s|%s|argc=%s]' "$1" "$2" "$3" "$4" "$#"
+    printf 'AGENT[%s|%s|%s|%s|%s|argc=%s]' "$1" "$2" "$3" "$4" "$5" "$#"
 }
 __username_format="{username}"
+__gpy_is_root=0
 output=$(__gpy_segment_username true "cyan")
-if [[ "$output" != "AGENT[root|true|cyan||argc=4]" ]]; then
-    echo "FAIL: Username agent-path args incorrect (want username|is_last|prev_bg|is_first): $output"
+if [[ "$output" != "AGENT[root|true|cyan|0||argc=5]" ]]; then
+    echo "FAIL: Username agent-path args incorrect (want username|is_last|prev_bg|is_root|is_first): $output"
     exit 1
 fi
 echo "PASS: Username dual-path routes to agent renderer with correctly-ordered args"
 
+# The 4th arg carries __gpy_is_root.
+__gpy_is_root=1
 output=$(__gpy_segment_username "" "")
-if [[ "$output" != "AGENT[root||||argc=4]" ]]; then
-    echo "FAIL: Username agent-path args incorrect for not-last/empty-prev_bg: $output"
+if [[ "$output" != "AGENT[root|||1||argc=5]" ]]; then
+    echo "FAIL: Username agent-path args incorrect for not-last/empty-prev_bg/root: $output"
     exit 1
 fi
-echo "PASS: Username dual-path threads empty is_last and empty prev_bg correctly"
+echo "PASS: Username dual-path threads empty is_last/prev_bg and __gpy_is_root"
 
-# is_first rides in the 4th slot: "true" for the first pill, "" (kept in place) otherwise.
+# is_first rides in the 5th slot: "true" for the first pill, "" (kept in place) otherwise.
 output=$(__gpy_segment_username "" "" true)
-if [[ "$output" != "AGENT[root|||true|argc=4]" ]]; then
-    echo "FAIL: Username agent-path should forward is_first as the 4th arg: $output"
+if [[ "$output" != "AGENT[root|||1|true|argc=5]" ]]; then
+    echo "FAIL: Username agent-path should forward is_first as the 5th arg: $output"
     exit 1
 fi
-echo "PASS: Username dual-path forwards is_first as the 4th arg"
+echo "PASS: Username dual-path forwards is_first as the 5th arg"
 
 unset __username_format
 unset -f __gpy_request_username
 
 # Registration in __gpy_segment_bg: the render loop threads the username
-# segment's background to the next segment's opening chevron.
+# segment's background (root or user style) to the next segment's chevron.
 __color_username_bg="magenta"
+__color_username_user_bg="yellow"
+__gpy_is_root=1
 seg_bg=$(__gpy_segment_bg username)
 if [[ "$seg_bg" != "magenta" ]]; then
-    echo "FAIL: __gpy_segment_bg did not return username's background: $seg_bg"
+    echo "FAIL: __gpy_segment_bg did not return username's root background: $seg_bg"
     exit 1
 fi
-unset __color_username_bg
+__gpy_is_root=0
+seg_bg=$(__gpy_segment_bg username)
+if [[ "$seg_bg" != "yellow" ]]; then
+    echo "FAIL: __gpy_segment_bg did not return username's user background: $seg_bg"
+    exit 1
+fi
+unset __color_username_bg __color_username_user_bg
 echo "PASS: Username registered in __gpy_segment_bg"
 
 # Restore ambient state mutated above.
@@ -885,12 +938,18 @@ if [[ $__gpy_username_test_had_format -eq 1 ]]; then
 else
     unset __username_format
 fi
+if [[ $__gpy_username_test_had_is_ssh -eq 1 ]]; then
+    __gpy_is_ssh=$__gpy_username_test_saved_is_ssh
+else
+    unset __gpy_is_ssh
+fi
 unset __gpy_username_test_had_user __gpy_username_test_saved_user \
     __gpy_username_test_had_is_root __gpy_username_test_saved_is_root \
     __gpy_username_test_had_is_sudo __gpy_username_test_saved_is_sudo \
     __gpy_username_test_had_show_always __gpy_username_test_saved_show_always \
     __gpy_username_test_had_icon __gpy_username_test_saved_icon \
-    __gpy_username_test_had_format __gpy_username_test_saved_format
+    __gpy_username_test_had_format __gpy_username_test_saved_format \
+    __gpy_username_test_had_is_ssh __gpy_username_test_saved_is_ssh
 
 echo "=== Testing Character/Directory Render Memoization ==="
 # __gpy_request_character and __gpy_segment_directory both run inside the

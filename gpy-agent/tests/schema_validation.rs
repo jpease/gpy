@@ -569,6 +569,10 @@ mod schema_files {
                 "username",
                 r#"{"op":"username","username":"me","format":"ansi"}"#,
             ),
+            (
+                "username",
+                r#"{"op":"username","username":"root","format":"ansi","is_root":true}"#,
+            ),
             ("ping", r#"{"op":"ping"}"#),
             ("status", r#"{"op":"status"}"#),
             ("shutdown", r#"{"op":"shutdown"}"#),
@@ -708,6 +712,7 @@ mod schema_files {
                 "username",
                 render_json(&Response::Username {
                     username: "u".to_owned(),
+                    is_root: true,
                 }),
             ),
             (

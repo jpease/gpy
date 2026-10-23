@@ -416,13 +416,16 @@ function __gpy_request_hostname --argument-names host is_last prev_bg is_ssh is_
     printf '%s\n' $result
 end
 
+# is_root "1" ($__gpy_is_root) is sent as "is_root":true so the agent picks the
+# root style; omitted (agent default false, the user style) otherwise.
 # No oneshot fallback: no reply (or an error) returns 1 and the caller draws the local pill.
-function __gpy_request_username --argument-names user is_last prev_bg is_first --description 'Send username render request to agent'
+function __gpy_request_username --argument-names user is_last prev_bg is_root is_first --description 'Send username render request to agent'
     set -l format ansi
     set -l escaped_user (__gpy_json_escape "$user")
 
     set -l payload (string join '' '{"op":"username","username":"' $escaped_user '","format":"' $format '"')
     set payload (string join '' $payload (__gpy_json_flags_tail "$is_last" "$is_first" "$prev_bg"))
+    test "$is_root" = 1; and set payload (string join '' $payload ',"is_root":true')
     set payload (string join '' $payload '}')
 
     set -l result (__gpy_ipc_send $payload $GPY_IPC_TIMEOUT_MS)

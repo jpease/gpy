@@ -75,13 +75,13 @@ bg_color = "transparent"
 time_format = "12"
 show_leading_zero = false
 
-# Username — Starship: `[$user]($style) in `. GPY renders this only for
-# root/sudo (gated shell-side by segment_username_detect), so `$style` maps to
-# Starship's `style_root` (bold red) — the elevated-session case. Non-root users
-# see nothing (show_always = false), matching Starship's default. GPY renders a
-# single style rather than Starship's root-vs-user style switch.
+# Username — Starship: `[$user]($style) in `. Shown as root, under sudo or over
+# SSH (gated shell-side by segment_username_detect; show_always = false matches
+# Starship's default). `format` carries Starship's `style_root` (bold red) and
+# `user_format` its `style_user` (bold yellow); the shell tells the agent which.
 [segments.username]
 format = "[$username](bold red) in "
+user_format = "[$username](bold yellow) in "
 show_always = false
 
 # Hostname — Starship: `[$ssh_symbol$hostname]($style) in `, bold dimmed green.

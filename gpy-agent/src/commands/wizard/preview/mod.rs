@@ -341,9 +341,14 @@ fn render_segment(
             crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
         }
         BuiltinSegment::Username => {
-            let format = theme.segments.username.format.as_deref()?;
-            let resolver = UsernameResolver::new(facts.username.clone(), theme, ctx.position)
-                .with_glyphs(Glyphs::from(&config.ui));
+            let format = theme.segments.username.format_for(facts.sample_is_root)?;
+            let resolver = UsernameResolver::new(
+                facts.username.clone(),
+                facts.sample_is_root,
+                theme,
+                ctx.position,
+            )
+            .with_glyphs(Glyphs::from(&config.ui));
             crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
         }
     }

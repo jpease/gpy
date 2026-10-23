@@ -787,36 +787,35 @@ pub fn translate_hostname(table: &toml::value::Table, warnings: &mut Warnings) -
 
 /// Translate Starship's `username` module into a GPY username theme.
 ///
-/// `$user` → `$username`; `$style` is inlined from `style_root` (root-only segment).
+/// `$user` → `$username`; `$style` is inlined from `style_root` into `format` and from
+/// `style_user` into `user_format`, the shell telling the agent which session it is.
 #[must_use]
 pub fn translate_username(table: &toml::value::Table, warnings: &mut Warnings) -> UsernameTheme {
-    let mut theme = UsernameTheme {
-        show_always: table
-            .get("show_always")
-            .and_then(toml::Value::as_bool)
-            .unwrap_or(false),
-        ..Default::default()
-    };
     let raw = table
         .get("format")
         .and_then(toml::Value::as_str)
-        .unwrap_or("[$user]($style) ");
+        .unwrap_or("[$user]($style) in ");
     // Braced form first so the unbraced replace can't match inside it.
     let renamed = raw
         .replace("${user}", "${username}")
         .replace("$user", "$username");
-    // Inline before the generic `*_style` pass so it isn't dropped as unknown.
-    let style_root = table
-        .get("style_root")
-        .and_then(toml::Value::as_str)
-        .unwrap_or("bold red");
-    let styled = renamed
-        .replace("${style}", style_root)
-        .replace("$style", style_root);
-    let inlined = inline_style_vars(&styled, table);
-    let mapped = retain_known_vars(&inlined, &["username", "symbol"], "username", warnings);
-    theme.format = Some(mapped);
-    theme
+    // `$style` is `style_root` in `format` and `style_user` in `user_format`.
+    let styled_with = |key: &str, default: &str, sink: &mut Warnings| {
+        let mut styles = table.clone();
+        let style = table.get(key).cloned().unwrap_or_else(|| default.into());
+        styles.insert("style".to_owned(), style);
+        let inlined = inline_style_vars(&renamed, &styles);
+        retain_known_vars(&inlined, &["username", "symbol"], "username", sink)
+    };
+    let format = styled_with("style_root", "bold red", warnings);
+    // Same template, so the same dropped-variable warnings: report them once.
+    let user_format = styled_with("style_user", "bold yellow", &mut Warnings::new());
+    UsernameTheme {
+        show_always: table.get("show_always").and_then(toml::Value::as_bool) == Some(true),
+        format: Some(format),
+        user_format: Some(user_format),
+        ..Default::default()
+    }
 }
 
 #[cfg(test)]

@@ -151,6 +151,8 @@ enum OneshotCommands {
         is_ssh: bool,
     },
     /// Render the username segment (when a format template is configured).
+    ///
+    /// The caller resolves the username and decides root/sudo/SSH visibility.
     Username {
         /// The username string to render (defaults to `$USER`/`$USERNAME`,
         /// or empty when that cannot be determined).
@@ -158,6 +160,10 @@ enum OneshotCommands {
         username: String,
         #[command(flatten)]
         segment: SegmentArgs,
+        /// Mark the session as root, so the root format and colors (Starship's
+        /// `style_root`) render instead of the user ones.
+        #[arg(long)]
+        is_root: bool,
     },
     /// Render the status segment (exit-status pill, when a format template is configured).
     Status {
@@ -248,6 +254,7 @@ fn base_oneshot_request(
         hostname: None,
         is_ssh: false,
         username: None,
+        is_root: false,
     }
 }
 
@@ -288,8 +295,13 @@ impl From<OneshotCommands> for OneshotRequest {
                 is_ssh,
                 ..base_oneshot_request(OneshotKind::Hostname, String::new(), segment)
             },
-            OneshotCommands::Username { username, segment } => Self {
+            OneshotCommands::Username {
+                username,
+                segment,
+                is_root,
+            } => Self {
                 username: Some(username),
+                is_root,
                 ..base_oneshot_request(OneshotKind::Username, String::new(), segment)
             },
             OneshotCommands::Status { exit_code, segment } => Self {

@@ -163,7 +163,7 @@ pub enum Message {
     },
 
     /// Request username segment render for a client-supplied username value.
-    /// The client resolves `$USER` and gates visibility; the agent does not.
+    /// The client resolves `$USER`, root state and visibility; the agent does not.
     UsernameRequest {
         /// The effective username string resolved by the client.
         username: String,
@@ -173,6 +173,8 @@ pub enum Message {
         is_last: bool,
         /// Whether this is the first segment in the prompt.
         is_first: bool,
+        /// Whether the client session runs as root; absent means `false`.
+        is_root: bool,
         /// Previous segment's background color, for chevron transitions.
         prev_bg: Option<String>,
     },
@@ -412,6 +414,9 @@ pub enum Response {
     Username {
         /// The username string, as supplied by the requesting client.
         username: String,
+        /// Whether the requesting client's session runs as root.
+        #[serde(default)]
+        is_root: bool,
     },
 
     /// Simple acknowledgment

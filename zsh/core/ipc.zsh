@@ -761,17 +761,20 @@ function __gpy_request_hostname() {
     return 1
 }
 
-# No oneshot fallback, as for hostname.
+# No oneshot fallback, as for hostname. is_root "1" sends "is_root":true so the
+# agent picks the root style; omitted (agent default: user style) otherwise.
 function __gpy_request_username() {
     local username=$1
     local is_last=$2
     local prev_bg=${3:-}
-    local is_first=${4:-}
+    local is_root=${4:-}
+    local is_first=${5:-}
 
-    local json_username flags_tail
+    local json_username flags_tail root_json=""
     __gpy_escape_json_into json_username "$username"
     __gpy_json_flags_tail_into flags_tail "$is_last" "$is_first" "$prev_bg"
-    local request="{\"op\":\"username\",\"username\":\"${json_username}\",\"format\":\"zsh-prompt\"${flags_tail}}"
+    [[ "$is_root" == "1" ]] && root_json=',"is_root":true'
+    local request="{\"op\":\"username\",\"username\":\"${json_username}\",\"format\":\"zsh-prompt\"${flags_tail}${root_json}}"
 
     local result
     result=$(__gpy_send_json "$request")

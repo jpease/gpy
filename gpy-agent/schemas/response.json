@@ -214,6 +214,10 @@
       "properties": {
         "username": {
           "type": "string"
+        },
+        "is_root": {
+          "type": "boolean",
+          "description": "Whether the requesting client's session runs as root"
         }
       },
       "title": "Username",

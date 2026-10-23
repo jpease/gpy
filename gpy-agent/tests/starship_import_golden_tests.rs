@@ -207,6 +207,11 @@ fn missing_module_tables_fall_back_to_starship_defaults() {
             &preset.username.format,
         ),
         (
+            "username (user)",
+            &imported.username.user_format,
+            &preset.username.user_format,
+        ),
+        (
             "language",
             &imported.language.format,
             &preset.language.format,

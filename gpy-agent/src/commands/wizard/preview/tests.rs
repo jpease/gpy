@@ -18,6 +18,7 @@ fn make_facts() -> PreviewFacts {
         sample_duration_ms: 128,
         sample_character_success: true,
         sample_is_ssh: true,
+        sample_is_root: true,
     }
 }
 

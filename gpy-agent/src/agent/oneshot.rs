@@ -74,6 +74,9 @@ pub struct OneshotRequest {
     /// The effective username to render; `None` (non-username requests) means empty.
     #[serde(default)]
     pub username: Option<String>,
+    /// Whether the session runs as root; picks the username style like IPC `is_root`.
+    #[serde(default)]
+    pub is_root: bool,
 }
 
 /// Default format for oneshot requests.
@@ -325,6 +328,7 @@ fn handle_oneshot_username_parsed(request: &OneshotRequest) -> Result<String> {
 
     let response = Response::Username {
         username: request.username.clone().unwrap_or_default(),
+        is_root: request.is_root,
     };
     render_response(&response, format, &config, &theme, position)
 }
