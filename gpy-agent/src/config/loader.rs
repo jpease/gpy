@@ -285,8 +285,6 @@ fn read_existing(path: &Path) -> Result<Option<String>> {
 /// # Errors
 /// Returns an error if the directory, temp file, or rename fails.
 fn write_atomically(target: &Path, contents: &str) -> Result<()> {
-    use std::io::Write as _;
-
     let parent = target
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -294,26 +292,8 @@ fn write_atomically(target: &Path, contents: &str) -> Result<()> {
     std::fs::create_dir_all(parent)
         .map_err(|e| Error::config(format!("Failed to create config directory: {e}")))?;
 
-    let file_name = target.file_name().map_or_else(
-        || "config.toml".into(),
-        |n| n.to_string_lossy().into_owned(),
-    );
-    let temp = parent.join(format!(".{file_name}.tmp.{}", std::process::id()));
-
-    let write_result = (|| -> std::io::Result<()> {
-        let mut file = std::fs::File::create(&temp)?;
-        file.write_all(contents.as_bytes())?;
-        if let Ok(meta) = std::fs::metadata(target) {
-            file.set_permissions(meta.permissions())?;
-        }
-        file.sync_all()?;
-        std::fs::rename(&temp, target)
-    })();
-
-    write_result.map_err(|e| {
-        drop(std::fs::remove_file(&temp));
-        Error::config(format!("Failed to write config file: {e}"))
-    })
+    crate::fs_util::write_atomically(target, contents.as_bytes())
+        .map_err(|e| Error::config(format!("Failed to write config file: {e}")))
 }
 
 /// Load a theme by name (user, plugin, or builtin), fresh from disk.

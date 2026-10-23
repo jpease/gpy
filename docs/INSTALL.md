@@ -628,12 +628,15 @@ the agent and supervisor processes, removes the binaries and their upgrade backu
 from `~/.local/bin`, removes all shell integration files and completions (Fish,
 Zsh, Bash), cleans the `gpy-init` block from all supported startup files
 (`~/.bashrc`, `~/.bash_profile`, `~/.bash_login`, `~/.profile`, `${ZDOTDIR:-~}/.zshrc`, `~/.zshrc`, and `~/.config/fish/config.fish`), and
-removes the config, cache, and runtime directories. It asks for confirmation first,
-and startup files are restored byte-for-byte (startup files the installer created are removed).
+removes the config, cache, and runtime directories. It asks for confirmation first
+and removes nothing unless it gets it: with no terminal to answer (stdin closed or
+at end of input) it exits non-zero, so pass `--yes` to uninstall from a script.
+Startup files are restored byte-for-byte (startup files the installer created are removed).
 
 ```bash
 # From a release archive or a clone of the repository
 sh scripts/uninstall.sh                     # POSIX shell entry point (uninstalls globally)
+sh scripts/uninstall.sh --yes               # no prompt (scripts, CI, no terminal)
 
 # Installed with the one-liner and no local copy? Download the script from the
 # release. Piping it straight into a shell would feed the confirmation prompt

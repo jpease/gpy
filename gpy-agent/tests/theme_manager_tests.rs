@@ -1311,6 +1311,35 @@ fn save_user_theme_rejects_unsafe_name() {
     assert!(result.is_err(), "unsafe theme name must be rejected");
 }
 
+/// A theme file managed as a symlink (dotfiles) stays a symlink across a
+/// wizard save, and the link's target receives the new content.
+#[test]
+#[serial]
+#[cfg(unix)]
+fn save_user_theme_writes_through_a_symlinked_theme_file() {
+    let temp_dir = TempDir::new().unwrap();
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", temp_dir.path());
+
+    let dotfiles = temp_dir.path().join("dotfiles");
+    fs::create_dir_all(&dotfiles).unwrap();
+    let target = dotfiles.join("mine.toml");
+    fs::write(&target, "# linked\n").unwrap();
+    let themes_dir = temp_dir.path().join("gpy").join("themes");
+    fs::create_dir_all(&themes_dir).unwrap();
+    let link = themes_dir.join("mine.toml");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    let theme = (*ThemeManager::builtin("default").unwrap().get()).clone();
+    ThemeManager::save_user_theme("mine", &theme).unwrap();
+
+    assert!(
+        link.symlink_metadata().unwrap().file_type().is_symlink(),
+        "the theme symlink must survive the save"
+    );
+    let written = fs::read_to_string(&target).unwrap();
+    assert!(written.starts_with("# GPY Theme: mine"), "{written}");
+}
+
 /// Extract the value assigned to `var` in a Fish theme export, e.g.
 /// `set -g __color_clock_bg "blue"` -> `Some("blue")`.
 fn exported_value(output: &str, var: &str) -> Option<String> {

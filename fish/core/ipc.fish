@@ -997,6 +997,11 @@ function __gpy_agent_supervisor_loop --description 'Background loop for agent su
 
     set -l restart_count 0
     set -l last_restart_time 0
+    # A stall shorter than one check interval clears by itself, so an agent
+    # that is connected but silent is restarted only after this many checks in
+    # a row; an unreachable one is restarted at once.
+    set -l unresponsive_limit 2
+    set -l unresponsive_checks 0
 
     while true
         # Re-read each pass so a config reload applies within one interval:
@@ -1018,7 +1023,17 @@ function __gpy_agent_supervisor_loop --description 'Background loop for agent su
             continue
         end
 
-        if not __gpy_agent_is_healthy
+        __gpy_agent_is_healthy
+        set -l health $status
+        if test $health -eq 2
+            set unresponsive_checks (math $unresponsive_checks + 1)
+        else
+            set unresponsive_checks 0
+        end
+
+        if test $health -eq 0
+            set restart_count 0
+        else if test $health -eq 1; or test $unresponsive_checks -ge $unresponsive_limit
             set -l current_time (date +%s)
 
             set -l rate_limit (__gpy_uint_or_default "$GPY_SUPERVISOR_RESTART_RATE_LIMIT_SECONDS" 60)
@@ -1026,6 +1041,7 @@ function __gpy_agent_supervisor_loop --description 'Background loop for agent su
             if test (math "$current_time - $last_restart_time") -gt $rate_limit
                 if test $restart_count -lt $max_restart_attempts
                     __gpy_log_warn ipc "Agent not responding, attempting restart ($restart_count/$max_restart_attempts)"
+                    set unresponsive_checks 0
                     if __gpy_agent_restart
                         __gpy_log_info ipc "Agent restarted successfully"
                         set restart_count 0
@@ -1043,31 +1059,24 @@ function __gpy_agent_supervisor_loop --description 'Background loop for agent su
                     continue
                 end
             end
-        else
-            set restart_count 0
         end
 
         sleep $check_interval; or break
     end
 end
 
-function __gpy_agent_is_healthy --description 'Check if agent is healthy and responding'
-    set -l socket_path (__gpy_ipc_endpoint)
+# 0: healthy. 1: unreachable (no socket, nothing listening). 2: connected but
+# no valid reply, which a briefly stalled agent also produces. Nothing waits on
+# this background check, so it allows more than the prompt's reply budget.
+function __gpy_agent_is_healthy --description 'Check the agent: 0 healthy, 1 unreachable, 2 unresponsive'
+    set -l prompt_budget (__gpy_uint_or_default "$GPY_IPC_TIMEOUT_MS" 150)
+    set -l response (__gpy_ipc_send '{"op":"ping"}' (math "max($prompt_budget, 1000)"))
+    test $status -eq 1; and return 1
 
-    if not test -S "$socket_path"
-        return 1
-    end
-
-    set -l response (__gpy_request ping)
-    if test -z "$response"
-        return 1
-    end
-
-    if string match -q '*"status":"ok"*' "$response"
+    if string match -q '*"status":"ok"*' -- "$response"
         return 0
     end
-
-    return 1
+    return 2
 end
 
 # Socket-holder PIDs via lsof or fuser; returns 1 when neither exists, which the
