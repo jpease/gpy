@@ -1,10 +1,31 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Remove the current user's whole GPY install (every shell, binaries, config,
-# cache, runtime). Usage: sh scripts/uninstall.sh
+# cache, runtime). Usage: sh scripts/uninstall.sh [--yes]
 # Sources nothing, so a lone downloaded copy works.
 
 set -e
+
+usage() {
+    echo "Usage: sh uninstall.sh [--yes]"
+    echo "  -y, --yes   uninstall without asking (for scripts and non-interactive shells)"
+}
+
+assume_yes=0
+for arg in "$@"; do
+    case "$arg" in
+        -y | --yes) assume_yes=1 ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "uninstall.sh: unknown argument: $arg" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
 
 # Resolved as gpy-agent/src/paths.rs does.
 config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
@@ -182,9 +203,17 @@ echo "  - GPY init blocks from startup files (if present):"
 echo "    - $HOME/.bashrc, $HOME/.bash_profile, $HOME/.bash_login, $HOME/.profile, ${zdotdir_zshrc:+$zdotdir_zshrc, }$HOME/.zshrc, $fish_config_dir/config.fish"
 echo ""
 echo "This will also stop any running agent and supervisor processes"
-printf '%s' "Press Enter to continue or Ctrl-C to cancel: "
-# `|| true`: an EOF stdin must not trip `set -e`.
-read -r _gpy_uninstall_confirm || true
+if [ "$assume_yes" = 1 ]; then
+    echo "Proceeding without confirmation (--yes)."
+else
+    printf '%s' "Press Enter to continue or Ctrl-C to cancel: "
+    # EOF (closed or exhausted stdin) is not consent: nothing has been removed yet.
+    if ! read -r _gpy_uninstall_confirm; then
+        echo ""
+        echo "No confirmation received; nothing was removed. Re-run with --yes to uninstall without a prompt." >&2
+        exit 1
+    fi
+fi
 
 remove_dir "$gpy_config_dir/bash" "Removed bash integration files from $gpy_config_dir/bash"
 remove_dir "$gpy_config_dir/zsh" "Removed zsh integration files from $gpy_config_dir/zsh"

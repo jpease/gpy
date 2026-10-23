@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file first, so a save that failed partway (disk full, crash) left a broken
   theme and the prompt fell back to the default. A symlinked theme file stays
   a symlink.
+- `scripts/uninstall.sh` no longer treats end of input as confirmation. Run
+  with stdin closed or redirected from `/dev/null`, it removed the config
+  directory, with your themes and palettes, without asking; now it removes
+  nothing and exits non-zero. Pass the new `--yes` to uninstall without a
+  prompt.
 
 ## [0.6.0] - 2026-10-22
 
