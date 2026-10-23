@@ -623,7 +623,7 @@ pub fn check_protocol_version_compatibility(agent_protocol_version: u8) {
         println!();
         println!("This may cause compatibility issues. Recommended actions:");
         println!("  1. Restart the agent: gpy-agent stop && gpy-agent start");
-        println!("  2. If issues persist, reinstall: ./install-dev.fish");
+        println!("  2. If issues persist, update gpy and re-run: gpy setup");
         println!();
         println!("Fallback: Use oneshot mode if IPC fails:");
         println!("  gpy-agent oneshot git --cwd . --format ansi");

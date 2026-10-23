@@ -149,6 +149,29 @@ end
 
 rm -rf "$home3"
 
+# --- Test 4: a packaged gpy outside $HOME blocks the install unless --allow-shadow.
+set -l home4 (mktemp -d)
+set -l pkg_bin (mktemp -d)
+printf '#!/bin/sh\necho "gpy 0.0.0"\n' >"$pkg_bin/gpy"
+chmod +x "$pkg_bin/gpy"
+mkdir -p "$home4/.local/bin"
+set -l out4 (env HOME=$home4 XDG_CONFIG_HOME="$home4/.config" PATH="$pkg_bin:$safe_path" \
+    fish --no-config install-dev.fish --fish-only 2>&1 | string collect)
+set -l status4 $pipestatus[1]
+if test $status4 -ne 0; and string match -q "*already installed at $pkg_bin/gpy*" -- "$out4"
+    __gpy_test_pass "install-dev.fish: refuses to shadow a packaged gpy"
+else
+    __gpy_test_fail "install-dev.fish: did not refuse a packaged gpy (status $status4): $out4"
+end
+set -l out4b (env HOME=$home4 XDG_CONFIG_HOME="$home4/.config" PATH="$pkg_bin:$safe_path" \
+    fish --no-config install-dev.fish --fish-only --allow-shadow 2>&1 | string collect)
+if string match -q "*already installed at*" -- "$out4b"
+    __gpy_test_fail "install-dev.fish: --allow-shadow still refused: $out4b"
+else
+    __gpy_test_pass "install-dev.fish: --allow-shadow bypasses the guard"
+end
+rm -rf "$home4" "$pkg_bin"
+
 if test $failed -eq 1
     exit 1
 end

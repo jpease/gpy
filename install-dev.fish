@@ -1,7 +1,7 @@
 #!/usr/bin/env fish
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Contributor installer: build and install from this checkout. End users: install.sh.
-# Usage: ./install-dev.fish [--fish-only] [--no-build] [--clean] [--help]
+# Usage: ./install-dev.fish [--fish-only] [--no-build] [--clean] [--allow-shadow] [--help]
 
 # Keep GPY out of the way while installing; a live prompt can hang the run.
 set -gx GPY_AGENT_ENABLED 0
@@ -12,6 +12,7 @@ set -g fish_only 0
 set -g no_build 0
 set -g clean_sync 0
 set -g show_help 0
+set -g allow_shadow 0
 
 for arg in $argv
     switch $arg
@@ -21,6 +22,8 @@ for arg in $argv
             set no_build 1
         case --clean
             set clean_sync 1
+        case --allow-shadow
+            set allow_shadow 1
         case --help -h
             set show_help 1
         case '*'
@@ -40,6 +43,7 @@ if test $show_help -eq 1
     echo "  --fish-only     Skip agent build, only update Fish files (fast)"
     echo "  --no-build      Skip building, use existing agent binary"
     echo "  --clean         Remove the installed Fish tree before setup"
+    echo "  --allow-shadow  Install even though a packaged gpy (e.g. Homebrew) is on PATH"
     echo "  --help, -h      Show this help"
     echo ""
     echo "Note:"
@@ -56,6 +60,31 @@ end
 if test $fish_only -eq 1; and test $no_build -eq 0
     set no_build 1 # --fish-only implies --no-build
 end
+
+# This script installs into ~/.local/bin, which sits ahead of Homebrew, system
+# and package-manager prefixes on PATH, and replaces ~/.config/fish/gpy that
+# `gpy setup` owns. Doing that over a packaged gpy leaves a stale shadow
+# once the package updates, so refuse unless asked. Copies under $HOME are
+# `_remove_conflicting_binaries`' business, and a sandboxed HOME sees none.
+function _refuse_to_shadow_package_install
+    test $allow_shadow -eq 1; and return 0
+    set -l install_dir (path resolve "$HOME/.local/bin")
+    set -l home_dir (path resolve "$HOME")
+    for found in (type -aP gpy 2>/dev/null)
+        set -l found_dir (path resolve (path dirname $found))
+        test "$found_dir" = "$install_dir"; and continue
+        test (string sub -l (string length -- "$home_dir/") -- "$found_dir/") = "$home_dir/"; and continue
+        echo "Error: gpy is already installed at $found (not by this script)."
+        echo "   This script would shadow it from $install_dir and replace the Fish files"
+        echo "   that 'gpy setup' manages. To test unreleased code without touching it, use a"
+        echo "   sandboxed HOME/XDG_* (see demo/setup.fish) or run the checkout's build directly."
+        echo "   Pass --allow-shadow to install anyway."
+        return 1
+    end
+    return 0
+end
+
+_refuse_to_shadow_package_install; or exit 1
 
 function _check_repo_root
     if not test -d gpy-agent
@@ -460,3 +489,4 @@ set -e fish_only
 set -e no_build
 set -e clean_sync
 set -e show_help
+set -e allow_shadow
