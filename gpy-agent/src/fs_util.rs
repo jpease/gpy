@@ -82,6 +82,63 @@ pub fn write_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     result
 }
 
+/// Exclusive advisory lock on `<path>.lock`, released on drop. Serializes
+/// read-modify-write cycles on `path` across processes; the lock file stays in
+/// place because unlinking one races like unlinking a socket.
+pub struct PathLock {
+    #[cfg(unix)]
+    _lock: nix::fcntl::Flock<std::fs::File>,
+}
+
+/// Take the exclusive lock beside `path`, polling for up to `wait`. The parent
+/// directory must exist. Resolve symlinks first so every writer locks the same
+/// file. Unix only: elsewhere this takes no lock.
+///
+/// # Errors
+/// Returns an error if the lock file cannot be opened, or `TimedOut` if another
+/// holder keeps the lock for the whole `wait`.
+#[cfg(unix)]
+pub fn lock_beside(path: &Path, wait: std::time::Duration) -> std::io::Result<PathLock> {
+    use nix::errno::Errno;
+    use nix::fcntl::{Flock, FlockArg};
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let mut lock_path = path.as_os_str().to_owned();
+    lock_path.push(".lock");
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .open(&lock_path)?;
+    let deadline = std::time::Instant::now()
+        .checked_add(wait)
+        .unwrap_or_else(std::time::Instant::now);
+    loop {
+        match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
+            Ok(lock) => return Ok(PathLock { _lock: lock }),
+            Err((unlocked, Errno::EWOULDBLOCK | Errno::EINTR)) => file = unlocked,
+            Err((_, errno)) => return Err(std::io::Error::from(errno)),
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("{} is held by another process", lock_path.to_string_lossy()),
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// No advisory locking off Unix.
+///
+/// # Errors
+/// Never fails.
+#[cfg(not(unix))]
+pub fn lock_beside(_path: &Path, _wait: std::time::Duration) -> std::io::Result<PathLock> {
+    Ok(PathLock {})
+}
+
 /// Whether the current user cannot write `path`. Uses `access(2)`, not mode
 /// bits, so ownership and ACLs count; fails closed.
 #[cfg(unix)]
@@ -230,5 +287,27 @@ mod tests {
         assert!(result.is_err(), "a read-only directory must fail the write");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous");
         assert_eq!(entries, 1, "no temp file may be left behind");
+    }
+
+    /// A second locker waits out the first and gets in once it drops.
+    #[test]
+    #[cfg(unix)]
+    fn lock_beside_excludes_until_the_holder_drops() {
+        use super::lock_beside;
+        use std::time::Duration;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+
+        let held = lock_beside(&path, Duration::from_secs(1)).unwrap();
+        let blocked = lock_beside(&path, Duration::from_millis(50));
+        assert_eq!(
+            blocked.err().map(|e| e.kind()),
+            Some(std::io::ErrorKind::TimedOut),
+            "a held lock must time out the second locker"
+        );
+
+        drop(held);
+        assert!(lock_beside(&path, Duration::from_secs(1)).is_ok());
     }
 }
