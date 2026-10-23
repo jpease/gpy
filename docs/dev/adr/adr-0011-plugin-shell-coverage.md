@@ -11,9 +11,9 @@ A community plugin provides segments through `plugin.toml` and one Fish file per
 - `gpy theme export` writes `__gpy_plugin_segment_file_<token>` for Fish only (`gpy-agent/src/theme/export/plugin_segments.rs:200-208`); `fish/core/init.fish:126-175` sources the file when the segment is enabled. `bash/core` and `zsh/core` have no loader.
 - The Bash and Zsh renderers walk `ui.enabled_segments` and call `__gpy_segment_<id> is_last prev_bg is_first` in a `$()` subshell, skipping any name without that function (`bash/core/init.bash:211-220,277-305`, `zsh/core/init.zsh:177-192,244-275`). Their names differ from the `v1` contract, and only `__gpy_section_standalone` exists there (`bash/core/renderer.bash:73`, `zsh/core/renderer.zsh:74`).
 - `entry_type = "command"` is reserved and rejected (`gpy-agent/src/plugin/registry.rs:167`).
-- The only user-facing statement is one line in [CLI Reference: Plugin Commands](../../user/cli-reference.md#plugin-commands) (from jpease/gpy-archive#990). The authoring guides ([Build a Segment Plugin](../build-segment-plugin.md), [Plugin + Theme Authoring](../plugin-theme-authoring.md), the [developer docs index](../README.md)) do not say it, and the [shell feature matrix](../../INSTALL.md#shell-feature-matrix) opens with "Every shell renders the same segments".
+- The only user-facing statement is one line in [CLI Reference: Plugin Commands](../../user/cli-reference.md#plugin-commands). The authoring guides ([Build a Segment Plugin](../build-segment-plugin.md), [Plugin + Theme Authoring](../plugin-theme-authoring.md), the [developer docs index](../README.md)) do not say it, and the [shell feature matrix](../../INSTALL.md#shell-feature-matrix) opens with "Every shell renders the same segments".
 
-Nobody has asked for plugin segments outside Fish: epic jpease/gpy-archive#988 parked this ADR for lack of demand (owner decision D2), and the owner started it with `go` on jpease/gpy-archive#993. The problem worth fixing is the silent surprise measured below, not a missing feature.
+Nobody has asked for plugin segments outside Fish. The problem worth fixing is the silent surprise measured below, not a missing feature.
 
 ### Measurements
 
@@ -76,7 +76,7 @@ Proposed: **Option B**. Plugin segments stay Fish-only, and every place a user o
 
 This is the cheapest change that removes the silent surprise. It adds no prompt-time work and changes no shell script, IPC message or `v1` contract. Option C's doctor warning is an optional add-on, taken only if the `gpy enable` message proves insufficient (for example, users who edit `config.toml` directly still report the surprise).
 
-Reopen trigger: a plugin author or user asks for a plugin segment in Bash or Zsh. Then try F first (no code execution, one plugin file for every shell), D second if F cannot express the segment, and E only with the owner approval external process execution needs.
+Reopen trigger: a plugin author or user asks for a plugin segment in Bash or Zsh. Then try F first (no code execution, one plugin file for every shell), D second if F cannot express the segment, and E only with the maintainer approval external process execution needs.
 
 ## Alternatives Considered
 
@@ -100,7 +100,7 @@ Port the loader to Bash and Zsh: plugins ship `segments/<id>.bash` and `segments
 
 ### Option E
 
-Activate `entry_type = "command"`: the agent runs a manifest-declared command and the shells show its output. Privilege: new external process execution from the daemon, which needs owner approval; per-shell context (`KUBECONFIG`, working directory) must travel in the request. Latency: 1 to 6 ms to spawn before the command does any work, so it must run off the request path with a cache and repaint (ADR-0009); each render still pays one request per segment. Work per shell: one generic request-and-draw function in each of Fish, Bash and Zsh; an agent runner, a cache and a new IPC operation (MINOR in `gpy-agent/SCHEMA_EVOLUTION.md`, approval-gated for `Message`/`Response`). `v1`: `command` is reserved in `v1`, so activating it is additive; older gpy rejects such plugins with a diagnostic.
+Activate `entry_type = "command"`: the agent runs a manifest-declared command and the shells show its output. Privilege: new external process execution from the daemon, which needs maintainer approval; per-shell context (`KUBECONFIG`, working directory) must travel in the request. Latency: 1 to 6 ms to spawn before the command does any work, so it must run off the request path with a cache and repaint (ADR-0009); each render still pays one request per segment. Work per shell: one generic request-and-draw function in each of Fish, Bash and Zsh; an agent runner, a cache and a new IPC operation (MINOR in `gpy-agent/SCHEMA_EVOLUTION.md`, approval-gated for `Message`/`Response`). `v1`: `command` is reserved in `v1`, so activating it is additive; older gpy rejects such plugins with a diagnostic.
 
 ### Option F
 
@@ -117,9 +117,8 @@ Declarative plugins: a trigger (files present upward from the working directory,
 
 - Bash and Zsh users still cannot use plugin segments.
 - A user who edits `config.toml` directly never sees the `gpy enable` message.
-- The message and output changes are production code: if accepted, they are filed as a top-level epic.
+- The message and output changes are production code: if accepted, they are tracked as a separate work item.
 
 ## References
 
 - [Plugin Framework](../plugins.md); [CLI Reference: Plugin Commands](../../user/cli-reference.md#plugin-commands); [ADR-0009](adr-0009-deferred-language-version-probes.md) (commands kept off the request path)
-- jpease/gpy-archive#993 (this ADR), #988 (assumptions A3, A4; decision D2), #990 (the CLI-reference note)
