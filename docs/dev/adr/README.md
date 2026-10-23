@@ -37,6 +37,7 @@ What becomes easier or more difficult to do because of this change?
 - [ADR-0007](adr-0007-sigurg-doorbell-notifications.md) - SIGURG Doorbell and Flag Files for Shell Notifications
 - [ADR-0008](adr-0008-fail-fast-on-panic.md) - Fail Fast on Panic
 - [ADR-0009](adr-0009-deferred-language-version-probes.md) - Deferred Language Version Probes
+- [ADR-0010](adr-0010-config-key-single-source.md) - Single Source of Truth for Config Keys
 
 ## Creating a New ADR
 
