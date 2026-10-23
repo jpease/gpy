@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory, with your themes and palettes, without asking; now it removes
   nothing and exits non-zero. Pass the new `--yes` to uninstall without a
   prompt.
+- The Fish supervisor no longer kills an agent that missed one health check.
+  A single ping that went unanswered within the prompt's 150 ms budget made it
+  stop the agent, kill whatever held the socket and start a new one, dropping
+  every cache. An agent that answers nothing is now restarted after two
+  checks in a row, each allowed a second; one that is gone is still restarted
+  at the next check.
 
 ## [0.6.0] - 2026-10-22
 
