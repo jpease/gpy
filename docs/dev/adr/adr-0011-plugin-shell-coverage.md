@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+Accepted (2026-10). B now; G as the cross-shell plugin format.
 
 ## Context
 
@@ -19,7 +19,7 @@ Only Fish users could write a plugin, so the lack of requests from Bash and Zsh 
 - **E**: `entry_type = "command"`; a program prints the segment text, run on every prompt.
 - **E-cached**: the agent runs the command off the request path, caches it and repaints (ADR-0009 pattern).
 - **F**: declarative trigger plus template, rendered by the agent.
-- **G**: one POSIX `sh` script per segment plus a small manifest, run by each shell and cached there, with no agent involvement.
+- **G**: one POSIX `sh` script per segment plus a small manifest, run by each shell (optionally cached there), with no agent involvement.
 
 **Scope.** The plugin contract for third-party segments. GPY's built-in segments were used below only as a test bench with known-correct output; whether any built-in moves onto the plugin contract is a separate, later decision.
 
@@ -106,7 +106,7 @@ The built-in's cost in the `default` theme is mostly the agent-rendered template
 
 Behaviour beyond the numbers:
 
-- **Freshness.** D recomputes every prompt. G recomputes when an input changes or the TTL expires; `directory` is keyed by `$PWD` and `$HOME`, so a change that does not move the shell (for example `git init` under `truncate_to_repo`) shows only after a `cd`. `duration` changes with every command, so G runs the script every prompt. A script can print only the time at which it ran, so the G clock needs `ttl_secs = 0`.
+- **Freshness (cached G, as prototyped).** D recomputes every prompt. The prototype's G recomputes when an input changes or the TTL expires; `directory` is keyed by `$PWD` and `$HOME`, so a change that does not move the shell (for example `git init` under `truncate_to_repo`) shows only after a `cd`. `duration` changes with every command, so G runs the script every prompt. A script can print only the time at which it ran, so the G clock needs `ttl_secs = 0`. An earlier G run (a Kubernetes-context stand-in edited in place, TTL 5 s, one Enter per second) showed the new value 3.1 / 4.4 / 3.2 s after the edit in Bash / Zsh / Fish; with the script in the background, an idle Zsh or Fish prompt still showed the old value 7 s after the edit, until the next Enter.
 - **Live display.** The built-in clock hands the shell a live prompt token (`\D{}`, `%D{}`) and appears in the Zsh and Fish transient prompt; no plugin approach can do either. No approach, built-in included, repaints an idle prompt on a timer.
 - **Without the agent.** With the agent disabled and stopped, Bash and Zsh drew all five segments under G, D and E; the built-in lost `directory`. In Fish, disabling the agent turns GPY off for every approach, and a stopped agent is restarted by the integration, so Fish was not testable that way.
 - **Bash 3.2.** The G adapter rendered under `/bin/bash` 3.2.57 (non-interactive). D's clock needs `printf '%()T'` (Bash 4.2+) and forks `date` on 3.2.
@@ -119,29 +119,37 @@ Not measured: Unicode cluster abbreviation in `directory` (G and D take the firs
 ### Dogfooding and examples
 
 - **Could run on G at parity:** `username` and `hostname` (static per session; about 6 times cheaper than the template-rendered built-in in Bash and 2 to 3.5 times in Zsh and Fish). Moving them is out of scope here.
-- **Run at parity but should not use G:** `directory` and `duration`. Their input changes every directory or command, so G forks as often as E; as D they are fork-free and always fresh.
+- **Run at parity on G at E's cost:** `directory` and `duration`. Their input changes every directory or command, so G runs `sh` on each such prompt, cached or not; as D they are fork-free and always fresh, which is the case D is kept for.
 - **Must stay native:** `clock` (live prompt token, transient prompt).
-- **Contract gaps** (what the public contract must expose before built-ins or third parties can rely on it): public names for shell state (`is_root`, `is_sudo`, `is_ssh`, the last command's duration; D read `__gpy_is_*` and `__gpy_cmd_duration`); colour variants (D read `__color_<id>_user_bg`); the glyph mode (a private-use icon over SSH was dropped by the built-in with `show_icons = false` and printed by every plugin); the theme's `format` for a plugin segment (or a stated rule that plugins are pills; the `text` theme differences and the username icon spacing, `⚡jpease` vs `⚡ jpease`, come from this); typed plugin settings (plugin theme values must be strings, `"3"`, `"true"`, and plugins cannot read `config.toml`); live prompt tokens and transient-prompt participation.
+- **Contract gaps** (what the public contract must expose before built-ins or third parties can rely on it): public names for shell state (`is_root`, `is_sudo`, `is_ssh`, the last command's duration; D read `__gpy_is_*` and `__gpy_cmd_duration`); colour variants (D read `__color_<id>_user_bg`); the glyph mode (a private-use icon over SSH was dropped by the built-in with `show_icons = false` and printed by every plugin); the theme's `format` for a plugin segment (or a stated rule that plugins are pills; the `text` theme differences and the username icon spacing, `⚡jpease` vs `⚡ jpease`, come from this); typed plugin settings (core config and built-in themes are typed, but a plugin's `[segments.<id>]` values are an undeclared string map, so `"3"` and `"true"`, and plugins cannot read `config.toml`); live prompt tokens and transient-prompt participation.
 - **What the examples teach an author:** how a segment receives settings (`GPY_OPT_*`) and shell values (`GPY_*` inputs), the two-line output protocol, choosing `ttl_secs` and `refresh` (`username`/`hostname`: one run per session; `directory`: per directory; `duration`: per command; `clock`: why a script is the wrong tool), and that GPY draws colours, caps and separators. The G examples needed no GPY internal; the D files did (the gaps above).
 
 ## Decision
 
-Proposed, from the measurements:
+Accepted by the maintainer (2026-10):
 
-1. **Interim, whatever the long-term choice: Option B.** Say "plugin segments load in Fish only" in [Build a Segment Plugin](../build-segment-plugin.md), [Plugin + Theme Authoring](../plugin-theme-authoring.md) and the [developer docs index](../README.md); add a "Plugin segments" row to the [shell feature matrix](../../INSTALL.md#shell-feature-matrix) and narrow its opening sentence to the built-in segments; print one line in `gpy plugin new`, `validate` and `list`; and at `gpy enable <segment>` for a plugin segment with a Bash or Zsh integration installed, note that those prompts skip it, with the remediation `gpy disable <segment>` or use Fish.
-2. **Long term: a split by segment class, both on one public contract.**
-   - **Static or rarely changing segments: G.** One POSIX script and a 4-line manifest serve all three shells, with the hit cost of D and no access to GPY internals; the script runs in a child, so it cannot change the shell's state.
-   - **Segments whose input changes every prompt or directory: D.** Shell-native files (one Bash/Zsh file plus a Fish file) stay fork-free and fresh, where G degrades to one `sh` per change. D needs the public names listed under contract gaps; with them, D is the fast path, and today's `.fish` files remain its Fish half.
-   - **Live segments (`clock`) stay built in.** No plugin approach reproduces the live prompt token.
-   - **Preconditions** for the G and D contract, before either ships:
-     - the contract gaps above, closed in the public contract;
-     - a declarative trigger in the G manifest, evaluated by the adapter before the script so a false trigger costs no fork: `detect_files` and `detect_folders` from the working directory up to `/`, `detect_extensions` in the working directory only (globbing every ancestor would read every parent directory; Starship also checks only the working directory), `detect_env`, and an optional `when` shell command, which forks and runs only after the detect checks pass (unlike Starship, where any one condition shows the module);
-     - a script timeout (Starship's 500 ms default is the reference);
-     - an output rule: the adapter strips control characters and escapes what the shell would interpret, on every path. Bash: `\`, `$` and backticks (`\[ \]` are the `\` case); Zsh: the same plus `%`; Fish: nothing beyond control characters. Starship before v1.20 is the cautionary case;
-     - discoverability: `gpy plugin validate` checks the manifest against a published JSON schema and prints each segment's `description`, as `starship explain` does.
-   - **Later, not measured:** `show_on_command = "kubectl|helm"` in the manifest, showing a segment only while the typed command matches. Zsh can redraw while typing through a line-editor hook (`zle-line-pre-redraw`, `zle reset-prompt`), as Powerlevel10k does; Fish would need a key binding that repaints; Bash's readline offers no supported way to redraw the prompt while typing, so it would apply in Zsh and Fish only.
+1. **Now: Option B.** Say "plugin segments load in Fish only" in [Build a Segment Plugin](../build-segment-plugin.md), [Plugin + Theme Authoring](../plugin-theme-authoring.md) and the [developer docs index](../README.md); add a "Plugin segments" row to the [shell feature matrix](../../INSTALL.md#shell-feature-matrix) and narrow its opening sentence to the built-in segments; print one line in `gpy plugin new`, `validate` and `list`; and at `gpy enable <segment>` for a plugin segment with a Bash or Zsh integration installed, note that those prompts skip it, with the remediation `gpy disable <segment>` or use Fish.
+2. **Cross-shell plugin format: G.** One POSIX script and a manifest per segment serve all three shells with no GPY internal and no agent involvement; the script runs in a child, so it cannot change the shell's state.
+   - **No cache by default.** As in Starship, the script runs on every prompt that passes the trigger, so its output is never stale. That costs one `sh` per passing prompt; the PoC's E rows are exactly this path (the G script with `ttl_secs = 0`): 7.1 to 8.7 / 5.8 to 7.2 / 6.7 to 8.0 ms per render in Bash / Zsh / Fish for the four one-process segments, `duration` 8.66 / 7.23 / 7.97 (reused from the PoC, not re-run). The trigger makes prompts where the segment does not apply free: 0.08 to 0.26 ms, no fork.
+   - **Caching is opt-in.** The author may set a default `ttl_secs` in the manifest (absent: no cache); the user overrides it per segment in config (`0` disables, a positive value enables or changes it). The cache key stays the segment, `$PWD` and the forwarded environment values. A hit costs 1.5 to 1.6 / 1.6 to 1.8 / 2.7 to 2.8 ms (PoC G "Hit" column, reused). Without a cache nothing is stale; with a TTL, a change outside the key shows only after the TTL and only when a prompt is drawn, so an idle Zsh or Fish prompt keeps the old value (the 3.1 to 4.4 s and 7 s cases under Measurements).
+   - **D is not chosen.** It stays a measured, documented alternative for segments that must be fresh and fork-free on every prompt, deferred until someone needs it; no D loader is committed.
+   - **The clock stays built in**, and replacing built-ins stays out of scope.
+3. **Typed plugin settings join the contract.** Core `config.toml` and the built-in segment themes are already typed (serde with validating newtypes; `gpy config set agent.timeout_seconds abc` fails with `Invalid u64 value: abc`, tested at `gpy-agent/src/config/metadata.rs:595`; `[segments.duration] show_if_exceeds_ms` is a `u64`, `gpy-agent/src/theme/model/mod.rs:354`). Plugin segments are not: unknown `[segments.<id>]` tables land in `SegmentThemes.plugin: HashMap<String, PluginSegmentTheme>` (`mod.rs:65-67`, a serde flatten catch-all) and their extra keys in `PluginSegmentTheme.properties: HashMap<String, String>` (`mod.rs:88-90`); nothing declares a plugin setting's type, range or default, so nothing validates them.
+   - The manifest declares each setting: `bool`, `int` or `string`, a default, a range or choices, and a description, the shape of a `ConfigKeyMeta` entry in `CONFIG_KEYS` (`metadata.rs:23-56`) plus an explicit type. `ttl_secs` is the first declared setting.
+   - Loading validates the plugin's `[segments.<id>]` values against the declarations and fails naming the key on a wrong type, as core config does; values still reach shells as strings at export. `gpy plugin validate` checks the manifest against the published JSON schema.
+   - This alters configuration schema structure, which the project's autonomy boundaries put behind maintainer approval and a `gpy-agent/SCHEMA_EVOLUTION.md` entry: likely MINOR (optional manifest fields; a plugin without declarations loads as today), MAJOR for a plugin whose new declaration rejects values its users already have. Accepting this ADR approves the change; the exact schema is designed in the implementation work.
+   - Open, not decided here: whether `gpy config get/set/list` reach plugin settings.
+4. **Implementation order**, each step a separate work item:
+   1. B, independent of the rest.
+   2. The contract gaps above, typed plugin settings and the published manifest schema.
+   3. G adapters in Bash, Zsh and Fish with:
+      - a declarative trigger, evaluated before the script so a false trigger costs no fork: `detect_files` and `detect_folders` from the working directory up to `/`, `detect_extensions` in the working directory only (globbing every ancestor would read every parent directory; Starship also checks only the working directory), `detect_env`, and an optional `when` shell command, which forks and runs only after the detect checks pass (unlike Starship, where any one condition shows the module);
+      - a script timeout (Starship's 500 ms default is the reference);
+      - an output rule: strip control characters and escape what the shell would interpret, on every path. Bash: `\`, `$` and backticks (`\[ \]` are the `\` case); Zsh: the same plus `%`; Fish: nothing beyond control characters. Starship before v1.20 is the cautionary case.
+   4. `gpy plugin new` (scaffold), `validate` (schema, each segment's `description` as `starship explain` shows it, `sh -n`), `doctor` (time the script) and `list` (show the format).
+5. **Later, not measured:** `show_on_command = "kubectl|helm"` in the manifest, showing a segment only while the typed command matches. Zsh can redraw while typing through a line-editor hook (`zle-line-pre-redraw`, `zle reset-prompt`), as Powerlevel10k does; Fish would need a key binding that repaints; Bash's readline offers no supported way to redraw the prompt while typing, so it would apply in Zsh and Fish only.
 
-E is rejected: it costs a process every prompt (6 per prompt for the five segments). E-cached is not pursued: on these segments it would match G's hit cost but needs agent process execution, a `Message` change and cache invalidation, and goes stale without the agent. F is not a plugin format for these segments: four of the five need logic the template engine lacks.
+E is rejected: it costs a process every prompt (6 per prompt for the five segments) with no trigger and no cache. E-cached is not pursued: on these segments it would match a cached G hit but needs agent process execution, a `Message` change and cache invalidation, and goes stale without the agent. F is not a plugin format for these segments: four of the five need logic the template engine lacks.
 
 ## Alternatives Considered
 
@@ -159,7 +167,7 @@ A `gpy doctor` warning per enabled plugin segment, from `enabled_plugin_segments
 
 ### Option D
 
-Port the loader: the theme export names a `.bash`/`.zsh`/`.fish` file per segment, and the Bash and Zsh loaders adapt the renderer's call to the `v1` `segment_<id>_render is_last is_first` (about 15 lines per shell on top of a public `gpy_section_standalone`). Measured above: the cheapest plugin approach in every cell, fork-free except Fish's `date`, always fresh, works without the agent. Privilege: plugin code is sourced into Bash and Zsh as it is into Fish today. Lost: authors maintain a Bash/Zsh file and a Fish file (the `directory` Fish file was a 104-line rewrite) and today must read GPY internals. `v1`: additive.
+Port the loader: the theme export names a `.bash`/`.zsh`/`.fish` file per segment, and the Bash and Zsh loaders adapt the renderer's call to the `v1` `segment_<id>_render is_last is_first` (about 15 lines per shell on top of a public `gpy_section_standalone`). Measured above: the cheapest plugin approach in every cell, fork-free except Fish's `date`, always fresh, works without the agent. Privilege: plugin code is sourced into Bash and Zsh as it is into Fish today. Lost: authors maintain a Bash/Zsh file and a Fish file (the `directory` Fish file was a 104-line rewrite) and today must read GPY internals. `v1`: additive. Not chosen: deferred until a segment needs to be fresh and fork-free on every prompt.
 
 ### Option E
 
@@ -171,21 +179,24 @@ Declarative trigger plus template rendered by the agent. Measured earlier at one
 
 ### Option G
 
-One portable script per segment, run and cached by each shell (measured above), behind a declarative trigger the shell evaluates without forking. Privilege: the script runs as the user from the shell, like D's code, but in a child `sh` that cannot change the shell's variables or functions; one child per miss; it inherits the shell's environment and `PATH`; the output cap, control-character strip and prompt escaping run after it exits, and the prototype had no timeout. Against the contributor rules' approval list it adds no agent process execution, no `Message`/`Response` change and no `security.rs` change; it adds a branch to the Fish integration's loader, which the maintainer may count as the Fish shell integration contract. Tooling: `gpy plugin new` would scaffold `bin/<id>.sh` and `segments/<id>.segment.toml`; `validate` would check the manifest against the published schema, print each segment's description and could run `sh -n`; the `gpy doctor` speed heuristic would read and could time the script; `gpy plugin list` would show the format. `v1`: additive.
+One portable script per segment, run by each shell (measured above; cached only with a TTL), behind a declarative trigger the shell evaluates without forking. Privilege: the script runs as the user from the shell, like D's code, but in a child `sh` that cannot change the shell's variables or functions; one child per prompt that passes the trigger, or per miss with a TTL; it inherits the shell's environment and `PATH`; the output cap, control-character strip and prompt escaping run after it exits, and the prototype had no timeout. Against the contributor rules' approval list it adds no agent process execution, no `Message`/`Response` change and no `security.rs` change; it adds a branch to the Fish integration's loader, which the maintainer may count as the Fish shell integration contract, and its typed settings change the configuration schema (Decision item 3). Tooling: `gpy plugin new` would scaffold `bin/<id>.sh` and `segments/<id>.segment.toml`; `validate` would check the manifest against the published schema, print each segment's description and could run `sh -n`; the `gpy doctor` speed heuristic would read and could time the script; `gpy plugin list` would show the format. `v1`: additive. Chosen.
 
 ## Consequences
 
 ### Positive
 
 - B removes the silent surprise now.
-- Plugin segments would render identically in Bash, Zsh and Fish; for static segments from one script, for per-prompt segments fork-free.
-- `username` and `hostname` could themselves move to G at parity and at a lower prompt cost than today's template path.
+- One script per segment renders in Bash, Zsh and Fish, with no GPY internal, no agent involvement and no change to the shell's state.
+- Uncached by default, a G segment is never stale, and its trigger keeps it free on prompts where it does not apply.
+- Plugin settings get the declared types and load-time validation that core config already has.
 
 ### Negative
 
-- Two plugin formats to document, validate and support, and a public contract to define for shell state, colours, glyph mode and settings first.
+- Only G is introduced, not two formats. D is deferred, so a segment that must be fresh and fork-free on every prompt has no plugin route until D is taken up.
+- An uncached G segment forks one `sh` per prompt that passes its trigger (about 6 to 9 ms per render in the PoC); a TTL avoids that at the price of staleness up to the TTL.
+- A public contract to define first: shell state, colours, glyph mode, and typed plugin settings, a configuration schema change.
 - Plugins remain pills: a theme's `format` does not apply to them, and the clock cannot be a plugin.
-- B and the split are production code: if accepted, each is tracked as a separate work item.
+- B and G are production code, each tracked as a separate work item.
 
 ## References
 
