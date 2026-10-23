@@ -57,6 +57,8 @@ export XDG_CONFIG_HOME="$root/config" XDG_CACHE_HOME="$root/cache"
 export XDG_RUNTIME_DIR="/tmp/gpy-dev-$USER"
 if [ "$reset" = 1 ]; then
     rm -rf "$root" "$XDG_RUNTIME_DIR"
+    # The worktrees went with $root; drop their registrations or a later --ref/--pr fails.
+    git -C "$repo" worktree prune
 fi
 mkdir -p "$XDG_CONFIG_HOME/gpy" "$XDG_CONFIG_HOME/fish" "$XDG_CACHE_HOME"
 mkdir -p "$XDG_RUNTIME_DIR"
