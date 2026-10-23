@@ -594,12 +594,12 @@ PendingEvent { event: Git, repo: /path }
   ↓
 debouncer::DebounceEngine:
   - Check HashMap for existing event
-  - If exists: reset expiry to now + 150ms, and merge Git paths into the
+  - If exists: reset expiry to now + 100ms, and merge Git paths into the
     pending event (bounded; past GitPaths::MAX_PATHS it degrades to a
     whole-repo full scan)
   - If new: create entry with expiry
   ↓
-(150ms passes)
+(100ms passes)
   ↓
 Flush thread wakes, finds expired event
   ↓
@@ -1015,8 +1015,6 @@ time git status --porcelain
 After you're comfortable with basics:
 - Modify watcher debouncing algorithm
 - Optimize cache eviction strategy
-- Add config hot-reload support
-- Implement protocol versioning
 - Performance optimization
 
 ---

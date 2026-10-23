@@ -40,7 +40,7 @@ What becomes easier or more difficult to do because of this change?
 
 ## Creating a New ADR
 
-1. Copy the template: `cp adr-template.md adr-NNNN-short-title.md`
+1. Copy the newest ADR as a starting point: `cp adr-0009-deferred-language-version-probes.md adr-NNNN-short-title.md`
 2. Fill in the sections
 3. Update this index
 4. Create a pull request

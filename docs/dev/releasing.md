@@ -18,7 +18,7 @@ tag they came from.
 - `CHANGELOG.md` — a `## [X.Y.Z]` heading. `scripts/release-notes.sh` builds the
   GitHub release body from that section and fails if it is empty.
 
-`tests/bash/release_version_consistency.test.bash` checks that the three agree,
+`tests/bash/release_version_consistency.test.bash` checks that the two agree,
 that the newest CHANGELOG heading has its `[X.Y.Z]: ...` link reference, and
 that `SECURITY.md` names exactly one supported series, `X.Y.x`.
 
@@ -31,7 +31,7 @@ Everything below runs on `main`, with a clean tree.
    breaking changes. See
    [gpy-agent/SCHEMA_EVOLUTION.md](../../gpy-agent/SCHEMA_EVOLUTION.md).
 
-2. **Bump the three version-bearing files** listed above to the same `X.Y.Z`.
+2. **Bump the two version-bearing files** listed above to the same `X.Y.Z`.
 
 3. **Close the CHANGELOG section.** Rename `## [Unreleased]` work into a
    `## [X.Y.Z] - YYYY-MM-DD` heading and **replace `YYYY-MM-DD` with the real
