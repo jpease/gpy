@@ -58,7 +58,7 @@ jobs:
           workspaces: gpy-agent
 
       - name: Install Rust tooling (nextest, audit, deny)
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-nextest,cargo-audit,cargo-deny,just
 
@@ -107,7 +107,7 @@ jobs:
       # One shellcheck version on every runner; cargo-audit backs the
       # dependency-advisory claims test.
       - name: Install just, shellcheck and cargo-audit
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: just,shellcheck,cargo-audit
 
@@ -149,7 +149,7 @@ jobs:
           workspaces: gpy-agent
 
       - name: Install Rust tooling (nextest, llvm-cov)
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-nextest,cargo-llvm-cov,just
 
