@@ -9,17 +9,23 @@ Proposed.
 GPY is a cross-shell prompt, but community plugin segments render only in Fish. A plugin provides segments through `plugin.toml` and one Fish file per segment (`<plugin-root>/segments/<segment-id>.fish`) that defines `segment_<id>_detect` and `segment_<id>_render` and draws with the public `gpy_section_*` helpers: the `api_version = "v1"` contract in [Plugin Framework](../plugins.md#what-is-stable-in-v1).
 
 - `gpy theme export` writes `__gpy_plugin_segment_file_<token>` for Fish only (`gpy-agent/src/theme/export/plugin_segments.rs:200-208`); `fish/core/init.fish:126-175` sources the file. `bash/core` and `zsh/core` have no loader.
-- The Bash and Zsh renderers call `__gpy_segment_<id> is_last prev_bg is_first` in a `$()` subshell and skip names without that function (`bash/core/init.bash:211-220,277-305`, `zsh/core/init.zsh:177-192,244-275`); only `__gpy_section_standalone` exists there.
+- The Bash and Zsh renderers call `__gpy_segment_<id> is_last prev_bg is_first` in a `$()` subshell and skip names without that function (`bash/core/init.bash:211-220,277-305`, `zsh/core/init.zsh:177-192,244-275`).
 - `entry_type = "command"` is reserved and rejected (`gpy-agent/src/plugin/registry.rs:167`).
 - The only user-facing statement is one line in [CLI Reference: Plugin Commands](../../user/cli-reference.md#plugin-commands); the [shell feature matrix](../../INSTALL.md#shell-feature-matrix) opens with "Every shell renders the same segments".
 
-Only Fish users could write a plugin, so the lack of requests from Bash and Zsh users says nothing about demand. This ADR therefore compares the cross-shell designs by prototype before recommending one.
+Only Fish users could write a plugin, so the lack of requests from Bash and Zsh users says nothing about demand. This ADR compares the cross-shell designs on five real segments before recommending one:
+
+- **D**: port the loader; Bash, Zsh and Fish load shell-native segment files with the `v1` names.
+- **E**: `entry_type = "command"`; a program prints the segment text, run on every prompt.
+- **E-cached**: the agent runs the command off the request path, caches it and repaints (ADR-0009 pattern).
+- **F**: declarative trigger plus template, rendered by the agent.
+- **G**: one POSIX `sh` script per segment plus a small manifest, run by each shell and cached there, with no agent involvement.
 
 ### Measurements
 
-macOS (Darwin 27.0.0, arm64, Apple M4 Max, 16 cores), checkout `00e0427`, Homebrew Bash 5.3.20, Zsh 5.9.2, Fish 4.9.3, kubectl on `PATH`. Every run used the `tests/lib/shell_e2e.sh` sandbox: a temporary `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` and `XDG_RUNTIME_DIR` (the variables `CliTestEnv` sets in `gpy-agent/tests/common/cli_harness.rs`) and a private `GPY_AGENT_SOCKET_PATH`. `$TMP` stands for the sandbox. `find ~/.config/gpy -newer <marker>` listed 0 files after the last run. The prototypes lived in a throwaway worktree that was deleted afterwards; none of their code is committed.
+macOS (Darwin 27.0.0, arm64, Apple M4 Max, 16 cores), Homebrew Bash 5.3.20, Zsh 5.9.2, Fish 4.9.3, macOS `/bin/bash` 3.2.57. Every run used the `tests/lib/shell_e2e.sh` sandbox: a temporary `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` and `XDG_RUNTIME_DIR` (the variables `CliTestEnv` sets in `gpy-agent/tests/common/cli_harness.rs`) and a private `GPY_AGENT_SOCKET_PATH`; `find ~/.config/gpy -newer <marker>` listed 0 files after the last run. Prototypes lived in throwaway worktrees, deleted afterwards; no prototype code is committed. The proof of concept below is kept outside the repository for the maintainer at `~/Backups/gpy-adr0011-poc/`: `poc-adapters.patch` (the adapters, against `28f2477`), `examples/` (the five G plugins), `d-examples/`, `e-examples/` and `harness/` (the parity and timing scripts and raw results).
 
-**Baseline: a Fish plugin today.** A plugin `k8s-tools` (`api_version = "v1"`, `entry_type = "file"`, `provided_segments = ["k8s_tools"]`) whose `segments/k8s_tools.fish` renders `gpy_section_standalone blue white " PLUGIN_SEGMENT" $is_last`, enabled as `["directory", "k8s_tools", "git"]` with `theme = "text"`. `gpy plugin validate k8s-tools` printed `ok: Valid discovered plugin`. Each shell ran interactively on a pty (`shell_e2e_spawn_client`); output with escapes stripped. Bash:
+**Baseline: a Fish plugin today.** A plugin `k8s-tools` (`api_version = "v1"`, `entry_type = "file"`) whose `segments/k8s_tools.fish` renders `gpy_section_standalone blue white " PLUGIN_SEGMENT" $is_last`, enabled as `["directory", "k8s_tools", "git"]` with `theme = "text"` (checkout `00e0427`). Each shell ran interactively on a pty; output with escapes stripped. Bash:
 
 ```text
 repo main❯echo "segments=[${__enabled_segments[*]}]"
@@ -54,154 +60,116 @@ repo[ PLUGIN_SEGMENT ] main❯
 
 Bash and Zsh drop the segment with no message from the shell or the agent, and `gpy doctor` ends `ok: All checks passed.` with both integrations installed.
 
-**Prototypes.** Two segments, each built three ways (D, E, F below) as separate plugins: a Kubernetes context segment (the `current-context` of `$KUBECONFIG`, else `~/.kube/config`, shown only when set) and an `$AWS_PROFILE` segment (shown only when set). The sandbox had `~/.kube/config` with `current-context: dev-cluster` and `AWS_PROFILE=staging`. The author's files for the Kubernetes segment follow, with the id shown as `k8s_context` (the prototypes used `k8s_d`, `k8s_e` and `k8s_f`).
+**Proof of concept: five built-ins as plugins.** `username`, `hostname`, `clock`, `duration` and `directory` were rewritten as plugins three ways and compared with the built-in (checkout `28f2477`):
 
-D, `segments/k8s_context.fish` (12 lines, today's contract) plus `segments/k8s_context.bash` (19 lines), which was copied byte for byte to `segments/k8s_context.zsh` and worked unchanged there:
+- **G**: `bin/<name>.sh` plus `segments/<id>.segment.toml` (`script`, `inputs`, `ttl_secs`, `refresh`). The adapter (95 to 118 lines per shell, the D loader included) runs `sh <script>` with the theme's `[segments.<id>]` values as `GPY_OPT_<key>` and the listed shell values as `GPY_PWD`, `GPY_HOME`, `GPY_USER`, `GPY_HOSTNAME`, `GPY_IS_ROOT`, `GPY_IS_SUDO`, `GPY_IS_SSH`, `GPY_CMD_DURATION_MS`. Output: line 1 the text (empty hides the segment), line 2 an optional colour variant (`<variant>_bg_color`/`<variant>_text_color`). One cache entry per shell and segment, keyed by those inputs; a hit reads it with builtins; the theme export changed about 60 Rust lines.
+- **D**: `segments/<id>.bash` (sourced unchanged by Zsh as `<id>.zsh` in all five cases) and `segments/<id>.fish`, with the `v1` names; the Bash/Zsh loader adapts the renderer's arguments to `segment_<id>_render is_last is_first`.
+- **E**: the G script with `ttl_secs = 0`, run in the prompt every time.
 
-```bash
-segment_k8s_context_detect() {
-    local cfg="${KUBECONFIG%%:*}" line
-    [[ -n "$cfg" ]] || cfg="$HOME/.kube/config"
-    __k8s_context=""
-    [[ -r "$cfg" ]] || return 1
-    while IFS= read -r line; do
-        if [[ "$line" == current-context:* ]]; then
-            line="${line#current-context:}"
-            line="${line//[\"\' ]/}"
-            __k8s_context="$line"
-            break
-        fi
-    done <"$cfg"
-    [[ -n "$__k8s_context" ]]
-}
+Parity compared every rendered prompt as styled cells (each character with its foreground, background and attributes), so equivalent escape sequences compare equal: 48 cases (users, root, SSH, hidden; host trims; 12/24 h; four durations; ten directory modes including `truncate_to_repo` and `max_length`; two icon cases), in the `default` and `text` themes, three layouts (alone, first, last next to another segment), three shells. G, D and E gave the same result on every comparison: 296 of 432 matched; 117 differ only where the `text` theme renders `duration` and `directory` through a cap-less template (`[$path]($style)`) while a plugin is always drawn as a pill (the visible text is identical); 18 are the icon cases; 1 is a minute rollover between two clock renders.
 
-segment_k8s_context_render() {
-    gpy_section_standalone "${__color_k8s_context_bg:-}" "${__color_k8s_context_fg:-}" " ⎈ ${__k8s_context}" "$1"
-}
-```
+Timing: release binaries, agent up; each case renders the prompt 30 times per sample (Bash `__gpy_render_prompt` plus `${PS1@P}`, Zsh `__gpy_update_prompts` plus `${(%)PROMPT}`, Fish `fish_prompt` in one process per sample), 32 cases interleaved for 7 rounds; medians in ms per render, Bash / Zsh / Fish; load average 5.4 to 9.2. A first full run (load 7.6 to 12) gave the same order in every cell. "Changing" means a new directory (`directory`) or a new duration (`duration`) before every render. Exec counts are external programs per prompt in steady state, from `PATH` shims (forks that exec nothing are not counted).
 
-E, `bin/k8s_context` (2 lines, one file for every shell):
+| Segment | Approach | Author writes (non-blank lines) | Hit | Changing input | Execs per prompt |
+|---|---|---|---|---|---|
+| username | built-in | about 202 (Rust 72, shell 80, IPC 50) | 9.27 / 5.70 / 6.53 | — | 1 / 0 / 1 |
+| | G | script 10 + manifest 4 | 1.57 / 1.62 / 2.80 | once per session | 0 |
+| | D | Bash/Zsh 13 + Fish 16 | 1.37 / 1.54 / 2.26 | — | 0 |
+| | E | as G | 7.44 / 6.02 / 6.65 | — | 1 |
+| hostname | built-in | about 198 | 9.30 / 3.52 / 6.75 | — | 1 / 0 / 1 |
+| | G | 11 + 4 | 1.51 / 1.61 / 2.82 | once per session | 0 |
+| | D | 9 + 12 | 1.42 / 1.49 / 2.35 | — | 0 |
+| | E | as G | 7.13 / 5.83 / 6.73 | — | 1 |
+| directory | built-in | about 346 (Rust 312) | 0.15 / 2.59 / 2.42 | 7.79 / 2.74 / 7.13 | 1 / 0 / 1 per new directory |
+| | G | 94 + 4 | 1.60 / 1.70 / 2.76 | 7.36 / 6.15 / 6.64 | 1 per new directory |
+| | D | 82 + 104 | 1.38 / 1.71 / 2.35 | 1.52 / 1.62 / 2.44 | 0 |
+| | E | as G | 7.29 / 6.91 / 7.03 | 7.81 / 6.40 / 6.69 | 1 |
+| duration | built-in | about 193 | 8.33 / 2.96 / 6.41 | 7.70 / 3.10 / 6.61 | 1 / 0 / 1 |
+| | G | 16 + 4 | 1.51 / 1.79 / 2.71 | 8.45 / 6.73 / 7.21 | 1 per command |
+| | D | 16 + 21 | 1.38 / 1.56 / 2.31 | 1.40 / 1.53 / 2.39 | 0 |
+| | E | as G | 8.66 / 7.23 / 7.97 | 8.20 / 6.86 / 7.37 | 1 |
+| clock | built-in | about 241 | 9.08 / 3.64 / 6.60 | — | 1 / 0 / 1 |
+| | G (`ttl_secs = 0`) | 8 + 4 | 9.63 / 7.84 / 9.00 | — | 2 (`sh`, `date`) |
+| | D | 17 + 14 | 1.74 / 2.03 / 3.55 | — | 0 / 0 / 1 (`date`) |
+| | E | as G | 9.67 / 8.14 / 9.02 | — | 2 |
+| all five | built-in / G / D / E | | 35.88 / 13.13 / 20.67; 15.92 / 11.21 / 10.48; 7.31 / 5.34 / 4.30; 40.04 / 30.76 / 27.37 | | 4 / 0 / 4; 2; 0 / 0 / 1; 6 |
 
-```sh
-#!/bin/sh
-ctx=$(kubectl config current-context 2>/dev/null) && [ -n "$ctx" ] && printf '⎈ %s\n' "$ctx"
-```
+The built-in's cost in the `default` theme is mostly the agent-rendered template: one IPC request per segment per prompt, a `socat` fork in Bash and Fish. The built-in `directory` in Bash hits an in-shell memo.
 
-F, `segments/k8s_context.toml` (6 lines, one file for every shell, no code):
+Behaviour beyond the numbers:
 
-```toml
-format = "([ ⎈ $context ]($style))"
-env = ["KUBECONFIG"]
+- **Freshness.** D recomputes every prompt. G recomputes when an input changes or the TTL expires; `directory` is keyed by `$PWD` and `$HOME`, so a change that does not move the shell (for example `git init` under `truncate_to_repo`) shows only after a `cd`. `duration` changes with every command, so G runs the script every prompt. A script can print only the time at which it ran, so the G clock needs `ttl_secs = 0`.
+- **Live display.** The built-in clock hands the shell a live prompt token (`\D{}`, `%D{}`) and appears in the Zsh and Fish transient prompt; no plugin approach can do either. No approach, built-in included, repaints an idle prompt on a timer.
+- **Without the agent.** With the agent disabled and stopped, Bash and Zsh drew all five segments under G, D and E; the built-in lost `directory`. In Fish, disabling the agent turns GPY off for every approach, and a stopped agent is restarted by the integration, so Fish was not testable that way.
+- **Bash 3.2.** The G adapter rendered under `/bin/bash` 3.2.57 (non-interactive). D's clock needs `printf '%()T'` (Bash 4.2+) and forks `date` on 3.2.
+- **Earlier background.** On a Kubernetes-context and an `$AWS_PROFILE` segment (load 11 to 37), E paid the `kubectl` script (26.7 ms alone) on every prompt, F cost one agent request per segment (+7.8 / +2.5 / +5.3 ms), E-cached matched D on a hit but showed a new directory's value only after a repaint (27-46 ms in Zsh and Fish, next prompt in Bash), kept serving old values with the agent down and after a restart, and needed agent process execution and a `Message` change; G in background mode repainted 30 to 40 ms after the prompt in Zsh and Fish. E-cached was not rebuilt for the five segments: its hit cost is the D/G file-read cost above (reused, not measured here).
 
-[file_vars.context]
-path = "${KUBECONFIG:-~/.kube/config}"
-prefix = "current-context:"
-```
+Not measured: Unicode cluster abbreviation in `directory` (G and D take the first character, not the grapheme cluster, so they probably differ); `read_only`; a script timeout; a theme switch in Bash and Zsh under D or G; many plugin segments at once; Fish without the agent; interactive Bash 3.2 and 4.x; Linux; memory.
 
-The `$AWS_PROFILE` segment took 8 lines of Fish plus a 5-line Bash/Zsh file (D), a 2-line script (E), or `format = "([ ☁ $AWS_PROFILE ]($style))"` and `env = ["AWS_PROFILE"]` (F). Every variant rendered the same prompt in Bash, Zsh and Fish (escapes stripped): `repo  ⎈ dev-cluster  ☁ staging   main  ❯`; with `AWS_PROFILE` unset and a kubeconfig without `current-context`, every variant rendered `repo   main  ❯`. With `[agent] enabled = false` and no agent running, D and E still rendered both segments in Bash and F rendered neither (not checked in Zsh or Fish).
+### Dogfooding and examples
 
-**Latency.** Release binaries, agent up, the `scripts/ci-bench.sh` render body (`__gpy_precmd; : "${PS1@P}"`, the Zsh `precmd_functions` plus `${(%)PROMPT}`, `fish_prompt`). Bash and Zsh: one process, 100 renders per sample, the four cases interleaved for 7 rounds. Fish: one `fish -c` process per sample of 100 renders, interleaved the same way, so Fish startup is spread equally over every case. Median ms per render (min to max), base case A = `directory git`, the others add both plugin segments:
-
-| Case | Bash | Zsh | Fish |
-|---|---|---|---|
-| A, no plugin | 6.90 (6.70-8.04) | 2.50 (2.44-2.58) | 3.26 (2.80-3.62) |
-| D, shell file | 9.82 (9.72-10.36) | 4.47 (4.34-4.53) | 3.75 (3.06-10.51) |
-| E, command per render | 42.89 (42.35-43.65) | 37.02 (36.53-38.71) | 38.37 (35.89-54.78) |
-| F, agent-rendered template | 22.58 (22.43-25.72) | 7.58 (7.25-8.08) | 13.84 (12.25-18.16) |
-
-Load average was 23.5 at the start and 22.8 at the end (16 cores); two earlier full runs (load 11 to 34) ranked the four cases the same way in every shell. Per segment: D adds about 1.5 ms in Bash (one subshell) and 1.0 ms in Zsh; in Fish the difference is within noise (the ranges overlap). E adds the commands' own runtime, measured alone with `hyperfine -N` at 26.7 ms for the kubectl script (20.8 ms for `kubectl config current-context`) and 4.0 ms for the `sh` script. F adds one IPC request per segment: about 7.8 ms in Bash and 5.3 ms in Fish, which fork `socat` per request, and 2.5 ms in Zsh (`zsocket`). The per-render budgets in `tests/performance-baselines.json` are Bash 37 ms target, 111 ms max and Zsh 13 ms target, 39 ms max.
-Not measured here: one batched request for all plugin segments under F; F's agent-free fallback; D's theme-switch reload in Bash and Zsh; Bash 3.2/4.x; Linux.
-
-**Cached command (E-cached).** A second prototype, built at the maintainer's request, moves the command off the prompt path the way ADR-0009 moved version probes. A new IPC operation `plugin_cmd` carries the segment, the shell's `$PWD` and the variables the plugin lists. The agent runs one job per (segment, cwd, forwarded variables): it runs the command, writes the first output line to `$XDG_CACHE_HOME/gpy/plugin-cache/<segment>.<cwd key>.<variables key>`, rings the shells in that directory through the existing SIGURG repaint (`notify_repaint_force`, ADR-0007), re-runs every `ttl_secs` while a registered shell is still there, and deletes the entry when none is. The shell's detect function only reads that file with builtins; on a miss it sends one detached request and hides the segment. The command ran with a cleared environment (the agent's `PATH` and `HOME` plus the listed variables), the shell's cwd validated by the existing `SafePath`, no stdin, stderr discarded, a 2 s timeout with kill, output capped at 256 bytes, first line only, control characters stripped; no sandbox and no resource or concurrency limit. For the Kubernetes segment the author writes the 2-line E script above plus `segments/k8s_context.cmd.toml`:
-
-```toml
-command = "bin/k8s-context"
-env = ["KUBECONFIG"]
-ttl_secs = 5
-```
-
-A day-of-week segment is `bin/dow` (`date +%a`) plus a 2-line TOML. Under D the same segment needs a different builtin per shell to avoid a fork on every prompt (`printf '%(%a)T'` in Bash, `strftime` in Zsh); Fish has none, so its D file forks `date` every prompt. Measured with a 25 ms `sleep` stand-in and with the kubectl script; same methodology, 100 renders per sample, 7 interleaved rounds, two full runs:
-
-| Measurement | Bash | Zsh | Fish |
-|---|---|---|---|
-| Cache hit, median ms per render, A / D / E-cached | 7.93 / 9.65 / 9.75; 9.14 / 11.40 / 11.55 | 3.62 / 4.18 / 4.12; 3.15 / 4.53 / 4.33 | 3.69 / 3.69 / 4.12; 4.23 / 4.38 / 4.39 |
-| Miss (new directory every render), A → E-cached | 20.96 → 22.01; 23.00 → 25.35 | 10.61 → 11.61; 11.36 → 12.57 | 8.93 → 10.12; 9.90 → 11.08 |
-| Value shown after the miss prompt (5 runs each) | at the next prompt | repaint after 27-29 ms (kubectl), 33-38 ms (stand-in) | 34-38 ms, 41-46 ms |
-| Context edited in place, TTL 5 s | first prompt drawn after the refresh (2 s) | repaint 4.07 s after the edit | repaint 4.07 s after the edit |
-| `KUBECONFIG` exported (new key) | at the next prompt | repaint after 43 ms | repaint after 34 ms |
-
-Load average was 18 to 37 on 16 cores; on a hit, D and E-cached differ by less than the run-to-run spread in every shell, and in Fish A, D and E-cached are all within noise. The commands alone under that load (`hyperfine -N`): kubectl script 40.6 and 46.8 ms, stand-in 39.4 and 49.2 ms, `date +%a` 14.6 and 15.2 ms, all off the prompt path. With the agent stopped, Bash and Zsh kept showing the cached value in an already visited directory (not checked in Fish), and all three shells showed no segment in a new directory and printed nothing. After the agent restarted, Bash and Zsh still showed the old context 8 s after it changed: a hit never contacts the agent, and the prototype has no invalidation at agent start. Not measured for E-cached: invalidation when a watched file such as the kubeconfig changes (not built), many concurrent keys (one thread each), Linux.
-
-**Shell-side cached script (G).** A third prototype, built at the maintainer's request, keeps E-cached's author artifact (the same scripts and TOML) but lets each shell's adapter run the script, so the agent spawns nothing and IPC is unchanged; only the theme export gained, for every shell, the script path, the forwarded variable names and the TTL. The adapter keeps one cache entry per shell and segment, keyed by `$PWD` plus the listed variables' values, in a file under `$XDG_RUNTIME_DIR` read with builtins: Zsh renders in a `$()` subshell, where a variable would not survive, and Fish has no builtin clock, so `path mtime --relative` on that file is its TTL clock (Bash and Zsh use `$SECONDS`). On a miss or expiry it runs `sh <script>` either in the prompt (sync) or in a detached child that writes the file and, in Zsh and Fish, sends the shell its own SIGURG, which the existing handler already treats as a repaint (background; the expired value is served meanwhile). Bash ignores SIGURG by design (ADR-0007), so there a background result shows at the next prompt. Both modes rendered under Homebrew Bash 5.3 and macOS `/bin/bash` 3.2.57 (non-interactive). A and D were re-run in the same interleaved run; the k8s TOML used `ttl_secs = 3600` there so every hit sample is a hit; misses were timed per render in a new directory with a 0.15 s untimed pause.
-
-| Measurement | Bash | Zsh | Fish |
-|---|---|---|---|
-| Hit, median ms per render, A / D / G | 6.97 / 8.71 / 8.77 | 2.68 / 3.77 / 3.77 | 3.31 / 3.24 / 3.43 |
-| First prompt in a new directory, ms, A / G sync / G background (stand-in) | 36.01 / 83.97 / 36.35 | 11.05 / 51.36 / 11.57 | 9.82 / 50.51 / 10.40 |
-| Marker → prompt and → value, ms, kubectl script, 5 runs each | A 19-24; sync 51-57; background 20-30, value at the next prompt | A 10-11; sync 39-46; background 10-12, value 41-45 | A 27-30; sync 54-57; background 33-36, value 73-78 |
-| Context edited in place (stand-in, TTL 5 s, one Enter per second) | sync 3.1 s; background 4.4 s (one prompt later) | sync 4.4 s; background: idle prompt still old after 7 s, new after the next Enter | sync 3.2 s; background: as Zsh |
-| `KUBECONFIG` exported (new key) | sync 47 ms; background at the next prompt | sync 40 ms; background prompt 11, value 58 | sync 57 ms; background prompt 31, value 77 |
-| Agent stopped, background, new directory | value at the next prompt | value after 59 ms | value after 75 ms |
-
-The 1-minute load average was 9 to 12 during these runs, after a heavier period (15-minute 35 to 52); Bash's A miss median (36 ms) is far above its minimum (20 ms), so that column is noisy. On a hit, D and G are within noise in every shell, as D and E-cached were. A background miss adds less than the spread of A; sync adds the script's runtime (`hyperfine -N`: kubectl script 29.0 ms, stand-in 41.4 ms, `date +%a` 11.2 ms). The script ran with the shell's full environment and `PATH`, no stdin, stderr discarded, first line kept, capped at 256 characters and stripped of control characters after it exited; there was no timeout, so a hung script blocks a sync prompt. Not measured for G: a timeout or watchdog, a script with large output, several G segments missing at once, a child killed before it removes its pending marker (that segment then never refreshes in the prototype), an interactive Bash 3.2 or 4.x session, Linux.
+- **Could run on G at parity today:** `username` and `hostname` (static per session; about 6 times cheaper than the template-rendered built-in in Bash and 2 to 3.5 times in Zsh and Fish).
+- **Run at parity but should not use G:** `directory` and `duration`. Their input changes every directory or command, so G forks as often as E; as D they are fork-free and always fresh.
+- **Must stay native:** `clock` (live prompt token, transient prompt).
+- **Contract gaps** (what the public contract must expose before built-ins or third parties can rely on it): public names for shell state (`is_root`, `is_sudo`, `is_ssh`, the last command's duration; D read `__gpy_is_*` and `__gpy_cmd_duration`); colour variants (D read `__color_<id>_user_bg`); the glyph mode (a private-use icon over SSH was dropped by the built-in with `show_icons = false` and printed by every plugin); the theme's `format` for a plugin segment (or a stated rule that plugins are pills; the `text` theme differences and the username icon spacing, `⚡jpease` vs `⚡ jpease`, come from this); typed plugin settings (plugin theme values must be strings, `"3"`, `"true"`, and plugins cannot read `config.toml`); live prompt tokens and transient-prompt participation.
+- **What the examples teach an author:** how a segment receives settings (`GPY_OPT_*`) and shell values (`GPY_*` inputs), the two-line output protocol, choosing `ttl_secs` and `refresh` (`username`/`hostname`: one run per session; `directory`: per directory; `duration`: per command; `clock`: why a script is the wrong tool), and that GPY draws colours, caps and separators. The G examples needed no GPY internal; the D files did (the gaps above).
 
 ## Decision
 
 Proposed, from the measurements:
 
 1. **Interim, whatever the long-term choice: Option B.** Say "plugin segments load in Fish only" in [Build a Segment Plugin](../build-segment-plugin.md), [Plugin + Theme Authoring](../plugin-theme-authoring.md) and the [developer docs index](../README.md); add a "Plugin segments" row to the [shell feature matrix](../../INSTALL.md#shell-feature-matrix) and narrow its opening sentence to the built-in segments; print one line in `gpy plugin new`, `validate` and `list`; and at `gpy enable <segment>` for a plugin segment with a Bash or Zsh integration installed, note that those prompts skip it, with the remediation `gpy disable <segment>` or use Fish.
-2. **Long term: Option G in background mode as the cross-shell authoring format, with today's `.fish` files kept as the Fish-native path.** On a hit G costs the same as D and E-cached in every shell; a background miss adds nothing measurable, and the value follows about 30 ms (Zsh) or 40 ms (Fish) after the prompt, or at the next prompt in Bash. It worked with the agent stopped in all three shells, needs no agent process execution, IPC or `security.rs` change, and lets authors write one POSIX script plus a 3-line TOML for every shell using the real tool. Against D: D is always fresh and shows the value on the first prompt, but its authors write a second file in a second dialect and need per-shell builtins to stay fork-free; G is stale for up to its TTL and refreshes only when a prompt is drawn (an idle Zsh or Fish prompt kept an old context 7 s after the edit). Against E-cached: same artifact and hit cost, but E-cached needs agent process execution, a `Message` variant and new path validation, and was stale or absent without the agent; its one measured advantage, repainting an idle prompt within the TTL, does not outweigh that. Sync mode is not recommended: it adds the script's runtime to every miss (40-48 ms with the stand-in), over the Zsh target.
+2. **Long term: a split by segment class, both on one public contract.**
+   - **Static or rarely changing segments: G.** One POSIX script and a 4-line manifest serve all three shells, with the hit cost of D and no access to GPY internals; the script runs in a child, so it cannot change the shell's state.
+   - **Segments whose input changes every prompt or directory: D.** Shell-native files (one Bash/Zsh file plus a Fish file) stay fork-free and fresh, where G degrades to one `sh` per change. D needs the public names listed under contract gaps; with them, D is the fast path, and today's `.fish` files remain its Fish half.
+   - **Live segments (`clock`) stay built in.** No plugin approach reproduces the live prompt token.
+   - Before either ships, the contract gaps above are closed in the public contract, and a G script gets a timeout.
 
-Porting D's loader to Bash and Zsh stays the alternative for segments that must be fresh on every prompt. E-cached is not pursued. Uncached E stays rejected: its cost is the command's runtime on every prompt in every shell, which on its own exceeds the Zsh target. F is the alternative if plugins without code execution matter more than latency and agent-free operation. G is the one hybrid measured: E-cached's artifact with D's execution model.
+E is rejected: it costs a process every prompt (6 per prompt for the five segments). E-cached is not pursued: on these segments it would match G's hit cost but needs agent process execution, a `Message` change and cache invalidation, and goes stale without the agent. F is not a plugin format for these segments: four of the five need logic the template engine lacks.
 
 ## Alternatives Considered
 
-| Option | Author writes | Code added (non-blank lines in the prototype) | Approval-gated | Same in Fish, Bash, Zsh | Per segment, Bash / Zsh / Fish |
-|---|---|---|---|---|---|
-| D | Fish file + one Bash/Zsh file | ~22 per Bash/Zsh, 0 Fish; theme export for all shells | No | Yes; agent-free in Bash | 1.5 / 1.0 / noise ms |
-| E | one executable | ~13 per Bash/Zsh, ~18 Fish | Yes, external process execution | Yes; agent-free in Bash | command runtime (27 ms kubectl) |
-| E-cached | one executable + 3-line TOML | ~34 per Bash/Zsh, ~48 Fish; ~250 Rust | Yes: process execution, `Message`, path validation | Yes; stale or absent without the agent | hit: same as D; first prompt in a new directory: +1 to 2.4 ms, value after a repaint |
-| F | one TOML file | ~20 per Bash/Zsh, ~29 Fish; ~240 Rust | Yes, `Message`/`Response` | Yes; needs the agent | 7.8 / 2.5 / 5.3 ms |
-| G | one POSIX script + 3-line TOML | ~48 per Bash/Zsh, ~57 Fish; ~45 Rust (theme export) | No agent boundary; adds a Fish loader branch | Yes; also with the agent stopped (all three) | hit: same as D; background miss: noise, value after a repaint (Zsh, Fish) or at the next prompt (Bash) |
-
 ### Option A
 
-Fish-only, with the existing CLI-reference note. No change and no cost, but it contradicts the cross-shell premise and leaves the silent drop shown in the baseline.
+Fish-only, with the existing CLI-reference note. No cost, but it contradicts the cross-shell premise and leaves the silent drop shown in the baseline.
 
 ### Option B
 
-Docs and messages, as in Decision item 1. No prompt-time cost and no change to shell scripts, IPC or `v1`. The `gpy enable` note reuses `setup::installed_integrations()`, which only checks that `$XDG_CONFIG_HOME/gpy/<shell>/` holds an entry point (`gpy-agent/src/commands/setup.rs:261-279`), so it can name a shell that is installed but unused; for one informational line that is acceptable. It is a mitigation, not cross-shell support.
+Docs and messages, as in Decision item 1. No prompt-time cost and no change to shell scripts, IPC or `v1`. The `gpy enable` note reuses `setup::installed_integrations()`, which only checks that `$XDG_CONFIG_HOME/gpy/<shell>/` holds an entry point (`gpy-agent/src/commands/setup.rs:261-279`), so it can name a shell that is installed but unused. A mitigation, not cross-shell support.
 
 ### Option C
 
-A `gpy doctor` warning per enabled plugin segment, from `enabled_plugin_segments` (`doctor.rs:280`) and `installed_integrations()` (`doctor.rs:46`). Keyed on installed integrations it has B's false positive inside a health report; keyed on the current shell (`GPY_SHELL`, then `$SHELL`) it misses a Fish user who also runs Bash. Doctor runs after the surprise. An optional add-on to B only if the `gpy enable` note proves insufficient.
+A `gpy doctor` warning per enabled plugin segment, from `enabled_plugin_segments` (`doctor.rs:280`) and `installed_integrations()` (`doctor.rs:46`). Keyed on installed integrations it has B's false positive inside a health report; keyed on the current shell (`GPY_SHELL`, then `$SHELL`) it misses a Fish user who also runs Bash. An optional add-on to B only if the `gpy enable` note proves insufficient.
 
 ### Option D
 
-Port the loader. The prototype exported the per-shell file path to every shell, sourced it, and defined `__gpy_segment_<id>` as an adapter that passes `is_last` and `is_first` to the author's `segment_<id>_render`, so the `v1` names and arguments are the same as Fish's; a public `gpy_section_standalone bg fg content is_last` wraps the escaping (`\[ \]`, `%{ %}`). The Fish file cannot be reused (different language), but one POSIX-style file served Bash and Zsh. Privilege: plugin code is sourced into Bash and Zsh interactive shells with user privileges, as in Fish today; no agent or IPC change. Lost: authors maintain two files; any fork in plugin code is paid every prompt; `gpy plugin new`, `validate` and doctor read only `.fish` today (`commands/plugin.rs:39`, `doctor.rs:315`). `v1`: additive (new optional files).
+Port the loader: the theme export names a `.bash`/`.zsh`/`.fish` file per segment, and the Bash and Zsh loaders adapt the renderer's call to the `v1` `segment_<id>_render is_last is_first` (about 15 lines per shell on top of a public `gpy_section_standalone`). Measured above: the cheapest plugin approach in every cell, fork-free except Fish's `date`, always fresh, works without the agent. Privilege: plugin code is sourced into Bash and Zsh as it is into Fish today. Lost: authors maintain a Bash/Zsh file and a Fish file (the `directory` Fish file was a 104-line rewrite) and today must read GPY internals. `v1`: additive.
 
 ### Option E
 
-Activate `entry_type = "command"`, in two variants. Uncached: each shell's segment function runs the plugin executable on every prompt; rejected, since the latency equals the tool's runtime in every shell (kubectl alone 20.8 ms against a 13 ms Zsh target). Cached (E-cached, measured above): the agent runs the command off the request path, caches the first line per (segment, cwd, forwarded variables), repaints through SIGURG and refreshes every TTL. Privilege: the daemon spawns plugin-chosen executables with the user's privileges on every miss and every TTL while a shell sits in that directory, with the agent's `PATH` rather than the shell's. Against the contributor rules' approval list it adds external process execution, changes the IPC `Message` enum (one variant; `Response` reused `Ack`), needs new file path validation (the prototype reused `SafePath` for the cwd without touching `security.rs`, but the command path must stay inside the plugin root, and variable and cache-file names need checks) and adds a cross-module dependency (`plugin` on `ipc::registry`); it did not touch the `tokio::select!` loop. Lost: freshness (up to the TTL; stale while the agent is down and after a restart in the prototype) and the segment on the first prompt in a new directory or environment. `v1`: `command` is already reserved, so activation is additive; the TOML fields are new.
+Activate `entry_type = "command"`. Uncached, the shell runs the program every prompt: measured at 6 to 10 ms per render with one segment and one process per segment; rejected. E-cached (agent runs it off the request path, caches, repaints through SIGURG) was measured on the earlier Kubernetes segment only: hit cost equal to D, the value one repaint late on a new key, stale with the agent down, and approval-gated (external process execution from the agent, a `Message` variant, new path validation, a dependency from `plugin` on `ipc::registry`).
 
 ### Option F
 
-Declarative trigger plus template, evaluated by the pure `template` engine. The prototype added an IPC operation `plugin` (segment name plus the forwarded variables the TOML lists), a resolver that adds `style`, `bg` and the separators from the theme, and a per-shell request function; a conditional group `( … )` is the trigger, so an unset variable hides the segment. An env-var or file-presence trigger cannot read the Kubernetes context: that needed one minimal extension, `file_vars`, which takes the rest of the first line starting with `prefix` from the first readable file in a `:`-separated path with `$VAR`, `${VAR:-default}` and `~/` expansion (about 45 Rust lines, no YAML parser). Privilege: no plugin code runs; the agent reads the files the TOML names, and the shell forwards the named variables over the socket; the `Message`/`Response` change is approval-gated. Lost: the segment disappears without the agent; one request per segment per prompt; state that only a tool can produce (or YAML beyond a top-level `key: value` line, or kubeconfig merging beyond the first file that sets the key) is out of reach. `v1`: a new `entry_type` is additive.
+Declarative trigger plus template rendered by the agent. Measured earlier at one agent request per segment per prompt. On the five segments: `username` needs a style chosen by root state (the built-in's `format`/`user_format` split); `hostname` needs `trim_at`, a string operation the template engine lacks; `duration` needs arithmetic formatting; `directory` needs the 312-line resolver; `clock` needs the per-shell live token. Each needs a new agent-side data source or transform, which is the built-in again.
 
 ### Option G
 
-One portable script per segment, run and cached by each shell (measured above). Privilege: the script runs as the user from the shell, as D's code does, but in a child `sh`, so unlike a sourced D file it cannot change the shell's variables or functions; it costs one child per miss or expiry; it inherits the shell's environment and `PATH` (not cleared, unlike the E-cached prototype; `env -i` would clear it at the cost of one more exec); the output cap and control-character strip happen in the shell after the script exits, and a timeout needs a watchdog process, which was not built. Against the contributor rules' approval list it adds no agent process execution, no `Message`/`Response` change and no `security.rs` change; it does add a branch to the Fish integration's loader (`fish/core/init.fish`), which the maintainer may count as the Fish shell integration contract, and it reuses the existing SIGURG repaint meaning unchanged. Tooling: `gpy plugin new` would scaffold `bin/<id>` (POSIX `sh`) and `segments/<id>.cmd.toml` instead of a `.fish` file; `gpy plugin validate` would check the TOML (command inside the plugin root, variable names, a positive TTL) and could run `sh -n` on the script; the `gpy doctor` speed heuristic would read, and could time, the script instead of the `.fish` file; `gpy plugin list` would show each segment's format. `v1`: additive (new optional files beside the `.fish` file).
+One portable script per segment, run and cached by each shell (measured above). Privilege: the script runs as the user from the shell, like D's code, but in a child `sh` that cannot change the shell's variables or functions; one child per miss; it inherits the shell's environment and `PATH`; the output cap and control-character strip run after it exits, and there is no timeout yet. Against the contributor rules' approval list it adds no agent process execution, no `Message`/`Response` change and no `security.rs` change; it adds a branch to the Fish integration's loader, which the maintainer may count as the Fish shell integration contract. Tooling: `gpy plugin new` would scaffold `bin/<id>.sh` and `segments/<id>.segment.toml`; `validate` would check the manifest and could run `sh -n`; the `gpy doctor` speed heuristic would read and could time the script; `gpy plugin list` would show the format. `v1`: additive.
 
 ## Consequences
 
 ### Positive
 
-- B removes the silent surprise now; G would make plugin segments render in Bash, Zsh and Fish from one script per segment, at D's hit cost, with no agent involvement.
+- B removes the silent surprise now.
+- Plugin segments would render identically in Bash, Zsh and Fish; for static segments from one script, for per-prompt segments fork-free.
+- `username` and `hostname` could themselves move to G at parity and at a lower prompt cost than today's template path.
 
 ### Negative
 
-- Under G, a segment can be up to its TTL stale and an idle prompt does not refresh; Bash shows background results one prompt late; scripts need a timeout before release.
-- B and G are production code: if accepted, each is tracked as a separate work item.
+- Two plugin formats to document, validate and support, and a public contract to define for shell state, colours, glyph mode and settings first.
+- Plugins remain pills: a theme's `format` does not apply to them, and the clock cannot be a plugin.
+- B and the split are production code: if accepted, each is tracked as a separate work item.
 
 ## References
 
