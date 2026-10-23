@@ -27,9 +27,10 @@ The agent process is named `gpy-agent`. There is typically one agent instance pe
 tokio multi-thread runtime; `Agent::start_background`'s `tokio::select!` drives five branches: IPC server, shutdown signal, 1 s clock, 60 s pruning, 45 s reconcile. The file watcher runs on its own OS threads.
 
 1.  **IPC Server**: Accepts and handles client connections.
-2.  **Clock Timer**: Triggers periodic updates for the prompt clock.
-3.  **Pruning Timer**: Periodically cleans up stale client records.
-4.  **Reconcile Timer**: rescans watched repos, signals only on a real diff.
+2.  **Shutdown Signal**: Stops the loop and waits for the server task to finish.
+3.  **Clock Timer**: Triggers periodic updates for the prompt clock.
+4.  **Pruning Timer**: Periodically cleans up stale client records.
+5.  **Reconcile Timer**: rescans watched repos, signals only on a real diff.
 
 ### 1. IPC Server (Idle Behavior)
 The server listens on the Unix socket using `UnixListener::accept()`. This is a non-blocking asynchronous operation.

@@ -566,7 +566,7 @@ cat ~/.cache/gpy/agent.log
 
 Common issues:
 - **Socket permission errors**: Delete the socket `gpy status` reports (`Socket Path: ...`, normally `$XDG_RUNTIME_DIR/gpy/gpy.sock`, else `~/.cache/gpy/gpy.sock`) and retry
-- **Port already in use**: Another agent instance is running, check with `gpy-agent status`
+- **Socket already in use**: Another agent instance is running, check with `gpy-agent status`
 
 ### Prompt not updating
 
