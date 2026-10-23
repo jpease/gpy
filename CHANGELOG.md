@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fish shell: its own config, fish scripts, caches and agent socket, so an
   installed release is untouched and `exit` returns to it. Build the
   checkout, a `--ref`, a `--pr`, or use prebuilt binaries with `--bin`.
+- `gpy config list [FILTER]` lists every config key with its access mode and
+  description, or only the keys starting with `FILTER`. The command was
+  documented but missing from the CLI, so it exited with `unrecognized
+  subcommand`. A test now fails when `docs/user/cli-reference.md` names a
+  `gpy` command the CLI does not have, and another when
+  `docs/user/configuration-reference.md` and the config key registry disagree.
 
 ### Changed
 

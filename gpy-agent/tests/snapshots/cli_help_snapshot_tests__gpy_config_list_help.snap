@@ -1,0 +1,14 @@
+---
+source: tests/cli_help_snapshot_tests.rs
+description: gpy config list
+expression: help
+---
+List every config key with its access mode and description
+
+Usage: gpy config list [FILTER]
+
+Arguments:
+  [FILTER]  Only list keys starting with this prefix (e.g., "git.icons")
+
+Options:
+  -h, --help  Print help

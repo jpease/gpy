@@ -1749,3 +1749,146 @@ fn test_oneshot_lang_relative_cwd_matches_absolute_cwd() {
     assert_eq!(detected, ["rust"], "Cargo project must be detected: {rel}");
     assert_eq!(rel, abs, "`--cwd .` and the absolute path must agree");
 }
+
+/// Words of the `gpy <words>` command at the start of `text`: the leading run
+/// of `[a-z][a-z0-9-]*` tokens after `gpy `. Empty for `gpy <TAB>`,
+/// `gpy <command> --help` and `gpy-agent ...` (no space after `gpy`).
+fn leading_command_words(text: &str) -> Vec<&str> {
+    let Some(rest) = text.strip_prefix("gpy ") else {
+        return Vec::new();
+    };
+    rest.split_whitespace()
+        .take_while(|word| {
+            word.starts_with(|c: char| c.is_ascii_lowercase())
+                && word
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        })
+        .collect()
+}
+
+/// Unique, sorted `gpy <words>` command paths documented in `cli-reference.md`.
+///
+/// Extraction rule: every inline code span, and every line of a fenced block
+/// (leading whitespace trimmed), that starts with `gpy ` (with the space, so
+/// `gpy-agent` is excluded) yields its leading run of `[a-z][a-z0-9-]*` words.
+/// An empty run (`gpy <TAB>`, `gpy <command> --help`) is skipped.
+fn documented_command_paths(doc: &str) -> Vec<String> {
+    let mut paths = std::collections::BTreeSet::new();
+    let mut in_fence = false;
+    for line in doc.lines() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        let candidates: Vec<&str> = if in_fence {
+            vec![line.trim_start()]
+        } else {
+            line.split('`').skip(1).step_by(2).collect()
+        };
+        for candidate in candidates {
+            let words = leading_command_words(candidate);
+            if !words.is_empty() {
+                paths.insert(words.join(" "));
+            }
+        }
+    }
+    paths.into_iter().collect()
+}
+
+/// Every `gpy <words>` command that `docs/user/cli-reference.md` mentions must
+/// exist: `gpy <words> --help` must not print clap's `unrecognized subcommand`
+/// marker. Argument tails (`lang versions maybe`) never produce that marker,
+/// so documented invalid examples and placeholders do not trip the guard. See
+/// [`documented_command_paths`] for the extraction rule. The reverse direction
+/// (CLI commands missing from the docs) and `gpy-agent` are out of scope.
+#[test]
+fn documented_cli_commands_exist() {
+    const MARKER: &str = "unrecognized subcommand";
+    let env = CliTestEnv::new().expect("failed to create CLI test env");
+
+    let canary = env
+        .run_gpy(&["definitely-not-a-command", "--help"])
+        .expect("spawn gpy");
+    assert!(
+        canary.stderr.contains(MARKER),
+        "clap no longer prints `{MARKER}` for an unknown subcommand; update the guard: {canary:?}"
+    );
+
+    let paths = documented_command_paths(include_str!("../../docs/user/cli-reference.md"));
+    assert!(
+        !paths.is_empty(),
+        "no commands extracted from cli-reference.md"
+    );
+    for anchor in ["config show", "plugin list", "lang versions"] {
+        assert!(
+            paths.iter().any(|path| path == anchor),
+            "extraction lost the anchor `{anchor}`; got {paths:?}"
+        );
+    }
+
+    let missing: Vec<&str> = paths
+        .iter()
+        .filter(|path| {
+            let mut args: Vec<&str> = path.split(' ').collect();
+            args.push("--help");
+            env.run_gpy(&args)
+                .expect("spawn gpy")
+                .stderr
+                .contains(MARKER)
+        })
+        .map(String::as_str)
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "cli-reference.md documents commands the CLI does not have: {missing:?}"
+    );
+}
+
+/// `gpy config list` prints exactly the keys in `CONFIG_KEYS`, with a matching
+/// footer, and a prefix filter narrows the list.
+#[test]
+fn config_list_matches_registry() {
+    let key_line =
+        regex::Regex::new(r"^  (\S+) \[(?:read-write|read-only )\]$").expect("valid regex");
+    let env = CliTestEnv::new().expect("failed to create CLI test env");
+
+    let all = env.run_gpy(&["config", "list"]).expect("spawn gpy");
+    all.assert_success("gpy config list");
+    let listed: std::collections::BTreeSet<&str> = all
+        .stdout
+        .lines()
+        .filter_map(|line| key_line.captures(line)?.get(1).map(|m| m.as_str()))
+        .collect();
+    let registered: std::collections::BTreeSet<&str> = gpy_agent::config::metadata::CONFIG_KEYS
+        .iter()
+        .map(|meta| meta.key)
+        .collect();
+    assert_eq!(listed, registered, "listed keys differ from CONFIG_KEYS");
+
+    let footer = format!("Total: {} keys", registered.len());
+    assert!(
+        all.stdout.lines().any(|line| line == footer),
+        "missing footer `{footer}` in:\n{}",
+        all.stdout
+    );
+
+    let filtered = env
+        .run_gpy(&["config", "list", "git.icons"])
+        .expect("spawn gpy");
+    filtered.assert_success("gpy config list git.icons");
+    let keys: Vec<&str> = filtered
+        .stdout
+        .lines()
+        .filter_map(|line| key_line.captures(line)?.get(1).map(|m| m.as_str()))
+        .collect();
+    assert!(
+        !keys.is_empty(),
+        "filter matched nothing:\n{}",
+        filtered.stdout
+    );
+    assert!(
+        keys.iter().all(|key| key.starts_with("git.icons.")),
+        "filter leaked other keys: {keys:?}"
+    );
+}

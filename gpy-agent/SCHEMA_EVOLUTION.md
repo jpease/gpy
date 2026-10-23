@@ -33,6 +33,24 @@ Changes are listed newest-first within each release group.
 
 ---
 
+### CLI — `gpy config list [FILTER]` (MINOR)
+
+| Property | Value |
+|---|---|
+| Scope | New `gpy config list [FILTER]` subcommand |
+| Change type | MINOR — new CLI subcommand |
+| IPC protocol | Unchanged |
+| Config schema | Unchanged |
+
+**What changed.** `gpy config list` prints every key in the config key registry with its
+access mode and description; the optional positional `FILTER` keeps only keys that start
+with it. The function behind it, `commands::config::list`, already existed and `gpy config
+list` was already documented, but no subcommand reached it. Its output format is unchanged;
+`config show`, `get`, `set` and `open` behave as before. No config field or IPC operation
+changed.
+
+---
+
 ### IPC protocol and theme schema — username over SSH, `is_root`, user style (MINOR)
 
 | Property | Value |

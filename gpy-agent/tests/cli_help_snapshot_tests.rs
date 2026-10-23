@@ -30,6 +30,7 @@ const GPY_SUBCOMMANDS: &[&[&str]] = &[
     &["lang"],
     &["lang", "versions"],
     &["config"],
+    &["config", "list"],
     &["config", "set"],
     &["doctor"],
     &["debug"],
