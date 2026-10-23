@@ -741,6 +741,67 @@ mod tests {
         );
     }
 
+    /// Every key row in `configuration-reference.md` is a registered key and
+    /// every registered key has a row.
+    ///
+    /// A `## `/`### ` heading of the form ``[section.name]`` (with backticks)
+    /// opens a section; any other heading closes it. While a section is open,
+    /// a table row whose first cell is a backticked name documents
+    /// `section.name`.
+    #[test]
+    fn reference_doc_matches_registry() {
+        let doc = include_str!("../../../docs/user/configuration-reference.md");
+        let mut documented: Vec<String> = Vec::new();
+        let mut section: Option<&str> = None;
+        for line in doc.lines() {
+            if line.starts_with('#') {
+                let level = line.chars().take_while(|c| *c == '#').count();
+                let has_space = line[level..].starts_with(' ');
+                if (1..=6).contains(&level) && has_space {
+                    section = None;
+                    if (2..=3).contains(&level) {
+                        section = line[level + 1..]
+                            .strip_prefix("`[")
+                            .and_then(|rest| rest.split_once("]`"))
+                            .filter(|(name, tail)| {
+                                tail.is_empty()
+                                    && !name.is_empty()
+                                    && name
+                                        .chars()
+                                        .all(|c| c.is_ascii_lowercase() || c == '_' || c == '.')
+                            })
+                            .map(|(name, _)| name);
+                    }
+                }
+            } else if let (Some(active), Some(row)) = (section, line.strip_prefix("| `"))
+                && let Some((key, _)) = row.split_once('`')
+                && !key.is_empty()
+                && key.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+            {
+                documented.push(format!("{active}.{key}"));
+            }
+        }
+        assert!(
+            !documented.is_empty(),
+            "no key rows parsed from the reference"
+        );
+
+        let undocumented: Vec<&str> = CONFIG_KEYS
+            .iter()
+            .map(|meta| meta.key)
+            .filter(|key| !documented.iter().any(|d| d == key))
+            .collect();
+        let unregistered: Vec<&String> = documented
+            .iter()
+            .filter(|d| !CONFIG_KEYS.iter().any(|meta| meta.key == d.as_str()))
+            .collect();
+        assert!(
+            undocumented.is_empty() && unregistered.is_empty(),
+            "configuration-reference.md drift: registered keys without a table row: \
+             {undocumented:?}; table rows not in CONFIG_KEYS: {unregistered:?}"
+        );
+    }
+
     #[test]
     fn language_icon_key_round_trips() {
         let mut cfg = Config::default();
