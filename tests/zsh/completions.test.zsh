@@ -64,26 +64,40 @@ fi
 
 failures=0
 
-zmodload zsh/zpty
+zmodload zsh/zpty zsh/datetime zsh/zselect
 
 # contains NEEDLE HAYSTACK
 contains() {
     [[ "$2" == *"$1"* ]]
 }
 
-# Collect whatever the pty produces within a bounded window (60 non-blocking
-# reads, 50 ms apart while idle): completion rendering + zle redraw is not
-# synchronous with the write, and there is no end-of-output marker to poll for.
+# drain [NEEDLE...]: collect what the pty produces until every NEEDLE has
+# appeared and the pty has then been quiet for DRAIN_QUIET_S, capped at
+# DRAIN_MAX_S. Completion rendering and zle redraw are not synchronous with
+# the write, so a needle must be text only the awaited output contains (not
+# the echoed command line); without needles the quiet window alone ends it.
+DRAIN_QUIET_S=0.2
+DRAIN_MAX_S=3
 drain() {
-    local out="" line
-    local i=0
-    while (( i < 60 )); do
+    local out="" line needle ready
+    local -F start=$EPOCHREALTIME last now
+    last=$start
+    while :; do
+        now=$EPOCHREALTIME
+        (( now - start >= DRAIN_MAX_S )) && break
         if zpty -r -t COMPPTY line 2>/dev/null; then
             out+="$line"
-        else
-            sleep 0.05
+            last=$EPOCHREALTIME
+            continue
         fi
-        i=$((i + 1))
+        if (( now - last >= DRAIN_QUIET_S )); then
+            ready=1
+            for needle in "$@"; do
+                contains "$needle" "$out" || { ready=0; break; }
+            done
+            (( ready )) && break
+        fi
+        zselect -t 2 # 20 ms, without forking sleep(1)
     done
     print -r -- "$out"
 }
@@ -116,8 +130,8 @@ drain >/dev/null
 # checkout path with a space must stay one word.
 send "fpath=(${(q)ROOT}/zsh/completions ${(q)GENERATED_DIR} \$fpath)"
 drain >/dev/null
-send "autoload -Uz _gpy-dynamic; autoload -Uz _gpy; compdef _gpy-dynamic gpy"
-out=$(drain)
+send "autoload -Uz _gpy-dynamic; autoload -Uz _gpy; compdef _gpy-dynamic gpy; print -r -- WIRED:\$((1))"
+out=$(drain WIRED:1)
 if [[ "$out" == *"not found"* || "$out" == *"error"* ]]; then
     echo "FAIL: setting up completions in the pty produced an error: $out"
     failures=$((failures + 1))
@@ -125,7 +139,7 @@ fi
 
 echo "Verifying _gpy-dynamic is registered as gpy's completer..."
 send 'print -r -- ${_comps[gpy]}'
-out=$(drain)
+out=$(drain _gpy-dynamic)
 if contains "_gpy-dynamic" "$out"; then
     echo "PASS: gpy's completer is _gpy-dynamic"
 else
@@ -133,6 +147,7 @@ else
     failures=$((failures + 1))
 fi
 
+clear_count=0
 check_candidates() {
     local label="$1" cmdline="$2"
     shift 2
@@ -140,10 +155,13 @@ check_candidates() {
 
     zpty -w -n COMPPTY "$cmdline"
     zpty -w -n COMPPTY $'\t'
-    local out=$(drain)
-    # Clear the typed line back out so the next command starts clean.
-    send ""
-    drain >/dev/null
+    local out=$(drain "$@")
+    # Kill the typed line (^U) instead of running it, then wait for a marker
+    # so nothing from this step leaks into the next capture.
+    clear_count=$((clear_count + 1))
+    zpty -w -n COMPPTY $'\C-u'
+    send "print -r -- CLEARED:\$((${clear_count}))"
+    drain "CLEARED:${clear_count}" >/dev/null
 
     for expected in "$@"; do
         if contains "$expected" "$out"; then
@@ -210,9 +228,9 @@ drain >/dev/null
 
 : >"$CALLS_FILE"
 send "__gpy_complete_cached theme; print -r -- CACHE1:\$__gpy_complete_result"
-out1=$(drain)
+out1=$(drain CACHE1:default)
 send "__gpy_complete_cached theme; print -r -- CACHE2:\$__gpy_complete_result"
-out2=$(drain)
+out2=$(drain CACHE2:default)
 
 if [[ "$(call_count)" == "1" ]]; then
     echo "PASS: second warm theme lookup reuses the cache instead of re-forking gpy"
@@ -230,9 +248,9 @@ fi
 echo "Checking a different kind's cache miss does not disturb an already-warm kind..."
 : >"$CALLS_FILE"
 send "__gpy_complete_cached segment; print -r -- SEG:\$__gpy_complete_result"
-seg_out=$(drain)
+seg_out=$(drain SEG:clock)
 send "__gpy_complete_cached theme; print -r -- THEME_AGAIN:\$__gpy_complete_result"
-theme_out=$(drain)
+theme_out=$(drain THEME_AGAIN:default)
 
 if [[ "$(call_count)" == "1" ]]; then
     echo "PASS: segment miss forks once, warm theme cache adds no extra fork"
@@ -252,9 +270,9 @@ echo "Checking an empty/failed gpy __complete is never cached..."
 send "unset __gpy_complete_cache_theme; gpy() { echo call >> ${(q)CALLS_FILE}; return 1 }"
 drain >/dev/null
 send "__gpy_complete_cached theme; print -r -- FAIL1:\$__gpy_complete_result:"
-fail_out1=$(drain)
+fail_out1=$(drain FAIL1::)
 send "__gpy_complete_cached theme; print -r -- FAIL2:\$__gpy_complete_result:"
-fail_out2=$(drain)
+fail_out2=$(drain FAIL2::)
 
 if [[ "$(call_count)" == "2" ]]; then
     echo "PASS: failed/empty gpy __complete retries instead of caching the failure"
