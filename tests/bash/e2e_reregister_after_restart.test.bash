@@ -41,9 +41,19 @@ shell_e2e_stop_agent
 shell_e2e_text_config '"directory", "git"'
 shell_e2e_truncated_directory_config TRUNC/
 # A restarted agent appends to the same debug log.
+log_lines_before_restart="$(wc -l <"$GPY_DEBUG_LOG")"
 shell_e2e_start_agent || { fail "agent did not restart"; shell_e2e_dump_transcript; exit 1; }
 
-flag_written() { [ -e "$shells_dir/$client_pid.reregister" ]; }
+# Wait for this agent's own announcement, not just any flag: the first agent
+# also announces at start, and on a slow host that can land after the shell
+# began tracking itself, leaving a flag that Enter would consume before the
+# restarted agent writes its own, which then outlives the re-registration.
+announced() {
+    tail -n "+$((log_lines_before_restart + 1))" "$GPY_DEBUG_LOG" |
+        grep -q "Announcing agent start to tracked shell $client_pid "
+}
+# The log line precedes the flag write, so poll both.
+flag_written() { announced && [ -e "$shells_dir/$client_pid.reregister" ]; }
 if shell_e2e_poll 5 flag_written; then
     pass "the restarted agent left a .reregister flag for the shell"
 else
