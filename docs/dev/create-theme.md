@@ -1,6 +1,6 @@
 # Create a Theme
 
-This guide is the reference workflow for creating a community theme for GPY.
+How to create a community theme for GPY.
 
 If you want plugin-specific styling details, also read [Build a Segment Plugin](build-segment-plugin.md).
 

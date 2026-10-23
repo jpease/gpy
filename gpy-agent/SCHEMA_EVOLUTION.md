@@ -318,11 +318,10 @@ round-tripped through `gpy config get/set/show` but were never read anywhere in 
 path — the actual rendered delimiters (prompt/segment open/close icons and colors) always
 came from the theme file's `[ui.prompt_open]`/`[ui.prompt_close]`/`[ui.segment_open]`/
 `[ui.segment_close]` (`theme::model::DelimiterConfig`, a separate, still-supported type),
-wired through `theme::export`. Rather than wire a second, config.toml-level override path for
-a purely visual/style concern — themes already own colors, icons, and other visual
-properties, and `config.toml` has no other precedent for a config.toml-level style override
-that competes with the theme file for the same rendered value — the dead schema was removed
-outright. To customize delimiters, edit or create a theme file (`gpy theme new`) instead.
+wired through `theme::export`. A config.toml-level override would compete with the theme
+file for the same rendered value, and no other config.toml key does that, so the dead
+schema was removed outright. To customize delimiters, edit or create a theme file
+(`gpy theme new`) instead.
 Cloning an existing theme's values into a new theme (rather than only the blank default
 template) is not covered by this change.
 

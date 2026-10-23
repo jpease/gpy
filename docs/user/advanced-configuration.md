@@ -238,7 +238,6 @@ in_progress = "~"
 **Use cases:**
 - Teams with long branch naming conventions
 - Narrow terminal widths
-- Keeping prompt compact and readable
 
 **Note:** Setting `max_branch_length = 0` (the default) disables truncation.
 

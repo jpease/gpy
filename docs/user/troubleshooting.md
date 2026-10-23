@@ -36,7 +36,7 @@ Before filing a bug, check whether the symptom is expected for your shell in the
 
 ## "My Prompt Isn't Updating Live" (Watcher Issues)
 
-This is the most common class of complaint for a tool like GPY, and the underlying mechanism is not documented elsewhere, so it gets the most detail here.
+This is the most common complaint, and the mechanism is not documented elsewhere, so it gets the most detail here.
 
 ### How live updates work
 
@@ -53,7 +53,7 @@ When this happens, git status, language versions, and theme edits stop refreshin
 
 ### Diagnostic and fallback environment variables
 
-All of these are off/default unless explicitly set — setting none of them preserves current behavior.
+All of these are off or default unless set.
 
 | Variable | Effect | Verified at |
 |---|---|---|
@@ -116,7 +116,7 @@ Zsh is at parity with Fish for live updates: `TRAPURG` re-renders `PROMPT` and c
 
 ## Bash-Specific Issues
 
-Bash has real caveats: duration-segment precision varies by Bash version (disabled entirely on Bash 3.x, macOS's default), and live updates are shown at the next prompt rather than repainting an idle one. macOS ships Bash 3.2 by default — most Bash-related reports trace back to that. See [Bash Limitations](bash-limitations.md) for the version details, migration paths, and known-issues list.
+Bash differs in two ways: duration-segment precision varies by Bash version (disabled entirely on Bash 3.x, macOS's default), and live updates are shown at the next prompt rather than repainting an idle one. macOS ships Bash 3.2 by default, and most Bash-related reports trace back to that. See [Bash Limitations](bash-limitations.md) for the version details, migration paths, and known-issues list.
 
 ---
 
@@ -134,7 +134,7 @@ The agent communicates over a Unix domain socket, resolved in priority order (`$
 
 ## Install/PATH Issues
 
-Binary-not-found errors, agent-won't-start, macOS Gatekeeper quarantine (`xattr -d com.apple.quarantine`), and the "Bash on macOS is too old" case are all covered in depth in the [Installation Guide § Troubleshooting](../INSTALL.md#troubleshooting). Start there for anything related to getting GPY installed and on `PATH` in the first place, before assuming it's a runtime/watcher issue.
+Binary-not-found errors, agent-won't-start, macOS Gatekeeper quarantine (`xattr -d com.apple.quarantine`), and the "Bash on macOS is too old" case are all covered in the [Installation Guide § Troubleshooting](../INSTALL.md#troubleshooting). Start there for anything related to getting GPY installed and on `PATH`, before assuming it's a runtime/watcher issue.
 
 `GPY_CONFIG_PATH` overrides the config file location if you need to point GPY at a non-standard config for debugging (verified at `gpy-agent/src/config/schema.rs`, `gpy-agent/src/config/mod.rs`, `gpy-agent/src/commands/utils.rs`); it's checked before the XDG/`HOME` fallback chain.
 

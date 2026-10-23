@@ -1,6 +1,6 @@
 # Adding a New Segment
 
-A short checklist for adding a shell-rendered segment to the Fish prompt (for example a Docker context). to ship a segment outside this repository, see [Build a Segment Plugin](build-segment-plugin.md).
+A short checklist for adding a shell-rendered segment to the Fish prompt (for example a Docker context). To ship a segment outside this repository, see [Build a Segment Plugin](build-segment-plugin.md).
 
 ## 1. Decide where the data comes from
 

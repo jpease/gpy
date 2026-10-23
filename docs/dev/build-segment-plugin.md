@@ -1,6 +1,6 @@
 # Build a Segment Plugin
 
-This guide is the reference workflow for community contributors who want to add a custom prompt segment without modifying GPY itself.
+How to add a custom prompt segment without modifying GPY itself.
 
 If you want the contract details first, read [Plugin Framework](plugins.md).
 
@@ -193,4 +193,4 @@ Runtime expectations for segment authors:
 
 - detection should usually be sub-millisecond
 - rendering should avoid subprocess storms
-- prompt rendering should remain effectively instantaneous to the user
+- prompt rendering should stay imperceptible to the user

@@ -2,7 +2,7 @@
 
 # Migrating from Starship
 
-A practical guide for Starship users switching to GPY: what carries over automatically, what config layout changes, and what to check by hand afterward.
+A guide for Starship users switching to GPY: what carries over automatically, what config layout changes, and what to check by hand afterward.
 
 ---
 

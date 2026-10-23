@@ -89,7 +89,7 @@ A theme file's color fields (`bg_color`, `text_color`, `clean_bg_color`, and so 
 
 GPY stores each color in one canonical spelling (for example `bright-magenta` becomes `brmagenta`), so every shell and the agent read the same value; `gpy theme validate` rejects anything else, such as `##112233`.
 
-The built-in `default` theme uses bare names throughout. Selecting a different palette remaps every name the theme already uses — no theme-file edits required. A hex value in a theme always wins as a literal; palettes can't override it. This is the same mechanism documented in [Configuration Examples: Apply a color palette to a theme](configuration-examples.md#goal-apply-a-color-palette-to-a-theme) — see that recipe for the exact `config.toml` snippet.
+The built-in `default` theme uses bare names throughout. Selecting a different palette remaps every name the theme already uses, with no theme-file edits. A hex value in a theme always wins as a literal; palettes can't override it. See [Configuration Examples: Apply a color palette to a theme](configuration-examples.md#goal-apply-a-color-palette-to-a-theme) for the `config.toml` snippet.
 
 ### Built-in palettes
 
@@ -188,7 +188,7 @@ text_color = "#f1faee"
 gpy config set ui.show_icons false
 ```
 
-`show_icons` lives in `config.toml`, not the theme file — it's a display toggle that applies across whichever theme is active, so you don't need to touch the theme file for it.
+`show_icons` lives in `config.toml`, not the theme file. It applies to whichever theme is active.
 
 **Pill formats for `hostname`, `username` and `status`:**
 
@@ -226,7 +226,7 @@ See [Migrating from Starship](migrating-from-starship.md) for the full walkthrou
 
 ## 5. Going further
 
-Once you're past small tweaks — designing a theme from scratch, styling every git state bucket, or theming a plugin segment — the light-editing workflow above isn't the right reference anymore. Two docs cover that ground:
+To design a theme from scratch, style every git state bucket, or theme a plugin segment, use these:
 
 - **[Create a Theme](../dev/create-theme.md)** — the complete theme-file schema: every `[ui]` field, the full `[segments.<id>]` table, the git segment's 6-bucket color-state model (`Conflicts > InProgress > Modified > UntrackedOnly > AheadBehind > Clean`), per-state `git_style` attributes, and how plugin segments are styled the same way as built-in ones.
 - **[Configuration Examples](configuration-examples.md)** — copy-paste recipes: a full powerline-style prompt, per-language segment colors, Nerd Font icon swaps, and more.

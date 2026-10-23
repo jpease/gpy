@@ -2,7 +2,7 @@
 
 This document defines the standard benchmark workflow so results are repeatable and comparable over time.
 
-The goal of GPY benchmarking is diagnostic, not marketing. We use these runs to compare GPY against itself over time, catch regressions, and validate improvements under controlled conditions. Absolute timings will vary materially by machine, filesystem, thermal state, OS background activity, and toolchain details.
+These runs compare GPY against itself over time, catch regressions, and validate improvements under controlled conditions. Absolute timings vary by machine, filesystem, thermal state, OS background activity, and toolchain details.
 
 For day-to-day development, the repository also provides `just perf-canary`.
 This runs a small same-machine comparison between `HEAD` and the last pushed
@@ -17,7 +17,7 @@ To compare GPY against Starship on pinned repositories and tool versions, use `j
 The cached prompt budget (`prompt_render` in `tests/performance-baselines.json`:
 20 ms target, 50 ms max) applies to the user-visible cached/instant-response
 path, not to fresh full computation in all cases. Fresh git or language recomputation on large or noisy repositories may
-take materially longer and must be communicated separately.
+take longer and must be communicated separately.
 
 ## Environment Requirements
 
@@ -69,7 +69,7 @@ done
 - If `System` time is unexpectedly large
 - If variance is wide
 - If a repo emits fsmonitor or filesystem errors
-- If results materially disagree with targeted A/B measurements
+- If results disagree with targeted A/B measurements
 
 ## Standard Benchmark Workflow
 
@@ -114,7 +114,7 @@ Rust micro-benchmarks in `scripts/bench.sh` and is run automatically as part of
 | startup RSS         | Daemon RSS right after it becomes responsive       | `memory_usage`                                  |
 | long-running RSS    | Peak daemon RSS under sustained prompt load        | `memory_long_running`                           |
 
-### How it stays honest
+### Measurement safeguards
 
 - The prompt scenarios load the actual project init path (`fish/core/init.fish`)
   and call the real `fish_prompt`, with the checkout's `fish/functions` forced to

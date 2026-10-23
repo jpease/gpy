@@ -1,6 +1,6 @@
 # Background Agent Behavior
 
-This document details the operational behavior of the `gpy-agent` background process, focusing on its discoverability, concurrency model, and resource usage during idle periods.
+How the `gpy-agent` background process is discovered, how it schedules work, and what it costs while idle.
 
 ## Discoverability
 
@@ -57,7 +57,7 @@ The file watcher (powered by the `notify` crate) uses OS-native APIs (FSEvents o
 
 ## Resource Usage
 
-The agent is designed to be extremely lightweight when idle:
+The agent is lightweight when idle:
 
 *   **CPU**: Near zero. The event loop blocks on `epoll`/`kqueue` until IO or a timer event occurs, and the file-watcher threads block until an event arrives or a debounce deadline falls due.
 *   **Memory**: Uses `Arc` (Atomic Reference Counting) to share large data structures (Git cache, configuration, theme) between components, avoiding duplication. The memory footprint primarily depends on the number of cached Git repositories.
@@ -65,4 +65,4 @@ The agent is designed to be extremely lightweight when idle:
 
 ## Coordination
 
-All cross-module coordination (e.g., "Git file changed -> Invalidate Cache -> Notify Clients") is handled centrally in the `Agent` module (`src/agent/mod.rs`). This ensures predictable data flow and prevents circular dependencies between subsystems.
+All cross-module coordination (e.g., "Git file changed -> Invalidate Cache -> Notify Clients") is handled centrally in the `Agent` module (`src/agent/mod.rs`), which keeps data flow predictable and avoids circular dependencies between subsystems.

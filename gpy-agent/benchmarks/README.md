@@ -44,7 +44,7 @@ We use real-world open-source repositories of varying sizes:
 | **medium-kubernetes** | ~24k files | ~3.27 MB index | Kubernetes orchestrator |
 | **large-tensorflow** | ~36k files | ~4.50 MB index | TensorFlow ML framework |
 
-These represent actual user workloads across a range of repository sizes, but the exact timings still depend on the host machine and environment.
+Exact timings depend on the host machine and environment.
 
 ## Why Real-World Repos?
 
@@ -56,8 +56,6 @@ Real-world repositories have characteristics that synthetic benchmarks miss:
 - Complex git metadata
 - .gitignore patterns
 - Submodules and worktrees
-
-These provide realistic performance measurements for actual user workloads.
 
 ## Configuration
 

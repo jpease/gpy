@@ -13,7 +13,7 @@ These tests are intentionally conservative so they remain stable across CI hosts
 
 ## Non-Regression Policy
 
-- Any PR that materially increases plugin discovery latency should include:
+- Any PR that increases plugin discovery latency should include:
   - root-cause analysis,
   - before/after timings,
   - justification and mitigation plan.

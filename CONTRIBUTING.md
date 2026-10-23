@@ -4,7 +4,7 @@ GPY is a personal project, maintained by one person in spare time. Review is
 best-effort with no fixed timeline — a PR may sit for a while before anyone
 looks at it. That is not a judgment on the change.
 
-Bug reports are genuinely wanted, especially from a platform the maintainer
+Bug reports are wanted, especially from a platform the maintainer
 cannot test directly: a Linux distribution, an older bash, Windows. If your
 prompt broke, file it — see [Filing a Bug Report](#filing-a-bug-report).
 

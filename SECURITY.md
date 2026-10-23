@@ -33,8 +33,7 @@ Include what you have:
 
 GPY is a personal project with a single maintainer working on it in spare
 time. No response window is guaranteed, no triage or fix timeline is promised,
-and a report may sit unread for some time. That is a capacity limit, not a
-judgment about the report.
+and a report may sit unread for some time.
 
 When a report is picked up: it is investigated in the private advisory it
 arrived in, a fix is prepared there where one is warranted, and the advisory is
@@ -53,7 +52,7 @@ they ask not to be.
 
 GPY is three cooperating pieces: a shell integration written for Fish, Bash and
 Zsh; a long-running local agent (`gpy-agent`); and a Unix domain socket between
-them. Who trusts what across those seams is the whole security model.
+them.
 
 **Your shell trusts the agent completely.** Every new shell runs the agent's
 theme export as shell code. Bash and Zsh do it with `eval "$(gpy-agent theme
@@ -64,7 +63,7 @@ socket reaches the prompt the same way. This is what a prompt generator is —
 something has to emit shell code — but it puts the agent binary on the same
 footing as your shell startup files.
 
-The consequence, stated plainly: anyone who can replace `gpy-agent` on your
+Anyone who can replace `gpy-agent` on your
 `PATH`, or write to the theme-export cache, gets arbitrary code execution in
 every shell you open from then on. Three things stand in the way, and only
 these three:

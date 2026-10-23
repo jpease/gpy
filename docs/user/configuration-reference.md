@@ -10,7 +10,7 @@ A complete field-by-field reference for `~/.config/gpy/config.toml`: every secti
 
 This document covers `config.toml` only — the file that controls agent behavior, git detection, language detection, and top-level UI layout. It does **not** cover:
 
-- **Theme files** (`~/.config/gpy/themes/*.toml`), which define colors, per-segment templates, and delimiter glyphs. See [Advanced Configuration](advanced-configuration.md) for a theme-file example and the theme-customization guide once it exists.
+- **Theme files** (`~/.config/gpy/themes/*.toml`), which define colors, per-segment templates, and delimiter glyphs. See [Theme Customization](theme-customization.md) and [Advanced Configuration](advanced-configuration.md).
 - **CLI commands** for reading/writing config values. See [CLI Reference](cli-reference.md).
 
 `config.toml` has exactly four top-level sections: `[agent]`, `[git]`, `[language]`, and `[ui]`. There is no `[security]`, `[segments]`, or `[plugins]` section in `config.toml` — those either don't exist or live elsewhere (segment templates and colors live in theme files, under `[segments.<id>]`).
