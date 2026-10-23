@@ -1,6 +1,6 @@
 # Plugin Framework
 
-This document defines the v1 plugin contract used by GPY for community-extensible segments.
+This document defines the v1 plugin contract for community segments.
 
 For an end-to-end contributor workflow (plugin + theme), see:
 - [Build a Segment Plugin](build-segment-plugin.md)
@@ -65,7 +65,7 @@ The following are intentionally not public plugin API guarantees:
 - internal registry implementation details beyond the documented behavior
 - undocumented theme variable naming conventions
 
-If you are writing a community plugin, target the documented contract, not GPY internals.
+Target the documented contract, not GPY internals.
 
 ## Registry Behavior
 
@@ -133,7 +133,7 @@ Rules:
 Practical meaning:
 
 - a GPY `0.1.x` to later `0.1.y` upgrade should not break a valid `v1` plugin
-- if GPY ever needs to break the `v1` plugin contract, it should do so explicitly with a new plugin API version rather than silently changing `v1`
+- a breaking change to the `v1` contract ships as a new plugin API version
 
 ## Compatibility Guarantees
 

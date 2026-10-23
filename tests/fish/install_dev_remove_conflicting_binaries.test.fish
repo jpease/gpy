@@ -82,7 +82,7 @@ function write_driver --argument-names driver repo_root home_dir safe_path insta
         "set -gx XDG_CONFIG_HOME '$home_dir/.config'" \
         "set -gx XDG_CACHE_HOME '$home_dir/.cache'" \
         "set -gx PATH '$safe_path'" \
-        "source install-dev.fish --fish-only >/dev/null 2>&1" \
+        "source install-dev.fish --fish-only --allow-shadow >/dev/null 2>&1" \
         "set -gx PATH "(string escape -- $argv[6..-1] | string join ' ') \
         "_remove_conflicting_binaries '$install'" >"$driver"
 end

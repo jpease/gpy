@@ -4,7 +4,7 @@ Complete reference for the `gpy` command-line tool.
 
 ## Overview
 
-`gpy` is the user-facing command-line interface for managing the GPY prompt for Bash, Fish and Zsh. It provides a simple, intuitive way to control the agent, manage themes, configure segments, and customize your prompt experience.
+`gpy` is the user-facing command-line interface for managing the GPY prompt for Bash, Fish and Zsh. It controls the agent, themes, segments and configuration.
 
 A second binary, `gpy-agent`, is the daemon itself. It also carries the few subcommands the shell integrations call (`oneshot`, `theme export`, `config reload`); they are listed under [The `gpy-agent` binary](#the-gpy-agent-binary) below.
 
@@ -319,7 +319,7 @@ Destination names must satisfy the safe configuration name invariant: non-empty,
 non-whitespace, containing no path separators (`/`, `\`), `..`, or control characters.
 An invalid destination name is rejected before creating files or directories.
 
-Creates a new theme file in `~/.config/gpy/themes/<name>.toml`. Without `--from`, it copies the default theme. With `--from <base>`, it copies the full contents of `<base>` (a builtin, user, or plugin theme name) instead, so you can start customizing from a theme you already like rather than the blank default. You can then edit this file to customize colors, icons, and other visual elements.
+Creates a new theme file in `~/.config/gpy/themes/<name>.toml`. Without `--from`, it copies the default theme. With `--from <base>`, it copies the full contents of `<base>` (a builtin, user, or plugin theme name) instead. You can then edit the file to customize colors, icons, and other visual elements.
 
 **Arguments:**
 - `<name>` - New theme name (non-empty safe config name)
@@ -1024,7 +1024,7 @@ which takes the detected default.
 
 ### Shell Completion
 
-Tab-completion for the `gpy` CLI is installed automatically by the standard installers — the one-line installer sets up completions for your detected shell (fish, bash, or zsh), and `install.sh` sets up fish. Completions are regenerated with every install or upgrade, ensuring they stay in sync with your installed binary.
+Tab-completion for the `gpy` CLI is installed automatically by the standard installers: the one-line installer sets up completions for your detected shell (fish, bash, or zsh), and `install.sh` sets up fish. Completions are regenerated with every install or upgrade, so they stay in sync with your binary.
 
 **Structural completion** (all shells):
 - `gpy <TAB>` completes subcommands and flags
@@ -1034,7 +1034,7 @@ Tab-completion for the `gpy` CLI is installed automatically by the standard inst
 - `gpy palette use <TAB>` and `gpy palette validate <TAB>` — installed palette names
 - `gpy enable <TAB>` and `gpy disable <TAB>` — available segment names
 
-The `gpy completions <shell>` command (documented above) is the underlying generator. The standard installers run this automatically; manual redirection is no longer needed for typical installations. Completions require the `gpy` CLI binary to be on your PATH.
+The `gpy completions <shell>` command (documented above) is the underlying generator. The standard installers run it for you. Completions require the `gpy` binary to be on your PATH.
 
 ---
 
@@ -1140,7 +1140,7 @@ max_length = 80
 
 `gpy-agent` is the daemon. The shell integrations call it directly, and
 `gpy start/stop/restart/status` delegate to it, so these are supported
-commands rather than internals:
+commands.
 
 | Command | What it does |
 |---|---|

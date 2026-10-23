@@ -1,7 +1,7 @@
 # Starship Importer
 
 `gpy theme import <starship.toml>` converts a [Starship](https://starship.rs/) configuration
-into a GPY palette and prompt theme so you can adopt GPY without starting from scratch.
+into a GPY palette and prompt theme.
 
 ## CLI reference
 

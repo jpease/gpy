@@ -761,7 +761,7 @@ function __gpy_check_protocol_version --description 'Check and warn on protocol 
         echo "" >&2
         echo "This may cause compatibility issues. Recommended actions:" >&2
         echo "  1. Restart the agent: gpy-agent stop && gpy-agent start" >&2
-        echo "  2. If issues persist, reinstall: ./install-dev.fish" >&2
+        echo "  2. If issues persist, update gpy and re-run: gpy setup" >&2
         echo "" >&2
         echo "Fallback: Use oneshot mode if IPC fails:" >&2
         echo "  gpy-agent oneshot git --cwd . --format ansi" >&2

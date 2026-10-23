@@ -35,10 +35,10 @@ GPY uses three different performance layers:
 
 Keep their claims separate when communicating performance.
 
-## Interpreting Results Honestly
+## Interpreting Results
 
 - Absolute timings will vary across machines, filesystems, kernel versions, thermal states, and background activity.
-- CI budgets and local baselines are primarily regression tools, not marketing numbers.
+- CI budgets and local baselines are primarily regression tools.
 - Real-world repository benchmarks can support comparative statements only when the fixtures, scope, and host conditions are explicitly documented.
 - If a run shows unusually high `System` time, wide variance, or host-specific warnings, treat it as a measurement problem first and investigate before drawing product conclusions.
 
@@ -95,7 +95,7 @@ cargo bench --bench agent_startup_bench
   shelled out to — **1.594ms** mean
 
 These absolute numbers are machine-specific engineering diagnostics, not
-promises about any user's host — see "Interpreting Results Honestly" above.
+promises about any user's host. See "Interpreting Results" above.
 `version_command_spawn` in particular is dominated by OS process-creation
 cost (fork/exec or `CreateProcess`), which varies significantly across
 machines and CI runners; its budget carries much larger headroom than the

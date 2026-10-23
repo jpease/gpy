@@ -152,7 +152,7 @@ bg_color = "blue"
 text_color = "black"
 ```
 
-`icon_color = "match_bg"` paints the separator glyph the same color as the segment's own background, so consecutive segments read as one continuous chain rather than boxed-in blocks. `transparent` (also valid for `icon_color`/`bg_color`) means "no color / terminal default." Validate with `gpy theme validate mytheme` before activating.
+`icon_color = "match_bg"` paints the separator glyph the same color as the segment's own background, so consecutive segments read as one continuous chain. `transparent` (also valid for `icon_color`/`bg_color`) means "no color / terminal default." Validate with `gpy theme validate mytheme` before activating.
 
 ---
 
@@ -161,4 +161,4 @@ text_color = "black"
 - [Configuration Reference](configuration-reference.md) — every `config.toml` key, type, default, and valid range.
 - [Advanced Configuration](advanced-configuration.md) — environment variables, performance tuning, security settings, and troubleshooting.
 - [Create a Theme](../dev/create-theme.md) — the full theme-file schema, including the git segment's 6-bucket color-state model.
-- The theme-customization guide, once it exists.
+- [Theme Customization](theme-customization.md) — wizard, palettes, and hand-editing a theme.

@@ -89,7 +89,6 @@ For edge cases not yet supported by gix:
    - Linux cross-compilation straightforward
 
 3. **Memory Safety**: No FFI boundary issues
-   - All Rust, all the way down
    - No segfaults from C code
    - Safe concurrent access
 

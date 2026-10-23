@@ -36,4 +36,4 @@ External tools can use these schemas to:
 
 ## Examples
 
-See the doc comments in `gpy-agent/src/ipc/mod.rs` for comprehensive examples of each message and response type.
+See the doc comments in `gpy-agent/src/ipc/mod.rs` for examples of each message and response type.

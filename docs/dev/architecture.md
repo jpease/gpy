@@ -389,7 +389,7 @@ agent/mod.rs (orchestrator - coordinates above)
 main.rs (CLI entry point)
 ```
 
-**Key insight**: Clean, acyclic dependency graph. Each layer depends only on lower layers.
+The graph is acyclic: each layer depends only on lower layers.
 
 ---
 
@@ -535,8 +535,7 @@ When adding new shared state:
 └──────────────────────────────────────────────────────┘
 ```
 
-**Key Insight**: Rust's ownership system ensures state cleanup automatically.
-No manual cleanup needed beyond stopping watchers and servers.
+**Key Insight**: Rust ownership cleans up state automatically; only watchers and servers need an explicit stop.
 
 ---
 
@@ -743,8 +742,6 @@ subprocess. ADR-0003 records the original decision and its reversal;
 **Cache Cooldown** (150ms): Prevents redundant git queries
 - Problem solved: File event fires before IPC request completes → skip re-query
 
-**Both needed**: Different problems, different solutions.
-
 ### Why tokio Instead of Threads?
 
 **Async needed for**:
@@ -882,7 +879,7 @@ Hot-reload tests:
    - `test_theme_export_delimiter_selection_after_git_disabled` - Verifies delimiter selection
    - `test_config_hot_reload_git_toggle_full_scenario` - End-to-end config toggle
 
-These tests specifically cover the critical bug where disabling `git.enabled` would not send a reload notification, causing Fish to use stale segment lists and incorrect delimiters.
+These tests cover the bug where disabling `git.enabled` sent no reload notification, so Fish kept stale segment lists and wrong delimiters.
 
 ---
 
@@ -1030,7 +1027,3 @@ After you're comfortable with basics:
 - [ADR-0004: SIGUSR1 Live Updates](adr/adr-0004-sigusr1-live-updates.md) - Why the watcher signals shells instead of polling
 - [ADR-0007: SIGURG Doorbell](adr/adr-0007-sigurg-doorbell-notifications.md) - The current single-signal protocol and flag files
 - [CONTRIBUTING.md § Quality Gates](../../CONTRIBUTING.md#quality-gates) - How to run every suite
-
----
-
-**Questions?** Open an issue with the `question` label or ask in discussions.

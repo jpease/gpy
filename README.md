@@ -108,6 +108,27 @@ Tab completion for `gpy` is installed for all three shells.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). `./scripts/quality-check.sh` runs the full gate.
 
+### Running an unreleased build
+
+`just dev` (or `scripts/gpy-dev.sh`) opens a fish shell running a build from
+a checkout, with its own config, caches and agent under `~/.local/share/gpy-dev`.
+Your installed gpy is untouched; `exit` goes back to it. The prompt is marked
+`[gpy-dev <version> <ref>]`.
+
+```bash
+./scripts/gpy-dev.sh                    # this checkout, debug build
+./scripts/gpy-dev.sh --release          # optimized build
+./scripts/gpy-dev.sh --ref v0.7.0-rc1   # branch, tag or sha, via a worktree
+./scripts/gpy-dev.sh --pr 123           # a pull request
+./scripts/gpy-dev.sh --bin ./dist       # prebuilt gpy and gpy-agent, no build
+./scripts/gpy-dev.sh --reset            # wipe the sandbox first
+./scripts/gpy-dev.sh --sync-config      # re-copy your real config.toml
+```
+
+The sandbox config is a copy of `~/.config/gpy/config.toml`, so a pre-release
+can't modify yours. Don't use `./install-dev.fish` next to a packaged gpy; it
+refuses unless given `--allow-shadow`.
+
 ## License
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).

@@ -2,7 +2,7 @@
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPLv3+-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-A fast, cross-platform agent for Git status detection and programming language identification, powering the [GPY prompt](https://github.com/jpease/gpy) for Bash, Fish, and Zsh.
+An agent for Git status detection and programming language identification, powering the [GPY prompt](https://github.com/jpease/gpy) for Bash, Fish, and Zsh.
 
 ## This crate is an application, not a library
 
@@ -24,12 +24,12 @@ Depend on it at your own risk, and pin a git revision if you do.
 
 ## Features
 
-- 🚀 **High Performance**: Sub-millisecond IPC latency with real-time file watching
+- 🚀 **Performance**: Sub-millisecond IPC latency with real-time file watching
 - 🔄 **Cross-Platform**: Native support for Linux and macOS; Windows via WSL (see [Supported Platforms and Shells](../docs/INSTALL.md#supported-platforms-and-shells))
-- 📊 **Git Integration**: Comprehensive Git status detection (staged, unstaged, untracked, conflicts)
+- 📊 **Git Integration**: Git status detection (staged, unstaged, untracked, conflicts)
 - 🏷️ **Language Detection**: Automatic programming language identification for development environments
-- 💾 **Smart Caching**: Memory-efficient LRU caching with configurable TTL
-- 📡 **Robust IPC**: Unix domain sockets for fast, secure communication
+- 💾 **Caching**: LRU cache with configurable TTL
+- 📡 **IPC**: Unix domain sockets
 - 📈 **Observability**: Structured logging, metrics collection, and health monitoring
 - 🛡️ **Fault Tolerant**: Circuit breaker pattern and graceful error handling
 
@@ -135,7 +135,7 @@ cargo bench
 
 ## Contributing
 
-Contributions are welcome! Please see the main [GPY repository](https://github.com/jpease/gpy) for contribution guidelines.
+Please see the main [GPY repository](https://github.com/jpease/gpy) for contribution guidelines.
 
 ## License
 

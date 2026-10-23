@@ -70,7 +70,9 @@ set -gx PATH "$fixture_home/.local/bin" $real_toolchain_dirs $PATH
 # install-dev.fish already honors HOME/XDG_* for every install path, so
 # reusing it here gets us a real, up-to-date install without duplicating its
 # logic -- it never touches the real ~/.config/gpy or ~/.local/bin.
-./install-dev.fish $argv; or exit 1
+# --allow-shadow: the real PATH tail may hold a packaged gpy, which the fixture's
+# own ~/.local/bin already precedes.
+./install-dev.fish --allow-shadow $argv; or exit 1
 
 # Demo-only config tweaks
 # Show only the language judged primary for a repo. The default (`all`) puts up

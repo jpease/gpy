@@ -128,8 +128,8 @@ the prompt stays static until the next render.
 
 ## One-Line Installation (Recommended)
 
-The easiest way to install GPY is with the one-line installer, which is an
-asset of the latest release (not a file on a branch):
+The one-line installer is an asset of the latest release (not a file on a
+branch):
 
 ```bash
 curl -fsSL https://github.com/jpease/gpy/releases/latest/download/install-oneline.sh | sh
@@ -145,7 +145,7 @@ curl -fsSL https://github.com/jpease/gpy/releases/download/vX.Y.Z/install-onelin
 
 ### What it does
 
-The installer automatically:
+The installer:
 
 1. **Detects your shell** (Fish, Zsh, or Bash)
 2. **Downloads the binary** for your platform (Linux/macOS, x86_64/aarch64/arm64)
@@ -284,7 +284,7 @@ even when a terminal is attached.
 
 ### Shell Completions
 
-Tab-completion for the `gpy` CLI is installed automatically as part of the standard installation flows — no manual step needed. Completions are regenerated on every install or upgrade, ensuring they match your installed binary.
+Tab-completion for the `gpy` CLI is installed automatically as part of the standard installation flows. Completions are regenerated on every install or upgrade to match your installed binary.
 
 Completion types:
 - `gpy <TAB>` — Subcommands and flags

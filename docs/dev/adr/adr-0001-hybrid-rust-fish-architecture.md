@@ -77,7 +77,7 @@ Implement a **hybrid architecture** with clear separation of concerns:
    - Fish code handles presentation
    - Well-defined IPC contract
 
-3. **User Experience**: Best of both worlds
+3. **User Experience**
    - Fast, responsive prompts
    - Familiar Fish customization
    - Live updates via filesystem watching

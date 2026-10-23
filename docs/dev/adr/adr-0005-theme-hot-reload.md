@@ -97,7 +97,7 @@ if let Some(ref callback) = *reload_callback.lock().unwrap() {
 
 > **Superseded by [ADR-0007](adr-0007-sigurg-doorbell-notifications.md):** reloads now use a `<pid>.reload` flag plus SIGURG; SIGUSR2 is unused.
 
-1. **Great UX**: Instant feedback on changes
+1. **UX**: Feedback on changes without restarts
    - No need to restart agent
    - No need to restart shell
    - Rapid iteration on themes

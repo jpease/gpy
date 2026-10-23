@@ -128,6 +128,10 @@ clean:
 install:
     fish install-dev.fish
 
+# Run an unreleased build in an isolated shell (flags: see scripts/README.md)
+dev *args:
+    ./scripts/gpy-dev.sh {{args}}
+
 # Run Rust micro-benchmarks (args passed to cargo bench)
 bench-rust *args:
     cd {{agent_dir}} && cargo bench {{args}}

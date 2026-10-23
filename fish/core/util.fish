@@ -29,13 +29,6 @@ function __gpy_resolve_agent_binary --description 'Resolve the gpy-agent binary 
         return 0
     end
 
-    set -l legacy_path (__gpy_config_root)/gpy/bin/gpy-agent
-    if test -x "$legacy_path"
-        set -g GPY_AGENT_BINARY_PATH "$legacy_path"
-        echo "$legacy_path"
-        return 0
-    end
-
     return 1
 end
 

@@ -134,7 +134,7 @@ The `ui.palette` field in `~/.config/gpy/config.toml` is all that changes.
 ## Builtin scheme palettes
 
 GPY ships six palettes generated from their official tinted-theming base16/base24
-ports. Values are copied from the source repos, not eyeballed:
+ports. Values are copied from the source repos.
 
 | Palette name | Scheme | Variant |
 |---|---|---|
@@ -207,5 +207,5 @@ gpy palette show
 gpy palette use starship
 ```
 
-Swapping a palette takes effect immediately on the next prompt render — no agent
-restart required. The prompt theme and all segment settings remain unchanged.
+Swapping a palette takes effect on the next prompt render, with no agent
+restart.

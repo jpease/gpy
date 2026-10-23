@@ -4,7 +4,7 @@ GPY is a personal project, maintained by one person in spare time. Review is
 best-effort with no fixed timeline — a PR may sit for a while before anyone
 looks at it. That is not a judgment on the change.
 
-Bug reports are genuinely wanted, especially from a platform the maintainer
+Bug reports are wanted, especially from a platform the maintainer
 cannot test directly: a Linux distribution, an older bash, Windows. If your
 prompt broke, file it — see [Filing a Bug Report](#filing-a-bug-report).
 
@@ -59,6 +59,21 @@ git clone https://github.com/<you>/gpy.git
 cd gpy
 ./install-dev.fish
 ```
+
+`./install-dev.fish` installs into `~/.local/bin` and `~/.config`, so it refuses
+to run when a packaged gpy (for example Homebrew's) is already on `PATH`; pass
+`--allow-shadow` to override. To try a build without touching an installed
+release, run it in an isolated shell instead:
+
+```bash
+./scripts/gpy-dev.sh                 # this checkout
+./scripts/gpy-dev.sh --pr 123        # a pull request
+./scripts/gpy-dev.sh --ref v0.7.0-rc1
+./scripts/gpy-dev.sh --bin ./dist    # prebuilt gpy + gpy-agent, no build
+```
+
+`exit` returns to the installed release. See
+[`scripts/README.md`](scripts/README.md) for the flags.
 
 ## Quality Gates
 
