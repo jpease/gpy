@@ -49,8 +49,10 @@ gpy lang versions on|off     # Toggle version display
 
 # Configuration
 gpy config show [section]    # Show configuration
+gpy config list [filter]     # List config keys, optionally by prefix
 gpy config get <key>         # Get a config value
 gpy config set <key> <value> # Set a config value
+gpy config open              # Open the config file in your editor
 gpy config wizard            # Launch the interactive configuration wizard
 
 # Diagnostics
@@ -706,6 +708,38 @@ staged = "✚"
 stash = "≡"
 unstaged = "✱"
 untracked = "?"
+```
+
+---
+
+#### `gpy config list [filter]`
+
+List every configuration key with its access mode and description.
+
+With a filter argument, lists only keys that start with it. The filter is a plain prefix, so `git.icons` matches every `git.icons.*` key. A filter that matches nothing prints a notice and still exits 0. Use `gpy config get <key>` to read a value and `gpy config set <key> <value>` to change it; the [configuration reference](configuration-reference.md) documents what each key accepts.
+
+**Example:**
+```bash
+# List every key
+gpy config list
+
+# List only the git icon keys
+gpy config list git.icons
+```
+
+**Output:**
+```text
+Available configuration keys:
+
+  git.icons.ahead [read-write]
+    Ahead indicator
+
+  git.icons.behind [read-write]
+    Behind indicator
+
+  ...
+
+Total: 9 keys
 ```
 
 ---

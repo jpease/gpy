@@ -264,6 +264,11 @@ enum ConfigAction {
         /// Section to show: agent, git, language, ui (shows all if omitted)
         section: Option<String>,
     },
+    /// List every config key with its access mode and description
+    List {
+        /// Only list keys starting with this prefix (e.g., "git.icons")
+        filter: Option<String>,
+    },
     /// Get a config value
     Get {
         /// Config key using dot-notation (e.g., "git.enabled")
@@ -496,6 +501,7 @@ fn run(command: Commands) -> Result<ExitCode> {
         },
         Commands::Config { action } => match action {
             ConfigAction::Show { section } => commands::config::show(section.as_deref())?,
+            ConfigAction::List { filter } => commands::config::list(filter.as_deref()),
             ConfigAction::Get { key } => commands::config::get(&key)?,
             ConfigAction::Set { key, value } => commands::config::set(&key, &value)?,
             ConfigAction::Open => commands::config::open()?,

@@ -9,6 +9,7 @@ Usage: gpy config <COMMAND>
 
 Commands:
   show    Show configuration
+  list    List every config key with its access mode and description
   get     Get a config value
   set     Set a config value
   open    Open the config file in your editor

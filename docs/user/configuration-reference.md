@@ -295,4 +295,4 @@ See [CLI Reference](cli-reference.md) for full command details.
 ## See Also
 
 - [Advanced Configuration](advanced-configuration.md) — theme files, environment variables, performance tuning, and troubleshooting.
-- [CLI Reference](cli-reference.md) — `gpy config show/get/set/open/wizard` and every other `gpy` subcommand.
+- [CLI Reference](cli-reference.md) — `gpy config show/list/get/set/open/wizard` and every other `gpy` subcommand.
