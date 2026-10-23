@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-22
+
 ### Fixed
 
 - `gpy-agent oneshot character --exit-code -1` is accepted and renders as a
@@ -386,7 +388,8 @@ repository was public; their notes are not carried over.
 - `install-oneline.sh` installs the Fish, Zsh and Bash scripts from one archive, `gpy-shell-files.tar.gz`, after checking its published SHA-256, instead of downloading each script from a branch or tag unverified. `GPY_VERSION` can therefore only name 0.4.0 or later.
 - Releases also publish `install-oneline.sh`, `uninstall.sh` and `uninstall.fish` (checksummed and attested like every other asset); the installer's uninstall hint points at them.
 
-[Unreleased]: https://github.com/jpease/gpy/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/jpease/gpy/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/jpease/gpy/releases/tag/v0.6.0
 [0.5.1]: https://github.com/jpease/gpy/releases/tag/v0.5.1
 [0.5.0]: https://github.com/jpease/gpy/releases/tag/v0.5.0
 [0.4.0]: https://github.com/jpease/gpy/releases/tag/v0.4.0
