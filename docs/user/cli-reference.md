@@ -932,6 +932,8 @@ shell or through separate requests and are not included. Exits `1` with an
 
 ### Plugin Commands
 
+Plugin segment files are loaded by the Fish integration only; see [Plugin Framework](../dev/plugins.md).
+
 #### `gpy plugin list`
 
 List discovered plugins, their source, root path, API version, and provided segments.

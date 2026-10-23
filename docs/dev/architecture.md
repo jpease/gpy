@@ -957,7 +957,7 @@ Quick version:
 Steps:
 1. Update `Message` enum in `ipc/mod.rs`
 2. Update Fish IPC code in `core/ipc.fish`
-3. Update protocol version negotiation notes if compatibility requirements change
+3. Bump `PROTOCOL_VERSION` if the change is incompatible (shells compare it for equality; there is no negotiation)
 4. Document the change for shell integrations
 5. Coordinate Fish + Rust deployment
 

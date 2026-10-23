@@ -26,7 +26,7 @@ that `SECURITY.md` names exactly one supported series, `X.Y.x`.
 
 Everything below runs on `main`, with a clean tree.
 
-1. **Pick the version.** GPY is 0.x: the IPC protocol version negotiation and
+1. **Pick the version.** GPY is 0.x: the IPC protocol version and
    the config schema are both still moving, so the minor number carries
    breaking changes. See
    [gpy-agent/SCHEMA_EVOLUTION.md](../../gpy-agent/SCHEMA_EVOLUTION.md).
