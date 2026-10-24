@@ -86,39 +86,50 @@ pub fn write_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()> {
 /// read-modify-write cycles on `path` across processes; the lock file stays in
 /// place because unlinking one races like unlinking a socket.
 pub struct PathLock {
-    #[cfg(unix)]
-    _lock: nix::fcntl::Flock<std::fs::File>,
+    lock: std::fs::File,
+}
+
+impl Drop for PathLock {
+    fn drop(&mut self) {
+        // Explicit, not just the close: Windows frees a closed handle's
+        // locks only "eventually" (`LockFileEx` docs), which would stall the
+        // next writer. Closing still releases it if this fails.
+        drop(self.lock.unlock());
+    }
 }
 
 /// Take the exclusive lock beside `path`, polling for up to `wait`. The parent
 /// directory must exist. Resolve symlinks first so every writer locks the same
-/// file. Unix only: elsewhere this takes no lock.
+/// file. The lock is `flock` on Unix and `LockFileEx` on Windows, both through
+/// [`std::fs::File::try_lock`]; on Windows it is mandatory, which is harmless
+/// because nothing reads or writes the lock file.
 ///
 /// # Errors
 /// Returns an error if the lock file cannot be opened, or `TimedOut` if another
 /// holder keeps the lock for the whole `wait`.
-#[cfg(unix)]
 pub fn lock_beside(path: &Path, wait: std::time::Duration) -> std::io::Result<PathLock> {
-    use nix::errno::Errno;
-    use nix::fcntl::{Flock, FlockArg};
-    use std::os::unix::fs::OpenOptionsExt as _;
+    use std::fs::TryLockError;
 
     let mut lock_path = path.as_os_str().to_owned();
     lock_path.push(".lock");
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .mode(0o600)
-        .open(&lock_path)?;
+    let mut options = std::fs::OpenOptions::new();
+    // `write`, not `read`: the lock only needs a handle with either access.
+    options.create(true).truncate(false).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let file = options.open(&lock_path)?;
     let deadline = std::time::Instant::now()
         .checked_add(wait)
         .unwrap_or_else(std::time::Instant::now);
     loop {
-        match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
-            Ok(lock) => return Ok(PathLock { _lock: lock }),
-            Err((unlocked, Errno::EWOULDBLOCK | Errno::EINTR)) => file = unlocked,
-            Err((_, errno)) => return Err(std::io::Error::from(errno)),
+        match file.try_lock() {
+            Ok(()) => return Ok(PathLock { lock: file }),
+            Err(TryLockError::WouldBlock) => {}
+            Err(TryLockError::Error(e)) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(TryLockError::Error(e)) => return Err(e),
         }
         if std::time::Instant::now() >= deadline {
             return Err(std::io::Error::new(
@@ -128,15 +139,6 @@ pub fn lock_beside(path: &Path, wait: std::time::Duration) -> std::io::Result<Pa
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-}
-
-/// No advisory locking off Unix.
-///
-/// # Errors
-/// Never fails.
-#[cfg(not(unix))]
-pub fn lock_beside(_path: &Path, _wait: std::time::Duration) -> std::io::Result<PathLock> {
-    Ok(PathLock {})
 }
 
 /// Whether the current user cannot write `path`. Uses `access(2)`, not mode
@@ -291,7 +293,6 @@ mod tests {
 
     /// A second locker waits out the first and gets in once it drops.
     #[test]
-    #[cfg(unix)]
     fn lock_beside_excludes_until_the_holder_drops() {
         use super::lock_beside;
         use std::time::Duration;
