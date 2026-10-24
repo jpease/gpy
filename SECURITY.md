@@ -81,8 +81,12 @@ these three:
 **Plugin segment files run as you.** Third-party plugins ship Fish scripts
 (`segments/<name>.fish`) that `fish/core/init.fish` sources, with your full user
 privileges, when the segment is enabled. Only the Fish theme export carries
-their paths (`__gpy_plugin_segment_file_*`); Bash and Zsh never source them.
-Installing a plugin means trusting its code like a shell startup file.
+their paths (`__gpy_plugin_segment_file_*`); Bash and Zsh never source these
+`.fish` files. Installing a plugin means trusting its code like a shell startup
+file. Planned script segments, which Bash, Zsh and Fish would all execute, are
+not shipped; their trust model and hardening rules are in
+[ADR-0011 Addendum: Script Segment Security](docs/dev/adr/adr-0011-addendum-script-segment-security.md),
+and this paragraph changes when they ship.
 
 **Prompt data is escaped for the shell that draws it.** Bash and Zsh paste the
 agent's prompt output into `PS1`/`PROMPT`, and both shells expand prompt
@@ -135,7 +139,9 @@ world-writable `/tmp`. A local attacker can then neither guess the path nor
 pre-create a file whose contents would be read back into `$PROMPT`, which would
 be a terminal-escape and prompt-injection vector. If `mktemp` is unavailable the
 memoization disables itself and every prompt does a full IPC round trip
-(`zsh/core/init.zsh`).
+(`zsh/core/init.zsh`). The planned script segments add no files: their design
+keeps the cache in shell variables only, with no `/tmp` path and no PID-keyed
+state.
 
 **Downloaded release artifacts are trusted only after verification.** What the
 installers enforce, and how to check a download by hand, is in
