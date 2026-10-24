@@ -724,6 +724,8 @@ fn enable_stdout(env: &CliTestEnv, segment: &str) -> String {
     output.stdout
 }
 
+// Windows resolves the config home outside `XDG_CONFIG_HOME`, and has no Bash/Zsh integration.
+#[cfg(unix)]
 #[test]
 fn enable_plugin_segment_notes_bash_and_zsh_skip_it() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
