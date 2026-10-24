@@ -8,6 +8,8 @@ Use the focused guides instead of treating this page as the primary reference:
 - [Plugin Manifest Template](templates/plugin.toml)
 - [Theme Template with Plugin Segment Styling](templates/theme.plugin-segment.toml)
 
+Plugin segments from v1 `.fish` files load in Fish only; see [Plugin Framework](plugins.md#segment-runtime-contract).
+
 ## Which Doc to Read
 
 Read [Build a Segment Plugin](build-segment-plugin.md) if you are:

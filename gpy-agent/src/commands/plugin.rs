@@ -120,6 +120,10 @@ fn load_manifest_from_path(path: &Path) -> Result<(PluginManifest, PathBuf)> {
     Ok((manifest, root))
 }
 
+/// One-line scope note printed by `gpy plugin new`, `validate` and `list`.
+pub(crate) const FISH_ONLY_NOTE: &str =
+    "Plugin segments from v1 `.fish` files load in Fish only; Bash and Zsh prompts skip them.";
+
 fn print_manifest_validation(manifest: &PluginManifest, root: &Path) {
     crate::commands::output::ok(format_args!(
         "Valid plugin: {} {} (api {})",
@@ -141,6 +145,7 @@ fn print_manifest_validation(manifest: &PluginManifest, root: &Path) {
     });
     println!("   public helpers: {}", PUBLIC_PLUGIN_HELPERS.join(", "));
     print_min_version_warning(manifest.compatibility_constraints.as_ref());
+    println!("   note: {FISH_ONLY_NOTE}");
 }
 
 fn print_discovered_plugin_validation(plugin: &crate::plugin::DiscoveredPlugin) {
@@ -162,6 +167,7 @@ fn print_discovered_plugin_validation(plugin: &crate::plugin::DiscoveredPlugin) 
             .join(", ")
     );
     print_min_version_warning(plugin.manifest.compatibility_constraints.as_ref());
+    println!("   note: {FISH_ONLY_NOTE}");
 }
 
 fn print_min_version_warning(
@@ -228,6 +234,7 @@ pub fn list() {
     println!("Plugins:");
     println!("========\n");
     println!("User plugin root: {}", user_root.display());
+    println!("{FISH_ONLY_NOTE}");
 
     if discovery.plugins.is_empty() {
         println!("(none discovered)");
@@ -389,6 +396,7 @@ pub fn new(id: &str, segment_name: Option<&str>) -> Result<()> {
     println!("  1. Edit the generated files");
     println!("  2. Run `gpy plugin validate {}`", plugin_root.display());
     println!("  3. Run `gpy enable {segment}`");
+    println!("\nNote: {FISH_ONLY_NOTE}");
     Ok(())
 }
 
