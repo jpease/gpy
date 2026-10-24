@@ -63,14 +63,15 @@ Windows is unmeasured.
 
 ### Shell feature matrix
 
-Every shell renders the same segments (directory, git, language, status,
-clock) and applies config and theme hot-reloads. The differences:
+Every shell renders the same built-in segments (directory, git, language,
+status, clock) and applies config and theme hot-reloads. The differences:
 
 | Feature | Fish | Zsh | Bash 5.x | Bash 4.x | Bash 3.2 (macOS default) |
 |---|---|---|---|---|---|
 | Live updates | Idle prompt repaints in place | Idle prompt repaints in place (`TRAPURG` + `zle reset-prompt`) | Shown at the next prompt (readline cannot repaint an idle prompt) | Same as Bash 5.x | Same as Bash 5.x |
 | Signal mechanism | One `--on-signal SIGURG` handler | Native `TRAPURG` function | No trap: SIGURG stays ignored, flag files are read at the next prompt | Same as Bash 5.x | Same as Bash 5.x |
 | Re-registers after an agent restart | Immediately | Immediately | At the next prompt | At the next prompt | At the next prompt |
+| Plugin segments (v1 `.fish` files) | Loaded | Skipped (see [Plugin Framework](dev/plugins.md#segment-runtime-contract)) | Skipped | Skipped | Skipped |
 | Duration segment | Millisecond | Millisecond (`EPOCHREALTIME`) | Millisecond (`EPOCHREALTIME`) | `date +%s%N` with GNU `date`; whole seconds with BSD `date` | Disabled |
 | Transient prompt (`ui.transient_prompt`) | Fish 4.2+: a submitted prompt collapses to `<time> ❯ <command>` | Same as Fish (`zle-line-finish`) | No: the full prompt stays | Same as Bash 5.x | Same as Bash 5.x |
 | Clock time in the scrollback | When Enter was pressed (Fish 4.2+; older Fish: when drawn) | When Enter was pressed | When the prompt was drawn | Same as Bash 5.x | Same as Bash 5.x |
