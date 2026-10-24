@@ -29,25 +29,40 @@ Not reproduced: the review's full PoC run under an interactive prompt (only the 
 ### Trust model
 
 - **Who installs.** The user does, by placing a plugin directory in the user plugin root (`$XDG_CONFIG_HOME/gpy/plugins/`) or using a bundled one, and enabling one of its segments. GPY downloads nothing and verifies nothing about a plugin.
-- **What runs.** Each enabled script segment runs as the user, from Bash, Zsh or Fish, with the shell's environment and `PATH`. It runs once per command that passes its trigger, in every directory the user enters. That includes untrusted ones (a cloned repository, an unpacked archive), whose names and files reach the script as input. Installing a plugin means trusting its code like a shell startup file, in all three shells.
+- **What runs.** Each enabled script segment runs as the user, from Bash, Zsh or Fish. It runs once per command that passes its trigger, in every directory the user enters. That includes untrusted ones (a cloned repository, an unpacked archive), whose names and files reach the script as input. Installing a plugin means trusting its code like a shell startup file, in all three shells.
+- **What the script sees.** A clean environment, not the shell's:
+  - The base set, each only when set: `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, every `LC_*`, `TERM`, `TZ` and `TMPDIR`.
+  - The names the manifest declares in `env`, with their values passed byte for byte.
+  - The `GPY_*` inputs and `GPY_OPT_*` settings, which the runner sets itself, so a value the user exported under the same name never reaches the script.
+  - Nothing else: cloud credentials, tokens, `SSH_AUTH_SOCK` and exported shell functions are absent unless declared. Declaring `SSH_AUTH_SOCK` lets the script use the user's SSH agent.
+
+  stdin is `/dev/null` and stderr is discarded. The working directory is the plugin root, or `$PWD` only when the segment declares the `pwd` input. The interpreter is `/bin/sh`, run by an absolute path resolved once per shell (on macOS, the shell `/private/var/select/sh` points to, run as `sh`), never a bare `sh` looked up on `PATH`.
+- **Process group.** The script runs in its own process group (or session, where the runner can arrange one) and is never handed the terminal. On timeout or Ctrl-C the group gets TERM, then CONT, then KILL after a 50 ms grace or as soon as the script exits. The runner never waits for pipe EOF.
+- **Background processes.** Background processes a script leaves in its group are killed when it exits or times out: TERM and CONT at once, KILL after the grace. A process that leaves the group (`setsid`, a daemonizing double fork) is outside this guarantee, on macOS and on Linux. In a container whose PID 1 does not reap, such orphans become zombies; run containers with `--init`.
 - **What GPY protects.** GPY does not protect the user from the script. It protects the interactive shell and the terminal from the script's output and from the manifest's names, and keeps directory names from reaching shell code. In order: script output never executes and never emits terminal controls; manifest names never execute; the executed file is the one inside the plugin directory; no state outside the shell can feed the prompt.
 - **What GPY does not protect.** A malicious plugin, or a benign script that runs repository-local tools on an untrusted checkout. For example, `git` in a cloned repository may run repository-configured hooks or `core.fsmonitor` (inferred, not tested). Plugin documentation must say so.
 
-### Output: strip, then escape, after every read
+### Output: sanitized once, before any shell variable holds it
 
-Script output goes through these steps every time a value is handed to the renderer, whether it comes from a run or from the cache. The cache stores the raw output. No step is skipped because an earlier one ran when the value was stored.
+The runner sanitizes script output once, at its boundary, before any shell variable holds the value. Raw output is never stored. The cache holds the render-ready value, and a cache hit hands it to the renderer unchanged. Sanitizing once, not after every read, is safe and required:
 
-1. Split the output. Line 1 is the text; line 2 is the optional colour variant. Anything after line 2 is ignored. A length cap, if any, comes before the strip.
-2. **Variant:** used only if it matches `^[a-z0-9_]{1,32}$` (validated under the C locale, as below); otherwise it is ignored. It is never filtered into shape, because it becomes part of a variable name.
-3. **Strip** from the text every C0 and C1 control: U+0000 to U+001F, U+007F, and U+0080 to U+009F. This is the agent's `char::is_control` set. The rule does not depend on the user's locale and never uses `[[:cntrl:]]`. Each form below removed U+009B, U+0085, ESC, BEL, DEL and TAB, and kept `é`, `→`, `ü` and U+00A0, under `en_US.UTF-8`, `C` and `C.UTF-8` in every listed shell:
+- Escaping is not idempotent. Escaping an already escaped value on every read would double its backslashes.
+- The cache's only writer is the runner, in the same interactive shell. There is no file, no other process, and no line framing a value could shift.
+
+The steps, in order:
+
+1. **Cap** at 4096 bytes, before anything else. Output over the cap hides the segment (it is not truncated), and two consecutive overflows count toward the segment's circuit breaker. Output must not contain NUL; text after a NUL may be lost, and shells differ in what they keep.
+2. Split the output. Line 1 is the text; line 2 is the optional colour variant. Anything after line 2 is ignored.
+3. **Variant:** used only if it matches `^[a-z0-9_]{1,32}$` (validated under the C locale, as below); otherwise it is ignored. It is never filtered into shape, because it becomes part of a variable name.
+4. **Strip** from the text every C0 and C1 control: U+0000 to U+001F, U+007F, and U+0080 to U+009F. This is the agent's `char::is_control` set. The rule does not depend on the user's locale and never uses `[[:cntrl:]]`. Each form below removed U+009B, U+0085, ESC, BEL, DEL and TAB, and kept `é`, `→`, `ü` and U+00A0, under `en_US.UTF-8`, `C` and `C.UTF-8` in every listed shell:
    - Bash (3.2 and 5.3), inside a function: `local LC_ALL=C`, then `x=${x//[$'\001'-$'\037'$'\177']/}` and `x=${x//$'\302'[$'\200'-$'\237']/}`. In the C locale the pattern matches bytes. C1 controls are the UTF-8 pairs `c2 80` to `c2 9f`, and `c2` never appears as a continuation byte, so other characters are untouched. Bash variables cannot hold NUL.
    - Zsh: the same two substitutions under `local LC_ALL=C`, with `$'\0'` as the first range bound, since Zsh variables can hold NUL (checked: `a\0b` became `ab`).
    - Fish: `string replace -ra '[\x00-\x1f\x7f-\x9f]' ''`. Fish matches code points in both locales, and its strings cannot hold NUL.
 
    A fast path that skips clean text must run under the same pinned locale. A lone byte `0x80`–`0x9F` that is not part of a UTF-8 sequence is not removed. A UTF-8 terminal should treat it as invalid UTF-8, not as a C1 control (not verified). The agent never sees such bytes, because it works on Rust `String`s.
-4. **Escape** for the shell that draws the prompt, with the existing `__gpy_prompt_escape`. Bash: `\`, `$` and the backtick. Zsh: those plus `%`. Fish prints its prompt literally and needs nothing beyond the strip. The integrations already pin the options this relies on (`promptvars`; `prompt_subst`, `prompt_percent`, `no_prompt_bang`). Starship before v1.20, which did not escape `custom` output, is the case this avoids.
+5. **Escape** for the shell that draws the prompt, with the existing `__gpy_prompt_escape`. Bash: `\`, `$` and the backtick. Zsh: those plus `%`. Fish prints its prompt literally and needs nothing beyond the strip. The integrations already pin the options this relies on (`promptvars`; `prompt_subst`, `prompt_percent`, `no_prompt_bang`). Starship before v1.20, which did not escape `custom` output, is the case this avoids.
 
-Values the shell passes to the script (`GPY_PWD` and the other `GPY_*` inputs, and `GPY_OPT_*` settings) go in as environment variables, unchanged. They are untrusted data for the script. The example scripts quote them, and the authoring docs say why.
+Values the shell passes to the script (`GPY_PWD` and the other `GPY_*` inputs, declared `env` names, and `GPY_OPT_*` settings) go in as environment variables, unchanged. They are untrusted data for the script. The example scripts quote them, and the authoring docs say why.
 
 ### Manifest names
 
@@ -68,9 +83,10 @@ Values the shell passes to the script (`GPY_PWD` and the other `GPY_*` inputs, a
 
 ### No files, no `/tmp`, no PID-keyed state
 
-- The cache is shell variables in the interactive shell and nothing else: no cache files, no relay files, no marker or pending files.
+- No files. The cache and the once-per-command guard are shell variables in the interactive shell, and the runner uses none either: no cache, relay, marker, pending or output files, and no fixed descriptor numbers. Both runner designs measured in the spike created 0 files.
 - No path under `/tmp` or `$TMPDIR`. The runtime root is not an option either: `__gpy_runtime_root` falls back to `/tmp/gpy` (`bash/core/ipc.bash:107`, `zsh/core/ipc.zsh:112`, `fish/core/ipc.fish:28`). If a later item needs a file, it needs a new security review.
-- No state keyed by `$$` or any PID. Ages come from a clock in the same shell, and nothing outlives it. The cache key is the plugin id and version, the segment id, the script path and every value passed to the script (ADR-0011 item 3). It is compared in memory, so a newline in `$PWD` cannot shift any framing.
+- No state keyed by `$$` or any PID. Ages come from a clock in the same shell, and nothing outlives it. Signalling a process group the runner obtained in the same run is not state: the PGID is never stored past that run. Its one exposure is a reuse window between the script's exit and the final signal (0 to 550 ms); reuse inside it needs the PID counter to wrap (inferred, not measured).
+- The cache key is the plugin id and version, the segment id, the script path, the resolved `GPY_OPT_*` values and the values of the declared inputs (ADR-0011 item 3). It is compared in memory, so a newline in `$PWD` cannot shift any framing.
 
 ### Approval boundaries
 
@@ -89,22 +105,31 @@ Shell tests follow `tests/<shell>/<name>.test.<ext>` and exist for Bash (run und
 
 | Defect | Test |
 |---|---|
-| Newline and ESC in `$PWD`; strip after every read, on a run and on a cache hit | `script_segment_hostile_pwd` |
+| Newline and ESC in `$PWD`; sanitized once, shown the same on a run and on a cache hit | `script_segment_hostile_pwd` |
 | C1 under `LC_ALL=C` and `en_US.UTF-8`, and in Fish | `script_segment_c1_locale` |
 | Prompt expansion in script output (`$(…)`, backticks, `%`) | `script_segment_output_escaped` |
 | `a[$(…)]` and `*` as manifest names, and in exported variables edited by hand | `script_segment_manifest_names` (shell); `script_names_validated_at_export` (Rust) |
 | Absolute path, `..` and an outward symlink as `script` | `script_path_contained_at_export` (Rust), also from `gpy plugin validate` |
 | No file is created anywhere under `HOME`, `TMPDIR`, `/tmp` or the runtime root, with caching on or off | `script_segment_no_files` |
 | A planted file named after the shell's PID changes nothing | `script_segment_no_pid_state` |
+| The hostile script set (hangs, process trees, TERM-ignoring children, terminal readers, `setsid`, 50 MB output, forged framing) in GPY's real hooks: Enter to prompt p99 within the timeout + 50 + 30 ms, only documented survivors, no runner text on the terminal | `script_segment_hostile_scripts` |
+| Ctrl-C during a run draws a prompt, kills the tree, hides the segment and does not rerun it | `script_segment_ctrl_c` |
+| Output over 4096 bytes hides the segment with no text on the terminal, Fish included, and leaves shell memory unchanged | `script_segment_output_cap` |
+| NUL in output never reaches the prompt and prints no shell warning | `script_segment_nul` |
+| `$!`/`$last_pid`, the job table, the terminal's foreground group and open descriptors are unchanged by a run | `script_segment_job_state` |
+| A `require_files` scan on a hung NFS mount stays within its 30 ms bound and the child is killed (Linux CI only; needs a privileged container) | `script_segment_scan_hang` |
+| Secrets and `SSH_AUTH_SOCK` absent unless declared; hostile declared values (newlines, `$(…)`, backticks, globs, quotes) arrive literally; names like `a[$(cmd)]` rejected before any use | `script_segment_clean_env` |
 
 ### SECURITY.md when the adapters ship
 
-The adapters PR replaces "Plugin segment files run as you" with a statement of the trust model above: script segments are executed (not sourced) by Bash, Zsh and Fish, as the user, once per command, in untrusted directories too. It lists the hardening: strip and escape after every read, name validation, containment, and no files. It keeps "trust it like a shell startup file" for all three shells. Until then, SECURITY.md says script segments are planned and links here.
+The adapters PR replaces "Plugin segment files run as you" with a statement of the trust model above: script segments are executed (not sourced) by Bash, Zsh and Fish, as the user, once per command, in untrusted directories too. It lists the hardening: the clean environment, output sanitized once before storage, name validation, containment, killing leftover background processes (with the `setsid` exclusion), and no files. It keeps "trust it like a shell startup file" for all three shells. Until then, SECURITY.md says script segments are planned and links here.
 
 ## Consequences
 
 - The PoC's cache design is not reused: its file cache, `$SECONDS`-in-file ages, `/tmp` fallback and `[[:cntrl:]]` strip are all replaced. The adapters item starts from these rules.
-- The output path costs two pattern substitutions and an escape per segment per draw, even on a cache hit. The `ci-bench` G scenario (ADR-0011 item 7) measures it.
+- Output is sanitized once per run, so a cache hit or a repaint costs no substitution or escape. The `ci-bench` G scenario (ADR-0011 item 7) measures the run path.
+- Scripts that relied on an inherited variable must declare it in `env`; the clean environment costs +0.07 to +0.30 ms per uncached run on macOS and +0.04 to +0.18 ms on Linux in the spike.
+- A `setsid` or daemonizing escapee and zombies under a non-reaping container PID 1 are documented gaps.
 - Lone non-UTF-8 C1 bytes stay a documented gap in the shells. The agent does not have it.
 - Four approval boundaries are crossed, so the work lands as several approved PRs, not one.
 
