@@ -663,6 +663,108 @@ provided_segments = ["k8s_tools"]
         "Discovered plugin must be listed as ready.\nstdout:\n{}",
         list.stdout
     );
+    assert!(
+        list.stdout.contains(FISH_ONLY_LINE),
+        "plugin list must say v1 plugin segments are Fish-only.\nstdout:\n{}",
+        list.stdout
+    );
+}
+
+#[test]
+fn plugin_validate_says_plugin_segments_are_fish_only() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    write_demo_plugin(&env);
+    let output = env
+        .run_gpy(&["plugin", "validate", "demo"])
+        .expect("Failed to run gpy plugin validate");
+    output.assert_success("gpy plugin validate demo");
+    assert!(
+        output.stdout.contains(FISH_ONLY_LINE),
+        "plugin validate must say v1 plugin segments are Fish-only.\nstdout:\n{}",
+        output.stdout
+    );
+}
+
+const FISH_ONLY_LINE: &str =
+    "Plugin segments from v1 `.fish` files load in Fish only; Bash and Zsh prompts skip them.";
+
+/// Plugin `demo` providing `k8s_tools`, with its segment file.
+fn write_demo_plugin(env: &CliTestEnv) {
+    let plugin_dir = env.plugins_dir().join("demo");
+    fs::create_dir_all(plugin_dir.join("segments")).expect("Failed to create plugin dir");
+    fs::write(
+        plugin_dir.join("plugin.toml"),
+        r#"
+id = "demo"
+name = "Demo"
+version = "0.1.0"
+api_version = "v1"
+entry_type = "file"
+provided_segments = ["k8s_tools"]
+"#,
+    )
+    .expect("Failed to write plugin manifest");
+    fs::write(plugin_dir.join("segments").join("k8s_tools.fish"), "")
+        .expect("Failed to write segment file");
+}
+
+/// Mark an integration as installed the way `gpy setup` does (entry point present).
+fn install_integration(env: &CliTestEnv, entry_point: &str) {
+    let path = env.xdg_config_home().join(entry_point);
+    fs::create_dir_all(path.parent().expect("entry point has a parent"))
+        .expect("Failed to create integration dir");
+    fs::write(path, "").expect("Failed to write integration entry point");
+}
+
+fn enable_stdout(env: &CliTestEnv, segment: &str) -> String {
+    let output = env
+        .run_gpy(&["enable", segment])
+        .expect("Failed to run gpy enable");
+    output.assert_success("gpy enable");
+    output.stdout
+}
+
+#[test]
+fn enable_plugin_segment_notes_bash_and_zsh_skip_it() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    write_demo_plugin(&env);
+    install_integration(&env, "gpy/bash/gpy.bash");
+    install_integration(&env, "fish/gpy/conf.d/gpy_init.fish");
+
+    let stdout = enable_stdout(&env, "k8s_tools");
+    assert!(
+        stdout.contains("the bash prompt will skip it")
+            && stdout.contains("gpy disable k8s_tools")
+            && stdout.contains("use Fish"),
+        "enable must warn that Bash skips a v1 plugin segment.\nstdout:\n{stdout}"
+    );
+    assert!(!stdout.contains("zsh"), "zsh is not installed:\n{stdout}");
+}
+
+#[test]
+fn enable_plugin_segment_is_silent_without_bash_or_zsh() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    write_demo_plugin(&env);
+    install_integration(&env, "fish/gpy/conf.d/gpy_init.fish");
+
+    let stdout = enable_stdout(&env, "k8s_tools");
+    assert!(
+        !stdout.contains("will skip it"),
+        "Fish-only installs get no note.\nstdout:\n{stdout}"
+    );
+}
+
+#[test]
+fn enable_builtin_segment_is_silent_even_with_bash_and_zsh() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    install_integration(&env, "gpy/bash/gpy.bash");
+    install_integration(&env, "gpy/zsh/gpy.zsh");
+
+    let stdout = enable_stdout(&env, "clock");
+    assert!(
+        !stdout.contains("will skip it"),
+        "built-in segments render in every shell.\nstdout:\n{stdout}"
+    );
 }
 
 #[test]
@@ -702,6 +804,11 @@ fn test_plugin_new_creates_scaffold() {
     assert!(
         segment.contains("gpy_section_standalone"),
         "Scaffold should use supported public helper surface"
+    );
+    assert!(
+        output.stdout.contains(FISH_ONLY_LINE),
+        "plugin new must say v1 plugin segments are Fish-only.\nstdout:\n{}",
+        output.stdout
     );
 }
 
