@@ -83,7 +83,7 @@ run cargo clippy --all-targets --all-features
 win=(cargo check --target x86_64-pc-windows-gnu)
 run "${win[@]}" --lib
 run "${win[@]}" --locked
-run "${win[@]}" --profile test --tests
+run "${win[@]}" --profile test --tests --features test-support
 if ((${#failed[@]})); then
     echo "check-platforms: FAILED:"
     printf "  %s\n" "${failed[@]}"
