@@ -13,8 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each save re-read the file, edited it and renamed it into place with
   nothing serializing the three steps, so two started together could each
   write a file without the other's change and both exit 0. Saves now hold an
-  exclusive lock on `config.toml.lock` beside the file, waiting up to 10
-  seconds. On Windows no lock is taken.
+  exclusive lock on `config.toml.lock` beside the file (`flock` on Unix,
+  `LockFileEx` on Windows), waiting up to 10 seconds.
 - `gpy config wizard` saves a theme by writing a temp file and renaming it
   into place, as `config.toml` already was. Before, it truncated the theme
   file first, so a save that failed partway (disk full, crash) left a broken

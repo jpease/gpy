@@ -27,7 +27,7 @@ restating it.
 | Linux (x86_64, aarch64) | Full on x86_64: every tier, including the shell end-to-end suites (Fish, Bash and Zsh against a real agent on a pseudo-terminal), runs on every pull request on `ubuntu-latest` (Fish 4, zsh, bash), and a fresh install into an empty `$HOME` on a stock `ubuntu:24.04` container renders a first prompt in fish, zsh and bash (`scripts/test-fresh-install.sh`). aarch64 binaries are built and checked against the glibc floor but not run in CI. Release binaries need glibc 2.31 or newer (e.g. Ubuntu 20.04+, Debian 11+); the release job rejects a binary that references a newer glibc and runs the x86_64 binaries in `ubuntu:20.04` (`GPY_GLIBC_FLOOR` in `.github/workflows/release.yml`) |
 | macOS 11+ (Intel and Apple Silicon) | Full: every tier, including the shell end-to-end suites, runs on every pull request on `macos-latest` (Apple Silicon) and on the maintainer's pre-push gate. Intel binaries are built and checksummed in the release but only the Apple Silicon ones are run |
 | Windows, via WSL | Recommended — run the Linux instructions inside WSL. `.github/workflows/wsl-smoke.yml` builds the agent in Ubuntu 24.04 under WSL 2 on a Windows runner and runs `scripts/wsl-smoke.sh` and the cross-shell contract suite there, when its own files change, weekly and on demand (it is not part of the PR gate). See [Windows (WSL)](#windows-wsl) for what is WSL-specific |
-| Windows, native | CLI-only; the prompt integration does not run there. The claim is backed by the five CLI integration targets the Windows gate runs on every pull request (`gpy_cli_tests`, `cli_config_mutation_tests`, `theme_import_tests`, `init_command_tests`, `cli_integration_tests`; `.github/workflows/windows-gate.yml`). See [Windows (WSL)](#windows-wsl) below for what "not supported" covers. |
+| Windows, native | CLI-only; the prompt integration does not run there. The claim is backed by the six CLI integration targets the Windows gate runs on every pull request (`gpy_cli_tests`, `cli_config_mutation_tests`, `config_concurrent_save_tests`, `theme_import_tests`, `init_command_tests`, `cli_integration_tests`; `.github/workflows/windows-gate.yml`). See [Windows (WSL)](#windows-wsl) below for what "not supported" covers. |
 
 What CI actually backs: `pr-gate.yml` runs on every pull request to `main`
 (and on manual dispatch), and `cross-platform-test.yml` runs after every push
@@ -44,7 +44,7 @@ token and no secrets.
 The Windows leg is one reusable workflow (`windows-gate.yml`) that
 `pr-gate.yml` and `cross-platform-test.yml` both call. It builds the agent
 with `cargo build --locked`, runs the library unit tests with `cargo test
---locked --lib`, and the five CLI integration targets listed in the table
+--locked --lib`, and the six CLI integration targets listed in the table
 above through nextest.
 
 What CI does not cover on native Windows is the shell integration, and it

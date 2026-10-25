@@ -1,7 +1,7 @@
 //! Parallel `gpy config set` writers on distinct keys must all persist: the
-//! read-modify-rename in `save_config` is serialized by a lock beside the file.
+//! read-modify-rename in `save_config` is serialized by a lock beside the file
+//! (`flock` on Unix, `LockFileEx` on Windows).
 
-#![cfg(unix)]
 #![allow(
     clippy::unwrap_used,
     reason = "test code: a failed unwrap is the failure"
@@ -14,8 +14,8 @@
 #![allow(clippy::missing_panics_doc, reason = "tests have no callers")]
 
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::Barrier;
 use tempfile::TempDir;
 
 /// Distinct keys with an even-round and an odd-round value that differ, so
@@ -27,16 +27,9 @@ const KEYS: [(&str, &str, &str); 4] = [
     ("git.max_branch_length", "12", "13"),
 ];
 
-/// Hold a `gpy config set` back until `go` exists, so the writers start within
-/// microseconds of each other. Without this, process start-up staggers them
-/// past the roughly 15 ms save window and the race rarely shows.
-fn spawn_gated(go: &Path, home: &Path, xdg: &Path, key: &str, value: &str) -> Child {
-    Command::new("sh")
-        .arg("-c")
-        .arg("while [ ! -e \"$1\" ]; do :; done; shift; exec \"$@\"")
-        .arg("sh")
-        .arg(go)
-        .arg(env!("CARGO_BIN_EXE_gpy"))
+/// Run one `gpy config set` in the isolated tree and return how it exited.
+fn config_set(home: &Path, xdg: &Path, key: &str, value: &str) -> ExitStatus {
+    Command::new(env!("CARGO_BIN_EXE_gpy"))
         .args(["config", "set", key, value])
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", xdg)
@@ -46,7 +39,7 @@ fn spawn_gated(go: &Path, home: &Path, xdg: &Path, key: &str, value: &str) -> Ch
         .env_remove("GPY_CONFIG_PATH")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
+        .status()
         .expect("spawn gpy")
 }
 
@@ -61,22 +54,32 @@ fn concurrent_config_sets_on_distinct_keys_all_persist() {
 
     let mut lost = Vec::new();
     for round in 0_u32..12_u32 {
-        let go = temp.path().join(format!("go-{round}"));
-        let children: Vec<Child> = KEYS
-            .iter()
-            .map(|(key, even, odd)| {
-                let value = if round.is_multiple_of(2) { even } else { odd };
-                spawn_gated(&go, &home, &xdg, key, value)
-            })
-            .collect();
-        // Let every child reach its spin loop before releasing them.
-        let ready = Instant::now();
-        while ready.elapsed() < Duration::from_millis(150) {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        std::fs::write(&go, "").unwrap();
-        for mut child in children {
-            child.wait().unwrap();
+        // One thread per writer, released together so the processes start
+        // within microseconds of each other. Spawned one after another,
+        // process start-up staggers them past the roughly 15 ms save window
+        // and the race rarely shows.
+        let barrier = Barrier::new(KEYS.len());
+        let (gate, home_dir, xdg_dir) = (&barrier, &home, &xdg);
+        let statuses: Vec<ExitStatus> = std::thread::scope(|scope| {
+            let writers: Vec<_> = KEYS
+                .iter()
+                .map(|(key, even, odd)| {
+                    let value = if round.is_multiple_of(2) { even } else { odd };
+                    scope.spawn(move || {
+                        gate.wait();
+                        config_set(home_dir, xdg_dir, key, value)
+                    })
+                })
+                .collect();
+            writers
+                .into_iter()
+                .map(|writer| writer.join().expect("writer thread"))
+                .collect()
+        });
+        for ((key, _, _), status) in KEYS.iter().zip(&statuses) {
+            if !status.success() {
+                lost.push(format!("round {round}: setting {key} exited {status}"));
+            }
         }
 
         let text = std::fs::read_to_string(&config).unwrap();

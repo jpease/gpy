@@ -46,52 +46,70 @@ key_length() {
 
 # Each driver runs in $PROJ: up to $TRIES times it asks the omit gate and, once
 # the segment is not omitted, prints `RENDER:<segment>`; otherwise `OMITTED`.
-# In `cold` mode an omitted render waits 100 ms for the refresh it dispatched.
+# In `cold` mode an omitted render waits 100 ms for the refresh it dispatched,
+# and so does an empty one: the agent writes the four position variants one
+# after another, so the gate (any variant counts) can open before the variant
+# this render reads exists, and the draw only follows once it does.
 # The render carries a previous background, so it reads through the variant
 # fallback.
 drive_bash='
 cd "$PROJ" || exit 1
 source "$GPY_ROOT/bash/gpy.bash" >/dev/null 2>&1
 export GPY_AGENT_ENABLED=1
+last=OMITTED
 for ((i = 0; i < TRIES; i++)); do
     if ! __gpy_segment_language_omit; then
-        printf "RENDER:%s" "$(__gpy_segment_language true 231 "")"
-        exit 0
+        rendered="$(__gpy_segment_language true 231 "")"
+        if [[ -n "$rendered" || "$MODE" != cold ]]; then
+            printf "RENDER:%s" "$rendered"
+            exit 0
+        fi
+        last="RENDER:"
     fi
     [[ "$MODE" == cold ]] || break
     sleep 0.1
 done
-printf OMITTED
+printf %s "$last"
 '
 drive_zsh='
 cd "$PROJ" || exit 1
 source "$GPY_ROOT/zsh/gpy.zsh" >/dev/null 2>&1
 export GPY_AGENT_ENABLED=1
+last=OMITTED
 for ((i = 0; i < TRIES; i++)); do
     if ! __gpy_segment_language_omit; then
-        printf "RENDER:%s" "$(__gpy_segment_language true 231 "")"
-        exit 0
+        rendered="$(__gpy_segment_language true 231 "")"
+        if [[ -n "$rendered" || "$MODE" != cold ]]; then
+            printf "RENDER:%s" "$rendered"
+            exit 0
+        fi
+        last="RENDER:"
     fi
     [[ "$MODE" == cold ]] || break
     sleep 0.1
 done
-printf OMITTED
+printf %s "$last"
 '
 drive_fish='
 cd $PROJ; or exit 1
 source $GPY_ROOT/fish/core/init.fish >/dev/null 2>&1
 source $GPY_ROOT/fish/segments/language.fish
 set -gx GPY_AGENT_ENABLED 1
+set last OMITTED
 for i in (seq $TRIES)
     if not segment_language_omit
         set -g __gpy_last_segment_bg 231
-        printf "RENDER:%s" (segment_language_render true "")
-        exit 0
+        set rendered (segment_language_render true "")
+        if test -n "$rendered"; or test "$MODE" != cold
+            printf "RENDER:%s" $rendered
+            exit 0
+        end
+        set last "RENDER:"
     end
     test "$MODE" = cold; or break
     sleep 0.1
 end
-printf OMITTED
+printf %s $last
 '
 
 # drive SHELL MODE PROJECT [PATH]: the shell binary is resolved before PATH

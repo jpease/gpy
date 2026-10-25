@@ -70,6 +70,7 @@ jobs:
           cargo nextest run --locked --profile ci-windows --no-fail-fast --no-tests=fail --features test-support
           --test gpy_cli_tests
           --test cli_config_mutation_tests
+          --test config_concurrent_save_tests
           --test theme_import_tests
           --test init_command_tests
           --test cli_integration_tests

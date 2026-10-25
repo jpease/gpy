@@ -2430,16 +2430,17 @@ fn language_event_does_not_wait_on_a_version_probe() {
                     .is_ok_and(|content| content.contains("3.7.4"))
         })
     };
+    // The job writes the instant cache first and rings the doorbell after, so
+    // a cache that already holds the version says nothing about the ring yet:
+    // wait for both, not the ring right after the cache.
+    let rung = || ctx.registry.notify_invocations() > notified_before;
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while !published() && std::time::Instant::now() < deadline {
+    while !(published() && rung()) && std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
     assert!(
         published(),
         "the probed version must reach the instant cache"
     );
-    assert!(
-        ctx.registry.notify_invocations() > notified_before,
-        "the publish must ring the shells"
-    );
+    assert!(rung(), "the publish must ring the shells");
 }
