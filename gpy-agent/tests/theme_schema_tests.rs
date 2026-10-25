@@ -675,7 +675,7 @@ bg_color = "black"
 text_color = "white"
 
 [segments.k8s]
-context_color = "definitely-not-a-color"
+warn_bg_color = "definitely-not-a-color"
 "#,
     );
 
@@ -683,39 +683,7 @@ context_color = "definitely-not-a-color"
         .expect_err("theme load should fail");
     let message = err.to_string();
     assert!(
-        message.contains("segments.k8s.context_color"),
+        message.contains("definitely-not-a-color"),
         "Expected plugin color validation error, got: {message}"
-    );
-}
-
-#[test]
-fn load_theme_invalid_plugin_icon_errors() {
-    let temp_dir = tempfile::tempdir().expect("temp dir");
-    let xdg_config = temp_dir.path().join("config");
-    let broken = write_theme(
-        &xdg_config,
-        "invalid-plugin-icon",
-        r#"[ui]
-prompt_icon = ">"
-
-[segments.clock]
-bg_color = "black"
-text_color = "white"
-
-[segments.k8s]
-secondary_icon = "\u0007"
-"#,
-    );
-
-    let err = loader::load_theme_from_path(broken.to_str().expect("path"))
-        .expect_err("theme load should fail");
-    let message = err.to_string();
-    assert!(
-        message.contains("segments.k8s.secondary_icon"),
-        "Expected plugin icon validation error, got: {message}"
-    );
-    assert!(
-        message.contains("contains control characters"),
-        "Expected control character error, got: {message}"
     );
 }

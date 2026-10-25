@@ -1892,3 +1892,101 @@ fn config_list_matches_registry() {
         "filter leaked other keys: {keys:?}"
     );
 }
+
+/// Install a script plugin `demo-tools` with segment `demo` under the env's
+/// user plugin root.
+fn install_script_plugin(env: &CliTestEnv) -> std::path::PathBuf {
+    let root = env.plugins_dir().join("demo-tools");
+    fs::create_dir_all(root.join("segments")).expect("segments dir");
+    fs::write(
+        root.join("plugin.toml"),
+        "id = \"demo-tools\"\nname = \"Demo\"\nversion = \"0.1.0\"\napi_version = \"v1\"\n\
+         entry_type = \"script\"\nprovided_segments = [\"demo\"]\n",
+    )
+    .expect("plugin manifest");
+    fs::write(root.join("demo.sh"), "printf 'demo\\n'\n").expect("script");
+    fs::write(
+        root.join("segments/demo.toml"),
+        "command = \"demo.sh\"\ninputs = [\"pwd\"]\ntimeout_ms = 300\n\
+         [settings.style]\ntype = \"string\"\ndefault = \"bold\"\nchoices = [\"bold\", \"dim\"]\n",
+    )
+    .expect("segment manifest");
+    root
+}
+
+/// `gpy plugin validate` reports a script segment; `gpy config get/set/list`
+/// reach its overrides as `plugin.<segment>.<key>` and validate them.
+#[test]
+fn script_plugin_validate_and_config_keys() {
+    let env = CliTestEnv::new().expect("CLI test env");
+    let root = install_script_plugin(&env);
+
+    let validate = env
+        .run_gpy(&["plugin", "validate", root.to_str().expect("utf8")])
+        .expect("spawn gpy");
+    validate.assert_success("gpy plugin validate");
+    for needle in [
+        "entry: script",
+        "segment demo:",
+        "command: demo.sh",
+        "cache: folder scope, ttl_secs 5, timeout_ms 300",
+    ] {
+        assert!(
+            validate.stdout.contains(needle),
+            "{needle:?} missing:\n{}",
+            validate.stdout
+        );
+    }
+
+    let get = env
+        .run_gpy(&["config", "get", "plugin.demo.ttl_secs"])
+        .expect("spawn gpy");
+    get.assert_success("gpy config get default");
+    assert_eq!(get.stdout.trim(), "5");
+
+    env.run_gpy(&["config", "set", "plugin.demo.ttl_secs", "30"])
+        .expect("spawn gpy")
+        .assert_success("gpy config set ttl_secs");
+    env.run_gpy(&["config", "set", "plugin.demo.style", "dim"])
+        .expect("spawn gpy")
+        .assert_success("gpy config set style");
+    let saved = fs::read_to_string(env.config_path()).expect("config written");
+    assert!(saved.contains("[plugin.demo]"), "{saved}");
+    let style = env
+        .run_gpy(&["config", "get", "plugin.demo.style"])
+        .expect("spawn gpy");
+    assert_eq!(style.stdout.trim(), "dim");
+
+    for (key, value, needle) in [
+        ("plugin.demo.style", "loud", "plugin.demo.style"),
+        ("plugin.demo.timeout_ms", "400", "may only lower it"),
+        ("plugin.nope.ttl_secs", "1", "no installed script plugin"),
+    ] {
+        let rejected = env
+            .run_gpy(&["config", "set", key, value])
+            .expect("spawn gpy");
+        assert_ne!(rejected.exit_code, 0_i32, "{key}={value} must fail");
+        let output = format!("{}{}", rejected.stdout, rejected.stderr);
+        assert!(output.contains(needle), "{needle:?} missing:\n{output}");
+    }
+    assert_eq!(
+        fs::read_to_string(env.config_path()).expect("config"),
+        saved
+    );
+
+    let list = env
+        .run_gpy(&["config", "list", "plugin."])
+        .expect("spawn gpy");
+    list.assert_success("gpy config list plugin.");
+    for key in [
+        "plugin.demo.style",
+        "plugin.demo.timeout_ms",
+        "plugin.demo.ttl_secs",
+    ] {
+        assert!(
+            list.stdout.contains(&format!("  {key} [read-write]")),
+            "{key}:\n{}",
+            list.stdout
+        );
+    }
+}

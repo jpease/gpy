@@ -3,6 +3,7 @@
 use super::utils::{
     active_config_path, load_active_config, read_config, reload_agent_and_notify, save_config_to,
 };
+use crate::config::plugin_segments::{self, PLUGIN_KEY_PREFIX};
 use crate::{Error, Result, config};
 use std::path::PathBuf;
 use std::process::Command;
@@ -15,27 +16,35 @@ const NEW_CONFIG_HEADER: &str = "# GPY configuration\n# Every key is optional; o
 /// # Errors
 /// Returns an error if the section is invalid or the config cannot be loaded.
 pub fn show(section: Option<&str>) -> Result<()> {
+    const SECTIONS: [(&str, &str); 5] = [
+        ("agent", "Agent"),
+        ("git", "Git"),
+        ("language", "Language"),
+        ("ui", "UI"),
+        ("plugin", "Plugin segment overrides"),
+    ];
     let config = read_config()?;
 
     match section {
-        Some("agent") => show_section(&config, "agent", "Agent")?,
-        Some("git") => show_section(&config, "git", "Git")?,
-        Some("language") => show_section(&config, "language", "Language")?,
-        Some("ui") => show_section(&config, "ui", "UI")?,
-        Some(other) => {
-            return Err(Error::config(format!(
-                "Invalid section: {other}. Valid sections: agent, git, language, ui"
-            )));
+        Some(name) => {
+            let (key, title) = SECTIONS
+                .iter()
+                .find(|(key, _)| *key == name)
+                .ok_or_else(|| {
+                    Error::config(format!(
+                        "Invalid section: {name}. Valid sections: agent, git, language, ui, plugin"
+                    ))
+                })?;
+            show_section(&config, key, title)?;
         }
         None => {
             // Reuse the parsed config rather than re-reading per section.
-            show_section(&config, "agent", "Agent")?;
-            println!();
-            show_section(&config, "git", "Git")?;
-            println!();
-            show_section(&config, "language", "Language")?;
-            println!();
-            show_section(&config, "ui", "UI")?;
+            for (index, (key, title)) in SECTIONS.iter().enumerate() {
+                if index > 0 {
+                    println!();
+                }
+                show_section(&config, key, title)?;
+            }
         }
     }
 
@@ -69,7 +78,11 @@ fn show_section(config: &config::Config, section: &str, title: &str) -> Result<(
 /// Returns an error if the key is unknown or the config cannot be loaded.
 pub fn get(key: &str) -> Result<()> {
     let config = read_config()?;
-    let value = config::metadata::get_config_value(&config, key)?;
+    let value = if key.starts_with(PLUGIN_KEY_PREFIX) {
+        plugin_segments::get(&config, &crate::plugin::discover_plugins(), key)?
+    } else {
+        config::metadata::get_config_value(&config, key)?
+    };
     println!("{value}");
     Ok(())
 }
@@ -78,6 +91,7 @@ pub fn get(key: &str) -> Result<()> {
 ///
 /// Loads, mutates, and saves the active config file. Load or validation
 /// failures abort before any write, leaving the existing file untouched.
+/// `plugin.<segment>.<key>` is checked against the installed segment's manifest.
 ///
 /// # Errors
 /// Returns an error if the key or value is invalid or the config cannot be loaded.
@@ -86,10 +100,15 @@ pub fn set(key: &str, value: &str) -> Result<()> {
     let original = load_active_config(&path)?;
     let mut config = original.clone();
 
-    config::metadata::set_config_value(&mut config, key, value)?;
-    validate_resource_backed_key(key, &config)?;
+    let explicit_key = if key.starts_with(PLUGIN_KEY_PREFIX) {
+        plugin_segments::set(&mut config, &crate::plugin::discover_plugins(), key, value)?;
+        plugin_segments::canonical_key(key)?
+    } else {
+        config::metadata::set_config_value(&mut config, key, value)?;
+        validate_resource_backed_key(key, &config)?;
+        config::metadata::canonical_config_key(key)
+    };
 
-    let explicit_key = config::metadata::canonical_config_key(key);
     save_config_to(&path, &original, &config, &[explicit_key.as_str()])?;
     println!("Set {key} = {value}");
 
@@ -147,28 +166,35 @@ pub fn open() -> Result<()> {
     Ok(())
 }
 
-/// List all available configuration keys.
+/// List all available configuration keys, then the `plugin.<segment>.<key>`
+/// overrides the installed script segments accept.
 pub fn list(filter: Option<&str>) {
     use crate::config::metadata::CONFIG_KEYS;
 
     println!("Available configuration keys:\n");
 
-    let mut count = 0_i32;
-    for meta in CONFIG_KEYS {
-        if let Some(f) = filter
-            && !meta.key.starts_with(f)
-        {
-            continue;
-        }
-
+    let core = CONFIG_KEYS.iter().map(|meta| {
         let access = if meta.set.is_some() {
             "read-write"
         } else {
             "read-only "
         };
+        (meta.key.to_owned(), access, meta.description.to_owned())
+    });
+    let plugin = plugin_segments::list_keys(&crate::plugin::discover_plugins())
+        .into_iter()
+        .map(|(key, description)| (key, "read-write", description));
 
-        println!("  {} [{}]", meta.key, access);
-        println!("    {}", meta.description);
+    let mut count = 0_i32;
+    for (key, access, description) in core.chain(plugin) {
+        if let Some(f) = filter
+            && !key.starts_with(f)
+        {
+            continue;
+        }
+
+        println!("  {key} [{access}]");
+        println!("    {description}");
         println!();
 
         count = count.saturating_add(1_i32);

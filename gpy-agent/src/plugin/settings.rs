@@ -69,7 +69,7 @@ impl fmt::Display for SettingKey {
 }
 
 /// A setting value: a TOML boolean, integer or string.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum SettingValue {
     /// `true` or `false`; the script sees `true`/`false`.

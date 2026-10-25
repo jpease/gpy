@@ -355,7 +355,7 @@ fn test_config_show_specific_section() {
     );
 }
 
-/// `show(None)` must equal its four `show(Some(section))` outputs joined by
+/// `show(None)` must equal its five `show(Some(section))` outputs joined by
 /// blank lines.
 #[test]
 fn test_config_show_all_equals_concatenated_sections() {
@@ -367,8 +367,10 @@ fn test_config_show_all_equals_concatenated_sections() {
     let language = run_gpy_command(&["config", "show", "language"])
         .expect("Failed to run gpy config show language");
     let ui = run_gpy_command(&["config", "show", "ui"]).expect("Failed to run gpy config show ui");
+    let plugin = run_gpy_command(&["config", "show", "plugin"])
+        .expect("Failed to run gpy config show plugin");
 
-    let expected = format!("{agent}\n{git}\n{language}\n{ui}");
+    let expected = format!("{agent}\n{git}\n{language}\n{ui}\n{plugin}");
     assert_eq!(
         all, expected,
         "show(None) output must be byte-identical to its per-section outputs joined by a blank line"
