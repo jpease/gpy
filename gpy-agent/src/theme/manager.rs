@@ -513,12 +513,14 @@ impl ThemeManager {
         )
     }
 
-    /// Discover third-party plugin segment file paths, keyed by segment name.
+    /// Discover third-party `.fish` plugin segment file paths, keyed by segment name.
     fn collect_plugin_segment_files() -> BTreeMap<String, String> {
         let discovery = discover_plugins();
         let mut files = BTreeMap::new();
         for plugin in discovery.plugins {
-            if matches!(plugin.source, crate::plugin::PluginSource::FirstParty) {
+            if matches!(plugin.source, crate::plugin::PluginSource::FirstParty)
+                || !matches!(plugin.manifest.entry_type, crate::plugin::EntryType::File)
+            {
                 continue;
             }
             for provided_segment in plugin.manifest.provided_segments {

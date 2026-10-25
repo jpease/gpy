@@ -169,10 +169,21 @@ fn register_discovered_plugin(
             plugin_dir,
             source,
             message: format!(
-                "Unsupported entry_type '{}' for plugin '{}': only 'file' plugins are loadable by this runtime",
+                "Unsupported entry_type '{}' for plugin '{}': only 'file' and 'script' plugins are loadable by this runtime",
                 manifest.entry_type.as_str(),
                 manifest.id
             ),
+        });
+        return;
+    }
+
+    let version_check = GpyVersion::new(env!("CARGO_PKG_VERSION"))
+        .and_then(|current| manifest.check_min_gpy_version(&current));
+    if let Err(e) = version_check {
+        diagnostics.push(PluginDiagnostic {
+            plugin_dir,
+            source,
+            message: e.to_string(),
         });
         return;
     }
@@ -394,6 +405,34 @@ entry_type = "command"
                 .message
                 .contains("Unsupported entry_type 'command'")),
             "expected an unsupported-entry-type diagnostic"
+        );
+    }
+
+    #[test]
+    fn discover_plugins_rejects_unmet_min_gpy_version() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = temp.path().join("gpy").join("plugins");
+        let manifest = format!(
+            "{}\n[compatibility_constraints]\nmin_gpy_version = \"999.0.0\"\n",
+            valid_manifest("future")
+        );
+        write_plugin(&root, "future", &manifest);
+
+        let discovery = discover_plugins_in_roots(&[(PluginSource::User, root)]);
+
+        assert!(
+            !discovery
+                .plugins
+                .iter()
+                .any(|plugin| plugin.manifest.id.as_str() == "future"),
+            "a plugin needing a newer GPY must not load"
+        );
+        assert!(
+            discovery
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("requires GPY 999.0.0")),
+            "expected a min_gpy_version diagnostic"
         );
     }
 

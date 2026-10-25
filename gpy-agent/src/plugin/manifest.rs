@@ -169,8 +169,11 @@ impl fmt::Display for SegmentName {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EntryType {
-    /// The plugin provides `segments/<name>.fish` files sourced at prompt init.
+    /// The plugin provides `segments/<name>.fish` files sourced at prompt init (Fish only).
     File,
+    /// The plugin provides `segments/<name>.toml` script segment manifests, each
+    /// naming a POSIX `sh` script that every shell runs (ADR-0011 option G).
+    Script,
     /// Reserved custom-command runtime; parsed for diagnostics but not loadable.
     Command,
 }
@@ -181,6 +184,7 @@ impl EntryType {
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::File => "file",
+            Self::Script => "script",
             Self::Command => "command",
         }
     }
@@ -188,7 +192,7 @@ impl EntryType {
     /// Whether the current runtime can load plugins with this entry type.
     #[must_use]
     pub const fn is_runtime_supported(&self) -> bool {
-        matches!(self, Self::File)
+        matches!(self, Self::File | Self::Script)
     }
 }
 
@@ -349,8 +353,27 @@ impl PluginManifest {
                 "provided_segments: {collision}"
             )));
         }
-
         Ok(manifest)
+    }
+
+    /// Reject a plugin whose `min_gpy_version` is newer than `current`.
+    ///
+    /// # Errors
+    /// Returns an error naming both versions when the plugin needs a newer GPY.
+    pub fn check_min_gpy_version(&self, current: &GpyVersion) -> crate::Result<()> {
+        match self
+            .compatibility_constraints
+            .as_ref()
+            .and_then(|constraints| constraints.min_gpy_version.as_ref())
+        {
+            Some(min_version) if min_version.is_greater_than(current) => {
+                Err(crate::Error::invalid(format!(
+                    "Plugin '{}' requires GPY {min_version} or newer (compatibility_constraints.min_gpy_version); this is GPY {current}",
+                    self.id
+                )))
+            }
+            _ => Ok(()),
+        }
     }
 }
 
@@ -509,9 +532,65 @@ mod tests {
     #[test]
     fn entry_type_runtime_support() {
         assert!(EntryType::File.is_runtime_supported());
+        assert!(EntryType::Script.is_runtime_supported());
         assert!(!EntryType::Command.is_runtime_supported());
         assert_eq!(EntryType::File.as_str(), "file");
+        assert_eq!(EntryType::Script.as_str(), "script");
         assert_eq!(EntryType::Command.as_str(), "command");
+    }
+
+    fn manifest_with_min_version(min: &str) -> PluginManifest {
+        PluginManifest::parse(&format!(
+            r#"
+            id = "versioned"
+            name = "Versioned"
+            version = "1.0.0"
+            api_version = "v1"
+            provided_segments = ["x"]
+            entry_type = "script"
+
+            [compatibility_constraints]
+            min_gpy_version = "{min}"
+        "#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn min_gpy_version_is_enforced() {
+        let current = GpyVersion::new("1.2.3").unwrap();
+        for ok in ["1.2.3", "1.2.0", "0.9.9", "1.2.3-beta.1"] {
+            manifest_with_min_version(ok)
+                .check_min_gpy_version(&current)
+                .unwrap();
+        }
+        let err = manifest_with_min_version("1.3.0")
+            .check_min_gpy_version(&current)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("1.3.0") && err.contains("1.2.3") && err.contains("min_gpy_version"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn missing_min_gpy_version_always_passes() {
+        let manifest = PluginManifest::parse(
+            r#"
+            id = "plain"
+            name = "Plain"
+            version = "1.0.0"
+            api_version = "v1"
+            provided_segments = ["x"]
+            entry_type = "script"
+        "#,
+        )
+        .unwrap();
+        assert_eq!(manifest.entry_type, EntryType::Script);
+        manifest
+            .check_min_gpy_version(&GpyVersion::new("0.0.1").unwrap())
+            .unwrap();
     }
 
     #[test]

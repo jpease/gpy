@@ -28,26 +28,30 @@ pub(crate) fn current_gpy_version() -> Result<GpyVersion> {
     GpyVersion::new(VERSION)
 }
 
-const fn render_entry_type(entry_type: &EntryType) -> &'static str {
-    match entry_type {
-        EntryType::File => "file",
-        EntryType::Command => "command",
-    }
-}
-
 fn plugin_segment_file(root: &Path, segment: &crate::plugin::SegmentName) -> PathBuf {
     root.join("segments").join(format!("{segment}.fish"))
 }
 
-/// Validate that a plugin root contains the files required by its manifest.
+fn script_segment_manifest_path(root: &Path, segment: &crate::plugin::SegmentName) -> PathBuf {
+    root.join("segments").join(format!("{segment}.toml"))
+}
+
+/// Error for a manifest whose `entry_type` this runtime cannot load.
+fn unsupported_entry_type(entry_type: &EntryType) -> Error {
+    Error::invalid(format!(
+        "Unsupported entry_type '{}': only 'file' and 'script' plugins are loadable by this runtime",
+        entry_type.as_str()
+    ))
+}
+
+/// Validate that a plugin root contains the files required by its manifest
+/// and that this GPY satisfies its `min_gpy_version`.
 fn validate_plugin_root(root: &Path, manifest: &PluginManifest) -> Result<()> {
     // Fail at validation rather than at prompt init.
     if !manifest.entry_type.is_runtime_supported() {
-        return Err(Error::invalid(format!(
-            "Unsupported entry_type '{}': only 'file' plugins are loadable by this runtime",
-            manifest.entry_type.as_str()
-        )));
+        return Err(unsupported_entry_type(&manifest.entry_type));
     }
+    manifest.check_min_gpy_version(&current_gpy_version()?)?;
 
     if !root.is_dir() {
         return Err(Error::invalid(format!(
@@ -64,16 +68,30 @@ fn validate_plugin_root(root: &Path, manifest: &PluginManifest) -> Result<()> {
         )));
     }
 
-    if matches!(manifest.entry_type, EntryType::File) {
-        for segment in &manifest.provided_segments {
-            let segment_file = plugin_segment_file(root, segment);
-            if !segment_file.is_file() {
-                return Err(Error::invalid(format!(
-                    "Missing segment file for '{segment}': {}",
-                    segment_file.display()
-                )));
+    match manifest.entry_type {
+        EntryType::File => {
+            for segment in &manifest.provided_segments {
+                let segment_file = plugin_segment_file(root, segment);
+                if !segment_file.is_file() {
+                    return Err(Error::invalid(format!(
+                        "Missing segment file for '{segment}': {}",
+                        segment_file.display()
+                    )));
+                }
             }
         }
+        EntryType::Script => {
+            for segment in &manifest.provided_segments {
+                let segment_manifest = script_segment_manifest_path(root, segment);
+                if !segment_manifest.is_file() {
+                    return Err(Error::invalid(format!(
+                        "Missing script segment manifest for '{segment}': {}",
+                        segment_manifest.display()
+                    )));
+                }
+            }
+        }
+        EntryType::Command => return Err(unsupported_entry_type(&manifest.entry_type)),
     }
 
     Ok(())
@@ -126,7 +144,7 @@ fn print_manifest_validation(manifest: &PluginManifest, root: &Path) {
         manifest.id, manifest.version, manifest.api_version
     ));
     println!("   root: {}", root.display());
-    println!("   entry: {}", render_entry_type(&manifest.entry_type));
+    println!("   entry: {}", manifest.entry_type.as_str());
     println!("   segments: {}", {
         let list = manifest
             .provided_segments
@@ -140,7 +158,7 @@ fn print_manifest_validation(manifest: &PluginManifest, root: &Path) {
         }
     });
     println!("   public helpers: {}", PUBLIC_PLUGIN_HELPERS.join(", "));
-    print_min_version_warning(manifest.compatibility_constraints.as_ref());
+    print_min_version(manifest.compatibility_constraints.as_ref());
 }
 
 fn print_discovered_plugin_validation(plugin: &crate::plugin::DiscoveredPlugin) {
@@ -161,23 +179,15 @@ fn print_discovered_plugin_validation(plugin: &crate::plugin::DiscoveredPlugin) 
             .collect::<Vec<_>>()
             .join(", ")
     );
-    print_min_version_warning(plugin.manifest.compatibility_constraints.as_ref());
+    print_min_version(plugin.manifest.compatibility_constraints.as_ref());
 }
 
-fn print_min_version_warning(
-    compatibility_constraints: Option<&crate::plugin::CompatibilityConstraints>,
-) {
-    if let Some(constraints) = compatibility_constraints
-        && let Some(min_version) = &constraints.min_gpy_version
+/// Print the declared minimum; validation already rejected an unmet one.
+fn print_min_version(compatibility_constraints: Option<&crate::plugin::CompatibilityConstraints>) {
+    if let Some(min_version) =
+        compatibility_constraints.and_then(|constraints| constraints.min_gpy_version.as_ref())
     {
         println!("   min gpy version: {min_version}");
-        if let Ok(current) = current_gpy_version()
-            && min_version.is_greater_than(&current)
-        {
-            println!(
-                "   compatibility warning: this plugin requires GPY {min_version}+, current is {current}"
-            );
-        }
     }
 }
 
@@ -240,10 +250,7 @@ pub fn list() {
                 render_source(plugin.source)
             );
             println!("  api: {}", plugin.manifest.api_version);
-            println!(
-                "  entry: {}",
-                render_entry_type(&plugin.manifest.entry_type)
-            );
+            println!("  entry: {}", plugin.manifest.entry_type.as_str());
             println!("  root: {}", plugin.root.display());
             println!(
                 "  segments: {}",
@@ -309,10 +316,7 @@ pub fn validate(path_or_id: &str) -> Result<()> {
 /// Validate first-party (built-in) plugin metadata, which has no filesystem root.
 fn validate_first_party_metadata(manifest: &PluginManifest) -> Result<()> {
     if !manifest.entry_type.is_runtime_supported() {
-        return Err(Error::invalid(format!(
-            "Unsupported entry_type '{}': only 'file' plugins are loadable by this runtime",
-            manifest.entry_type.as_str()
-        )));
+        return Err(unsupported_entry_type(&manifest.entry_type));
     }
     if manifest.provided_segments.is_empty() {
         return Err(Error::invalid(
@@ -338,7 +342,7 @@ fn print_first_party_validation(plugin: &crate::plugin::DiscoveredPlugin) {
             .collect::<Vec<_>>()
             .join(", ")
     );
-    print_min_version_warning(plugin.manifest.compatibility_constraints.as_ref());
+    print_min_version(plugin.manifest.compatibility_constraints.as_ref());
 }
 
 /// Create a new plugin scaffold in the user plugin root.
@@ -423,5 +427,61 @@ entry_type = "command"
     #[test]
     fn validate_first_party_gpy_core_succeeds() {
         validate("gpy-core").expect("first-party gpy-core should validate");
+    }
+
+    fn write_script_plugin(root: &Path, min_version: &str) {
+        fs::write(
+            root.join("plugin.toml"),
+            format!(
+                r#"
+id = "script-plugin"
+name = "Script Plugin"
+version = "0.1.0"
+api_version = "v1"
+provided_segments = ["demo"]
+entry_type = "script"
+
+[compatibility_constraints]
+min_gpy_version = "{min_version}"
+"#
+            ),
+        )
+        .expect("write manifest");
+    }
+
+    #[test]
+    fn validate_script_plugin_needs_no_fish_file() {
+        let temp = TempDir::new().expect("tempdir");
+        write_script_plugin(temp.path(), "0.0.1");
+        let path = temp.path().to_str().expect("utf8 path");
+
+        let err = validate(path).expect_err("segment manifest is required");
+        assert!(
+            err.to_string()
+                .contains("Missing script segment manifest for 'demo'"),
+            "unexpected error: {err}"
+        );
+
+        fs::create_dir_all(temp.path().join("segments")).expect("segments dir");
+        fs::write(
+            temp.path().join("segments/demo.toml"),
+            "command = \"bin/demo.sh\"\n",
+        )
+        .expect("write segment manifest");
+        fs::create_dir_all(temp.path().join("bin")).expect("bin dir");
+        fs::write(temp.path().join("bin/demo.sh"), "echo demo\n").expect("write script");
+        validate(path).expect("script plugin without a .fish file validates");
+    }
+
+    #[test]
+    fn validate_rejects_unmet_min_gpy_version() {
+        let temp = TempDir::new().expect("tempdir");
+        write_script_plugin(temp.path(), "999.0.0");
+        let err = validate(temp.path().to_str().expect("utf8 path"))
+            .expect_err("a newer min_gpy_version must fail validation");
+        assert!(
+            err.to_string().contains("requires GPY 999.0.0"),
+            "unexpected error: {err}"
+        );
     }
 }
