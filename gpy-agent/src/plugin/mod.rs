@@ -6,6 +6,10 @@ mod builtin;
 pub mod manifest;
 /// Plugin discovery and registry model
 pub mod registry;
+/// Script segment manifests (`entry_type = "script"`)
+pub mod script;
+/// Typed settings declared by script segments
+pub mod settings;
 
 pub(crate) use builtin::{BUILTIN_ORDER, BuiltinSegment};
 pub use manifest::{
@@ -16,3 +20,12 @@ pub use registry::{
     DiscoveredPlugin, PluginDiagnostic, PluginDiscovery, PluginSource, discover_plugins,
     user_plugins_dir,
 };
+pub use script::{
+    CacheScope, EnvName, Extension, InputName, RESERVED_SETTING_KEYS, ScanName, ScriptPath,
+    ScriptSegmentManifest, TimeoutMs, TtlSecs, VariantColorKey, VariantColorPart, VariantName,
+    script_segment_manifest_path,
+};
+pub use settings::{SettingDecl, SettingKey, SettingValue};
+
+#[cfg(test)]
+mod schema_tests;

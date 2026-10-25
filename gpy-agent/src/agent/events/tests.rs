@@ -1359,6 +1359,17 @@ fn palette_change_triggers_refresh_required() {
 }
 
 #[test]
+fn plugin_segment_override_change_triggers_refresh_required() {
+    let old = Config::default();
+    let new_cfg = crate::config::loader::parse_config_toml("[plugin.k8s]\nttl_secs = 30\n")
+        .expect("valid plugin override");
+    assert!(
+        config_refresh_required(&old, &new_cfg),
+        "a [plugin.<segment>] change must be recognized as requiring a prompt refresh"
+    );
+}
+
+#[test]
 fn unchanged_config_does_not_require_refresh() {
     let config = Config::default();
     assert!(

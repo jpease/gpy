@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- Script plugin segments (`entry_type = "script"`): a public, documented
+  contract in `docs/dev/plugins.md` with a `segments/<id>.toml` manifest,
+  typed settings, enforced `min_gpy_version`, published JSON schemas, and
+  user overrides in `config.toml` `[plugin.<segment>]` reachable by
+  `gpy config get/set/list` as `plugin.<segment>.<key>`. Theme
+  `[segments.<plugin>]` now accepts only style keys; free-form keys such as
+  `context_color` are rejected in favour of `<variant>_bg_color` and
+  `<variant>_text_color`.
+
 ### Fixed
 
 - Parallel `gpy config set` calls on different keys no longer lose updates.

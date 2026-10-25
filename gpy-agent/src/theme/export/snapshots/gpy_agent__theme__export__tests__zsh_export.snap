@@ -98,11 +98,10 @@ typeset -g __gpy_segment_kubernetes_text_color="white"
 typeset -g __color_kubernetes_fg="white"
 typeset -g __gpy_segment_kubernetes_icon="k8s\$ctx"
 typeset -g __icon_kubernetes="k8s\$ctx"
-typeset -g __gpy_segment_kubernetes_context_color="brblue"
-typeset -g __color_kubernetes_context="brblue"
-typeset -g __gpy_segment_kubernetes_namespace_icon="ns\`n\`"
-typeset -g __icon_kubernetes_namespace="ns\`n\`"
-typeset -g __gpy_segment_kubernetes_plain_property="value\\"
+typeset -g __gpy_segment_kubernetes_warn_bg_color="brblue"
+typeset -g __color_kubernetes_warn_bg="brblue"
+typeset -g __gpy_segment_kubernetes_warn_text_color="black"
+typeset -g __color_kubernetes_warn_fg="black"
 typeset -g -a __enabled_segments=(clock username hostname directory git duration status)
 typeset -g -a __gpy_lang_marker_files=(.ruby-version CMakeLists.txt Cargo.toml Gemfile Makefile Package.swift Pipfile Rakefile build.gradle build.gradle.kts composer.json go.mod go.sum mix.exs package.json pom.xml pyproject.toml rebar.config requirements.txt setup.cfg setup.py tox.ini tsconfig.json)
 

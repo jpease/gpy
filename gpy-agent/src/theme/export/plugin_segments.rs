@@ -1,15 +1,11 @@
-//! Assignments for plugin and community segments: styles, delimiters, properties and file paths.
+//! Assignments for plugin and community segments: styles, delimiters, variant colours and file paths.
 
-use super::shell_assignment::{
-    ShellAssignment, append_shell_assignment, append_shell_assignments, sanitize_property_token,
-};
+use super::shell_assignment::{ShellAssignment, append_shell_assignment, append_shell_assignments};
 use super::shell_colors::ShellColors;
 use crate::config::DelimiterConfig;
-use crate::config::validation::colors::canonical_color;
-use crate::plugin::SegmentName;
+use crate::plugin::{SegmentName, VariantColorPart};
 use crate::shell::Shell;
 use crate::theme::model::{PluginSegmentTheme, ThemeConfig};
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 /// Style assignments for one plugin segment, emitted both namespaced
@@ -100,66 +96,29 @@ fn plugin_segment_delimiter_assignments(
     ]
 }
 
-/// Plugin segment `properties`, sorted; `*_color`/`*_icon` also get a flat alias.
-fn plugin_segment_property_assignments(
+/// Variant colours, sorted: `__gpy_segment_<token>_<variant>_{bg,text}_color`
+/// plus the flat `__color_<token>_<variant>_{bg,fg}` alias built-ins use.
+fn plugin_segment_variant_assignments(
     colors: ShellColors<'_>,
     segment_token: &str,
     segment_theme: &PluginSegmentTheme,
 ) -> Vec<ShellAssignment> {
-    let gpy_prefix = format!("__gpy_segment_{segment_token}");
     let mut assignments = Vec::new();
-
-    let mut property_names: Vec<_> = segment_theme.properties.keys().collect();
-    property_names.sort_unstable();
-    for property_name in property_names {
-        let Some(raw_value) = segment_theme
-            .properties
-            .get(property_name)
-            .map(String::as_str)
-        else {
-            continue;
+    for (key, color) in &segment_theme.variant_colors {
+        let resolved = colors.resolve(color);
+        let flat_suffix = match key.part {
+            VariantColorPart::Bg => "bg",
+            VariantColorPart::Text => "fg",
         };
-        let property_token = sanitize_property_token(property_name);
-        if property_token.is_empty() {
-            continue;
-        }
-        let is_color = property_name.ends_with("_color");
-        // Theme validation accepted `*_color` values; export them in the spelling typed colors use.
-        let value = if is_color {
-            canonical_color(raw_value).map_or(Cow::Borrowed(raw_value), |canonical| {
-                Cow::Owned(colors.resolve(&canonical).into_owned())
-            })
-        } else {
-            Cow::Borrowed(raw_value)
-        };
-
         assignments.push(ShellAssignment::local(
-            format!("{gpy_prefix}_{property_token}"),
-            value.as_ref(),
+            format!("__gpy_segment_{segment_token}_{key}"),
+            resolved.as_ref(),
         ));
-
-        if is_color {
-            let base = property_name.trim_end_matches("_color");
-            let base_token = sanitize_property_token(base);
-            if !base_token.is_empty() {
-                assignments.push(ShellAssignment::local(
-                    format!("__color_{segment_token}_{base_token}"),
-                    value.as_ref(),
-                ));
-            }
-        }
-        if property_name.ends_with("_icon") {
-            let base = property_name.trim_end_matches("_icon");
-            let base_token = sanitize_property_token(base);
-            if !base_token.is_empty() {
-                assignments.push(ShellAssignment::local(
-                    format!("__icon_{segment_token}_{base_token}"),
-                    value.as_ref(),
-                ));
-            }
-        }
+        assignments.push(ShellAssignment::local(
+            format!("__color_{segment_token}_{}_{flat_suffix}", key.variant),
+            resolved,
+        ));
     }
-
     assignments
 }
 
@@ -192,7 +151,7 @@ pub(super) fn append_plugin_segment_assignments(
         append_shell_assignments(
             output,
             colors.shell,
-            plugin_segment_property_assignments(colors, &segment_token, segment_theme),
+            plugin_segment_variant_assignments(colors, &segment_token, segment_theme),
         );
     }
 }

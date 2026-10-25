@@ -265,6 +265,31 @@ truncate_to_repo = false
 
 ---
 
+## `[plugin.<segment>]`
+
+Overrides for one script plugin segment (`entry_type = "script"`, see [Plugin Framework](../dev/plugins.md#script-segments)). `<segment>` is the segment name as enabled in `ui.enabled_segments`. Settings live here rather than in the theme so they survive a theme switch.
+
+| Key | Type | Default | Range | Effect |
+|---|---|---|---|---|
+| `ttl_secs` | integer | the segment manifest's `ttl_secs` (5 unless the author set another) | `0`–`31536000` | Seconds a script result is reused. `0` runs the script on every prompt that needs it. |
+| `timeout_ms` | integer | the manifest's `timeout_ms` (at most 500) | `1` up to the manifest's value | Lowers the script's time limit. A value above the manifest's is rejected. |
+| any setting the manifest declares | bool, integer or string, as declared | the declared default | the declared `min`/`max` or `choices` | Passed to the script as `GPY_OPT_<key>`. |
+
+Each table is typed when the config loads. Whether a key is declared, and whether its value is allowed, depends on the installed plugin, so `gpy config set` checks it against the segment manifest and every error names the key (`plugin.k8s.style: 'loud' is not one of bold, dim`). Run `gpy config list plugin.` to see the keys your installed script segments accept.
+
+```toml
+[plugin.k8s]
+ttl_secs = 30
+style = "dim"
+```
+
+```bash
+gpy config set plugin.k8s.ttl_secs 30
+gpy config get plugin.k8s.style   # the override, or the declared default
+```
+
+---
+
 ## Applying Changes
 
 `config.toml` is hot-reloaded by the running agent — no restart needed for most edits. Every reload re-resolves which config file is in effect (the highest-priority one that exists), so the agent also follows a config file that you fix after it failed to load at startup, create at a higher-priority location, or delete — deleting the active `config.toml` returns the agent to the built-in defaults. A file that exists but is invalid keeps the last good configuration.

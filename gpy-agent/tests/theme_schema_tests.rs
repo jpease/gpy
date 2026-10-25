@@ -74,8 +74,8 @@ text_color = "white"
 bg_color = "#073642"
 text_color = "white"
 icon = "⎈"
-context_color = "#326ce5"
-namespace_color = "#aaaaaa"
+prod_bg_color = "#326ce5"
+prod_text_color = "#aaaaaa"
 
 [segments.k8s.open]
 icon = "["
@@ -90,18 +90,37 @@ bg_color = "match_bg"
     assert_eq!(k8s.bg_color.as_deref(), Some("#073642"));
     assert_eq!(k8s.text_color.as_deref(), Some("white"));
     assert_eq!(k8s.icon.as_deref(), Some("⎈"));
-    assert_eq!(
-        k8s.properties.get("context_color").map(String::as_str),
-        Some("#326ce5")
-    );
-    assert_eq!(
-        k8s.properties.get("namespace_color").map(String::as_str),
-        Some("#aaaaaa")
-    );
+    let variant = |raw: &str| {
+        let key = gpy_agent::plugin::VariantColorKey::new(raw).expect("variant key");
+        k8s.variant_colors.get(&key).map(ToString::to_string)
+    };
+    assert_eq!(variant("prod_bg_color").as_deref(), Some("#326ce5"));
+    assert_eq!(variant("prod_text_color").as_deref(), Some("#aaaaaa"));
     assert_eq!(
         k8s.open.as_ref().map(|delimiter| delimiter.icon.as_str()),
         Some("[")
     );
+}
+
+#[test]
+fn plugin_segment_theme_rejects_untyped_keys() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let xdg_config = temp_dir.path().join("config");
+    for (key, value) in [
+        ("context_color", "\"red\""),
+        ("show_namespace", "true"),
+        ("Prod_bg_color", "\"red\""),
+    ] {
+        let theme_path = write_theme(
+            &xdg_config,
+            "plugin-untyped",
+            &format!("[ui]\nprompt_icon = \">\"\n\n[segments.k8s]\n{key} = {value}\n"),
+        );
+        let err = loader::load_theme_from_path(theme_path.to_str().expect("path str"))
+            .expect_err("untyped plugin key must fail")
+            .to_string();
+        assert!(err.contains(key), "{key} not named in: {err}");
+    }
 }
 
 #[test]
@@ -656,7 +675,7 @@ bg_color = "black"
 text_color = "white"
 
 [segments.k8s]
-context_color = "definitely-not-a-color"
+warn_bg_color = "definitely-not-a-color"
 "#,
     );
 
@@ -664,39 +683,7 @@ context_color = "definitely-not-a-color"
         .expect_err("theme load should fail");
     let message = err.to_string();
     assert!(
-        message.contains("segments.k8s.context_color"),
+        message.contains("definitely-not-a-color"),
         "Expected plugin color validation error, got: {message}"
-    );
-}
-
-#[test]
-fn load_theme_invalid_plugin_icon_errors() {
-    let temp_dir = tempfile::tempdir().expect("temp dir");
-    let xdg_config = temp_dir.path().join("config");
-    let broken = write_theme(
-        &xdg_config,
-        "invalid-plugin-icon",
-        r#"[ui]
-prompt_icon = ">"
-
-[segments.clock]
-bg_color = "black"
-text_color = "white"
-
-[segments.k8s]
-secondary_icon = "\u0007"
-"#,
-    );
-
-    let err = loader::load_theme_from_path(broken.to_str().expect("path"))
-        .expect_err("theme load should fail");
-    let message = err.to_string();
-    assert!(
-        message.contains("segments.k8s.secondary_icon"),
-        "Expected plugin icon validation error, got: {message}"
-    );
-    assert!(
-        message.contains("contains control characters"),
-        "Expected control character error, got: {message}"
     );
 }

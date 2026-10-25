@@ -9,6 +9,8 @@ pub mod loader;
 pub mod manager;
 /// Configuration metadata for keys and descriptions.
 pub mod metadata;
+/// `[plugin.<segment>]` overrides for script plugin segments.
+pub mod plugin_segments;
 /// Recommended-layout reconciliation engine for `gpy theme use --force`.
 pub mod recommended_layout;
 pub mod schema;
@@ -50,6 +52,12 @@ pub struct Config {
     /// UI/display configuration
     #[serde(default)]
     pub ui: UiSettings,
+    /// Per-segment overrides for script plugin segments (`[plugin.<segment>]`).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub plugin: std::collections::BTreeMap<
+        crate::plugin::SegmentName,
+        plugin_segments::PluginSegmentConfig,
+    >,
 }
 
 /// Agent process configuration

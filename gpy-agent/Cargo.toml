@@ -144,6 +144,10 @@ proptest = "1.12"
 
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 
+# Test-only: generates the published plugin manifest JSON schemas from the
+# Rust types (`cfg_attr(test, derive(JsonSchema))`); never in release builds.
+schemars = "1.2"
+
 [[bin]]
 name = "gpy-agent"
 path = "src/main.rs"

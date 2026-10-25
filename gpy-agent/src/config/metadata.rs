@@ -420,7 +420,10 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
 /// Prefixes of dynamic (map-backed) keys addressed as `<prefix><name>`.
 ///
 /// Not in [`CONFIG_KEYS`] because the name part is user-chosen.
-pub const DYNAMIC_KEY_PREFIXES: &[&str] = &[LANGUAGE_ICONS_PREFIX];
+pub const DYNAMIC_KEY_PREFIXES: &[&str] = &[
+    LANGUAGE_ICONS_PREFIX,
+    super::plugin_segments::PLUGIN_KEY_PREFIX,
+];
 
 /// Prefix of the `[language.icons]` map keys (`language.icons.<lang>`).
 const LANGUAGE_ICONS_PREFIX: &str = "language.icons.";

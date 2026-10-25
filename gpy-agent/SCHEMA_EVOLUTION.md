@@ -33,6 +33,28 @@ Changes are listed newest-first within each release group.
 
 ---
 
+### Plugin manifest, theme and config schema — script segments (MAJOR)
+
+| Property | Value |
+|---|---|
+| Scope | `plugin.toml` `entry_type = "script"`; new `segments/<id>.toml` script segment manifest; theme `[segments.<plugin-segment>]`; config `[plugin.<segment>]` |
+| Change type | MAJOR — field type change and removal: the theme's untyped plugin property map (`PluginSegmentTheme.properties`) is replaced by typed `<variant>_bg_color`/`<variant>_text_color` keys, and any other key is rejected |
+| IPC protocol | Unchanged |
+| Config schema | New `[plugin.<segment>]` table (`ttl_secs`, `timeout_ms`, declared settings); `gpy config get/set/list` reach it as `plugin.<segment>.<key>` |
+
+**What changed.** Script plugins declare each segment in `segments/<id>.toml`
+(command, inputs, env, ttl_secs, timeout_ms, require_*, typed `[settings.<key>]`),
+validated at load. `min_gpy_version` is enforced. Behaviour settings moved out
+of the theme into `config.toml`. Published, generated schemas:
+`schemas/plugin-manifest.json`, `schemas/script-segment-manifest.json`
+(drift test `plugin::schema_tests`).
+
+**Backward compatibility.** None, by design (project unannounced): a theme with
+free-form plugin keys such as `context_color` fails to load and must use variant
+colours; no shim.
+
+---
+
 ### CLI — `gpy config list [FILTER]` (MINOR)
 
 | Property | Value |
