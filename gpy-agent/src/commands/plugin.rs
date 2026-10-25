@@ -139,6 +139,25 @@ fn load_manifest_from_path(path: &Path) -> Result<(PluginManifest, PathBuf, Scri
     Ok((manifest, root, script_segments))
 }
 
+/// One-line scope note printed by `gpy plugin new`, `validate` and `list`.
+///
+/// Applies only to v1 `.fish` plugins (`entry_type = "file"`); `script` plugins run in every shell.
+pub(crate) const FISH_ONLY_NOTE: &str =
+    "Plugin segments from v1 `.fish` files load in Fish only; Bash and Zsh prompts skip them.";
+
+/// Whether `plugin` is a user v1 `.fish` plugin; built-in plugins load in every shell.
+const fn is_fish_only_plugin(plugin: &DiscoveredPlugin) -> bool {
+    !matches!(plugin.source, PluginSource::FirstParty)
+        && matches!(plugin.manifest.entry_type, EntryType::File)
+}
+
+/// Print the Fish-only note when `entry_type` is a v1 `.fish` file plugin.
+fn print_fish_only_note(entry_type: &EntryType) {
+    if matches!(entry_type, EntryType::File) {
+        println!("   note: {FISH_ONLY_NOTE}");
+    }
+}
+
 fn print_manifest_validation(manifest: &PluginManifest, root: &Path, segments: &ScriptSegments) {
     crate::commands::output::ok(format_args!(
         "Valid plugin: {} {} (api {})",
@@ -162,6 +181,7 @@ fn print_manifest_validation(manifest: &PluginManifest, root: &Path, segments: &
         println!("   public helpers: {}", PUBLIC_PLUGIN_HELPERS.join(", "));
     }
     print_min_version(manifest.compatibility_constraints.as_ref());
+    print_fish_only_note(&manifest.entry_type);
     print_script_segments(segments);
 }
 
@@ -234,6 +254,7 @@ fn print_discovered_plugin_validation(plugin: &crate::plugin::DiscoveredPlugin) 
             .join(", ")
     );
     print_min_version(plugin.manifest.compatibility_constraints.as_ref());
+    print_fish_only_note(&plugin.manifest.entry_type);
     print_script_segments(&plugin.script_segments);
 }
 
@@ -293,6 +314,9 @@ pub fn list() {
     println!("Plugins:");
     println!("========\n");
     println!("User plugin root: {}", user_root.display());
+    if discovery.plugins.iter().any(is_fish_only_plugin) {
+        println!("{FISH_ONLY_NOTE}");
+    }
 
     if discovery.plugins.is_empty() {
         println!("(none discovered)");
@@ -448,6 +472,7 @@ pub fn new(id: &str, segment_name: Option<&str>) -> Result<()> {
     println!("  1. Edit the generated files");
     println!("  2. Run `gpy plugin validate {}`", plugin_root.display());
     println!("  3. Run `gpy enable {segment}`");
+    println!("\nNote: {FISH_ONLY_NOTE}");
     Ok(())
 }
 

@@ -5,6 +5,7 @@ use super::utils::{
 };
 use crate::config::Config;
 use crate::plugin::{BUILTIN_ORDER, BuiltinSegment, SegmentName, discover_plugins};
+use crate::shell::Shell;
 use crate::{Error, Result};
 use std::collections::BTreeSet;
 
@@ -45,8 +46,56 @@ pub fn enable(segment: &str) -> Result<()> {
     save_config_to(&path, &original, &config, &[])?;
 
     println!("Enabled {canonical} segment");
+    if is_file_plugin_segment(&canonical)
+        && let Some(note) = skipped_by_note(
+            &canonical,
+            &super::setup::installed_integrations()
+                .iter()
+                .map(|integration| integration.shell)
+                .collect::<Vec<_>>(),
+        )
+    {
+        println!("{note}");
+    }
     reload_agent_and_notify();
     Ok(())
+}
+
+/// Whether `name` comes from a discovered v1 `.fish` plugin (`entry_type = "file"`).
+///
+/// `script` plugins run in every shell, so they never get the Fish-only note.
+fn is_file_plugin_segment(name: &str) -> bool {
+    BuiltinSegment::try_from(name).is_err()
+        && discover_plugins().plugins.iter().any(|plugin| {
+            !matches!(plugin.source, crate::plugin::PluginSource::FirstParty)
+                && matches!(plugin.manifest.entry_type, crate::plugin::EntryType::File)
+                && plugin
+                    .manifest
+                    .provided_segments
+                    .iter()
+                    .any(|segment| segment.as_str() == name)
+        })
+}
+
+/// The note `gpy enable` prints for a v1 plugin segment when a Bash or Zsh
+/// integration is installed; `None` when only Fish (or nothing) is installed.
+///
+/// v1 plugin segments are `.fish` files, which only Fish sources.
+fn skipped_by_note(segment: &str, installed: &[Shell]) -> Option<String> {
+    let skipping: Vec<&str> = installed
+        .iter()
+        .filter(|shell| matches!(shell, Shell::Bash | Shell::Zsh))
+        .map(|shell| shell.as_str())
+        .collect();
+    if skipping.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Note: {segment} is a v1 `.fish` plugin segment, so the {} prompt{} will skip it. \
+         Run `gpy disable {segment}` to drop it, or use Fish.",
+        skipping.join(" and "),
+        if skipping.len() > 1 { "s" } else { "" },
+    ))
 }
 
 /// Disable a prompt segment.
@@ -230,6 +279,18 @@ fn ensure_segment_known(segment: &str, enabling: bool) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn skipped_by_note_names_only_installed_bash_and_zsh() {
+        assert_eq!(skipped_by_note("seg", &[]), None);
+        assert_eq!(skipped_by_note("seg", &[Shell::Fish]), None);
+        let bash = skipped_by_note("seg", &[Shell::Fish, Shell::Bash]).expect("bash note");
+        assert!(bash.contains("the bash prompt will skip it"), "{bash}");
+        assert!(bash.contains("gpy disable seg"), "{bash}");
+        assert!(bash.contains("use Fish"), "{bash}");
+        let both = skipped_by_note("seg", &[Shell::Zsh, Shell::Bash]).expect("both note");
+        assert!(both.contains("zsh and bash prompts will skip it"), "{both}");
+    }
 
     #[test]
     fn apply_feature_toggle_sets_git_independently_of_language() {

@@ -15,6 +15,8 @@
 - [Create a Theme](create-theme.md) - Step-by-step guide for community theme authors.
 - [Plugin + Theme Authoring](plugin-theme-authoring.md) - Short index for extension authoring docs.
 
+Plugin segments from v1 `.fish` files load in Fish only; see [Plugin Framework](plugins.md#segment-runtime-contract).
+
 ## Testing
 
 - [Testing Tiers](testing.md) - Every test tier (Rust, CLI, Fish content and PTY sessions, Bash/Zsh live daemon, installers, release smoke, container fresh install, Windows, coverage), what each proves, and the command that runs it.
