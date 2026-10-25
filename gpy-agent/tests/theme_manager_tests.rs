@@ -177,9 +177,8 @@ text_color = "white"
 bg_color = "#073642"
 text_color = "white"
 icon = "⎈"
-context_color = "#326ce5"
-namespace_color = "#aaaaaa"
-secondary_icon = "•"
+prod_bg_color = "#326ce5"
+prod_text_color = "#aaaaaa"
 
 [segments.my-seg]
 bg_color = "cyan"
@@ -866,14 +865,13 @@ fn test_theme_export_fish_includes_plugin_segment_vars() {
     assert!(output.contains("set -g __gpy_segment_k8s_bg_color \"#073642\""));
     assert!(output.contains("set -g __gpy_segment_k8s_text_color \"white\""));
     assert!(output.contains("set -g __gpy_segment_k8s_icon \"⎈\""));
-    assert!(output.contains("set -g __gpy_segment_k8s_context_color \"#326ce5\""));
-    assert!(output.contains("set -g __gpy_segment_k8s_namespace_color \"#aaaaaa\""));
-    assert!(output.contains("set -g __gpy_segment_k8s_secondary_icon \"•\""));
+    assert!(output.contains("set -g __gpy_segment_k8s_prod_bg_color \"#326ce5\""));
+    assert!(output.contains("set -g __gpy_segment_k8s_prod_text_color \"#aaaaaa\""));
     assert!(output.contains("set -g __color_k8s_bg \"#073642\""));
     assert!(output.contains("set -g __color_k8s_fg \"white\""));
-    assert!(output.contains("set -g __color_k8s_context \"#326ce5\""));
+    assert!(output.contains("set -g __color_k8s_prod_bg \"#326ce5\""));
+    assert!(output.contains("set -g __color_k8s_prod_fg \"#aaaaaa\""));
     assert!(output.contains("set -g __icon_k8s \"⎈\""));
-    assert!(output.contains("set -g __icon_k8s_secondary \"•\""));
     assert!(output.contains("set -g __gpy_segment_my_seg_id \"my-seg\""));
     assert!(output.contains("set -g __color_my_seg_bg \"cyan\""));
     assert!(output.contains("set -g __color_clock_bg \"black\""));
@@ -900,8 +898,8 @@ fn test_theme_export_zsh_bash_include_plugin_segment_vars() {
     assert!(zsh_output.contains("export GPY_UI_DIRECTORY_DISPLAY=\"basename\""));
     assert!(zsh_output.contains("typeset -g __gpy_segment_k8s_id=\"k8s\""));
     assert!(zsh_output.contains("typeset -g __gpy_segment_k8s_bg_color=\"#073642\""));
-    assert!(zsh_output.contains("typeset -g __color_k8s_context=\"#326ce5\""));
-    assert!(zsh_output.contains("typeset -g __icon_k8s_secondary=\"•\""));
+    assert!(zsh_output.contains("typeset -g __color_k8s_prod_bg=\"#326ce5\""));
+    assert!(zsh_output.contains("typeset -g __gpy_segment_k8s_prod_text_color=\"#aaaaaa\""));
 
     let bash_output = manager.export(
         Shell::Bash,
@@ -911,8 +909,8 @@ fn test_theme_export_zsh_bash_include_plugin_segment_vars() {
     assert!(bash_output.contains("export GPY_UI_DIRECTORY_DISPLAY=\"basename\""));
     assert!(bash_output.contains("__gpy_segment_k8s_id=\"k8s\""));
     assert!(bash_output.contains("__gpy_segment_k8s_bg_color=\"#073642\""));
-    assert!(bash_output.contains("__color_k8s_context=\"#326ce5\""));
-    assert!(bash_output.contains("__icon_k8s_secondary=\"•\""));
+    assert!(bash_output.contains("__color_k8s_prod_bg=\"#326ce5\""));
+    assert!(bash_output.contains("__gpy_segment_k8s_prod_text_color=\"#aaaaaa\""));
 }
 
 #[test]

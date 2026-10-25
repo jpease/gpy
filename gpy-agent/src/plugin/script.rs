@@ -6,10 +6,16 @@
 //! declares and validates.
 
 use super::manifest::SegmentName;
+use super::settings::{SettingDecl, SettingKey};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
+
+/// Manifest fields the user overrides in `[plugin.<segment>]` next to the
+/// declared settings; a declared setting may not reuse these names.
+pub const RESERVED_SETTING_KEYS: [&str; 2] = ["ttl_secs", "timeout_ms"];
 
 /// Cap on segment manifest reads, as for `plugin.toml`.
 const SEGMENT_MANIFEST_READ_CAP: usize = 65_536;
@@ -431,6 +437,82 @@ impl VariantName {
 
 deserialize_via_new!(VariantName);
 
+/// Which colour of a variant a theme key sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum VariantColorPart {
+    /// `<variant>_bg_color`.
+    Bg,
+    /// `<variant>_text_color`.
+    Text,
+}
+
+/// A plugin segment theme key `<variant>_bg_color` or `<variant>_text_color`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct VariantColorKey {
+    /// The variant the script prints on its second line.
+    pub variant: VariantName,
+    /// Background or text colour.
+    pub part: VariantColorPart,
+}
+
+impl VariantColorKey {
+    /// Parse a theme key.
+    ///
+    /// # Errors
+    /// Returns an error listing the accepted plugin segment style keys.
+    pub fn new(key: &str) -> Result<Self> {
+        let parsed = key
+            .strip_suffix("_bg_color")
+            .map(|variant| (variant, VariantColorPart::Bg))
+            .or_else(|| {
+                key.strip_suffix("_text_color")
+                    .map(|variant| (variant, VariantColorPart::Text))
+            })
+            .and_then(|(variant, part)| {
+                VariantName::new(variant).ok().map(|name| Self {
+                    variant: name,
+                    part,
+                })
+            });
+        parsed.ok_or_else(|| {
+            Error::invalid(format!(
+                "unknown plugin segment style key '{key}': use icon, open, close, bg_color, \
+                 text_color or <variant>_bg_color / <variant>_text_color \
+                 (behaviour settings belong in config.toml [plugin.<segment>])"
+            ))
+        })
+    }
+}
+
+impl fmt::Display for VariantColorKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let suffix = match self.part {
+            VariantColorPart::Bg => "bg_color",
+            VariantColorPart::Text => "text_color",
+        };
+        write!(f, "{}_{suffix}", self.variant)
+    }
+}
+
+impl Serialize for VariantColorKey {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for VariantColorKey {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Self::new(&raw).map_err(|e| serde::de::Error::custom(detail(e)))
+    }
+}
+
 /// A script segment manifest, `segments/<id>.toml` in a script plugin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -467,6 +549,9 @@ pub struct ScriptSegmentManifest {
     /// A script, relative to the plugin root, that must exit 0; run last.
     #[serde(default)]
     pub require_command: Option<ScriptPath>,
+    /// Typed settings, passed as `GPY_OPT_<key>` and overridable in `config.toml`.
+    #[serde(default)]
+    pub settings: BTreeMap<SettingKey, SettingDecl>,
 }
 
 /// First value in `items` that appears twice, by `key`.
@@ -527,6 +612,15 @@ impl ScriptSegmentManifest {
             return Err(Error::invalid(format!(
                 "require_env: '{name}' is listed twice"
             )));
+        }
+        for (key, decl) in &self.settings {
+            if RESERVED_SETTING_KEYS.contains(&key.as_str()) {
+                return Err(Error::invalid(format!(
+                    "settings.{key}: '{key}' is a manifest field, not a setting"
+                )));
+            }
+            decl.validate()
+                .map_err(|e| Error::invalid(format!("settings.{key}: {}", detail(e))))?;
         }
         Ok(())
     }

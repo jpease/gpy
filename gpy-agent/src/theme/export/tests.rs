@@ -97,9 +97,8 @@ bg_color = "blue"
 icon = "k8s$ctx"
 bg_color = "blue"
 text_color = "white"
-context_color = "bright-blue"
-namespace_icon = "ns`n`"
-plain_property = "value\\"
+warn_bg_color = "bright-blue"
+warn_text_color = "black"
 
 [segments.AWS-Profile]
 icon = "aws"

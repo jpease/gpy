@@ -8,6 +8,8 @@ pub mod manifest;
 pub mod registry;
 /// Script segment manifests (`entry_type = "script"`)
 pub mod script;
+/// Typed settings declared by script segments
+pub mod settings;
 
 pub(crate) use builtin::{BUILTIN_ORDER, BuiltinSegment};
 pub use manifest::{
@@ -19,6 +21,8 @@ pub use registry::{
     user_plugins_dir,
 };
 pub use script::{
-    CacheScope, EnvName, Extension, InputName, ScanName, ScriptPath, ScriptSegmentManifest,
-    TimeoutMs, TtlSecs, VariantName, script_segment_manifest_path,
+    CacheScope, EnvName, Extension, InputName, RESERVED_SETTING_KEYS, ScanName, ScriptPath,
+    ScriptSegmentManifest, TimeoutMs, TtlSecs, VariantColorKey, VariantColorPart, VariantName,
+    script_segment_manifest_path,
 };
+pub use settings::{SettingDecl, SettingKey, SettingValue};

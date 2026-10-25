@@ -85,9 +85,10 @@ pub struct PluginSegmentTheme {
     /// Optional segment text color.
     #[serde(default)]
     pub text_color: Option<types::ColorSpec>,
-    /// Additional plugin-specific string style properties (e.g. `context_color`).
+    /// Colours per output variant: `<variant>_bg_color` / `<variant>_text_color`.
     #[serde(flatten)]
-    pub properties: HashMap<String, String>,
+    pub variant_colors:
+        std::collections::BTreeMap<crate::plugin::VariantColorKey, types::ColorSpec>,
 }
 
 /// UI-level colors (prompt, delimiters)

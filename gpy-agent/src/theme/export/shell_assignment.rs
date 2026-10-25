@@ -56,37 +56,6 @@ impl ShellAssignment {
     }
 }
 
-/// Sanitize a free-form theme property key into a shell variable-name fragment.
-///
-/// Segment names use [`SegmentName::variable_token`](crate::plugin::SegmentName::variable_token)
-/// instead: Fish recomputes that token, so it must stay the documented `-`→`_` mapping.
-pub(super) fn sanitize_property_token(raw: &str) -> String {
-    let mut normalized = String::new();
-    let mut prev_was_underscore = false;
-
-    for ch in raw.chars() {
-        let is_valid = ch.is_ascii_alphanumeric() || ch == '_';
-        let next = if is_valid {
-            ch.to_ascii_lowercase()
-        } else {
-            '_'
-        };
-
-        if next == '_' {
-            if prev_was_underscore {
-                continue;
-            }
-            prev_was_underscore = true;
-        } else {
-            prev_was_underscore = false;
-        }
-
-        normalized.push(next);
-    }
-
-    normalized.trim_matches('_').to_owned()
-}
-
 pub(super) fn append_shell_assignment(
     output: &mut String,
     shell: Shell,
