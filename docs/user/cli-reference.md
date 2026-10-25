@@ -672,6 +672,7 @@ Without a section argument, shows all configuration. With a section argument, sh
 - `git` - Git detection settings
 - `language` - Language detection settings
 - `ui` - User interface settings
+- `plugin` - Script plugin segment overrides (`[plugin.<segment>]`)
 
 **Example:**
 ```bash
@@ -715,6 +716,8 @@ untracked = "?"
 #### `gpy config list [filter]`
 
 List every configuration key with its access mode and description.
+
+After the core keys it lists the `plugin.<segment>.<key>` overrides that installed script plugin segments accept (`ttl_secs`, `timeout_ms` and each declared setting, with its type, constraints and default).
 
 With a filter argument, lists only keys that start with it. The filter is a plain prefix, so `git.icons` matches every `git.icons.*` key. A filter that matches nothing prints a notice and still exits 0. Use `gpy config get <key>` to read a value and `gpy config set <key> <value>` to change it; the [configuration reference](configuration-reference.md) documents what each key accepts.
 
@@ -966,7 +969,7 @@ shell or through separate requests and are not included. Exits `1` with an
 
 ### Plugin Commands
 
-Plugin segment files are loaded by the Fish integration only; see [Plugin Framework](../dev/plugins.md).
+Plugin segment files (`entry_type = "file"`) are loaded by the Fish integration only. Script segments (`entry_type = "script"`) are declared for every shell; see [Plugin Framework](../dev/plugins.md).
 
 #### `gpy plugin list`
 
@@ -1001,6 +1004,12 @@ Checks:
 - the declared plugin API version is supported
 - `provided_segments` is present and lists at least one segment
 - segment files exist for declared file-based segments
+- for a script plugin, every `segments/<segment>.toml` manifest parses and its
+  `command` (and `require_command`) is a file inside the plugin root; the
+  output lists each segment's command, inputs, env, cache scope, `ttl_secs`,
+  `timeout_ms` and triggers
+- the running GPY meets `compatibility_constraints.min_gpy_version` (a newer
+  minimum fails validation, and discovery skips the plugin with a diagnostic)
 
 You can pass either:
 - a plugin directory

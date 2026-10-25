@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PluginManifest",
+  "description": "Root structure of a plugin manifest (plugin.toml)",
+  "type": "object",
+  "properties": {
+    "api_version": {
+      "description": "Plugin API version",
+      "$ref": "#/$defs/PluginApiVersion"
+    },
+    "compatibility_constraints": {
+      "description": "Environment compatibility constraints",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CompatibilityConstraints"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "description": {
+      "description": "Optional plugin description",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "entry_type": {
+      "description": "Type of execution entry point",
+      "$ref": "#/$defs/EntryType"
+    },
+    "id": {
+      "description": "Canonical plugin identifier",
+      "$ref": "#/$defs/PluginId"
+    },
+    "name": {
+      "description": "Human-readable plugin name",
+      "type": "string"
+    },
+    "provided_segments": {
+      "description": "List of segment names provided by this plugin",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SegmentName"
+      }
+    },
+    "version": {
+      "description": "Plugin version",
+      "$ref": "#/$defs/GpyVersion"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "version",
+    "api_version",
+    "provided_segments",
+    "entry_type"
+  ],
+  "$defs": {
+    "CompatibilityConstraints": {
+      "description": "Constraints for plugin compatibility",
+      "type": "object",
+      "properties": {
+        "min_gpy_version": {
+          "description": "Minimum required GPY version",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GpyVersion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "EntryType": {
+      "description": "Entry type for a plugin",
+      "oneOf": [
+        {
+          "description": "The plugin provides `segments/<name>.fish` files sourced at prompt init (Fish only).",
+          "type": "string",
+          "const": "file"
+        },
+        {
+          "description": "The plugin provides `segments/<name>.toml` script segment manifests, each\nnaming a POSIX `sh` script that every shell runs (ADR-0011 option G).",
+          "type": "string",
+          "const": "script"
+        },
+        {
+          "description": "Reserved custom-command runtime; parsed for diagnostics but not loadable.",
+          "type": "string",
+          "const": "command"
+        }
+      ]
+    },
+    "GpyVersion": {
+      "description": "A parsed GPY semantic version.",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+].*)?$"
+    },
+    "PluginApiVersion": {
+      "description": "Supported public plugin API versions.",
+      "oneOf": [
+        {
+          "description": "The first public plugin contract.",
+          "type": "string",
+          "const": "v1"
+        }
+      ]
+    },
+    "PluginId": {
+      "description": "A validated, normalized plugin identifier",
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "SegmentName": {
+      "description": "A validated, normalized segment name",
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$"
+    }
+  }
+}

@@ -72,6 +72,7 @@ macro_rules! deserialize_via_new {
 /// Each reaches the script as `GPY_<NAME>`; only declared inputs are set and
 /// only they are part of the cache key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum InputName {
     /// The shell's working directory; the script then runs in it and the
@@ -149,8 +150,11 @@ impl CacheScope {
 
 /// A validated environment variable name (`^[A-Za-z_][A-Za-z0-9_]*$`).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(transparent)]
-pub struct EnvName(String);
+pub struct EnvName(
+    #[cfg_attr(test, schemars(regex(pattern = r"^[A-Za-z_][A-Za-z0-9_]*$")))] String,
+);
 
 impl EnvName {
     /// Validate an environment variable name.
@@ -181,6 +185,7 @@ deserialize_via_new!(EnvName);
 /// Syntax is checked at parse; [`ScriptPath::resolve`] checks that it names a
 /// file that stays inside the plugin root after symlinks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(transparent)]
 pub struct ScriptPath(String);
 
@@ -249,6 +254,7 @@ deserialize_via_new!(ScriptPath);
 
 /// One file or folder name searched for by `require_files`/`require_folders`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(transparent)]
 pub struct ScanName(String);
 
@@ -282,8 +288,11 @@ deserialize_via_new!(ScanName);
 
 /// A file extension for `require_extensions`, without the leading dot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(transparent)]
-pub struct Extension(String);
+pub struct Extension(
+    #[cfg_attr(test, schemars(regex(pattern = r"^[A-Za-z0-9_+-][A-Za-z0-9_.+-]*$")))] String,
+);
 
 impl Extension {
     /// Validate an extension such as `tf` or `tar.gz`.
@@ -320,6 +329,8 @@ macro_rules! bounded_u32 {
     ($(#[$doc:meta])* $name:ident, $min:expr, $max:expr, $default:expr, $what:literal) => {
         $(#[$doc])*
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+        #[cfg_attr(test, derive(schemars::JsonSchema))]
+        #[cfg_attr(test, schemars(extend("minimum" = $min, "maximum" = $max)))]
         #[serde(try_from = "u32", into = "u32")]
         pub struct $name(u32);
 
@@ -515,6 +526,7 @@ impl<'de> Deserialize<'de> for VariantColorKey {
 
 /// A script segment manifest, `segments/<id>.toml` in a script plugin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ScriptSegmentManifest {
     /// One line shown by `gpy plugin validate`.

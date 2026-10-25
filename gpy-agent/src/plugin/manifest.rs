@@ -7,8 +7,9 @@ use std::fmt;
 
 /// A validated, normalized plugin identifier
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(transparent)]
-pub struct PluginId(String);
+pub struct PluginId(#[cfg_attr(test, schemars(regex(pattern = r"^[a-z0-9-]+$")))] String);
 
 impl PluginId {
     /// Create a new `PluginId`, normalizing and validating the input
@@ -56,8 +57,9 @@ impl fmt::Display for PluginId {
 
 /// A validated, normalized segment name
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(transparent)]
-pub struct SegmentName(String);
+pub struct SegmentName(#[cfg_attr(test, schemars(regex(pattern = r"^[a-z0-9_-]+$")))] String);
 
 impl SegmentName {
     /// Create a new `SegmentName`, normalizing and validating the input
@@ -167,6 +169,7 @@ impl fmt::Display for SegmentName {
 
 /// Entry type for a plugin
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum EntryType {
     /// The plugin provides `segments/<name>.fish` files sourced at prompt init (Fish only).
@@ -198,6 +201,7 @@ impl EntryType {
 
 /// Supported public plugin API versions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub enum PluginApiVersion {
     /// The first public plugin contract.
     #[serde(rename = "v1")]
@@ -214,8 +218,11 @@ impl fmt::Display for PluginApiVersion {
 
 /// A parsed GPY semantic version.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(transparent)]
-pub struct GpyVersion(String);
+pub struct GpyVersion(
+    #[cfg_attr(test, schemars(regex(pattern = r"^[0-9]+\.[0-9]+\.[0-9]+([-+].*)?$")))] String,
+);
 
 impl GpyVersion {
     /// Create a new parsed GPY version string.
@@ -297,6 +304,7 @@ impl fmt::Display for GpyVersion {
 
 /// Constraints for plugin compatibility
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct CompatibilityConstraints {
     /// Minimum required GPY version
     pub min_gpy_version: Option<GpyVersion>,
@@ -304,6 +312,7 @@ pub struct CompatibilityConstraints {
 
 /// Root structure of a plugin manifest (plugin.toml)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 pub struct PluginManifest {
     /// Canonical plugin identifier
     pub id: PluginId,

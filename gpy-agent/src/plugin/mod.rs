@@ -26,3 +26,6 @@ pub use script::{
     script_segment_manifest_path,
 };
 pub use settings::{SettingDecl, SettingKey, SettingValue};
+
+#[cfg(test)]
+mod schema_tests;

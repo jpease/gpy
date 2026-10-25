@@ -1,0 +1,287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ScriptSegmentManifest",
+  "description": "A script segment manifest, `segments/<id>.toml` in a script plugin.",
+  "type": "object",
+  "properties": {
+    "command": {
+      "description": "The script, relative to the plugin root; run by `/bin/sh`.",
+      "$ref": "#/$defs/ScriptPath"
+    },
+    "description": {
+      "description": "One line shown by `gpy plugin validate`.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "env": {
+      "description": "Extra environment variables forwarded to the script and keyed in the cache.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/EnvName"
+      }
+    },
+    "inputs": {
+      "description": "Public shell values passed as `GPY_<NAME>`; `pwd` makes the cache per folder.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/InputName"
+      }
+    },
+    "require_command": {
+      "description": "A script, relative to the plugin root, that must exit 0; run last.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ScriptPath"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "require_env": {
+      "description": "Every variable must be set and non-empty in the shell.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/EnvName"
+      }
+    },
+    "require_extensions": {
+      "description": "Every extension must match a file in the working directory itself.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Extension"
+      }
+    },
+    "require_files": {
+      "description": "Every name must exist as a file in the working directory or an ancestor.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ScanName"
+      }
+    },
+    "require_folders": {
+      "description": "Every name must exist as a folder in the working directory or an ancestor.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ScanName"
+      }
+    },
+    "settings": {
+      "description": "Typed settings, passed as `GPY_OPT_<key>` and overridable in `config.toml`.",
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "patternProperties": {
+        "^[a-z_][a-z0-9_]{0,63}$": {
+          "$ref": "#/$defs/SettingDecl"
+        }
+      }
+    },
+    "timeout_ms": {
+      "description": "Run time limit in milliseconds (default and maximum 500).",
+      "$ref": "#/$defs/TimeoutMs",
+      "default": 500
+    },
+    "ttl_secs": {
+      "description": "Seconds a result is reused (default 5; `0` disables the cache).",
+      "$ref": "#/$defs/TtlSecs",
+      "default": 5
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "command"
+  ],
+  "$defs": {
+    "EnvName": {
+      "description": "A validated environment variable name (`^[A-Za-z_][A-Za-z0-9_]*$`).",
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "Extension": {
+      "description": "A file extension for `require_extensions`, without the leading dot.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_+-][A-Za-z0-9_.+-]*$"
+    },
+    "InputName": {
+      "description": "A public shell value a script can declare in `inputs`.\n\nEach reaches the script as `GPY_<NAME>`; only declared inputs are set and\nonly they are part of the cache key.",
+      "oneOf": [
+        {
+          "description": "The shell's working directory; the script then runs in it and the\ncache becomes per folder.",
+          "type": "string",
+          "const": "pwd"
+        },
+        {
+          "description": "`1` when the shell runs as root, else `0`.",
+          "type": "string",
+          "const": "is_root"
+        },
+        {
+          "description": "`1` inside a `sudo` session, else `0`.",
+          "type": "string",
+          "const": "is_sudo"
+        },
+        {
+          "description": "`1` over SSH, else `0`.",
+          "type": "string",
+          "const": "is_ssh"
+        },
+        {
+          "description": "The last command's duration in milliseconds; empty before the first command.",
+          "type": "string",
+          "const": "cmd_duration"
+        },
+        {
+          "description": "The glyph mode: `nerd` (Nerd Font icons) or `ascii`.",
+          "type": "string",
+          "const": "prompt_icons"
+        }
+      ]
+    },
+    "ScanName": {
+      "description": "One file or folder name searched for by `require_files`/`require_folders`.",
+      "type": "string"
+    },
+    "ScriptPath": {
+      "description": "A plugin-relative path to a POSIX `sh` script (`command`, `require_command`).\n\nSyntax is checked at parse; [`ScriptPath::resolve`] checks that it names a\nfile that stays inside the plugin root after symlinks.",
+      "type": "string"
+    },
+    "SettingDecl": {
+      "description": "One `[settings.<key>]` declaration.",
+      "oneOf": [
+        {
+          "description": "A boolean switch.",
+          "type": "object",
+          "properties": {
+            "default": {
+              "description": "Value when the user sets none.",
+              "type": "boolean"
+            },
+            "description": {
+              "description": "What the setting does.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "type": {
+              "type": "string",
+              "const": "bool"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "default"
+          ]
+        },
+        {
+          "description": "An integer, optionally bounded (inclusive).",
+          "type": "object",
+          "properties": {
+            "default": {
+              "description": "Value when the user sets none.",
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": {
+              "description": "What the setting does.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "max": {
+              "description": "Largest accepted value.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "default": null
+            },
+            "min": {
+              "description": "Smallest accepted value.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "default": null
+            },
+            "type": {
+              "type": "string",
+              "const": "int"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "default"
+          ]
+        },
+        {
+          "description": "A string, optionally limited to `choices`.",
+          "type": "object",
+          "properties": {
+            "choices": {
+              "description": "The accepted values; empty accepts any string.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "default": {
+              "description": "Value when the user sets none.",
+              "type": "string"
+            },
+            "description": {
+              "description": "What the setting does.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "type": {
+              "type": "string",
+              "const": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "default"
+          ]
+        }
+      ]
+    },
+    "TimeoutMs": {
+      "description": "Milliseconds a script may run before it is killed and the segment hidden.",
+      "type": "integer",
+      "format": "uint32",
+      "maximum": 500,
+      "minimum": 1
+    },
+    "TtlSecs": {
+      "description": "Seconds a script result is reused; `0` runs the script on every due prompt.",
+      "type": "integer",
+      "format": "uint32",
+      "maximum": 31536000,
+      "minimum": 0
+    }
+  }
+}

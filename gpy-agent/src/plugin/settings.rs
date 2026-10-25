@@ -12,8 +12,11 @@ use std::fmt;
 /// A setting key (`^[a-z_][a-z0-9_]*$`, at most 64 bytes); the script reads it
 /// as `GPY_OPT_<key>`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(transparent)]
-pub struct SettingKey(String);
+pub struct SettingKey(
+    #[cfg_attr(test, schemars(regex(pattern = r"^[a-z_][a-z0-9_]{0,63}$")))] String,
+);
 
 impl SettingKey {
     /// Longest accepted key.
@@ -102,6 +105,7 @@ impl fmt::Display for SettingValue {
 
 /// One `[settings.<key>]` declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum SettingDecl {
     /// A boolean switch.
