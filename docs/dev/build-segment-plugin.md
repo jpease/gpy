@@ -4,7 +4,7 @@ How to add a custom prompt segment without modifying GPY itself.
 
 If you want the contract details first, read [Plugin Framework](plugins.md).
 
-> **Fish only:** plugin segments from v1 `.fish` files load in Fish only; Bash and Zsh prompts skip them. Details in [Plugin Framework](plugins.md#segment-runtime-contract). `gpy plugin new`, `validate` and `list` repeat this, and `gpy enable` warns when a Bash or Zsh integration is installed.
+> **Fish only:** plugin segments from v1 `.fish` files load in Fish only; Bash and Zsh prompts skip them. Details in [Plugin Framework](plugins.md#segment-runtime-contract). `gpy plugin new`, and `validate`/`list` for `.fish` plugins, repeat this, and `gpy enable` warns for their segments when a Bash or Zsh integration is installed. Script plugins (`entry_type = "script"`) are not Fish-only.
 
 ## Before You Start
 

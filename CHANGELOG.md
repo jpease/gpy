@@ -49,11 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Plugin segments from v1 `.fish` files load in Fish only, and GPY now says
-  so: `gpy plugin new`, `validate` and `list` print a one-line note, and
-  `gpy enable <segment>` for a plugin segment warns when a Bash or Zsh
+  so: `gpy plugin new` prints a one-line note, `validate` and `list` print it
+  for `entry_type = "file"` plugins only, and `gpy enable <segment>` for a
+  segment from such a plugin warns when a Bash or Zsh
   integration is installed that those prompts skip it (`gpy disable
   <segment>`, or use Fish). The developer docs and the INSTALL.md shell
-  feature matrix carry the same statement. No change to prompt rendering.
+  feature matrix carry the same statement. Script plugins
+  (`entry_type = "script"`) are not affected. No change to prompt rendering.
 - `scripts/gpy-dev.sh` (`just dev`) runs an unreleased build in an isolated
   fish shell: its own config, fish scripts, caches and agent socket, so an
   installed release is untouched and `exit` returns to it. Build the

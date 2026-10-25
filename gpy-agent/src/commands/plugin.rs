@@ -146,7 +146,7 @@ pub(crate) const FISH_ONLY_NOTE: &str =
     "Plugin segments from v1 `.fish` files load in Fish only; Bash and Zsh prompts skip them.";
 
 /// Whether `plugin` is a user v1 `.fish` plugin; built-in plugins load in every shell.
-fn is_fish_only_plugin(plugin: &DiscoveredPlugin) -> bool {
+const fn is_fish_only_plugin(plugin: &DiscoveredPlugin) -> bool {
     !matches!(plugin.source, PluginSource::FirstParty)
         && matches!(plugin.manifest.entry_type, EntryType::File)
 }

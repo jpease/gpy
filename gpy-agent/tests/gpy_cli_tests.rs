@@ -708,6 +708,30 @@ provided_segments = ["k8s_tools"]
         .expect("Failed to write segment file");
 }
 
+/// Script plugin `scripty` providing `ctx`; runs in every shell, so it is not Fish-only.
+fn write_script_plugin(env: &CliTestEnv) {
+    let plugin_dir = env.plugins_dir().join("scripty");
+    fs::create_dir_all(plugin_dir.join("segments")).expect("Failed to create plugin dir");
+    fs::write(
+        plugin_dir.join("plugin.toml"),
+        r#"
+id = "scripty"
+name = "Scripty"
+version = "0.1.0"
+api_version = "v1"
+entry_type = "script"
+provided_segments = ["ctx"]
+"#,
+    )
+    .expect("Failed to write plugin manifest");
+    fs::write(
+        plugin_dir.join("segments").join("ctx.toml"),
+        "command = \"ctx.sh\"\n",
+    )
+    .expect("Failed to write script segment manifest");
+    fs::write(plugin_dir.join("ctx.sh"), "echo ctx\n").expect("Failed to write script");
+}
+
 /// Mark an integration as installed the way `gpy setup` does (entry point present).
 fn install_integration(env: &CliTestEnv, entry_point: &str) {
     let path = env.xdg_config_home().join(entry_point);
@@ -767,6 +791,34 @@ fn enable_builtin_segment_is_silent_even_with_bash_and_zsh() {
         !stdout.contains("will skip it"),
         "built-in segments render in every shell.\nstdout:\n{stdout}"
     );
+}
+
+#[test]
+fn script_plugin_gets_no_fish_only_note() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    write_script_plugin(&env);
+    install_integration(&env, "gpy/bash/gpy.bash");
+
+    let validate = env
+        .run_gpy(&["plugin", "validate", "scripty"])
+        .expect("Failed to run gpy plugin validate");
+    validate.assert_success("gpy plugin validate scripty");
+    let list = env
+        .run_gpy(&["plugin", "list"])
+        .expect("Failed to run gpy plugin list");
+    list.assert_success("gpy plugin list");
+    let enable = enable_stdout(&env, "ctx");
+
+    for (command, stdout) in [
+        ("validate", &validate.stdout),
+        ("list", &list.stdout),
+        ("enable", &enable),
+    ] {
+        assert!(
+            !stdout.contains("Fish only") && !stdout.contains("will skip it"),
+            "script plugins run in every shell; `{command}` must not say otherwise.\nstdout:\n{stdout}"
+        );
+    }
 }
 
 #[test]
