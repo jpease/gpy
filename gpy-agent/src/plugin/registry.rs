@@ -4,7 +4,8 @@ use super::manifest::{
     EntryType, GpyVersion, PluginApiVersion, PluginId, PluginManifest, SegmentName,
     first_token_collision,
 };
-use std::collections::HashMap;
+use super::script::ScriptSegmentManifest;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 /// Cap on `plugin.toml` reads: a manifest with declared fields, config-sized.
@@ -40,6 +41,31 @@ pub struct DiscoveredPlugin {
     pub root: PathBuf,
     /// Plugin source location.
     pub source: PluginSource,
+    /// Validated segment manifests of a `script` plugin, one per provided
+    /// segment; empty for other entry types.
+    pub script_segments: BTreeMap<SegmentName, ScriptSegmentManifest>,
+}
+
+impl DiscoveredPlugin {
+    /// Load every provided segment's manifest of a `script` plugin.
+    ///
+    /// # Errors
+    /// Returns the first manifest error, naming its file and key.
+    pub fn load_script_segments(
+        manifest: &PluginManifest,
+        root: &Path,
+    ) -> crate::Result<BTreeMap<SegmentName, ScriptSegmentManifest>> {
+        if !matches!(manifest.entry_type, EntryType::Script) {
+            return Ok(BTreeMap::new());
+        }
+        manifest
+            .provided_segments
+            .iter()
+            .map(|segment| {
+                ScriptSegmentManifest::load(root, segment).map(|loaded| (segment.clone(), loaded))
+            })
+            .collect()
+    }
 }
 
 /// A non-fatal plugin discovery/parse issue.
@@ -119,6 +145,7 @@ fn first_party_plugins() -> Vec<DiscoveredPlugin> {
         manifest,
         root: PathBuf::from("<first-party>"),
         source: PluginSource::FirstParty,
+        script_segments: BTreeMap::new(),
     }]
 }
 
@@ -177,22 +204,27 @@ fn register_discovered_plugin(
         return;
     }
 
-    let version_check = GpyVersion::new(env!("CARGO_PKG_VERSION"))
-        .and_then(|current| manifest.check_min_gpy_version(&current));
-    if let Err(e) = version_check {
-        diagnostics.push(PluginDiagnostic {
-            plugin_dir,
-            source,
-            message: e.to_string(),
-        });
-        return;
-    }
+    let checked = GpyVersion::new(env!("CARGO_PKG_VERSION"))
+        .and_then(|current| manifest.check_min_gpy_version(&current))
+        .and_then(|()| DiscoveredPlugin::load_script_segments(&manifest, &plugin_dir));
+    let script_segments = match checked {
+        Ok(script_segments) => script_segments,
+        Err(e) => {
+            diagnostics.push(PluginDiagnostic {
+                plugin_dir,
+                source,
+                message: e.to_string(),
+            });
+            return;
+        }
+    };
 
     let plugin_id = manifest.id.as_str().to_owned();
     let candidate = DiscoveredPlugin {
         manifest,
         root: plugin_dir,
         source,
+        script_segments,
     };
 
     let Some(existing) = winners.get(&plugin_id) else {
@@ -433,6 +465,58 @@ entry_type = "command"
                 .iter()
                 .any(|diagnostic| diagnostic.message.contains("requires GPY 999.0.0")),
             "expected a min_gpy_version diagnostic"
+        );
+    }
+
+    #[test]
+    fn discover_plugins_loads_script_segments_or_reports_them() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = temp.path().join("gpy").join("plugins");
+        for id in ["good", "bad"] {
+            write_plugin(
+                &root,
+                id,
+                &valid_manifest(id).replace("entry_type = \"file\"", "entry_type = \"script\""),
+            );
+            let dir = root.join(id);
+            fs::create_dir_all(dir.join("segments")).expect("segments");
+            fs::write(dir.join("run.sh"), "echo hi\n").expect("script");
+        }
+        fs::write(
+            root.join("good/segments/good.toml"),
+            "command = \"run.sh\"\ninputs = [\"pwd\"]\n",
+        )
+        .expect("good manifest");
+        fs::write(
+            root.join("bad/segments/bad.toml"),
+            "command = \"run.sh\"\nenv = [\"a-b\"]\n",
+        )
+        .expect("bad manifest");
+
+        let discovery = discover_plugins_in_roots(&[(PluginSource::User, root)]);
+
+        let good = discovery
+            .plugins
+            .iter()
+            .find(|plugin| plugin.manifest.id.as_str() == "good")
+            .expect("good script plugin discovered");
+        let segment = good
+            .script_segments
+            .get(&SegmentName::new("good").unwrap())
+            .expect("segment manifest loaded");
+        assert_eq!(segment.cache_scope(), super::super::CacheScope::Folder);
+        assert!(
+            !discovery
+                .plugins
+                .iter()
+                .any(|plugin| plugin.manifest.id.as_str() == "bad")
+        );
+        assert!(
+            discovery.diagnostics.iter().any(|diagnostic| {
+                diagnostic.message.contains("bad.toml") && diagnostic.message.contains("a-b")
+            }),
+            "{:?}",
+            discovery.diagnostics
         );
     }
 

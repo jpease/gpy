@@ -6,6 +6,8 @@ mod builtin;
 pub mod manifest;
 /// Plugin discovery and registry model
 pub mod registry;
+/// Script segment manifests (`entry_type = "script"`)
+pub mod script;
 
 pub(crate) use builtin::{BUILTIN_ORDER, BuiltinSegment};
 pub use manifest::{
@@ -15,4 +17,8 @@ pub use manifest::{
 pub use registry::{
     DiscoveredPlugin, PluginDiagnostic, PluginDiscovery, PluginSource, discover_plugins,
     user_plugins_dir,
+};
+pub use script::{
+    CacheScope, EnvName, Extension, InputName, ScanName, ScriptPath, ScriptSegmentManifest,
+    TimeoutMs, TtlSecs, VariantName, script_segment_manifest_path,
 };

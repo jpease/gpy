@@ -1,12 +1,17 @@
 //! `gpy plugin` command handlers.
 
 use crate::plugin::{
-    EntryType, GpyVersion, PluginApiVersion, PluginManifest, PluginSource, SegmentName,
-    discover_plugins, user_plugins_dir,
+    DiscoveredPlugin, EntryType, GpyVersion, PluginApiVersion, PluginManifest, PluginSource,
+    ScriptSegmentManifest, SegmentName, discover_plugins, script_segment_manifest_path,
+    user_plugins_dir,
 };
 use crate::{Error, Result, VERSION};
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::{fs, path::PathBuf};
+
+/// Validated segment manifests of a script plugin, keyed by segment.
+type ScriptSegments = BTreeMap<SegmentName, ScriptSegmentManifest>;
 
 pub(crate) const fn render_source(source: PluginSource) -> &'static str {
     match source {
@@ -32,10 +37,6 @@ fn plugin_segment_file(root: &Path, segment: &crate::plugin::SegmentName) -> Pat
     root.join("segments").join(format!("{segment}.fish"))
 }
 
-fn script_segment_manifest_path(root: &Path, segment: &crate::plugin::SegmentName) -> PathBuf {
-    root.join("segments").join(format!("{segment}.toml"))
-}
-
 /// Error for a manifest whose `entry_type` this runtime cannot load.
 fn unsupported_entry_type(entry_type: &EntryType) -> Error {
     Error::invalid(format!(
@@ -46,7 +47,7 @@ fn unsupported_entry_type(entry_type: &EntryType) -> Error {
 
 /// Validate that a plugin root contains the files required by its manifest
 /// and that this GPY satisfies its `min_gpy_version`.
-fn validate_plugin_root(root: &Path, manifest: &PluginManifest) -> Result<()> {
+fn validate_plugin_root(root: &Path, manifest: &PluginManifest) -> Result<ScriptSegments> {
     // Fail at validation rather than at prompt init.
     if !manifest.entry_type.is_runtime_supported() {
         return Err(unsupported_entry_type(&manifest.entry_type));
@@ -94,7 +95,7 @@ fn validate_plugin_root(root: &Path, manifest: &PluginManifest) -> Result<()> {
         EntryType::Command => return Err(unsupported_entry_type(&manifest.entry_type)),
     }
 
-    Ok(())
+    DiscoveredPlugin::load_script_segments(manifest, root)
 }
 
 /// Resolve a plugin path target into manifest and root paths.
@@ -125,7 +126,7 @@ fn resolve_manifest_target(path: &Path) -> Result<(PathBuf, PathBuf)> {
 }
 
 /// Load and parse a plugin manifest from a filesystem path target.
-fn load_manifest_from_path(path: &Path) -> Result<(PluginManifest, PathBuf)> {
+fn load_manifest_from_path(path: &Path) -> Result<(PluginManifest, PathBuf, ScriptSegments)> {
     let (manifest_path, root) = resolve_manifest_target(path)?;
     let content = std::fs::read_to_string(&manifest_path).map_err(|e| {
         Error::invalid(format!(
@@ -134,11 +135,11 @@ fn load_manifest_from_path(path: &Path) -> Result<(PluginManifest, PathBuf)> {
         ))
     })?;
     let manifest = crate::plugin::PluginManifest::parse(&content)?;
-    validate_plugin_root(&root, &manifest)?;
-    Ok((manifest, root))
+    let script_segments = validate_plugin_root(&root, &manifest)?;
+    Ok((manifest, root, script_segments))
 }
 
-fn print_manifest_validation(manifest: &PluginManifest, root: &Path) {
+fn print_manifest_validation(manifest: &PluginManifest, root: &Path, segments: &ScriptSegments) {
     crate::commands::output::ok(format_args!(
         "Valid plugin: {} {} (api {})",
         manifest.id, manifest.version, manifest.api_version
@@ -157,8 +158,61 @@ fn print_manifest_validation(manifest: &PluginManifest, root: &Path) {
             list.join(", ")
         }
     });
-    println!("   public helpers: {}", PUBLIC_PLUGIN_HELPERS.join(", "));
+    if matches!(manifest.entry_type, EntryType::File) {
+        println!("   public helpers: {}", PUBLIC_PLUGIN_HELPERS.join(", "));
+    }
     print_min_version(manifest.compatibility_constraints.as_ref());
+    print_script_segments(segments);
+}
+
+/// Joined `items`, or `-` when empty.
+fn joined<T>(items: &[T], show: impl Fn(&T) -> &str) -> String {
+    if items.is_empty() {
+        "-".to_owned()
+    } else {
+        items.iter().map(show).collect::<Vec<_>>().join(", ")
+    }
+}
+
+/// One block per script segment: what runs, with what, how often and when.
+fn print_script_segments(segments: &ScriptSegments) {
+    for (name, segment) in segments {
+        println!("   segment {name}:");
+        if let Some(description) = &segment.description {
+            println!("     description: {description}");
+        }
+        println!("     command: {}", segment.command.as_str());
+        println!("     inputs: {}", joined(&segment.inputs, |i| i.as_str()));
+        println!("     env: {}", joined(&segment.env, |n| n.as_str()));
+        println!(
+            "     cache: {} scope, ttl_secs {}, timeout_ms {}",
+            segment.cache_scope().as_str(),
+            segment.ttl_secs,
+            segment.timeout_ms
+        );
+        for (key, value) in [
+            (
+                "require_files",
+                joined(&segment.require_files, |n| n.as_str()),
+            ),
+            (
+                "require_folders",
+                joined(&segment.require_folders, |n| n.as_str()),
+            ),
+            (
+                "require_extensions",
+                joined(&segment.require_extensions, |e| e.as_str()),
+            ),
+            ("require_env", joined(&segment.require_env, |n| n.as_str())),
+        ] {
+            if value != "-" {
+                println!("     {key}: {value}");
+            }
+        }
+        if let Some(require_command) = &segment.require_command {
+            println!("     require_command: {}", require_command.as_str());
+        }
+    }
 }
 
 fn print_discovered_plugin_validation(plugin: &crate::plugin::DiscoveredPlugin) {
@@ -180,6 +234,7 @@ fn print_discovered_plugin_validation(plugin: &crate::plugin::DiscoveredPlugin) 
             .join(", ")
     );
     print_min_version(plugin.manifest.compatibility_constraints.as_ref());
+    print_script_segments(&plugin.script_segments);
 }
 
 /// Print the declared minimum; validation already rejected an unmet one.
@@ -286,8 +341,8 @@ pub fn list() {
 pub fn validate(path_or_id: &str) -> Result<()> {
     let path = Path::new(path_or_id);
     if path.exists() {
-        let (manifest, root) = load_manifest_from_path(path)?;
-        print_manifest_validation(&manifest, &root);
+        let (manifest, root, segments) = load_manifest_from_path(path)?;
+        print_manifest_validation(&manifest, &root, &segments);
         return Ok(());
     }
 
