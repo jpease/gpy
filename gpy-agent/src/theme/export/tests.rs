@@ -383,6 +383,59 @@ fn zsh_export_matches_golden() {
     insta::assert_snapshot!("zsh_export", golden_export(Shell::Zsh));
 }
 
+/// Variant colours live under `_variant_`: variant `open` keeps off the `open`
+/// delimiter's colour, and segment `a` + variant `b_c` off segment `a_b` + variant `c`.
+#[test]
+fn plugin_variant_colors_do_not_collide_with_delimiters_or_other_segments() {
+    let theme: ThemeConfig = toml::from_str(
+        r#"
+[segments.a]
+open_bg_color = "red"
+b_c_bg_color = "green"
+
+[segments.a.open]
+icon = "<"
+icon_color = "white"
+bg_color = "black"
+
+[segments.a_b]
+c_bg_color = "blue"
+"#,
+    )
+    .expect("collision fixture should parse");
+    let script = theme_to_shell(
+        &theme,
+        "collisions",
+        &Config::default(),
+        Shell::Bash,
+        &Palette::default(),
+        &BTreeMap::new(),
+    );
+    let names: Vec<&str> = script
+        .lines()
+        .filter_map(|line| line.split_once('=').map(|(name, _)| name))
+        .filter(|name| name.starts_with("__gpy_segment_"))
+        .collect();
+    for name in &names {
+        assert_eq!(
+            names.iter().filter(|other| *other == name).count(),
+            1,
+            "`{name}` is assigned more than once:\n{script}"
+        );
+    }
+    for expected in [
+        "__gpy_segment_a_open_bg_color=\"black\"",
+        "__gpy_segment_a_variant_open_bg_color=\"red\"",
+        "__gpy_segment_a_variant_b_c_bg_color=\"green\"",
+        "__gpy_segment_a_b_variant_c_bg_color=\"blue\"",
+    ] {
+        assert!(
+            script.lines().any(|line| line == expected),
+            "missing `{expected}`:\n{script}"
+        );
+    }
+}
+
 /// Bash/Zsh exports carry a generated `__gpy_segment_bg`; Fish gets none.
 #[test]
 fn bash_and_zsh_export_include_segment_bg_function_for_every_builtin_segment() {
