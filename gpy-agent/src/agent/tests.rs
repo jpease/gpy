@@ -3,7 +3,7 @@ mod language_tests {
 
     use crate::config::LanguageSettings;
     use crate::language::detector::DetectedLanguage;
-    use crate::language::display::build_language_display_info;
+    use crate::language::display::{DisplayRequest, Versions, display_info};
     use crate::theme::ThemeConfig;
 
     fn sample_detected_languages() -> Vec<DetectedLanguage> {
@@ -32,7 +32,11 @@ mod language_tests {
             ..LanguageSettings::default()
         };
 
-        let info = build_language_display_info(&detected, &theme, &language_cfg);
+        let info = display_info(
+            &DisplayRequest::new(&detected, &theme, &language_cfg),
+            Versions::Probe,
+        )
+        .unwrap();
 
         assert_eq!(info.len(), detected.len());
     }
@@ -47,7 +51,11 @@ mod language_tests {
             ..LanguageSettings::default()
         };
 
-        let info = build_language_display_info(&detected, &theme, &language_cfg);
+        let info = display_info(
+            &DisplayRequest::new(&detected, &theme, &language_cfg),
+            Versions::Probe,
+        )
+        .unwrap();
         let names: Vec<&str> = info.iter().map(|lang| lang.name.as_str()).collect();
         assert_eq!(names, vec!["alpha"]);
     }
@@ -61,7 +69,11 @@ mod language_tests {
             ..LanguageSettings::default()
         };
 
-        let info = build_language_display_info(&detected, &theme, &language_cfg);
+        let info = display_info(
+            &DisplayRequest::new(&detected, &theme, &language_cfg),
+            Versions::Probe,
+        )
+        .unwrap();
         assert!(info.is_empty());
     }
 }

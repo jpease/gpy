@@ -9,6 +9,7 @@ use crate::git::status::GitBackend;
 use crate::git::{CompleteStatus, RepositoryStatus};
 use crate::ipc::ClientDirectory;
 use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
+use crate::language::display::{DisplayRequest, Versions, display_info};
 use crate::palette::PaletteCache;
 use crate::sync_ext::MutexExt;
 use crate::theme::{GitState, ThemeConfig, ThemeManager};
@@ -234,13 +235,10 @@ fn refresh_language_for(
     let palette = ctx.palette_cache.get();
     let stashed_venv = crate::language::venv::stashed_project_venv(root);
     // Off the request path, so a cold version is probed here.
-    let languages = crate::language::display::build_language_display_info_at(
-        &detected,
-        theme,
-        &config.language,
-        Some(root),
-        stashed_venv.as_ref(),
-    );
+    let request = DisplayRequest::new(&detected, theme, &config.language)
+        .with_cwd(Some(root))
+        .with_venv(stashed_venv.as_ref());
+    let languages = display_info(&request, Versions::Probe).unwrap_or_default();
 
     let mut wrote = false;
     for prev_bg in std::iter::once(None).chain(extra_prev_bg.map(Some)) {

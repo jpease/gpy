@@ -2,9 +2,13 @@
 
 use crate::cache::bounded::VERSION_CACHE_CAPACITY;
 use crate::cache::ttl_map::TtlMap;
+use crate::language::ancestors::{MAX_ANCESTOR_DEPTH, bounded_ancestors, home_dir};
+use crate::language::probe_memo::ProbeMemo;
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::OnceLock;
+use std::time::Duration;
 
 /// Trait for detecting language versions
 pub trait ReleaseSource: Send + Sync {
@@ -177,64 +181,21 @@ fn wait_with_timeout(child: Child, label: &str, timeout: Duration) -> Result<Out
 
 /// Whether a `.tool-versions`/`mise.toml`/`.mise.toml` governs `path`.
 /// Memoized per directory; the walk stops at `$HOME` or
-/// [`MAX_TOOL_VERSION_ANCESTORS`] levels.
+/// [`MAX_ANCESTOR_DEPTH`] levels.
 fn has_tool_version_config(path: &Path) -> bool {
     let cache_key = canonical_dir_key(path);
-    if let Some(cached) = get_cached_tool_config(&cache_key) {
+    if let Some(cached) = TOOL_CONFIG_CACHE.get(&cache_key) {
         return cached;
     }
 
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let present = compute_has_tool_version_config(path, home.as_deref());
-    cache_tool_config_result(cache_key, present);
+    let home = home_dir();
+    let present = bounded_ancestors(path, home.as_deref(), MAX_ANCESTOR_DEPTH).any(|ancestor| {
+        [".tool-versions", "mise.toml", ".mise.toml"]
+            .iter()
+            .any(|name| ancestor.join(name).exists())
+    });
+    TOOL_CONFIG_CACHE.insert(cache_key, present);
     present
-}
-
-/// Ancestor-walk depth bound outside `$HOME` (guards pathological paths).
-pub(super) const MAX_TOOL_VERSION_ANCESTORS: usize = 64;
-
-/// Bounded ancestor walk backing [`has_tool_version_config`].
-fn compute_has_tool_version_config(path: &Path, home: Option<&Path>) -> bool {
-    let mut checked = 0_usize;
-    for ancestor in path.ancestors() {
-        if ancestor.join(".tool-versions").exists()
-            || ancestor.join("mise.toml").exists()
-            || ancestor.join(".mise.toml").exists()
-        {
-            return true;
-        }
-
-        if home.is_some_and(|home_dir| ancestor == home_dir) {
-            break;
-        }
-
-        checked = checked.saturating_add(1);
-        if checked >= MAX_TOOL_VERSION_ANCESTORS {
-            break;
-        }
-    }
-    false
-}
-
-/// Nearest `.ruby-version`, with [`compute_has_tool_version_config`]'s bounds.
-fn find_ruby_version_file(path: &Path, home: Option<&Path>) -> Option<PathBuf> {
-    let mut checked = 0_usize;
-    for ancestor in path.ancestors() {
-        let candidate = ancestor.join(".ruby-version");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-
-        if home.is_some_and(|home_dir| ancestor == home_dir) {
-            break;
-        }
-
-        checked = checked.saturating_add(1);
-        if checked >= MAX_TOOL_VERSION_ANCESTORS {
-            break;
-        }
-    }
-    None
 }
 
 /// Read the project's `.ruby-version` pin when no mise/tool-versions config
@@ -245,8 +206,10 @@ pub(crate) fn resolve_ruby_version_file(cwd: &Path) -> Option<String> {
         return None;
     }
 
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let path = find_ruby_version_file(cwd, home.as_deref())?;
+    let home = home_dir();
+    let path = bounded_ancestors(cwd, home.as_deref(), MAX_ANCESTOR_DEPTH)
+        .map(|ancestor| ancestor.join(".ruby-version"))
+        .find(|candidate| candidate.is_file())?;
     let contents = crate::fs_util::read_small_file(&path, RUBY_VERSION_READ_CAP).ok()?;
     parse_ruby_version(&contents)
 }
@@ -280,11 +243,6 @@ fn parse_version_output<P: ReleaseSource + ?Sized>(
     detector.parse_version(&text)
 }
 
-/// Record `version` for `cache_key` in the shared version cache.
-fn cache_version_result(cache_key: &str, version: String) {
-    VERSION_CACHE.insert(cache_key.to_owned(), version);
-}
-
 /// Cached version detection without a working directory.
 #[must_use]
 pub fn detect_language_release<P: ReleaseSource + ?Sized>(detector: &P) -> Option<String> {
@@ -307,7 +265,7 @@ pub struct ColdVersion;
 /// Cached version detection in a project directory.
 ///
 /// The cwd is part of the cache key since version managers resolve per
-/// project. Failures are cached for [`VERSION_FAILURE_TTL`] so a broken
+/// project. Failures are cached for [`FAILURE_TTL`](crate::language::probe_memo::FAILURE_TTL) so a broken
 /// tool costs one probe round per window.
 #[must_use]
 pub fn detect_language_release_at<P: ReleaseSource + ?Sized>(
@@ -329,38 +287,16 @@ pub fn lookup_language_release_at<P: ReleaseSource + ?Sized>(
     cwd: Option<&Path>,
     policy: ProbePolicy,
 ) -> std::result::Result<Option<String>, ColdVersion> {
-    let cache_key = version_cache_key(detector.language_name(), cwd);
-
-    if let Some(cached) = VERSION_CACHE.get(&cache_key) {
-        return Ok(Some(cached));
-    }
-    if has_recent_failure(&cache_key) {
-        return Ok(None);
-    }
-    if policy == ProbePolicy::CachedOnly {
-        return Err(ColdVersion);
-    }
-
-    if let Ok(Some(version)) = execute_version_command(detector, cwd) {
-        VERSION_FAILURE_CACHE.remove(&cache_key);
-        cache_version_result(&cache_key, version.clone());
-        Ok(Some(version))
-    } else {
-        VERSION_FAILURE_CACHE.insert(cache_key, SystemTime::now());
-        Ok(None)
-    }
+    VERSION_MEMO.lookup_or_probe(
+        version_cache_key(detector.language_name(), cwd),
+        policy,
+        || execute_version_command(detector, cwd).ok().flatten(),
+    )
 }
 
-/// Whether a probe for `cache_key` failed within [`VERSION_FAILURE_TTL`];
-/// a backwards clock counts as not recent.
-fn has_recent_failure(cache_key: &str) -> bool {
-    VERSION_FAILURE_CACHE
-        .get(cache_key)
-        .is_some_and(|recorded_at| {
-            SystemTime::now()
-                .duration_since(recorded_at)
-                .is_ok_and(|elapsed| elapsed < VERSION_FAILURE_TTL)
-        })
+/// The `n`th whitespace-separated word of `output`.
+fn nth_word(output: &str, n: usize) -> Option<String> {
+    output.split_whitespace().nth(n).map(ToOwned::to_owned)
 }
 
 /// Node.js version detector
@@ -392,10 +328,7 @@ impl ReleaseSource for PythonDetector {
         &["python3"]
     }
     fn parse_version(&self, output: &str) -> Option<String> {
-        output
-            .split_whitespace()
-            .nth(1)
-            .map(std::borrow::ToOwned::to_owned)
+        nth_word(output, 1)
     }
 }
 
@@ -409,10 +342,7 @@ impl ReleaseSource for RustDetector {
         &["rustc", "--version"]
     }
     fn parse_version(&self, output: &str) -> Option<String> {
-        output
-            .split_whitespace()
-            .nth(1)
-            .map(std::borrow::ToOwned::to_owned)
+        nth_word(output, 1)
     }
 }
 
@@ -426,11 +356,9 @@ impl ReleaseSource for GoDetector {
         &["go", "version"]
     }
     fn parse_version(&self, output: &str) -> Option<String> {
-        output
-            .split_whitespace()
-            .nth(2)
-            .and_then(|v| v.strip_prefix("go"))
-            .map(std::borrow::ToOwned::to_owned)
+        nth_word(output, 2)?
+            .strip_prefix("go")
+            .map(ToOwned::to_owned)
     }
 }
 
@@ -501,10 +429,7 @@ impl ReleaseSource for RubyDetector {
         &["ruby", "--version"]
     }
     fn parse_version(&self, output: &str) -> Option<String> {
-        output
-            .split_whitespace()
-            .nth(1)
-            .map(std::borrow::ToOwned::to_owned)
+        nth_word(output, 1)
     }
 }
 
@@ -542,29 +467,15 @@ impl ReleaseSource for FishDetector {
         &["fish", "--version"]
     }
     fn parse_version(&self, output: &str) -> Option<String> {
-        output
-            .split_whitespace()
-            .nth(2)
-            .map(std::borrow::ToOwned::to_owned)
+        nth_word(output, 2)
     }
 }
-
-use std::sync::OnceLock;
-use std::time::{Duration, SystemTime};
 
 /// Registered version detectors, built once.
 static VERSION_DETECTORS: OnceLock<Vec<Box<dyn ReleaseSource + Sync + Send>>> = OnceLock::new();
 
-/// Successful probe results; shares [`TtlMap`]'s TTL knob.
-static VERSION_CACHE: TtlMap<String, String> = TtlMap::new(VERSION_CACHE_CAPACITY);
-
-/// How long a failed probe suppresses re-probing: avoids respawning a broken
-/// tool every render while picking up a fixed one within a minute.
-pub(crate) const VERSION_FAILURE_TTL: Duration = Duration::from_secs(60);
-
-/// Failed probe timestamps, keyed like [`VERSION_CACHE`];
-/// [`has_recent_failure`] applies the shorter [`VERSION_FAILURE_TTL`].
-static VERSION_FAILURE_CACHE: TtlMap<String, SystemTime> = TtlMap::new(VERSION_CACHE_CAPACITY);
+/// Probe results and recent failures per `language[:cwd]`.
+static VERSION_MEMO: ProbeMemo<String> = ProbeMemo::new(VERSION_CACHE_CAPACITY);
 
 fn version_cache_key(language_name: &str, cwd: Option<&Path>) -> String {
     let Some(path) = cwd else {
@@ -600,16 +511,6 @@ static TOOL_CONFIG_CACHE: TtlMap<PathBuf, bool> = TtlMap::new(TOOL_CONFIG_CACHE_
 static MISE_NEGATIVE_CACHE: TtlMap<(PathBuf, String), ()> =
     TtlMap::new(MISE_NEGATIVE_CACHE_CAPACITY);
 
-/// Fetch a memoized tool-config presence result, dropping it if the TTL lapsed.
-fn get_cached_tool_config(cache_key: &Path) -> Option<bool> {
-    TOOL_CONFIG_CACHE.get(cache_key)
-}
-
-/// Store a tool-config presence result, bounding the cache by capacity.
-fn cache_tool_config_result(cache_key: PathBuf, present: bool) {
-    TOOL_CONFIG_CACHE.insert(cache_key, present);
-}
-
 /// Whether `mise exec` recently failed for `program` in `cwd`.
 fn mise_known_negative(program: &str, cwd: Option<&Path>) -> bool {
     let Some(path) = cwd else {
@@ -636,8 +537,7 @@ pub(crate) fn invalidate_language_release_cache_at(cwd: &Path) {
             .split_once(':')
             .is_none_or(|(_language_name, cached_path)| cached_path != scoped_path)
     };
-    VERSION_CACHE.retain(keep_other_dirs);
-    VERSION_FAILURE_CACHE.retain(keep_other_dirs);
+    VERSION_MEMO.retain(keep_other_dirs);
 
     // Also drop mise memoizations so a new `.tool-versions` is seen immediately.
     let canonical = canonical_dir_key(cwd);
@@ -681,6 +581,8 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
 
     use super::*;
+    use crate::language::probe_memo::FAILURE_TTL;
+    use std::time::SystemTime;
 
     #[test]
     fn parse_ruby_version_table() {
@@ -736,19 +638,24 @@ mod tests {
     fn cache_lookup_respects_ttl_setting() {
         set_version_cache_ttl(1);
 
-        VERSION_CACHE.clear();
-        VERSION_CACHE.insert("test-lang".to_owned(), "1.0.0".to_owned());
+        VERSION_MEMO.found().clear();
+        VERSION_MEMO
+            .found()
+            .insert("test-lang".to_owned(), "1.0.0".to_owned());
 
-        assert_eq!(VERSION_CACHE.get("test-lang").as_deref(), Some("1.0.0"));
+        assert_eq!(
+            VERSION_MEMO.found().get("test-lang").as_deref(),
+            Some("1.0.0")
+        );
 
-        VERSION_CACHE.insert_at(
+        VERSION_MEMO.found().insert_at(
             "test-lang".to_owned(),
             "1.0.0".to_owned(),
             SystemTime::now() - Duration::from_secs(3600 + 5),
         );
 
         assert_eq!(
-            VERSION_CACHE.get("test-lang"),
+            VERSION_MEMO.found().get("test-lang"),
             None,
             "expected cache miss after expiration"
         );
@@ -766,7 +673,7 @@ mod tests {
         std::fs::write(second.path().join(".python-version"), "3.14.4\n")
             .expect("write second version");
 
-        VERSION_CACHE.clear();
+        VERSION_MEMO.found().clear();
 
         let detector = CwdVersionFileDetector;
         let first_version = detect_language_release_at(&detector, Some(first.path()));
@@ -786,19 +693,23 @@ mod tests {
         let first_key = version_cache_key("ruby", Some(first.path()));
         let second_key = version_cache_key("ruby", Some(second.path()));
 
-        VERSION_CACHE.clear();
-        VERSION_CACHE.insert(first_key.clone(), "3.3.11".to_owned());
-        VERSION_CACHE.insert(second_key.clone(), "4.0.5".to_owned());
+        VERSION_MEMO.found().clear();
+        VERSION_MEMO
+            .found()
+            .insert(first_key.clone(), "3.3.11".to_owned());
+        VERSION_MEMO
+            .found()
+            .insert(second_key.clone(), "4.0.5".to_owned());
 
         invalidate_language_release_cache_at(first.path());
 
         assert_eq!(
-            VERSION_CACHE.get(&first_key),
+            VERSION_MEMO.found().get(&first_key),
             None,
             "invalidated project's entry should be gone"
         );
         assert_eq!(
-            VERSION_CACHE.get(&second_key).as_deref(),
+            VERSION_MEMO.found().get(&second_key).as_deref(),
             Some("4.0.5"),
             "other project's entry should survive invalidation"
         );
@@ -807,20 +718,22 @@ mod tests {
     #[test]
     #[serial_test::serial(global_ttl)]
     fn version_cache_is_bounded_across_many_projects() {
-        VERSION_CACHE.clear();
+        VERSION_MEMO.found().clear();
 
         let visits = VERSION_CACHE_CAPACITY.saturating_mul(2);
         for i in 0..visits {
-            cache_version_result(&format!("ruby:/project/{i}"), "3.3.0".to_owned());
+            VERSION_MEMO
+                .found()
+                .insert(format!("ruby:/project/{i}"), "3.3.0".to_owned());
         }
 
-        let len = VERSION_CACHE.len();
+        let len = VERSION_MEMO.found().len();
         assert!(
             len <= VERSION_CACHE_CAPACITY,
             "version cache grew to {len} entries, exceeding cap {VERSION_CACHE_CAPACITY}"
         );
 
-        VERSION_CACHE.clear();
+        VERSION_MEMO.found().clear();
     }
 
     #[test]
@@ -1022,16 +935,16 @@ mod tests {
         assert_eq!(detect_language_release_at(&stub, Some(dir)), None);
         assert_eq!(spawn_count(&count), 1, "no re-probe within the failure TTL");
 
-        VERSION_FAILURE_CACHE.insert(
+        VERSION_MEMO.failed().insert(
             key.clone(),
-            SystemTime::now() - VERSION_FAILURE_TTL - Duration::from_secs(1),
+            SystemTime::now() - FAILURE_TTL - Duration::from_secs(1),
         );
         assert_eq!(
             detect_language_release_at(&stub, Some(dir)).as_deref(),
             Some("1.2.3")
         );
         assert_eq!(spawn_count(&count), 2);
-        assert_eq!(VERSION_FAILURE_CACHE.get(&key), None);
+        assert_eq!(VERSION_MEMO.failed().get(&key), None);
 
         assert_eq!(
             detect_language_release_at(&stub, Some(dir)).as_deref(),

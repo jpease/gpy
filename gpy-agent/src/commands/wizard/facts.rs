@@ -4,6 +4,7 @@ use crate::config::Config;
 use crate::git::{CompleteStatus, RepositoryStatus};
 use crate::ipc::LanguageInfo;
 use crate::language::detector::Detector;
+use crate::language::display::{DisplayRequest, Versions, display_info};
 use crate::theme::ThemeConfig;
 use std::path::Path;
 
@@ -57,13 +58,8 @@ pub fn gather(cwd: &Path, config: &Config, theme: &ThemeConfig) -> crate::Result
 
     let languages = if config.language.enabled {
         let detected = Detector::detect_directory_bounded(cwd, config.language.detection_mode);
-        crate::language::display::build_language_display_info_at(
-            &detected,
-            theme,
-            &config.language,
-            Some(cwd),
-            None,
-        )
+        let request = DisplayRequest::new(&detected, theme, &config.language).with_cwd(Some(cwd));
+        display_info(&request, Versions::Probe).unwrap_or_default()
     } else {
         Vec::new()
     };

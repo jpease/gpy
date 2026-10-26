@@ -10,6 +10,7 @@ use crate::formatter::{
 };
 use crate::ipc::Response;
 use crate::language::detector::Detector;
+use crate::language::display::{DisplayRequest, Versions, display_info};
 use crate::theme::ThemeConfig;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -206,13 +207,9 @@ fn language_response(
         return None;
     }
 
-    let languages = crate::language::display::build_language_display_info_at(
-        &detected_languages,
-        theme,
-        &config.language,
-        Some(root.as_path()),
-        None,
-    );
+    let display_request = DisplayRequest::new(&detected_languages, theme, &config.language)
+        .with_cwd(Some(root.as_path()));
+    let languages = display_info(&display_request, Versions::Probe).unwrap_or_default();
     (!languages.is_empty()).then_some(Response::Language { languages })
 }
 

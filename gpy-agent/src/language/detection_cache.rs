@@ -19,14 +19,14 @@ struct DetectionEntry {
 
 type DetectionMap = HashMap<PathBuf, DetectionEntry>;
 
-/// Thread-safe cache for language detection results
+/// Per-directory detection results shared across threads.
 #[derive(Default, Clone)]
 pub struct DetectionCache {
     cache: Arc<RwLock<DetectionMap>>,
 }
 
 impl DetectionCache {
-    /// Create a new language detection cache
+    /// An empty cache.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -34,12 +34,10 @@ impl DetectionCache {
         }
     }
 
-    /// Get cached detection results for a directory
+    /// Cached results for `path`.
     #[must_use]
     pub fn get(&self, path: &Path) -> Option<Vec<DetectedLanguage>> {
         let cache = self.cache.read_or_recover();
-        // Clone the results because DetectedLanguage is relatively small
-        // and we want to avoid holding the lock
         cache.get(path).map(|entry| entry.languages.clone())
     }
 
@@ -52,12 +50,12 @@ impl DetectionCache {
             .map(|entry| (entry.languages.clone(), entry.last_refresh.elapsed()))
     }
 
-    /// Set cached detection results for a directory
+    /// Store `results` for `path` without a refresh signature.
     pub fn set(&self, path: &Path, results: Vec<DetectedLanguage>) {
         self.set_entry(path, results, None);
     }
 
-    /// Set cached detection results with a refresh signature.
+    /// Store `results` for `path` with a refresh signature.
     pub fn set_with_signature(&self, path: &Path, results: Vec<DetectedLanguage>, signature: u64) {
         self.set_entry(path, results, Some(signature));
     }
@@ -72,20 +70,19 @@ impl DetectionCache {
                 signature,
             },
         );
-        // Cap memory for agents that visit many directories
-        // (least-recently-updated eviction).
         evict_to_capacity(&mut cache, DETECTION_CACHE_CAPACITY, |entry| {
             entry.last_refresh
         });
         drop(cache);
     }
 
-    /// Invalidate cache for a directory
+    /// Drop the entry for `path`.
     pub fn invalidate(&self, path: &Path) {
         self.cache.write_or_recover().remove(path);
     }
 
-    /// Returns true if a refresh should run based on signature change and interval.
+    /// Whether a refresh should run: no entry, or the entry is older than
+    /// `min_interval` and its signature differs.
     #[must_use]
     pub fn should_refresh(&self, path: &Path, signature: u64, min_interval: Duration) -> bool {
         self.cache.read_or_recover().get(path).is_none_or(|entry| {

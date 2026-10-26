@@ -11,7 +11,7 @@ use gpy_agent::config::{
     metadata::set_config_value,
     types::{DetectionMode, LanguageFilter},
 };
-use gpy_agent::language::display::{build_language_display_info, build_language_display_info_at};
+use gpy_agent::language::display::{DisplayRequest, Versions, display_info};
 use gpy_agent::language::{
     detector::{
         DetectedLanguage, Detector, get_language_color_from_theme, normalize_language_name,
@@ -103,13 +103,11 @@ fn python_version_comes_from_project_venv() {
 
     let config = Config::default();
     let theme = gpy_agent::theme::ThemeConfig::default();
-    let display = build_language_display_info_at(
-        &languages,
-        &theme,
-        &config.language,
-        Some(dir.path()),
-        None,
-    );
+    let display = display_info(
+        &DisplayRequest::new(&languages, &theme, &config.language).with_cwd(Some(dir.path())),
+        Versions::Probe,
+    )
+    .expect("probing never reports a cold version");
 
     let python = display
         .iter()
@@ -133,13 +131,11 @@ fn ruby_version_comes_from_ruby_version_file() {
 
     let config = Config::default();
     let theme = gpy_agent::theme::ThemeConfig::default();
-    let display = build_language_display_info_at(
-        &languages,
-        &theme,
-        &config.language,
-        Some(dir.path()),
-        None,
-    );
+    let display = display_info(
+        &DisplayRequest::new(&languages, &theme, &config.language).with_cwd(Some(dir.path())),
+        Versions::Probe,
+    )
+    .expect("probing never reports a cold version");
 
     let ruby = display
         .iter()
@@ -169,7 +165,11 @@ fn test_filter_mode_primary() {
     ];
 
     let theme = gpy_agent::theme::ThemeConfig::default();
-    let display = build_language_display_info(&languages, &theme, &config.language);
+    let display = display_info(
+        &DisplayRequest::new(&languages, &theme, &config.language),
+        Versions::Probe,
+    )
+    .expect("probing never reports a cold version");
     assert_eq!(display.len(), 1);
     assert_eq!(display.first().expect("first entry").name, "rust");
 }
@@ -201,7 +201,11 @@ fn test_filter_mode_top_n() {
     ];
 
     let theme = gpy_agent::theme::ThemeConfig::default();
-    let display = build_language_display_info(&languages, &theme, &config.language);
+    let display = display_info(
+        &DisplayRequest::new(&languages, &theme, &config.language),
+        Versions::Probe,
+    )
+    .expect("probing never reports a cold version");
     assert_eq!(display.len(), 2);
     assert_eq!(display.first().expect("first entry").name, "rust");
     assert_eq!(display.get(1).expect("second entry").name, "node");
@@ -235,7 +239,11 @@ fn test_confidence_threshold() {
     ];
 
     let theme = gpy_agent::theme::ThemeConfig::default();
-    let display = build_language_display_info(&languages, &theme, &config.language);
+    let display = display_info(
+        &DisplayRequest::new(&languages, &theme, &config.language),
+        Versions::Probe,
+    )
+    .expect("probing never reports a cold version");
     assert_eq!(display.len(), 1, "Only Rust should pass 0.25 threshold");
     assert_eq!(display.first().expect("first entry").name, "rust");
 }
@@ -276,7 +284,11 @@ fn test_combined_threshold_and_filter() {
 
     // Should filter to 3 languages (threshold), then take top 2 (filter)
     let theme = gpy_agent::theme::ThemeConfig::default();
-    let display = build_language_display_info(&languages, &theme, &config.language);
+    let display = display_info(
+        &DisplayRequest::new(&languages, &theme, &config.language),
+        Versions::Probe,
+    )
+    .expect("probing never reports a cold version");
     assert_eq!(display.len(), 2);
     assert_eq!(display.first().expect("first entry").name, "rust");
     assert_eq!(display.get(1).expect("second entry").name, "node");
@@ -1073,7 +1085,7 @@ fn cpp_header_is_not_resolved_by_static_language_priority() {
     let header = "#include <iostream>\n#include <vector>\n\nnamespace demo {\nclass Widget {\npublic:\n    void render() const;\n};\n}\n";
     let dir = create_repo_with_contents(&[("widget.h", header)]);
 
-    let detected = Detector::detect_file(dir.path().join("widget.h"))
+    let detected = Detector::detect_file(&dir.path().join("widget.h"))
         .expect("detection should not error")
         .expect("a .h file with C++ contents should resolve to a language");
     assert_eq!(
@@ -1157,7 +1169,7 @@ fn detect_file_reports_single_file_metrics() {
     let source = "fn main() {\n    println!(\"hello\");\n}\n";
     let dir = create_repo_with_contents(&[("main.rs", source)]);
 
-    let detected = Detector::detect_file(dir.path().join("main.rs"))
+    let detected = Detector::detect_file(&dir.path().join("main.rs"))
         .expect("detection should not error")
         .expect("main.rs should resolve to a language");
 
@@ -1175,7 +1187,7 @@ fn detect_file_reports_single_file_metrics() {
 fn detect_file_returns_none_for_an_unrecognized_file() {
     let dir = create_repo_with_contents(&[("notes.zzzunknown", "plain text, no language\n")]);
 
-    let detected = Detector::detect_file(dir.path().join("notes.zzzunknown"))
+    let detected = Detector::detect_file(&dir.path().join("notes.zzzunknown"))
         .expect("an unrecognized file is not an error");
     assert!(
         detected.is_none(),

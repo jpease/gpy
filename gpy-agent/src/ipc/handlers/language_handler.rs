@@ -7,10 +7,7 @@ use super::{
 use crate::ipc::{LanguageInfo, Message, Response};
 use crate::language::DetectionCache;
 use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
-use crate::language::display::{
-    build_language_display_info_at, cached_language_display_info_at,
-    settled_language_display_info_at,
-};
+use crate::language::display::{DisplayRequest, Versions, display_info};
 use crate::language::venv::PythonVenv;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -113,16 +110,11 @@ impl LanguageHandler {
 
         // Versions come from the caches; a cold one is probed by a background
         // job, waited on only for what is left of the budget.
-        let cached = || {
-            cached_language_display_info_at(
-                &detected_languages,
-                &theme,
-                &config.language,
-                Some(&repo_root),
-                python_venv.as_ref(),
-            )
-        };
-        let (languages, published) = if let Some(languages) = cached() {
+        let request = DisplayRequest::new(&detected_languages, &theme, &config.language)
+            .with_cwd(Some(&repo_root))
+            .with_venv(python_venv.as_ref());
+        let (languages, published) = if let Ok(languages) = display_info(&request, Versions::Cached)
+        {
             (languages, false)
         } else {
             let (probe, started_here) = self.version_probe_job(
@@ -139,15 +131,7 @@ impl LanguageHandler {
             // as none rather than failing a request that is in budget.
             let languages = probe
                 .wait_timeout(remaining(deadline))
-                .map(|()| {
-                    settled_language_display_info_at(
-                        &detected_languages,
-                        &theme,
-                        &config.language,
-                        Some(&repo_root),
-                        python_venv.as_ref(),
-                    )
-                })
+                .map(|()| display_info(&request, Versions::Settled).unwrap_or_default())
                 .ok_or(HandlerError::TimedOut("Language version probe"))?;
             // A job this request started already published its inputs.
             (languages, started_here)
@@ -187,13 +171,10 @@ impl LanguageHandler {
                 spawn_detached(move || {
                     let config = render.config_manager.get();
                     let theme = render.theme_manager.get();
-                    let languages = build_language_display_info_at(
-                        &detected_owned,
-                        &theme,
-                        &config.language,
-                        Some(&repo_root_owned),
-                        python_venv_owned.as_ref(),
-                    );
+                    let request = DisplayRequest::new(&detected_owned, &theme, &config.language)
+                        .with_cwd(Some(&repo_root_owned))
+                        .with_venv(python_venv_owned.as_ref());
+                    let languages = display_info(&request, Versions::Probe).unwrap_or_default();
                     Self::publish_languages(
                         &render,
                         &cache_path_owned,
@@ -265,13 +246,10 @@ impl LanguageHandler {
         // A background job, so a cold version is probed here. No request
         // context, so prev_bg is None; reuse the stashed venv.
         let stashed_venv = crate::language::venv::stashed_project_venv(repo_root);
-        let languages = build_language_display_info_at(
-            detected,
-            &theme,
-            &config.language,
-            Some(repo_root),
-            stashed_venv.as_ref(),
-        );
+        let request = DisplayRequest::new(detected, &theme, &config.language)
+            .with_cwd(Some(repo_root))
+            .with_venv(stashed_venv.as_ref());
+        let languages = display_info(&request, Versions::Probe).unwrap_or_default();
         Self::publish_languages(deps, repo_root, &languages, None);
     }
 

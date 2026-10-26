@@ -139,6 +139,12 @@ impl ColorSpec {
             .ok_or_else(|| crate::Error::invalid(format!("Invalid color specification: '{value}'")))
     }
 
+    /// White, the fallback when a configured color does not validate.
+    #[must_use]
+    pub fn white() -> Self {
+        Self("#ffffff".to_owned())
+    }
+
     /// Get the color string.
     #[must_use]
     pub fn as_str(&self) -> &str {

@@ -4,9 +4,10 @@
 //! so marker-less subdirectories (`docs/`) still match the shell pre-filters.
 
 use crate::cache::ttl_map::TtlMap;
+use crate::language::ancestors::{MAX_ANCESTOR_DEPTH, bounded_ancestors, home_dir};
 use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
 use crate::language::metadata::marker_file_names;
-use crate::language::version::MAX_TOOL_VERSION_ANCESTORS;
+
 use crate::watcher::multi_repo::MultiRepoWatcher;
 use std::path::{Path, PathBuf};
 
@@ -46,7 +47,7 @@ static NON_GIT_ROOT_CACHE: TtlMap<PathBuf, PathBuf> =
     TtlMap::with_ttl(NON_GIT_ROOT_CACHE_CAPACITY, LANGUAGE_REFRESH_INTERVAL);
 
 /// Resolve the language-detection root for `path`: git root, else nearest
-/// marker ancestor below `$HOME` (bounded by [`MAX_TOOL_VERSION_ANCESTORS`]), else `path`.
+/// marker ancestor below `$HOME` (bounded by [`MAX_ANCESTOR_DEPTH`]), else `path`.
 #[must_use]
 pub fn project_root(path: &Path) -> ProjectRoot {
     MultiRepoWatcher::find_git_root(path)
@@ -56,9 +57,7 @@ pub fn project_root(path: &Path) -> ProjectRoot {
 /// Memoized non-git half of [`project_root`].
 fn non_git_root(path: &Path) -> PathBuf {
     memoized_non_git_root(path, || {
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .map(|home_dir| home_dir.canonicalize().unwrap_or(home_dir))
+        home_dir().map(|home| home.canonicalize().unwrap_or(home))
     })
 }
 
@@ -84,21 +83,10 @@ fn resolve_non_git_root(dir: &Path, home: Option<&Path>) -> PathBuf {
 /// `$HOME` is a boundary, not a candidate: a stray `~/package.json` must not
 /// make every directory under home a node project.
 fn nearest_marker_ancestor(path: &Path, home: Option<&Path>) -> Option<PathBuf> {
-    let mut checked = 0_usize;
-    for ancestor in path.ancestors() {
-        if home.is_some_and(|home_dir| ancestor == home_dir) {
-            break;
-        }
-        if has_marker_file(ancestor) {
-            return Some(ancestor.to_path_buf());
-        }
-
-        checked = checked.saturating_add(1);
-        if checked >= MAX_TOOL_VERSION_ANCESTORS {
-            break;
-        }
-    }
-    None
+    bounded_ancestors(path, home, MAX_ANCESTOR_DEPTH)
+        .take_while(|ancestor| home != Some(*ancestor))
+        .find(|ancestor| has_marker_file(ancestor))
+        .map(Path::to_path_buf)
 }
 
 /// Most directory entries [`has_marker_file`] reads for a case-insensitive
@@ -199,20 +187,19 @@ mod tests {
     fn walk_is_bounded_outside_home() {
         let (_temp_dir, top) = canonical_temp_dir();
         std::fs::write(top.join("package.json"), "{}").expect("marker");
-        let deep =
-            (0_usize..MAX_TOOL_VERSION_ANCESTORS).fold(top.clone(), |dir, _level| dir.join("d"));
+        let deep = (0_usize..MAX_ANCESTOR_DEPTH).fold(top.clone(), |dir, _level| dir.join("d"));
         std::fs::create_dir_all(&deep).expect("deep dir");
 
         assert_eq!(
             nearest_marker_ancestor(&deep, None),
             None,
-            "the walk must give up after MAX_TOOL_VERSION_ANCESTORS levels"
+            "the walk must give up after MAX_ANCESTOR_DEPTH levels"
         );
         let within_bound = deep.parent().expect("parent");
         assert_eq!(
             nearest_marker_ancestor(within_bound, None),
             Some(top),
-            "a marker exactly MAX_TOOL_VERSION_ANCESTORS levels up is still found"
+            "a marker exactly MAX_ANCESTOR_DEPTH levels up is still found"
         );
     }
 
