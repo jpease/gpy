@@ -40,9 +40,10 @@ Not reproduced: the review's full PoC run under an interactive prompt (only the 
   - Nothing else: cloud credentials, tokens, `SSH_AUTH_SOCK` and exported shell functions are absent unless declared.
 
   The clean environment keeps the cache key complete and keeps credentials out of scripts by default. It is not a confidentiality boundary: a script running as the user can still read `~/.aws` and `~/.ssh`, find the SSH agent socket, or read other processes' environments where the system allows it. stdin is `/dev/null` and stderr is discarded. The working directory is the plugin root, or `$PWD` only when the segment declares the `pwd` input. The interpreter is `/bin/sh`, run by an absolute path resolved once per shell (on macOS, the shell `/private/var/select/sh` points to, run as `sh`), never a bare `sh` looked up on `PATH`. `require_command` gets the same environment, working directory, interpreter and process rules as `command`.
-- **Declared values in argv.** The cheapest leak-free shape the spike priced (`cxls`: `exec -c` and a prologue) passes each declared `NAME=value` as an argument of the script's `sh`, so the value stays in that process's argv for the whole run, where other local users may read it with `ps` (inferred, not checked on macOS or Linux). `env -i` holds the values only until it execs, at +0.5 to +1.0 ms more per run on macOS. Which shape ships is an [open decision](#open-decisions); `script_segment_clean_env` records which applies.
+- **Declared values never in argv.** Declared values reach the script through its environment (`env -i` shape), never as arguments of its `sh`, so other local users cannot read them with `ps`. This costs +0.5 to +1.0 ms more per uncached run on macOS than the cheapest priced shape (`cxls`, which leaves each `NAME=value` in argv for the whole run); the maintainer chose it on 2026-10-25. `script_segment_clean_env` checks that no declared value appears in the script process's argv.
 - **Process group.** The script runs in its own process group (Bash and Zsh: a new group in the same session; Linux Fish: a new session through `setsid(1)`) and is never given the foreground group. Where it keeps a controlling terminal it can still open `/dev/tty`; text written there bypasses the strip. On timeout or Ctrl-C the group gets TERM, then CONT, then KILL after a 50 ms grace or as soon as the script exits. The runner never waits for pipe EOF. Fish's `none` wrapper mode (no `setsid(1)` and no `/bin/bash`) signals only the direct child, so the group rules do not hold there; it was not run.
 - **Background processes.** After a normal exit, if members remain in the script's group, the runner sends TERM and CONT, polls `kill -0 -PGID` for at most the 50 ms grace, then sends KILL. It does this synchronously, before the prompt, and waits only when members remain. The spike runners sent TERM and CONT only; this KILL step is not built or measured. A process that leaves the group (`setsid`, a daemonizing double fork) is outside this guarantee, on macOS and on Linux. In a container whose PID 1 does not reap, every timed-out run can leave zombies (1 to 3 per run in the spike) until the PID limit is reached; run containers with `--init`.
+- **Ctrl-C.** In Fish and Zsh the runner child is a Bash 4 or later found at init, else `/bin/bash`. Bash 3.2 ignores SIGINT inside `<( )` and runs traps only after `read -t` returns, so with the 3.2 fallback (stock macOS) Ctrl-C during a slow script waits for the timeout; the run still reports 130 and the group is killed. With Bash 4 or later, and in Bash itself, Ctrl-C reaches the prompt at once (at most 58 ms on Linux in the spike).
 - **What GPY protects.** GPY does not protect the user from the script. It protects the interactive shell and the terminal from the script's output and from the manifest's names, and keeps directory names from reaching shell code. In order: script output never executes, and reaches the terminal with no C0 control, no DEL and no UTF-8-encoded C1 control (a lone byte `0x80`–`0x9F` is the residual in step 4); manifest names never execute; the executed files are the `command` and `require_command` scripts inside the plugin directory; no state outside the shell can feed the prompt.
 - **What GPY does not protect.**
   - A malicious plugin, or a benign script that runs repository-local tools on an untrusted checkout. For example, `git` in a cloned repository may run repository-configured hooks or `core.fsmonitor` (inferred, not tested). Plugin documentation must say so.
@@ -145,7 +146,7 @@ The agent gains no process execution and no `Message`/`Response` change, and `se
 
 These need the maintainer before the adapters PR picks an implementation:
 
-- **Declared values in argv.** Accept that the `cxls` shape puts declared values in the script's argv for the whole run (and document it), or pay +0.5 to +1.0 ms per run for `env -i`.
+- ~~Declared values in argv~~: decided 2026-10-25, environment only (see "Declared values never in argv").
 - **Strip and escape cost at the cap in Bash 3.2.** The strip and escape now grow about linearly (see step 5). Keep the 4096-byte cap in Bash 3.2, or set a smaller one there, from a quiet-machine measurement of the 4096-byte worst cases (#1010).
 
 ### Named tests for the adapters item
@@ -169,7 +170,7 @@ Shell tests follow `tests/<shell>/<name>.test.<ext>` and exist for Bash (run und
 | NUL in output never reaches the prompt and prints no shell warning | `script_segment_nul` |
 | `$!`/`$last_pid`, the job table, the terminal's foreground group and open descriptors are unchanged by a run and by a scan | `script_segment_job_state` |
 | A `require_files`, `require_folders` or `require_extensions` scan on a hung NFS mount, and a `require_extensions` scan of a directory with 1,000,000 entries, stay within the 30 ms bound and the child is killed (Linux CI only; needs a privileged container) | `script_segment_scan_hang` |
-| Secrets and `SSH_AUTH_SOCK` absent unless declared; relative `PATH` entries dropped; `require_command` gets the same environment; hostile declared values (newlines, `$(…)`, backticks, globs, quotes) arrive literally; names like `a[$(cmd)]` rejected before any use; whether declared values appear in any process's argv during the run | `script_segment_clean_env` |
+| Secrets and `SSH_AUTH_SOCK` absent unless declared; relative `PATH` entries dropped; `require_command` gets the same environment; hostile declared values (newlines, `$(…)`, backticks, globs, quotes) arrive literally; names like `a[$(cmd)]` rejected before any use; no declared value appears in any process's argv during the run | `script_segment_clean_env` |
 
 ### SECURITY.md when the adapters ship
 
@@ -178,7 +179,7 @@ The adapters PR replaces "Plugin segment files run as you" with a statement of t
 - "Repositories are read, never written": a script that declares `pwd` runs tools such as `git` in the repository, and they may write index and lock files.
 - "No sandbox": scripts have no CPU, memory, file or process limits beyond the timeout.
 - "Prompt data is escaped … so neither can emit escape sequences": the shells keep a lone byte `0x80`–`0x9F`, and text written to `/dev/tty` is not sanitized.
-- The documented gaps: lone C1 bytes, Unicode format characters, a `setsid` or daemonizing escapee, zombies under a non-reaping PID 1, and declared values in argv if that shape ships.
+- The documented gaps: lone C1 bytes, Unicode format characters, a `setsid` or daemonizing escapee, zombies under a non-reaping PID 1, and Ctrl-C bounded by the timeout in Fish and Zsh on a stock macOS (Bash 3.2 runner child).
 
 Until then, SECURITY.md says script segments are planned and links here.
 
