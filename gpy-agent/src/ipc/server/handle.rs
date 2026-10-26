@@ -300,20 +300,13 @@ impl EndpointHandle {
     /// Fails if the socket cannot be bound or accepting fails.
     #[cfg(unix)]
     pub async fn start(&mut self) -> Result<()> {
-        use crate::debug_log;
-
         let bound = self.bind_socket();
         // End the handshake either way, so the next start sees the real outcome.
         if let (Err(e), Some(startup)) = (&bound, self.startup.take()) {
             startup.fail(e);
         }
         bound?;
-        debug_log!("server", "Listener stored, starting accept loop...");
-
-        debug_log!("server", "About to enter accept_loop");
-        let result = self.accept_loop().await;
-        debug_log!("server", "accept_loop returned: {:?}", result.is_ok());
-        result
+        self.accept_loop().await
     }
 
     /// Bind the socket in a trusted directory (see [`secure_socket_dir`]), set
@@ -325,20 +318,16 @@ impl EndpointHandle {
     /// setting permissions fails.
     #[cfg(unix)]
     fn bind_socket(&mut self) -> Result<()> {
-        use crate::debug_log;
         use std::os::unix::fs::PermissionsExt;
 
         // Explain over-long paths instead of the kernel's bare SUN_LEN error.
         crate::paths::check_socket_path_len(&self.socket_path)?;
         secure_socket_dir(&self.socket_path, self.socket_dir_repair)?;
 
-        debug_log!("server", "Attempting to bind socket...");
         let listener = UnixListener::bind(&self.socket_path).map_err(|e| {
             ipc_io_err(&format!("bind socket '{}'", self.socket_path.display()), &e)
         })?;
-        debug_log!("server", "Socket bound successfully");
 
-        debug_log!("server", "Setting socket permissions...");
         let metadata = std::fs::metadata(&self.socket_path)
             .map_err(|e| ipc_io_err("read socket metadata", &e))?;
 
@@ -346,7 +335,6 @@ impl EndpointHandle {
         perms.set_mode(0o600);
         std::fs::set_permissions(&self.socket_path, perms)
             .map_err(|e| ipc_io_err("set socket permissions", &e))?;
-        debug_log!("server", "Socket permissions set successfully");
 
         // Record after chmod: it changes ctime, so a pre-chmod identity would never match.
         let bound_metadata = std::fs::metadata(&self.socket_path)
@@ -365,7 +353,6 @@ impl EndpointHandle {
     async fn accept_loop(&mut self) -> Result<()> {
         use crate::debug_log;
 
-        debug_log!("server", "Starting accept loop");
         let mut shutdown_rx = self.shutdown_rx.take().ok_or_else(|| {
             Error::ipc("accept loop already ran: no shutdown receiver".to_owned())
         })?;
@@ -379,10 +366,7 @@ impl EndpointHandle {
         ownership_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         ownership_timer.reset();
 
-        debug_log!("server", "Got listener reference, entering main loop");
         loop {
-            debug_log!("server", "Waiting for connection...");
-
             tokio::select! {
                 result = listener.accept() => {
                     let stream = match result {
@@ -429,7 +413,6 @@ impl EndpointHandle {
             }
         }
 
-        debug_log!("server", "Accept loop finished, cleaning up socket");
         self.unlink_socket_if_owned();
 
         Ok(())

@@ -322,7 +322,7 @@ impl StartupHandoff {
         use std::io::Write;
 
         let reason = crate::error::user_message(err);
-        crate::debug::write_debug_log("agent", &format!("Fatal startup error: {reason}"));
+        debug_log!("agent", "Fatal startup error: {reason}");
         let _ = self.report.write_all(reason.as_bytes());
     }
 }

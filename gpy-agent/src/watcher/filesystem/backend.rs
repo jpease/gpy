@@ -186,9 +186,10 @@ impl WatcherBackend {
             match op {
                 OsOp::Add(path, mode) => {
                     if let Err(error) = batch.add(&path, mode.recursive_mode()) {
-                        crate::debug::write_debug_log(
+                        crate::debug_log!(
                             "watcher",
-                            &format!("failed to watch {} ({mode:?}): {error}", path.display()),
+                            "failed to watch {} ({mode:?}): {error}",
+                            path.display()
                         );
                         self.os.record_failed_add(&path, mode);
                         failures.push((path, error));
@@ -196,19 +197,17 @@ impl WatcherBackend {
                 }
                 OsOp::Remove(path) => {
                     if let Err(error) = batch.remove(&path) {
-                        crate::debug::write_debug_log(
+                        crate::debug_log!(
                             "watcher",
-                            &format!("failed to unwatch {}: {error}", path.display()),
+                            "failed to unwatch {}: {error}",
+                            path.display()
                         );
                     }
                 }
             }
         }
         if let Err(error) = batch.commit() {
-            crate::debug::write_debug_log(
-                "watcher",
-                &format!("failed to commit watch changes: {error}"),
-            );
+            crate::debug_log!("watcher", "failed to commit watch changes: {error}");
         }
         failures
     }
@@ -266,9 +265,10 @@ impl WatcherBackend {
         }
         // Kept in the expansion on failure; the parent's scan reports removal.
         for (path, error) in self.apply(ops) {
-            crate::debug::write_debug_log(
+            crate::debug_log!(
                 "watcher",
-                &format!("poll backend could not arm new {}: {error}", path.display()),
+                "poll backend could not arm new {}: {error}",
+                path.display()
             );
         }
     }

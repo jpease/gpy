@@ -50,9 +50,9 @@ impl ClientHandler {
             _ => "unknown".to_owned(),
         };
 
-        crate::debug::write_debug_log(
+        crate::debug_log!(
             "client",
-            &format!("Registering client: PID={pid}, shell={shell_info}"),
+            "Registering client: PID={pid}, shell={shell_info}"
         );
 
         let sanitized = cwd.map(crate::security::SafePath::into_inner);
@@ -68,9 +68,9 @@ impl ClientHandler {
             if let Some(watcher) = current_watcher
                 && let Err(e) = watcher.register_client(pid.get(), path)
             {
-                crate::debug::write_debug_log(
+                crate::debug_log!(
                     "client",
-                    &format!("Watcher registration failed for PID={pid} (continuing): {e}"),
+                    "Watcher registration failed for PID={pid} (continuing): {e}"
                 );
             }
 
@@ -107,9 +107,9 @@ impl ClientHandler {
         if let Some(watcher) = current_watcher
             && let Err(e) = watcher.update_client(pid.get(), path_buf)
         {
-            crate::debug::write_debug_log(
+            crate::debug_log!(
                 "client",
-                &format!("Watcher update failed for PID={pid} (continuing): {e}"),
+                "Watcher update failed for PID={pid} (continuing): {e}"
             );
             self.trigger_initial_scan(path_buf);
         }

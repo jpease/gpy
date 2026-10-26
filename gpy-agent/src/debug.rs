@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 /// `GPY_DEBUG_LOG`, made absolute against the launch directory.
 static DEBUG_PATH: OnceLock<Option<String>> = OnceLock::new();
 
-/// Check if debug logging is enabled.
+/// Return the path to the debug log file if enabled.
 fn debug_log_path() -> Option<&'static str> {
     DEBUG_PATH
         .get_or_init(|| {
@@ -55,13 +55,14 @@ fn now_millis() -> u128 {
 #[macro_export]
 macro_rules! debug_log {
     ($category:expr, $($arg:tt)*) => {
-        $crate::debug::write_debug_log($category, &format!($($arg)*));
+        if $crate::debug::is_debug_enabled() {
+            $crate::debug::write_debug_log($category, &format!($($arg)*));
+        }
     };
 }
 
 /// Write a debug log entry (internal use only).
-#[doc(hidden)]
-pub fn write_debug_log(category: &str, message: &str) {
+pub(crate) fn write_debug_log(category: &str, message: &str) {
     if let Some(log_path) = debug_log_path() {
         append_to(
             Path::new(log_path),
@@ -89,12 +90,7 @@ pub fn warn(category: &str, message: &str) {
     // Not `eprintln!`: `clippy::print_stderr` is denied.
     let _ = writeln!(std::io::stderr(), "Warning: [{category}] {message}");
 
-    if let Some(log_path) = debug_log_path() {
-        append_to(
-            Path::new(log_path),
-            &format_line(now_millis(), category, message),
-        );
-    }
+    write_debug_log(category, message);
 }
 
 /// Warn that `component` failed with `error` and is doing `fallback_action`.
@@ -149,5 +145,26 @@ mod tests {
         // Best-effort: must not panic.
         let path = std::path::Path::new("/nonexistent-gpy-debug-dir/debug.log");
         append_to(path, "[1] [test] unreachable");
+    }
+
+    #[test]
+    fn debug_log_does_not_evaluate_arguments_when_logging_is_disabled() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountingDisplay<'a>(&'a AtomicUsize);
+        impl std::fmt::Display for CountingDisplay<'_> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                write!(f, "counted")
+            }
+        }
+
+        assert!(
+            !super::is_debug_enabled(),
+            "test expects GPY_DEBUG_LOG to be unset"
+        );
+        let counter = AtomicUsize::new(0);
+        crate::debug_log!("test", "side effect: {}", CountingDisplay(&counter));
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
     }
 }

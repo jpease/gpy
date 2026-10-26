@@ -110,16 +110,16 @@ pub(super) fn spawn_health_probe(
     let registry_for_probe = Arc::clone(registry);
     thread::spawn(move || {
         if native_backend_delivers_events(timing.probe_timeout, &stop_for_probe) {
-            crate::debug::write_debug_log(
+            crate::debug_log!(
                 "watcher",
-                "native backend health probe passed; staying on native",
+                "native backend health probe passed; staying on native"
             );
             return;
         }
-        crate::debug::write_debug_log(
+        crate::debug_log!(
             "watcher",
             "native backend accepted the watch but delivered no events \
-             within the probe window; falling back to polling",
+             within the probe window; falling back to polling"
         );
         engage_poll_fallback(
             &backend_for_probe,
@@ -177,13 +177,11 @@ pub(super) fn apply_poll_swap(
 
     let paths = rearm_poll_paths(&mut backend_guard, registry, precomputed);
     drop(backend_guard);
-    crate::debug::write_debug_log(
+    crate::debug_log!(
         "watcher",
-        &format!(
-            "backend swapped: native -> poll ({}ms interval), {} path(s) re-armed",
-            armed.poll_interval.as_millis(),
-            paths.len()
-        ),
+        "backend swapped: native -> poll ({}ms interval), {} path(s) re-armed",
+        armed.poll_interval.as_millis(),
+        paths.len()
     );
     Some(paths)
 }
@@ -209,12 +207,10 @@ pub(super) fn engage_poll_fallback(
         Ok(watcher) => watcher,
         Err(error) => {
             // Keep the silent native backend; the reconcile remains the backstop.
-            crate::debug::write_debug_log(
+            crate::debug_log!(
                 "watcher",
-                &format!(
-                    "poll fallback unavailable ({error}); staying on the native \
-                     backend and relying on the periodic reconcile"
-                ),
+                "poll fallback unavailable ({error}); staying on the native \
+                 backend and relying on the periodic reconcile"
             );
             return;
         }
@@ -278,9 +274,10 @@ pub(super) fn rearm_poll_paths(
     }
     paths.dedup();
     for (path, error) in state.apply(ops) {
-        crate::debug::write_debug_log(
+        crate::debug_log!(
             "watcher",
-            &format!("poll fallback could not re-arm {}: {error}", path.display()),
+            "poll fallback could not re-arm {}: {error}",
+            path.display()
         );
     }
     paths

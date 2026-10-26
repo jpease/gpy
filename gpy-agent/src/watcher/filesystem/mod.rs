@@ -107,9 +107,10 @@ impl FileSystemWatcher {
                 (build_native_watcher(&event_tx)?, BackendKind::Native)
             }
         };
-        crate::debug::write_debug_log(
+        crate::debug_log!(
             "watcher",
-            &format!("backend armed: {} (policy: {policy:?})", kind.label()),
+            "backend armed: {} (policy: {policy:?})",
+            kind.label()
         );
 
         let backend = Arc::new(Mutex::new(WatcherBackend::armed(watcher, kind)));
@@ -191,7 +192,7 @@ impl FileSystemWatcher {
                 let _ = event_tx.send(event);
             }
             Err(error) => {
-                crate::debug::write_debug_log("watcher", &format!("notify backend error: {error}"));
+                crate::debug_log!("watcher", "notify backend error: {error}");
             }
         }
     }
