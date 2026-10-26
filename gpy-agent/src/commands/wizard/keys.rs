@@ -42,12 +42,10 @@ pub fn handle_key(
     }
 }
 
-/// `y`/`Y`/`Enter` confirms discard; anything else cancels.
+/// `y`/`Y` confirms discard; anything else cancels.
 const fn handle_confirm_key(key: KeyEvent) -> (InputMode, WizardAction) {
     match key.code {
-        KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
-            (InputMode::Normal, WizardAction::ExitWithoutSaving)
-        }
+        KeyCode::Char('y' | 'Y') => (InputMode::Normal, WizardAction::ExitWithoutSaving),
         _ => (InputMode::Normal, WizardAction::Continue),
     }
 }
@@ -310,14 +308,14 @@ mod tests {
     }
 
     #[test]
-    fn confirm_enter_returns_exit_action() {
+    fn confirm_enter_cancels() {
         let mut state = test_state(make_config("default", "default"));
         let mode = InputMode::ConfirmQuit;
         let theme = ThemeConfig::default();
 
         let (new_mode, action) = handle_key(&mut state, mode, &theme, key(KeyCode::Enter));
 
-        assert_eq!(action, WizardAction::ExitWithoutSaving);
+        assert_eq!(action, WizardAction::Continue);
         assert_eq!(new_mode, InputMode::Normal);
     }
 
