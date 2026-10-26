@@ -126,6 +126,9 @@ pub fn prompt() -> Result<()> {
 
         let cwd_str = std::env::current_dir()?.to_string_lossy().to_string();
         let safe_cwd = crate::security::SafePath::new(&cwd_str)?;
+        let safe_cwd_str = safe_cwd
+            .as_str()
+            .ok_or_else(|| crate::Error::invalid("Current working directory is not valid UTF-8"))?;
 
         print!("Ping (Baseline):      ");
         std::io::stdout().flush()?;
@@ -136,7 +139,7 @@ pub fn prompt() -> Result<()> {
         std::io::stdout().flush()?;
         let git_duration = send_request(
             &mut stream,
-            &serde_json::json!({"op": "git", "cwd": safe_cwd.as_str(), "format": "json"}),
+            &serde_json::json!({"op": "git", "cwd": safe_cwd_str, "format": "json"}),
         )
         .await?;
         println!("{git_duration:.2?}");
@@ -145,7 +148,7 @@ pub fn prompt() -> Result<()> {
         std::io::stdout().flush()?;
         let lang_duration = send_request(
             &mut stream,
-            &serde_json::json!({"op": "lang", "cwd": safe_cwd.as_str(), "format": "json", "is_last": true}),
+            &serde_json::json!({"op": "lang", "cwd": safe_cwd_str, "format": "json", "is_last": true}),
         )
         .await?;
         println!("{lang_duration:.2?}");

@@ -98,7 +98,13 @@ impl InstantPromptCache {
             source: Some(Box::new(e)),
         })?;
         // Nothing else removes entries; best-effort, never blocks startup.
-        let _ = prune_stale_entries(&cache_dir, SystemTime::now());
+        let (entries, orphans) = prune_stale_entries(&cache_dir, SystemTime::now());
+        if entries > 0 || orphans > 0 {
+            crate::debug_log!(
+                "cache",
+                "Pruned {entries} stale entries and {orphans} orphans from instant-prompt cache"
+            );
+        }
         Ok(Self {
             cache_dir,
             last_written: Mutex::new(LastWritten {
@@ -222,7 +228,16 @@ impl InstantPromptCache {
         let mut first_err = None;
         for context in self.known_contexts(&key, prev_bg) {
             let token = prev_bg_token(context.as_deref());
-            let color = context.as_deref().and_then(|s| parse_color(s).ok());
+            let color = context.as_deref().and_then(|s| match parse_color(s) {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    crate::debug_log!(
+                        "cache",
+                        "Failed to parse prev_bg color '{s}' for instant prompt: {e}"
+                    );
+                    None
+                }
+            });
             for position in SEGMENT_POSITIONS {
                 let prompts = match render(position, color.clone()) {
                     Ok(prompts) => prompts,

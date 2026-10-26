@@ -48,6 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `validate_config_key`, `validate_icon`, `get_language_color_from_theme`,
   and the `ThemeValidationResult`/`PaletteValidationResult` types
   (`commands::{theme,palette}::validate_*` return `ValidationReport`).
+- Conflicting `--socket` and `GPY_AGENT_SOCKET_PATH` overrides now return an
+  error instead of being silently accepted.
 - Config validation errors name the exact field and the real rule.
   `gpy config set` reports a non-integer value as `Invalid whole number: <value>`
   instead of naming a Rust type (`u64 value`). A `git.skip_paths` entry such as

@@ -141,18 +141,16 @@ pub fn list() -> Result<()> {
 }
 
 /// Canonicalize a segment name.
-#[allow(
-    clippy::map_err_ignore,
-    reason = "the message already names the rejected segment; attaching the cause would append to the CLI error text"
-)]
 fn canonicalize_segment(segment: &str) -> Result<String> {
     let normalized = if segment == "lang" {
         "language"
     } else {
         segment
     };
-    let name = SegmentName::new(normalized)
-        .map_err(|_| Error::config(format!("invalid segment '{segment}'")))?;
+    let name = SegmentName::new(normalized).map_err(|e| Error::Config {
+        message: format!("invalid segment '{segment}'"),
+        source: Some(Box::new(e)),
+    })?;
     Ok(name.to_string())
 }
 
@@ -385,9 +383,12 @@ mod tests {
 
     #[test]
     fn canonicalize_segment_accepts_plugin_names() {
+        use std::error::Error as _;
+
         assert_eq!(canonicalize_segment("lang").unwrap(), "language");
         assert_eq!(canonicalize_segment("k8s-tools").unwrap(), "k8s-tools");
-        assert!(canonicalize_segment("bad segment").is_err());
+        let err = canonicalize_segment("bad segment").expect_err("should reject invalid name");
+        assert!(err.source().is_some(), "error should preserve source cause");
     }
 
     #[test]

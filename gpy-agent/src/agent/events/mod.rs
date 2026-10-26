@@ -559,7 +559,6 @@ fn schedule_language_refresh_from_git_status(
     }
 
     let signature = git_status_signature(status);
-
     // Pre-check; `refresh_language_for` re-checks when the job runs.
     if !ctx
         .language_cache
@@ -571,7 +570,6 @@ fn schedule_language_refresh_from_git_status(
     let refresh_ctx = ctx.clone();
     let refresh_repo_root = repo_root.to_path_buf();
     let refresh_config = config.clone();
-
     let job = move || {
         let theme = refresh_ctx.theme_manager.get();
         refresh_language_for(
@@ -708,7 +706,9 @@ fn sync_watcher_state(
             Ok(new_watcher) => {
                 let repos = ctx.registry.get_registered_repos();
                 for (pid, path) in repos {
-                    let _ = new_watcher.attach_client(pid, &path);
+                    if let Err(e) = new_watcher.attach_client(pid, &path) {
+                        debug_log!("config", "registration failed for {pid}: {e}");
+                    }
                 }
                 *watcher_guard = Some(new_watcher);
             }
@@ -860,7 +860,6 @@ pub(super) fn handle_theme_reload(ctx: &AgentContext, reload: &dyn Fn() -> bool)
 pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, config: &Config) {
     let theme = ctx.theme_manager.get();
     let palette = ctx.palette_cache.get();
-
     // prev_bg for git under the new theme; mirrors `ThemeManager::export`.
     let git_prev_bg = theme.segments.directory.bg_color.as_str();
     // Repos `config` includes again may publish git caches once more.
@@ -873,11 +872,9 @@ pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, con
         let git_root = crate::git::find_git_dir_only(&cwd);
         // Keyed by request path when there is no git root.
         let lang_root = git_root.clone().unwrap_or_else(|| cwd.clone());
-
         if !seen_keys.insert(lang_root.clone()) {
             continue;
         }
-
         if let Some(root) = git_root.as_ref() {
             if config.git.is_enabled_for(root) {
                 if let Some(status) = ctx.cache.get(root) {
@@ -940,7 +937,6 @@ fn regen_language_caches(ctx: &AgentContext, lang_root: &Path, config: &Config) 
 }
 
 #[cfg(test)]
-mod tests;
-
-#[cfg(test)]
 mod coordinator_tests;
+#[cfg(test)]
+mod tests;

@@ -492,11 +492,21 @@ impl FileSystemWatcher {
         }
 
         // The probe checks `stop_flag` each iteration, so this returns promptly.
-        if let Some(handle) = self.probe_handle.take() {
-            let _ = handle.join();
+        if let Some(handle) = self.probe_handle.take()
+            && let Err(e) = handle.join()
+        {
+            crate::debug::write_debug_log(
+                "watcher",
+                &format!("probe worker thread panicked: {e:?}"),
+            );
         }
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+        if let Some(handle) = self.handle.take()
+            && let Err(e) = handle.join()
+        {
+            crate::debug::write_debug_log(
+                "watcher",
+                &format!("filesystem watcher worker thread panicked: {e:?}"),
+            );
         }
     }
 }

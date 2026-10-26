@@ -216,8 +216,13 @@ impl HotReloadSlot {
         self.poll_stop.store(true, Ordering::Relaxed);
         {
             let mut handle_guard = self.poll_handle.lock_or_recover();
-            if let Some(handle) = handle_guard.take() {
-                let _ = handle.join();
+            if let Some(handle) = handle_guard.take()
+                && let Err(e) = handle.join()
+            {
+                crate::debug::write_debug_log(
+                    "watcher",
+                    &format!("hot-reload poll thread panicked: {e:?}"),
+                );
             }
         }
 

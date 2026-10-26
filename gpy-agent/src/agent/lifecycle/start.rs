@@ -499,7 +499,9 @@ fn enter_daemon() -> Result<tokio::runtime::Runtime> {
         return Err(Error::process("chdir", e.to_string()));
     }
 
-    let _ = super::write_agent_version();
+    if let Err(e) = super::write_agent_version() {
+        crate::warn_log!("agent", "Failed to write agent version file: {e}");
+    }
 
     tokio::runtime::Runtime::new().map_err(|e| Error::process("runtime", e.to_string()))
 }
@@ -532,7 +534,7 @@ pub fn start_background_agent() -> Result<()> {
         // Absolutize a relative `GPY_AGENT_SOCKET_PATH`; the default socket stays
         // unset so it keeps the `agent.version` marker.
         if crate::paths::socket_path_override().is_some() {
-            let _ = crate::paths::SOCKET_OVERRIDE.set(socket_path.clone());
+            crate::paths::set_socket_override(&socket_path)?;
         }
 
         // Vet the directory before the lock file, stale-socket eviction, or

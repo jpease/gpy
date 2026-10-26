@@ -59,6 +59,8 @@ pub fn create_new(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     file.write_all(contents)
 }
 
+static TEMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Replace `path` with `contents` through a temp file in the same directory
 /// and a rename, so a failed write (disk full, crash) leaves the previous file
 /// whole. A symlinked `path` is resolved first so the link survives, and an
@@ -81,7 +83,8 @@ pub fn write_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     let file_name = target
         .file_name()
         .map_or_else(|| "file".into(), |n| n.to_string_lossy().into_owned());
-    let temp = parent.join(format!(".{file_name}.tmp.{}", std::process::id()));
+    let count = TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp = parent.join(format!(".{file_name}.tmp.{}.{count}", std::process::id()));
 
     let result = (|| -> std::io::Result<()> {
         let mut file = std::fs::File::create(&temp)?;
@@ -303,6 +306,32 @@ mod tests {
         assert!(result.is_err(), "a read-only directory must fail the write");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "previous");
         assert_eq!(entries, 1, "no temp file may be left behind");
+    }
+
+    /// Concurrent atomic writes to the same target don't collide on temp files.
+    #[test]
+    fn concurrent_write_atomically_does_not_collide() {
+        use super::write_atomically;
+        use std::sync::Arc;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = Arc::new(tmp.path().join("concurrent.txt"));
+        let mut handles = Vec::new();
+
+        for i in 0_u32..10_u32 {
+            let p = Arc::clone(&path);
+            handles.push(std::thread::spawn(move || {
+                let data = format!("thread-{i}");
+                write_atomically(&p, data.as_bytes()).unwrap();
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let content = std::fs::read_to_string(&*path).unwrap();
+        assert!(content.starts_with("thread-"));
     }
 
     /// A second locker waits out the first and gets in once it drops.

@@ -3,6 +3,7 @@
 use crate::debug_log;
 use crate::{Error, Result};
 use std::future::Future;
+use std::path::Path;
 use std::pin::Pin;
 use std::time::Duration;
 use tokio::signal;
@@ -12,9 +13,9 @@ pub(super) type ShutdownSignal = Pin<Box<dyn Future<Output = Result<()>> + Send>
 
 /// Logs startup diagnostics. The real bind (and its errors) happens in
 /// [`crate::ipc::server::EndpointHandle::start`]; a pre-check would race.
-pub(super) fn startup_checks(socket_path: &str) {
+pub(super) fn startup_checks(socket_path: &Path) {
     debug_log!("agent", "GPY Agent starting...");
-    debug_log!("agent", "Socket path: {}", socket_path);
+    debug_log!("agent", "Socket path: {}", socket_path.display());
     debug_log!("agent", "Starting IPC server...");
 }
 

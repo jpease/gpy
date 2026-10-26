@@ -464,7 +464,7 @@ impl Agent {
             let config_for_export = ctx.config_manager.get();
             let palette_for_export = ctx.palette_cache.get();
             #[cfg(unix)]
-            let socket_path = server.socket_path().to_owned();
+            let socket_path = server.socket_path().to_path_buf();
             tokio::task::spawn_blocking(move || {
                 #[cfg(unix)]
                 {
@@ -611,8 +611,10 @@ impl Agent {
         self.ctx
             .registry
             .register(pid, Some(repo_path.to_path_buf()));
-        if let Some(watcher) = self.watcher.lock_or_recover().as_ref() {
-            let _ = watcher.attach_client(pid, repo_path);
+        if let Some(watcher) = self.watcher.lock_or_recover().as_ref()
+            && let Err(e) = watcher.attach_client(pid, repo_path)
+        {
+            crate::debug_log!("agent", "Watcher registration failed for PID={pid}: {e}");
         }
     }
 }

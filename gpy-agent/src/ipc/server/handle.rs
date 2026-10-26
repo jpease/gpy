@@ -23,7 +23,7 @@ use crate::security::{GuardSettings, RateLimiter};
 use crate::theme::ThemeManager;
 #[cfg(unix)]
 use crate::warn_log;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 #[cfg(unix)]
 use std::time::Duration;
@@ -517,8 +517,9 @@ impl EndpointHandle {
     }
 
     /// Get the socket path being used.
-    pub fn socket_path(&self) -> &str {
-        self.socket_path.to_str().unwrap_or("")
+    #[must_use]
+    pub fn socket_path(&self) -> &Path {
+        &self.socket_path
     }
 
     /// Sender that stops the accept loop, for a caller that moved this handle into a task.
@@ -797,6 +798,7 @@ mod socket_ownership_tests {
         let socket_path = tmp.path().join("gpy.sock");
 
         let mut handle = build_handle(&socket_path);
+        assert_eq!(handle.socket_path(), socket_path.as_path());
         handle.bind_socket().expect("bind");
         assert!(socket_path.exists(), "socket should exist after bind");
 

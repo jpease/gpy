@@ -208,8 +208,13 @@ impl WatchCoordinator {
 
         self.stop_flag.store(true, Ordering::Relaxed);
         let _ = self.flush_kick.send(());
-        if let Some(handle) = self.flush_handle.take() {
-            let _ = handle.join();
+        if let Some(handle) = self.flush_handle.take()
+            && let Err(e) = handle.join()
+        {
+            crate::debug::write_debug_log(
+                "watcher",
+                &format!("coordinator flush thread panicked: {e:?}"),
+            );
         }
 
         self.debouncer.lock_or_recover().clear();

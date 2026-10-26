@@ -236,6 +236,35 @@ pub fn runtime_root_for(
 /// Overrides the default agent socket path (`--socket`, tests, fixed deployments).
 pub static SOCKET_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
 
+/// Sets the socket override path.
+///
+/// # Errors
+/// Returns an error if a conflicting socket override was already set.
+pub fn set_socket_override(path: &Path) -> crate::Result<()> {
+    let absolute = absolutize(path);
+    if let Some(existing) = SOCKET_OVERRIDE.get() {
+        if existing.as_path() != absolute.as_path() {
+            return Err(crate::Error::invalid(format!(
+                "conflicting socket override: existing={}, requested={}",
+                existing.display(),
+                absolute.display()
+            )));
+        }
+        return Ok(());
+    }
+    if SOCKET_OVERRIDE.set(absolute.clone()).is_err()
+        && let Some(existing) = SOCKET_OVERRIDE.get()
+        && existing.as_path() != absolute.as_path()
+    {
+        return Err(crate::Error::invalid(format!(
+            "conflicting socket override: existing={}, requested={}",
+            existing.display(),
+            absolute.display()
+        )));
+    }
+    Ok(())
+}
+
 /// Runtime directory for agent files: `$XDG_RUNTIME_DIR/gpy`, then
 /// `$XDG_CACHE_HOME/gpy`, `$HOME/.cache/gpy`, `/tmp/gpy` (matches the shells).
 /// Never creates it; `gpy-agent start` does (`lifecycle::ensure_runtime_dir`).

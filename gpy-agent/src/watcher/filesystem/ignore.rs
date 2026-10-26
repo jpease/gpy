@@ -201,12 +201,40 @@ fn nested_ignore_signature(repo_root: &Path, chain: &[PathBuf]) -> NestedIgnoreS
 /// (including negations) win. Empty matcher on error.
 fn build_nested_ignore(repo_root: &Path, chain: &[PathBuf]) -> Gitignore {
     let mut builder = GitignoreBuilder::new(repo_root);
-    let _ = builder.add(repo_root.join(".gitignore"));
-    let _ = builder.add(repo_root.join(".git/info/exclude"));
-    for dir in chain.iter().skip(1) {
-        let _ = builder.add(dir.join(".gitignore"));
+    let root_ignore = repo_root.join(".gitignore");
+    if let Some(err) = builder.add(&root_ignore) {
+        crate::debug_log!(
+            "watcher",
+            "Failed to load .gitignore at {}: {err}",
+            root_ignore.display()
+        );
     }
-    builder.build().unwrap_or_else(|_| Gitignore::empty())
+    let info_exclude = repo_root.join(".git/info/exclude");
+    if let Some(err) = builder.add(&info_exclude) {
+        crate::debug_log!(
+            "watcher",
+            "Failed to load exclude file at {}: {err}",
+            info_exclude.display()
+        );
+    }
+    for dir in chain.iter().skip(1) {
+        let nested_ignore = dir.join(".gitignore");
+        if let Some(err) = builder.add(&nested_ignore) {
+            crate::debug_log!(
+                "watcher",
+                "Failed to load nested .gitignore at {}: {err}",
+                nested_ignore.display()
+            );
+        }
+    }
+    builder.build().unwrap_or_else(|err| {
+        crate::debug_log!(
+            "watcher",
+            "Failed to build gitignore matcher for {}: {err}",
+            repo_root.display()
+        );
+        Gitignore::empty()
+    })
 }
 
 /// Cap a cache to [`IGNORE_CACHE_CAPACITY`], never evicting `keep`.

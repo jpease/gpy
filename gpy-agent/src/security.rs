@@ -22,10 +22,19 @@ impl SafePath {
         Ok(Self(validated))
     }
 
-    /// Get the path as a string slice.
+    /// Get the path as a string slice, or `None` if it is not valid UTF-8.
     #[must_use]
-    pub fn as_str(&self) -> &str {
-        self.0.to_str().unwrap_or_default()
+    pub fn as_str(&self) -> Option<&str> {
+        let opt = self.0.to_str();
+        if opt.is_none() {
+            #[cfg(unix)]
+            crate::warn_log!(
+                "security",
+                "SafePath is not valid UTF-8: {}",
+                self.0.display()
+            );
+        }
+        opt
     }
 
     /// Get the inner `Path` reference.
@@ -436,5 +445,23 @@ mod tests {
         assert!(!limiter.allow_connection_at(base + Duration::from_secs(2)));
 
         assert!(limiter.allow_connection_at(base + Duration::from_secs(4)));
+    }
+
+    #[test]
+    fn test_safepath_as_str() {
+        let safe = SafePath::new("./src").unwrap();
+        assert!(safe.as_str().is_some_and(|s| s.ends_with("src")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_safepath_as_str_non_utf8() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let bytes = b"/tmp/invalid-\xff\xfe";
+        let os_str = OsStr::from_bytes(bytes);
+        let safe = SafePath(PathBuf::from(os_str));
+        assert_eq!(safe.as_str(), None);
     }
 }

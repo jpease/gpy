@@ -63,15 +63,17 @@ fn parse_format(value: Option<&str>) -> Option<Format> {
 /// Size-check and decode request bytes into their flat wire form.
 #[allow(
     clippy::map_err_ignore,
-    reason = "the fixed deserialize message is the IPC error text clients see; serde's detail is kept out of it"
+    reason = "the fixed deserialize message is the IPC error text clients see; serde's detail is logged via debug_log!"
 )]
 fn parse_request(data: &[u8]) -> Result<ShellIpcMessage> {
     validate_message_size(data)?;
     let json = std::str::from_utf8(data)
         .map_err(|e| Error::ipc(format!("Invalid UTF-8 in message: {e}")))?;
 
-    serde_json::from_str(json)
-        .map_err(|_| Error::ipc("Failed to deserialize message: invalid format".to_owned()))
+    serde_json::from_str(json).map_err(|e| {
+        crate::debug_log!("protocol", "Failed to deserialize IPC message: {e}");
+        Error::ipc("Failed to deserialize message: invalid format".to_owned())
+    })
 }
 
 /// Serialize a response to JSON bytes.

@@ -106,7 +106,7 @@ fn op_line(msg: &Message) -> String {
             shell,
             shell_version,
         } => serde_json::json!({
-            "op": "register", "pid": pid.get(), "cwd": cwd.as_ref().map(SafePath::as_str),
+            "op": "register", "pid": pid.get(), "cwd": cwd.as_ref().and_then(SafePath::as_str),
             "shell": shell, "shell_version": shell_version,
         }),
         Message::UnregisterClient { pid } => {
