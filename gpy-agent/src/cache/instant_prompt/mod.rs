@@ -84,7 +84,20 @@ pub struct InstantPromptCache {
     suppressed_git: Mutex<HashMap<String, PathBuf>>,
     /// Temp directory backing `cache_dir` for [`Self::new_for_test`]; removed on drop.
     #[cfg(any(test, feature = "test-support"))]
-    _temp_dir: Option<tempfile::TempDir>,
+    _temp_dir: Option<RemoveDirOnDrop>,
+}
+
+/// Removes its directory tree when dropped.
+#[cfg(any(test, feature = "test-support"))]
+struct RemoveDirOnDrop(PathBuf);
+
+#[cfg(any(test, feature = "test-support"))]
+impl Drop for RemoveDirOnDrop {
+    fn drop(&mut self) {
+        if let Err(e) = std::fs::remove_dir_all(&self.0) {
+            crate::debug_log!("cache", "Failed to remove {}: {e}", self.0.display());
+        }
+    }
 }
 
 impl InstantPromptCache {
@@ -140,14 +153,14 @@ impl InstantPromptCache {
     )]
     #[must_use]
     pub fn new_for_test() -> Self {
-        let temp_dir = tempfile::Builder::new()
-            .prefix("gpy-test-instant-cache-")
-            .tempdir()
-            .expect("temp directory for the instant cache");
-        let cache = Self::new_in_dir(temp_dir.path().to_path_buf())
-            .expect("instant cache in a temp directory");
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("gpy-test-instant-cache-{}-{n}", std::process::id()));
+        let guard = RemoveDirOnDrop(dir.clone());
+        let cache = Self::new_in_dir(dir).expect("instant cache in a temp directory");
         Self {
-            _temp_dir: Some(temp_dir),
+            _temp_dir: Some(guard),
             ..cache
         }
     }
