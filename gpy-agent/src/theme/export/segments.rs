@@ -195,10 +195,7 @@ pub(super) fn append_builtin_segment_assignments(
     append_shell_assignment(
         output,
         shell,
-        ShellAssignment::local(
-            "__time_format",
-            theme.segments.clock.time_format.as_deref().unwrap_or("12"),
-        ),
+        ShellAssignment::local("__time_format", theme.segments.clock.time_format()),
     );
     append_shell_assignments(
         output,

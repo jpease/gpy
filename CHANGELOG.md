@@ -147,6 +147,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hints from the kind of failure, so rewording an error no longer drops its
   hint. A palette file with a bad TOML value now reports
   `TOML parsing failed: ...` for named palettes too.
+- `gpy config wizard`: the `?` help lists the browsing and filter keys plus
+  only the highlighted segment's option keys, and the footers, detail-panel
+  hints, help and `docs/user/cli-reference.md` key map now come from one key
+  table, so they always name the keys the wizard handles. The reference now
+  documents `/`, `?`, `[`/`]`, `v`, `:`, `m`, `b`, `a` and `t`.
 
 ## [0.6.0] - 2026-10-22
 

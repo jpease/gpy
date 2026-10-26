@@ -49,9 +49,10 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
 
     use super::*;
-    use crate::commands::wizard::state::WizardState;
+    use crate::commands::wizard::state::{SegmentEdit, WizardState};
     use crate::config::Config;
     use crate::config::types::GitTimeout;
+    use crate::theme::ThemeConfig;
     use std::fs;
     use tempfile::TempDir;
 
@@ -182,18 +183,7 @@ mod tests {
         assert_eq!(config.ui.directory.display, DirectoryDisplay::Basename);
 
         let mut state = test_state(config);
-        // Directory display only takes effect when "directory" is focused.
-        state.next_section(); // Theme -> Palette
-        state.next_section(); // Palette -> Segments
-        while state
-            .available_segments()
-            .get(state.segment_cursor())
-            .map(String::as_str)
-            != Some("directory")
-        {
-            state.move_cursor_down();
-        }
-        state.cycle_directory_display(true);
+        state.apply_edit(SegmentEdit::NextDirectoryDisplay, &ThemeConfig::default());
 
         save_to(&state, &path).expect("save_to should succeed");
 
@@ -215,19 +205,9 @@ mod tests {
         assert!(config.language.show_versions);
 
         let mut state = test_state(config);
-        // Language options only take effect when "language" is focused.
-        state.next_section(); // Theme -> Palette
-        state.next_section(); // Palette -> Segments
-        while state
-            .available_segments()
-            .get(state.segment_cursor())
-            .map(String::as_str)
-            != Some("language")
-        {
-            state.move_cursor_down();
-        }
-        state.cycle_language_display(true);
-        state.toggle_language_show_versions();
+        let theme = ThemeConfig::default();
+        state.apply_edit(SegmentEdit::ToggleLanguageDisplay, &theme);
+        state.apply_edit(SegmentEdit::ToggleLanguageShowVersions, &theme);
 
         save_to(&state, &path).expect("save_to should succeed");
 

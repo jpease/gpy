@@ -31,18 +31,7 @@ gpy config wizard
 
 A full-screen TUI with three pickers — Theme, Palette, Segments — plus a live preview of the resulting prompt that updates as you move the cursor. Nothing is written to disk until you save.
 
-**Keys**:
-
-| Key | Action |
-|---|---|
-| `Tab` | Move to the next section (Theme → Palette → Segments → Theme …) |
-| `Shift+Tab` | Move to the previous section |
-| `Up` / `Down` | Move the cursor within the focused section |
-| `Space` / `Enter` | Toggle or select the highlighted item |
-| `s` | Save the current selection and exit |
-| `q` / `Esc` | Quit — prompts to confirm discarding changes if anything is unsaved |
-
-> `docs/user/cli-reference.md`'s prose for `gpy config wizard` only mentions `Tab`, `Space`/`Enter`, `s`, and `q` — it omits `Shift+Tab` and `Up`/`Down`. Both exist and work; this table reflects the actual key handler.
+`Tab` moves between the three pickers, the arrow keys move the cursor, `Space`/`Enter` selects or toggles, `s` saves and `q` quits. Highlighting the `clock`, `duration`, `language`, `directory` or `git` segment enables keys for its options, and `?` lists every key that applies. The full key map is in the [CLI Reference](cli-reference.md#gpy-config-wizard).
 
 This is the fastest way to try combinations — pick a theme, cycle palettes over it, toggle segments on/off, and watch the preview — before touching any TOML.
 

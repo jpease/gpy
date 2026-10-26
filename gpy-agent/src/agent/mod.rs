@@ -163,13 +163,7 @@ fn handle_clock_tick(
         return last_notified_minute;
     }
 
-    let clock_show_seconds = ctx
-        .theme_manager
-        .get()
-        .segments
-        .clock
-        .show_seconds
-        .unwrap_or(false);
+    let clock_show_seconds = ctx.theme_manager.get().segments.clock.show_seconds();
     debug_log!("agent", "Clock tick: show_seconds={}", clock_show_seconds);
 
     let current_minute = std::time::SystemTime::now()

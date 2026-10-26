@@ -44,9 +44,9 @@ impl<'a> ClockResolver<'a> {
     /// Must match Fish's `__gpy_clock_date_format` exactly; Fish substitutes this text.
     fn time_spec(&self) -> String {
         let clock = &self.theme.segments.clock;
-        let is_24h = clock.time_format.as_deref() == Some("24");
-        let leading_zero = clock.show_leading_zero.unwrap_or(false);
-        let show_seconds = clock.show_seconds.unwrap_or(false);
+        let is_24h = clock.time_format() == "24";
+        let leading_zero = clock.show_leading_zero();
+        let show_seconds = clock.show_seconds();
 
         let hour = if is_24h {
             if leading_zero { "%H" } else { "%-H" }

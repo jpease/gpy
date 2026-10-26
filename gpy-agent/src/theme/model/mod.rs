@@ -302,6 +302,26 @@ impl Default for ClockTheme {
     }
 }
 
+impl ClockTheme {
+    /// `time_format`, defaulting to `"12"`.
+    #[must_use]
+    pub fn time_format(&self) -> &str {
+        self.time_format.as_deref().unwrap_or("12")
+    }
+
+    /// `show_leading_zero`, defaulting to off.
+    #[must_use]
+    pub fn show_leading_zero(&self) -> bool {
+        self.show_leading_zero.unwrap_or(false)
+    }
+
+    /// `show_seconds`, defaulting to off.
+    #[must_use]
+    pub fn show_seconds(&self) -> bool {
+        self.show_seconds.unwrap_or(false)
+    }
+}
+
 /// Directory segment colors
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirectoryTheme {
@@ -635,6 +655,24 @@ const fn is_in_progress(state: crate::git::RepositoryState) -> bool {
 }
 
 impl GitTheme {
+    /// `show_branch`, defaulting to shown.
+    #[must_use]
+    pub fn show_branch(&self) -> bool {
+        self.show_branch.unwrap_or(true)
+    }
+
+    /// `show_ahead_behind`, defaulting to shown.
+    #[must_use]
+    pub fn show_ahead_behind(&self) -> bool {
+        self.show_ahead_behind.unwrap_or(true)
+    }
+
+    /// `show_stash`, defaulting to shown.
+    #[must_use]
+    pub fn show_stash(&self) -> bool {
+        self.show_stash.unwrap_or(true)
+    }
+
     /// Get background color for a git state with fallback.
     #[must_use]
     pub fn get_bg_color(&self, state: GitState) -> &str {

@@ -1,5 +1,6 @@
 //! Pure key-event → wizard-action mapping, testable without a terminal.
 
+use super::bindings::{self, Command};
 use super::state::WizardState;
 use crate::theme::ThemeConfig;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -19,7 +20,7 @@ pub enum InputMode {
     Normal,
     /// "Discard changes?" prompt; every key answers it.
     ConfirmQuit,
-    /// Help overlay; only `?`/`Esc` (close) are handled.
+    /// Help overlay; keys other than its bindings are ignored.
     Help,
     /// Keys edit the filter query, which is shared across all sections.
     Filter,
@@ -27,150 +28,83 @@ pub enum InputMode {
 
 /// Reduce `(mode, key)` to the next mode and the loop action.
 ///
-/// `theme` is the on-disk theme, the base for theme-scoped picker edits.
+/// `theme` is the on-disk theme, the base for theme-scoped segment edits.
 pub fn handle_key(
     state: &mut WizardState,
     mode: InputMode,
     theme: &ThemeConfig,
     key: KeyEvent,
 ) -> (InputMode, WizardAction) {
-    match mode {
-        InputMode::ConfirmQuit => handle_confirm_key(key),
-        InputMode::Help => handle_help_key(key),
-        InputMode::Filter => handle_filter_key(state, key),
-        InputMode::Normal => handle_normal_key(state, theme, key),
+    match bindings::lookup(mode, state.focused_builtin(), key.code) {
+        Some(command) => run(state, mode, theme, command),
+        None => handle_unbound_key(state, mode, key),
     }
 }
 
-/// `y`/`Y` confirms discard; anything else cancels.
-const fn handle_confirm_key(key: KeyEvent) -> (InputMode, WizardAction) {
-    match key.code {
-        KeyCode::Char('y' | 'Y') => (InputMode::Normal, WizardAction::ExitWithoutSaving),
-        _ => (InputMode::Normal, WizardAction::Continue),
-    }
-}
-
-const fn handle_help_key(key: KeyEvent) -> (InputMode, WizardAction) {
-    if matches!(key.code, KeyCode::Char('?') | KeyCode::Esc) {
-        (InputMode::Normal, WizardAction::Continue)
-    } else {
-        (InputMode::Help, WizardAction::Continue)
-    }
-}
-
-/// Filter mode: `Esc` clears the query and exits; `Tab`/`BackTab` switch
-/// sections but keep the query; movement/activation act on the filtered subset;
-/// other characters append to the query.
-fn handle_filter_key(state: &mut WizardState, key: KeyEvent) -> (InputMode, WizardAction) {
-    match key.code {
-        KeyCode::Esc => {
-            state.clear_filter();
-            return (InputMode::Normal, WizardAction::Continue);
-        }
-        KeyCode::Tab => state.next_section(),
-        KeyCode::BackTab => state.prev_section(),
-        KeyCode::Backspace => state.pop_filter_char(),
-        KeyCode::Up | KeyCode::Left => state.move_cursor_up(),
-        KeyCode::Down | KeyCode::Right => state.move_cursor_down(),
-        KeyCode::Char(' ') | KeyCode::Enter => state.activate_cursor(),
-        KeyCode::Char(c) => state.push_filter_char(c),
-        _ => {}
-    }
-    (InputMode::Filter, WizardAction::Continue)
-}
-
-fn handle_normal_key(
+fn run(
     state: &mut WizardState,
+    mode: InputMode,
     theme: &ThemeConfig,
+    command: Command,
+) -> (InputMode, WizardAction) {
+    let next_mode = match command {
+        Command::NextSection => {
+            state.next_section();
+            mode
+        }
+        Command::PrevSection => {
+            state.prev_section();
+            mode
+        }
+        Command::CursorUp => {
+            state.move_cursor_up();
+            mode
+        }
+        Command::CursorDown => {
+            state.move_cursor_down();
+            mode
+        }
+        Command::Activate => {
+            state.activate_cursor();
+            mode
+        }
+        Command::OpenFilter => InputMode::Filter,
+        Command::ClearFilter => {
+            state.clear_filter();
+            InputMode::Normal
+        }
+        Command::DeleteFilterChar => {
+            state.pop_filter_char();
+            mode
+        }
+        Command::OpenHelp => InputMode::Help,
+        Command::CloseHelp => InputMode::Normal,
+        Command::Edit(edit) => {
+            state.apply_edit(edit, theme);
+            mode
+        }
+        Command::Save => return (InputMode::Normal, WizardAction::Save),
+        Command::Quit if state.dirty() => InputMode::ConfirmQuit,
+        Command::Quit | Command::Discard => {
+            return (InputMode::Normal, WizardAction::ExitWithoutSaving);
+        }
+    };
+    (next_mode, WizardAction::Continue)
+}
+
+/// Filter mode types other characters into the query; any other key at the
+/// discard prompt keeps editing; elsewhere unbound keys do nothing.
+fn handle_unbound_key(
+    state: &mut WizardState,
+    mode: InputMode,
     key: KeyEvent,
 ) -> (InputMode, WizardAction) {
-    if let Some(action) = handle_segment_picker_key(state, theme, key) {
-        return (InputMode::Normal, action);
+    match (mode, key.code) {
+        (InputMode::Filter, KeyCode::Char(c)) => state.push_filter_char(c),
+        (InputMode::ConfirmQuit, _) => return (InputMode::Normal, WizardAction::Continue),
+        _ => {}
     }
-    match key.code {
-        KeyCode::Char('?') => (InputMode::Help, WizardAction::Continue),
-        KeyCode::Char('/') => (InputMode::Filter, WizardAction::Continue),
-        KeyCode::Tab => {
-            state.next_section();
-            (InputMode::Normal, WizardAction::Continue)
-        }
-        KeyCode::BackTab => {
-            state.prev_section();
-            (InputMode::Normal, WizardAction::Continue)
-        }
-        KeyCode::Char('s') => (InputMode::Normal, WizardAction::Save),
-        KeyCode::Char('q') | KeyCode::Esc => {
-            if state.dirty() {
-                (InputMode::ConfirmQuit, WizardAction::Continue)
-            } else {
-                (InputMode::Normal, WizardAction::ExitWithoutSaving)
-            }
-        }
-        // Sections render as wrapped lines, so Left/Right alias Up/Down.
-        KeyCode::Up | KeyCode::Left => {
-            state.move_cursor_up();
-            (InputMode::Normal, WizardAction::Continue)
-        }
-        KeyCode::Down | KeyCode::Right => {
-            state.move_cursor_down();
-            (InputMode::Normal, WizardAction::Continue)
-        }
-        KeyCode::Char(' ') | KeyCode::Enter => {
-            state.activate_cursor();
-            (InputMode::Normal, WizardAction::Continue)
-        }
-        _ => (InputMode::Normal, WizardAction::Continue),
-    }
-}
-
-/// Segment-picker bindings (`[`/`]` cycle; `v`/`:`/`m`/`b`/`a`/`t` toggle).
-/// Returns `None` for other keys. Each call no-ops unless its own segment is
-/// focused, so calling them unconditionally is safe. `:`/`m`/`t` avoid `s` (save).
-fn handle_segment_picker_key(
-    state: &mut WizardState,
-    theme: &ThemeConfig,
-    key: KeyEvent,
-) -> Option<WizardAction> {
-    match key.code {
-        KeyCode::Char('[') => {
-            state.cycle_directory_display(false);
-            state.cycle_language_display(false);
-            state.cycle_clock_time_format(theme);
-            Some(WizardAction::Continue)
-        }
-        KeyCode::Char(']') => {
-            state.cycle_directory_display(true);
-            state.cycle_language_display(true);
-            state.cycle_clock_time_format(theme);
-            Some(WizardAction::Continue)
-        }
-        KeyCode::Char('v') => {
-            state.toggle_language_show_versions();
-            Some(WizardAction::Continue)
-        }
-        KeyCode::Char(':') => {
-            state.toggle_clock_show_seconds(theme);
-            Some(WizardAction::Continue)
-        }
-        KeyCode::Char('m') => {
-            state.toggle_duration_show_milliseconds(theme);
-            Some(WizardAction::Continue)
-        }
-        // Git visibility: `b`ranch, `a`head/behind, s`t`ash.
-        KeyCode::Char('b') => {
-            state.toggle_git_show_branch(theme);
-            Some(WizardAction::Continue)
-        }
-        KeyCode::Char('a') => {
-            state.toggle_git_show_ahead_behind(theme);
-            Some(WizardAction::Continue)
-        }
-        KeyCode::Char('t') => {
-            state.toggle_git_show_stash(theme);
-            Some(WizardAction::Continue)
-        }
-        _ => None,
-    }
+    (mode, WizardAction::Continue)
 }
 
 #[cfg(test)]
@@ -401,307 +335,152 @@ mod tests {
         assert_eq!(state.is_segment_enabled(&target), before);
     }
 
-    fn focus_directory_segment(state: &mut WizardState) {
-        state.next_section(); // Theme -> Palette
-        state.next_section(); // Palette -> Segments
+    /// Focus Segments with the cursor on `segment` (below the cursor).
+    fn highlight(state: &mut WizardState, segment: &str) {
+        while state.focus() != Section::Segments {
+            state.next_section();
+        }
         while state
             .available_segments()
             .get(state.segment_cursor())
             .map(String::as_str)
-            != Some("directory")
+            != Some(segment)
         {
             state.move_cursor_down();
         }
     }
 
+    fn press(
+        state: &mut WizardState,
+        theme: &ThemeConfig,
+        code: char,
+    ) -> (InputMode, WizardAction) {
+        handle_key(state, InputMode::Normal, theme, key(KeyCode::Char(code)))
+    }
+
     #[test]
-    fn bracket_keys_cycle_directory_display_when_directory_segment_focused() {
+    fn bracket_keys_cycle_the_directory_display_both_ways() {
         use crate::config::types::DirectoryDisplay;
 
         let mut state = test_state(make_config("default", "default"));
-        let mode = InputMode::Normal;
         let theme = ThemeConfig::default();
-        focus_directory_segment(&mut state);
+        highlight(&mut state, "directory");
         assert_eq!(state.directory_display(), DirectoryDisplay::Basename);
 
-        let (mode_after_close, action) =
-            handle_key(&mut state, mode, &theme, key(KeyCode::Char(']')));
-        assert_eq!(action, WizardAction::Continue);
-        assert_eq!(mode_after_close, InputMode::Normal);
+        let outcome = press(&mut state, &theme, ']');
+        assert_eq!(outcome, (InputMode::Normal, WizardAction::Continue));
         assert_eq!(state.directory_display(), DirectoryDisplay::Abbreviated);
 
-        handle_key(
-            &mut state,
-            mode_after_close,
-            &theme,
-            key(KeyCode::Char('[')),
-        );
-        assert_eq!(state.directory_display(), DirectoryDisplay::Basename);
+        press(&mut state, &theme, '[');
+        press(&mut state, &theme, '[');
+        assert_eq!(state.directory_display(), DirectoryDisplay::Full);
     }
 
     #[test]
-    fn bracket_keys_are_noop_when_directory_segment_not_focused() {
-        use crate::config::types::DirectoryDisplay;
-
-        let mut state = test_state(make_config("default", "default"));
-        let mode = InputMode::Normal;
-        let theme = ThemeConfig::default();
-        assert_eq!(state.focus(), Section::Theme);
-
-        handle_key(&mut state, mode, &theme, key(KeyCode::Char(']')));
-
-        assert_eq!(state.directory_display(), DirectoryDisplay::Basename);
-    }
-
-    fn focus_language_segment(state: &mut WizardState) {
-        state.next_section(); // Theme -> Palette
-        state.next_section(); // Palette -> Segments
-        while state
-            .available_segments()
-            .get(state.segment_cursor())
-            .map(String::as_str)
-            != Some("language")
-        {
-            state.move_cursor_down();
-        }
-    }
-
-    #[test]
-    fn bracket_keys_cycle_language_display_when_language_segment_focused() {
+    fn bracket_keys_switch_the_language_display() {
         use crate::config::types::LanguageDisplay;
 
         let mut state = test_state(make_config("default", "default"));
-        let mode = InputMode::Normal;
         let theme = ThemeConfig::default();
-        focus_language_segment(&mut state);
-        assert_eq!(state.language_display(), LanguageDisplay::Icon);
+        highlight(&mut state, "language");
 
-        let (mode_after_close, action) =
-            handle_key(&mut state, mode, &theme, key(KeyCode::Char(']')));
-        assert_eq!(action, WizardAction::Continue);
-        assert_eq!(mode_after_close, InputMode::Normal);
-        assert_eq!(state.language_display(), LanguageDisplay::Text);
-
-        handle_key(
-            &mut state,
-            mode_after_close,
-            &theme,
-            key(KeyCode::Char('[')),
-        );
-        assert_eq!(state.language_display(), LanguageDisplay::Icon);
-    }
-
-    #[test]
-    fn bracket_keys_do_not_affect_language_display_when_directory_segment_focused() {
-        use crate::config::types::LanguageDisplay;
-
-        let mut state = test_state(make_config("default", "default"));
-        let mode = InputMode::Normal;
-        let theme = ThemeConfig::default();
-        focus_directory_segment(&mut state);
-
-        handle_key(&mut state, mode, &theme, key(KeyCode::Char(']')));
-
-        assert_eq!(state.language_display(), LanguageDisplay::Icon);
-    }
-
-    #[test]
-    fn v_key_toggles_language_show_versions_when_language_segment_focused() {
-        let mut state = test_state(make_config("default", "default"));
-        let mode = InputMode::Normal;
-        let theme = ThemeConfig::default();
-        focus_language_segment(&mut state);
-        let before = state.language_show_versions();
-
-        let (new_mode, action) = handle_key(&mut state, mode, &theme, key(KeyCode::Char('v')));
-
-        assert_eq!(action, WizardAction::Continue);
-        assert_eq!(new_mode, InputMode::Normal);
-        assert_eq!(state.language_show_versions(), !before);
-    }
-
-    #[test]
-    fn v_key_is_noop_when_language_segment_not_focused() {
-        let mut state = test_state(make_config("default", "default"));
-        let mode = InputMode::Normal;
-        let theme = ThemeConfig::default();
-        let before = state.language_show_versions();
-        assert_eq!(state.focus(), Section::Theme);
-
-        handle_key(&mut state, mode, &theme, key(KeyCode::Char('v')));
-
-        assert_eq!(state.language_show_versions(), before);
-    }
-
-    fn focus_clock_segment(state: &mut WizardState) {
-        state.next_section(); // Theme -> Palette
-        state.next_section(); // Palette -> Segments
-        while state
-            .available_segments()
-            .get(state.segment_cursor())
-            .map(String::as_str)
-            != Some("clock")
-        {
-            state.move_cursor_down();
-        }
-    }
-
-    #[test]
-    fn bracket_keys_cycle_clock_time_format_when_clock_segment_focused() {
-        let mut state = test_state(make_config("default", "default"));
-        let mode = InputMode::Normal;
-        let theme = ThemeConfig::default();
-        focus_clock_segment(&mut state);
-        assert_eq!(state.clock_time_format(&theme), "12");
-
-        let (mode_after_close, action) =
-            handle_key(&mut state, mode, &theme, key(KeyCode::Char(']')));
-        assert_eq!(action, WizardAction::Continue);
-        assert_eq!(mode_after_close, InputMode::Normal);
-        assert_eq!(state.clock_time_format(&theme), "24");
-
-        handle_key(
-            &mut state,
-            mode_after_close,
-            &theme,
-            key(KeyCode::Char('[')),
-        );
-        assert_eq!(state.clock_time_format(&theme), "12");
-    }
-
-    #[test]
-    fn bracket_keys_do_not_affect_clock_time_format_when_directory_segment_focused() {
-        let mut state = test_state(make_config("default", "default"));
-        let mode = InputMode::Normal;
-        let theme = ThemeConfig::default();
-        focus_directory_segment(&mut state);
-
-        handle_key(&mut state, mode, &theme, key(KeyCode::Char(']')));
-
-        assert_eq!(state.clock_time_format(&theme), "12");
-    }
-
-    #[test]
-    fn colon_key_toggles_clock_show_seconds_when_clock_segment_focused() {
-        let mut state = test_state(make_config("default", "default"));
-        let mode = InputMode::Normal;
-        let theme = ThemeConfig::default();
-        focus_clock_segment(&mut state);
-        let before = state.clock_show_seconds(&theme);
-
-        let (new_mode, action) = handle_key(&mut state, mode, &theme, key(KeyCode::Char(':')));
-
-        assert_eq!(action, WizardAction::Continue);
-        assert_eq!(new_mode, InputMode::Normal);
-        assert_eq!(state.clock_show_seconds(&theme), !before);
-    }
-
-    #[test]
-    fn colon_key_is_noop_when_clock_segment_not_focused() {
-        let mut state = test_state(make_config("default", "default"));
-        let mode = InputMode::Normal;
-        let theme = ThemeConfig::default();
-        let before = state.clock_show_seconds(&theme);
-        assert_eq!(state.focus(), Section::Theme);
-
-        handle_key(&mut state, mode, &theme, key(KeyCode::Char(':')));
-
-        assert_eq!(state.clock_show_seconds(&theme), before);
-    }
-
-    fn focus_duration_segment(state: &mut WizardState) {
-        state.next_section(); // Theme -> Palette
-        state.next_section(); // Palette -> Segments
-        while state
-            .available_segments()
-            .get(state.segment_cursor())
-            .map(String::as_str)
-            != Some("duration")
-        {
-            state.move_cursor_down();
-        }
-    }
-
-    #[test]
-    fn m_key_toggles_duration_show_milliseconds_when_duration_segment_focused() {
-        let mut state = test_state(make_config("default", "default"));
-        let mode = InputMode::Normal;
-        let theme = ThemeConfig::default();
-        focus_duration_segment(&mut state);
-        let before = state.duration_show_milliseconds(&theme);
-
-        let (new_mode, action) = handle_key(&mut state, mode, &theme, key(KeyCode::Char('m')));
-
-        assert_eq!(action, WizardAction::Continue);
-        assert_eq!(new_mode, InputMode::Normal);
-        assert_eq!(state.duration_show_milliseconds(&theme), !before);
-    }
-
-    #[test]
-    fn m_key_is_noop_when_duration_segment_not_focused() {
-        let mut state = test_state(make_config("default", "default"));
-        let mode = InputMode::Normal;
-        let theme = ThemeConfig::default();
-        let before = state.duration_show_milliseconds(&theme);
-        assert_eq!(state.focus(), Section::Theme);
-
-        handle_key(&mut state, mode, &theme, key(KeyCode::Char('m')));
-
-        assert_eq!(state.duration_show_milliseconds(&theme), before);
-    }
-
-    fn focus_git_segment(state: &mut WizardState) {
-        state.next_section(); // Theme -> Palette
-        state.next_section(); // Palette -> Segments
-        while state
-            .available_segments()
-            .get(state.segment_cursor())
-            .map(String::as_str)
-            != Some("git")
-        {
-            state.move_cursor_down();
-        }
-    }
-
-    #[test]
-    fn git_content_keys_toggle_their_flags_when_git_segment_focused() {
-        let mut state = test_state(make_config("default", "default"));
-        let mode = InputMode::Normal;
-        let theme = ThemeConfig::default();
-        focus_git_segment(&mut state);
-
-        // b -> branch, a -> ahead/behind, t -> stash.
-        for (code, before) in [
-            ('b', state.git_show_branch(&theme)),
-            ('a', state.git_show_ahead_behind(&theme)),
-            ('t', state.git_show_stash(&theme)),
+        for (code, expected) in [
+            (']', LanguageDisplay::Text),
+            ('[', LanguageDisplay::Icon),
+            ('[', LanguageDisplay::Text),
         ] {
-            let (new_mode, action) = handle_key(&mut state, mode, &theme, key(KeyCode::Char(code)));
-            assert_eq!(action, WizardAction::Continue);
-            assert_eq!(new_mode, InputMode::Normal);
-            let after = match code {
-                'b' => state.git_show_branch(&theme),
-                'a' => state.git_show_ahead_behind(&theme),
-                _ => state.git_show_stash(&theme),
-            };
-            assert_eq!(after, !before, "key '{code}' should flip its flag");
+            press(&mut state, &theme, code);
+            assert_eq!(state.language_display(), expected, "after '{code}'");
         }
     }
 
     #[test]
-    fn git_content_keys_are_noop_when_git_segment_not_focused() {
+    fn bracket_keys_switch_the_clock_time_format() {
         let mut state = test_state(make_config("default", "default"));
-        let mode = InputMode::Normal;
         let theme = ThemeConfig::default();
-        assert_eq!(state.focus(), Section::Theme);
+        highlight(&mut state, "clock");
 
-        for code in ['b', 'a', 't'] {
-            handle_key(&mut state, mode, &theme, key(KeyCode::Char(code)));
+        for (code, expected) in [(']', "24"), ('[', "12"), ('[', "24")] {
+            press(&mut state, &theme, code);
+            assert_eq!(
+                state.active_theme(&theme).segments.clock.time_format(),
+                expected,
+                "after '{code}'"
+            );
         }
+    }
 
-        assert!(state.git_show_branch(&theme));
-        assert!(state.git_show_ahead_behind(&theme));
-        assert!(state.git_show_stash(&theme));
+    #[test]
+    fn bracket_keys_edit_only_the_highlighted_segment() {
+        use crate::config::types::LanguageDisplay;
+
+        let mut state = test_state(make_config("default", "default"));
+        let theme = ThemeConfig::default();
+        highlight(&mut state, "directory");
+
+        press(&mut state, &theme, ']');
+
+        assert_eq!(state.language_display(), LanguageDisplay::Icon);
+        assert!(
+            state.pending_theme().is_none(),
+            "the clock format must stay unedited"
+        );
+    }
+
+    #[test]
+    fn toggle_keys_flip_their_option_on_the_highlighted_segment() {
+        type Read = fn(&WizardState, &ThemeConfig) -> bool;
+        let cases: [(&str, char, Read); 6] = [
+            ("language", 'v', |state, _| state.language_show_versions()),
+            ("clock", ':', |state, theme| {
+                state.active_theme(theme).segments.clock.show_seconds()
+            }),
+            ("duration", 'm', |state, theme| {
+                state
+                    .active_theme(theme)
+                    .segments
+                    .duration
+                    .show_milliseconds
+            }),
+            ("git", 'b', |state, theme| {
+                state.active_theme(theme).segments.git.show_branch()
+            }),
+            ("git", 'a', |state, theme| {
+                state.active_theme(theme).segments.git.show_ahead_behind()
+            }),
+            ("git", 't', |state, theme| {
+                state.active_theme(theme).segments.git.show_stash()
+            }),
+        ];
+        let theme = ThemeConfig::default();
+        for (segment, code, read) in cases {
+            let mut state = test_state(make_config("default", "default"));
+            highlight(&mut state, segment);
+            let before = read(&state, &theme);
+
+            let outcome = press(&mut state, &theme, code);
+
+            assert_eq!(outcome, (InputMode::Normal, WizardAction::Continue));
+            assert_eq!(read(&state, &theme), !before, "'{code}' on {segment}");
+        }
+    }
+
+    #[test]
+    fn segment_edit_keys_are_inert_unless_their_segment_is_highlighted() {
+        let theme = ThemeConfig::default();
+        for code in ['[', ']', 'v', ':', 'm', 'b', 'a', 't'] {
+            for highlighted in [None, Some("status")] {
+                let mut state = test_state(make_config("default", "default"));
+                if let Some(segment) = highlighted {
+                    highlight(&mut state, segment);
+                }
+
+                let outcome = press(&mut state, &theme, code);
+
+                assert_eq!(outcome, (InputMode::Normal, WizardAction::Continue));
+                assert!(!state.dirty(), "'{code}' with {highlighted:?} highlighted");
+            }
+        }
     }
 
     #[test]

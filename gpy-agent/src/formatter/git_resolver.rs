@@ -208,8 +208,7 @@ impl VariableResolver for GitResolver<'_> {
         match name {
             "symbol" => self.symbol(),
             "branch" => {
-                let git_theme = &self.theme.segments.git;
-                if !git_theme.show_branch.unwrap_or(true) {
+                if !self.theme.segments.git.show_branch() {
                     return None;
                 }
                 let max = self.config.git.max_branch_length.get();
@@ -221,8 +220,7 @@ impl VariableResolver for GitResolver<'_> {
                 .theme
                 .segments
                 .git
-                .show_ahead_behind
-                .unwrap_or(true)
+                .show_ahead_behind()
                 .then(|| self.ahead_behind())
                 .flatten(),
             "state" => self.state(),
@@ -230,8 +228,7 @@ impl VariableResolver for GitResolver<'_> {
                 .theme
                 .segments
                 .git
-                .show_stash
-                .unwrap_or(true)
+                .show_stash()
                 .then(|| self.stash())
                 .flatten(),
             _ => self.chrome.resolve(name),

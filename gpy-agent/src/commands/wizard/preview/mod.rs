@@ -370,9 +370,9 @@ fn render_segment(
 /// global `ui.*` delimiters (`segments.clock.open`/`.close` are unused config).
 fn clock_demo_spans(theme: &ThemeConfig, is_first: IsFirst, is_last: IsLast) -> Vec<TemplateSpan> {
     let clock = &theme.segments.clock;
-    let is_24h = clock.time_format.as_deref() == Some("24");
-    let leading_zero = clock.show_leading_zero.unwrap_or(false);
-    let show_seconds = clock.show_seconds.unwrap_or(false);
+    let is_24h = clock.time_format() == "24";
+    let leading_zero = clock.show_leading_zero();
+    let show_seconds = clock.show_seconds();
 
     let mut text = String::from(if leading_zero { " 09:41" } else { " 9:41" });
     if show_seconds {

@@ -1,6 +1,7 @@
 //! Detail-panel content for whichever item has the cursor in the focused section.
 
-use super::state::{Section, WizardState};
+use super::bindings::{Command, key_hint};
+use super::state::{Section, SegmentEdit, WizardState};
 use crate::theme::ThemeConfig;
 use ratatui::text::Line;
 
@@ -106,7 +107,10 @@ fn theme_or_palette_lines(
     lines.push(Line::from(if highlighted_item == selected {
         "Currently selected.".to_owned()
     } else {
-        "Not selected — press space/enter to select.".to_owned()
+        format!(
+            "Not selected — press {} to select.",
+            key_hint(&[Command::Activate])
+        )
     }));
     lines.push(Line::from(format!("Selected value: {selected}")));
     lines.push(Line::from(if selected == initial {
@@ -165,12 +169,25 @@ fn segment_lines(state: &WizardState, theme: &ThemeConfig) -> Vec<Line<'static>>
     lines
 }
 
+/// `(press <keys> to <verb>)` for the keys bound to `edits`.
+fn press_hint(edits: &[SegmentEdit], verb: &str) -> String {
+    let commands: Vec<Command> = edits.iter().map(|&edit| Command::Edit(edit)).collect();
+    format!("(press {} to {verb})", key_hint(&commands))
+}
+
 fn directory_display_lines(state: &WizardState) -> Vec<Line<'static>> {
     let current = state.directory_display();
     let initial = state.initial_directory_display();
+    let hint = press_hint(
+        &[
+            SegmentEdit::PrevDirectoryDisplay,
+            SegmentEdit::NextDirectoryDisplay,
+        ],
+        "cycle",
+    );
     vec![
         Line::from(""),
-        Line::from(format!("Display style: {current} (press [ / ] to cycle)")),
+        Line::from(format!("Display style: {current} {hint}")),
         Line::from("Display config field: ui.directory.display"),
         Line::from(if current == initial {
             "Matches the startup config.".to_owned()
@@ -188,7 +205,8 @@ fn language_display_lines(state: &WizardState) -> Vec<Line<'static>> {
     vec![
         Line::from(""),
         Line::from(format!(
-            "Display style: {current_display} (press [ / ] to cycle)"
+            "Display style: {current_display} {}",
+            press_hint(&[SegmentEdit::ToggleLanguageDisplay], "cycle")
         )),
         Line::from("Display config field: language.display"),
         Line::from(if current_display == initial_display {
@@ -198,8 +216,9 @@ fn language_display_lines(state: &WizardState) -> Vec<Line<'static>> {
         }),
         Line::from(""),
         Line::from(format!(
-            "Show versions: {} (press v to toggle)",
-            if current_versions { "on" } else { "off" }
+            "Show versions: {} {}",
+            if current_versions { "on" } else { "off" },
+            press_hint(&[SegmentEdit::ToggleLanguageShowVersions], "toggle")
         )),
         Line::from("Show-versions config field: language.show_versions"),
         Line::from(if current_versions == initial_versions {
@@ -213,14 +232,15 @@ fn language_display_lines(state: &WizardState) -> Vec<Line<'static>> {
 /// Clock options, diffed against the on-disk `theme` (not `initial_config`),
 /// since these fields are theme-scoped.
 fn clock_display_lines(state: &WizardState, theme: &ThemeConfig) -> Vec<Line<'static>> {
-    let current_format = state.clock_time_format(theme);
-    let initial_format = theme.segments.clock.time_format.as_deref().unwrap_or("12");
-    let current_seconds = state.clock_show_seconds(theme);
-    let initial_seconds = theme.segments.clock.show_seconds.unwrap_or(false);
+    let current = &state.active_theme(theme).segments.clock;
+    let initial = &theme.segments.clock;
+    let (current_format, initial_format) = (current.time_format(), initial.time_format());
+    let (current_seconds, initial_seconds) = (current.show_seconds(), initial.show_seconds());
     vec![
         Line::from(""),
         Line::from(format!(
-            "Time format: {current_format}h (press [ / ] to cycle)"
+            "Time format: {current_format}h {}",
+            press_hint(&[SegmentEdit::ToggleClockTimeFormat], "cycle")
         )),
         Line::from("Time format config field: segments.clock.time_format"),
         Line::from(if current_format == initial_format {
@@ -230,8 +250,9 @@ fn clock_display_lines(state: &WizardState, theme: &ThemeConfig) -> Vec<Line<'st
         }),
         Line::from(""),
         Line::from(format!(
-            "Show seconds: {} (press : to toggle)",
-            if current_seconds { "on" } else { "off" }
+            "Show seconds: {} {}",
+            if current_seconds { "on" } else { "off" },
+            press_hint(&[SegmentEdit::ToggleClockShowSeconds], "toggle")
         )),
         Line::from("Show-seconds config field: segments.clock.show_seconds"),
         Line::from(if current_seconds == initial_seconds {
@@ -244,13 +265,18 @@ fn clock_display_lines(state: &WizardState, theme: &ThemeConfig) -> Vec<Line<'st
 
 /// Duration options, diffed against `theme` like `clock_display_lines`.
 fn duration_display_lines(state: &WizardState, theme: &ThemeConfig) -> Vec<Line<'static>> {
-    let current = state.duration_show_milliseconds(theme);
+    let current = state
+        .active_theme(theme)
+        .segments
+        .duration
+        .show_milliseconds;
     let initial = theme.segments.duration.show_milliseconds;
     vec![
         Line::from(""),
         Line::from(format!(
-            "Show milliseconds: {} (press m to toggle)",
-            if current { "on" } else { "off" }
+            "Show milliseconds: {} {}",
+            if current { "on" } else { "off" },
+            press_hint(&[SegmentEdit::ToggleDurationShowMilliseconds], "toggle")
         )),
         Line::from("Show-milliseconds config field: segments.duration.show_milliseconds"),
         Line::from(if current == initial {
@@ -261,38 +287,40 @@ fn duration_display_lines(state: &WizardState, theme: &ThemeConfig) -> Vec<Line<
     ]
 }
 
-/// Git visibility flags, diffed against `theme`; unset means on.
+/// Git visibility flags, diffed against `theme`.
 fn git_display_lines(state: &WizardState, theme: &ThemeConfig) -> Vec<Line<'static>> {
-    let git = &theme.segments.git;
+    let edited = &state.active_theme(theme).segments.git;
+    let on_disk = &theme.segments.git;
     let rows = [
         (
             "Show branch",
-            'b',
+            SegmentEdit::ToggleGitShowBranch,
             "segments.git.show_branch",
-            state.git_show_branch(theme),
-            git.show_branch.unwrap_or(true),
+            edited.show_branch(),
+            on_disk.show_branch(),
         ),
         (
             "Show ahead/behind",
-            'a',
+            SegmentEdit::ToggleGitShowAheadBehind,
             "segments.git.show_ahead_behind",
-            state.git_show_ahead_behind(theme),
-            git.show_ahead_behind.unwrap_or(true),
+            edited.show_ahead_behind(),
+            on_disk.show_ahead_behind(),
         ),
         (
             "Show stash",
-            't',
+            SegmentEdit::ToggleGitShowStash,
             "segments.git.show_stash",
-            state.git_show_stash(theme),
-            git.show_stash.unwrap_or(true),
+            edited.show_stash(),
+            on_disk.show_stash(),
         ),
     ];
     let mut lines = Vec::new();
-    for (label, key, field, current, initial) in rows {
+    for (label, edit, field, current, initial) in rows {
         lines.push(Line::from(""));
         lines.push(Line::from(format!(
-            "{label}: {} (press {key} to toggle)",
-            if current { "on" } else { "off" }
+            "{label}: {} {}",
+            if current { "on" } else { "off" },
+            press_hint(&[edit], "toggle")
         )));
         lines.push(Line::from(format!("Config field: {field}")));
         lines.push(Line::from(if current == initial {
@@ -519,7 +547,7 @@ mod tests {
         assert!(before.contains(&"Display config field: ui.directory.display".to_owned()));
         assert!(before.contains(&"Matches the startup config.".to_owned()));
 
-        state.cycle_directory_display(true);
+        state.apply_edit(SegmentEdit::NextDirectoryDisplay, &theme);
         let after = lines_to_strings(&detail_lines(&state, &theme));
 
         assert!(after.contains(&"Display style: abbreviated (press [ / ] to cycle)".to_owned()));
@@ -559,8 +587,8 @@ mod tests {
             "both display style and show-versions should report matching startup state"
         );
 
-        state.cycle_language_display(true);
-        state.toggle_language_show_versions();
+        state.apply_edit(SegmentEdit::ToggleLanguageDisplay, &theme);
+        state.apply_edit(SegmentEdit::ToggleLanguageShowVersions, &theme);
         let after = lines_to_strings(&detail_lines(&state, &theme));
 
         assert!(after.contains(&"Display style: text (press [ / ] to cycle)".to_owned()));
@@ -599,7 +627,7 @@ mod tests {
         ));
         assert!(before.contains(&"Matches the startup config.".to_owned()));
 
-        state.toggle_duration_show_milliseconds(&theme);
+        state.apply_edit(SegmentEdit::ToggleDurationShowMilliseconds, &theme);
         let after = lines_to_strings(&detail_lines(&state, &theme));
 
         assert!(after.contains(&"Show milliseconds: off (press m to toggle)".to_owned()));
@@ -632,7 +660,7 @@ mod tests {
         assert!(before.contains(&"Config field: segments.git.show_stash".to_owned()));
         assert!(before.contains(&"Matches the startup config.".to_owned()));
 
-        state.toggle_git_show_stash(&theme);
+        state.apply_edit(SegmentEdit::ToggleGitShowStash, &theme);
         let after = lines_to_strings(&detail_lines(&state, &theme));
 
         assert!(after.contains(&"Show stash: off (press t to toggle)".to_owned()));
