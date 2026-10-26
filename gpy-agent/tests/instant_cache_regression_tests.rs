@@ -261,9 +261,9 @@ fn test_client_handler_triggers_initial_scan_on_registration() {
     assert!(!cache_file.exists(), "Cache should not exist yet");
 
     let message = Message::RegisterClient {
-        pid: gpy_agent::config::types::ClientPid::new(std::process::id()).unwrap(),
+        pid: gpy_agent::ipc::ClientPid::new(std::process::id()).unwrap(),
         cwd: Some(SafePath::new(repo_path).unwrap()),
-        shell: Some(gpy_agent::config::types::ShellVariant::Fish),
+        shell: Some(gpy_agent::shell::Shell::Fish),
         shell_version: Some("3.0.0".to_owned()),
     };
 

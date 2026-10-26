@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn test_pid_validation() {
-        use crate::config::types::ClientPid;
+        use crate::ipc::ClientPid;
 
         assert!(!ClientPid::pid_in_range(0));
         assert!(!ClientPid::pid_in_range(4_194_305));
@@ -394,7 +394,7 @@ mod tests {
     /// Constructing a `ClientPid` must not probe liveness (route time only).
     #[test]
     fn test_client_pid_construction_does_not_probe_liveness() {
-        use crate::config::types::ClientPid;
+        use crate::ipc::ClientPid;
 
         let dead_pid = 4_194_303_u32;
         assert!(

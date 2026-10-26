@@ -189,14 +189,16 @@ impl std::fmt::Display for GitIconSet {
 }
 
 impl std::str::FromStr for GitIconSet {
-    type Err = String;
+    type Err = types::ParseEnumError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "unicode" => Ok(Self::Unicode),
             "nerd_font" => Ok(Self::NerdFont),
-            other => Err(format!(
-                "Invalid git.icon_set '{other}'. Use 'unicode' or 'nerd_font'"
+            _ => Err(types::ParseEnumError::new(
+                "git.icon_set",
+                s,
+                "'unicode' or 'nerd_font'",
             )),
         }
     }

@@ -43,9 +43,9 @@ impl ClientHandler {
     #[expect(clippy::unnecessary_wraps, reason = "dispatch signature")]
     fn handle_register_client(
         &self,
-        pid: crate::config::types::ClientPid,
+        pid: crate::ipc::ClientPid,
         cwd: Option<crate::security::SafePath>,
-        shell: Option<&crate::config::types::ShellVariant>,
+        shell: Option<crate::shell::Shell>,
         shell_version: Option<&String>,
     ) -> Result<Response, HandlerError> {
         let shell_info = match (&shell, &shell_version) {
@@ -91,7 +91,7 @@ impl ClientHandler {
     /// Fails if path validation fails or the PID is not registered.
     fn handle_workspace_update(
         &self,
-        pid: crate::config::types::ClientPid,
+        pid: crate::ipc::ClientPid,
         cwd: &crate::security::SafePath,
     ) -> Result<Response, HandlerError> {
         let path_buf = cwd.as_path();
@@ -128,7 +128,7 @@ impl ClientHandler {
     #[expect(clippy::unnecessary_wraps, reason = "dispatch signature")]
     fn handle_unregister_client(
         &self,
-        pid: crate::config::types::ClientPid,
+        pid: crate::ipc::ClientPid,
     ) -> Result<Response, HandlerError> {
         self.render.client_registry.unregister(pid.get());
         let current_watcher = self.watcher.lock_or_recover().clone();
@@ -261,12 +261,7 @@ impl RequestHandler for ClientHandler {
                 cwd,
                 shell,
                 shell_version,
-            } => self.handle_register_client(
-                *pid,
-                cwd.clone(),
-                shell.as_ref(),
-                shell_version.as_ref(),
-            ),
+            } => self.handle_register_client(*pid, cwd.clone(), *shell, shell_version.as_ref()),
             Message::UnregisterClient { pid } => self.handle_unregister_client(*pid),
             Message::WorkspaceUpdate { pid, cwd } => self.handle_workspace_update(*pid, cwd),
             Message::Status => self.handle_status(),
@@ -349,7 +344,7 @@ mod tests {
     }
 
     fn register(handler: &ClientHandler, cwd: &Path) {
-        let pid = crate::config::types::ClientPid::new(std::process::id()).expect("pid");
+        let pid = crate::ipc::ClientPid::new(std::process::id()).expect("pid");
         let safe = crate::security::SafePath::new(cwd.to_str().expect("utf8")).expect("safe");
         handler
             .handle_register_client(pid, Some(safe), None, None)

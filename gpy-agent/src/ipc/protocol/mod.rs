@@ -209,17 +209,17 @@ fn resolve(wire: WireMessage) -> Result<Message> {
                         .map_err(|e| Error::ipc(format!("Invalid cwd: {e}")))
                 })
                 .transpose()?,
-            pid: crate::config::types::ClientPid::new(pid)
+            pid: crate::ipc::ClientPid::new(pid)
                 .map_err(|e| Error::ipc(format!("Invalid PID: {e}")))?,
             shell,
             shell_version,
         }),
         WireMessage::UnregisterClient { pid } => Ok(Message::UnregisterClient {
-            pid: crate::config::types::ClientPid::new(pid)
+            pid: crate::ipc::ClientPid::new(pid)
                 .map_err(|e| Error::ipc(format!("Invalid PID: {e}")))?,
         }),
         WireMessage::WorkspaceUpdate { pid, cwd } => Ok(Message::WorkspaceUpdate {
-            pid: crate::config::types::ClientPid::new(pid)
+            pid: crate::ipc::ClientPid::new(pid)
                 .map_err(|e| Error::ipc(format!("Invalid PID: {e}")))?,
             cwd: crate::security::SafePath::new(&cwd)
                 .map_err(|e| Error::ipc(format!("Invalid workspace path: {e}")))?,
@@ -452,7 +452,7 @@ enum WireMessage {
     RegisterClient {
         pid: u32,
         cwd: Option<String>,
-        shell: Option<crate::config::types::ShellVariant>,
+        shell: Option<crate::shell::Shell>,
         shell_version: Option<String>,
     },
     UnregisterClient {
@@ -616,10 +616,10 @@ impl ShellIpcMessage {
                 let pid = self
                     .pid
                     .ok_or_else(|| Error::ipc("register missing pid".to_owned()))?;
-                let shell = self.shell.as_deref().map(|s| {
-                    std::str::FromStr::from_str(s)
-                        .unwrap_or(crate::config::types::ShellVariant::Unknown)
-                });
+                let shell = self
+                    .shell
+                    .as_deref()
+                    .and_then(|s| s.parse::<crate::shell::Shell>().ok());
 
                 Ok(WireMessage::RegisterClient {
                     pid,

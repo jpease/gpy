@@ -6,8 +6,8 @@
 #![allow(missing_docs)]
 
 use super::*;
-use crate::config::types::ShellVariant;
 use crate::ipc::Format;
+use crate::shell::Shell;
 use serde_json;
 
 #[test]
@@ -421,7 +421,7 @@ fn test_parse_wire_register_keeps_pid_and_cwd_raw() {
         } => {
             assert_eq!(pid, 4_194_305_u32);
             assert_eq!(cwd, Some("/etc/nope".to_owned()));
-            assert_eq!(shell, Some(ShellVariant::Fish));
+            assert_eq!(shell, Some(Shell::Fish));
             assert_eq!(shell_version, Some("3.7.1".to_owned()));
         }
         _ => panic!("expected WireMessage::RegisterClient"),

@@ -2,98 +2,123 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::marker::PhantomData;
 use std::str::FromStr;
 
-/// Strongly-typed process ID for registered clients.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ClientPid(u32);
-
-impl ClientPid {
-    /// Largest plausible process ID (Linux's default `pid_max` ceiling).
-    const MAX: u32 = 4_194_304;
-
-    /// Create a new `ClientPid` after validation.
-    ///
-    /// Range check only; liveness is probed once at IPC route time.
-    ///
-    /// # Errors
-    /// Returns an error if the PID is 0 or above the plausible maximum.
-    pub fn new(pid: u32) -> crate::Result<Self> {
-        if Self::pid_in_range(pid) {
-            Ok(Self(pid))
-        } else {
-            Err(crate::Error::ipc(format!("Invalid PID: {pid}")))
-        }
-    }
-
-    /// Whether `pid` is nonzero and within the platform's maximum.
-    #[must_use]
-    pub const fn pid_in_range(pid: u32) -> bool {
-        pid > 0 && pid <= Self::MAX
-    }
-
-    /// Get the raw PID value.
-    #[must_use]
-    pub const fn get(self) -> u32 {
-        self.0
-    }
+/// Error for a string that names no variant of a string-parsed setting.
+///
+/// Renders as `Invalid <field> '<value>'. Use <expected>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseEnumError {
+    field: &'static str,
+    value: String,
+    expected: &'static str,
 }
 
-impl fmt::Display for ClientPid {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl PartialEq<u32> for ClientPid {
-    fn eq(&self, other: &u32) -> bool {
-        self.0 == *other
-    }
-}
-
-impl PartialEq<ClientPid> for u32 {
-    fn eq(&self, other: &ClientPid) -> bool {
-        *self == other.0
-    }
-}
-
-/// Supported shell variants for registered clients.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "kebab-case")]
-pub enum ShellVariant {
-    /// Fish shell
-    Fish,
-    /// Zsh shell
-    Zsh,
-    /// Bash shell
-    Bash,
-    /// Unknown or unsupported shell
-    #[default]
-    Unknown,
-}
-
-impl FromStr for ShellVariant {
-    type Err = std::convert::Infallible;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "fish" => Ok(Self::Fish),
-            "zsh" => Ok(Self::Zsh),
-            "bash" => Ok(Self::Bash),
-            _ => Ok(Self::Unknown),
+impl ParseEnumError {
+    pub(crate) fn new(field: &'static str, value: &str, expected: &'static str) -> Self {
+        Self {
+            field,
+            value: value.to_owned(),
+            expected,
         }
     }
 }
 
-impl fmt::Display for ShellVariant {
+impl fmt::Display for ParseEnumError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            Self::Fish => "fish",
-            Self::Zsh => "zsh",
-            Self::Bash => "bash",
-            Self::Unknown => "unknown",
-        };
-        write!(f, "{s}")
+        write!(
+            f,
+            "Invalid {} '{}'. Use {}",
+            self.field, self.value, self.expected
+        )
     }
+}
+
+impl std::error::Error for ParseEnumError {}
+
+impl From<ParseEnumError> for crate::Error {
+    fn from(error: ParseEnumError) -> Self {
+        Self::config(error.to_string())
+    }
+}
+
+/// Declare a range-checked numeric newtype.
+///
+/// Generates `MIN`/`MAX`/`DEFAULT`, a const `new` returning `None` outside
+/// `MIN..=MAX`, `get`, `Default`, `Display`, `TryFrom` (with the message built
+/// by `error(min, max)`), and a `Deserialize` that rejects out-of-range values
+/// with that message.
+macro_rules! bounded_int {
+    (
+        $(#[$meta:meta])*
+        $name:ident($int:ty) {
+            min: $min:expr,
+            max: $max:expr,
+            default: $default:expr,
+            error: $error:expr $(,)?
+        }
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+        pub struct $name($int);
+
+        impl $name {
+            /// Default value.
+            pub const DEFAULT: $int = $default;
+            /// Smallest accepted value.
+            pub const MIN: $int = $min;
+            /// Largest accepted value.
+            pub const MAX: $int = $max;
+
+            /// Create a new value if it lies within `MIN..=MAX`.
+            #[must_use]
+            pub const fn new(value: $int) -> Option<Self> {
+                if value >= Self::MIN && value <= Self::MAX {
+                    Some(Self(value))
+                } else {
+                    None
+                }
+            }
+
+            /// Get the inner value.
+            #[must_use]
+            pub const fn get(self) -> $int {
+                self.0
+            }
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self(Self::DEFAULT)
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                fmt::Display::fmt(&self.0, f)
+            }
+        }
+
+        impl TryFrom<$int> for $name {
+            type Error = String;
+
+            fn try_from(value: $int) -> Result<Self, Self::Error> {
+                let describe: fn($int, $int) -> String = $error;
+                Self::new(value).ok_or_else(|| describe(Self::MIN, Self::MAX))
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                let value = <$int>::deserialize(deserializer)?;
+                Self::try_from(value).map_err(serde::de::Error::custom)
+            }
+        }
+    };
 }
 
 /// A validated color specification (Hex, ANSI code, named color, or magic keyword),
@@ -157,7 +182,7 @@ impl fmt::Display for ColorSpec {
     }
 }
 
-/// A validated UI icon (non-empty string).
+/// A validated UI icon: any string without control characters; may be empty.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct Icon(String);
@@ -236,434 +261,112 @@ impl From<Icon> for String {
     }
 }
 
-/// Agent timeout in seconds (1..=300)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "u64")]
-pub struct AgentTimeout(u64);
-
-impl AgentTimeout {
-    /// Default agent timeout
-    pub const DEFAULT: u64 = 5;
-    /// Minimum allowed timeout
-    pub const MIN: u64 = 1;
-    /// Maximum allowed timeout
-    pub const MAX: u64 = 300;
-
-    /// Create a new `AgentTimeout` if the value is valid
-    #[must_use]
-    pub const fn new(value: u64) -> Option<Self> {
-        if value >= Self::MIN && value <= Self::MAX {
-            Some(Self(value))
-        } else {
-            None
-        }
-    }
-
-    /// Get the inner value
-    #[must_use]
-    pub const fn get(self) -> u64 {
-        self.0
+bounded_int! {
+    /// Agent timeout in seconds (1..=300).
+    #[derive(Eq)]
+    AgentTimeout(u64) {
+        min: 1,
+        max: 300,
+        default: 5,
+        error: |min, max| format!("agent timeout must be between {min} and {max}"),
     }
 }
 
-impl Default for AgentTimeout {
-    fn default() -> Self {
-        Self(Self::DEFAULT)
+bounded_int! {
+    /// Git timeout in seconds (1..=600).
+    #[derive(Eq)]
+    GitTimeout(u64) {
+        min: 1,
+        max: 600,
+        default: 10,
+        error: |min, max| format!("git timeout must be between {min} and {max}"),
     }
 }
 
-impl fmt::Display for AgentTimeout {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+bounded_int! {
+    /// Supervisor check interval in seconds (5..=3600).
+    ///
+    /// Out-of-range values, including `0`, are rejected at deserialize time.
+    #[derive(Eq)]
+    SupervisorCheckInterval(u64) {
+        min: 5,
+        max: 3600,
+        default: 30,
+        error: |min, max| format!(
+            "agent.supervisor.check_interval_seconds must be between {min} and {max} seconds"
+        ),
     }
 }
 
-impl TryFrom<u64> for AgentTimeout {
-    type Error = String;
-
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        Self::new(value).ok_or_else(|| {
-            format!(
-                "agent timeout must be between {} and {}",
-                Self::MIN,
-                Self::MAX
-            )
-        })
+bounded_int! {
+    /// Maximum supervisor restart attempts before giving up (1..=100).
+    #[derive(Eq)]
+    SupervisorMaxRestartAttempts(u32) {
+        min: 1,
+        max: 100,
+        default: 5,
+        error: |min, max| format!(
+            "agent.supervisor.max_restart_attempts must be between {min} and {max}"
+        ),
     }
 }
 
-/// Git timeout in seconds (1..=600)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "u64")]
-pub struct GitTimeout(u64);
-
-impl GitTimeout {
-    /// Default git timeout
-    pub const DEFAULT: u64 = 10;
-    /// Minimum allowed timeout
-    pub const MIN: u64 = 1;
-    /// Maximum allowed timeout
-    pub const MAX: u64 = 600;
-
-    /// Create a new `GitTimeout` if the value is valid
-    #[must_use]
-    pub const fn new(value: u64) -> Option<Self> {
-        if value >= Self::MIN && value <= Self::MAX {
-            Some(Self(value))
-        } else {
-            None
-        }
-    }
-
-    /// Get the inner value
-    #[must_use]
-    pub const fn get(self) -> u64 {
-        self.0
+bounded_int! {
+    /// Maximum branch length (0..=500); `0` means unlimited.
+    #[derive(Eq)]
+    MaxBranchLength(usize) {
+        min: 0,
+        max: 500,
+        default: 0,
+        error: |_, max| format!("max branch length must be <= {max}"),
     }
 }
 
-impl Default for GitTimeout {
-    fn default() -> Self {
-        Self(Self::DEFAULT)
+bounded_int! {
+    /// Language cache TTL in hours (1..=720).
+    #[derive(Eq)]
+    CacheTtlHours(u64) {
+        min: 1,
+        max: 720,
+        default: 24,
+        error: |min, max| format!("cache TTL must be between {min} and {max}"),
     }
 }
 
-impl fmt::Display for GitTimeout {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+bounded_int! {
+    /// Confidence threshold (0.0..=1.0).
+    ConfidenceThreshold(f32) {
+        min: 0.0,
+        max: 1.0,
+        default: 0.1,
+        error: |_, _| "confidence threshold must be between 0.0 and 1.0".to_owned(),
     }
 }
 
-impl TryFrom<u64> for GitTimeout {
-    type Error = String;
-
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        Self::new(value).ok_or_else(|| {
-            format!(
-                "git timeout must be between {} and {}",
-                Self::MIN,
-                Self::MAX
-            )
-        })
+bounded_int! {
+    /// Maximum path length (1..=1000).
+    ///
+    /// Hard cap in `char`s; at or below the ellipsis width (3) the ellipsis is
+    /// dropped and the raw trailing characters are shown.
+    #[derive(Eq)]
+    MaxPathLength(usize) {
+        min: 1,
+        max: 1000,
+        default: 80,
+        error: |min, max| format!("max path length must be between {min} and {max}"),
     }
 }
 
-/// Supervisor check interval in seconds (5..=3600).
-///
-/// Out-of-range values, including `0`, are rejected at deserialize time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "u64")]
-pub struct SupervisorCheckInterval(u64);
-
-impl SupervisorCheckInterval {
-    /// Default supervisor check interval
-    pub const DEFAULT: u64 = 30;
-    /// Minimum allowed interval
-    pub const MIN: u64 = 5;
-    /// Maximum allowed interval
-    pub const MAX: u64 = 3600;
-
-    /// Create a new `SupervisorCheckInterval` if the value is valid
-    #[must_use]
-    pub const fn new(value: u64) -> Option<Self> {
-        if value >= Self::MIN && value <= Self::MAX {
-            Some(Self(value))
-        } else {
-            None
-        }
-    }
-
-    /// Get the inner value
-    #[must_use]
-    pub const fn get(self) -> u64 {
-        self.0
-    }
-}
-
-impl TryFrom<u64> for SupervisorCheckInterval {
-    type Error = String;
-
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        Self::new(value).ok_or_else(|| {
-            format!(
-                "agent.supervisor.check_interval_seconds must be between {} and {} seconds",
-                Self::MIN,
-                Self::MAX
-            )
-        })
-    }
-}
-
-impl Default for SupervisorCheckInterval {
-    fn default() -> Self {
-        Self(Self::DEFAULT)
-    }
-}
-
-impl fmt::Display for SupervisorCheckInterval {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// Maximum supervisor restart attempts before giving up (1..=100).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "u32")]
-pub struct SupervisorMaxRestartAttempts(u32);
-
-impl SupervisorMaxRestartAttempts {
-    /// Default maximum restart attempts
-    pub const DEFAULT: u32 = 5;
-    /// Minimum allowed attempts
-    pub const MIN: u32 = 1;
-    /// Maximum allowed attempts
-    pub const MAX: u32 = 100;
-
-    /// Create a new `SupervisorMaxRestartAttempts` if the value is valid
-    #[must_use]
-    pub const fn new(value: u32) -> Option<Self> {
-        if value >= Self::MIN && value <= Self::MAX {
-            Some(Self(value))
-        } else {
-            None
-        }
-    }
-
-    /// Get the inner value
-    #[must_use]
-    pub const fn get(self) -> u32 {
-        self.0
-    }
-}
-
-impl TryFrom<u32> for SupervisorMaxRestartAttempts {
-    type Error = String;
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        Self::new(value).ok_or_else(|| {
-            format!(
-                "agent.supervisor.max_restart_attempts must be between {} and {}",
-                Self::MIN,
-                Self::MAX
-            )
-        })
-    }
-}
-
-impl Default for SupervisorMaxRestartAttempts {
-    fn default() -> Self {
-        Self(Self::DEFAULT)
-    }
-}
-
-impl fmt::Display for SupervisorMaxRestartAttempts {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// Maximum branch length (0..=500)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "usize")]
-pub struct MaxBranchLength(usize);
-
-impl MaxBranchLength {
-    /// Default max branch length (0 = unlimited)
-    pub const DEFAULT: usize = 0;
-    /// Maximum allowed length
-    pub const MAX: usize = 500;
-
-    /// Create a new `MaxBranchLength` if the value is valid
-    #[must_use]
-    pub const fn new(value: usize) -> Option<Self> {
-        if value <= Self::MAX {
-            Some(Self(value))
-        } else {
-            None
-        }
-    }
-
-    /// Get the inner value
-    #[must_use]
-    pub const fn get(self) -> usize {
-        self.0
-    }
-}
-
-impl Default for MaxBranchLength {
-    fn default() -> Self {
-        Self(Self::DEFAULT)
-    }
-}
-
-impl fmt::Display for MaxBranchLength {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl TryFrom<usize> for MaxBranchLength {
-    type Error = String;
-
-    fn try_from(value: usize) -> Result<Self, Self::Error> {
-        Self::new(value).ok_or_else(|| format!("max branch length must be <= {}", Self::MAX))
-    }
-}
-
-/// Language cache TTL in hours (1..=720)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "u64")]
-pub struct CacheTtlHours(u64);
-
-impl CacheTtlHours {
-    /// Default cache TTL
-    pub const DEFAULT: u64 = 24;
-    /// Minimum allowed TTL
-    pub const MIN: u64 = 1;
-    /// Maximum allowed TTL
-    pub const MAX: u64 = 720;
-
-    /// Create a new `CacheTtlHours` if the value is valid
-    #[must_use]
-    pub const fn new(value: u64) -> Option<Self> {
-        if value >= Self::MIN && value <= Self::MAX {
-            Some(Self(value))
-        } else {
-            None
-        }
-    }
-
-    /// Get the inner value
-    #[must_use]
-    pub const fn get(self) -> u64 {
-        self.0
-    }
-}
-
-impl Default for CacheTtlHours {
-    fn default() -> Self {
-        Self(Self::DEFAULT)
-    }
-}
-
-impl fmt::Display for CacheTtlHours {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl TryFrom<u64> for CacheTtlHours {
-    type Error = String;
-
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        Self::new(value)
-            .ok_or_else(|| format!("cache TTL must be between {} and {}", Self::MIN, Self::MAX))
-    }
-}
-
-/// Confidence threshold (0.0..=1.0)
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "f32")]
-pub struct ConfidenceThreshold(f32);
-
-impl ConfidenceThreshold {
-    /// Default confidence threshold
-    pub const DEFAULT: f32 = 0.1;
-
-    /// Create a new `ConfidenceThreshold` if the value is valid
-    #[must_use]
-    pub const fn new(value: f32) -> Option<Self> {
-        if value >= 0.0 && value <= 1.0 {
-            Some(Self(value))
-        } else {
-            None
-        }
-    }
-
-    /// Get the inner value
-    #[must_use]
-    pub const fn get(self) -> f32 {
-        self.0
-    }
-}
-
-impl Default for ConfidenceThreshold {
-    fn default() -> Self {
-        Self(Self::DEFAULT)
-    }
-}
-
-impl fmt::Display for ConfidenceThreshold {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl TryFrom<f32> for ConfidenceThreshold {
-    type Error = String;
-
-    fn try_from(value: f32) -> Result<Self, Self::Error> {
-        Self::new(value)
-            .ok_or_else(|| "confidence threshold must be between 0.0 and 1.0".to_owned())
-    }
-}
-
-/// Maximum path length (1..=1000)
-///
-/// Hard cap in `char`s; at or below the ellipsis width (3) the ellipsis is
-/// dropped and the raw trailing characters are shown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "usize")]
-pub struct MaxPathLength(usize);
-
-impl MaxPathLength {
-    /// Default max path length
-    pub const DEFAULT: usize = 80;
-    /// Minimum allowed length
-    pub const MIN: usize = 1;
-    /// Maximum allowed length
-    pub const MAX: usize = 1000;
-
-    /// Create a new `MaxPathLength` if the value is valid
-    #[must_use]
-    pub const fn new(value: usize) -> Option<Self> {
-        if value >= Self::MIN && value <= Self::MAX {
-            Some(Self(value))
-        } else {
-            None
-        }
-    }
-
-    /// Get the inner value
-    #[must_use]
-    pub const fn get(self) -> usize {
-        self.0
-    }
-}
-
-impl Default for MaxPathLength {
-    fn default() -> Self {
-        Self(Self::DEFAULT)
-    }
-}
-
-impl fmt::Display for MaxPathLength {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl TryFrom<usize> for MaxPathLength {
-    type Error = String;
-
-    fn try_from(value: usize) -> Result<Self, Self::Error> {
-        Self::new(value).ok_or_else(|| {
-            format!(
-                "max path length must be between {} and {}",
-                Self::MIN,
-                Self::MAX
-            )
-        })
+bounded_int! {
+    /// Number of path components kept when the directory segment is truncated (1..=255).
+    #[derive(Eq)]
+    DirectoryTruncationLength(usize) {
+        min: 1,
+        max: 255,
+        default: 3,
+        error: |min, max| format!(
+            "directory truncation length must be between {min} and {max}"
+        ),
     }
 }
 
@@ -680,97 +383,98 @@ pub fn is_safe_config_name(name: &str) -> bool {
         && !name.chars().any(char::is_control)
 }
 
-/// Theme name (non-empty string)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "String")]
-pub struct ThemeName(String);
+/// Marks which kind of file stem a [`SafeName`] names; supplies the label used in errors.
+pub trait NameKind {
+    /// Noun used in the rejection message, e.g. `theme name`.
+    const LABEL: &'static str;
+}
 
-impl ThemeName {
-    /// Default theme name
+/// Marker for [`ThemeName`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ThemeKind {}
+
+impl NameKind for ThemeKind {
+    const LABEL: &'static str = "theme name";
+}
+
+/// Marker for [`PaletteName`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PaletteKind {}
+
+impl NameKind for PaletteKind {
+    const LABEL: &'static str = "palette name";
+}
+
+/// A theme or palette name that [`is_safe_config_name`] accepts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SafeName<K>(String, PhantomData<K>);
+
+/// Theme name.
+pub type ThemeName = SafeName<ThemeKind>;
+
+/// Palette (color theme) name.
+pub type PaletteName = SafeName<PaletteKind>;
+
+impl<K: NameKind> SafeName<K> {
+    /// Default name.
     pub const DEFAULT: &'static str = "default";
 
-    /// Create a new `ThemeName` if the value is valid.
+    /// Create a new name if the value is valid.
     ///
     /// Returns `None` unless [`is_safe_config_name`].
     #[must_use]
     pub fn new(value: String) -> Option<Self> {
-        is_safe_config_name(&value).then_some(Self(value))
+        is_safe_config_name(&value).then_some(Self(value, PhantomData))
     }
 
-    /// Get the inner value
+    /// Get the inner value.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-impl Default for ThemeName {
+impl<K: NameKind> Default for SafeName<K> {
     fn default() -> Self {
-        Self(Self::DEFAULT.to_owned())
+        Self(Self::DEFAULT.to_owned(), PhantomData)
     }
 }
 
-impl fmt::Display for ThemeName {
+impl<K> fmt::Display for SafeName<K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        f.write_str(&self.0)
     }
 }
 
-impl TryFrom<String> for ThemeName {
+impl<K: NameKind> TryFrom<String> for SafeName<K> {
     type Error = String;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         Self::new(value).ok_or_else(|| {
-            "theme name must be non-empty and must not contain path separators or control characters"
-                .to_owned()
+            format!(
+                "{} must be non-empty and must not contain path separators or control characters",
+                K::LABEL
+            )
         })
     }
 }
 
-/// Palette (color theme) name (non-empty string)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "String")]
-pub struct PaletteName(String);
-
-impl PaletteName {
-    /// Default palette name
-    pub const DEFAULT: &'static str = "default";
-
-    /// Create a new `PaletteName` if the value is valid.
-    ///
-    /// Returns `None` unless [`is_safe_config_name`].
-    #[must_use]
-    pub fn new(value: String) -> Option<Self> {
-        is_safe_config_name(&value).then_some(Self(value))
-    }
-
-    /// Get the inner value
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
+impl<K> Serialize for SafeName<K> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0)
     }
 }
 
-impl Default for PaletteName {
-    fn default() -> Self {
-        Self(Self::DEFAULT.to_owned())
-    }
-}
-
-impl fmt::Display for PaletteName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl TryFrom<String> for PaletteName {
-    type Error = String;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        Self::new(value).ok_or_else(|| {
-            "palette name must be non-empty and must not contain path separators or control characters"
-                .to_owned()
-        })
+impl<'de, K: NameKind> Deserialize<'de> for SafeName<K> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::try_from(value).map_err(serde::de::Error::custom)
     }
 }
 
@@ -781,8 +485,7 @@ pub enum DirectoryDisplay {
     /// Show only the current directory name.
     #[default]
     Basename,
-    /// Show the path with intermediate components abbreviated to their first
-    /// letter (shell-side; the Rust resolver currently aliases this to `Full`).
+    /// Show the path with intermediate components abbreviated to their first letter.
     Abbreviated,
     /// Show the path truncated to its trailing components.
     Truncated,
@@ -802,20 +505,8 @@ impl fmt::Display for DirectoryDisplay {
     }
 }
 
-/// Error returned when parsing an unrecognized `DirectoryDisplay` string.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseDirectoryDisplayError(String);
-
-impl fmt::Display for ParseDirectoryDisplayError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unrecognized directory display mode: {}", self.0)
-    }
-}
-
-impl std::error::Error for ParseDirectoryDisplayError {}
-
 impl FromStr for DirectoryDisplay {
-    type Err = ParseDirectoryDisplayError;
+    type Err = ParseEnumError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
@@ -823,64 +514,12 @@ impl FromStr for DirectoryDisplay {
             "abbreviated" => Ok(Self::Abbreviated),
             "truncated" => Ok(Self::Truncated),
             "full" => Ok(Self::Full),
-            other => Err(ParseDirectoryDisplayError(other.to_owned())),
+            _ => Err(ParseEnumError::new(
+                "ui.directory.display",
+                s,
+                "'basename', 'abbreviated', 'truncated', or 'full'",
+            )),
         }
-    }
-}
-
-/// Number of path components kept when the directory segment is truncated (1..=255).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "usize")]
-pub struct DirectoryTruncationLength(usize);
-
-impl DirectoryTruncationLength {
-    /// Default number of trailing components kept
-    pub const DEFAULT: usize = 3;
-    /// Minimum allowed length
-    pub const MIN: usize = 1;
-    /// Maximum allowed length
-    pub const MAX: usize = 255;
-
-    /// Create a new `DirectoryTruncationLength` if the value is valid
-    #[must_use]
-    pub const fn new(value: usize) -> Option<Self> {
-        if value >= Self::MIN && value <= Self::MAX {
-            Some(Self(value))
-        } else {
-            None
-        }
-    }
-
-    /// Get the inner value
-    #[must_use]
-    pub const fn get(self) -> usize {
-        self.0
-    }
-}
-
-impl Default for DirectoryTruncationLength {
-    fn default() -> Self {
-        Self(Self::DEFAULT)
-    }
-}
-
-impl fmt::Display for DirectoryTruncationLength {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl TryFrom<usize> for DirectoryTruncationLength {
-    type Error = String;
-
-    fn try_from(value: usize) -> Result<Self, Self::Error> {
-        Self::new(value).ok_or_else(|| {
-            format!(
-                "directory truncation length must be between {} and {}",
-                Self::MIN,
-                Self::MAX
-            )
-        })
     }
 }
 
@@ -892,7 +531,7 @@ pub struct DirectoryTruncationSymbol(String);
 impl DirectoryTruncationSymbol {
     /// Create a new `DirectoryTruncationSymbol` if the value is valid.
     ///
-    /// Returns `None` on ASCII control characters; empty is valid (default).
+    /// Returns `None` on Unicode control characters; empty is valid (default).
     #[must_use]
     pub fn new(value: String) -> Option<Self> {
         if value.chars().any(char::is_control) {
@@ -946,26 +585,18 @@ impl fmt::Display for LanguageDisplay {
     }
 }
 
-/// Error returned when parsing an unrecognized `LanguageDisplay` string.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseLanguageDisplayError(String);
-
-impl fmt::Display for ParseLanguageDisplayError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unrecognized language display mode: {}", self.0)
-    }
-}
-
-impl std::error::Error for ParseLanguageDisplayError {}
-
 impl FromStr for LanguageDisplay {
-    type Err = ParseLanguageDisplayError;
+    type Err = ParseEnumError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "icon" => Ok(Self::Icon),
             "text" => Ok(Self::Text),
-            other => Err(ParseLanguageDisplayError(other.to_owned())),
+            _ => Err(ParseEnumError::new(
+                "language.display",
+                s,
+                "'icon' or 'text'",
+            )),
         }
     }
 }
@@ -998,15 +629,17 @@ impl fmt::Display for DetectionMode {
 }
 
 impl FromStr for DetectionMode {
-    type Err = String;
+    type Err = ParseEnumError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "content" => Ok(Self::Content),
             "markers" => Ok(Self::Markers),
             "hybrid" => Ok(Self::Hybrid),
-            other => Err(format!(
-                "Invalid language.detection_mode '{other}'. Use 'content', 'markers', or 'hybrid'"
+            _ => Err(ParseEnumError::new(
+                "language.detection_mode",
+                s,
+                "'content', 'markers', or 'hybrid'",
             )),
         }
     }
@@ -1035,18 +668,18 @@ impl fmt::Display for LanguageFilter {
 }
 
 impl FromStr for LanguageFilter {
-    type Err = String;
+    type Err = ParseEnumError;
 
-    #[allow(
-        clippy::map_err_ignore,
-        reason = "Err is a String with no source slot; the message already quotes the rejected value"
-    )]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "all" => Ok(Self::All),
             "primary" => Ok(Self::Primary),
-            other => other.parse::<usize>().map(Self::Top).map_err(|_| {
-                format!("Invalid language.filter '{other}'. Use 'all', 'primary', or a number (e.g. '3')")
+            other => other.parse::<usize>().ok().map(Self::Top).ok_or_else(|| {
+                ParseEnumError::new(
+                    "language.filter",
+                    other,
+                    "'all', 'primary', or a number (e.g. '3')",
+                )
             }),
         }
     }
@@ -1189,7 +822,7 @@ mod tests {
     #[test]
     fn language_filter_rejects_garbage_with_message() {
         let err = "bogus".parse::<LanguageFilter>().expect_err("must reject");
-        assert!(err.contains("language.filter"), "got {err}");
+        assert!(err.to_string().contains("language.filter"), "got {err}");
         assert!("-1".parse::<LanguageFilter>().is_err());
     }
 
@@ -1199,5 +832,84 @@ mod tests {
             let parsed: LanguageFilter = value.parse().expect("valid");
             assert_eq!(parsed.to_string(), value);
         }
+    }
+
+    #[test]
+    fn bounded_ints_enforce_range_and_report_it() {
+        assert!(AgentTimeout::new(0).is_none());
+        assert!(AgentTimeout::new(301).is_none());
+        assert_eq!(AgentTimeout::new(300).expect("MAX is valid").get(), 300);
+        assert_eq!(
+            AgentTimeout::try_from(0).expect_err("below MIN"),
+            "agent timeout must be between 1 and 300"
+        );
+        assert_eq!(
+            SupervisorCheckInterval::try_from(4).expect_err("below MIN"),
+            "agent.supervisor.check_interval_seconds must be between 5 and 3600 seconds"
+        );
+        assert_eq!(
+            MaxBranchLength::try_from(501).expect_err("above MAX"),
+            "max branch length must be <= 500"
+        );
+        assert_eq!(MaxBranchLength::new(0).expect("zero is unlimited").get(), 0);
+        assert_eq!(
+            ConfidenceThreshold::try_from(1.5).expect_err("above MAX"),
+            "confidence threshold must be between 0.0 and 1.0"
+        );
+        assert!(ConfidenceThreshold::new(f32::NAN).is_none());
+        assert_eq!(AgentTimeout::default().to_string(), "5");
+    }
+
+    #[test]
+    fn bounded_int_deserialize_rejects_out_of_range_with_message() {
+        #[derive(Debug, Deserialize)]
+        struct Holder {
+            timeout: GitTimeout,
+        }
+        let ok: Holder = toml::from_str("timeout = 600").expect("MAX is valid");
+        assert_eq!(ok.timeout.get(), 600);
+        let err = toml::from_str::<Holder>("timeout = 601").expect_err("above MAX");
+        assert!(
+            err.to_string()
+                .contains("git timeout must be between 1 and 600"),
+            "got {err}"
+        );
+    }
+
+    #[test]
+    fn safe_names_report_their_kind() {
+        assert!(
+            ThemeName::try_from(String::new())
+                .expect_err("empty")
+                .starts_with("theme name must be non-empty")
+        );
+        assert!(
+            PaletteName::try_from("a/b".to_owned())
+                .expect_err("separator")
+                .starts_with("palette name must be non-empty")
+        );
+    }
+
+    #[test]
+    fn string_enums_share_one_error_style() {
+        assert_eq!(
+            "sideways"
+                .parse::<DirectoryDisplay>()
+                .unwrap_err()
+                .to_string(),
+            "Invalid ui.directory.display 'sideways'. Use 'basename', 'abbreviated', 'truncated', or 'full'"
+        );
+        assert_eq!(
+            "glyph".parse::<LanguageDisplay>().unwrap_err().to_string(),
+            "Invalid language.display 'glyph'. Use 'icon' or 'text'"
+        );
+        assert_eq!(
+            "x".parse::<DetectionMode>().unwrap_err().to_string(),
+            "Invalid language.detection_mode 'x'. Use 'content', 'markers', or 'hybrid'"
+        );
+        assert_eq!(
+            "x".parse::<LanguageFilter>().unwrap_err().to_string(),
+            "Invalid language.filter 'x'. Use 'all', 'primary', or a number (e.g. '3')"
+        );
     }
 }

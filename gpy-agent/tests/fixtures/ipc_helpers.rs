@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 #![allow(clippy::expect_used)]
 
-use gpy_agent::config::types::ClientPid;
+use gpy_agent::ipc::ClientPid;
 use gpy_agent::ipc::{Format, Message, Response};
 use gpy_agent::security::SafePath;
 use std::path::PathBuf;

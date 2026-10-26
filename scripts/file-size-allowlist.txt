@@ -3,5 +3,3 @@
 # without saying why in the commit.
 1041 gpy-agent/src/agent/events/mod.rs
 846 gpy-agent/src/agent/lifecycle/mod.rs
-1073 gpy-agent/src/config/types.rs
-

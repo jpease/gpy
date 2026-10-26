@@ -89,7 +89,7 @@ async fn test_client_registration_flow() {
 
     // Register client
     let pid_u32 = std::process::id();
-    let pid = gpy_agent::config::types::ClientPid::new(pid_u32).unwrap();
+    let pid = gpy_agent::ipc::ClientPid::new(pid_u32).unwrap();
     let response = server
         .send_request(Message::RegisterClient {
             pid,

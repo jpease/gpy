@@ -207,7 +207,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "git.icon_set",
         get: |c| c.git.icon_set.to_string(),
         set: Some(|c, v| {
-            c.git.icon_set = v.parse().map_err(Error::config)?;
+            c.git.icon_set = v.parse()?;
             Ok(())
         }),
         description: "Glyph set for stash/detached/in-progress icons: 'unicode' or 'nerd_font'",
@@ -249,7 +249,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "language.detection_mode",
         get: |c| c.language.detection_mode.to_string(),
         set: Some(|c, v| {
-            c.language.detection_mode = v.parse().map_err(Error::config)?;
+            c.language.detection_mode = v.parse()?;
             Ok(())
         }),
         description: "Detection strategy: 'content', 'markers', or 'hybrid'",
@@ -269,17 +269,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "language.display",
         get: |c| c.language.display.to_string(),
         set: Some(|c, v| {
-            // Plain text: keeps the allowed-values hint `InvalidValue` can't express.
-            #[allow(
-                clippy::map_err_ignore,
-                reason = "the message quotes the rejected value and lists the allowed ones; a cause would append to it"
-            )]
-            let display = v.parse().map_err(|_| {
-                Error::config(format!(
-                    "Invalid language.display '{v}'. Use 'icon' or 'text'"
-                ))
-            })?;
-            c.language.display = display;
+            c.language.display = v.parse()?;
             Ok(())
         }),
         description: "Display mode: 'icon' or 'text'",
@@ -288,8 +278,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "language.filter",
         get: |c| c.language.filter.to_string(),
         set: Some(|c, v| {
-            // Plain text: message is composed by `LanguageFilter::from_str`.
-            c.language.filter = v.parse().map_err(Error::config)?;
+            c.language.filter = v.parse()?;
             Ok(())
         }),
         description: "Language filter: 'all', 'primary', or top N (e.g. '3')",
@@ -346,7 +335,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
         key: "ui.directory.display",
         get: |c| c.ui.directory.display.to_string(),
         set: Some(|c, v| {
-            c.ui.directory.display = parse_directory_display(v)?;
+            c.ui.directory.display = v.parse()?;
             Ok(())
         }),
         description: "Directory display mode: 'basename', 'abbreviated', 'truncated', 'full'",
@@ -564,19 +553,6 @@ fn parse_usize_field(s: &str, field_path: &'static str) -> Result<usize> {
         .map_err(|_| invalid_value(field_path, "usize value", s))
 }
 
-/// # Errors
-/// Returns an error if the value is not a valid directory display mode.
-fn parse_directory_display(s: &str) -> Result<types::DirectoryDisplay> {
-    s.parse()
-        .map_err(|e: <types::DirectoryDisplay as std::str::FromStr>::Err| {
-            invalid_value(
-                "ui.directory.display",
-                "directory display mode",
-                e.to_string(),
-            )
-        })
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -608,7 +584,7 @@ mod tests {
             (
                 "ui.directory.display",
                 "sideways",
-                "Invalid directory display mode: unrecognized directory display mode: sideways",
+                "Invalid ui.directory.display 'sideways'. Use 'basename', 'abbreviated', 'truncated', or 'full'",
             ),
             (
                 "language.confidence_threshold",

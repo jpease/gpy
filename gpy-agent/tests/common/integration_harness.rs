@@ -20,7 +20,7 @@
 #[path = "skip.rs"]
 mod skip;
 
-use gpy_agent::config::types::ClientPid;
+use gpy_agent::ipc::ClientPid;
 use gpy_agent::ipc::{Format, Message, Response};
 use gpy_agent::security::SafePath;
 use std::io;

@@ -1,5 +1,6 @@
 //! JSON IPC between shell clients and the agent over Unix domain sockets.
 
+mod client_pid;
 pub mod handlers;
 pub mod protocol;
 pub mod registry;
@@ -40,6 +41,7 @@ pub fn decode_wire_reply(text: &str) -> crate::Result<Response> {
         "Failed to parse agent response: not a Response: {body}"
     )))
 }
+pub use client_pid::ClientPid;
 pub use registry::ClientDirectory;
 
 use serde::{Deserialize, Serialize};
@@ -197,11 +199,11 @@ pub enum Message {
     /// Register Fish process for live updates
     RegisterClient {
         /// The process ID of the client.
-        pid: crate::config::types::ClientPid,
+        pid: crate::ipc::ClientPid,
         /// Optional current working directory for targeted updates.
         cwd: Option<crate::security::SafePath>,
-        /// Optional shell name (e.g., "fish", "zsh")
-        shell: Option<crate::config::types::ShellVariant>,
+        /// Optional shell; unrecognized shell names are dropped at the wire boundary
+        shell: Option<crate::shell::Shell>,
         /// Optional shell version
         shell_version: Option<String>,
     },
@@ -209,13 +211,13 @@ pub enum Message {
     /// Unregister Fish process
     UnregisterClient {
         /// The process ID of the client.
-        pid: crate::config::types::ClientPid,
+        pid: crate::ipc::ClientPid,
     },
 
     /// Update workspace information for a registered client
     WorkspaceUpdate {
         /// The process ID of the client.
-        pid: crate::config::types::ClientPid,
+        pid: crate::ipc::ClientPid,
         /// Current working directory reported by Fish
         cwd: crate::security::SafePath,
     },
