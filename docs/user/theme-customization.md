@@ -182,6 +182,16 @@ bg_color = "#1d3557"
 text_color = "#f1faee"
 ```
 
+**Change the read-only marker:**
+
+A directory format's `$read_only` shows when the working directory is not writable. It is the theme's `read_only_icon`, or 🔒 when unset; with `ui.show_icons = false` it is `ro`, and a Nerd Font `read_only_icon` gives way to `ro` too.
+
+```toml
+[segments.directory]
+format = "[$path]($style)[ $read_only](red)"
+read_only_icon = "RO"
+```
+
 **Toggle icon display globally:**
 
 ```bash

@@ -2,7 +2,8 @@
 //! (`git_branch`/`git_status`) so imported Starship `format` strings work verbatim.
 
 use crate::config::{Config, GitIconSet};
-use crate::formatter::separator::{Glyphs, SeparatorStyle, separator_var};
+use crate::formatter::chrome::SegmentChrome;
+use crate::formatter::separator::Glyphs;
 use crate::formatter::{SegmentPosition, truncate_branch};
 use crate::git::RepositoryStatus;
 use crate::template::VariableResolver;
@@ -24,25 +25,34 @@ pub struct GitResolver<'a> {
     config: &'a Config,
     theme: &'a ThemeConfig,
     state: GitState,
-    pos: SegmentPosition,
+    chrome: SegmentChrome<'a>,
 }
 
 impl<'a> GitResolver<'a> {
-    /// Build a resolver for one git segment render.
+    /// Build a resolver for one git segment render, styled for `state`.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         status: &'a RepositoryStatus,
+        state: GitState,
         config: &'a Config,
         theme: &'a ThemeConfig,
-        state: GitState,
         pos: SegmentPosition,
     ) -> Self {
+        let git_theme = &theme.segments.git;
+        // Git formats have no `$attr` slot, so the state's attribute leads `$style`.
+        let chrome = SegmentChrome::pill(
+            pos,
+            Glyphs::from(&config.ui),
+            git_theme.get_text_color(GitTextElement::Branch, state),
+            git_theme.get_bg_color(state),
+        )
+        .with_attrs(git_theme.get_style(state));
         Self {
             status,
             config,
             theme,
             state,
-            pos,
+            chrome,
         }
     }
 
@@ -191,28 +201,10 @@ impl<'a> GitResolver<'a> {
         }
         (!text.is_empty()).then_some(text)
     }
-
-    /// Style string for `($style)`, with the theme's `[git_style]` attribute for this state
-    /// folded in (git formats have no separate `$attr` slot).
-    fn style(&self) -> String {
-        let bg = self.theme.segments.git.get_bg_color(self.state);
-        let fg = self
-            .theme
-            .segments
-            .git
-            .get_text_color(GitTextElement::Branch, self.state);
-        let attr = self.theme.segments.git.get_style(self.state);
-        if attr.is_empty() {
-            format!("fg:{fg} bg:{bg}")
-        } else {
-            format!("{attr} fg:{fg} bg:{bg}")
-        }
-    }
 }
 
 impl VariableResolver for GitResolver<'_> {
     fn resolve(&self, name: &str) -> Option<String> {
-        let glyphs = Glyphs::from(&self.config.ui);
         match name {
             "symbol" => self.symbol(),
             "branch" => {
@@ -242,12 +234,7 @@ impl VariableResolver for GitResolver<'_> {
                 .unwrap_or(true)
                 .then(|| self.stash())
                 .flatten(),
-            "style" => Some(self.style()),
-            "bg" => Some(self.theme.segments.git.get_bg_color(self.state).to_owned()),
-            "sep_gap" | "sep_open" | "sep_close" => {
-                separator_var(name, self.pos, SeparatorStyle::Chained, glyphs)
-            }
-            _ => None,
+            _ => self.chrome.resolve(name),
         }
     }
 }
@@ -287,9 +274,9 @@ mod tests {
         let (config, theme, st) = (Config::default(), ThemeConfig::default(), status());
         let resolver = GitResolver::new(
             &st,
+            GitState::AheadBehind,
             &config,
             &theme,
-            GitState::AheadBehind,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("branch"), Some("main".to_owned()));
@@ -308,9 +295,9 @@ mod tests {
         let (config, theme) = (Config::default(), ThemeConfig::default());
         let resolver = GitResolver::new(
             &st,
+            GitState::AheadBehind,
             &config,
             &theme,
-            GitState::AheadBehind,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(
@@ -331,9 +318,9 @@ mod tests {
         let (config, theme) = (Config::default(), ThemeConfig::default());
         let resolver = GitResolver::new(
             &st,
+            GitState::AheadBehind,
             &config,
             &theme,
-            GitState::AheadBehind,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         let text = resolver.resolve("ahead_behind").unwrap_or_default();
@@ -349,9 +336,9 @@ mod tests {
         let (config, theme) = (Config::default(), ThemeConfig::default());
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("status"), None);
@@ -363,9 +350,9 @@ mod tests {
         let (config, theme, st) = (Config::default(), ThemeConfig::default(), status());
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("nonsuch"), None);
@@ -376,9 +363,9 @@ mod tests {
         let (config, theme, st) = (Config::default(), ThemeConfig::default(), status());
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::Yes, IsFirst::No),
         );
         assert_eq!(resolver.resolve("sep_close"), Some("\u{e0b4}".to_owned()));
@@ -389,9 +376,9 @@ mod tests {
         let (config, theme, st) = (Config::default(), ThemeConfig::default(), status());
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("sep_close"), Some("\u{e0bc}".to_owned()));
@@ -402,9 +389,9 @@ mod tests {
         let (config, theme, st) = (Config::default(), ThemeConfig::default(), status());
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("sep_gap"), Some(" ".to_owned()));
@@ -415,9 +402,9 @@ mod tests {
         let (config, theme, st) = (Config::default(), ThemeConfig::default(), status());
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::Yes, IsFirst::No),
         );
         assert_eq!(resolver.resolve("sep_gap"), None);
@@ -428,9 +415,9 @@ mod tests {
         let (config, theme, st) = (Config::default(), ThemeConfig::default(), status());
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert!(
@@ -444,9 +431,9 @@ mod tests {
         let (config, theme, st) = (Config::default(), ThemeConfig::default(), status());
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::Yes),
         );
         assert_eq!(resolver.resolve("sep_open"), None);
@@ -457,9 +444,9 @@ mod tests {
         let (config, theme, st) = (Config::default(), ThemeConfig::default(), status());
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("sep_open"), Some("\u{e0ba}".to_owned()));
@@ -471,9 +458,9 @@ mod tests {
         let (config, theme, st) = (Config::default(), ThemeConfig::default(), status());
         let resolver = GitResolver::new(
             &st,
+            GitState::AheadBehind,
             &config,
             &theme,
-            GitState::AheadBehind,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("status"), Some("✚1?3".to_owned()));
@@ -490,9 +477,9 @@ mod tests {
         let st = status();
         let resolver = GitResolver::new(
             &st,
+            GitState::AheadBehind,
             &config,
             &theme,
-            GitState::AheadBehind,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("status"), Some("+?".to_owned()));
@@ -510,9 +497,9 @@ mod tests {
         ] {
             let resolver = GitResolver::new(
                 &st,
+                state,
                 &config,
                 &theme,
-                state,
                 SegmentPosition::new(IsLast::No, IsFirst::No),
             );
             assert_eq!(
@@ -531,9 +518,9 @@ mod tests {
         st.rebase_progress = Some(crate::git::RebaseProgress { step: 3, total: 5 });
         let resolver = GitResolver::new(
             &st,
+            GitState::InProgress,
             &config,
             &theme,
-            GitState::InProgress,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("state"), Some("↻ REBASING 3/5".to_owned()));
@@ -547,9 +534,9 @@ mod tests {
         st.rebase_progress = None;
         let resolver = GitResolver::new(
             &st,
+            GitState::InProgress,
             &config,
             &theme,
-            GitState::InProgress,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("state"), Some("↻ REBASING".to_owned()));
@@ -563,9 +550,9 @@ mod tests {
         st.rebase_progress = None;
         let resolver = GitResolver::new(
             &st,
+            GitState::InProgress,
             &config,
             &theme,
-            GitState::InProgress,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("state"), Some("↻ APPLYING".to_owned()));
@@ -577,9 +564,9 @@ mod tests {
         assert_eq!(st.stash_count, 0);
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("stash"), None);
@@ -592,9 +579,9 @@ mod tests {
         st.stash_count = 2;
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("stash"), Some("≡2".to_owned()));
@@ -609,9 +596,9 @@ mod tests {
         st.stash_count = 1;
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("stash"), Some("$1".to_owned()));
@@ -625,9 +612,9 @@ mod tests {
         let st = status();
         let resolver = GitResolver::new(
             &st,
+            GitState::AheadBehind,
             &config,
             &theme,
-            GitState::AheadBehind,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("branch"), None);
@@ -642,9 +629,9 @@ mod tests {
         let st = status();
         let resolver = GitResolver::new(
             &st,
+            GitState::AheadBehind,
             &config,
             &theme,
-            GitState::AheadBehind,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("ahead_behind"), None);
@@ -660,9 +647,9 @@ mod tests {
         st.stash_count = 2;
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("stash"), None);
@@ -679,9 +666,9 @@ mod tests {
         st.stash_count = 1;
         let resolver = GitResolver::new(
             &st,
+            GitState::AheadBehind,
             &config,
             &theme,
-            GitState::AheadBehind,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("branch"), Some("main".to_owned()));
@@ -696,9 +683,9 @@ mod tests {
         st.detached = true;
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("symbol"), Some("➦".to_owned()));
@@ -713,9 +700,9 @@ mod tests {
         st.detached = true;
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("symbol"), Some("\u{f126}".to_owned()));
@@ -729,9 +716,9 @@ mod tests {
         st.branch = "a1b2c3d".to_owned();
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         let branch = resolver.resolve("branch").expect("branch should resolve");
@@ -747,9 +734,9 @@ mod tests {
         let (config, theme, st) = (Config::default(), ThemeConfig::default(), status());
         let resolver = GitResolver::new(
             &st,
+            GitState::Conflicts,
             &config,
             &theme,
-            GitState::Conflicts,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         let style = resolver.resolve("style").expect("style should resolve");
@@ -771,9 +758,9 @@ mod tests {
         let st = status();
         let resolver = GitResolver::new(
             &st,
+            GitState::Conflicts,
             &config,
             &theme,
-            GitState::Conflicts,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         let style = resolver.resolve("style").expect("style should resolve");
@@ -789,9 +776,9 @@ mod tests {
         assert!(!st.detached);
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(resolver.resolve("symbol"), Some("\u{e0a0}".to_owned()));
@@ -806,9 +793,9 @@ mod tests {
         st.detached = true;
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(
@@ -826,9 +813,9 @@ mod tests {
         st.branch = "main".to_owned();
         let resolver = GitResolver::new(
             &st,
+            GitState::Clean,
             &config,
             &theme,
-            GitState::Clean,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
         assert_eq!(

@@ -1,7 +1,9 @@
 //! Per-connection request serving. [`ConnectionHandler`] owns only what one
 //! accepted connection needs; transport concerns stay in `EndpointHandle`.
 
-use crate::formatter::{Format, IsFirst, IsLast, RenderContext, SegmentPosition, create_formatter};
+use crate::formatter::{
+    DirectoryEnv, Format, IsFirst, IsLast, RenderContext, SegmentPosition, create_formatter,
+};
 use crate::ipc::{ClientDirectory, Message, Response, handlers::HandlerRegistry, protocol};
 use crate::palette::PaletteCache;
 use crate::security::{GuardSettings, PidValidator};
@@ -423,6 +425,7 @@ impl ConnectionHandler {
     }
 
     /// Render a response into the requested format; an unparseable `prev_bg` becomes `None`.
+    /// A directory rendered as prompt text gets its [`DirectoryEnv`] probed here.
     ///
     /// # Errors
     /// Fails if serialization fails.
@@ -439,9 +442,11 @@ impl ConnectionHandler {
         let theme = theme_manager.get();
         let palette = palette_cache.get();
         let parsed_prev_bg: Option<Color> = prev_bg.and_then(|s| parse_color(s).ok());
+        let directory = DirectoryEnv::for_response(response, format, &config.ui.directory);
         let ctx = RenderContext::new(&config, &theme, position)
             .with_palette(palette)
-            .with_prev_colors(None, parsed_prev_bg);
+            .with_prev_colors(None, parsed_prev_bg)
+            .with_directory(&directory);
         create_formatter(format).render(response, &ctx)
     }
 }

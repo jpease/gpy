@@ -3,8 +3,10 @@
 //! `time` resolves to the shell's live-time token (zsh `%D{…}`, bash `\D{…}`) so the
 //! clock ticks between redraws; Fish gets the bare spec, replaced by `clock.fish`.
 
+use crate::config::Config;
 use crate::formatter::SegmentPosition;
-use crate::formatter::separator::{Glyphs, SeparatorStyle, separator_var};
+use crate::formatter::chrome::SegmentChrome;
+use crate::formatter::separator::Glyphs;
 use crate::shell::Shell;
 use crate::template::VariableResolver;
 use crate::theme::ThemeConfig;
@@ -13,26 +15,29 @@ use crate::theme::ThemeConfig;
 pub struct ClockResolver<'a> {
     shell: Shell,
     theme: &'a ThemeConfig,
-    pos: SegmentPosition,
-    glyphs: Glyphs,
+    chrome: SegmentChrome<'a>,
 }
 
 impl<'a> ClockResolver<'a> {
     /// Build a resolver for one clock segment render.
     #[must_use]
-    pub const fn new(shell: Shell, theme: &'a ThemeConfig, pos: SegmentPosition) -> Self {
+    pub fn new(
+        shell: Shell,
+        config: &Config,
+        theme: &'a ThemeConfig,
+        pos: SegmentPosition,
+    ) -> Self {
+        let colors = &theme.segments.clock;
         Self {
             shell,
             theme,
-            pos,
-            glyphs: Glyphs::Nerd,
+            chrome: SegmentChrome::pill(
+                pos,
+                Glyphs::from(&config.ui),
+                colors.text_color.as_str(),
+                colors.bg_color.as_str(),
+            ),
         }
-    }
-
-    /// Draw this segment with `glyphs` instead of the default [`Glyphs::Nerd`].
-    #[must_use]
-    pub const fn with_glyphs(self, glyphs: Glyphs) -> Self {
-        Self { glyphs, ..self }
     }
 
     /// Build the `strftime(3)` spec for the configured clock format.
@@ -72,25 +77,13 @@ impl<'a> ClockResolver<'a> {
             Shell::Fish => spec,
         }
     }
-
-    /// Style string: `fg:<text_color> bg:<bg_color>`.
-    fn style(&self) -> String {
-        let fg = self.theme.segments.clock.text_color.as_str();
-        let bg = self.theme.segments.clock.bg_color.as_str();
-        format!("fg:{fg} bg:{bg}")
-    }
 }
 
 impl VariableResolver for ClockResolver<'_> {
     fn resolve(&self, name: &str) -> Option<String> {
         match name {
             "time" => Some(self.time_token()),
-            "style" => Some(self.style()),
-            "bg" => Some(self.theme.segments.clock.bg_color.as_str().to_owned()),
-            "sep_gap" | "sep_open" | "sep_close" => {
-                separator_var(name, self.pos, SeparatorStyle::Chained, self.glyphs)
-            }
-            _ => None,
+            _ => self.chrome.resolve(name),
         }
     }
 
@@ -107,6 +100,7 @@ mod tests {
     #![allow(clippy::missing_errors_doc)]
 
     use super::ClockResolver;
+    use crate::config::Config;
     use crate::formatter::{IsFirst, IsLast, SegmentPosition};
     use crate::shell::Shell;
     use crate::template::VariableResolver;
@@ -145,21 +139,21 @@ mod tests {
     #[test]
     fn zsh_gets_prompt_expansion_token() {
         let thr = theme();
-        let res = ClockResolver::new(Shell::Zsh, &thr, mid());
+        let res = ClockResolver::new(Shell::Zsh, &Config::default(), &thr, mid());
         assert_eq!(res.resolve("time").unwrap(), "%D{%-I:%M %p}");
     }
 
     #[test]
     fn bash_gets_prompt_expansion_token() {
         let thr = theme();
-        let res = ClockResolver::new(Shell::Bash, &thr, mid());
+        let res = ClockResolver::new(Shell::Bash, &Config::default(), &thr, mid());
         assert_eq!(res.resolve("time").unwrap(), "\\D{%-I:%M %p}");
     }
 
     #[test]
     fn fish_gets_bare_spec() {
         let thr = theme();
-        let res = ClockResolver::new(Shell::Fish, &thr, mid());
+        let res = ClockResolver::new(Shell::Fish, &Config::default(), &thr, mid());
         assert_eq!(res.resolve("time").unwrap(), "%-I:%M %p");
     }
 
@@ -167,49 +161,49 @@ mod tests {
     fn twelve_hour_no_leading_zero_is_the_default() {
         // zsh must honor the configured 12-hour format.
         let thr = theme_with("12", LeadingZero::No, Seconds::No);
-        let res = ClockResolver::new(Shell::Zsh, &thr, mid());
+        let res = ClockResolver::new(Shell::Zsh, &Config::default(), &thr, mid());
         assert_eq!(res.resolve("time").unwrap(), "%D{%-I:%M %p}");
     }
 
     #[test]
     fn twelve_hour_leading_zero() {
         let thr = theme_with("12", LeadingZero::Yes, Seconds::No);
-        let res = ClockResolver::new(Shell::Zsh, &thr, mid());
+        let res = ClockResolver::new(Shell::Zsh, &Config::default(), &thr, mid());
         assert_eq!(res.resolve("time").unwrap(), "%D{%I:%M %p}");
     }
 
     #[test]
     fn twenty_four_hour_drops_the_meridiem() {
         let thr = theme_with("24", LeadingZero::No, Seconds::No);
-        let res = ClockResolver::new(Shell::Zsh, &thr, mid());
+        let res = ClockResolver::new(Shell::Zsh, &Config::default(), &thr, mid());
         assert_eq!(res.resolve("time").unwrap(), "%D{%-H:%M}");
     }
 
     #[test]
     fn twenty_four_hour_leading_zero() {
         let thr = theme_with("24", LeadingZero::Yes, Seconds::No);
-        let res = ClockResolver::new(Shell::Zsh, &thr, mid());
+        let res = ClockResolver::new(Shell::Zsh, &Config::default(), &thr, mid());
         assert_eq!(res.resolve("time").unwrap(), "%D{%H:%M}");
     }
 
     #[test]
     fn seconds_are_appended_before_the_meridiem() {
         let thr = theme_with("12", LeadingZero::No, Seconds::Yes);
-        let res = ClockResolver::new(Shell::Zsh, &thr, mid());
+        let res = ClockResolver::new(Shell::Zsh, &Config::default(), &thr, mid());
         assert_eq!(res.resolve("time").unwrap(), "%D{%-I:%M:%S %p}");
     }
 
     #[test]
     fn seconds_in_twenty_four_hour() {
         let thr = theme_with("24", LeadingZero::Yes, Seconds::Yes);
-        let res = ClockResolver::new(Shell::Bash, &thr, mid());
+        let res = ClockResolver::new(Shell::Bash, &Config::default(), &thr, mid());
         assert_eq!(res.resolve("time").unwrap(), "\\D{%H:%M:%S}");
     }
 
     #[test]
     fn style_contains_fg_and_bg() {
         let thr = theme();
-        let res = ClockResolver::new(Shell::Zsh, &thr, mid());
+        let res = ClockResolver::new(Shell::Zsh, &Config::default(), &thr, mid());
         let style = res.resolve("style").expect("style present");
         assert!(style.starts_with("fg:"), "got {style}");
         assert!(style.contains("bg:"), "got {style}");
@@ -218,7 +212,7 @@ mod tests {
     #[test]
     fn bg_is_the_clock_background() {
         let thr = theme();
-        let res = ClockResolver::new(Shell::Zsh, &thr, mid());
+        let res = ClockResolver::new(Shell::Zsh, &Config::default(), &thr, mid());
         assert_eq!(
             res.resolve("bg").unwrap(),
             thr.segments.clock.bg_color.as_str()
@@ -230,6 +224,7 @@ mod tests {
         let thr = theme();
         let res = ClockResolver::new(
             Shell::Zsh,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::Yes, IsFirst::No),
         );
@@ -239,7 +234,7 @@ mod tests {
     #[test]
     fn sep_close_is_triangle_when_not_last() {
         let thr = theme();
-        let res = ClockResolver::new(Shell::Zsh, &thr, mid());
+        let res = ClockResolver::new(Shell::Zsh, &Config::default(), &thr, mid());
         assert_eq!(res.resolve("sep_close"), Some("\u{e0bc}".to_owned()));
     }
 
@@ -248,6 +243,7 @@ mod tests {
         let thr = theme();
         let res = ClockResolver::new(
             Shell::Zsh,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::Yes),
         );
@@ -257,14 +253,14 @@ mod tests {
     #[test]
     fn sep_gap_is_space_when_not_last() {
         let thr = theme();
-        let res = ClockResolver::new(Shell::Zsh, &thr, mid());
+        let res = ClockResolver::new(Shell::Zsh, &Config::default(), &thr, mid());
         assert_eq!(res.resolve("sep_gap"), Some(" ".to_owned()));
     }
 
     #[test]
     fn unknown_variable_is_none() {
         let thr = theme();
-        let res = ClockResolver::new(Shell::Zsh, &thr, mid());
+        let res = ClockResolver::new(Shell::Zsh, &Config::default(), &thr, mid());
         assert_eq!(res.resolve("nonsuch"), None);
     }
 }

@@ -1,7 +1,9 @@
 //! Maps command duration to Starship-compatible `cmd_duration` variables.
 
+use crate::config::Config;
 use crate::formatter::SegmentPosition;
-use crate::formatter::separator::{Glyphs, SeparatorStyle, separator_var};
+use crate::formatter::chrome::SegmentChrome;
+use crate::formatter::separator::Glyphs;
 use crate::template::VariableResolver;
 use crate::theme::ThemeConfig;
 
@@ -9,26 +11,29 @@ use crate::theme::ThemeConfig;
 pub struct DurationResolver<'a> {
     duration_ms: u64,
     theme: &'a ThemeConfig,
-    pos: SegmentPosition,
-    glyphs: Glyphs,
+    chrome: SegmentChrome<'a>,
 }
 
 impl<'a> DurationResolver<'a> {
     /// Build a resolver for one duration segment render.
     #[must_use]
-    pub const fn new(duration_ms: u64, theme: &'a ThemeConfig, pos: SegmentPosition) -> Self {
+    pub fn new(
+        duration_ms: u64,
+        config: &Config,
+        theme: &'a ThemeConfig,
+        pos: SegmentPosition,
+    ) -> Self {
+        let colors = &theme.segments.duration;
         Self {
             duration_ms,
             theme,
-            pos,
-            glyphs: Glyphs::Nerd,
+            chrome: SegmentChrome::pill(
+                pos,
+                Glyphs::from(&config.ui),
+                colors.text_color.as_str(),
+                colors.bg_color.as_str(),
+            ),
         }
-    }
-
-    /// Draw this segment with `glyphs` instead of the default [`Glyphs::Nerd`].
-    #[must_use]
-    pub const fn with_glyphs(self, glyphs: Glyphs) -> Self {
-        Self { glyphs, ..self }
     }
 
     /// Format milliseconds, e.g. `3_661_500` → `"1h 1m 1.500s"` (humanized: `"1h 1m 1s"`).
@@ -55,25 +60,13 @@ impl<'a> DurationResolver<'a> {
         }
         parts.join(" ")
     }
-
-    /// Style string: `fg:<text_color> bg:<bg_color>`.
-    fn style(&self) -> String {
-        let fg = self.theme.segments.duration.text_color.as_str();
-        let bg = self.theme.segments.duration.bg_color.as_str();
-        format!("fg:{fg} bg:{bg}")
-    }
 }
 
 impl VariableResolver for DurationResolver<'_> {
     fn resolve(&self, name: &str) -> Option<String> {
         match name {
             "duration" => Some(self.format_duration()),
-            "style" => Some(self.style()),
-            "bg" => Some(self.theme.segments.duration.bg_color.as_str().to_owned()),
-            "sep_gap" | "sep_open" | "sep_close" => {
-                separator_var(name, self.pos, SeparatorStyle::Chained, self.glyphs)
-            }
-            _ => None,
+            _ => self.chrome.resolve(name),
         }
     }
 }
@@ -85,6 +78,7 @@ mod tests {
     #![allow(clippy::missing_errors_doc)]
 
     use super::DurationResolver;
+    use crate::config::Config;
     use crate::formatter::{IsFirst, IsLast, SegmentPosition};
     use crate::template::VariableResolver;
     use crate::theme::ThemeConfig;
@@ -96,15 +90,24 @@ mod tests {
     #[test]
     fn zero_ms() {
         let thr = theme();
-        let res = DurationResolver::new(0_u64, &thr, SegmentPosition::new(IsLast::No, IsFirst::No));
+        let res = DurationResolver::new(
+            0_u64,
+            &Config::default(),
+            &thr,
+            SegmentPosition::new(IsLast::No, IsFirst::No),
+        );
         assert_eq!(res.resolve("duration").unwrap(), "0.000s");
     }
 
     #[test]
     fn sub_second_500ms() {
         let thr = theme();
-        let res =
-            DurationResolver::new(500_u64, &thr, SegmentPosition::new(IsLast::No, IsFirst::No));
+        let res = DurationResolver::new(
+            500_u64,
+            &Config::default(),
+            &thr,
+            SegmentPosition::new(IsLast::No, IsFirst::No),
+        );
         assert_eq!(res.resolve("duration").unwrap(), "0.500s");
     }
 
@@ -113,6 +116,7 @@ mod tests {
         let thr = theme();
         let res = DurationResolver::new(
             2500_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -124,6 +128,7 @@ mod tests {
         let thr = theme();
         let res = DurationResolver::new(
             65_000_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -135,6 +140,7 @@ mod tests {
         let thr = theme();
         let res = DurationResolver::new(
             3_661_500_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -146,6 +152,7 @@ mod tests {
         let thr = theme();
         let res = DurationResolver::new(
             60_000_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -157,6 +164,7 @@ mod tests {
         let thr = theme();
         let res = DurationResolver::new(
             3_600_000_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -168,6 +176,7 @@ mod tests {
         let thr = theme();
         let res = DurationResolver::new(
             1000_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -181,6 +190,7 @@ mod tests {
         let thr = theme();
         let res = DurationResolver::new(
             1000_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -192,6 +202,7 @@ mod tests {
         let thr = theme();
         let res = DurationResolver::new(
             1000_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::Yes, IsFirst::No),
         );
@@ -203,6 +214,7 @@ mod tests {
         let thr = theme();
         let res = DurationResolver::new(
             1000_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -214,6 +226,7 @@ mod tests {
         let thr = theme();
         let res = DurationResolver::new(
             1000_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -225,6 +238,7 @@ mod tests {
         let thr = theme();
         let res = DurationResolver::new(
             1000_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::Yes, IsFirst::No),
         );
@@ -236,6 +250,7 @@ mod tests {
         let thr = theme();
         let res = DurationResolver::new(
             1000_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::Yes),
         );
@@ -247,6 +262,7 @@ mod tests {
         let thr = theme();
         let res = DurationResolver::new(
             1000_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -258,6 +274,7 @@ mod tests {
         let thr = theme();
         let res = DurationResolver::new(
             1000_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -278,6 +295,7 @@ mod tests {
         let thr = theme_no_ms();
         let res = DurationResolver::new(
             2_500_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -287,8 +305,12 @@ mod tests {
     #[test]
     fn humanized_sub_second_500ms() {
         let thr = theme_no_ms();
-        let res =
-            DurationResolver::new(500_u64, &thr, SegmentPosition::new(IsLast::No, IsFirst::No));
+        let res = DurationResolver::new(
+            500_u64,
+            &Config::default(),
+            &thr,
+            SegmentPosition::new(IsLast::No, IsFirst::No),
+        );
         assert_eq!(res.resolve("duration").unwrap(), "0s");
     }
 
@@ -297,6 +319,7 @@ mod tests {
         let thr = theme_no_ms();
         let res = DurationResolver::new(
             65_000_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -308,6 +331,7 @@ mod tests {
         let thr = theme_no_ms();
         let res = DurationResolver::new(
             3_661_500_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );
@@ -319,6 +343,7 @@ mod tests {
         let thr = theme();
         let res = DurationResolver::new(
             2_500_u64,
+            &Config::default(),
             &thr,
             SegmentPosition::new(IsLast::No, IsFirst::No),
         );

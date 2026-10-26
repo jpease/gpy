@@ -6,6 +6,7 @@
 )]
 
 use super::*;
+use crate::config::Config;
 use crate::formatter::SegmentPosition;
 use crate::theme::ThemeConfig;
 

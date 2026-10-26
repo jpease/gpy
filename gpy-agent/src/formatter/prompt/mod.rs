@@ -2,20 +2,18 @@
 //! whose template errors) emit nothing; [`PromptDialect`] selects text escaping.
 
 use crate::Result;
-use crate::config::Config;
 use crate::formatter::character_resolver::CharacterResolver;
 use crate::formatter::clock_resolver::ClockResolver;
 use crate::formatter::directory_resolver::DirectoryResolver;
 use crate::formatter::duration_resolver::DurationResolver;
 use crate::formatter::git_resolver::GitResolver;
 use crate::formatter::hostname_resolver::HostnameResolver;
-use crate::formatter::separator::Glyphs;
+use crate::formatter::language_resolver::{LanguageResolver, select_languages};
 use crate::formatter::status_resolver::StatusResolver;
 use crate::formatter::username_resolver::UsernameResolver;
-use crate::formatter::{Formatter, PromptDialect, RenderContext};
+use crate::formatter::{Formatter, IsFirst, IsLast, PromptDialect, RenderContext, SegmentPosition};
 use crate::ipc::{LanguageInfo, Response};
 use crate::template::VariableResolver;
-use crate::theme::ThemeConfig;
 
 /// Format responses as ANSI-rendered prompt segments in one [`PromptDialect`].
 #[derive(Debug, Clone, Copy, Default)]
@@ -35,7 +33,7 @@ impl Formatter for PromptFormatter {
     fn render(&self, response: &Response, ctx: &RenderContext<'_>) -> Result<String> {
         let dialect = self.dialect;
         let segments = &ctx.theme.segments;
-        let glyphs = || Glyphs::from(&ctx.config.ui);
+        let (config, theme, pos) = (ctx.config, ctx.theme, ctx.position);
         let rendered = match response {
             Response::RepositoryStatus(repo) => render_resolved(
                 "git segment",
@@ -44,7 +42,7 @@ impl Formatter for PromptFormatter {
                 dialect,
                 || {
                     let state = crate::theme::GitState::from_status(repo);
-                    GitResolver::new(repo, ctx.config, ctx.theme, state, ctx.position)
+                    GitResolver::new(repo, state, config, theme, pos)
                 },
             ),
             Response::Language { languages } => render_segment(
@@ -57,58 +55,49 @@ impl Formatter for PromptFormatter {
                 segments.directory.format.as_deref(),
                 ctx,
                 dialect,
-                || DirectoryResolver::new(cwd, *read_only, ctx.config, ctx.theme, ctx.position),
+                || DirectoryResolver::new(cwd, *read_only, ctx.directory, config, theme, pos),
             ),
             Response::Clock { shell } => render_resolved(
                 "clock segment",
                 segments.clock.format.as_deref(),
                 ctx,
                 dialect,
-                || ClockResolver::new(*shell, ctx.theme, ctx.position).with_glyphs(glyphs()),
+                || ClockResolver::new(*shell, config, theme, pos),
             ),
             Response::Duration { duration_ms } => render_resolved(
                 "duration segment",
                 segments.duration.format.as_deref(),
                 ctx,
                 dialect,
-                || {
-                    DurationResolver::new(*duration_ms, ctx.theme, ctx.position)
-                        .with_glyphs(glyphs())
-                },
+                || DurationResolver::new(*duration_ms, config, theme, pos),
             ),
             Response::Character { success } => render_resolved(
                 "character segment",
                 segments.character.format.as_deref(),
                 ctx,
                 dialect,
-                || CharacterResolver::new(*success, ctx.theme, ctx.position).with_glyphs(glyphs()),
+                || CharacterResolver::new(*success, config, theme, pos),
             ),
             Response::ExitStatus { success } => render_resolved(
                 "status segment",
                 segments.status.format.as_deref(),
                 ctx,
                 dialect,
-                || StatusResolver::new(*success, ctx.theme, ctx.position).with_glyphs(glyphs()),
+                || StatusResolver::new(*success, config, theme, pos),
             ),
             Response::Hostname { hostname, is_ssh } => render_resolved(
                 "hostname segment",
                 segments.hostname.format.as_deref(),
                 ctx,
                 dialect,
-                || {
-                    HostnameResolver::new(hostname.clone(), *is_ssh, ctx.theme, ctx.position)
-                        .with_glyphs(glyphs())
-                },
+                || HostnameResolver::new(hostname.clone(), *is_ssh, config, theme, pos),
             ),
             Response::Username { username, is_root } => render_resolved(
                 "username segment",
                 segments.username.format_for(*is_root),
                 ctx,
                 dialect,
-                || {
-                    UsernameResolver::new(username.clone(), *is_root, ctx.theme, ctx.position)
-                        .with_glyphs(glyphs())
-                },
+                || UsernameResolver::new(username.clone(), *is_root, config, theme, pos),
             ),
             // The reply is printed verbatim into the prompt, so protocol JSON must never reach it.
             Response::Error { message } => {
@@ -175,29 +164,6 @@ fn render_segment(
     render_or_warn(component, build(template))
 }
 
-/// Select up to three languages to show. With `show_versions`, versionless ones
-/// are dropped unless `show_symbol_without_version`. Shared with the wizard preview.
-pub(crate) fn select_languages<'a>(
-    config: &Config,
-    theme: &ThemeConfig,
-    languages: &'a [LanguageInfo],
-) -> Vec<&'a LanguageInfo> {
-    let show_symbol_without_version = theme
-        .segments
-        .language
-        .show_symbol_without_version
-        .unwrap_or(false);
-    if config.language.show_versions && !show_symbol_without_version {
-        languages
-            .iter()
-            .filter(|lang| lang.version.is_some())
-            .take(3)
-            .collect()
-    } else {
-        languages.iter().take(3).collect()
-    }
-}
-
 /// Render each selected language independently and concatenate.
 fn render_languages_via_template(
     languages: &[LanguageInfo],
@@ -205,9 +171,6 @@ fn render_languages_via_template(
     dialect: PromptDialect,
     format: &str,
 ) -> crate::template::Result<String> {
-    use crate::formatter::language_resolver::LanguageResolver;
-    use crate::formatter::{IsFirst, IsLast, SegmentPosition};
-
     let selected = select_languages(ctx.config, ctx.theme, languages);
     let last_index = selected.len().saturating_sub(1);
     let mut output = String::with_capacity(160);
@@ -229,25 +192,6 @@ fn render_languages_via_template(
         output.push_str(&render_via_template(&resolver, ctx, dialect, format)?);
     }
     Ok(output)
-}
-
-/// Resolve the display text for a language (icon or name) used by resolvers.
-pub fn get_language_display(config: &Config, language: &str) -> String {
-    if !config.ui.show_icons {
-        return language.to_owned();
-    }
-    if config.language.display == crate::config::types::LanguageDisplay::Icon {
-        let icon_key = crate::language::metadata::get_icon_key(language).unwrap_or(language);
-
-        config
-            .language
-            .icons
-            .icons
-            .get(icon_key)
-            .map_or_else(|| language.to_owned(), std::string::ToString::to_string)
-    } else {
-        language.to_owned()
-    }
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 //! Output formatting layer: renders agent responses as JSON or ANSI prompt text.
 
 pub(crate) mod character_resolver;
+pub(crate) mod chrome;
 pub(crate) mod clock_resolver;
 pub(crate) mod directory_resolver;
 pub(crate) mod duration_resolver;
@@ -14,9 +15,9 @@ pub(crate) mod status_resolver;
 mod style_encoder;
 pub(crate) mod username_resolver;
 
+pub use directory_resolver::DirectoryEnv;
 pub use json::JsonFormatter;
 pub use prompt::PromptFormatter;
-pub(crate) use prompt::{get_language_display, select_languages};
 pub use style_encoder::{PromptDialect, encode_ansi, encode_bash_prompt, encode_zsh_prompt};
 
 use crate::Result;
@@ -103,14 +104,6 @@ pub(crate) enum IsLast {
     No,
 }
 
-impl IsLast {
-    /// `Yes` → `true`.
-    #[must_use]
-    pub(crate) const fn as_bool(self) -> bool {
-        matches!(self, Self::Yes)
-    }
-}
-
 impl From<bool> for IsLast {
     fn from(b: bool) -> Self {
         if b { Self::Yes } else { Self::No }
@@ -125,14 +118,6 @@ pub(crate) enum IsFirst {
     /// Render the opening cap.
     #[default]
     No,
-}
-
-impl IsFirst {
-    /// `Yes` → `true`.
-    #[must_use]
-    pub(crate) const fn as_bool(self) -> bool {
-        matches!(self, Self::Yes)
-    }
 }
 
 impl From<bool> for IsFirst {
@@ -183,10 +168,13 @@ pub struct RenderContext<'a> {
     pub prev_bg: Option<crate::template::Color>,
     /// Active color palette, supplied to the template engine for color resolution.
     pub palette: crate::template::Palette,
+    /// What the caller gathered about a directory response's `cwd`.
+    pub directory: &'a DirectoryEnv,
 }
 
 impl<'a> RenderContext<'a> {
-    /// Create new render context with no previous-segment colors and an empty palette.
+    /// Create new render context with no previous-segment colors, an empty
+    /// palette and an unprobed directory.
     #[must_use]
     pub fn new(config: &'a Config, theme: &'a ThemeConfig, position: SegmentPosition) -> Self {
         Self {
@@ -196,6 +184,7 @@ impl<'a> RenderContext<'a> {
             prev_fg: None,
             prev_bg: None,
             palette: crate::template::Palette::default(),
+            directory: DirectoryEnv::unprobed(),
         }
     }
 
@@ -215,6 +204,14 @@ impl<'a> RenderContext<'a> {
     #[must_use]
     pub fn with_palette(mut self, palette: crate::template::Palette) -> Self {
         self.palette = palette;
+        self
+    }
+
+    /// Attach what the caller probed about a directory response's `cwd`
+    /// (see [`DirectoryEnv::for_response`]).
+    #[must_use]
+    pub const fn with_directory(mut self, env: &'a DirectoryEnv) -> Self {
+        self.directory = env;
         self
     }
 }

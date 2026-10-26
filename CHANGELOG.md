@@ -66,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/bin/bash` on macOS. With default shell options the output is the same
   byte for byte; the Zsh escape also no longer garbles text when `ksh_arrays`
   or `glob_subst` is set.
+- With `ui.show_icons = false`, the directory's read-only marker
+  (`$read_only`) is `ro` instead of the 🔒 emoji.
 
 ### Added
 
@@ -87,6 +89,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subcommand`. A test now fails when `docs/user/cli-reference.md` names a
   `gpy` command the CLI does not have, and another when
   `docs/user/configuration-reference.md` and the config key registry disagree.
+- Theme key `[segments.directory] read_only_icon` sets the directory
+  format's `$read_only` marker (default 🔒).
 
 ### Changed
 

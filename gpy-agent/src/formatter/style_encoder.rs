@@ -348,7 +348,7 @@ mod tests {
     fn default_directory_spans() -> (Vec<Span>, String) {
         use crate::config::Config;
         use crate::formatter::SegmentPosition;
-        use crate::formatter::directory_resolver::DirectoryResolver;
+        use crate::formatter::directory_resolver::{DirectoryEnv, DirectoryResolver};
         use crate::template::{RenderContext as TemplateContext, render};
 
         let config = Config::default();
@@ -364,6 +364,7 @@ mod tests {
         let resolver = DirectoryResolver::new(
             "/home/user/project",
             false,
+            DirectoryEnv::unprobed(),
             &config,
             &theme,
             SegmentPosition::MIDDLE,

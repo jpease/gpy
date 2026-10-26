@@ -5,7 +5,9 @@ use crate::config::{
     Config,
     loader::{load_config, load_theme},
 };
-use crate::formatter::{Format, IsFirst, IsLast, RenderContext, SegmentPosition, create_formatter};
+use crate::formatter::{
+    DirectoryEnv, Format, IsFirst, IsLast, RenderContext, SegmentPosition, create_formatter,
+};
 use crate::ipc::Response;
 use crate::language::detector::Detector;
 use crate::theme::ThemeConfig;
@@ -94,8 +96,10 @@ pub fn handle_oneshot_request(request: &OneshotRequest) -> Result<String> {
     let Some(response) = response_for(request, &config, &theme)? else {
         return Ok(empty_language_output(format));
     };
+    let directory = DirectoryEnv::for_response(&response, format, &config.ui.directory);
     let ctx = RenderContext::new(&config, &theme, request_position(request))
-        .with_palette(crate::palette::active_palette(&config));
+        .with_palette(crate::palette::active_palette(&config))
+        .with_directory(&directory);
     create_formatter(format).render(&response, &ctx)
 }
 

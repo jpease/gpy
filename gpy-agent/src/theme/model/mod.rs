@@ -321,6 +321,10 @@ pub struct DirectoryTheme {
     /// Text color
     #[serde(default = "default_color_white")]
     pub text_color: types::ColorSpec,
+    /// `$read_only`, shown when the directory is not writable (default: 🔒, or
+    /// `ro` with `ui.show_icons = false`).
+    #[serde(default)]
+    pub read_only_icon: Option<types::Icon>,
 }
 
 impl Default for DirectoryTheme {
@@ -331,6 +335,7 @@ impl Default for DirectoryTheme {
             close: None,
             bg_color: const_color("blue"),
             text_color: default_color_white(),
+            read_only_icon: None,
         }
     }
 }
