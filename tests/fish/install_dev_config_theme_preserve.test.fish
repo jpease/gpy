@@ -86,7 +86,7 @@ else
     end
 
     if test -f "$home1/.config/gpy/config.toml.new"
-        if diff -q "$repo_root/config/config.toml" "$home1/.config/gpy/config.toml.new" >/dev/null 2>&1
+        if diff -q "$repo_root/config/config.example.toml" "$home1/.config/gpy/config.toml.new" >/dev/null 2>&1
             pass "install-dev.fish: config.toml.new matches shipped default"
         else
             fail "install-dev.fish: config.toml.new does not match shipped default"
@@ -100,7 +100,7 @@ end
 # row does not misbehave. ---
 __gpy_run_install_dev "$home1" "$safe_path" "" >/dev/null 2>&1
 if test -f "$home1/.config/gpy/config.toml.new"
-    if diff -q "$repo_root/config/config.toml" "$home1/.config/gpy/config.toml.new" >/dev/null 2>&1
+    if diff -q "$repo_root/config/config.example.toml" "$home1/.config/gpy/config.toml.new" >/dev/null 2>&1
         pass "install-dev.fish: repeat run keeps a single correct config.toml.new"
     else
         fail "install-dev.fish: repeat run corrupted config.toml.new"
@@ -126,7 +126,7 @@ set -l status3 $status
 if test $status3 -ne 0
     fail "install-dev.fish --fish-only exited $status3: $out3"
 else
-    if diff -q "$repo_root/config/config.toml" "$home3/.config/gpy/config.toml" >/dev/null 2>&1
+    if diff -q "$repo_root/config/config.example.toml" "$home3/.config/gpy/config.toml" >/dev/null 2>&1
         pass "install-dev.fish: first install creates config.toml matching shipped default"
     else
         fail "install-dev.fish: first install config.toml does not match shipped default"

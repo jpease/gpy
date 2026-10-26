@@ -310,7 +310,7 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
             c.ui.show_icons = parse_bool_field(v, "ui.show_icons")?;
             Ok(())
         }),
-        description: "Show icons for languages",
+        description: "Show glyphs: language icons, git icons and powerline separators",
     },
     ConfigKeyMeta {
         key: "ui.transient_prompt",
@@ -401,8 +401,8 @@ pub const CONFIG_KEYS: &[ConfigKeyMeta] = &[
     ConfigKeyMeta {
         key: "ui.enabled_segments",
         get: |c| c.ui.enabled_segments.join(" "),
-        set: None, // Setting requires Vec<String> parsing, not yet implemented
-        description: "Enabled segments and their order",
+        set: None, // List-valued: edited in config.toml or with `gpy enable`/`gpy disable`
+        description: "Enabled segments and their order (see `gpy enable`/`gpy disable`)",
     },
 ];
 

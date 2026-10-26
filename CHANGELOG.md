@@ -49,6 +49,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   theme fails to load, as the agent does. Before, it used a bare built-in
   theme with no segment formats and rendered the git, directory and language
   segments empty.
+- `config/config.example.toml` is the one config template, shipped in the
+  release archive and installed by `install-dev.fish`. It lists every
+  setting, commented out at its built-in default, so a copy changes nothing
+  and pins no key (before, `config/config.toml` and the archive's example each
+  covered a different subset, with different git icons, and the dev install
+  pinned the keys it listed). `[language.icons]` examples are
+  commented too, so a fresh dev install shows language names until you enable
+  them. The `text` theme no longer sets a Nerd Font duration icon, and
+  `ui.show_icons` is described as also switching git icons and powerline
+  caps.
 
 ### Fixed
 

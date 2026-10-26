@@ -1,98 +1,141 @@
-# GPY Agent Configuration
+# GPY configuration template (config.toml)
+#
+# Every setting appears at its built-in default, commented out: a key you omit
+# falls back to that default, so an untouched copy changes nothing and keeps
+# following future default changes. Remove the leading `#` of a setting to
+# override it. Colours and segment templates live in theme files, not here.
+# Field-by-field reference: docs/user/configuration-reference.md
 
 [ui]
-# Show language/tool icons
-show_icons = true
-# Color theme: default (visual), text (basic)
-theme = "default"
+# Show glyphs: language icons, git icons and the powerline caps. false falls
+# back to text and flat blocks that render in any font.
+#show_icons = true
+# Theme file stem: default, text or starship, or any file under ~/.config/gpy/themes/
+#theme = "default"
+# Palette file stem: default, starship, catppuccin-latte, catppuccin-frappe,
+# catppuccin-macchiato, catppuccin-mocha, gruvbox-dark-medium or nord, or any
+# file under ~/.config/gpy/palettes/
+#palette = "default"
+# Segments to render, left to right. Built in: clock, duration, language,
+# directory, git, status, character, hostname, username; plugin segments too.
+#enabled_segments = ["clock", "duration", "language", "directory", "git"]
 # Collapse each submitted prompt to clock, prompt icon and command (Fish 4.2+, Zsh)
-transient_prompt = true
+#transient_prompt = true
 
 [ui.directory]
 # Display mode: basename, abbreviated, truncated, full
-display = "basename"
-# Trailing path components kept when display = "truncated"
-truncation_length = 3
+#display = "basename"
+# Trailing path components kept when display = "truncated" (1-255)
+#truncation_length = 3
 # Prefix shown before a truncated path (e.g. "…/")
-truncation_symbol = ""
-# Maximum path length to display (character cap)
-max_length = 80
+#truncation_symbol = ""
+# Maximum path length to display, a character cap (1-1000)
+#max_length = 80
+# Anchor the path at the enclosing git repository root
+#truncate_to_repo = false
 
 [agent]
-# Enable background agent process
-enabled = true
-# Request timeout in seconds
-timeout_seconds = 5
+# Enable the background agent process
+#enabled = true
+# Request timeout in seconds (1-300)
+#timeout_seconds = 5
 # Enable live prompt updates via signals
-live_updates = true
+#live_updates = true
 
 [agent.supervisor]
-# Enable supervisor for automatic agent restart
-enabled = true
-# Supervisor health check interval in seconds
-check_interval_seconds = 30
-# Maximum restart attempts before giving up
-max_restart_attempts = 5
+# Restart the agent automatically when it stops
+#enabled = true
+# Health check interval in seconds (5-3600)
+#check_interval_seconds = 30
+# Maximum restart attempts before giving up (1-100)
+#max_restart_attempts = 5
 
 [git]
 # Enable git status detection
-enabled = true
+#enabled = true
 # Show ahead/behind commit counts
-show_upstream = true
-# Git command timeout in seconds
-timeout_seconds = 10
+#show_upstream = true
+# Git command timeout in seconds (1-600)
+#timeout_seconds = 10
 # Repositories to skip git detection for (performance). A repository is skipped
 # when its root is at or under an entry; an entry inside a repository does not
 # skip it. Entries are matched after `~` expansion and symlink resolution.
 # Example: skip_paths = ["~/work/huge-monorepo", "/mnt/network-share"]
-skip_paths = []
-# Maximum branch name length to display (0 = unlimited)
-# Long branch names will be truncated with an ellipsis (…)
-# Example: "feature/very-long-branch-name" → "feature/very-long-bra…"
-max_branch_length = 0
+#skip_paths = []
+# Maximum branch name length to display, 0-500 (0 = unlimited). Longer names
+# end in an ellipsis: "feature/very-long-branch-name" -> "feature/very-long-bra…"
+#max_branch_length = 0
 # Maximum ahead/behind count to show (0 = unlimited); larger counts render as N+
-max_ahead_behind = 100
-# Watch the working tree, not just .git, so edits update the prompt instantly (GPY_WATCH_WORKTREE overrides)
-watch_worktree = true
+#max_ahead_behind = 100
+# Watch the working tree, not just .git, so edits update the prompt instantly
+# (GPY_WATCH_WORKTREE overrides)
+#watch_worktree = true
+# Capture the stash count and render $stash
+#stash_enabled = true
+# Glyph set for the stash, detached-HEAD and in-progress icons: unicode or
+# nerd_font (needs a patched font; icons you set in [git.icons] win)
+#icon_set = "unicode"
 
-# Git icons (semantic indicators)
+# Git status indicators; an icon set here replaces the built-in glyph.
 [git.icons]
-ahead = "󰁝"       # Ahead of remote indicator
-behind = "󰁅"      # Behind remote indicator
-staged = "󱓞"      # Staged files indicator
-unstaged = "󰛄"    # Unstaged files indicator
-untracked = "?"   # Untracked files indicator
-conflicts = "󱈸"   # Conflicts indicator
+#ahead = "↑"
+#behind = "↓"
+#staged = "✚"
+#unstaged = "✱"
+#untracked = "?"
+#conflicts = "✖"
+#stash = "≡"
+#detached = "➦"
+#in_progress = "↻"
 
 [language]
 # Enable programming language detection
-enabled = true
+#enabled = true
 # Show language versions
-show_versions = true
-# Version cache TTL in hours
-cache_ttl_hours = 24
+#show_versions = true
+# Version cache TTL in hours (1-720)
+#cache_ttl_hours = 24
 # Specific languages to detect (empty = detect all)
-# enabled_languages = ["rust", "node", "python", "go"]
-enabled_languages = []
-# Display mode: "icon" or "text"
-# "icon" - use icons from language.icons (fallback to text if not defined)
-# "text" - always use language name
-display = "icon"
+# Example: enabled_languages = ["rust", "node", "python", "go"]
+#enabled_languages = []
+# Display mode: "icon" (glyphs from [language.icons], falling back to the
+# language name when none is set) or "text" (always the language name)
+#display = "icon"
+# Which detected languages to show:
+#   "all"     every detected language
+#   "primary" only the dominant language (highest confidence)
+#   "3"       the top N languages by confidence (any number)
+#filter = "all"
+# Detection strategy: content (rank by file prevalence), markers (require
+# project marker files) or hybrid (content ranking gated by a marker file)
+#detection_mode = "content"
+# Minimum confidence (0.0-1.0) to display a language. Confidence is 70% file
+# size ratio + 30% file count ratio, so 0.05 hides languages under 5% of the
+# project (e.g. a single config.js in a Rust repository).
+#confidence_threshold = 0.1
 
-# Language icons (Nerd Fonts icons from https://www.nerdfonts.com/cheat-sheet)
+# Language icons, from https://www.nerdfonts.com/cheat-sheet (needs a patched
+# font). default: none; a language without an icon shows its name.
 [language.icons]
-rust = "󱘗"      # nf-md-language_rust
-python = "󰌠"    # nf-md-language_python
-node = "󰎙"      # nf-md-nodejs
-go = "󰟓"        # nf-md-language_go
-java = "󰬷"      # nf-md-language_java
-ruby = "󰴭"      # nf-md-language_ruby
-swift = "󰛥"     # nf-md-language_swift
-elixir = ""    # nf-dev-elixir
-php = "󰌟"       # nf-md-language_php
-csharp = "󰌛"    # nf-md-language_csharp
-cpp = "󰙲"       # nf-md-language_cpp
-c = "󰙱"         # nf-md-language_c
-erlang = ""    # nf-dev-erlang
-fish = "󰈺"      # nf-md-fish
-# If a language icon is not defined and show="icon", falls back to language name
+#rust = "󱘗"      # nf-md-language_rust
+#python = "󰌠"    # nf-md-language_python
+#node = "󰎙"      # nf-md-nodejs
+#go = "󰟓"        # nf-md-language_go
+#java = "󰬷"      # nf-md-language_java
+#ruby = "󰴭"      # nf-md-language_ruby
+#swift = "󰛥"     # nf-md-language_swift
+#elixir = ""     # nf-dev-elixir
+#php = "󰌟"       # nf-md-language_php
+#csharp = "󰌛"    # nf-md-language_csharp
+#cpp = "󰙲"       # nf-md-language_cpp
+#c = "󰙱"         # nf-md-language_c
+#erlang = ""     # nf-dev-erlang
+#fish = "󰈺"      # nf-md-fish
+
+# Per-segment overrides for script plugin segments. default: none. <segment>
+# names an enabled plugin segment; any setting its manifest declares is
+# accepted too (see docs/user/configuration-reference.md).
+#
+# [plugin.<segment>]
+# ttl_secs = 30
+# timeout_ms = 200

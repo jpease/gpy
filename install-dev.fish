@@ -288,7 +288,7 @@ function _install_fish_files
     set -l gpy_fish_dir "$fish_config_dir/gpy"
 
     mkdir -p $gpy_config_dir
-    set -l config_file config/config.toml
+    set -l config_file config/config.example.toml
 
     if not test -f $config_file
         echo "error: Source file not found: $config_file"

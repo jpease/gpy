@@ -13,7 +13,7 @@ Tests already catch drift between the two:
 - `every_config_leaf_has_registry_entry` and `every_registry_key_is_a_config_leaf` compare the registry with the leaves of a serialized `Config::default()`.
 - `reference_doc_matches_registry` and `cli_reference_common_keys_are_registered` tie `docs/user/configuration-reference.md` and `docs/user/cli-reference.md` to the registry.
 - `config_list_matches_registry` ties `gpy config list` to it.
-- `shipped_config_toml_sets_only_known_keys` covers `config/config.toml` and `config/config.example.toml`.
+- `config_template_sets_every_config_key_at_its_default` ties `config/config.example.toml`, the one shipped template, to `Config`: every leaf is present, no key is unknown, and every value is the built-in default.
 
 Ghostty (`src/config/Config.zig`) declares each field once and generates its CLI flag and docs from that declaration. This ADR measures what the same approach would cost gpy.
 

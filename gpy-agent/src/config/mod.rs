@@ -237,7 +237,7 @@ pub struct LanguageSettings {
     pub display: types::LanguageDisplay,
     /// Filter mode: all, primary, or top N
     pub filter: types::LanguageFilter,
-    /// Detection strategy: `content` scan (default) or project `markers`
+    /// Detection strategy: `content` scan (default), project `markers`, or `hybrid`
     pub detection_mode: types::DetectionMode,
     /// Minimum confidence threshold (0.0-1.0)
     pub confidence_threshold: types::ConfidenceThreshold,
@@ -281,7 +281,7 @@ pub struct DirectorySettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiSettings {
-    /// Show icons for languages
+    /// Show glyphs: language icons, git icons and powerline separators
     pub show_icons: bool,
     /// Color theme
     pub theme: types::ThemeName,
