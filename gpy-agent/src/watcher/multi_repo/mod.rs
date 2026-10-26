@@ -449,12 +449,28 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
         Ok(())
     }
 
+    /// Arm watches for a repo and log one `Watch ready` line, the marker the
+    /// e2e tests wait on before touching the tree.
+    ///
+    /// # Errors
+    /// Returns an error if the coordinator is gone or `.git` cannot be watched.
+    fn start_repo_watches(
+        &self,
+        git_root: &Path,
+        git_dir: &Path,
+        watch_worktree: bool,
+    ) -> Result<RepoWatches> {
+        let watches = self.arm_watches(git_root, git_dir, watch_worktree)?;
+        debug_log!("watcher", "Watch ready for {}", git_root.display());
+        Ok(watches)
+    }
+
     /// Arm watches for a repo. `.git` failure is fatal; a worktree-watch failure
     /// (likely watch-budget exhaustion) degrades to `.git`-only.
     ///
     /// # Errors
     /// Returns an error if the coordinator is gone or `.git` cannot be watched.
-    fn start_repo_watches(
+    fn arm_watches(
         &self,
         git_root: &Path,
         git_dir: &Path,

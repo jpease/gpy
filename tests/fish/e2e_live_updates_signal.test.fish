@@ -23,17 +23,12 @@ function print_banner
     print_test_header "E2E Test: Live Update Signal Flow"
 end
 
-# Make git changes until the client's signal count exceeds the baseline. The
-# agent exposes no "watch ready" signal, so a change made before the watch is
-# armed is retried rather than waited out.
-function __gpy_change_rang --argument-names client_pid baseline
+# Make one git change and wait for the client's signal count to exceed the
+# baseline. Callers wait for the agent's "Watch ready" line first.
+function ring_after_change --argument-names client_pid baseline
     echo >>(pwd)/.gpy-test-$fish_pid
     git -C (pwd) add (pwd)/.gpy-test-$fish_pid >/dev/null 2>&1
-    test (count_signals $client_pid) -gt $baseline
-end
-
-function ring_after_change --argument-names client_pid baseline
-    poll_until 8 __gpy_change_rang $client_pid $baseline
+    wait_for_signal $client_pid (math $baseline + 1) 8
 end
 
 function test_signal_flow
@@ -48,6 +43,7 @@ function test_signal_flow
         return 1
     end
 
+    set -l watch_base1 (count_watch_ready)
     set -l client1 (register_test_client 12)
     if test -z "$client1"
         fail "Register client (phase 1)" "Failed to spawn test client"
@@ -59,6 +55,7 @@ function test_signal_flow
     # Wait for the registration signal, then capture a baseline. We assert an
     # INCREMENT caused specifically by the git change: a plain "at least 1" check
     # would be satisfied by the registration signal alone.
+    wait_for_watch_ready $watch_base1 8
     wait_for_signal $client1 1 5
     set -l baseline1 (count_signals $client1)
 
@@ -84,6 +81,7 @@ function test_signal_flow
         return 1
     end
 
+    set -l watch_base2 (count_watch_ready)
     set -l client2 (register_test_client 12)
     if test -z "$client2"
         fail "Register client (phase 2)" "Failed to spawn test client after restart"
@@ -92,6 +90,7 @@ function test_signal_flow
     end
     pass "Register client (phase 2)"
 
+    wait_for_watch_ready $watch_base2 8
     wait_for_signal $client2 1 5
     set -l baseline2 (count_signals $client2)
 

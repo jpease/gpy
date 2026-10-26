@@ -36,6 +36,8 @@ if shell_e2e_poll 5 find_cache; then
 else
     fail "no git instant-cache entry appeared"
 fi
+watch_ready() { grep -q 'Watch ready for' "$GPY_DEBUG_LOG" 2>/dev/null; }
+shell_e2e_poll 8 watch_ready || fail "the agent never logged that the repo watch was ready"
 cp "$cache_file" "$SHELL_E2E_ROOT/before.ansi" 2>/dev/null || true
 signal_before="$(grep -c 'notifying clients via SIGURG' "$GPY_DEBUG_LOG" 2>/dev/null || true)"
 

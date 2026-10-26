@@ -29,12 +29,6 @@ function __live_cache_changed --argument-names file
     not cmp -s $file $__gpy_test_tmp_dir/before.ansi
 end
 
-# Predicate for poll_until: edit the tracked file, then test whether $file changed.
-function __live_edit_changed_cache --argument-names file
-    echo modified >>$__live_repo/tracked.txt
-    __live_cache_changed $file
-end
-
 function test_git_live_content
     print_test_header "E2E Test: Git Segment Live Content Update"
     init_test_env
@@ -73,6 +67,7 @@ function test_git_live_content
     end
     pass "Agent Start"
 
+    set -l watch_base (count_watch_ready)
     set -l client (register_test_client 15 $repo)
     if test -z "$client"
         fail "Register client" "Failed to spawn test client"
@@ -94,12 +89,11 @@ function test_git_live_content
     # Snapshot the clean-state content, then edit the tracked file WITHOUT git add.
     cp $cache_file $__gpy_test_tmp_dir/before.ansi
 
-    # The agent exposes no "watch ready" signal and some fs backends drop events
-    # right after a stream starts, so each poll attempt re-edits the file until
-    # git.ansi is rewritten (clean -> dirty).
-    set -g __live_repo $repo
+    # Wait for the agent's "Watch ready" line before the single edit.
+    wait_for_watch_ready $watch_base 8
+    echo modified >>$repo/tracked.txt
     set -l changed 0
-    poll_until 8 __live_edit_changed_cache $cache_file; and set changed 1
+    poll_until 8 __live_cache_changed $cache_file; and set changed 1
 
     if test $changed -eq 1
         pass "Worktree edit updates git segment (clock disabled)"
