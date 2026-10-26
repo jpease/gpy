@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Numeric tuning variables (`GPY_RECONCILE_INTERVAL_SECS`, the hot-reload poll
+  interval) now ignore surrounding whitespace like the watcher ones, and the
+  language and font lookups find the home directory the way the rest of gpy
+  does: through the passwd database when `HOME` is unset, never from a
+  relative `HOME`.
 - Config validation errors name the exact field and the real rule.
   `gpy config set` reports a non-integer value as `Invalid whole number: <value>`
   instead of naming a Rust type (`u64 value`). A `git.skip_paths` entry such as
