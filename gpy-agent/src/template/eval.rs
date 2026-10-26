@@ -244,7 +244,8 @@ fn eval_nodes(
 /// Security: directory/branch names may contain ESC/OSC sequences that would
 /// inject terminal escapes into the prompt. Stripped (not escaped) so prompt
 /// width stays aligned. Style ANSI is produced by the encoders and never passes through here.
-fn sanitize_control_chars(value: &str) -> Cow<'_, str> {
+/// The CLI uses it for plugin manifest text it prints, for the same reason.
+pub(crate) fn sanitize_control_chars(value: &str) -> Cow<'_, str> {
     strip_controls(value, |_| false)
 }
 
