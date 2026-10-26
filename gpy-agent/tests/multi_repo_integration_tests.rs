@@ -9,7 +9,9 @@ mod git_helpers;
 #[path = "common/wait.rs"]
 mod wait;
 
-use git_helpers::{git, git_bare, git_command, git_init, git_stdout};
+#[cfg(unix)]
+use git_helpers::git_command;
+use git_helpers::{git, git_bare, git_init, git_stdout};
 use gpy_agent::ipc::ClientDirectory;
 use gpy_agent::watcher::multi_repo::MultiRepoWatcher;
 use gpy_agent::watcher::{DebouncedEvent, FileEvent, WatcherConfig};

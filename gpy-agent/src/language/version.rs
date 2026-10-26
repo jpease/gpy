@@ -581,6 +581,7 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
 
     use super::*;
+    #[cfg(unix)]
     use crate::language::probe_memo::FAILURE_TTL;
     use std::time::SystemTime;
 

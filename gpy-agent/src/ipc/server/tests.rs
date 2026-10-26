@@ -2,8 +2,10 @@
 
 use super::EndpointHandle;
 use crate::config::manager::ConfigManager;
+#[cfg(unix)]
+use crate::ipc::ClientDirectory;
 use crate::ipc::fixtures::{endpoint_deps, render_deps};
-use crate::ipc::{ClientDirectory, Message, Response, Segment};
+use crate::ipc::{Message, Response, Segment};
 use std::path::Path;
 use std::sync::Arc;
 use tempfile::TempDir;

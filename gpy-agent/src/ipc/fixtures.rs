@@ -25,6 +25,7 @@ pub(crate) fn render_deps(config_manager: Arc<ConfigManager>) -> RenderDeps {
 }
 
 /// [`render_deps`] over the default configuration.
+#[cfg(unix)]
 pub(crate) fn default_render_deps() -> RenderDeps {
     render_deps(Arc::new(
         ConfigManager::with_defaults().expect("default config"),
