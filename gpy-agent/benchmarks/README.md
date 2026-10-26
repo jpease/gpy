@@ -92,18 +92,20 @@ The baseline file (`baseline.json`) stores performance data:
 
 ```json
 {
-  "timestamp": "2024-11-29T12:00:00Z",
-  "git_commit": "9bcff3f",
+  "timestamp": "2025-12-02T12:00:00Z",
+  "git_commit": "<full commit sha>",
   "scope": "benchmark-mode",
+  "kernel": "Darwin 24.1.0",
   "benchmarks": {
-    "tiny-express": {
-      "mean": 0.0089,
-      "stddev": 0.0002
-    },
-    ...
+    "tiny-express":      { "mean": 0.0089, "stddev": 0.0002 },
+    "small-redis":       { "mean": 0.0101, "stddev": 0.0003 },
+    "medium-kubernetes": { "mean": 0.0245, "stddev": 0.0004 },
+    "large-tensorflow":  { "mean": 0.0302, "stddev": 0.0005 }
   }
 }
 ```
+
+`mean` and `stddev` are in seconds and are written for all four repositories listed above. `--baseline` writes the file; `--compare` prints every repository and exits non-zero if the baseline has no entry for one of them (regenerate with `--baseline`). The values above are illustrative.
 
 ## Regression Testing
 
@@ -120,21 +122,10 @@ cargo build --release
 ```
 
 Output shows:
-- 🔴 REGRESSION - Performance degraded >10%
-- 🟢 IMPROVEMENT - Performance improved >10%
-- ✓ No change - Within ±10%
-
-## CI Integration
-
-Add to your CI pipeline:
-
-```yaml
-- name: Performance regression test
-  run: |
-    ./benchmarks/setup-repos.sh
-    cargo build --release
-    ./benchmarks/run.sh --compare
-```
+- `REGRESSION` - Performance degraded >10%
+- `IMPROVEMENT` - Performance improved >10%
+- `no change` - Within ±10%
+- `MISSING from baseline` - No baseline entry for that repository (exit status 1)
 
 ## Maintenance
 
@@ -154,23 +145,6 @@ The setup script is also safe to rerun without deleting the directory first. It 
 - restore each benchmark repo to a clean state before measurement.
 
 Note: on case-insensitive filesystems, some repositories may still report dirty paths after reset if upstream contains case-distinct filenames that collide locally. The old `large-linux` fixture hit that problem on macOS, so the current suite uses `large-tensorflow` instead. Verify cleanliness with `git -c core.fsmonitor=false status --short` before using any fixture for published comparisons.
-
-## Historical Results
-
-Historical snapshot only: it was taken on one benchmark host and predates the
-swap from the `large-linux` fixture to `large-tensorflow`. Re-run the suite on
-your own host before citing any of these numbers.
-
-Snapshot: 2025-12-02, 1000 runs per test, `benchmark-mode` scope, mean ± stddev.
-
-| Repository | GPY | Starship | Difference |
-|------------|-----|----------|------------|
-| tiny-express | 25.4ms ± 0.9ms | 27.3ms ± 1.4ms | -6.96% |
-| small-redis | 25.6ms ± 0.8ms | 27.6ms ± 1.3ms | -7.25% |
-| medium-kubernetes | 33.1ms ± 1.4ms | 35.0ms ± 1.1ms | -5.43% |
-| large-linux | 37.5ms ± 1.3ms | 39.3ms ± 1.2ms | -4.58% |
-
-CPU time in that run: user 6.8-16.7ms (scaling with repo size), system 5.4-8.0ms.
 
 ## What Is Measured
 
