@@ -1,22 +1,24 @@
 {
-  "timestamp": "2025-11-29T20:50:43Z",
-  "git_commit": "a71a23ce4b29f854288bb1d654030d6cecb7e708",
+  "timestamp": "2026-10-26T21:27:41Z",
+  "git_commit": "ab0433ad3829a1b54cfaf14ff480d3e40cbcbf05",
+  "scope": "benchmark-mode",
+  "kernel": "Darwin 27.0.0",
   "benchmarks": {
     "tiny-express": {
-      "mean": 0.012763539420000001,
-      "stddev": 0.00021148843023271983
+      "mean": 0.028731043670000005,
+      "stddev": 0.0070646035533697355
     },
     "small-redis": {
-      "mean": 0.0256278406,
-      "stddev": 0.0004549349631663846
+      "mean": 0.06565363065,
+      "stddev": 0.004194314477130333
     },
     "medium-kubernetes": {
-      "mean": 0.043471523260000006,
-      "stddev": 0.0001522730862128954
+      "mean": 0.17874844267999995,
+      "stddev": 0.01075802873277879
     },
-    "large-linux": {
-      "mean": 0.050869988340000005,
-      "stddev": 0.0005572939265751072
+    "large-tensorflow": {
+      "mean": 0.13265359226,
+      "stddev": 0.015962240526161818
     }
   }
 }

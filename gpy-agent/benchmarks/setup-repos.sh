@@ -25,14 +25,16 @@ setup_repo() {
 
     echo "[$name] $description"
 
+    if [ -d "$name" ] && ! git -C "$name" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+        echo "  Not a usable clone; recloning"
+        rm -rf "$name"
+    fi
     if [ ! -d "$name" ]; then
         echo "  Cloning..."
         if [ -n "$commit" ]; then
-            # Clone and checkout specific commit/tag
-            git clone --depth 1 --no-single-branch "$url" "$name" 2>&1 | grep -v "Receiving objects" || true
+            git clone --depth 1 --no-single-branch "$url" "$name"
         else
-            # Shallow clone of branch head
-            git clone --depth 1 --single-branch --branch "$branch" "$url" "$name" 2>&1 | grep -v "Receiving objects" || true
+            git clone --depth 1 --single-branch --branch "$branch" "$url" "$name"
         fi
     else
         echo "  ✓ Already exists"
