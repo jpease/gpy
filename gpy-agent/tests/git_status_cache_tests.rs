@@ -1,4 +1,4 @@
-//! Unit tests for `GitStatusCache`
+//! `GitStatusCache` behaviour through its public API.
 
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::doc_markdown)]

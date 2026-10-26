@@ -25,7 +25,7 @@ Every message is one JSON object with an `op` field naming the operation:
 
 ## Validation
 
-The schemas can be used with standard JSON Schema validators to ensure protocol compliance. `gpy-agent/tests/schema_validation.rs` checks them against the code: the `format` enum against `Format`, the ops against the `into_wire_message` dispatch table, and real agent replies against `response.json`.
+The schemas can be used with standard JSON Schema validators to ensure protocol compliance. `gpy-agent/tests/schema_validation_tests.rs` checks them against the code: the `format` enum against `Format`, the ops against the `into_wire_message` dispatch table, and real agent replies against `response.json`.
 
 An unrecognized `format` silently falls back to `json`.
 

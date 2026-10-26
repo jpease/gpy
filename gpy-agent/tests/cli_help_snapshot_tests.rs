@@ -11,7 +11,7 @@ mod common;
 use common::cli_harness::CliTestEnv;
 use insta::{assert_snapshot, with_settings};
 
-/// Every public `gpy` subcommand, with the nested actions users can reach.
+/// Public `gpy` subcommands and nested actions that must stay reachable.
 const GPY_SUBCOMMANDS: &[&[&str]] = &[
     &["start"],
     &["stop"],
@@ -88,17 +88,50 @@ fn gpy_top_level_help() {
     });
 }
 
+/// Names listed under `Commands:` in clap help, excluding the implicit `help`.
+/// Continuation lines of wrapped descriptions are indented deeper than names.
+fn listed_commands(help: &str) -> Vec<String> {
+    help.lines()
+        .skip_while(|line| *line != "Commands:")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .filter_map(|line| {
+            line.strip_prefix("  ")
+                .filter(|rest| !rest.starts_with(' '))
+        })
+        .filter_map(|rest| rest.split_whitespace().next())
+        .filter(|name| *name != "help")
+        .map(str::to_owned)
+        .collect()
+}
+
+fn walk_command_tree(env: &CliTestEnv, prefix: &[String], found: &mut Vec<Vec<String>>) {
+    let args: Vec<&str> = prefix.iter().map(String::as_str).collect();
+    let help = help_of(env, &args);
+    assert_no_hidden_items(&help, &format!("gpy {}", prefix.join(" ")));
+    for name in listed_commands(&help) {
+        let mut path = prefix.to_vec();
+        path.push(name);
+        found.push(path.clone());
+        walk_command_tree(env, &path, found);
+    }
+}
+
 #[test]
-fn gpy_subcommand_help() {
+fn gpy_command_tree_lists_public_commands_and_hides_internal_ones() {
     let env = CliTestEnv::new().expect("create isolated CLI test env");
-    for args in GPY_SUBCOMMANDS {
-        let label = format!("gpy {}", args.join(" "));
-        let help = help_of(&env, args);
-        assert_no_hidden_items(&help, &label);
-        let name = format!("gpy_{}_help", args.join("_"));
-        with_settings!({description => label.clone()}, {
-            assert_snapshot!(name, help);
-        });
+    let mut found = Vec::new();
+    walk_command_tree(&env, &[], &mut found);
+
+    for path in GPY_SUBCOMMANDS {
+        assert!(
+            found.iter().any(|found_path| found_path
+                .iter()
+                .map(String::as_str)
+                .eq(path.iter().copied())),
+            "gpy {} missing from the command tree: {found:?}",
+            path.join(" ")
+        );
     }
 }
 

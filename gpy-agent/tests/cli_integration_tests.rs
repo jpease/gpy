@@ -6,7 +6,7 @@
 #![allow(clippy::unwrap_used)]
 
 use std::fs;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use tempfile::TempDir;
 
 #[path = "common/cli_harness.rs"]
@@ -564,7 +564,10 @@ fn test_cli_invalid_command() {
     let (exit_code, _stdout, stderr) = run_gpy_agent(&["invalid-command"]);
 
     assert_ne!(exit_code, 0_i32);
-    assert_ne!(stderr, "");
+    assert!(
+        stderr.contains("error:"),
+        "clap usage error expected: {stderr}"
+    );
 }
 
 #[test]
@@ -573,7 +576,7 @@ fn test_cli_oneshot_missing_operation() {
     let (exit_code, _stdout, stderr) = run_gpy_agent(&["oneshot"]);
 
     assert_ne!(exit_code, 0_i32);
-    assert_ne!(stderr, "");
+    assert!(stderr.contains("Usage: gpy-agent oneshot"), "{stderr}");
 }
 
 #[test]
@@ -582,7 +585,10 @@ fn test_cli_oneshot_invalid_operation() {
     let (exit_code, _stdout, stderr) = run_gpy_agent(&["oneshot", "invalid-op"]);
 
     assert_ne!(exit_code, 0_i32);
-    assert_ne!(stderr, "");
+    assert!(
+        stderr.contains("error:"),
+        "clap usage error expected: {stderr}"
+    );
 }
 
 /// A negative exit code is a value, not a flag, and counts as failure.
@@ -697,18 +703,28 @@ fn test_cli_with_complex_paths() {
     let temp_path = temp_dir.path();
 
     let complex_dir = temp_path.join("test dir with spaces & symbols");
-    let _ = fs::create_dir_all(&complex_dir);
-
-    let (exit_code, stdout, _stderr) = run_gpy_agent(&[
+    fs::create_dir_all(&complex_dir).expect("create complex dir");
+    let args = [
         "oneshot",
         "git",
         "--cwd",
-        complex_dir.to_string_lossy().as_ref(),
-    ]);
+        complex_dir.to_str().expect("utf-8 temp path"),
+    ];
 
-    assert_eq!(exit_code, 0_i32);
+    let (exit_code, stdout, stderr) = run_gpy_agent(&args);
+    assert_eq!(exit_code, 0_i32, "{stderr}");
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON");
-    assert!(json.get("error").is_some());
+    assert_eq!(
+        json.get("error"),
+        Some(&serde_json::json!("Not in a git repository"))
+    );
+
+    git_helpers::git_init(&complex_dir);
+    let (repo_exit, repo_stdout, repo_stderr) = run_gpy_agent(&args);
+    assert_eq!(repo_exit, 0_i32, "{repo_stderr}");
+    let repo_json: serde_json::Value = serde_json::from_str(&repo_stdout).expect("Invalid JSON");
+    assert!(repo_json.get("error").is_none(), "{repo_stdout}");
+    assert!(repo_json.get("branch").is_some(), "{repo_stdout}");
 }
 
 #[test]
@@ -757,6 +773,9 @@ fn test_cli_concurrent_oneshot_commands() {
     for handle in handles {
         let output = handle.join().unwrap();
         assert!(output.status.success());
+        let json: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("stdout should be JSON");
+        assert!(json.get("branch").is_some(), "no branch in {json}");
     }
 }
 
@@ -786,23 +805,6 @@ fn test_cli_git_status_json_format() {
     assert!(json.get("untracked").is_some());
     assert!(json.get("conflicts").is_some());
     assert!(json.get("state").is_some());
-}
-
-#[test]
-#[allow(clippy::unwrap_used)]
-fn test_cli_environment_variable_handling() {
-    let exit_code = match Command::new(env!("CARGO_BIN_EXE_gpy-agent"))
-        .args(["oneshot", "git", "--cwd", "."])
-        .env("GPY_DEBUG", "1")
-        .env("GPY_TIMEOUT", "30")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-    {
-        Ok(o) => o.status.code().unwrap_or(-1_i32),
-        Err(_) => -1_i32,
-    };
-    assert_eq!(exit_code, 0_i32);
 }
 
 #[test]

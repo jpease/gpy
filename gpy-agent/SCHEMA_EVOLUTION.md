@@ -79,7 +79,7 @@ before the signal.
 5. Run the schema tests from `gpy-agent/`:
 
    ```bash
-   cargo nextest run --features test-support --test schema_validation \
+   cargo nextest run --features test-support --test schema_validation_tests \
      --test ipc_protocol_tests --test config_tests --test theme_schema_tests
    cargo nextest run --features test-support --lib -E 'test(/schema_tests/)'
    ```

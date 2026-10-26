@@ -1,6 +1,7 @@
-//! Golden ANSI fixtures pinning the live template render of text.toml.
-//! Regenerate after changing text.toml with the ignored `capture_text_golden`:
-//!   cargo test --test `theme_golden_text` `capture_text_golden` -- --ignored
+//! Golden ANSI fixtures for the default theme. Regenerate after changing default.toml:
+//!   cargo test --test `theme_golden_default_tests` `capture_default_golden` -- --ignored
+//! `clock` has no agent render path, so it isn't pinned here.
+
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
@@ -20,13 +21,14 @@ fn golden_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden")
 }
 
-fn load_text_theme() -> ThemeConfig {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../config/themes/text.toml");
+fn load_default_theme() -> ThemeConfig {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../config/themes/default.toml");
     gpy_agent::config::loader::load_theme_from_path(&path.display().to_string())
-        .expect("load text.toml")
+        .expect("load default.toml")
 }
 
-/// The repo's default palette; `active_palette` would pick up the developer's.
+/// The repo's default palette; `active_palette` would pick up the developer's
+/// `~/.config/gpy/palettes/default.toml`.
 fn load_default_palette() -> gpy_agent::template::Palette {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../config/palettes/default.toml");
     let content = std::fs::read_to_string(&path).expect("read palettes/default.toml");
@@ -119,45 +121,45 @@ fn render_status(theme: &ThemeConfig, success: bool) -> String {
     render_response(theme, &Response::Character { success }, true)
 }
 
-/// `(fixture_name, rendered_bytes)` for every pinned case; add rows here.
+/// `(fixture_name, rendered_bytes)` for every pinned case.
 fn all_cases(theme: &ThemeConfig) -> Vec<(&'static str, String)> {
     vec![
         (
-            "text_git_clean.ansi",
+            "default_git_clean.ansi",
             render_git(theme, &git_clean(), false),
         ),
         (
-            "text_git_dirty.ansi",
+            "default_git_dirty.ansi",
             render_git(theme, &git_dirty(), false),
         ),
         (
-            "text_git_ahead_behind.ansi",
+            "default_git_ahead_behind.ansi",
             render_git(theme, &git_ahead_behind(), false),
         ),
         (
-            "text_git_clean_last.ansi",
+            "default_git_clean_last.ansi",
             render_git(theme, &git_clean(), true),
         ),
         (
-            "text_language_rust.ansi",
+            "default_language_rust.ansi",
             render_language(theme, vec![lang("Rust", "1.75.0", "red")], false),
         ),
         (
-            "text_language_python.ansi",
+            "default_language_python.ansi",
             render_language(theme, vec![lang("Python", "3.12.0", "blue")], false),
         ),
-        ("text_directory.ansi", render_directory(theme)),
-        ("text_duration.ansi", render_duration(theme)),
-        ("text_status_ok.ansi", render_status(theme, true)),
-        ("text_status_fail.ansi", render_status(theme, false)),
+        ("default_directory.ansi", render_directory(theme)),
+        ("default_duration.ansi", render_duration(theme)),
+        ("default_status_ok.ansi", render_status(theme, true)),
+        ("default_status_fail.ansi", render_status(theme, false)),
     ]
 }
 
 #[test]
-#[ignore = "regenerates golden fixtures from the current theme; run manually after changing text.toml"]
-fn capture_text_golden() {
+#[ignore = "regenerates golden fixtures from the current theme; run manually after changing default.toml"]
+fn capture_default_golden() {
     std::fs::create_dir_all(golden_dir()).expect("mkdir golden");
-    let theme = load_text_theme();
+    let theme = load_default_theme();
     for (file, rendered) in all_cases(&theme) {
         std::fs::write(golden_dir().join(file), rendered).expect("write fixture");
     }
@@ -165,21 +167,54 @@ fn capture_text_golden() {
 
 fn assert_case(file: &str, got: &str) {
     let expected = std::fs::read_to_string(golden_dir().join(file))
-        .unwrap_or_else(|_| panic!("missing golden {file}; run capture_text_golden --ignored"));
+        .unwrap_or_else(|_| panic!("missing golden {file}; run capture_default_golden --ignored"));
     assert!(
         !expected.is_empty(),
         "golden {file} is empty; the segment produced no template output"
     );
     assert_eq!(
         got, &expected,
-        "text.toml render drifted for {file}\n expected: {expected:?}\n      got: {got:?}"
+        "default.toml render drifted for {file}\n expected: {expected:?}\n      got: {got:?}"
     );
 }
 
 #[test]
 fn all_cases_match_golden() {
-    let theme = load_text_theme();
+    let theme = load_default_theme();
     for (file, rendered) in all_cases(&theme) {
         assert_case(file, &rendered);
     }
+}
+
+// sep_close (U+E0B4) needs fg=segment-bg and bg=default (SGR 49); inheriting
+// the segment bg makes fg == bg and the glyph invisible.
+#[test]
+fn sep_close_glyph_has_bg_reset_when_last() {
+    let theme = load_default_theme();
+    // Clean git: bg=green (SGR 32). sep_close must carry fg:32 bg:default(49).
+    let output = render_git(&theme, &git_clean(), true);
+    assert!(
+        output.contains("\x1b[32;49m"),
+        "sep_close must include bg:default (SGR 49) so the half-circle is visible; got: {output:?}"
+    );
+}
+
+// `in_progress_bg_color = "magenta"` must render as SGR 45 (text pill) and
+// 35;49 (caps), not resolve to an uncolored palette self-reference.
+#[test]
+fn in_progress_git_uses_magenta_background() {
+    let theme = load_default_theme();
+    let status = RepositoryStatus {
+        state: RepositoryState::Rebasing,
+        ..git_clean()
+    };
+    let output = render_git(&theme, &status, true);
+    assert!(
+        output.contains("37;45m"),
+        "in-progress git text must use fg white on bg magenta; got: {output:?}"
+    );
+    assert!(
+        output.contains("35;49m"),
+        "in-progress git caps must use fg magenta on default bg; got: {output:?}"
+    );
 }
