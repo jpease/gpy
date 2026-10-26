@@ -47,6 +47,12 @@ test_finish "one-line summary"   # exit 1 if any fail, else PASS: summary
   `shell_e2e_init` arms the EXIT trap that stops the client and agent, kills
   whatever holds a unix socket under the sandbox, and removes it; register a
   helper process with `shell_e2e_track_pid PID`.
+- A test that needs a stand-in agent on a Unix socket (silent, slow,
+  answering, cut off mid-reply, or a socket file nobody listens on) uses
+  `shell_e2e_stub_listener SOCKET MODE [OPTION...]`, which runs
+  `tests/lib/stub_listener.py`; never an inline Python listener. Stop it with
+  `shell_e2e_stop_pids`; a test without `shell_e2e_init` calls
+  `shell_e2e_kill_tracked` from its own EXIT trap.
 - Tests that must not start an agent source `tests/lib/supervisor_off.bash`,
   write `[agent] enabled = false` into their own sandbox `config.toml`, or
   source with no `gpy-agent` on `PATH` (`shell_e2e_agent_free_begin` /

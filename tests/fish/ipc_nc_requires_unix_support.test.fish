@@ -31,11 +31,7 @@ set -g nc_log $tmp/nc.log
 
 # A socket node nothing listens on: the stub nc never connects to it, but the
 # pre-flight `-S` test needs the real thing.
-python3 -c 'import socket, sys; s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()' $tmp/agent.sock
-if not test -S $tmp/agent.sock
-    rm -rf $tmp
-    test_skip "could not create a Unix socket node"
-end
+test_stub_listener $tmp/agent.sock bind-only
 
 mkdir -p $tmp/bin
 # make_nc HELP_TEXT: a stub nc whose `-h` prints HELP_TEXT and whose other

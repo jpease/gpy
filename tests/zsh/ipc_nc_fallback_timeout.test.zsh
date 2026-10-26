@@ -8,8 +8,8 @@
 # `__gpy_send_json` prefers the zsh/net/socket builtin, then socat, then
 # `nc -U ... -w 1` (wrapped in `timeout` when that exists). Against a listener
 # that accepts and then never answers, the call must return non-zero, print
-# nothing, and do so well before the listener's own lifetime. A python3
-# listener plays the wedged agent; `zmodload` is shadowed so the builtin
+# nothing, and do so well before the listener's own lifetime. A stub listener
+# plays the wedged agent; `zmodload` is shadowed so the builtin
 # transport is unavailable, and a PATH shim hides socat and timeout so the
 # bare `nc -w 1` branch is the one exercised.
 
@@ -23,24 +23,12 @@ tmp="$(mktemp -d "${TMPDIR:-/tmp}/gpy-nc-timeout.XXXXXX")"
 sock="$tmp/wedged.sock"
 listener_lifetime_secs=4
 cleanup() {
-    [ -n "${listener_pid:-}" ] && kill -9 "$listener_pid" 2>/dev/null
+    shell_e2e_kill_tracked
     rm -rf "$tmp"
 }
 trap cleanup EXIT
 
-python3 -c '
-import socket, sys, time
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1])
-s.listen(1)
-conn, _ = s.accept()
-time.sleep(float(sys.argv[2]))
-' "$sock" "$listener_lifetime_secs" &
-listener_pid=$!
-socket_up() { [ -S "$sock" ]; }
-if ! shell_e2e_poll 3 socket_up; then
-    test_skip "could not create the test Unix socket listener"
-fi
+shell_e2e_stub_listener "$sock" silent --lifetime "$listener_lifetime_secs"
 
 # Only nc (and the tools the transport itself needs) are visible.
 shim="$tmp/bin"

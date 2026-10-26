@@ -4,11 +4,11 @@
 # path validator). Dropping it would make every later `cd` skip the sync while
 # the agent still held the PID with its old cwd.
 #
-# A python3 fake listener stands in for the agent (the real agent is never
-# started): `workspace`/`register` -> error for a cwd named `denied` (the real
-# validator rejects the re-register from /etc too), "not registered" for a
-# `workspace` from `lost`, ok otherwise. Every op is appended to a log so
-# the test can count registers. Paths reach python only through argv.
+# A stub listener stands in for the agent (the real agent is never started):
+# `workspace`/`register` -> error for a cwd named `denied` (the real validator
+# rejects the re-register from /etc too), "not registered" for a `workspace`
+# from `lost`, ok otherwise. Every request is appended to a log so the test
+# can count registers.
 
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
@@ -24,54 +24,18 @@ if not command -q python3
 end
 
 set -g __ws_tmp (mktemp -d)
-set -g __ws_listener_pid
-function __ws_cleanup --on-event fish_exit
-    test -n "$__ws_listener_pid"; and kill $__ws_listener_pid 2>/dev/null
-    rm -rf $__ws_tmp
-end
+test_track_dir $__ws_tmp
 
 set -l sock $__ws_tmp/agent.sock
-set -l oplog $__ws_tmp/ops.log
-touch $oplog
+set -g __ws_requests $__ws_tmp/requests.log
+touch $__ws_requests
 mkdir -p $__ws_tmp/proj $__ws_tmp/denied $__ws_tmp/lost $__ws_tmp/other
 
-python3 -c '
-import json, os, socket, sys
-sock_path, log_path = sys.argv[1], sys.argv[2]
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sock_path)
-s.listen(4)
-while True:
-    conn, _ = s.accept()
-    with conn:
-        buf = b""
-        while not buf.endswith(b"\n"):
-            chunk = conn.recv(4096)
-            if not chunk:
-                break
-            buf += chunk
-        try:
-            msg = json.loads(buf.decode())
-        except ValueError:
-            continue
-        op, cwd = msg.get("op"), msg.get("cwd", "")
-        with open(log_path, "a") as log:
-            log.write(op + " " + cwd + "\n")
-        name = os.path.basename(cwd)
-        if op in ("workspace", "register") and name == "denied":
-            reply = {"error": "Invalid workspace path: Access to system directories denied"}
-        elif op == "workspace" and name == "lost":
-            reply = {"error": "PID 123 not registered - please register first"}
-        else:
-            reply = {"status": "ok"}
-        conn.sendall((json.dumps(reply, separators=(",", ":")) + "\n").encode())
-' $sock $oplog >/dev/null 2>&1 &
-set -g __ws_listener_pid $last_pid
-
-poll_until 3 test -S $sock
-if not test -S $sock
-    test_skip "could not create fake listener socket"
-end
+test_stub_listener $sock reply --reply '{"status":"ok"}' --requests $__ws_requests \
+    --route '"op":"(workspace|register)".*"cwd":"[^"]*/denied"' \
+    '{"error":"Invalid workspace path: Access to system directories denied"}' \
+    --route '"op":"workspace".*"cwd":"[^"]*/lost"' \
+    '{"error":"PID 123 not registered - please register first"}'
 
 set -gx GPY_AGENT_SOCKET_PATH $sock
 # Registration writes the shell PID file under the runtime root; keep it in
@@ -84,7 +48,7 @@ set -e GPY_SUPERVISOR_CHILD
 functions -e __gpy_workspace_on_pwd
 
 function __ws_count --argument-names op
-    count (string match -- "$op *" < $__ws_tmp/ops.log)
+    count (string match -- "*\"op\":\"$op\"*" <$__ws_requests)
 end
 
 cd $__ws_tmp/proj

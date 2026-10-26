@@ -39,16 +39,8 @@ cleanup_sandbox() {
 }
 trap cleanup_sandbox EXIT
 
-bind_af_unix_socket() {
-    python3 -c '
-import socket, sys
-s = socket.socket(socket.AF_UNIX)
-s.bind(sys.argv[1])
-' "$1"
-}
-
-bind_af_unix_socket "$DECOY_SOCK"
-bind_af_unix_socket "$IN_ROOT_SOCK"
+shell_e2e_stub_listener "$DECOY_SOCK" bind-only
+shell_e2e_stub_listener "$IN_ROOT_SOCK" bind-only
 
 assert_true "decoy socket exists before cleanup" "[[ -S '$DECOY_SOCK' ]]"
 assert_true "in-root socket exists before cleanup" "[[ -S '$IN_ROOT_SOCK' ]]"

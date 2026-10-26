@@ -21,8 +21,7 @@ tmp="$(mktemp -d "${TMPDIR:-/tmp}/gpy-nc-probe.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 
 # The stub nc never connects, but the pre-flight `-S` test needs a real socket.
-python3 -c 'import socket, sys; s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()' "$tmp/agent.sock"
-[ -S "$tmp/agent.sock" ] || test_skip "could not create a Unix socket node"
+shell_e2e_stub_listener "$tmp/agent.sock" bind-only
 
 mkdir -p "$tmp/bin"
 log="$tmp/nc.log"

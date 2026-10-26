@@ -263,11 +263,7 @@ if ! command -v python3 &>/dev/null; then
     echo "SKIP: python3 not installed, cannot create a test Unix socket"
 else
 # __gpy_send_json is stubbed; the socket only needs to pass the `-S` gate.
-    python3 -c '
-import socket, sys
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1])
-' "$supervisor_test_sock"
+    python3 tests/lib/stub_listener.py "$supervisor_test_sock" bind-only
 
     if [[ ! -S "$supervisor_test_sock" ]]; then
         echo "SKIP: could not create test Unix socket for supervisor round-trip test"

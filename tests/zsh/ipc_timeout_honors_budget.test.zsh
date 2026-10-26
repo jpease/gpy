@@ -6,7 +6,7 @@
 # treated like an unreachable one: __gpy_request must not fork a blocking
 # `gpy-agent oneshot` while the agent computes the same segment.
 #
-# A python3 listener replies after a fixed delay; a stub `gpy-agent` on PATH
+# A stub listener replies after a fixed delay; a stub `gpy-agent` on PATH
 # logs every oneshot call.
 #   1. reply at 120 ms, budget 1000 ms -> reply used, no oneshot.
 #   2. reply at 400 ms, budget 150 ms  -> empty output, no oneshot.
@@ -26,9 +26,8 @@ fi
 
 tmp=$(mktemp -d)
 mkdir -p "$tmp/bin" "$tmp/cache"
-listener_pid=""
 cleanup() {
-    [[ -n "$listener_pid" ]] && kill -9 "$listener_pid" 2>/dev/null
+    shell_e2e_kill_tracked
     rm -rf "$tmp"
 }
 trap cleanup EXIT
@@ -42,30 +41,10 @@ chmod +x "$tmp/bin/gpy-agent"
 
 sock="$tmp/slow.sock"
 
-# start_listener DELAY: replies GITSEGMENT after DELAY seconds, bounded life.
+# start_listener DELAY: replies GITSEGMENT after DELAY seconds.
 start_listener() {
     rm -f "$sock"
-    python3 -c '
-import socket, sys, time
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1]); s.listen(4); s.settimeout(3)
-try:
-    while True:
-        c, _ = s.accept(); c.recv(65536); time.sleep(float(sys.argv[2]))
-        try: c.sendall(b"GITSEGMENT\n")
-        except OSError: pass
-        c.close()
-except OSError:
-    pass
-' "$sock" "$1" &
-    listener_pid=$!
-    shell_e2e_poll 3 test -S "$sock" || test_skip "could not create test Unix socket listener"
-}
-
-stop_listener() {
-    kill -9 "$listener_pid" 2>/dev/null
-    wait "$listener_pid" 2>/dev/null
-    listener_pid=""
+    shell_e2e_stub_listener "$sock" reply --reply GITSEGMENT --delay "$1"
 }
 
 # run_case NAME SOCKET_PATH DELAY BUDGET_MS EXPECT_OUT EXPECT_ONESHOT(0|1)
@@ -81,7 +60,7 @@ run_case() {
         rehash
         __gpy_request git "$tmp" ansi true
     )
-    [[ -n "$delay" ]] && stop_listener
+    [[ -n "$delay" ]] && shell_e2e_stop_pids "$SHELL_E2E_STUB_PID"
     [[ -s "$oneshot_log" ]] && oneshots=1
     if [[ "$out" == "$expect_out" && "$oneshots" == "$expect_oneshot" ]]; then
         pass "$name"

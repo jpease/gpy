@@ -34,7 +34,9 @@ function __guard_test_cleanup --on-event fish_exit
     rm -rf $scratch
 end
 
-# The child test; $argv = out_dir mode.
+# The child test; $argv = out_dir mode. The held socket's holder is started
+# without test_stub_listener, which would register its PID: only the
+# directory registration may reap it.
 set -g child_script $scratch/child.fish
 printf '%s\n' \
     'set -l out $argv[1]' \
@@ -44,13 +46,7 @@ printf '%s\n' \
     'start_test_agent; or exit 9' \
     'set -l holder_dir (mktemp -d /tmp/gpy-fguard-held.XXXXXX)' \
     'test_track_dir $holder_dir' \
-    'python3 -c "import socket, sys, time
-s = socket.socket(socket.AF_UNIX)
-s.bind(sys.argv[1])
-s.listen(1)
-time.sleep(120)" $holder_dir/held.sock &' \
-    'set -l holder_pid $last_pid' \
-    'poll_until 5 test -S $holder_dir/held.sock; or exit 9' \
+    'set -l holder_pid (python3 $argv[3]/tests/lib/stub_listener.py $holder_dir/held.sock silent --lifetime 120); or exit 9' \
     'sleep 120 &' \
     'set -l tracked_pid $last_pid' \
     'test_track_pid $tracked_pid' \

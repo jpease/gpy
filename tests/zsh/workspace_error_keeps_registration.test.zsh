@@ -7,10 +7,10 @@
 # __gpy_registered would make the re-register from the same rejected directory
 # fail too, and every later cd would skip the sync.
 #
-# A python3 listener plays the agent: `workspace`/`register` from a directory
+# A stub listener plays the agent: `workspace`/`register` from a directory
 # named `denied` -> error; `workspace` from `lost` -> "not registered"; else
-# ok. Every op is logged. The agent is never started; the listener is killed
-# on exit. Paths reach python only through argv.
+# ok. Every request is logged. The agent is never started; the listener is
+# stopped on exit.
 
 ROOT=${0:a:h:h:h}
 emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
@@ -24,61 +24,30 @@ if ! (( $+commands[socat] )) && ! (( $+commands[nc] )); then
 fi
 
 test_tmp_dir="$(mktemp -d)"
-listener_pid=""
 cleanup() {
-    [[ -n "$listener_pid" ]] && kill -9 "$listener_pid" 2>/dev/null
+    shell_e2e_kill_tracked
     rm -rf "$test_tmp_dir"
 }
 trap cleanup EXIT
 
 sock="$test_tmp_dir/agent.sock"
-oplog="$test_tmp_dir/ops.log"
-: >"$oplog"
+requests="$test_tmp_dir/requests.log"
 mkdir -p "$test_tmp_dir/proj" "$test_tmp_dir/denied" "$test_tmp_dir/lost" "$test_tmp_dir/other"
 
-python3 -c '
-import json, os, socket, sys
-sock_path, log_path = sys.argv[1], sys.argv[2]
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sock_path)
-s.listen(4)
-while True:
-    conn, _ = s.accept()
-    with conn:
-        buf = b""
-        while not buf.endswith(b"\n"):
-            chunk = conn.recv(4096)
-            if not chunk:
-                break
-            buf += chunk
-        try:
-            msg = json.loads(buf.decode())
-        except ValueError:
-            continue
-        op, cwd = msg.get("op"), msg.get("cwd", "")
-        with open(log_path, "a") as log:
-            log.write(op + " " + cwd + "\n")
-        name = os.path.basename(cwd)
-        if op in ("workspace", "register") and name == "denied":
-            reply = {"error": "Invalid workspace path: Access to system directories denied"}
-        elif op == "workspace" and name == "lost":
-            reply = {"error": "PID 123 not registered - please register first"}
-        else:
-            reply = {"status": "ok"}
-        conn.sendall((json.dumps(reply, separators=(",", ":")) + "\n").encode())
-' "$sock" "$oplog" &
-listener_pid=$!
-disown "$listener_pid" 2>/dev/null
-shell_e2e_poll 3 test -S "$sock" || test_skip "could not create test Unix socket listener"
+shell_e2e_stub_listener "$sock" reply --reply '{"status":"ok"}' --requests "$requests" \
+    --route '"op":"(workspace|register)".*"cwd":"[^"]*/denied"' \
+    '{"error":"Invalid workspace path: Access to system directories denied"}' \
+    --route '"op":"workspace".*"cwd":"[^"]*/lost"' \
+    '{"error":"PID 123 not registered - please register first"}'
 
-count_ops() { grep -c "^$1 " "$oplog"; }
+count_ops() { grep -c "\"op\":\"$1\"" "$requests"; }
 
 export GPY_AGENT_SOCKET_PATH="$sock"
 source zsh/core/constants.zsh
 source zsh/core/ipc.zsh
 source zsh/core/init.zsh >/dev/null 2>&1
 function __gpy_track_shell_for_agent_recovery() { :; }
-: >"$oplog"
+: >"$requests"
 __gpy_registered=""
 __gpy_last_workspace=""
 

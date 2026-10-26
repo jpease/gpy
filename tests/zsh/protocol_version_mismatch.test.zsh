@@ -24,32 +24,17 @@ if ! command -v socat &>/dev/null && ! command -v nc &>/dev/null; then
 fi
 
 test_tmp_dir="$(mktemp -d)"
-
 cleanup() {
-    kill -9 "$1" 2>/dev/null
+    shell_e2e_kill_tracked
+    rm -rf "$test_tmp_dir"
 }
+trap cleanup EXIT
 
 # --- Case 1: mismatched protocol_version must be detected ---
 
 sock1="$test_tmp_dir/gpy-protocol-mismatch.sock"
-python3 -c '
-import socket, sys
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1])
-s.listen(1)
-conn, _ = s.accept()
-conn.recv(4096)
-conn.sendall(b"{\"AgentStatus\":{\"version\":\"9.9.9\",\"protocol_version\":99,\"watched_repos\":0,\"registered_clients\":0,\"cache_entries\":0}}\n")
-conn.close()
-' "$sock1" &
-listener1_pid=$!
-disown "$listener1_pid" 2>/dev/null
-
-if ! shell_e2e_poll 2 test -S "$sock1"; then
-    cleanup "$listener1_pid"
-    rm -rf "$test_tmp_dir"
-    test_skip "could not create test Unix socket listener"
-fi
+shell_e2e_stub_listener "$sock1" reply \
+    --reply '{"AgentStatus":{"version":"9.9.9","protocol_version":99,"watched_repos":0,"registered_clients":0,"cache_entries":0}}'
 
 export GPY_AGENT_SOCKET_PATH="$sock1"
 
@@ -59,29 +44,13 @@ else
     pass "mismatched protocol_version is detected"
 fi
 
-cleanup "$listener1_pid"
+shell_e2e_stop_pids "$SHELL_E2E_STUB_PID"
 
 # --- Case 2: matching protocol_version must not be flagged ---
 
 sock2="$test_tmp_dir/gpy-protocol-match.sock"
-python3 -c '
-import socket, sys
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1])
-s.listen(1)
-conn, _ = s.accept()
-conn.recv(4096)
-conn.sendall(b"{\"AgentStatus\":{\"version\":\"0.1.0\",\"protocol_version\":2,\"watched_repos\":0,\"registered_clients\":0,\"cache_entries\":0}}\n")
-conn.close()
-' "$sock2" &
-listener2_pid=$!
-disown "$listener2_pid" 2>/dev/null
-
-if ! shell_e2e_poll 2 test -S "$sock2"; then
-    cleanup "$listener2_pid"
-    rm -rf "$test_tmp_dir"
-    test_skip "could not create second test Unix socket listener"
-fi
+shell_e2e_stub_listener "$sock2" reply \
+    --reply '{"AgentStatus":{"version":"0.1.0","protocol_version":2,"watched_repos":0,"registered_clients":0,"cache_entries":0}}'
 
 export GPY_AGENT_SOCKET_PATH="$sock2"
 
@@ -91,7 +60,6 @@ else
     fail "matching protocol_version is not flagged: expected zero return"
 fi
 
-cleanup "$listener2_pid"
-rm -rf "$test_tmp_dir"
+shell_e2e_stop_pids "$SHELL_E2E_STUB_PID"
 
 test_finish

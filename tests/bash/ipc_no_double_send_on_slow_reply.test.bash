@@ -19,10 +19,9 @@ test_require_command python3 "python3 not installed, cannot simulate a slow-to-r
 . bash/core/ipc.bash
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/gpy-slow-reply.XXXXXX")"
-listener_pid=""
 # shellcheck disable=SC2329 # invoked via trap
 cleanup() {
-    [ -n "$listener_pid" ] && kill -9 "$listener_pid" 2>/dev/null
+    shell_e2e_kill_tracked
     rm -rf "$tmp"
 }
 trap cleanup EXIT
@@ -42,44 +41,13 @@ make_shim() {
 # Replies after DELAY seconds, counting connections in $tmp/connections.
 start_listener() {
     rm -f "$tmp/slow.sock" "$tmp/connections"
-    python3 -c '
-import socket, sys, time
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1]); s.listen(5)
-deadline = time.time() + float(sys.argv[4])
-while True:
-    left = deadline - time.time()
-    if left <= 0:
-        break
-    s.settimeout(left)
-    try:
-        c, _ = s.accept()
-    except socket.timeout:
-        break
-    with open(sys.argv[2], "a") as f:
-        f.write("connection\n")
-    c.recv(65536)
-    time.sleep(float(sys.argv[3]))
-    try:
-        c.sendall(b"{\"status\":\"ok\"}\n")
-    except OSError:
-        pass
-    c.close()
-' "$tmp/slow.sock" "$tmp/connections" "$1" "$2" &
-    listener_pid=$!
-    shell_e2e_poll 3 test -S "$tmp/slow.sock" && return 0
-    test_skip "could not create test Unix socket listener"
-}
-
-stop_listener() {
-    kill -9 "$listener_pid" 2>/dev/null
-    wait "$listener_pid" 2>/dev/null
-    listener_pid=""
+    shell_e2e_stub_listener "$tmp/slow.sock" reply --reply '{"status":"ok"}' \
+        --delay "$1" --lifetime 6 --connections "$tmp/connections"
 }
 
 check_transport() {
-    local label="$1" use_path="$2" delay="$3" out status connections=0
-    start_listener "$delay" 6
+    local label="$1" use_path="$2" delay="$3" out status connections
+    start_listener "$delay"
     export GPY_AGENT_SOCKET_PATH="$tmp/slow.sock" GPY_IPC_TIMEOUT_MS=150
     PATH="$use_path"
     out="$(__gpy_send_json '{"op":"ping"}')"
@@ -87,8 +55,8 @@ check_transport() {
     PATH="$real_path"
     # Leave a window in which a resend would open a second connection.
     sleep 0.3
-    stop_listener
-    [ -f "$tmp/connections" ] && connections="$(wc -l <"$tmp/connections" | tr -d ' ')"
+    shell_e2e_stop_pids "$SHELL_E2E_STUB_PID"
+    connections="$(shell_e2e_count_lines "$tmp/connections")"
 
     if [ "$connections" -eq 1 ]; then
         pass "$label: one logical request is one connection"
@@ -143,9 +111,9 @@ run_request() {
     )
 }
 
-start_listener 0.6 6
+start_listener 0.6
 out="$(run_request "$tmp/slow.sock")"
-stop_listener
+shell_e2e_stop_pids "$SHELL_E2E_STUB_PID"
 if [ -z "$out" ] && [ ! -s "$oneshot_log" ]; then
     pass "__gpy_request omits the segment for a late agent and forks no oneshot"
 else
@@ -160,7 +128,7 @@ else
 fi
 
 # Connection refused is "unreachable", not "late", so it must fall back.
-python3 -c 'import socket, sys; s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()' "$tmp/dead.sock"
+shell_e2e_stub_listener "$tmp/dead.sock" bind-only
 out="$(run_request "$tmp/dead.sock")"
 if [ "$out" = ONESHOT_OUTPUT ] && [ -s "$oneshot_log" ]; then
     pass "__gpy_request still falls back to oneshot when nothing listens on the socket"

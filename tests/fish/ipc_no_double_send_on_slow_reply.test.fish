@@ -8,7 +8,7 @@
 # same segment with a blocking `gpy-agent oneshot` fork. Only an agent that
 # cannot be reached at all (status 1) may fall back.
 #
-# A python3 listener plays the slow agent and records one line per accepted
+# A stub listener plays the slow agent and records one line per accepted
 # connection. Each transport that exists on this machine is exercised on its
 # own, by putting just that client on PATH: socat, nc without `timeout` (nc's
 # own whole-second -w bound), and nc wrapped in `timeout` when that exists.
@@ -27,11 +27,9 @@ if not command -q python3
 end
 
 set -g tmp (mktemp -d)
-set -g listener_pid
 set -g real_path $PATH
 
 function finish
-    test -n "$listener_pid"; and kill -9 $listener_pid 2>/dev/null
     set -gx PATH $real_path
     rm -rf $tmp
 end
@@ -46,48 +44,17 @@ function make_shim --argument-names name
     echo $dir
 end
 
-# start_listener DELAY LIFETIME: replies `{"status":"ok"}` after DELAY seconds,
+# start_listener DELAY: replies `{"status":"ok"}` after DELAY seconds,
 # counting accepted connections in $tmp/connections.
-function start_listener --argument-names delay lifetime
+function start_listener --argument-names delay
     rm -f $tmp/slow.sock $tmp/connections
-    python3 -c '
-import socket, sys, time
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1]); s.listen(5)
-deadline = time.time() + float(sys.argv[4])
-while True:
-    left = deadline - time.time()
-    if left <= 0:
-        break
-    s.settimeout(left)
-    try:
-        c, _ = s.accept()
-    except socket.timeout:
-        break
-    with open(sys.argv[2], "a") as f:
-        f.write("connection\n")
-    c.recv(65536)
-    time.sleep(float(sys.argv[3]))
-    try:
-        c.sendall(b"{\"status\":\"ok\"}\n")
-    except OSError:
-        pass
-    c.close()
-' $tmp/slow.sock $tmp/connections $delay $lifetime &
-    set -g listener_pid $last_pid
-    poll_until 3 test -S $tmp/slow.sock; and return 0
-    finish
-    test_skip "could not create test Unix socket listener"
-end
-
-function stop_listener
-    kill -9 $listener_pid 2>/dev/null
-    set -g listener_pid
+    test_stub_listener $tmp/slow.sock reply --reply '{"status":"ok"}' \
+        --delay $delay --lifetime 6 --connections $tmp/connections
 end
 
 # check_transport LABEL PATH DELAY: one slow request over the given PATH.
 function check_transport --argument-names label use_path delay
-    start_listener $delay 6
+    start_listener $delay
     set -gx GPY_AGENT_SOCKET_PATH $tmp/slow.sock
     set -g GPY_IPC_TIMEOUT_MS 150
     set -gx PATH $use_path
@@ -97,7 +64,7 @@ function check_transport --argument-names label use_path delay
     # Window in which a resend over a second connection would land; the
     # connection count below must still be exactly one after it.
     sleep 0.3
-    stop_listener
+    test_stop_pids $test_stub_pid
 
     set -l connections 0
     test -f $tmp/connections; and set connections (wc -l <$tmp/connections | string trim)
@@ -147,9 +114,9 @@ function run_request --argument-names socket
     __gpy_request git $tmp true "" true
 end
 
-start_listener 0.6 6
+start_listener 0.6
 set -l out (run_request $tmp/slow.sock)
-stop_listener
+test_stop_pids $test_stub_pid
 check "__gpy_request omits the segment for a late agent and forks no oneshot" 1 (test -z "$out" -a ! -s $oneshot_log; and echo 1; or echo 0)
 
 set out (run_request $tmp/missing.sock)
@@ -157,7 +124,7 @@ check "__gpy_request still falls back to oneshot when the socket is missing" 1 (
 
 # A socket file nobody listens on (a crashed agent): connection refused is
 # "unreachable", not "late", so it must also fall back.
-python3 -c 'import socket, sys; s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()' $tmp/dead.sock
+test_stub_listener $tmp/dead.sock bind-only
 set out (run_request $tmp/dead.sock)
 check "__gpy_request still falls back to oneshot when nothing listens on the socket" 1 (test "$out" = ONESHOT_OUTPUT -a -s $oneshot_log; and echo 1; or echo 0)
 

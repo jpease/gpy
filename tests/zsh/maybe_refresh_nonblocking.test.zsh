@@ -39,8 +39,6 @@ calls="$SHELL_E2E_ROOT/refresh-calls"
 # Recording stub; the delay makes a blocking dispatcher observable.
 stub_delay=1
 __gpy_trigger_data_refresh() { sleep "$stub_delay"; echo "$1 $2" >>"$calls"; }
-count() { wc -l <"$calls" | tr -d ' '; }
-count_is() { [ "$(count)" -eq "$1" ]; }
 now_s() { python3 -c 'import time; print(time.time())'; }
 root="$SHELL_E2E_REPO"
 
@@ -56,21 +54,21 @@ if python3 -c "import sys; sys.exit(0 if $t1 - $t0 < 0.9 else 1)"; then
 else
     fail "__gpy_maybe_refresh blocked on the refresh ($t0 -> $t1)"
 fi
-if shell_e2e_poll 5 count_is 1; then
+if shell_e2e_poll 5 shell_e2e_has_lines "$calls" 1; then
     # Window for a second (throttle-violating) request to land; nothing to poll for.
     sleep 0.3
-    [ "$(count)" -eq 1 ] && pass "a burst across the shell and subshells sent exactly one request" \
-        || fail "burst sent $(count) requests"
+    shell_e2e_has_lines "$calls" 1 && pass "a burst across the shell and subshells sent exactly one request" \
+        || fail "burst sent $(shell_e2e_count_lines "$calls") requests"
 else
-    fail "the first call never reached the refresh (count $(count))"
+    fail "the first call never reached the refresh (count $(shell_e2e_count_lines "$calls"))"
 fi
 
 # --- (c) a different throttle key is independent -----------------------------------------
 __gpy_maybe_refresh git "$root" git_last true black "" 222
-if shell_e2e_poll 5 count_is 2; then
+if shell_e2e_poll 5 shell_e2e_has_lines "$calls" 2; then
     pass "a different variant token is throttled independently"
 else
-    fail "the variant-token refresh was starved (count $(count))"
+    fail "the variant-token refresh was starved (count $(shell_e2e_count_lines "$calls"))"
 fi
 
 # --- (d) after the interval the same key sends again ------------------------------------
@@ -81,10 +79,10 @@ __gpy_now_ms() { printf -v "$1" '%s' "$fake_ms"; }
 advance_clock_past_throttle() { fake_ms=$((fake_ms + 600)); }
 advance_clock_past_throttle
 __gpy_maybe_refresh git "$root" git_last true black ""
-if shell_e2e_poll 5 count_is 3; then
+if shell_e2e_poll 5 shell_e2e_has_lines "$calls" 3; then
     pass "after the throttle interval the same key sends again"
 else
-    fail "no refresh after the interval (count $(count))"
+    fail "no refresh after the interval (count $(shell_e2e_count_lines "$calls"))"
 fi
 
 # --- (e) a stale git segment burst sends one request --------------------------------------
@@ -99,25 +97,25 @@ printf '%s' "STALE" >"$entry"
 python3 -c "import os,sys,time; os.utime(sys.argv[1], (time.time()-60, time.time()-60))" "$entry"
 # Wait out the 500 ms throttle window left by (d).
 advance_clock_past_throttle
-before="$(count)"
+before="$(shell_e2e_count_lines "$calls")"
 for _ in 1 2 3 4; do out="$(__gpy_segment_git "true" red "")"; done
 if [ "$out" = "STALE" ]; then
     pass "the stale value is still served immediately"
 else
     fail "expected the stale value, got '$out'"
 fi
-if shell_e2e_poll 5 count_is $((before + 1)); then
+if shell_e2e_poll 5 shell_e2e_has_lines "$calls" $((before + 1)); then
     # Window for a second (throttle-violating) request to land; nothing to poll for.
     sleep 0.3
-    [ "$(count)" -eq $((before + 1)) ] && pass "four stale renders sent exactly one request" \
-        || fail "four stale renders sent $(($(count) - before)) requests"
+    shell_e2e_has_lines "$calls" $((before + 1)) && pass "four stale renders sent exactly one request" \
+        || fail "four stale renders sent $(($(shell_e2e_count_lines "$calls") - before)) requests"
 else
-    fail "the stale renders sent no request (count $(count), before $before)"
+    fail "the stale renders sent no request (count $(shell_e2e_count_lines "$calls"), before $before)"
 fi
 
 # --- (f) agent-free mode: nothing is sent ------------------------------------------------
 advance_clock_past_throttle # so a missing request below is not explained by the throttle
-before="$(count)"
+before="$(shell_e2e_count_lines "$calls")"
 stub_delay=0.1
 export GPY_AGENT_ENABLED=0
 __gpy_maybe_refresh git "$root" git_last true black ""
@@ -125,7 +123,7 @@ __gpy_maybe_refresh git "$root" git_last true black ""
 # in which any refresh that was sent would have been recorded.
 sleep 0.5
 export GPY_AGENT_ENABLED=1
-[ "$(count)" -eq "$before" ] && pass "with the agent disabled no refresh is sent" \
+shell_e2e_has_lines "$calls" "$before" && pass "with the agent disabled no refresh is sent" \
     || fail "a refresh was sent with GPY_AGENT_ENABLED=0"
 
 test_finish "__gpy_maybe_refresh is throttled and non-blocking"

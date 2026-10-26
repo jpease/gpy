@@ -18,6 +18,9 @@
 #   registers is killed, removed or called back on every exit path (normal
 #   exit, failed assertion, `exit N`, test_skip, SIGINT, SIGTERM, SIGHUP).
 #   init_test_env arms it and registers its own sandbox and agent.
+# - test_stub_listener SOCKET MODE [OPTION...] / test_stop_pids PID...: a
+#   stand-in agent on a Unix socket (tests/lib/stub_listener.py), and the
+#   TERM-then-KILL stop for it or any other helper process
 
 # Global test state
 set -g __gpy_root (realpath (dirname (status -f))/../..)
@@ -111,8 +114,22 @@ function test_track_cleanup
     set -a __gpy_guard_hooks $argv
 end
 
+# Run tests/lib/stub_listener.py on $argv[1] (its docstring lists the modes
+# and options). Returns once the socket accepts connections, with the serving
+# process's PID in $test_stub_pid, registered with test_track_pid. Stop it
+# with test_stop_pids: it logs what is still queued, then exits. Mode
+# bind-only leaves a socket file nothing listens on and $test_stub_pid empty.
+# A stub that cannot start fails the test.
+function test_stub_listener
+    if not set -g test_stub_pid (python3 $__gpy_root/tests/lib/stub_listener.py $argv)
+        echo "FAIL: could not start a stub listener on $argv[1]"
+        exit 1
+    end
+    set -q test_stub_pid[1]; and test_track_pid $test_stub_pid
+end
+
 # TERM every PID, wait (bounded) for them to leave, then KILL the stragglers.
-function __gpy_guard_kill_pids
+function test_stop_pids
     set -l pids
     for pid in $argv
         kill -0 $pid 2>/dev/null; and set -a pids $pid
@@ -154,7 +171,7 @@ function __gpy_guard_teardown
     if set -q sockets[1]; and not command -q lsof
         echo "WARNING: lsof unavailable; cannot stop agents bound under the test sandbox" >&2
     end
-    __gpy_guard_kill_pids $__gpy_guard_pids $file_pids $holders
+    test_stop_pids $__gpy_guard_pids $file_pids $holders
     for socket in $sockets
         rm -f $socket 2>/dev/null
     end

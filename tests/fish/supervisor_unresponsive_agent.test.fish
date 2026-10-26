@@ -34,35 +34,17 @@ set -l rc $status
 check "no socket is unreachable (1)" 1 $rc
 
 # A socket file nobody listens on: what a crashed agent leaves behind.
-python3 -c 'import socket, sys; s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()' $tmp/agent.sock
+test_stub_listener $tmp/agent.sock bind-only
 __gpy_agent_is_healthy
 set rc $status
 check "a socket nobody listens on is unreachable (1)" 1 $rc
 rm -f $tmp/agent.sock
 
 # A listener that accepts and never answers: a stalled agent.
-python3 -c '
-import socket, sys, time
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1]); s.listen(5)
-held = []
-end = time.time() + 15
-while time.time() < end:
-    s.settimeout(end - time.time())
-    try:
-        c, _ = s.accept()
-    except socket.timeout:
-        break
-    held.append(c)
-' $tmp/agent.sock &
-set -l listener_pid $last_pid
-test_track_pid $listener_pid
-if not poll_until 3 test -S $tmp/agent.sock
-    test_skip "could not create test Unix socket listener"
-end
+test_stub_listener $tmp/agent.sock silent --lifetime 15
 __gpy_agent_is_healthy
 set rc $status
-kill -9 $listener_pid 2>/dev/null
+test_stop_pids $test_stub_pid
 check "a connected agent that never answers is unresponsive (2)" 2 $rc
 
 # --- loop decisions over a scripted sequence of health results ---

@@ -3,14 +3,13 @@
 # unavailable must not hang forever against a connected-but-silent socket —
 # that would freeze the prompt on stock macOS.
 #
-# The "wedged agent" is simulated with a tiny Python listener that accept()s
-# the connection and then goes silent. Plain `nc -l` can't stand in for this:
-# nc auto-closes as soon as it sees the client's half-close, which masks the
+# The "wedged agent" is a silent stub listener: it accept()s the connection
+# and then never answers. Plain `nc -l` can't stand in for this: nc
+# auto-closes as soon as it sees the client's half-close, which masks the
 # hang this test guards against.
 #
-# The listener self-destructs after a few seconds so this test has a hard,
-# deterministic upper bound even if the fallback hangs — no fragile
-# background-job PID tracking required.
+# The listener exits after a few seconds, so this test has a hard,
+# deterministic upper bound even if the fallback hangs.
 
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
@@ -29,33 +28,13 @@ if not command -q python3
 end
 
 set -l test_tmp_dir (mktemp -d)
+test_track_dir $test_tmp_dir
 set -l sock $test_tmp_dir/gpy-wedged-test.sock
 
-# Listener that accepts the connection, then goes silent, then gives up and
-# exits after a few seconds — the self-destruct is what bounds this test's
-# worst case, not any polling/killing of the client side.
+# The listener's lifetime is what bounds this test's worst case, not any
+# polling/killing of the client side.
 set -l listener_lifetime_secs 4
-python3 -c '
-import socket, sys, time
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.bind(sys.argv[1])
-s.listen(1)
-conn, _ = s.accept()
-time.sleep(float(sys.argv[2]))
-' $sock $listener_lifetime_secs &
-set -l listener_pid $last_pid
-
-poll_until 2 test -S $sock
-
-function _ipc_nc_fallback_cleanup --argument-names listener_pid test_tmp_dir
-    kill -9 $listener_pid 2>/dev/null
-    rm -rf $test_tmp_dir
-end
-
-if not test -S $sock
-    _ipc_nc_fallback_cleanup $listener_pid $test_tmp_dir
-    test_skip "could not create test Unix socket listener"
-end
+test_stub_listener $sock silent --lifetime $listener_lifetime_secs
 
 # Restrict PATH to force the no-coreutils-timeout branch in __gpy_ipc_send
 # regardless of what the host machine actually has installed.
@@ -72,8 +51,7 @@ set -l result (__gpy_ipc_send '{"op":"ping"}' 300)
 set -gx PATH $saved_path
 set -l end_ns (test_now_ns)
 
-_ipc_nc_fallback_cleanup $listener_pid $test_tmp_dir
-functions -e _ipc_nc_fallback_cleanup
+test_stop_pids $test_stub_pid
 
 set -l elapsed_ms (math "($end_ns - $start_ns) / 1000000")
 
