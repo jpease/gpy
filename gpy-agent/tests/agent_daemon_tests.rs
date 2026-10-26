@@ -398,8 +398,7 @@ fn agent_git_ansi(repo: &Path) -> Result<String> {
     let theme = ThemeManager::new(config.ui.theme.as_str())
         .or_else(|_| ThemeManager::new("default"))?
         .get();
-    let status = gpy_agent::git::status::load_repository_state_with(
-        &gpy_agent::git::native::NativeGitBackend,
+    let status = gpy_agent::git::native::NativeGitBackend::get_complete_status(
         repo,
         None,
         config.git.max_ahead_behind,
