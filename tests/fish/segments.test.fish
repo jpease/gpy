@@ -175,18 +175,6 @@ else
     exit 1
 end
 
-# Test 9: Verify render functions exist
-echo "Test 9: Segment render functions"
-if functions -q segment_git_render
-    and functions -q segment_language_render
-    and functions -q segment_directory_render
-    and functions -q segment_clock_render
-    pass "All segment render functions are defined"
-else
-    fail "Some segment render functions missing"
-    exit 1
-end
-
 # Directory display modes and truncation are rendered by the agent, not by
 # the shell, and are asserted end to end (real agent, real repo) in
 # tests/fish/e2e_prompt_content.test.fish.

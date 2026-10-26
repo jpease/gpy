@@ -910,7 +910,7 @@ These tests cover the bug where disabling `git.enabled` sent no reload notificat
 
 **Fish** (tests/fish/):
 - `e2e_live_updates_signal.test.fish`: Repaint signal delivery, agent restart
-- `e2e_agent_autostart.test.fish`: Auto-start on Fish init
+- `e2e_interactive_session.test.fish`: Real `fish -i` on a pty: idle repaint, registration, config reload
 - `doorbell_signal.test.fish`: SIGURG handler, flag files, repaint trigger
 
 ### Coverage Goals

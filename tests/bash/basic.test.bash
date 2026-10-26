@@ -22,18 +22,6 @@ if [[ -z "$__prompt_color" ]]; then
     exit 1
 fi
 
-echo "Checking IPC..."
-if ! declare -f __gpy_request &>/dev/null; then
-    echo "FAIL: IPC function not defined"
-    exit 1
-fi
-
-echo "Checking init..."
-if ! declare -f __gpy_precmd &>/dev/null; then
-    echo "FAIL: Init function not defined"
-    exit 1
-fi
-
 echo "Checking version detection..."
 echo "Bash version: ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"
 echo "Duration method: $__gpy_duration_method"

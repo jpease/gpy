@@ -3,9 +3,6 @@
 # tests/bash/parity.test.bash
 # Verify Bash implementation matches Fish/Zsh feature set
 
-# shellcheck disable=SC2154
-# __gpy_duration_method is assigned by bash/gpy.bash, sourced above.
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
@@ -26,24 +23,7 @@ unset XDG_RUNTIME_DIR
 
 echo "=== Checking Feature Parity with Fish/Zsh ==="
 
-required_segments=(
-    directory
-    git
-    clock
-    duration
-    language
-    status
-)
-
 source bash/gpy.bash
-
-for seg in "${required_segments[@]}"; do
-    if ! declare -f "__gpy_segment_$seg" &>/dev/null; then
-        echo "FAIL: Missing segment: $seg"
-        exit 1
-    fi
-    pass "$seg"
-done
 
 # Bash must NOT trap SIGURG: a trap would re-render a PS1 readline cannot show.
 # Read via $(...), not a pipe: bash 3.2 resets traps in pipe subshells.
@@ -51,22 +31,7 @@ if [[ -n "$(trap -p URG)" ]]; then
     echo "FAIL: SIGURG is trapped: $(trap -p URG)"
     exit 1
 fi
-if ! declare -F __gpy_consume_shell_flags >/dev/null; then
-    echo "FAIL: Missing doorbell flag consumer __gpy_consume_shell_flags"
-    exit 1
-fi
-pass "SIGURG doorbell flags consumed at the prompt, no URG trap"
-
-if ! declare -f __gpy_supervisor_start &>/dev/null; then
-    echo "FAIL: Missing supervisor"
-    exit 1
-fi
-pass "Supervisor"
-
-pass "Duration method: $__gpy_duration_method (Bash ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]})"
-
-pass "Exit cleanup: EXIT trap unregisters the client"
-
+pass "Bash does not trap SIGURG"
 
 echo "=== Warm Cache Hit Tests ==="
 

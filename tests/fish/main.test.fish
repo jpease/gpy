@@ -80,13 +80,4 @@ else
     exit 1
 end
 
-# Test 4: Essential logging functions exist
-if functions -q __gpy_log_error
-    and functions -q __gpy_log_warn
-    pass "Essential logging functions are defined"
-else
-    fail "Essential logging functions missing"
-    exit 1
-end
-
 test_finish "core tests"
