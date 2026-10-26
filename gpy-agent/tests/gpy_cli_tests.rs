@@ -1213,6 +1213,50 @@ fn test_theme_new_creates_file() {
 }
 
 #[test]
+fn test_theme_new_twice_keeps_the_existing_file() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    env.run_gpy(&["theme", "new", "twice"])
+        .expect("Failed to run gpy theme new")
+        .assert_success("gpy theme new twice");
+    let theme_file = env.themes_dir().join("twice.toml");
+    fs::write(&theme_file, "# hand edited\n").expect("Failed to edit theme file");
+
+    let second = env
+        .run_gpy(&["theme", "new", "twice"])
+        .expect("Failed to run gpy theme new");
+
+    assert_ne!(second.exit_code, 0_i32, "{second:?}");
+    assert!(second.stderr.contains("already exists"), "{second:?}");
+    assert_eq!(
+        fs::read_to_string(&theme_file).expect("Failed to read theme file"),
+        "# hand edited\n",
+        "an existing theme must not be overwritten"
+    );
+}
+
+#[test]
+fn test_plugin_new_twice_keeps_the_existing_scaffold() {
+    let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
+    env.run_gpy(&["plugin", "new", "twice-tools"])
+        .expect("Failed to run gpy plugin new")
+        .assert_success("gpy plugin new twice-tools");
+    let manifest = env.plugins_dir().join("twice-tools/plugin.toml");
+    fs::write(&manifest, "# hand edited\n").expect("Failed to edit manifest");
+
+    let second = env
+        .run_gpy(&["plugin", "new", "twice-tools"])
+        .expect("Failed to run gpy plugin new");
+
+    assert_ne!(second.exit_code, 0_i32, "{second:?}");
+    assert!(second.stderr.contains("already exists"), "{second:?}");
+    assert_eq!(
+        fs::read_to_string(&manifest).expect("Failed to read manifest"),
+        "# hand edited\n",
+        "an existing plugin must not be overwritten"
+    );
+}
+
+#[test]
 fn test_theme_new_from_clones_base_theme_contents() {
     let env = CliTestEnv::new().expect("Failed to create isolated CLI test environment");
     let themes_dir = env.themes_dir();

@@ -38,6 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A client-supplied `virtual_env` is now validated like other paths: control
   characters, paths over 4096 bytes, and `..` components are rejected.
+- `gpy theme new`, `gpy theme save`, `gpy palette import` and `gpy plugin new`
+  create files exclusively, so a file created between the existence check and
+  the write is reported as already existing instead of being overwritten.
+  `gpy setup --shell fish` now fails when `gpy-dynamic.fish` is missing from
+  the script tree instead of installing broken completions, `gpy setup`
+  warns when it cannot ask about icons on `/dev/tty`, and `gpy doctor`
+  reports config read and agent errors, inspects the segment file or script
+  of every plugin entry type, and no longer flags comments or identifiers
+  such as `node_count` as slow patterns.
+
 - A theme whose plugin segment sections would set the same shell variable
   is now rejected, naming both fields. Segment names and variants both allow
   `_`, so segment `a` with an `open` cap and segment `a_open` with an `icon`

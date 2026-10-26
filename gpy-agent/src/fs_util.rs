@@ -43,6 +43,21 @@ pub fn read_regular_file_capped(path: &Path, cap: usize) -> std::io::Result<Vec<
     Ok(buf)
 }
 
+/// Create `path` with `contents`, failing with `AlreadyExists` instead of
+/// replacing a file that is already there (including one created concurrently).
+///
+/// # Errors
+/// Returns an error if the file exists or cannot be created or written.
+pub fn create_new(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(contents)
+}
+
 /// Replace `path` with `contents` through a temp file in the same directory
 /// and a rename, so a failed write (disk full, crash) leaves the previous file
 /// whole. A symlinked `path` is resolved first so the link survives, and an

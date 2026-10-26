@@ -200,11 +200,14 @@ pub fn import(file: &Path, name_override: Option<&str>, force: bool) -> Result<(
         )));
     }
     let dest = PaletteManager::palette_path(&stem);
-    if dest.exists() && !force {
-        return Err(Error::config(format!(
+    let already_exists = || {
+        Error::config(format!(
             "palette '{stem}' already exists at {}; pass --force to overwrite",
             dest.display()
-        )));
+        ))
+    };
+    if !force && dest.exists() {
+        return Err(already_exists());
     }
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
@@ -212,8 +215,18 @@ pub fn import(file: &Path, name_override: Option<&str>, force: bool) -> Result<(
     }
     let toml = toml::to_string_pretty(&palette)
         .map_err(|e| Error::config(format!("failed to serialize palette: {e}")))?;
-    std::fs::write(&dest, toml)
-        .map_err(|e| Error::config(format!("failed to write palette: {e}")))?;
+    let written = if force {
+        crate::fs_util::write_atomically(&dest, toml.as_bytes())
+    } else {
+        crate::fs_util::create_new(&dest, toml.as_bytes())
+    };
+    written.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            already_exists()
+        } else {
+            Error::config(format!("failed to write palette: {e}"))
+        }
+    })?;
     println!("Imported palette '{stem}' → {}", dest.display());
     Ok(())
 }

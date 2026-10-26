@@ -249,17 +249,18 @@ pub fn new(name: &str, from: Option<&str>) -> Result<()> {
 
     let new_theme_path = themes_dir.join(format!("{name}.toml"));
 
-    if new_theme_path.exists() {
-        return Err(Error::config(format!("theme '{name}' already exists")));
-    }
-
     let source_content = match from {
         Some(base) => ThemeManager::theme_source_content(base)?,
         None => ThemeManager::default_theme_template().to_owned(),
     };
 
-    std::fs::write(&new_theme_path, &source_content)
-        .map_err(|e| Error::config(format!("failed to write theme file: {e}")))?;
+    crate::fs_util::create_new(&new_theme_path, source_content.as_bytes()).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            Error::config(format!("theme '{name}' already exists"))
+        } else {
+            Error::config(format!("failed to write theme file: {e}"))
+        }
+    })?;
 
     match from {
         Some(base) => println!(
@@ -294,7 +295,8 @@ pub fn save(name: Option<&str>) -> Result<()> {
         .map_err(|e| Error::config(format!("failed to create themes directory: {e}")))?;
     let target_path = themes_dir.join(format!("{target_name}.toml"));
 
-    if save_requires_confirmation(name, target_path.exists()) {
+    let target_exists = target_path.exists();
+    if save_requires_confirmation(name, target_exists) {
         let prompt = if name.is_none() {
             format!(
                 "Overwrite current theme '{target_name}' with its current configuration? [y/N] "
@@ -308,8 +310,18 @@ pub fn save(name: Option<&str>) -> Result<()> {
         }
     }
 
-    std::fs::write(&target_path, &source_content)
-        .map_err(|e| Error::config(format!("failed to write theme file: {e}")))?;
+    let written = if target_exists {
+        crate::fs_util::write_atomically(&target_path, source_content.as_bytes())
+    } else {
+        crate::fs_util::create_new(&target_path, source_content.as_bytes())
+    };
+    written.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            Error::config(format!("theme '{target_name}' already exists"))
+        } else {
+            Error::config(format!("failed to write theme file: {e}"))
+        }
+    })?;
 
     println!("Saved theme: {}", target_path.display());
     println!("Edit: {}", target_path.display());

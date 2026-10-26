@@ -37,10 +37,12 @@ pub fn active_config_path() -> Result<String> {
 /// # Errors
 /// Returns an error if the file exists but cannot be read, parsed, or validated.
 pub fn load_active_config(path: &str) -> Result<config::Config> {
-    if Path::new(path).exists() {
-        config::loader::load_config_from_file(path)
-    } else {
-        Ok(config::Config::default())
+    match std::fs::read_to_string(path) {
+        Ok(contents) => config::loader::parse_config_toml(&contents),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(config::Config::default()),
+        Err(e) => Err(Error::config(format!(
+            "Failed to read config file {path}: {e}"
+        ))),
     }
 }
 

@@ -40,14 +40,6 @@ pub fn parse_config_toml(toml_content: &str) -> Result<Config> {
     Ok(config)
 }
 
-/// Create the config file with literal `contents`.
-///
-/// # Errors
-/// Returns an error if the file cannot be written.
-pub fn write_new_config(path: &str, contents: &str) -> Result<()> {
-    write_atomically(Path::new(path), contents)
-}
-
 /// Write only changed leaves (plus `explicit_keys`) into the file in place,
 /// preserving comments and layout; symlinks are written through. `updated` is
 /// normalized first, so the file holds what the next load would produce.

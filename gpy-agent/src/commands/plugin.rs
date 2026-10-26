@@ -442,40 +442,58 @@ fn print_first_party_validation(plugin: &crate::plugin::DiscoveredPlugin) {
 ///
 /// # Errors
 /// Returns an error if the ID is invalid, the target exists, or writing fails.
+#[allow(
+    clippy::create_dir,
+    reason = "create_dir fails with AlreadyExists, which is how a concurrent or repeated `plugin new` is refused"
+)]
 pub fn new(id: &str, segment_name: Option<&str>) -> Result<()> {
     let plugin_id = crate::plugin::PluginId::new(id)?;
     let segment = SegmentName::new(segment_name.unwrap_or(plugin_id.as_str()))?;
     let plugin_root = user_plugins_dir().join(plugin_id.as_str());
 
-    if plugin_root.exists() {
-        return Err(Error::invalid(format!(
+    let already_exists = || {
+        Error::invalid(format!(
             "plugin directory already exists: {}",
             plugin_root.display()
-        )));
-    }
-
-    fs::create_dir_all(plugin_root.join("segments")).map_err(|e| {
-        Error::invalid(format!(
-            "failed to create plugin directory {}: {e}",
-            plugin_root.display()
         ))
-    })?;
+    };
+    let create_failed = |e: std::io::Error| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            already_exists()
+        } else {
+            Error::invalid(format!(
+                "failed to create plugin directory {}: {e}",
+                plugin_root.display()
+            ))
+        }
+    };
+    if let Some(parent) = plugin_root.parent() {
+        fs::create_dir_all(parent).map_err(create_failed)?;
+    }
+    fs::create_dir(&plugin_root).map_err(create_failed)?;
+    fs::create_dir_all(plugin_root.join("segments")).map_err(create_failed)?;
 
     let manifest_path = plugin_root.join("plugin.toml");
     let segment_path = plugin_segment_file(&plugin_root, &segment);
 
-    fs::write(&manifest_path, scaffold_manifest(&plugin_id, &segment)).map_err(|e| {
-        Error::invalid(format!(
-            "failed to write plugin manifest {}: {e}",
-            manifest_path.display()
-        ))
-    })?;
-    fs::write(&segment_path, scaffold_segment(&segment)).map_err(|e| {
-        Error::invalid(format!(
-            "failed to write plugin segment {}: {e}",
-            segment_path.display()
-        ))
-    })?;
+    let write_new = |path: &Path, contents: String, what: &str| {
+        crate::fs_util::create_new(path, contents.as_bytes()).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                already_exists()
+            } else {
+                Error::invalid(format!(
+                    "failed to write plugin {what} {}: {e}",
+                    path.display()
+                ))
+            }
+        })
+    };
+    write_new(
+        &manifest_path,
+        scaffold_manifest(&plugin_id, &segment),
+        "manifest",
+    )?;
+    write_new(&segment_path, scaffold_segment(&segment), "segment")?;
 
     println!("Created plugin scaffold");
     output::detail(format_args!("plugin: {}", plugin_id.as_str()));

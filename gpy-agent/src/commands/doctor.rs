@@ -8,14 +8,17 @@ use crate::{Error, Result, config};
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
 
+/// Command words that suggest a prompt segment spawns a slow process, with
+/// the reason reported. `http` matches a URL scheme rather than a word.
 const SLOW_PATTERN_HINTS: &[(&str, &str)] = &[
     ("curl", "network call"),
     ("wget", "network call"),
     ("http", "network call"),
     ("kubectl", "external tool invocation"),
     ("docker", "external tool invocation"),
-    ("git ", "subprocess git call"),
+    ("git", "subprocess git call"),
     ("python", "interpreter spawn"),
+    ("python3", "interpreter spawn"),
     ("node", "interpreter spawn"),
 ];
 
@@ -39,7 +42,7 @@ pub fn run() -> Result<()> {
     all_ok &= check_plugins(&discovery);
     output::blank();
 
-    check_plugin_performance(&discovery);
+    check_plugin_performance(&loaded_config, &discovery);
     output::blank();
 
     all_ok &= check_binaries();
@@ -91,14 +94,29 @@ fn check_active_palette(palette_name: &str) -> bool {
     }
 }
 
-/// Warn about keys in `path` that `Config` ignores. A read or parse failure
-/// prints nothing: the typed load already reports it as invalid.
+/// Warn about keys in `path` that `Config` ignores. A file that cannot be
+/// read or parsed is reported as such.
 fn print_unknown_config_keys(path: &std::path::Path) {
-    let Some(raw) = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| text.parse::<toml::Table>().ok())
-    else {
-        return;
+    let raw = match std::fs::read_to_string(path) {
+        Ok(text) => match text.parse::<toml::Table>() {
+            Ok(table) => table,
+            Err(err) => {
+                output::detail_status(
+                    1,
+                    Status::Warn,
+                    format_args!("Cannot check {} for unknown keys: {err}", path.display()),
+                );
+                return;
+            }
+        },
+        Err(err) => {
+            output::detail_status(
+                1,
+                Status::Warn,
+                format_args!("Cannot check {} for unknown keys: {err}", path.display()),
+            );
+            return;
+        }
     };
     for key in config::loader::unknown_config_keys(&raw) {
         output::detail_status(
@@ -263,15 +281,21 @@ fn check_plugins(discovery: &crate::plugin::PluginDiscovery) -> bool {
     all_plugins_ok
 }
 
-fn check_plugin_performance(discovery: &crate::plugin::PluginDiscovery) {
+fn check_plugin_performance(
+    loaded_config: &Result<config::Config>,
+    discovery: &crate::plugin::PluginDiscovery,
+) {
     output::section("Plugin Performance");
 
-    let Ok(cfg) = config::loader::load_config() else {
-        output::detail("Skipped: config unavailable.");
-        return;
+    let cfg = match loaded_config {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            output::detail(format_args!("Skipped: config unavailable ({err})."));
+            return;
+        }
     };
 
-    let enabled_plugin_segments = enabled_plugin_segments(&cfg, discovery);
+    let enabled_plugin_segments = enabled_plugin_segments(cfg, discovery);
 
     if enabled_plugin_segments.is_empty() {
         output::detail("No enabled community plugin segments detected.");
@@ -318,8 +342,48 @@ fn plugin_segment_index(
     segment_index
 }
 
+/// The file whose contents `segment` runs: the `.fish` file of a `file`
+/// plugin, or the script a `script` plugin's segment manifest names.
+fn plugin_segment_file(
+    segment: &str,
+    plugin: &crate::plugin::DiscoveredPlugin,
+) -> std::result::Result<std::path::PathBuf, String> {
+    match plugin.manifest.entry_type {
+        crate::plugin::EntryType::File => {
+            Ok(plugin.root.join("segments").join(format!("{segment}.fish")))
+        }
+        crate::plugin::EntryType::Script => {
+            let manifest = plugin
+                .script_segments
+                .iter()
+                .find_map(|(name, manifest)| (name.as_str() == segment).then_some(manifest))
+                .ok_or_else(|| format!("no segment manifest for '{segment}'"))?;
+            manifest
+                .command
+                .resolve(&plugin.root)
+                .map_err(|err| err.to_string())
+        }
+        crate::plugin::EntryType::Command => {
+            Err("command plugins have no inspectable script".to_owned())
+        }
+    }
+}
+
 fn print_plugin_performance_hint(segment: &str, plugin: &crate::plugin::DiscoveredPlugin) {
-    let segment_path = plugin.root.join("segments").join(format!("{segment}.fish"));
+    let segment_path = match plugin_segment_file(segment, plugin) {
+        Ok(path) => path,
+        Err(reason) => {
+            output::detail_at(
+                2,
+                format_args!("- {segment} (plugin: {})", plugin.manifest.id),
+            );
+            output::detail_at(
+                3,
+                format_args!("heuristic: unable to inspect file ({reason})"),
+            );
+            return;
+        }
+    };
     output::detail_at(
         2,
         format_args!(
@@ -340,11 +404,43 @@ fn print_plugin_performance_hint(segment: &str, plugin: &crate::plugin::Discover
     }
 }
 
+/// Reasons the command words of `content` suggest a slow prompt segment.
+/// Comment lines and trailing comments are ignored, and a pattern matches a
+/// whole word (or a URL scheme), not a substring of an identifier.
+fn slow_pattern_reasons(content: &str) -> Vec<&'static str> {
+    let mut reasons = Vec::new();
+    for line in content.lines() {
+        let code = line
+            .split_once(" #")
+            .map_or(line, |(code, _comment)| code)
+            .trim_start();
+        if code.starts_with('#') {
+            continue;
+        }
+        for word in code
+            .split(|c: char| {
+                c.is_whitespace()
+                    || matches!(c, ';' | '|' | '&' | '(' | ')' | '`' | '"' | '\'' | '$')
+            })
+            .filter(|word| !word.is_empty())
+        {
+            for (pattern, reason) in SLOW_PATTERN_HINTS {
+                let hit = if *pattern == "http" {
+                    word.starts_with("http://") || word.starts_with("https://")
+                } else {
+                    word == *pattern
+                };
+                if hit && !reasons.contains(reason) {
+                    reasons.push(*reason);
+                }
+            }
+        }
+    }
+    reasons
+}
+
 fn print_suspect_patterns(segment: &str, content: &str) {
-    let suspects = SLOW_PATTERN_HINTS
-        .iter()
-        .filter_map(|(pattern, reason)| content.contains(pattern).then_some(*reason))
-        .collect::<Vec<_>>();
+    let suspects = slow_pattern_reasons(content);
     if suspects.is_empty() {
         output::detail_at(3, "heuristic: no obvious slow patterns detected");
     } else {
@@ -364,9 +460,9 @@ fn print_suspect_patterns(segment: &str, content: &str) {
     }
 }
 
-/// Warn about installed shell scripts that an older `gpy` wrote: an upgrade
-/// run for one shell used to leave the others behind. Not a failure, since
-/// they still work against the same protocol.
+/// Warn about installed shell scripts whose version stamp differs from this
+/// `gpy`: `gpy setup` for one shell leaves the other shells' scripts as they
+/// were. Not a failure, since they still work against the same protocol.
 fn check_shell_integrations(installed: &[super::setup::InstalledIntegration]) {
     for integration in installed {
         let shell = integration.shell;
@@ -434,20 +530,23 @@ fn check_binaries() -> bool {
     }
 }
 
-/// Whether a live agent answered `gpy-agent status`. The report line is
-/// checked too: older agents exit 0 even when stopped.
+/// The `gpy-agent status` report line that proves the agent answered.
+const AGENT_RESPONDING_LINE: &str = "Status: Running and Responding";
+
+/// Whether a live agent answered `gpy-agent status`: a zero exit status and
+/// the report line. A status command that cannot run is reported.
 fn check_agent_running() -> bool {
     match Command::new(agent_binary()).arg("status").output() {
         Ok(output) => {
             output.status.success()
                 && String::from_utf8_lossy(&output.stdout).contains(AGENT_RESPONDING_LINE)
         }
-        Err(_) => false,
+        Err(err) => {
+            output::detail(format_args!("Diagnostic: could not run gpy-agent: {err}"));
+            false
+        }
     }
 }
-
-/// The `gpy-agent status` report line that proves the agent answered.
-const AGENT_RESPONDING_LINE: &str = "Status: Running and Responding";
 
 #[cfg(test)]
 mod tests {
@@ -457,8 +556,28 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
     #![allow(missing_docs)]
 
+    use super::slow_pattern_reasons;
+
     #[test]
     fn doctor_palette_validation_rejects_unknown() {
         assert!(crate::commands::palette::validate_target(Some("definitely-missing")).is_err());
+    }
+
+    #[test]
+    fn slow_patterns_ignore_comments_and_identifiers() {
+        let script = "# no network here: curl, wget and http are not used\n\
+                      node_count=3 # docker is not called\n\
+                      echo \"$node_count\"\n";
+        assert_eq!(slow_pattern_reasons(script), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn slow_patterns_flag_command_words_once_per_reason() {
+        let script = "out=$(curl -s https://example.com | wget -q -)\n\
+                      git status; python3 -c 'pass'\n";
+        assert_eq!(
+            slow_pattern_reasons(script),
+            vec!["network call", "subprocess git call", "interpreter spawn"]
+        );
     }
 }

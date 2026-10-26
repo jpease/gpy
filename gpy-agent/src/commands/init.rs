@@ -55,7 +55,13 @@ fn resolve_show_icons(capability: FontCapability, non_interactive: bool) -> bool
     if non_interactive {
         return recommended;
     }
-    confirm_icons(capability, recommended).unwrap_or(recommended)
+    confirm_icons(capability, recommended).unwrap_or_else(|err| {
+        let choice = if recommended { "icons" } else { "ASCII" };
+        output::warn_stderr(format_args!(
+            "could not ask about icons on /dev/tty ({err}); using {choice}"
+        ));
+        recommended
+    })
 }
 
 /// A prompt line with a git branch (U+E0A0), the Rust icon (U+F1617) and `❯`.
@@ -65,16 +71,18 @@ fn sample_prompt_line() -> String {
 }
 
 /// Ask on `/dev/tty` whether the sample renders; stdin is the installer's
-/// piped script, not the user. `None` when there is no controlling terminal.
+/// piped script, not the user.
+///
+/// # Errors
+/// Returns an error when `/dev/tty` cannot be opened, written, or read.
 #[cfg(unix)]
-fn confirm_icons(capability: FontCapability, default_yes: bool) -> Option<bool> {
+fn confirm_icons(capability: FontCapability, default_yes: bool) -> std::io::Result<bool> {
     use std::io::{BufRead, BufReader, Write};
 
     let tty = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
-        .open("/dev/tty")
-        .ok()?;
+        .open("/dev/tty")?;
 
     let hint = match capability {
         FontCapability::NerdFont => "detected a Nerd Font, so the default is Yes",
@@ -90,26 +98,29 @@ fn confirm_icons(capability: FontCapability, default_yes: bool) -> Option<bool> 
          Do the icons above display correctly (not boxes or question marks)? {marker}\n\
          ({hint}): ",
         sample = sample_prompt_line(),
-    )
-    .ok()?;
-    writer.flush().ok()?;
+    )?;
+    writer.flush()?;
 
     let mut reader = BufReader::new(&tty);
     let mut line = String::new();
-    if reader.read_line(&mut line).ok()? == 0 {
-        return Some(default_yes);
+    if reader.read_line(&mut line)? == 0 {
+        return Ok(default_yes);
     }
 
     let answer = line.trim().to_lowercase();
     if answer.is_empty() {
-        return Some(default_yes);
+        return Ok(default_yes);
     }
-    Some(matches!(answer.as_str(), "y" | "yes"))
+    Ok(matches!(answer.as_str(), "y" | "yes"))
 }
 
 #[cfg(not(unix))]
-fn confirm_icons(_capability: FontCapability, _default_yes: bool) -> Option<bool> {
-    None
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "mirrors the Unix signature, which can fail on /dev/tty"
+)]
+fn confirm_icons(_capability: FontCapability, default_yes: bool) -> std::io::Result<bool> {
+    Ok(default_yes)
 }
 
 /// Print the outcome, with opt-in instructions whenever ASCII was chosen.

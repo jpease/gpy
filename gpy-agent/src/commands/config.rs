@@ -158,8 +158,19 @@ fn validate_theme_selection(name: &str) -> Result<()> {
 pub fn open() -> Result<()> {
     let config_path = PathBuf::from(active_config_path()?);
 
-    if !config_path.exists() {
-        config::loader::write_new_config(&config_path.to_string_lossy(), NEW_CONFIG_HEADER)?;
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| Error::config(format!("failed to create config directory: {e}")))?;
+    }
+    match crate::fs_util::create_new(&config_path, NEW_CONFIG_HEADER.as_bytes()) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => {
+            return Err(Error::config(format!(
+                "failed to create config file {}: {e}",
+                config_path.display()
+            )));
+        }
     }
 
     launch_editor(&config_path)?;

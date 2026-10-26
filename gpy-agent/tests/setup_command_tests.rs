@@ -386,3 +386,81 @@ fn installer_style_setup_keeps_the_scripts_for_a_bare_rerun() {
     );
     assert_ok(&run(&[]));
 }
+
+fn copy_dir(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for dirent in fs::read_dir(from).unwrap() {
+        let entry = dirent.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+#[test]
+fn fish_setup_fails_when_the_dynamic_completion_glue_is_missing() {
+    let home = TempDir::new().unwrap();
+    let source = TempDir::new().unwrap();
+    copy_dir(&repo_root().join("fish"), &source.path().join("fish"));
+    fs::remove_file(source.path().join("fish/completions/gpy-dynamic.fish")).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_gpy"))
+        .args(["setup", "--shell", "fish", "--non-interactive", "--from"])
+        .arg(source.path())
+        .current_dir(home.path())
+        .env_clear()
+        .env("HOME", home.path())
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("GPY_NERD_FONT", "0")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("gpy-dynamic.fish"), "{stderr}");
+    assert!(
+        !home
+            .path()
+            .join(".config/fish/completions/gpy.fish")
+            .exists(),
+        "no completions without the glue"
+    );
+}
+
+#[test]
+fn doctor_inspects_a_plugin_segment_and_ignores_comments() {
+    let home = TempDir::new().unwrap();
+    let config = home.path().join(".config/gpy");
+    let plugin = config.join("plugins/demo-tools");
+    fs::create_dir_all(plugin.join("segments")).unwrap();
+    fs::write(
+        plugin.join("plugin.toml"),
+        "id = \"demo-tools\"\nname = \"Demo\"\nversion = \"0.1.0\"\napi_version = \"v1\"\n\
+         entry_type = \"file\"\nprovided_segments = [\"demo_status\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        plugin.join("segments/demo_status.fish"),
+        "# no network here: curl, wget\nset node_count 1\n",
+    )
+    .unwrap();
+    fs::write(
+        config.join("config.toml"),
+        "[ui]\nenabled_segments = [\"demo_status\"]\n",
+    )
+    .unwrap();
+
+    let report = doctor(home.path());
+
+    assert!(
+        report.contains("- demo_status (plugin: demo-tools"),
+        "{report}"
+    );
+    assert!(
+        report.contains("heuristic: no obvious slow patterns detected"),
+        "{report}"
+    );
+}
