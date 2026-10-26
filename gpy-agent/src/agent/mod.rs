@@ -312,8 +312,20 @@ impl Agent {
         Self::init_watcher(&initial_config, watcher_config, &ctx, &watcher_slot);
 
         crate::agent::lifecycle::ensure_runtime_dir()?;
-        let socket_path = crate::paths::get_socket_path()?;
-        let server = Self::init_server(&ctx, &watcher_slot, language_cache, socket_path)?;
+        let server = EndpointHandle::new(EndpointDeps {
+            socket_path: crate::paths::get_socket_path()?,
+            #[cfg(unix)]
+            socket_dir_repair: crate::agent::lifecycle::socket_dir_repair(),
+            security_config: crate::security::GuardSettings::default(),
+            watcher_slot: Arc::clone(&watcher_slot),
+            client_registry: Arc::clone(&ctx.registry),
+            git_cache: Arc::clone(&ctx.cache),
+            config_manager: Arc::clone(&ctx.config_manager),
+            theme_manager: Arc::clone(&ctx.theme_manager),
+            instant_cache: Arc::clone(&ctx.instant_cache),
+            language_cache,
+            palette_cache: Arc::clone(&ctx.palette_cache),
+        });
 
         Ok(Self {
             server,
@@ -437,32 +449,6 @@ impl Agent {
         } else {
             debug_log!("agent", "Git segment disabled; skipping watcher startup");
         }
-    }
-
-    /// # Errors
-    /// Returns an error if the endpoint handle builder fails.
-    fn init_server(
-        ctx: &events::AgentContext,
-        watcher_slot: &SharedWatcherSlot,
-        language_cache: crate::language::DetectionCache,
-        socket_path: std::path::PathBuf,
-    ) -> Result<EndpointHandle> {
-        let builder = EndpointHandle::builder(EndpointDeps {
-            client_registry: Arc::clone(&ctx.registry),
-            git_cache: Arc::clone(&ctx.cache),
-            config_manager: Arc::clone(&ctx.config_manager),
-            theme_manager: Arc::clone(&ctx.theme_manager),
-            instant_cache: Arc::clone(&ctx.instant_cache),
-            language_cache,
-        })
-        .socket_path(socket_path)
-        .watcher_slot(Arc::clone(watcher_slot))
-        .palette_cache(Arc::clone(&ctx.palette_cache));
-        #[cfg(unix)]
-        let configured = builder.socket_dir_repair(crate::agent::lifecycle::socket_dir_repair());
-        #[cfg(not(unix))]
-        let configured = builder;
-        configured.build()
     }
 
     /// Start the agent in background mode.

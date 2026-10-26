@@ -1,5 +1,5 @@
-//! IPC request handlers, one per domain (git, language, theme, client, misc),
-//! behind the [`RequestHandler`] trait.
+//! IPC request handlers, one per domain (git, language, client, misc), behind
+//! the [`RequestHandler`] trait.
 
 use crate::ipc::{ClientDirectory, Message, Response};
 use crate::sync_ext::MutexExt;
@@ -55,15 +55,6 @@ pub enum HandlerError {
         /// The upstream failure.
         source: crate::Error,
     },
-
-    /// A theme query asked for a key the theme schema does not define.
-    #[error("Unknown theme key: {key}. Valid keys: {valid_keys}")]
-    UnknownThemeKey {
-        /// The key the client asked for.
-        key: String,
-        /// Comma-separated list of keys that would have been accepted.
-        valid_keys: String,
-    },
 }
 
 /// Handles one domain of IPC requests.
@@ -73,8 +64,6 @@ pub trait RequestHandler: Send + Sync {
     /// # Errors
     /// Fails if the message is unsupported by this handler or processing fails.
     fn handle(&self, message: &Message) -> Result<Response, HandlerError>;
-    /// Handler name for logging.
-    fn name(&self) -> &'static str;
 }
 
 /// Shared handles needed to write the instant-prompt cache and repaint live
@@ -421,19 +410,6 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "Config reload failed: Configuration error: missing field"
-        );
-    }
-
-    #[test]
-    fn unknown_theme_key_lists_the_valid_keys() {
-        let err = HandlerError::UnknownThemeKey {
-            key: "nonsuch".to_owned(),
-            valid_keys: "a, b".to_owned(),
-        };
-
-        assert_eq!(
-            err.to_string(),
-            "Unknown theme key: nonsuch. Valid keys: a, b"
         );
     }
 

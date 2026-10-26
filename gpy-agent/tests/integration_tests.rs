@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::endpoint::endpoint_builder;
+use common::endpoint::endpoint;
 #[cfg(unix)]
 use common::endpoint::wait_for_socket;
 use common::env_guard::EnvGuard;
@@ -36,7 +36,7 @@ fn test_ipc_server_creation() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let socket_path = temp_dir.path().join("test_ipc_server.sock");
 
-    let _server = endpoint_builder(socket_path).build().expect("server build");
+    let _server = endpoint(socket_path);
 }
 
 #[test]
@@ -124,9 +124,7 @@ async fn test_message_size_limit_enforced() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let socket_path = temp_dir.path().join("test_size_limit.sock");
 
-    let mut server = endpoint_builder(socket_path.clone())
-        .build()
-        .expect("server build");
+    let mut server = endpoint(socket_path.clone());
     let server_handle = tokio::spawn(async move {
         let _ = server.start().await;
     });
@@ -289,9 +287,7 @@ async fn test_concurrent_connection_limit() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let socket_path = temp_dir.path().join("test_concurrent_limit.sock");
 
-    let mut server = endpoint_builder(socket_path.clone())
-        .build()
-        .expect("server build");
+    let mut server = endpoint(socket_path.clone());
 
     let server_handle = tokio::spawn(async move {
         let _ = server.start().await;
@@ -398,9 +394,7 @@ async fn test_workspace_update_requires_registration() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let socket_path = temp_dir.path().join("test_workspace_registration.sock");
 
-    let mut server = endpoint_builder(socket_path.clone())
-        .build()
-        .expect("server build");
+    let mut server = endpoint(socket_path.clone());
 
     let server_handle = tokio::spawn(async move {
         let _ = server.start().await;
@@ -483,9 +477,7 @@ async fn ansi_error_replies_are_empty_lines() {
     fs::create_dir_all(fake_repo_dir.join(".git")).expect("create empty .git");
     let fake_repo = fake_repo_dir.to_str().expect("utf8 temp path");
 
-    let mut server = endpoint_builder(socket_path.clone())
-        .build()
-        .expect("server build");
+    let mut server = endpoint(socket_path.clone());
     let server_handle = tokio::spawn(async move {
         let _ = server.start().await;
     });

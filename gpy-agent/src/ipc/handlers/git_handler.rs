@@ -98,7 +98,7 @@ impl GitHandler {
 
             // The watcher may have missed an event (submodules, dropped FSEvents),
             // so revalidate in the background past the cooldown; never awaited.
-            let _ = self.revalidate_stale_hit(&git_root, path_buf, config.git.max_ahead_behind);
+            self.revalidate_stale_hit(&git_root, path_buf, config.git.max_ahead_behind);
 
             return Ok(Self::make_git_response(
                 cached_status,
@@ -175,20 +175,12 @@ impl GitHandler {
 
     /// Revalidate a within-TTL cache hit in the background once past its cooldown.
     ///
-    /// The cooldown throttles this to one recompute per window per repo. Returns
-    /// the job handle (for tests) or `None` when throttled; never awaited on the
-    /// request path.
-    #[must_use]
-    fn revalidate_stale_hit(
-        &self,
-        git_root: &Path,
-        path: &Path,
-        max_ahead_behind: usize,
-    ) -> Option<Arc<SharedJob<SharedGitStatusResult>>> {
-        if self.git_cache.is_fresh_canonical(git_root) {
-            return None;
+    /// The cooldown throttles this to one recompute per window per repo; never
+    /// awaited on the request path.
+    fn revalidate_stale_hit(&self, git_root: &Path, path: &Path, max_ahead_behind: usize) {
+        if !self.git_cache.is_fresh_canonical(git_root) {
+            drop(self.git_status_job(git_root, path.to_path_buf(), max_ahead_behind));
         }
-        Some(self.git_status_job(git_root, path.to_path_buf(), max_ahead_behind))
     }
 
     fn git_status_job(
@@ -294,10 +286,6 @@ impl RequestHandler for GitHandler {
             }),
         }
     }
-
-    fn name(&self) -> &'static str {
-        "GitHandler"
-    }
 }
 
 #[cfg(test)]
@@ -351,6 +339,22 @@ mod tests {
             cooldown: Duration::ZERO,
         };
         Arc::new(GitStatusCache::with_policy(policy))
+    }
+
+    /// Poll until the cached status for `root` reaches `state`, so the temp dir
+    /// outlives the background job that produces it.
+    fn wait_for_canonical_state(cache: &GitStatusCache, root: &Path, state: RepositoryState) {
+        let started = std::time::Instant::now();
+        while cache
+            .get_any_canonical(root)
+            .is_none_or(|cached| cached.state != state)
+        {
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "background revalidation did not reach {state:?} within the timeout"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// Create a repo with one untracked file; returns the canonical root.
@@ -548,16 +552,8 @@ mod tests {
         );
 
         // (b) Background revalidation recomputes the true Dirty status.
-        let handle = handler
-            .revalidate_stale_hit(&git_root, &git_root, 0)
-            .expect("entry is past cooldown, so revalidation must be spawned");
-        let job_result = handle
-            .wait_timeout(Duration::from_secs(5))
-            .expect("background revalidation should complete within the timeout");
-        assert!(
-            matches!(job_result, Ok(Some(_))),
-            "revalidation job should produce a fresh status: {job_result:?}"
-        );
+        handler.revalidate_stale_hit(&git_root, &git_root, 0);
+        wait_for_canonical_state(&cache, &git_root, RepositoryState::Dirty);
 
         let refreshed = cache
             .get_any_canonical(&git_root)
@@ -583,26 +579,23 @@ mod tests {
         let default_cache = Arc::new(GitStatusCache::new());
         let (fresh_handler, _r1) = make_handler_with_cache(Arc::clone(&default_cache));
         default_cache.set_canonical(&git_root, status(0), HashMap::new());
+        fresh_handler.revalidate_stale_hit(&git_root, &git_root, 0);
         assert!(
             fresh_handler
-                .revalidate_stale_hit(&git_root, &git_root, 0)
-                .is_none(),
+                .in_flight
+                .jobs
+                .lock()
+                .expect("jobs lock")
+                .is_empty(),
             "a within-cooldown entry must not spawn a background revalidation"
         );
 
-        // 0ms cooldown: spawned.
+        // 0ms cooldown: spawned, and the recompute replaces the seeded Clean entry.
         let hot_cache = zero_cooldown_cache();
         let (hot_handler, _r2) = make_handler_with_cache(Arc::clone(&hot_cache));
         hot_cache.set_canonical(&git_root, status(0), HashMap::new());
-        let handle = hot_handler.revalidate_stale_hit(&git_root, &git_root, 0);
-        assert!(
-            handle.is_some(),
-            "an entry past its cooldown must spawn a background revalidation"
-        );
-        // Drain the job so it doesn't outlive the temp dir.
-        if let Some(job) = handle {
-            let _ = job.wait_timeout(Duration::from_secs(5));
-        }
+        hot_handler.revalidate_stale_hit(&git_root, &git_root, 0);
+        wait_for_canonical_state(&hot_cache, &git_root, RepositoryState::Dirty);
     }
 
     /// A stale entry older than `MAX_IMMEDIATE_STALE_AGE` isn't served; the fresh recompute is.

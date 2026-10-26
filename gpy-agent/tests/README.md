@@ -17,10 +17,11 @@ to the code in `src/`.
     exit path: `KillOnDrop` (a `std::process::Child`), `PtyChild` (a
     `portable_pty` child), `AgentStopGuard` (runs `gpy-agent stop` for a
     daemonised agent).
-  - `endpoint.rs` — `endpoint_builder(socket_path)` and
-    `endpoint_builder_with_config(socket_path, config)`: in-process
-    `EndpointHandle` builders with default subsystems (the second takes the
-    `ConfigManager` the server reads); `wait_for_socket`.
+  - `endpoint.rs` — `endpoint(socket_path)` and
+    `endpoint_with_config(socket_path, config)`: in-process `EndpointHandle`s
+    with default subsystems (the second takes the `ConfigManager` the server
+    reads); `endpoint_deps_with_config` returns the `EndpointDeps` for tests
+    that override one field; `wait_for_socket`.
   - `env_guard.rs` — `EnvGuard`: restores every environment variable it
     touched on drop, including when an assertion fails.
   - `fixtures.rs` — `ServerGuard` (aborts a spawned server task on drop),

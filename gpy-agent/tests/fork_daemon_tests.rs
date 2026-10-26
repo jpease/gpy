@@ -11,7 +11,7 @@
 
 mod common;
 
-use common::endpoint::{endpoint_builder, wait_for_socket};
+use common::endpoint::{endpoint, wait_for_socket};
 use common::fixtures::ServerGuard;
 use gpy_agent::Result;
 use std::path::Path;
@@ -40,9 +40,7 @@ async fn test_socket_permissions() -> Result<()> {
     let temp_dir = tempdir()?;
     let socket_path = temp_dir.path().join("gpy-permissions-test.sock");
 
-    let mut server = endpoint_builder(socket_path.clone())
-        .build()
-        .expect("server build");
+    let mut server = endpoint(socket_path.clone());
 
     let server_handle = tokio::spawn(async move { server.start().await });
     let _guard = ServerGuard::new(server_handle);
@@ -69,23 +67,19 @@ async fn test_socket_binding_variations() -> Result<()> {
 
     // Normal socket path
     let socket_path = temp_dir.path().join("test.sock");
-    let server = endpoint_builder(socket_path).build().expect("server build");
+    let server = endpoint(socket_path);
     drop(server);
 
     // Nested directory path
     let nested_dir = temp_dir.path().join("nested").join("deep");
     std::fs::create_dir_all(&nested_dir)?;
-    let nested_server = endpoint_builder(nested_dir.join("test.sock"))
-        .build()
-        .expect("server build");
+    let nested_server = endpoint(nested_dir.join("test.sock"));
     drop(nested_server);
 
     // Path with spaces
     let spaced_dir = temp_dir.path().join("path with spaces");
     std::fs::create_dir_all(&spaced_dir)?;
-    let spaced_server = endpoint_builder(spaced_dir.join("test.sock"))
-        .build()
-        .expect("server build");
+    let spaced_server = endpoint(spaced_dir.join("test.sock"));
     drop(spaced_server);
 
     Ok(())
@@ -99,9 +93,7 @@ async fn test_rapid_socket_lifecycle() -> Result<()> {
 
     for i in 0_i32..5_i32 {
         let socket_path = temp_dir.path().join(format!("rapid-test-{i}.sock"));
-        let mut server = endpoint_builder(socket_path.clone())
-            .build()
-            .expect("server build");
+        let mut server = endpoint(socket_path.clone());
 
         let server_handle = tokio::spawn(async move { server.start().await });
         let guard = ServerGuard::new(server_handle);
@@ -125,9 +117,7 @@ async fn test_concurrent_connections() -> Result<()> {
     let temp_dir = tempdir()?;
     let socket_path = temp_dir.path().join("concurrent-test.sock");
 
-    let mut server = endpoint_builder(socket_path.clone())
-        .build()
-        .expect("Server failed to build");
+    let mut server = endpoint(socket_path.clone());
     let server_handle = tokio::spawn(async move {
         server.start().await.expect("Server failed to start");
     });
@@ -156,9 +146,7 @@ async fn test_aborted_server_refuses_connections() -> Result<()> {
     let temp_dir = tempdir()?;
     let socket_path = temp_dir.path().join("cleanup-test.sock");
 
-    let mut server = endpoint_builder(socket_path.clone())
-        .build()
-        .expect("server build");
+    let mut server = endpoint(socket_path.clone());
     let guard = ServerGuard::new(tokio::spawn(async move { server.start().await }));
 
     wait_for_socket(&socket_path, SOCKET_TIMEOUT).await;
@@ -197,9 +185,7 @@ async fn test_ipc_under_load() -> Result<()> {
     let temp_dir = tempdir()?;
     let socket_path = temp_dir.path().join("load-test.sock");
 
-    let mut server = endpoint_builder(socket_path.clone())
-        .build()
-        .expect("Server failed to build");
+    let mut server = endpoint(socket_path.clone());
     let server_handle = tokio::spawn(async move {
         server.start().await.expect("Server failed to start");
     });
@@ -266,9 +252,7 @@ async fn test_socket_binding_errors() -> Result<()> {
         perms.set_mode(0o444);
         std::fs::set_permissions(&readonly_dir, perms)?;
 
-        let mut server = endpoint_builder(readonly_dir.join("test.sock"))
-            .build()
-            .expect("server build");
+        let mut server = endpoint(readonly_dir.join("test.sock"));
 
         // Building succeeds; start must fail (or never get going) in a read-only directory
         let start_result = timeout(Duration::from_secs(2), server.start()).await;
@@ -287,7 +271,7 @@ async fn test_socket_binding_errors() -> Result<()> {
     let file_path = temp_dir.path().join("existing-file");
     std::fs::write(&file_path, "not a socket")?;
 
-    let mut server = endpoint_builder(file_path).build().expect("server build");
+    let mut server = endpoint(file_path);
 
     let start_result = timeout(Duration::from_secs(2), server.start()).await;
     assert!(

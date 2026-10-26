@@ -52,7 +52,7 @@ step that can fail, and bind it to a named variable.
 
 ## Related
 
-- `tests/common/endpoint.rs` — `endpoint_builder` and `wait_for_socket` for
+- `tests/common/endpoint.rs` — `endpoint` and `wait_for_socket` for
   building and starting the in-process server the guard wraps.
 - `scripts/cleanup-test-agents.sh` — removes agents and sockets left by
   killed test runs.

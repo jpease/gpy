@@ -37,17 +37,13 @@ impl ClientHandler {
     }
 
     /// Handle client registration (PID already validated by the server).
-    ///
-    /// # Errors
-    /// Fails if workspace path validation fails.
-    #[expect(clippy::unnecessary_wraps, reason = "dispatch signature")]
     fn handle_register_client(
         &self,
         pid: crate::ipc::ClientPid,
         cwd: Option<crate::security::SafePath>,
         shell: Option<crate::shell::Shell>,
         shell_version: Option<&String>,
-    ) -> Result<Response, HandlerError> {
+    ) -> Response {
         let shell_info = match (&shell, &shell_version) {
             (Some(s), Some(v)) => format!("{s} {v}"),
             (Some(s), None) => format!("{s}"),
@@ -82,7 +78,7 @@ impl ClientHandler {
             self.trigger_initial_scan(path);
         }
 
-        Ok(Response::Ack)
+        Response::Ack
     }
 
     /// Handle workspace update for a registered client.
@@ -122,29 +118,18 @@ impl ClientHandler {
     }
 
     /// Handle client unregistration.
-    ///
-    /// # Errors
-    /// Never fails; matches the dispatch signature.
-    #[expect(clippy::unnecessary_wraps, reason = "dispatch signature")]
-    fn handle_unregister_client(
-        &self,
-        pid: crate::ipc::ClientPid,
-    ) -> Result<Response, HandlerError> {
+    fn handle_unregister_client(&self, pid: crate::ipc::ClientPid) -> Response {
         self.render.client_registry.unregister(pid.get());
         let current_watcher = self.watcher.lock_or_recover().clone();
         if let Some(watcher) = current_watcher {
             watcher.unregister_client(pid.get());
         }
 
-        Ok(Response::Ack)
+        Response::Ack
     }
 
     /// Handle agent status query.
-    ///
-    /// # Errors
-    /// Never fails; matches the dispatch signature.
-    #[expect(clippy::unnecessary_wraps, reason = "dispatch signature")]
-    fn handle_status(&self) -> Result<Response, HandlerError> {
+    fn handle_status(&self) -> Response {
         let watched_repos = self
             .watcher
             .lock_or_recover()
@@ -153,13 +138,13 @@ impl ClientHandler {
         let registered_clients = self.render.client_registry.len();
         let cache_entries = self.git_cache.len();
 
-        Ok(Response::AgentStatus {
+        Response::AgentStatus {
             version: crate::VERSION.to_owned(),
             protocol_version: crate::ipc::protocol::PROTOCOL_VERSION,
             watched_repos,
             registered_clients,
             cache_entries,
-        })
+        }
     }
 
     /// Handle configuration reload request.
@@ -174,26 +159,6 @@ impl ClientHandler {
                 label: "Config reload",
                 source: e,
             })?;
-        Ok(Response::Ack)
-    }
-
-    /// Handle ping request.
-    ///
-    /// # Errors
-    /// Never fails; matches the dispatch signature.
-    #[expect(clippy::unnecessary_wraps, reason = "dispatch signature")]
-    #[expect(clippy::unused_self, reason = "dispatch signature")]
-    const fn handle_ping(&self) -> Result<Response, HandlerError> {
-        Ok(Response::Ack)
-    }
-
-    /// Handle shutdown request.
-    ///
-    /// # Errors
-    /// Never fails; matches the dispatch signature.
-    #[expect(clippy::unnecessary_wraps, reason = "dispatch signature")]
-    #[expect(clippy::unused_self, reason = "dispatch signature")]
-    const fn handle_shutdown(&self) -> Result<Response, HandlerError> {
         Ok(Response::Ack)
     }
 
@@ -261,23 +226,18 @@ impl RequestHandler for ClientHandler {
                 cwd,
                 shell,
                 shell_version,
-            } => self.handle_register_client(*pid, cwd.clone(), *shell, shell_version.as_ref()),
-            Message::UnregisterClient { pid } => self.handle_unregister_client(*pid),
+            } => Ok(self.handle_register_client(*pid, cwd.clone(), *shell, shell_version.as_ref())),
+            Message::UnregisterClient { pid } => Ok(self.handle_unregister_client(*pid)),
             Message::WorkspaceUpdate { pid, cwd } => self.handle_workspace_update(*pid, cwd),
-            Message::Status => self.handle_status(),
+            Message::Status => Ok(self.handle_status()),
             Message::ConfigReload => self.handle_config_reload(),
-            Message::Ping => self.handle_ping(),
-            Message::Shutdown => self.handle_shutdown(),
+            Message::Ping | Message::Shutdown => Ok(Response::Ack),
             _ => Err(HandlerError::UnexpectedMessage {
                 handler: "ClientHandler",
                 qualifier: "unexpected",
                 message: format!("{message:?}"),
             }),
         }
-    }
-
-    fn name(&self) -> &'static str {
-        "ClientHandler"
     }
 }
 
@@ -346,9 +306,7 @@ mod tests {
     fn register(handler: &ClientHandler, cwd: &Path) {
         let pid = crate::ipc::ClientPid::new(std::process::id()).expect("pid");
         let safe = crate::security::SafePath::new(cwd.to_str().expect("utf8")).expect("safe");
-        handler
-            .handle_register_client(pid, Some(safe), None, None)
-            .expect("register");
+        let _ack = handler.handle_register_client(pid, Some(safe), None, None);
     }
 
     /// Registering in a repo skipped via a symlinked entry writes no git cache files.

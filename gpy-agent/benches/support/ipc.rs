@@ -7,10 +7,10 @@
 #![allow(clippy::missing_panics_doc, reason = "benchmark fixture helpers")]
 
 use criterion::Criterion;
-use gpy_agent::ipc::server::{EndpointDeps, EndpointHandle};
+use gpy_agent::ipc::server::{DirRepair, EndpointDeps, EndpointHandle};
 use gpy_agent::security::GuardSettings;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::runtime::Runtime;
@@ -23,13 +23,20 @@ pub fn build_ipc_server(socket_path: &Path) -> EndpointHandle {
         max_concurrent_connections: 1000,
         ..Default::default()
     };
-    EndpointHandle::builder(EndpointDeps {
+    let config_manager = Arc::new(
+        gpy_agent::config::manager::ConfigManager::with_defaults().expect("default config manager"),
+    );
+    let palette_cache = Arc::new(gpy_agent::palette::PaletteCache::from_config(
+        &config_manager.get(),
+    ));
+    EndpointHandle::new(EndpointDeps {
+        socket_path: socket_path.to_path_buf(),
+        socket_dir_repair: DirRepair::Refuse,
+        security_config,
+        watcher_slot: Arc::new(Mutex::new(None)),
         client_registry: Arc::new(gpy_agent::ipc::ClientDirectory::new()),
         git_cache: Arc::new(gpy_agent::git::cache::GitStatusCache::new()),
-        config_manager: Arc::new(
-            gpy_agent::config::manager::ConfigManager::with_defaults()
-                .expect("default config manager"),
-        ),
+        config_manager,
         theme_manager: Arc::new(
             gpy_agent::theme::ThemeManager::new("default").expect("default theme manager"),
         ),
@@ -37,11 +44,8 @@ pub fn build_ipc_server(socket_path: &Path) -> EndpointHandle {
             gpy_agent::cache::InstantPromptCache::new().expect("instant prompt cache"),
         ),
         language_cache: gpy_agent::language::DetectionCache::new(),
+        palette_cache,
     })
-    .socket_path(socket_path.to_path_buf())
-    .security_config(security_config)
-    .build()
-    .expect("build endpoint handle")
 }
 
 /// Poll `socket_path` until a Unix stream connection succeeds.

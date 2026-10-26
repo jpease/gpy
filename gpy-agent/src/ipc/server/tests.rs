@@ -1,7 +1,6 @@
 //! Unit tests for IPC server construction and guard behavior.
 
-use super::handle::ServerDeps;
-use super::{EndpointDeps, EndpointHandle, EndpointHandleBuilder};
+use super::{EndpointDeps, EndpointHandle};
 use crate::config::manager::ConfigManager;
 use crate::ipc::{ClientDirectory, Message, Response, Segment};
 use crate::security::GuardSettings;
@@ -103,20 +102,20 @@ fn hot_reload_git_enabled_blocks_requests() {
     let palette_cache_for_git = Arc::new(crate::palette::PaletteCache::from_config(
         &initial_config_for_git,
     ));
-    let handle = EndpointHandle::with_path_and_state(
-        PathBuf::from("/tmp/hot-reload-git.sock"),
-        ServerDeps {
-            client_registry: Arc::clone(&registry),
-            git_cache: Arc::clone(&git_cache),
-            config_manager: Arc::clone(&config_manager),
-            theme_manager: Arc::clone(&theme_manager),
-            instant_cache,
-            language_cache,
-            palette_cache: palette_cache_for_git,
-        },
-        Arc::clone(&watcher),
-        GuardSettings::default(),
-    );
+    let handle = EndpointHandle::new(EndpointDeps {
+        socket_path: PathBuf::from("/tmp/hot-reload-git.sock"),
+        #[cfg(unix)]
+        socket_dir_repair: super::DirRepair::Refuse,
+        security_config: GuardSettings::default(),
+        watcher_slot: Arc::clone(&watcher),
+        client_registry: Arc::clone(&registry),
+        git_cache: Arc::clone(&git_cache),
+        config_manager: Arc::clone(&config_manager),
+        theme_manager: Arc::clone(&theme_manager),
+        instant_cache,
+        language_cache,
+        palette_cache: palette_cache_for_git,
+    });
 
     let repo = create_git_repo();
     let path_str = repo
@@ -175,20 +174,20 @@ fn build_test_endpoint(
     let palette_cache = Arc::new(crate::palette::PaletteCache::from_config(
         &config_manager.get(),
     ));
-    let handle = EndpointHandle::with_path_and_state(
-        PathBuf::from(sock_name),
-        ServerDeps {
-            client_registry: Arc::clone(&registry),
-            git_cache: Arc::clone(&git_cache),
-            config_manager: Arc::clone(&config_manager),
-            theme_manager: Arc::clone(&theme_manager),
-            instant_cache,
-            language_cache,
-            palette_cache,
-        },
-        Arc::clone(&watcher),
-        GuardSettings::default(),
-    );
+    let handle = EndpointHandle::new(EndpointDeps {
+        socket_path: PathBuf::from(sock_name),
+        #[cfg(unix)]
+        socket_dir_repair: super::DirRepair::Refuse,
+        security_config: GuardSettings::default(),
+        watcher_slot: Arc::clone(&watcher),
+        client_registry: Arc::clone(&registry),
+        git_cache: Arc::clone(&git_cache),
+        config_manager: Arc::clone(&config_manager),
+        theme_manager: Arc::clone(&theme_manager),
+        instant_cache,
+        language_cache,
+        palette_cache,
+    });
     let project = create_language_project();
     let path_str = project.path().to_str().expect("valid UTF-8");
     let path = crate::security::SafePath::new(path_str).expect("Valid test path");
@@ -226,90 +225,4 @@ fn hot_reload_language_enabled_updates_responses() {
         handle.handler_registry.route(&message),
         Ok(Response::Language { languages }) if languages.is_empty()
     ));
-}
-
-/// A builder over fresh default collaborators with no optional setter applied.
-#[allow(clippy::missing_panics_doc)]
-fn default_builder() -> EndpointHandleBuilder {
-    EndpointHandle::builder(EndpointDeps {
-        client_registry: Arc::new(ClientDirectory::new()),
-        git_cache: Arc::new(crate::git::cache::GitStatusCache::new()),
-        config_manager: Arc::new(
-            crate::config::manager::ConfigManager::with_defaults()
-                .expect("default config should load"),
-        ),
-        theme_manager: Arc::new(
-            ThemeManager::builtin("default").expect("default theme should load"),
-        ),
-        instant_cache: Arc::new(crate::cache::InstantPromptCache::new_for_test()),
-        language_cache: crate::language::DetectionCache::new(),
-    })
-}
-
-#[test]
-#[allow(clippy::missing_panics_doc)]
-fn test_endpoint_handle_builder_optional_defaults() {
-    let handle = default_builder()
-        .build()
-        .expect("builder should succeed with only the required collaborators");
-
-    assert_eq!(
-        handle.socket_path,
-        crate::paths::get_socket_path().expect("default socket path"),
-        "Socket path should default to the platform path"
-    );
-}
-
-#[test]
-#[allow(clippy::missing_panics_doc)]
-fn test_endpoint_handle_builder_with_socket_path() {
-    let custom_path = PathBuf::from("/tmp/custom-test.sock");
-    let handle = default_builder()
-        .socket_path(custom_path.clone())
-        .build()
-        .expect("builder should accept a custom socket path");
-
-    assert_eq!(
-        handle.socket_path, custom_path,
-        "Builder should use custom socket path"
-    );
-}
-
-/// Registration through the built handle must reach the watcher in the
-/// caller's slot, or live updates break.
-#[test]
-#[allow(clippy::missing_panics_doc)]
-fn test_endpoint_handle_builder_with_watcher_slot() {
-    let repo = create_git_repo();
-    let watcher = Arc::new(
-        crate::watcher::multi_repo::MultiRepoWatcher::builder()
-            .callback(Box::new(|_event| {}))
-            .build()
-            .expect("watcher"),
-    );
-    let watcher_slot = Arc::new(Mutex::new(Some(Arc::clone(&watcher))));
-
-    let handle = default_builder()
-        .watcher_slot(watcher_slot)
-        .build()
-        .expect("builder should accept a shared watcher slot");
-    let register = Message::RegisterClient {
-        pid: crate::ipc::ClientPid::new(std::process::id()).expect("pid in range"),
-        cwd: Some(
-            crate::security::SafePath::new(repo.path().to_str().expect("utf-8 path"))
-                .expect("safe path"),
-        ),
-        shell: None,
-        shell_version: None,
-    };
-    handle
-        .handler_registry
-        .route(&register)
-        .expect("registration succeeds");
-
-    assert_eq!(
-        watcher.watched_repo_count(),
-        1,
-        "the registered client's repository must be watched by the shared watcher"
-    );
 }

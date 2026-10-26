@@ -96,7 +96,7 @@ impl LanguageHandler {
             if let Some((cached, age)) = self.language_cache.get_with_age(&repo_root) {
                 // Never wait here: the stale value is served now and the job's
                 // result reaches the shell through the repaint doorbell.
-                drop(self.revalidate_stale_hit(&repo_root, in_git_repo, age));
+                self.revalidate_stale_hit(&repo_root, in_git_repo, age);
                 cached
             } else {
                 let job = self.language_detection_job(&repo_root);
@@ -189,18 +189,11 @@ impl LanguageHandler {
 
     /// Start a background re-detection for a non-git cache hit older than
     /// [`LANGUAGE_REFRESH_INTERVAL`]; non-git directories aren't watched.
-    /// Returns the job handle (for tests), or `None`; never awaited.
-    #[must_use]
-    fn revalidate_stale_hit(
-        &self,
-        repo_root: &Path,
-        in_git_repo: bool,
-        age: Duration,
-    ) -> Option<Arc<LanguageJob>> {
-        if in_git_repo || age < LANGUAGE_REFRESH_INTERVAL {
-            return None;
+    /// Never awaited.
+    fn revalidate_stale_hit(&self, repo_root: &Path, in_git_repo: bool, age: Duration) {
+        if !in_git_repo && age >= LANGUAGE_REFRESH_INTERVAL {
+            drop(self.language_detection_job(repo_root));
         }
-        Some(self.language_detection_job(repo_root))
     }
 
     fn language_detection_job(&self, repo_root: &Path) -> Arc<LanguageJob> {
@@ -295,10 +288,6 @@ impl RequestHandler for LanguageHandler {
                 message: format!("{message:?}"),
             }),
         }
-    }
-
-    fn name(&self) -> &'static str {
-        "LanguageHandler"
     }
 }
 
@@ -685,12 +674,6 @@ mod tests {
             .handle(&language_detect_request(&root))
             .expect("stale hit request");
 
-        assert!(
-            handler
-                .revalidate_stale_hit(&root, true, LANGUAGE_REFRESH_INTERVAL)
-                .is_none(),
-            "a git root must not start a detection job from a stale hit"
-        );
         // Absence window: a detection job started by the request above would
         // have replaced the empty entry by now.
         std::thread::sleep(Duration::from_millis(300));

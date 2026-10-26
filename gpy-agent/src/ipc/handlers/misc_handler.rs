@@ -65,10 +65,6 @@ impl RequestHandler for MiscHandler {
             }),
         }
     }
-
-    fn name(&self) -> &'static str {
-        "MiscHandler"
-    }
 }
 
 #[cfg(test)]

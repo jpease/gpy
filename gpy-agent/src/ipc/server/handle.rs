@@ -1,7 +1,6 @@
 //! Runtime handle for the IPC server: binds the Unix socket, accepts
 //! connections, enforces guard settings, and dispatches messages.
 
-use super::builder::{EndpointDeps, EndpointHandleBuilder};
 #[cfg(unix)]
 use super::connection::ConnectionHandler;
 #[cfg(unix)]
@@ -42,8 +41,18 @@ const CONNECTION_DEADLINE_MULTIPLIER: u32 = 4;
 /// Shared slot for the multi-repo watcher; the `Option` lets it be taken out or replaced.
 pub type WatcherRef = Arc<Mutex<Option<Arc<crate::watcher::multi_repo::MultiRepoWatcher>>>>;
 
-/// Shared subsystem handles the IPC endpoint needs for its whole lifetime.
-pub(crate) struct ServerDeps {
+/// Everything an [`EndpointHandle`] is constructed from.
+pub struct EndpointDeps {
+    /// Where the Unix socket is bound.
+    pub socket_path: PathBuf,
+    /// How a socket directory we own but others can write is treated: tighten
+    /// it only when the caller knows GPY owns the directory.
+    #[cfg(unix)]
+    pub socket_dir_repair: DirRepair,
+    /// Connection limits and rate limiting.
+    pub security_config: GuardSettings,
+    /// The agent's shared watcher slot; live updates break if it is not shared.
+    pub watcher_slot: WatcherRef,
     /// Registered shell clients, used to target repaint signals.
     pub client_registry: Arc<ClientDirectory>,
     /// Shared git status cache backing both the request path and the watcher.
@@ -60,7 +69,7 @@ pub(crate) struct ServerDeps {
     pub palette_cache: Arc<PaletteCache>,
 }
 
-impl ServerDeps {
+impl EndpointDeps {
     /// The subset of these handles every publish-and-repaint site needs.
     fn render(&self) -> RenderDeps {
         RenderDeps {
@@ -71,6 +80,14 @@ impl ServerDeps {
             client_registry: Arc::clone(&self.client_registry),
         }
     }
+}
+
+/// An IPC error for a failed `action`, logged as it is raised.
+#[cfg(unix)]
+fn ipc_io_err(action: &str, err: &std::io::Error) -> Error {
+    let message = format!("Failed to {action}: {err}");
+    debug_log!("server", "{}", message);
+    Error::ipc(message)
 }
 
 /// Whether an `accept()` error is transient (`EMFILE`/`ENFILE`/`EINTR`/`ECONNABORTED`);
@@ -143,9 +160,9 @@ pub struct EndpointHandle {
     client_registry: Arc<ClientDirectory>,
     config_manager: Arc<crate::config::manager::ConfigManager>,
     /// How [`Self::bind_socket`] treats a socket directory we own that others
-    /// can write; the builder's caller knows whether GPY owns the directory.
+    /// can write; the caller knows whether GPY owns the directory.
     #[cfg(unix)]
-    pub(super) socket_dir_repair: DirRepair,
+    socket_dir_repair: DirRepair,
     theme_manager: Arc<ThemeManager>,
     palette_cache: Arc<PaletteCache>,
     connection_semaphore: Arc<Semaphore>,
@@ -213,15 +230,13 @@ impl EndpointHandle {
             .saturating_mul(CONNECTION_DEADLINE_MULTIPLIER)
     }
 
-    pub(crate) fn with_path_and_state(
-        socket_path: PathBuf,
-        deps: ServerDeps,
-        watcher: WatcherRef,
-        security_config: GuardSettings,
-    ) -> Self {
-        let rate_limiter = RateLimiter::new(security_config.max_connections_per_second);
-        let connection_semaphore =
-            Arc::new(Semaphore::new(security_config.max_concurrent_connections));
+    /// Create a handle from its dependencies; the socket is bound by [`Self::start`].
+    #[must_use]
+    pub fn new(deps: EndpointDeps) -> Self {
+        let rate_limiter = RateLimiter::new(deps.security_config.max_connections_per_second);
+        let connection_semaphore = Arc::new(Semaphore::new(
+            deps.security_config.max_concurrent_connections,
+        ));
 
         let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
 
@@ -234,7 +249,7 @@ impl EndpointHandle {
         let client_handler = Arc::new(ClientHandler::new(
             render,
             Arc::clone(&deps.git_cache),
-            watcher,
+            deps.watcher_slot,
         ));
         let misc_handler = Arc::new(MiscHandler::new());
         let handler_registry = Arc::new(HandlerRegistry::new(
@@ -245,7 +260,7 @@ impl EndpointHandle {
         ));
 
         Self {
-            socket_path,
+            socket_path: deps.socket_path,
             #[cfg(unix)]
             listener: None,
             #[cfg(unix)]
@@ -254,12 +269,12 @@ impl EndpointHandle {
             startup: None,
             #[cfg(unix)]
             socket_ownership_check: SOCKET_OWNERSHIP_CHECK,
-            security_config,
+            security_config: deps.security_config,
             rate_limiter,
             client_registry: deps.client_registry,
             config_manager: deps.config_manager,
             #[cfg(unix)]
-            socket_dir_repair: DirRepair::Refuse,
+            socket_dir_repair: deps.socket_dir_repair,
             theme_manager: deps.theme_manager,
             palette_cache: deps.palette_cache,
             connection_semaphore,
@@ -267,12 +282,6 @@ impl EndpointHandle {
             shutdown_rx: Some(shutdown_rx),
             handler_registry,
         }
-    }
-
-    /// Create a builder for an `EndpointHandle` from its required [`EndpointDeps`].
-    #[must_use]
-    pub fn builder(deps: EndpointDeps) -> EndpointHandleBuilder {
-        EndpointHandleBuilder::new(deps)
     }
 
     /// Hold the startup handshake until this handle's socket is bound (see the
@@ -325,35 +334,23 @@ impl EndpointHandle {
 
         debug_log!("server", "Attempting to bind socket...");
         let listener = UnixListener::bind(&self.socket_path).map_err(|e| {
-            let socket_path = self.socket_path.display();
-            let error_msg = format!("Failed to bind socket '{socket_path}': {e}");
-            debug_log!("server", "{}", error_msg);
-            Error::ipc(error_msg)
+            ipc_io_err(&format!("bind socket '{}'", self.socket_path.display()), &e)
         })?;
         debug_log!("server", "Socket bound successfully");
 
         debug_log!("server", "Setting socket permissions...");
-        let metadata = std::fs::metadata(&self.socket_path).map_err(|e| {
-            let error_msg = format!("Failed to read socket metadata: {e}");
-            debug_log!("server", "{}", error_msg);
-            Error::ipc(error_msg)
-        })?;
+        let metadata = std::fs::metadata(&self.socket_path)
+            .map_err(|e| ipc_io_err("read socket metadata", &e))?;
 
         let mut perms = metadata.permissions();
         perms.set_mode(0o600);
-        std::fs::set_permissions(&self.socket_path, perms).map_err(|e| {
-            let error_msg = format!("Failed to set socket permissions: {e}");
-            debug_log!("server", "{}", error_msg);
-            Error::ipc(error_msg)
-        })?;
+        std::fs::set_permissions(&self.socket_path, perms)
+            .map_err(|e| ipc_io_err("set socket permissions", &e))?;
         debug_log!("server", "Socket permissions set successfully");
 
         // Record after chmod: it changes ctime, so a pre-chmod identity would never match.
-        let bound_metadata = std::fs::metadata(&self.socket_path).map_err(|e| {
-            let error_msg = format!("Failed to re-read socket metadata: {e}");
-            debug_log!("server", "{}", error_msg);
-            Error::ipc(error_msg)
-        })?;
+        let bound_metadata = std::fs::metadata(&self.socket_path)
+            .map_err(|e| ipc_io_err("re-read socket metadata", &e))?;
         self.bound_socket = Some(SocketIdentity::from_metadata(&bound_metadata));
 
         self.listener = Some(listener);
@@ -401,11 +398,9 @@ impl EndpointHandle {
                             continue;
                         }
                         Err(e) => {
-                            let error_msg = format!("Failed to accept connection: {e}");
-                            debug_log!("server", "{}", error_msg);
                             // Fatal errors skip the loop exit below, so clean up here.
-                            self.cleanup_socket_file();
-                            return Err(Error::ipc(error_msg));
+                            self.unlink_socket_if_owned();
+                            return Err(ipc_io_err("accept connection", &e));
                         }
                     };
                     debug_log!("server", "Connection accepted");
@@ -435,15 +430,9 @@ impl EndpointHandle {
         }
 
         debug_log!("server", "Accept loop finished, cleaning up socket");
-        self.cleanup_socket_file();
+        self.unlink_socket_if_owned();
 
         Ok(())
-    }
-
-    /// Best-effort, ownership-checked removal of the socket file on accept-loop exit.
-    #[cfg(unix)]
-    fn cleanup_socket_file(&self) {
-        self.unlink_socket_if_owned();
     }
 
     /// Whether the path still holds the socket this handle bound (dev+ino+ctime).
@@ -804,35 +793,35 @@ mod socket_ownership_tests {
     #![allow(clippy::missing_panics_doc)]
     #![allow(missing_docs)]
 
-    use super::{EndpointDeps, EndpointHandle};
+    use super::{DirRepair, EndpointDeps, EndpointHandle};
     use crate::config::manager::ConfigManager;
     use crate::git::cache::GitStatusCache;
     use crate::ipc::ClientDirectory;
+    use crate::palette::PaletteCache;
+    use crate::security::GuardSettings;
     use crate::theme::ThemeManager;
     use std::os::unix::fs::MetadataExt;
     use std::os::unix::net::UnixListener;
     use std::path::Path;
     use std::sync::{Arc, Mutex};
 
-    /// Fresh default collaborators for an unbound handle.
-    fn test_deps() -> EndpointDeps {
-        EndpointDeps {
+    /// Build an unbound `EndpointHandle` targeting `socket_path` (no accept loop).
+    pub(super) fn build_handle(socket_path: &Path) -> EndpointHandle {
+        let config_manager = Arc::new(ConfigManager::with_defaults().expect("default config"));
+        let palette_cache = Arc::new(PaletteCache::from_config(&config_manager.get()));
+        EndpointHandle::new(EndpointDeps {
+            socket_path: socket_path.to_path_buf(),
+            socket_dir_repair: DirRepair::Refuse,
+            security_config: GuardSettings::default(),
+            watcher_slot: Arc::new(Mutex::new(None)),
             client_registry: Arc::new(ClientDirectory::new()),
             git_cache: Arc::new(GitStatusCache::new()),
-            config_manager: Arc::new(ConfigManager::with_defaults().expect("default config")),
+            config_manager,
             theme_manager: Arc::new(ThemeManager::builtin("default").expect("default theme")),
             instant_cache: Arc::new(crate::cache::InstantPromptCache::new_for_test()),
             language_cache: crate::language::DetectionCache::new(),
-        }
-    }
-
-    /// Build an unbound `EndpointHandle` targeting `socket_path` (no accept loop).
-    pub(super) fn build_handle(socket_path: &Path) -> EndpointHandle {
-        EndpointHandle::builder(test_deps())
-            .socket_path(socket_path.to_path_buf())
-            .watcher_slot(Arc::new(Mutex::new(None)))
-            .build()
-            .expect("handle build")
+            palette_cache,
+        })
     }
 
     fn inode_of(path: &Path) -> u64 {
@@ -840,7 +829,7 @@ mod socket_ownership_tests {
     }
 
     #[tokio::test]
-    async fn cleanup_socket_file_unlinks_own_socket() {
+    async fn unlink_socket_if_owned_unlinks_own_socket() {
         let tmp = tempfile::tempdir().expect("temp dir");
         let socket_path = tmp.path().join("gpy.sock");
 
@@ -848,7 +837,7 @@ mod socket_ownership_tests {
         handle.bind_socket().expect("bind");
         assert!(socket_path.exists(), "socket should exist after bind");
 
-        handle.cleanup_socket_file();
+        handle.unlink_socket_if_owned();
 
         assert!(
             !socket_path.exists(),
@@ -858,7 +847,7 @@ mod socket_ownership_tests {
 
     // Accept-loop cleanup must also honour ownership.
     #[tokio::test]
-    async fn cleanup_socket_file_does_not_unlink_foreign_socket() {
+    async fn unlink_socket_if_owned_does_not_unlink_foreign_socket() {
         let tmp = tempfile::tempdir().expect("temp dir");
         let socket_path = tmp.path().join("gpy.sock");
 
@@ -870,7 +859,7 @@ mod socket_ownership_tests {
         let foreign = UnixListener::bind(&socket_path).expect("foreign bind");
         let foreign_inode = inode_of(&socket_path);
 
-        handle.cleanup_socket_file();
+        handle.unlink_socket_if_owned();
 
         assert!(
             socket_path.exists(),
@@ -887,10 +876,7 @@ mod socket_ownership_tests {
         tokio::task::JoinHandle<crate::Result<()>>,
         tokio::sync::broadcast::Sender<()>,
     ) {
-        let mut handle = EndpointHandle::builder(test_deps())
-            .socket_path(socket_path.to_path_buf())
-            .build()
-            .expect("handle build");
+        let mut handle = build_handle(socket_path);
         handle.socket_ownership_check = std::time::Duration::from_millis(50);
         let shutdown = handle.shutdown_sender();
         let task = tokio::spawn(async move { handle.start().await });
@@ -952,7 +938,7 @@ mod socket_ownership_tests {
 
         let handle = build_handle(&socket_path); // bind_socket never called
 
-        handle.cleanup_socket_file();
+        handle.unlink_socket_if_owned();
 
         assert!(
             socket_path.exists(),

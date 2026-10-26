@@ -13,9 +13,10 @@
 
 mod common;
 
-use common::endpoint::{endpoint_builder_with_config, wait_for_socket};
+use common::endpoint::{endpoint_deps_with_config, wait_for_socket};
 use common::git::{git, git_init};
 use gpy_agent::config::manager::ConfigManager;
+use gpy_agent::ipc::server::{EndpointDeps, EndpointHandle};
 use gpy_agent::security::GuardSettings;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -41,10 +42,10 @@ async fn start_server_with(
     let temp_dir = tempdir().expect("temp dir");
     let socket_path = temp_dir.path().join(socket_name);
 
-    let mut server = endpoint_builder_with_config(socket_path.clone(), config_manager)
-        .security_config(security_config)
-        .build()
-        .expect("server build");
+    let mut server = EndpointHandle::new(EndpointDeps {
+        security_config,
+        ..endpoint_deps_with_config(socket_path.clone(), config_manager)
+    });
     let server_handle = tokio::spawn(async move {
         server.start().await.expect("server start");
     });
