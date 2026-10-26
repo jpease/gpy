@@ -15,7 +15,7 @@ use common::fixtures::TempSocket;
 use common::git::TestRepo;
 use common::integration_harness::{GitChange, GitStatus, IntegrationTestServer, TestConfig};
 use common::skip::skip_test;
-use gpy_agent::ipc::{ClientPid, Format, Message, Response};
+use gpy_agent::ipc::{ClientPid, Message, Response, Segment};
 use gpy_agent::security::SafePath;
 use std::time::Duration;
 
@@ -34,10 +34,7 @@ async fn test_git_status_integration() {
     let response = server
         .send_request(Message::RepositoryStatus {
             path: SafePath::new(&repo.path_string()).unwrap(),
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
+            segment: Segment::default(),
         })
         .await
         .expect("Request failed");
@@ -66,10 +63,7 @@ async fn test_config_hot_reload_disables_git() {
     let response = server
         .send_request(Message::RepositoryStatus {
             path: SafePath::new(&repo.path_string()).unwrap(),
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
+            segment: Segment::default(),
         })
         .await
         .expect("Request failed");
@@ -155,10 +149,7 @@ async fn test_concurrent_git_status_requests() {
             server_clone
                 .send_request(Message::RepositoryStatus {
                     path: path_clone,
-                    format: Format::Json,
-                    is_last: false,
-                    is_first: false,
-                    prev_bg: None,
+                    segment: Segment::default(),
                 })
                 .await
         }));
@@ -187,10 +178,7 @@ async fn test_git_status_invalid_path() {
     let response = server
         .send_request(Message::RepositoryStatus {
             path: SafePath::new("/nonexistent/path/12345").unwrap(),
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
+            segment: Segment::default(),
         })
         .await
         .expect("Request failed");
@@ -226,10 +214,7 @@ async fn test_socket_serves_requests_before_theme_export_warmup() {
     let response = server
         .send_request(Message::RepositoryStatus {
             path: SafePath::new(&repo.path_string()).unwrap(),
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
+            segment: Segment::default(),
         })
         .await
         .expect("Request should succeed the instant the socket accepts");
@@ -261,10 +246,7 @@ async fn test_language_detection_integration() {
     let response = server
         .send_request(Message::LanguageDetect {
             path: SafePath::new(&repo.path_string()).unwrap(),
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
+            segment: Segment::default(),
             virtual_env: None,
         })
         .await

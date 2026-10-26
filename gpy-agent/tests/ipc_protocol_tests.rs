@@ -160,9 +160,9 @@ fn test_fish_shell_ipc_format_git() {
     let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
 
     match deserialized {
-        Message::RepositoryStatus { path, format, .. } => {
+        Message::RepositoryStatus { path, segment } => {
             assert_eq!(path, "/test/path");
-            assert_eq!(format, Format::Json);
+            assert_eq!(segment.format, Format::Json);
         }
         _ => assert!(
             matches!(deserialized, Message::RepositoryStatus { .. }),
@@ -177,9 +177,9 @@ fn test_fish_shell_ipc_format_lang() {
     let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
 
     match deserialized {
-        Message::LanguageDetect { path, format, .. } => {
+        Message::LanguageDetect { path, segment, .. } => {
             assert_eq!(path, "/project");
-            assert_eq!(format, Format::Json);
+            assert_eq!(segment.format, Format::Json);
         }
         _ => assert!(
             matches!(deserialized, Message::LanguageDetect { .. }),
@@ -278,11 +278,11 @@ fn test_missing_required_fields() {
     // Missing cwd for git operation
     let git_json = r#"{"op":"git"}"#;
     let git_result = deserialize_message(git_json.as_bytes());
-    let Ok(Message::RepositoryStatus { path, format, .. }) = git_result else {
+    let Ok(Message::RepositoryStatus { path, segment }) = git_result else {
         panic!("missing cwd must deserialize to RepositoryStatus with default path");
     };
     assert_eq!(path, SafePath::new(".").unwrap());
-    assert_eq!(format, Format::Json);
+    assert_eq!(segment.format, Format::Json);
 
     // Missing pid for register operation must be rejected
     let register_json = r#"{"op":"register"}"#;
@@ -300,9 +300,9 @@ fn test_json_string_escaping() {
     let deserialized = deserialize_message(line.as_bytes()).expect("deserialize_message failed");
 
     match deserialized {
-        Message::RepositoryStatus { path, format, .. } => {
+        Message::RepositoryStatus { path, segment } => {
             assert_eq!(path, path_with_quotes);
-            assert_eq!(format, Format::Json);
+            assert_eq!(segment.format, Format::Json);
         }
         _ => assert!(
             matches!(deserialized, Message::RepositoryStatus { .. }),

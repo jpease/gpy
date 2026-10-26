@@ -376,7 +376,7 @@ mod schema_files {
         }
     }
 
-    /// Ops accepted by `ShellIpcMessage::into_wire_message`, parsed from the
+    /// Ops accepted by `ShellIpcMessage::into_message`, parsed from the
     /// `"op" =>` arms of its dispatch table so no hand-kept list can drift.
     fn ops_from_code() -> BTreeSet<String> {
         let source = protocol_source();
@@ -410,7 +410,7 @@ mod schema_files {
         assert_eq!(
             schema_ops,
             ops_from_code(),
-            "message.json ops != into_wire_message ops"
+            "message.json ops != into_message ops"
         );
     }
 

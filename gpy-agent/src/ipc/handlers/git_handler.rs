@@ -283,10 +283,10 @@ impl GitHandler {
 impl RequestHandler for GitHandler {
     fn handle(&self, message: &Message) -> Result<Response, HandlerError> {
         match message {
-            Message::RepositoryStatus { path, prev_bg, .. } => {
+            Message::RepositoryStatus { path, segment } => {
                 // `write_git` uses the raw wire string for both chevron color and
                 // cache-key token, so the reading shell resolves the same file.
-                self.get_git_status(path, prev_bg.as_deref())
+                self.get_git_status(path, segment.prev_bg.as_deref())
             }
             _ => Err(HandlerError::UnexpectedMessage {
                 handler: "GitHandler",

@@ -56,35 +56,36 @@ pub(crate) fn native_windows_unsupported() -> crate::Error {
     )
 }
 
-/// IPC message types that can be sent between Fish and Agent
+/// Rendering position and format shared by every segment request.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Segment {
+    /// Desired response format.
+    pub format: Format,
+    /// Whether this is the last segment in the prompt.
+    pub is_last: bool,
+    /// Whether this is the first segment in the prompt (opening-cap suppression).
+    pub is_first: bool,
+    /// Previous segment's background color, for chevron transitions.
+    pub prev_bg: Option<String>,
+}
+
+/// Requests a shell client sends to the agent.
 #[derive(Debug)]
 pub enum Message {
     /// Request git status for a directory
     RepositoryStatus {
         /// The path to the directory to check.
         path: crate::security::SafePath,
-        /// Desired response format.
-        format: Format,
-        /// Whether this is the last segment in the prompt.
-        is_last: bool,
-        /// Whether this is the first segment in the prompt.
-        is_first: bool,
-        /// Previous segment's background color, for chevron transitions.
-        prev_bg: Option<String>,
+        /// Render position and format.
+        segment: Segment,
     },
 
     /// Request language detection for a directory
     LanguageDetect {
         /// The path to the directory to check.
         path: crate::security::SafePath,
-        /// Desired response format.
-        format: Format,
-        /// Whether this is the last segment in the prompt.
-        is_last: bool,
-        /// Whether this is the first segment in the prompt.
-        is_first: bool,
-        /// Previous segment's background color, for chevron transitions.
-        prev_bg: Option<String>,
+        /// Render position and format.
+        segment: Segment,
         /// Client-forwarded `$VIRTUAL_ENV` for venv-aware Python version
         /// detection. Absent when no venv is activated (back-compatible).
         virtual_env: Option<String>,
@@ -96,14 +97,8 @@ pub enum Message {
         path: crate::security::SafePath,
         /// The client's logical `$PWD`, rendered as `cwd` so symlinks match oneshot output. Never on the wire.
         display_path: String,
-        /// Desired response format.
-        format: Format,
-        /// Whether this is the last segment in the prompt.
-        is_last: bool,
-        /// Whether this is the first segment in the prompt.
-        is_first: bool,
-        /// Previous segment's background color, for chevron transitions.
-        prev_bg: Option<String>,
+        /// Render position and format.
+        segment: Segment,
     },
 
     /// Request clock segment render.
@@ -111,40 +106,24 @@ pub enum Message {
     ClockRequest {
         /// Shell whose live-time prompt token the render should embed.
         shell: crate::shell::Shell,
-        /// Desired response format.
-        format: Format,
-        /// Whether this is the last segment in the prompt.
-        is_last: bool,
-        /// Whether this is the first segment in the prompt.
-        is_first: bool,
-        /// Previous segment's background color, for chevron transitions.
-        prev_bg: Option<String>,
+        /// Render position and format.
+        segment: Segment,
     },
 
     /// Request duration segment render for a given elapsed time.
     DurationRequest {
         /// The command duration in milliseconds.
         duration_ms: u64,
-        /// Desired response format.
-        format: Format,
-        /// Whether this is the last segment in the prompt.
-        is_last: bool,
-        /// Whether this is the first segment in the prompt.
-        is_first: bool,
-        /// Previous segment's background color, for chevron transitions.
-        prev_bg: Option<String>,
+        /// Render position and format.
+        segment: Segment,
     },
 
     /// Request character segment render (the final `❯` prompt symbol, colored by exit status).
     CharacterRequest {
         /// Whether the last command succeeded (`true`) or failed (`false`).
         success: bool,
-        /// Desired response format.
-        format: Format,
-        /// Whether this is the last segment in the prompt.
-        is_last: bool,
-        /// Previous segment's background color, for chevron transitions.
-        prev_bg: Option<String>,
+        /// Render position and format; the prompt symbol never draws an opening cap, so `is_first` has no effect.
+        segment: Segment,
     },
 
     /// Request hostname segment render for a client-supplied hostname value.
@@ -152,16 +131,10 @@ pub enum Message {
     HostnameRequest {
         /// The hostname string resolved by the client.
         hostname: String,
-        /// Desired response format.
-        format: Format,
-        /// Whether this is the last segment in the prompt.
-        is_last: bool,
-        /// Whether this is the first segment in the prompt.
-        is_first: bool,
         /// Whether the client session is over SSH; absent means `false`.
         is_ssh: bool,
-        /// Previous segment's background color, for chevron transitions.
-        prev_bg: Option<String>,
+        /// Render position and format.
+        segment: Segment,
     },
 
     /// Request username segment render for a client-supplied username value.
@@ -169,16 +142,10 @@ pub enum Message {
     UsernameRequest {
         /// The effective username string resolved by the client.
         username: String,
-        /// Desired response format.
-        format: Format,
-        /// Whether this is the last segment in the prompt.
-        is_last: bool,
-        /// Whether this is the first segment in the prompt.
-        is_first: bool,
         /// Whether the client session runs as root; absent means `false`.
         is_root: bool,
-        /// Previous segment's background color, for chevron transitions.
-        prev_bg: Option<String>,
+        /// Render position and format.
+        segment: Segment,
     },
 
     /// Request status segment render: the pill showing the previous command's exit status.
@@ -186,17 +153,11 @@ pub enum Message {
     ExitStatusRequest {
         /// Whether the last command succeeded (`true`) or failed (`false`).
         success: bool,
-        /// Desired response format.
-        format: Format,
-        /// Whether this is the last segment in the prompt.
-        is_last: bool,
-        /// Whether this is the first segment in the prompt.
-        is_first: bool,
-        /// Previous segment's background color, for chevron transitions.
-        prev_bg: Option<String>,
+        /// Render position and format.
+        segment: Segment,
     },
 
-    /// Register Fish process for live updates
+    /// Register a shell process for live updates
     RegisterClient {
         /// The process ID of the client.
         pid: crate::ipc::ClientPid,
@@ -208,7 +169,7 @@ pub enum Message {
         shell_version: Option<String>,
     },
 
-    /// Unregister Fish process
+    /// Unregister a shell process
     UnregisterClient {
         /// The process ID of the client.
         pid: crate::ipc::ClientPid,
@@ -218,7 +179,7 @@ pub enum Message {
     WorkspaceUpdate {
         /// The process ID of the client.
         pid: crate::ipc::ClientPid,
-        /// Current working directory reported by Fish
+        /// Current working directory reported by the client
         cwd: crate::security::SafePath,
     },
 
@@ -235,116 +196,28 @@ pub enum Message {
     ConfigReload,
 }
 
-/// Per-request rendering metadata shared by segment-render messages.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RequestMeta {
-    /// Desired response format.
-    pub format: Format,
-    /// Whether this is the last segment in the prompt.
-    pub is_last: bool,
-    /// Whether this is the first segment in the prompt.
-    /// Always `false` for variants without an opening cap.
-    pub is_first: bool,
-    /// Previous segment's background color, for chevron transitions.
-    pub prev_bg: Option<String>,
-}
-
 impl Message {
-    /// Shared render metadata, or `None` for control messages.
+    /// Render position and format, or `None` for control messages.
     #[must_use]
-    pub fn request_meta(&self) -> Option<RequestMeta> {
-        self.positional_request_meta()
-            .or_else(|| self.capless_request_meta())
-    }
-
-    /// [`RequestMeta`] for the segment variants that carry `is_first`.
-    fn positional_request_meta(&self) -> Option<RequestMeta> {
-        let (format, is_last, is_first, prev_bg) = match self {
-            Self::RepositoryStatus {
-                format,
-                is_last,
-                is_first,
-                prev_bg,
-                ..
-            }
-            | Self::LanguageDetect {
-                format,
-                is_last,
-                is_first,
-                prev_bg,
-                ..
-            }
-            | Self::DirectoryRequest {
-                format,
-                is_last,
-                is_first,
-                prev_bg,
-                ..
-            }
-            | Self::ClockRequest {
-                format,
-                is_last,
-                is_first,
-                prev_bg,
-                ..
-            }
-            | Self::DurationRequest {
-                format,
-                is_last,
-                is_first,
-                prev_bg,
-                ..
-            }
-            | Self::HostnameRequest {
-                format,
-                is_last,
-                is_first,
-                prev_bg,
-                ..
-            }
-            | Self::UsernameRequest {
-                format,
-                is_last,
-                is_first,
-                prev_bg,
-                ..
-            }
-            | Self::ExitStatusRequest {
-                format,
-                is_last,
-                is_first,
-                prev_bg,
-                ..
-            } => (*format, *is_last, *is_first, prev_bg),
-            _ => return None,
-        };
-
-        Some(RequestMeta {
-            format,
-            is_last,
-            is_first,
-            prev_bg: prev_bg.clone(),
-        })
-    }
-
-    /// [`RequestMeta`] for the variant that carries no `is_first` (the prompt character).
-    fn capless_request_meta(&self) -> Option<RequestMeta> {
-        let Self::CharacterRequest {
-            format,
-            is_last,
-            prev_bg,
-            ..
-        } = self
-        else {
-            return None;
-        };
-
-        Some(RequestMeta {
-            format: *format,
-            is_last: *is_last,
-            is_first: false,
-            prev_bg: prev_bg.clone(),
-        })
+    pub const fn segment(&self) -> Option<&Segment> {
+        match self {
+            Self::RepositoryStatus { segment, .. }
+            | Self::LanguageDetect { segment, .. }
+            | Self::DirectoryRequest { segment, .. }
+            | Self::ClockRequest { segment, .. }
+            | Self::DurationRequest { segment, .. }
+            | Self::CharacterRequest { segment, .. }
+            | Self::HostnameRequest { segment, .. }
+            | Self::UsernameRequest { segment, .. }
+            | Self::ExitStatusRequest { segment, .. } => Some(segment),
+            Self::RegisterClient { .. }
+            | Self::UnregisterClient { .. }
+            | Self::WorkspaceUpdate { .. }
+            | Self::Ping
+            | Self::Status
+            | Self::Shutdown
+            | Self::ConfigReload => None,
+        }
     }
 
     /// Path that live-update notifications are scoped to, if the message carries one.

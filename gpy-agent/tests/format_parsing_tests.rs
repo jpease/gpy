@@ -30,8 +30,8 @@ fn test_shell_ipc_message_parsing_ansi() {
     let json = r#"{"op":"git","cwd":".","format":"ansi"}"#;
     let msg = deserialize_message(json.as_bytes()).expect("failed to parse ansi message");
 
-    if let Message::RepositoryStatus { format, .. } = msg {
-        assert_eq!(format, Format::Ansi);
+    if let Message::RepositoryStatus { segment, .. } = msg {
+        assert_eq!(segment.format, Format::Ansi);
     } else {
         panic!("Expected RepositoryStatus");
     }

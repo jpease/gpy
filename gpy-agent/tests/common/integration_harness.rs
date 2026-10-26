@@ -19,7 +19,7 @@
 use super::fixtures::TempSocket;
 use super::git::{TestRepo, git_output};
 use gpy_agent::config::Config;
-use gpy_agent::ipc::{Format, Message, Response};
+use gpy_agent::ipc::{Message, Response, Segment};
 use gpy_agent::security::SafePath;
 use std::fs;
 use std::io;
@@ -87,26 +87,18 @@ fn op_line(msg: &Message) -> String {
     let value = match msg {
         Message::Ping => serde_json::json!({"op": "ping"}),
         Message::Status => serde_json::json!({"op": "status"}),
-        Message::RepositoryStatus {
-            path,
-            format,
-            is_last,
-            is_first,
-            prev_bg,
-        } => serde_json::json!({
-            "op": "git", "cwd": path.as_str(), "format": format,
-            "is_last": is_last, "is_first": is_first, "prev_bg": prev_bg,
+        Message::RepositoryStatus { path, segment } => serde_json::json!({
+            "op": "git", "cwd": path.as_str(), "format": segment.format,
+            "is_last": segment.is_last, "is_first": segment.is_first, "prev_bg": segment.prev_bg,
         }),
         Message::LanguageDetect {
             path,
-            format,
-            is_last,
-            is_first,
-            prev_bg,
+            segment,
             virtual_env,
         } => serde_json::json!({
-            "op": "lang", "cwd": path.as_str(), "format": format, "is_last": is_last,
-            "is_first": is_first, "prev_bg": prev_bg, "virtual_env": virtual_env,
+            "op": "lang", "cwd": path.as_str(), "format": segment.format,
+            "is_last": segment.is_last, "is_first": segment.is_first, "prev_bg": segment.prev_bg,
+            "virtual_env": virtual_env,
         }),
         Message::RegisterClient {
             pid,
@@ -405,10 +397,7 @@ impl IntegrationTestServer {
         let response = self
             .send_request(Message::RepositoryStatus {
                 path: safe_path,
-                format: Format::Json,
-                is_last: false,
-                is_first: false,
-                prev_bg: None,
+                segment: Segment::default(),
             })
             .await?;
 

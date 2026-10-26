@@ -4,7 +4,9 @@
 use crate::formatter::{
     DirectoryEnv, Format, IsFirst, IsLast, RenderContext, SegmentPosition, create_formatter,
 };
-use crate::ipc::{ClientDirectory, Message, Response, handlers::HandlerRegistry, protocol};
+use crate::ipc::{
+    ClientDirectory, Message, Response, Segment, handlers::HandlerRegistry, protocol,
+};
 use crate::palette::PaletteCache;
 use crate::security::{GuardSettings, PidValidator};
 use crate::template::{Color, parse_color};
@@ -21,11 +23,9 @@ use tokio::time::timeout;
 /// Result of routing a single message.
 pub(super) struct RouteResult {
     pub(super) response: Response,
-    pub(super) format: Format,
     pub(super) notify_path: Option<String>,
-    pub(super) is_last: bool,
-    pub(super) is_first: bool,
-    pub(super) prev_bg: Option<String>,
+    /// Render position and format; the default (JSON, middle) for control messages.
+    pub(super) segment: Segment,
 }
 
 /// Result of [`ConnectionHandler::parse_and_route_blocking`].
@@ -253,15 +253,16 @@ impl ConnectionHandler {
                     Self::route_request_secure(handler_registry, security_config, &message);
 
                 let response = route_result.response;
+                let segment = route_result.segment;
                 let position = SegmentPosition::new(
-                    IsLast::from(route_result.is_last),
-                    IsFirst::from(route_result.is_first),
+                    IsLast::from(segment.is_last),
+                    IsFirst::from(segment.is_first),
                 );
                 let payload = Self::render_payload(
                     &response,
-                    route_result.format,
+                    segment.format,
                     position,
-                    route_result.prev_bg.as_deref(),
+                    segment.prev_bg.as_deref(),
                     config_manager,
                     theme_manager,
                     palette_cache,
@@ -313,11 +314,8 @@ impl ConnectionHandler {
                 response: Response::Error {
                     message: format!("Invalid PID: {e}"),
                 },
-                format: Format::Json,
                 notify_path: None,
-                is_last: false,
-                is_first: false,
-                prev_bg: None,
+                segment: Segment::default(),
             };
         }
 
@@ -326,16 +324,10 @@ impl ConnectionHandler {
             .unwrap_or_else(|e| Response::Error {
                 message: e.to_string(),
             });
-        let meta = msg.request_meta();
-        let notify_path = msg.notify_path();
-
         RouteResult {
             response,
-            format: meta.as_ref().map_or(Format::Json, |m| m.format),
-            notify_path,
-            is_last: meta.as_ref().is_some_and(|m| m.is_last),
-            is_first: meta.as_ref().is_some_and(|m| m.is_first),
-            prev_bg: meta.and_then(|m| m.prev_bg),
+            notify_path: msg.notify_path(),
+            segment: msg.segment().cloned().unwrap_or_default(),
         }
     }
 

@@ -3,8 +3,7 @@
 use super::handle::ServerDeps;
 use super::{EndpointDeps, EndpointHandle, EndpointHandleBuilder};
 use crate::config::manager::ConfigManager;
-use crate::formatter::Format;
-use crate::ipc::{ClientDirectory, Message, Response};
+use crate::ipc::{ClientDirectory, Message, Response, Segment};
 use crate::security::GuardSettings;
 use crate::theme::ThemeManager;
 use std::path::{Path, PathBuf};
@@ -170,10 +169,7 @@ fn hot_reload_git_enabled_blocks_requests() {
 fn git_status_message(path: crate::security::SafePath) -> Message {
     Message::RepositoryStatus {
         path,
-        format: Format::Json,
-        is_last: false,
-        is_first: false,
-        prev_bg: None,
+        segment: Segment::default(),
     }
 }
 
@@ -226,10 +222,7 @@ fn hot_reload_language_enabled_updates_responses() {
 
     let lang_msg = Message::LanguageDetect {
         path: path.clone(),
-        format: Format::Json,
-        is_last: false,
-        is_first: false,
-        prev_bg: None,
+        segment: Segment::default(),
         virtual_env: None,
     };
     assert!(matches!(
@@ -245,10 +238,7 @@ fn hot_reload_language_enabled_updates_responses() {
 
     let message = Message::LanguageDetect {
         path,
-        format: Format::Json,
-        is_last: false,
-        is_first: false,
-        prev_bg: None,
+        segment: Segment::default(),
         virtual_env: None,
     };
     assert!(matches!(

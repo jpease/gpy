@@ -77,17 +77,14 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
 
     use super::*;
-    use crate::formatter::Format;
+    use crate::ipc::Segment;
 
     #[test]
     fn handles_duration_request() {
         let handler = MiscHandler::new();
         let msg = Message::DurationRequest {
             duration_ms: 65_000,
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
+            segment: Segment::default(),
         };
         let response = handler.handle(&msg).expect("handling must succeed");
         match response {
@@ -101,9 +98,10 @@ mod tests {
         let handler = MiscHandler::new();
         let msg = Message::CharacterRequest {
             success: false,
-            format: Format::Json,
-            is_last: true,
-            prev_bg: None,
+            segment: Segment {
+                is_last: true,
+                ..Segment::default()
+            },
         };
         let response = handler.handle(&msg).expect("handling must succeed");
         match response {
@@ -126,10 +124,7 @@ mod tests {
         let msg = Message::DirectoryRequest {
             path,
             display_path: requested.clone(),
-            format: Format::Json,
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
+            segment: Segment::default(),
         };
         let response = handler.handle(&msg).expect("handling must succeed");
         match response {

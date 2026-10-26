@@ -303,14 +303,12 @@ impl RequestHandler for LanguageHandler {
         match message {
             Message::LanguageDetect {
                 path,
-                is_last,
-                prev_bg,
+                segment,
                 virtual_env,
-                ..
             } => self.handle_language_detection(
                 path,
-                *is_last,
-                prev_bg.as_deref(),
+                segment.is_last,
+                segment.prev_bg.as_deref(),
                 virtual_env.as_deref(),
             ),
             _ => Err(HandlerError::UnexpectedMessage {
@@ -334,8 +332,7 @@ mod tests {
     use crate::cache::InstantPromptCache;
     use crate::config::Config;
     use crate::config::manager::ConfigManager;
-    use crate::formatter::Format;
-    use crate::ipc::ClientDirectory;
+    use crate::ipc::{ClientDirectory, Segment};
     use crate::language::DetectedLanguage;
     use crate::palette::PaletteCache;
     use crate::theme::ThemeManager;
@@ -368,10 +365,7 @@ mod tests {
         Message::LanguageDetect {
             path: crate::security::SafePath::new(repo_root.to_str().expect("utf8 path"))
                 .expect("safe path"),
-            format: Format::default(),
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
+            segment: Segment::default(),
             virtual_env: None,
         }
     }
@@ -381,10 +375,7 @@ mod tests {
         Message::LanguageDetect {
             path: crate::security::SafePath::new(repo_root.to_str().expect("utf8 path"))
                 .expect("safe path"),
-            format: Format::default(),
-            is_last: false,
-            is_first: false,
-            prev_bg: None,
+            segment: Segment::default(),
             virtual_env: venv.map(|v| v.to_str().expect("utf8 path").to_owned()),
         }
     }
