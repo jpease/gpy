@@ -59,6 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The protocol-mismatch hint, printed by the agent and by the Fish
   integration, now says to update gpy and re-run `gpy setup`. It used to
   point at `./install-dev.fish`, which only exists in a source checkout.
+- Bash and Zsh escape prompt text (hostnames, usernames, icons, theme
+  delimiters) in time that grows linearly with its length. The escape looped
+  per character and Bash 3.2 also cost the length of the text per character,
+  so a 4096-character value full of `$` took about half a second in
+  `/bin/bash` on macOS. With default shell options the output is the same
+  byte for byte; the Zsh escape also no longer garbles text when `ksh_arrays`
+  or `glob_subst` is set.
 
 ### Added
 

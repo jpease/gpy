@@ -42,21 +42,27 @@ __gpy_sgr_param() {
 
 # Escape TEXT for PS1 under promptvars: `\` needs four backslashes, `$` and
 # backtick two. Bare `\$` is avoided because it renders `#` for root.
+# Bash 3.2 substitution costs the string length per match, so the work runs
+# over 64-byte slices in the C locale (the three characters are ASCII and never
+# inside a multibyte character). The operands are quoted variables: Bash 3.2
+# keeps literal quotes in a double-quoted `${x//p/"r"}`, and an unquoted
+# replacement is subject to Bash 5.2's patsub_replacement.
 # shellcheck disable=SC1003 # the backslash replacements are literal on purpose
 __gpy_prompt_escape() {
-    local __text="$1" __out="" __ch __i
-    if [[ "$__text" != *[\\\$\`]* ]]; then
-        printf -v "$2" '%s' "$__text"
+    if [[ "$1" != *[\\\$\`]* ]]; then
+        printf -v "$2" '%s' "$1"
         return 0
     fi
-    for ((__i = 0; __i < ${#__text}; __i++)); do
-        __ch="${__text:__i:1}"
-        case "$__ch" in
-            \\) __out+='\\\\' ;;
-            '$') __out+='\\$' ;;
-            '`') __out+='\\`' ;;
-            *) __out+="$__ch" ;;
-        esac
+    local LC_ALL=C
+    local __text="$1" __out="" __slice __i __len __bs='\' __dl='$' __bt='`' \
+        __rbs='\\\\' __rdl='\\$' __rbt='\\`'
+    __len=${#__text}
+    for ((__i = 0; __i < __len; __i += 64)); do
+        __slice=${__text:__i:64}
+        __slice=${__slice//"$__bs"/"$__rbs"}
+        __slice=${__slice//"$__dl"/"$__rdl"}
+        __slice=${__slice//"$__bt"/"$__rbt"}
+        __out+=$__slice
     done
     printf -v "$2" '%s' "$__out"
 }
