@@ -1,5 +1,6 @@
 //! Oneshot request handling without the background agent (CLI non-daemon mode).
 
+use crate::Result;
 use crate::config::{
     Config,
     loader::{load_config, load_theme},
@@ -8,10 +9,8 @@ use crate::formatter::{Format, IsFirst, IsLast, RenderContext, SegmentPosition, 
 use crate::ipc::Response;
 use crate::language::detector::Detector;
 use crate::theme::ThemeConfig;
-use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::str::FromStr;
 
 /// The kind of oneshot request; serializes as `snake_case` (`"git_status"`, ...).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,9 +46,9 @@ pub struct OneshotRequest {
     pub request_type: OneshotKind,
     /// Working directory the request applies to (empty for path-less requests).
     pub path: String,
-    /// Output format name (see [`crate::formatter::Format`]); defaults to `json`.
-    #[serde(default = "default_format")]
-    pub format: String,
+    /// Output format; defaults to `json`.
+    #[serde(default)]
+    pub format: Format,
     /// Whether this is the last agent-rendered segment in the prompt.
     #[serde(default)]
     pub is_last: bool,
@@ -79,29 +78,25 @@ pub struct OneshotRequest {
     pub is_root: bool,
 }
 
-/// Default format for oneshot requests.
-fn default_format() -> String {
-    "json".to_owned()
-}
-
 /// Empty language list response body.
 const EMPTY_LANGUAGES_JSON: &str = "{\"languages\":[]}";
 
 /// Handle a parsed oneshot request in-process.
 ///
 /// # Errors
-/// Returns an error if the format is invalid or the requested detection fails.
+/// Returns an error if the requested detection or rendering fails.
 pub fn handle_oneshot_request(request: &OneshotRequest) -> Result<String> {
-    match request.request_type {
-        OneshotKind::GitStatus => handle_oneshot_git_parsed(request),
-        OneshotKind::LanguageDetect => handle_oneshot_language_parsed(request),
-        OneshotKind::Directory => handle_oneshot_directory_parsed(request),
-        OneshotKind::Duration => handle_oneshot_duration_parsed(request),
-        OneshotKind::Character => handle_oneshot_character_parsed(request),
-        OneshotKind::Hostname => handle_oneshot_hostname_parsed(request),
-        OneshotKind::Username => handle_oneshot_username_parsed(request),
-        OneshotKind::ExitStatus => handle_oneshot_exit_status_parsed(request),
-    }
+    let _timer = (request.request_type == OneshotKind::GitStatus)
+        .then(|| crate::profiling::Timer::new("git_total"));
+    let format = request.format;
+    let (config, theme) = load_config_and_theme(request);
+
+    let Some(response) = response_for(request, &config, &theme)? else {
+        return Ok(empty_language_output(format));
+    };
+    let ctx = RenderContext::new(&config, &theme, request_position(request))
+        .with_palette(crate::palette::active_palette(&config));
+    create_formatter(format).render(&response, &ctx)
 }
 
 /// Parse a JSON oneshot request and handle it (test/schema entry point).
@@ -109,46 +104,48 @@ pub fn handle_oneshot_request(request: &OneshotRequest) -> Result<String> {
 /// # Errors
 /// Returns an error on invalid JSON or if [`handle_oneshot_request`] fails.
 pub(super) fn handle_oneshot(request: &str) -> Result<String> {
-    let parsed: OneshotRequest = serde_json::from_str(request)
-        .map_err(|e| Error::ipc(format!("Invalid JSON in oneshot request: {e}")))?;
+    let parsed: OneshotRequest = serde_json::from_str(request)?;
 
     handle_oneshot_request(&parsed)
 }
 
-/// Handle a oneshot git status request.
-fn handle_oneshot_git_parsed(request: &OneshotRequest) -> Result<String> {
-    let _timer = crate::profiling::Timer::new("git_total");
-    let format = parse_format(&request.format)?;
-    let position = request_position(request);
-    let benchmark_mode = request.benchmark_mode && matches!(format, Format::Json);
+/// Build the response a request asks for; `None` means there is nothing to
+/// render (no languages detected or language detection disabled).
+fn response_for(
+    request: &OneshotRequest,
+    config: &Config,
+    theme: &ThemeConfig,
+) -> Result<Option<Response>> {
+    Ok(match request.request_type {
+        OneshotKind::GitStatus => Some(git_response(request, config)?),
+        OneshotKind::LanguageDetect => language_response(request, config, theme),
+        OneshotKind::Directory => Some(Response::Directory {
+            cwd: request.path.clone(),
+            read_only: crate::fs_util::directory_is_read_only(Path::new(&request.path)),
+        }),
+        OneshotKind::Duration => Some(Response::Duration {
+            duration_ms: request.duration_ms,
+        }),
+        OneshotKind::Character => Some(Response::Character {
+            success: request.success.unwrap_or(false),
+        }),
+        OneshotKind::Hostname => Some(Response::Hostname {
+            hostname: request.hostname.clone().unwrap_or_default(),
+            is_ssh: request.is_ssh,
+        }),
+        OneshotKind::Username => Some(Response::Username {
+            username: request.username.clone().unwrap_or_default(),
+            is_root: request.is_root,
+        }),
+        OneshotKind::ExitStatus => Some(Response::ExitStatus {
+            success: request.success.unwrap_or(false),
+        }),
+    })
+}
 
-    // Benchmark mode skips config/theme file I/O.
-    let config = if benchmark_mode {
-        Config::default()
-    } else {
-        load_config().unwrap_or_else(|e| {
-            crate::debug::warn_fallback("Config loading", "using defaults", &e);
-            Config::default()
-        })
-    };
+/// Git status for the requested path, or the error response the agent would send.
+fn git_response(request: &OneshotRequest, config: &Config) -> Result<Response> {
     crate::language::version::set_version_cache_ttl(config.language.cache_ttl_hours.get());
-
-    let theme = if benchmark_mode || matches!(format, Format::Json) {
-        ThemeConfig::default()
-    } else {
-        load_theme(config.ui.theme.as_str()).unwrap_or_else(|e| {
-            let theme_name = &config.ui.theme;
-            crate::debug::warn_fallback(
-                &format!("Theme '{theme_name}' loading"),
-                "using defaults",
-                &e,
-            );
-            ThemeConfig::default()
-        })
-    };
-
-    let palette = crate::palette::active_palette(&config);
-    let ctx = RenderContext::new(&config, &theme, position).with_palette(palette);
 
     // `skip_paths` gates the repository root, like the agent. Resolved from the
     // canonical path (best effort), as with the IPC `SafePath`, so `~/` and
@@ -160,195 +157,92 @@ fn handle_oneshot_git_parsed(request: &OneshotRequest) -> Result<String> {
         && crate::git::find_repo_root(&canonical_request_path)
             .is_none_or(|root| config.git.is_enabled_for(&root));
     if !git_allowed {
-        let response = Response::Error {
+        return Ok(Response::Error {
             message: "Git segment disabled via config".to_owned(),
-        };
-        return create_formatter(format).render(&response, &ctx);
+        });
     }
 
-    let Some(crate::git::CompleteStatus { status, .. }) = ({
-        let _t = crate::profiling::Timer::new("git_load_repository");
+    let _t = crate::profiling::Timer::new("git_load_repository");
+    let Some(crate::git::CompleteStatus { status, .. }) =
         crate::git::status::load_repository_state_with(
             &crate::git::native::NativeGitBackend,
-            std::path::Path::new(&request.path),
+            request_path,
             None,
             config.git.max_ahead_behind,
             config.git.stash_enabled,
             std::time::Duration::from_secs(config.git.timeout_seconds.get()),
-        )
-        .map_err(|e| Error::ipc(format!("Git error: {e}")))?
-    }) else {
-        let response = Response::Error {
+        )?
+    else {
+        return Ok(Response::Error {
             message: "Not in a git repository".to_owned(),
-        };
-        return create_formatter(format).render(&response, &ctx);
+        });
     };
 
-    let response_status = if config.git.show_upstream {
+    Ok(Response::RepositoryStatus(if config.git.show_upstream {
         status
     } else {
         status.without_upstream()
-    };
-
-    let response = Response::RepositoryStatus(response_status);
-
-    create_formatter(format).render(&response, &ctx)
+    }))
 }
 
-/// Handle a oneshot language detection request.
-fn handle_oneshot_language_parsed(request: &OneshotRequest) -> Result<String> {
-    let format = parse_format(&request.format)?;
-    let position = request_position(request);
-
-    let config = load_config().unwrap_or_else(|e| {
-        crate::debug::warn_fallback("Config loading", "using defaults", &e);
-        Config::default()
-    });
-
+/// Detected languages for the requested path, or `None` when there are none to show.
+fn language_response(
+    request: &OneshotRequest,
+    config: &Config,
+    theme: &ThemeConfig,
+) -> Option<Response> {
     if !config.language.enabled {
-        return match format {
-            Format::Json => Ok(EMPTY_LANGUAGES_JSON.to_owned()),
-            _ => Ok(String::new()),
-        };
+        return None;
     }
-
-    let theme = load_theme(config.ui.theme.as_str()).unwrap_or_else(|e| {
-        let theme_name = &config.ui.theme;
-        crate::debug::warn_fallback(
-            &format!("Theme '{theme_name}' loading"),
-            "using defaults",
-            &e,
-        );
-        ThemeConfig::default()
-    });
 
     // Resolve the project root like the agent's lang handler so answers match.
     let root = crate::language::project_root(Path::new(&request.path)).into_path();
     let detected_languages =
         Detector::detect_directory_bounded(&root, config.language.detection_mode);
-
     if detected_languages.is_empty() {
-        return match format {
-            Format::Json => Ok(EMPTY_LANGUAGES_JSON.to_owned()),
-            _ => Ok(String::new()),
-        };
+        return None;
     }
 
-    let languages_info = crate::language::display::build_language_display_info_at(
+    let languages = crate::language::display::build_language_display_info_at(
         &detected_languages,
-        &theme,
+        theme,
         &config.language,
         Some(root.as_path()),
         None,
     );
+    (!languages.is_empty()).then_some(Response::Language { languages })
+}
 
-    if languages_info.is_empty() {
-        return match format {
-            Format::Json => Ok(EMPTY_LANGUAGES_JSON.to_owned()),
-            _ => Ok(String::new()),
-        };
+/// The output for a language request with nothing to show.
+fn empty_language_output(format: Format) -> String {
+    if Format::is_json(format) {
+        EMPTY_LANGUAGES_JSON.to_owned()
+    } else {
+        String::new()
+    }
+}
+
+/// Load config (falling back to defaults) and the theme the request renders with.
+///
+/// The theme file is read only when something consumes it: non-JSON output, or
+/// the language list, whose JSON carries theme-derived colors and icons.
+/// Benchmark-mode JSON git requests skip all config and theme file I/O.
+fn load_config_and_theme(request: &OneshotRequest) -> (Config, ThemeConfig) {
+    let json = Format::is_json(request.format);
+    if request.benchmark_mode && json && request.request_type == OneshotKind::GitStatus {
+        return (Config::default(), ThemeConfig::default());
     }
 
-    let response = Response::Language {
-        languages: languages_info,
-    };
-
-    let ctx = RenderContext::new(&config, &theme, position)
-        .with_palette(crate::palette::active_palette(&config));
-    create_formatter(format).render(&response, &ctx)
-}
-
-/// Handle a oneshot directory request.
-fn handle_oneshot_directory_parsed(request: &OneshotRequest) -> Result<String> {
-    let format = parse_format(&request.format)?;
-    let position = request_position(request);
-    let (config, theme) = load_config_and_theme(format);
-
-    let cwd = request.path.clone();
-    let read_only = crate::fs_util::directory_is_read_only(Path::new(&cwd));
-
-    let response = Response::Directory { cwd, read_only };
-    render_response(&response, format, &config, &theme, position)
-}
-
-/// Handle a oneshot duration request.
-fn handle_oneshot_duration_parsed(request: &OneshotRequest) -> Result<String> {
-    let format = parse_format(&request.format)?;
-    let position = request_position(request);
-    let (config, theme) = load_config_and_theme(format);
-
-    let response = Response::Duration {
-        duration_ms: request.duration_ms,
-    };
-    render_response(&response, format, &config, &theme, position)
-}
-
-/// Handle a oneshot character request.
-fn handle_oneshot_character_parsed(request: &OneshotRequest) -> Result<String> {
-    let format = parse_format(&request.format)?;
-    let position = request_position(request);
-    let (config, theme) = load_config_and_theme(format);
-
-    let response = Response::Character {
-        success: request.success.unwrap_or(false),
-    };
-    render_response(&response, format, &config, &theme, position)
-}
-
-/// Handle a oneshot hostname request.
-fn handle_oneshot_hostname_parsed(request: &OneshotRequest) -> Result<String> {
-    let format = parse_format(&request.format)?;
-    let position = request_position(request);
-    let (config, theme) = load_config_and_theme(format);
-
-    let response = Response::Hostname {
-        hostname: request.hostname.clone().unwrap_or_default(),
-        is_ssh: request.is_ssh,
-    };
-    render_response(&response, format, &config, &theme, position)
-}
-
-/// Handle a oneshot status request.
-fn handle_oneshot_exit_status_parsed(request: &OneshotRequest) -> Result<String> {
-    let format = parse_format(&request.format)?;
-    let position = request_position(request);
-    let (config, theme) = load_config_and_theme(format);
-
-    let response = Response::ExitStatus {
-        success: request.success.unwrap_or(false),
-    };
-    render_response(&response, format, &config, &theme, position)
-}
-
-/// Handle a oneshot username request.
-fn handle_oneshot_username_parsed(request: &OneshotRequest) -> Result<String> {
-    let format = parse_format(&request.format)?;
-    let position = request_position(request);
-    let (config, theme) = load_config_and_theme(format);
-
-    let response = Response::Username {
-        username: request.username.clone().unwrap_or_default(),
-        is_root: request.is_root,
-    };
-    render_response(&response, format, &config, &theme, position)
-}
-
-/// Parse a format name; unknown names error rather than defaulting to JSON.
-fn parse_format(format_str: &str) -> Result<Format> {
-    Format::from_str(format_str)
-}
-
-/// Load config (falling back to defaults) and the active theme, skipping theme
-/// file I/O for JSON output where the theme is never rendered.
-fn load_config_and_theme(format: Format) -> (Config, ThemeConfig) {
     let config = load_config().unwrap_or_else(|e| {
         crate::debug::warn_fallback("Config loading", "using defaults", &e);
         Config::default()
     });
 
-    let theme = if matches!(format, Format::Json) {
-        ThemeConfig::default()
-    } else {
+    let theme_consumed = match request.request_type {
+        OneshotKind::LanguageDetect => config.language.enabled,
+        _ => !json,
+    };
+    let theme = if theme_consumed {
         load_theme(config.ui.theme.as_str()).unwrap_or_else(|e| {
             let theme_name = &config.ui.theme;
             crate::debug::warn_fallback(
@@ -358,6 +252,8 @@ fn load_config_and_theme(format: Format) -> (Config, ThemeConfig) {
             );
             ThemeConfig::default()
         })
+    } else {
+        ThemeConfig::default()
     };
 
     (config, theme)
@@ -371,19 +267,6 @@ fn request_position(request: &OneshotRequest) -> SegmentPosition {
     )
 }
 
-/// Render a response through the standard oneshot render context.
-fn render_response(
-    response: &Response,
-    format: Format,
-    config: &Config,
-    theme: &ThemeConfig,
-    position: SegmentPosition,
-) -> Result<String> {
-    let ctx = RenderContext::new(config, theme, position)
-        .with_palette(crate::palette::active_palette(config));
-    create_formatter(format).render(response, &ctx)
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -392,19 +275,7 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
     #![allow(missing_docs)]
 
-    use super::{handle_oneshot, parse_format};
-
-    /// An unknown `--format` must error, not silently coerce to JSON.
-    #[test]
-    fn parse_format_rejects_unknown_format() {
-        let err = parse_format("not-a-real-format")
-            .expect_err("an unrecognized format string must be rejected, not defaulted to JSON");
-
-        assert!(
-            err.to_string().contains("not-a-real-format"),
-            "error should name the unrecognized format, got: {err}"
-        );
-    }
+    use super::handle_oneshot;
 
     /// A oneshot request with an invalid format must fail, not render as JSON.
     #[test]

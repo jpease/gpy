@@ -237,7 +237,7 @@ fn apply_socket_override(socket: Option<PathBuf>) {
 }
 
 /// Request fields every `oneshot` subcommand shares.
-fn base_oneshot_request(
+const fn base_oneshot_request(
     request_type: OneshotKind,
     path: String,
     segment: SegmentArgs,
@@ -245,7 +245,7 @@ fn base_oneshot_request(
     OneshotRequest {
         request_type,
         path,
-        format: segment.format.as_str().to_owned(),
+        format: segment.format,
         is_last: !segment.not_last,
         is_first: segment.first,
         benchmark_mode: false,

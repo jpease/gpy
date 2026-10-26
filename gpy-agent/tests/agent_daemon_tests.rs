@@ -84,6 +84,49 @@ async fn test_oneshot_language_command() -> Result<()> {
     Ok(())
 }
 
+/// Every oneshot kind must render in JSON and in ANSI.
+#[tokio::test]
+#[serial]
+async fn test_oneshot_every_kind_renders_json_and_ansi() -> Result<()> {
+    let _env = set_test_env();
+    let path = env!("CARGO_MANIFEST_DIR");
+    let extras = [
+        ("git_status", serde_json::json!({})),
+        ("language_detect", serde_json::json!({})),
+        ("directory", serde_json::json!({})),
+        ("duration", serde_json::json!({"duration_ms": 2_500_u64})),
+        ("character", serde_json::json!({"success": true})),
+        (
+            "hostname",
+            serde_json::json!({"hostname": "box", "is_ssh": true}),
+        ),
+        (
+            "username",
+            serde_json::json!({"username": "me", "is_root": false}),
+        ),
+        ("exit_status", serde_json::json!({"success": false})),
+    ];
+
+    for (kind, extra) in extras {
+        for format in ["json", "ansi"] {
+            let mut request = serde_json::json!({"type": kind, "path": path, "format": format});
+            request
+                .as_object_mut()
+                .expect("request is an object")
+                .extend(extra.as_object().expect("extras are an object").clone());
+            let output = Agent::handle_oneshot(&request.to_string())
+                .map_err(|e| gpy_agent::Error::ipc(format!("{kind}/{format} failed: {e}")))?;
+            if format == "json" {
+                serde_json::from_str::<serde_json::Value>(&output).map_err(|e| {
+                    gpy_agent::Error::ipc(format!("{kind} JSON output is not JSON: {e}"))
+                })?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[tokio::test]
 #[serial]
 async fn test_oneshot_error_handling() -> Result<()> {
