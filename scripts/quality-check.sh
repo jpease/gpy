@@ -219,7 +219,7 @@ run_shell_tests() {
         return 0
     fi
     if shell_part fish; then
-        run_check "Fish tests" "./scripts/test_fish.sh" || true
+        run_check "Fish tests" "./scripts/test-fish.sh" || true
     fi
 
     SHELL_TEST_AGENT_DIR="${CARGO_TARGET_DIR:-$PWD/gpy-agent/target}/debug"
@@ -266,7 +266,7 @@ run_repo_checks() {
     run_check "License metadata" "./scripts/check-license-metadata.sh" || true
     run_check "Privacy patterns" "./scripts/check-privacy-patterns.sh" || true
     run_check "Documentation links" "./scripts/check-doc-links.sh" || true
-    run_check "File size" "python3 ./scripts/check_file_size.py" || true
+    run_check "File size" "python3 ./scripts/check-file-size.py" || true
 }
 
 run_fish_lint() {

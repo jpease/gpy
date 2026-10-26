@@ -1,4 +1,4 @@
-# Fish shell binaries (at root)
+# Release binaries (at root)
 /bin/
 
 # Allow src/bin directories
@@ -19,9 +19,8 @@ target/
 !gpy-agent/tests/snapshots/*.snap
 !gpy-agent/src/theme/export/snapshots/*.snap
 lcov.info
-# Anchored: both are scratch output written at the repo root by scripts/bench.sh
-# and scripts/ci-bench.sh. Unanchored, `bench-results/` also swallowed the
-# tracked docs/dev/performance/bench-results/ archive.
+# Anchored: scratch output written at the repo root by scripts/bench.sh
+# and scripts/ci-bench.sh.
 /bench-results.json
 /bench-results/
 
@@ -55,37 +54,14 @@ private.just
 __pycache__/
 *.pyc
 
-# Documentation build
-book/
-
 # Backup files
 *.bak
 *.orig
 *.rej
 
-# Erlang crash dumps (from language detection testing)
-erl_crash.dump
-
-# moon
-.moon/cache
-.moon/docker
-.moon/cache
-.moon/docker
-
-# Local database files
-.dolt/
-*.db
-
-# Legacy Beads local state (no longer used by this repository)
-.beads/
-.beads-hooks/
-
 # Isolated fixture $HOME used by demo/setup.fish to record demo/demo.tape
 demo/.fixture-home/
 
-# Language-server and linter caches
-.ruby-lsp/
-.ruff_cache/
 
 # GitNexus code-intelligence index, rebuilt per clone
 .gitnexus/

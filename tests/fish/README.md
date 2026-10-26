@@ -13,7 +13,7 @@ run through all three shells by `tests/bash/shell_contract.test.bash`.
 ## Running
 
 ```bash
-./scripts/test_fish.sh                     # syntax, formatting, then every *.test.fish
+./scripts/test-fish.sh                     # syntax, formatting, then every *.test.fish
 fish tests/fish/init_integration.test.fish # one file, from any directory
 ```
 

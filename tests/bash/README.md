@@ -39,7 +39,7 @@ test_finish "one-line summary"   # exit 1 if any fail, else PASS: summary
   locally, exit 1 under `CI`. `test_skip_part "reason"` does the same for one
   section of a test: it returns locally so the rest still runs. Never print
   `SKIP:` or `exit 0` on a missing prerequisite directly; `quality-check.sh`
-  and `test_fish.sh` list every test whose output has a `SKIP:` line.
+  and `test-fish.sh` list every test whose output has a `SKIP:` line.
 - All waits are bounded polls (`shell_e2e_poll SECONDS CMD...`); do not add
   fixed sleeps for synchronisation. A sleep stays only where elapsed time is
   the behaviour (a measured duration, a TTL) or a window in which nothing may

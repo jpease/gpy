@@ -929,7 +929,7 @@ cargo test --quiet
 just lint
 
 # Fish integration tests
-./scripts/test_fish.sh
+./scripts/test-fish.sh
 
 # Interactive sessions on a real pseudo-terminal (idle repaint, two shells,
 # a config reload reaching a Fish client)
@@ -998,7 +998,7 @@ time git status --porcelain
 1. **Read this doc**
 2. **Read module docs**: `gpy-agent/src/agent/mod.rs`, `gpy-agent/src/watcher/mod.rs`
 3. **Trace a request**: Follow git status request through entire stack
-4. **Run tests**: `cargo test`, `./scripts/test_fish.sh`
+4. **Run tests**: `cargo test`, `./scripts/test-fish.sh`
 5. **Read [add-new-segment.md](add-new-segment.md)**: Learn how to add segments
 6. **Pick a good first issue**: Look for `good-first-issue` label
 

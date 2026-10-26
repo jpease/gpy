@@ -13,7 +13,7 @@ Closes #ISSUE_NUMBER
 ```
 
 Which parts did you run, and did they pass? If you ran a narrower command
-instead (e.g. `(cd gpy-agent && cargo nextest run)` or `./scripts/test_fish.sh`),
+instead (e.g. `(cd gpy-agent && cargo nextest run)` or `./scripts/test-fish.sh`),
 say which.
 
 ## Checklist

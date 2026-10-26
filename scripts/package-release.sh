@@ -263,7 +263,7 @@ missing=0
 require_entry() {
     local listing="$1" archive="$2" entry="$3"
     if ! grep -qxF "$entry" <<<"$listing"; then
-        echo "✗ $archive is missing $entry" >&2
+        echo "FAIL: $archive is missing $entry" >&2
         missing=$((missing + 1))
     fi
 }

@@ -133,7 +133,7 @@ anchors_of() {
 }
 
 report_broken() {
-    echo "✗ $1:$2 -> $3"
+    echo "FAIL: $1:$2 -> $3"
     [[ -n "$4" ]] && printf '  %s\n' "$4"
     broken=$((broken + 1))
     return 0
@@ -258,7 +258,7 @@ if [[ $broken -ne 0 ]]; then
 fi
 
 if [[ $failures -eq 0 ]]; then
-    echo "✓ All repository-relative links and plain-text file references in $files tracked Markdown files resolve"
+    echo "ok: all repository-relative links and plain-text file references in $files tracked Markdown files resolve"
     exit 0
 fi
 

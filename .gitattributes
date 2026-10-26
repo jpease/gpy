@@ -2,4 +2,3 @@
 # Windows checkout otherwise turns the embedded theme/palette TOML
 # (include_str!) and the docs and fixtures the tests read into CRLF.
 * text=auto eol=lf
-*.sh text eol=lf

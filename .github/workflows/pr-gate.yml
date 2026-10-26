@@ -264,7 +264,7 @@ jobs:
         run: |
           set -euo pipefail
           base="${BASE_SHA:-$(git merge-base origin/main HEAD)}"
-          python3 scripts/check_new_allows.py "$base"
+          python3 scripts/check-new-allows.py "$base"
 
   gate-result:
     # `always()` so a failed or cancelled leg turns this red instead of

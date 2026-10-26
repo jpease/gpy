@@ -244,7 +244,7 @@ function init_test_env
 
     # Test this checkout's gpy-agent, never an installed one: a standalone
     # `fish tests/fish/<file>` otherwise resolves whatever the caller's PATH
-    # (or fish_user_paths) holds. Same rule as scripts/test_fish.sh and
+    # (or fish_user_paths) holds. Same rule as scripts/test-fish.sh and
     # tests/lib/shell_e2e.sh.
     set -l target_dir $__gpy_root/gpy-agent/target
     test -n "$CARGO_TARGET_DIR"; and set target_dir $CARGO_TARGET_DIR

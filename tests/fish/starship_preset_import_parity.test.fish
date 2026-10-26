@@ -45,7 +45,7 @@
 #     `__spi_color_sig`) — same two-pronged method as starship_parity.test.fish.
 #
 # NAMESPACING
-#   `scripts/test_fish.sh` runs every `tests/fish/*.test.fish` file in its own
+#   `scripts/test-fish.sh` runs every `tests/fish/*.test.fish` file in its own
 #   `fish -c '... source FILE'` invocation (verified by reading the runner),
 #   so this file's functions/globals never coexist with starship_parity.
 #   test.fish's `__sp_*`/`SP_*` names in the same process. This file still

@@ -30,7 +30,7 @@ set -l script_dir (dirname (status --filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
 
-# Resolve a real gpy-agent binary. Prefer the debug build test_fish.sh
+# Resolve a real gpy-agent binary. Prefer the debug build test-fish.sh
 # ensures exists (matches how other Fish tests get a known-fresh binary
 # rather than trusting whatever is on the developer's PATH); fall back to
 # PATH for a direct `fish tests/fish/...` invocation.

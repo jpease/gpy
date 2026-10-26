@@ -86,7 +86,7 @@ test-rust:
 
 # Run Fish integration tests
 test-fish:
-    ./{{scripts_dir}}/test_fish.sh
+    ./{{scripts_dir}}/test-fish.sh
 
 # Enforce performance budgets: Rust micro-benchmarks, then prompt latency and agent memory
 bench-ci:

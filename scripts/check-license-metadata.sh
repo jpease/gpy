@@ -11,16 +11,16 @@ failures=0
 check_field() {
     local label="$1" file="$2" pattern="$3"
     if [[ ! -f "$file" ]]; then
-        echo "✗ $label: $file not found"
+        echo "FAIL: $label: $file not found"
         failures=$((failures + 1))
         return
     fi
     local found
     found="$(grep -oE "$pattern" "$file" | head -1 || true)"
     if [[ "$found" == *"$EXPECTED"* ]]; then
-        echo "✓ $label ($file)"
+        echo "ok: $label ($file)"
     else
-        echo "✗ $label ($file): expected \"$EXPECTED\", found \"${found:-<no match>}\""
+        echo "FAIL: $label ($file): expected \"$EXPECTED\", found \"${found:-<no match>}\""
         failures=$((failures + 1))
     fi
 }
@@ -28,10 +28,10 @@ check_field() {
 check_field "Cargo.toml" "gpy-agent/Cargo.toml" '^license = "[^"]*"'
 
 if [[ ! -f LICENSE ]] || ! grep -q "GNU GENERAL PUBLIC LICENSE" LICENSE || ! grep -q "Version 3" LICENSE; then
-    echo "✗ LICENSE: missing or not GPLv3 text"
+    echo "FAIL: LICENSE: missing or not GPLv3 text"
     failures=$((failures + 1))
 else
-    echo "✓ LICENSE (GPLv3 text present)"
+    echo "ok: LICENSE (GPLv3 text present)"
 fi
 
 # Non-GPL declarations outside dependency manifests (deny.toml lists *dependency* licenses).
@@ -41,13 +41,13 @@ stray="$(find . \
     grep -v -e 'Cargo.lock' -e 'deny.toml' | \
     xargs grep -nE '"license"[[:space:]]*:[[:space:]]*"(MIT|Apache-2.0|BSD-[23]-Clause)"|^license = "(MIT|Apache-2.0|BSD-[23]-Clause)"' 2>/dev/null || true)"
 if [[ -n "$stray" ]]; then
-    echo "✗ Stray non-GPL license declaration(s) found:"
+    echo "FAIL: Stray non-GPL license declaration(s) found:"
     echo "$stray"
     failures=$((failures + 1))
 fi
 
 if [[ $failures -eq 0 ]]; then
-    echo "All license declarations agree on $EXPECTED"
+    echo "ok: all license declarations agree on $EXPECTED"
     exit 0
 else
     echo "$failures license metadata check(s) failed"

@@ -37,35 +37,21 @@ case "${1:-}" in
         ;;
     --uninstall)
         if command -v prek >/dev/null 2>&1; then
-            echo "[gpy] Uninstalling prek hooks..."
-            # commit-msg: older installs also had one.
-            prek uninstall "${PREK_HOOK_FLAGS[@]}" --hook-type commit-msg
-        fi
-
-        if git config --get core.hooksPath >/dev/null 2>&1; then
-            git config --unset core.hooksPath
-            echo "[gpy] Removed custom hooksPath; default git hooks restored."
-        else
-            echo "[gpy] No custom hooksPath set."
+            echo "Uninstalling prek hooks..."
+            prek uninstall "${PREK_HOOK_FLAGS[@]}"
         fi
         exit 0
         ;;
     "")
         if ! command -v prek >/dev/null 2>&1; then
-            echo "[gpy] 'prek' not found. Installing prek via cargo..."
-            cargo install prek
+            echo "FAIL: prek not found; install it with 'cargo install prek'" >&2
+            exit 1
         fi
 
-        # prek uses the default hooks dir; drop a legacy .githooks hooksPath.
-        if [[ "$(git config --get core.hooksPath || true)" == ".githooks" ]]; then
-            git config --unset core.hooksPath
-            echo "[gpy] Cleaned up legacy .githooks configuration."
-        fi
-
-        echo "[gpy] Installing prek hooks..."
+        echo "Installing prek hooks..."
         prek install "${PREK_HOOK_FLAGS[@]}"
 
-        echo "[gpy] Git hooks installed successfully via prek."
+        echo "ok: git hooks installed successfully via prek"
         ;;
     *)
         usage

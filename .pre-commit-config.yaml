@@ -35,7 +35,7 @@ repos:
     -   id: new-allows
         name: new-allows
         description: Reject a newly added allow attribute that has no reason
-        entry: python3 scripts/check_new_allows.py --staged
+        entry: python3 scripts/check-new-allows.py --staged
         language: system
         files: '\.rs$'
         pass_filenames: false
@@ -43,7 +43,7 @@ repos:
     -   id: file-size
         name: file-size
         description: Rust files stay under 800 lines; listed larger files may not grow
-        entry: python3 scripts/check_file_size.py
+        entry: python3 scripts/check-file-size.py
         language: system
         files: '\.rs$|file-size-allowlist\.txt$'
         pass_filenames: false

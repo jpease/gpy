@@ -24,7 +24,7 @@ its current size, and refuses if the list already exists.
 
 Usage, from anywhere in the repository (paths are taken from its root; an
 explicit --allowlist is taken from the current directory):
-    check_file_size.py [--cap N] [--allowlist PATH] [--exclude GLOB ...] [--update | --init]
+    check-file-size.py [--cap N] [--allowlist PATH] [--exclude GLOB ...] [--update | --init]
 Exit 0 clean, 1 on a violation, 2 on a usage error. Standard library only.
 """
 
@@ -135,7 +135,7 @@ def write_allowlist(path, entries, cap):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(
-            f"# Rust files over the {cap}-line cap (check_file_size.py). A listed file may\n"
+            f"# Rust files over the {cap}-line cap (check-file-size.py). A listed file may\n"
             "# not grow; lower its size when it shrinks. Never add a file or raise a size\n"
             "# without saying why in the commit.\n"
         )

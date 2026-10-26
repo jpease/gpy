@@ -3,8 +3,8 @@
 """Fail when a change adds an `allow` attribute without a `reason`.
 
 Usage:
-    check_new_allows.py --staged          # pre-commit: staged changes
-    check_new_allows.py <base-rev>        # CI / pre-push: <base-rev>...HEAD
+    check-new-allows.py --staged          # pre-commit: staged changes
+    check-new-allows.py <base-rev>        # CI / pre-push: <base-rev>...HEAD
 
 Only lines the change adds are checked, so existing allows are left alone.
 An attribute is every `#[...]` / `#![...]` that starts on an added line, read

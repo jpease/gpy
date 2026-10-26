@@ -28,7 +28,7 @@ SELF_PATHS='scripts/check-privacy-patterns\.sh|tests/bash/privacy_patterns\.test
 failures=0
 
 report() {
-    echo "✗ $1"
+    echo "FAIL: $1"
     printf '%s\n' "$2" | sed 's/^/  /'
     failures=$((failures + 1))
 }
@@ -86,7 +86,7 @@ scan_socket_paths
 scan_private_refs
 
 if [[ $failures -eq 0 ]]; then
-    echo "✓ No workstation or private-project references in tracked files"
+    echo "ok: no workstation or private-project references in tracked files"
     exit 0
 fi
 
