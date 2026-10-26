@@ -52,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `GPY_CONFIG_PATH`, `XDG_CONFIG_HOME` or `HOME` that is not valid UTF-8 is
+  no longer rewritten with replacement characters, so the config file under it
+  is found, loaded and saved.
 - Bash and Zsh now fall back to a 100 ms duration threshold, as Fish and the
   exported theme do, instead of 2000 ms before a theme export runs.
 - Fish hostname and username segments no longer print a `test` error on every

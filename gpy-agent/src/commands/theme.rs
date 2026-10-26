@@ -124,7 +124,7 @@ fn apply_forced_switch(
     name: &str,
     original: &config::Config,
     config: &mut config::Config,
-    path: &str,
+    path: &Path,
     theme: &ThemeConfig,
     pending: PendingLayout,
     recommended_detection: Option<config::types::DetectionMode>,
@@ -474,7 +474,7 @@ fn validate_theme_name(theme_name: &str) -> std::result::Result<(), Failure> {
 }
 
 fn validate_theme_file(path: &Path) -> std::result::Result<(), Failure> {
-    let theme = config::loader::load_theme_from_path(&path.display().to_string())
+    let theme = config::loader::load_theme_from_path(path)
         .map_err(|error| classify_load_failure(error, Some(path)))?;
     let config = config::loader::load_config().unwrap_or_default();
     let palette = crate::palette::active_palette(&config);

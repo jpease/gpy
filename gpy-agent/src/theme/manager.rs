@@ -640,7 +640,7 @@ impl ThemeManager {
     /// # Errors
     /// Returns an error if the file cannot be read or the TOML cannot be parsed.
     fn load_from_path(path: &Path) -> Result<ThemeConfig> {
-        crate::config::loader::load_theme_from_path(&path.display().to_string())
+        crate::config::loader::load_theme_from_path(path)
     }
 
     /// Resolve `theme_name` (user, plugin, then builtin), shared by daemon and oneshot.
@@ -1009,7 +1009,8 @@ mod tests {
             // fallback, exercised via a path that does not exist on disk.
             let synthetic_path = format!("/nonexistent/path/{name}.toml");
             assert!(
-                crate::config::loader::load_theme_from_path(&synthetic_path).is_ok(),
+                crate::config::loader::load_theme_from_path(std::path::Path::new(&synthetic_path))
+                    .is_ok(),
                 "load_theme_from_path should resolve embedded content for \"{name}\" via its BUILTIN_THEMES entry"
             );
 

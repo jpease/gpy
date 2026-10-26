@@ -129,7 +129,7 @@ fn setup_test_env() -> (TempDir, PathBuf) {
     let config_path = gpy_config_dir.join("config.toml");
     let default_config = Config::default();
     loader::save_config(
-        config_path.to_str().expect("config path utf-8"),
+        &config_path,
         &default_config,
         &default_config,
         &["ui.show_icons"],

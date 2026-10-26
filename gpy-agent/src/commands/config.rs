@@ -6,7 +6,6 @@ use super::utils::{
 };
 use crate::config::plugin_segments::{self, PLUGIN_KEY_PREFIX};
 use crate::{Error, Result, config};
-use std::path::PathBuf;
 use std::process::Command;
 
 /// Contents of a config file freshly created by `gpy config open`.
@@ -156,7 +155,7 @@ fn validate_theme_selection(name: &str) -> Result<()> {
 /// # Errors
 /// Returns an error if the file cannot be created or the editor fails.
 pub fn open() -> Result<()> {
-    let config_path = PathBuf::from(active_config_path()?);
+    let config_path = active_config_path()?;
 
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent)

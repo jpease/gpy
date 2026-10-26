@@ -11,24 +11,17 @@ use std::path::{Path, PathBuf};
 ///
 /// # Errors
 /// Returns an error if no candidate path can be constructed.
-#[allow(
-    clippy::map_err_ignore,
-    reason = "into_string's error is the OsString itself, which is not an Error and cannot be a source"
-)]
-pub fn active_config_path() -> Result<String> {
+pub fn active_config_path() -> Result<PathBuf> {
     let paths = config::schema::get_config_paths();
 
-    let (write_path, _existing) =
-        config::schema::resolve_active_config(&paths).ok_or_else(|| {
+    config::schema::resolve_active_config(&paths)
+        .map(|(write_path, _existing)| write_path)
+        .ok_or_else(|| {
             Error::config(
                 "Unable to determine a config path from GPY_CONFIG_PATH, XDG_CONFIG_HOME, or HOME"
                     .to_owned(),
             )
-        })?;
-    write_path
-        .into_os_string()
-        .into_string()
-        .map_err(|_| Error::config("Config path contains invalid UTF-8".to_owned()))
+        })
 }
 
 /// Load the config at `path`; a missing file yields defaults, but an invalid
@@ -36,12 +29,13 @@ pub fn active_config_path() -> Result<String> {
 ///
 /// # Errors
 /// Returns an error if the file exists but cannot be read, parsed, or validated.
-pub fn load_active_config(path: &str) -> Result<config::Config> {
+pub fn load_active_config(path: &Path) -> Result<config::Config> {
     match std::fs::read_to_string(path) {
         Ok(contents) => config::loader::parse_config_toml(&contents),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(config::Config::default()),
         Err(e) => Err(Error::config(format!(
-            "Failed to read config file {path}: {e}"
+            "Failed to read config file {}: {e}",
+            path.display()
         ))),
     }
 }
@@ -52,7 +46,7 @@ pub fn load_active_config(path: &str) -> Result<config::Config> {
 /// # Errors
 /// Returns an error if validation or the write fails.
 pub fn save_config_to(
-    path: &str,
+    path: &Path,
     original: &config::Config,
     updated: &config::Config,
     explicit_keys: &[&str],

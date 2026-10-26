@@ -23,8 +23,7 @@ fn golden_dir() -> PathBuf {
 
 fn load_default_theme() -> ThemeConfig {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../config/themes/default.toml");
-    gpy_agent::config::loader::load_theme_from_path(&path.display().to_string())
-        .expect("load default.toml")
+    gpy_agent::config::loader::load_theme_from_path(&path).expect("load default.toml")
 }
 
 /// The repo's default palette; `active_palette` would pick up the developer's

@@ -434,9 +434,7 @@ fn set_test_env() -> TestEnv {
     let config_path = gpy_config_dir.join("config.toml");
     let default_config = Config::default();
     loader::save_config(
-        config_path
-            .to_str()
-            .expect("config path should be valid UTF-8"),
+        &config_path,
         &default_config,
         &default_config,
         &["ui.show_icons"],

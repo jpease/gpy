@@ -391,7 +391,7 @@ impl Harness {
     fn fresh_config(&self) -> Config {
         self.active_config_file()
             .map_or_else(Config::default, |path| {
-                load_config_from_file(&path.display().to_string()).expect("fresh config load")
+                load_config_from_file(&path).expect("fresh config load")
             })
     }
 
@@ -400,7 +400,7 @@ impl Harness {
     /// fallback), so a row may begin on an invalid file.
     fn startup_config(&self) -> Config {
         self.active_config_file()
-            .and_then(|path| load_config_from_file(&path.display().to_string()).ok())
+            .and_then(|path| load_config_from_file(&path).ok())
             .unwrap_or_default()
     }
 

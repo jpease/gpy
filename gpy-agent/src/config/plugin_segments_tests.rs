@@ -289,20 +289,19 @@ fn list_keys_strips_controls_from_manifest_descriptions() {
 fn overrides_round_trip_through_a_saved_file() {
     let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join("config.toml");
-    let path_str = path.to_str().unwrap();
     std::fs::write(&path, "# mine\n[ui]\nshow_icons = false\n").unwrap();
 
-    let original = loader::load_config_from_file(path_str).unwrap();
+    let original = loader::load_config_from_file(&path).unwrap();
     let mut updated = original.clone();
     set(&mut updated, &discovery(), "plugin.k8s.depth", "4").unwrap();
     set(&mut updated, &discovery(), "plugin.k8s.ttl_secs", "60").unwrap();
-    loader::save_config(path_str, &original, &updated, &["plugin.k8s.depth"]).unwrap();
+    loader::save_config(&path, &original, &updated, &["plugin.k8s.depth"]).unwrap();
 
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(
         text.contains("# mine") && text.contains("[plugin.k8s]"),
         "{text}"
     );
-    let reloaded = loader::load_config_from_file(path_str).unwrap();
+    let reloaded = loader::load_config_from_file(&path).unwrap();
     assert_eq!(reloaded.plugin, updated.plugin);
 }

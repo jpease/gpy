@@ -71,7 +71,11 @@ pub fn resolved_paths() -> Vec<(&'static str, String)> {
 
     let theme_export_file = crate::cache::theme_export::get_theme_export_cache_path().ok();
     let config_path = super::utils::active_config_path().ok();
-    let config_candidates = crate::config::schema::get_config_paths().join(LIST_SEPARATOR);
+    let config_candidates = crate::config::schema::get_config_paths()
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(LIST_SEPARATOR);
     let theme_dir = crate::theme::ThemeManager::user_themes_dir();
 
     vec![
@@ -81,12 +85,7 @@ pub fn resolved_paths() -> Vec<(&'static str, String)> {
         ("cache_root", show(cache_root.as_deref())),
         ("instant_prompts_dir", show(instant_prompts_dir.as_deref())),
         ("theme_export_file", show(theme_export_file.as_deref())),
-        (
-            "config_path",
-            config_path
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| UNRESOLVED.to_owned()),
-        ),
+        ("config_path", show(config_path.as_deref())),
         (
             "config_candidates",
             if config_candidates.is_empty() {

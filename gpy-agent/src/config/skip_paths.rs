@@ -69,43 +69,49 @@ struct Cached {
     matcher: Arc<SkipMatcher>,
 }
 
-/// Holds the matcher for the most recent `(skip_paths, home)` pair.
-struct MatcherCache(Mutex<Option<Cached>>);
+/// Most distinct `(skip_paths, home)` pairs kept; the oldest is evicted past it.
+const MAX_CACHED: usize = 8;
+
+/// Holds one matcher per recent `(skip_paths, home)` pair, so configs that
+/// alternate (reload overlap, tests) don't re-canonicalize on every call.
+struct MatcherCache(Mutex<Vec<Cached>>);
 
 impl MatcherCache {
     const fn new() -> Self {
-        Self(Mutex::new(None))
+        Self(Mutex::new(Vec::new()))
     }
 
-    /// The matcher for `entries`/`home`, re-resolved when the pair changed or
+    /// The matcher for `entries`/`home`, re-resolved when the pair is new or
     /// the cached one is at least [`RESOLVE_TTL`] old at `now`. Resolution
     /// runs outside the lock: `canonicalize` on a slow mount must not stall
     /// every other Git gate check.
     fn matcher(&self, entries: &[String], home: Option<&str>, now: Instant) -> Arc<SkipMatcher> {
+        let is_pair = |c: &Cached| c.entries == entries && c.home.as_deref() == home;
         {
             let guard = self.0.lock_or_recover();
-            if let Some(cached) = guard.as_ref().filter(|c| {
-                c.entries == entries
-                    && c.home.as_deref() == home
-                    && now.saturating_duration_since(c.resolved_at) < RESOLVE_TTL
-            }) {
+            if let Some(cached) = guard
+                .iter()
+                .find(|c| is_pair(c) && now.saturating_duration_since(c.resolved_at) < RESOLVE_TTL)
+            {
                 return Arc::clone(&cached.matcher);
             }
         }
         let matcher = Arc::new(SkipMatcher::new(entries, home.map(Path::new)));
         let mut guard = self.0.lock_or_recover();
         // A concurrent resolver may have stored a newer result meanwhile; keep it.
-        let newer_stored = guard.as_ref().is_some_and(|c| {
-            c.entries == entries && c.home.as_deref() == home && c.resolved_at > now
-        });
-        if !newer_stored {
-            *guard = Some(Cached {
-                entries: entries.to_vec(),
-                home: home.map(str::to_owned),
-                resolved_at: now,
-                matcher: Arc::clone(&matcher),
-            });
+        if guard.iter().any(|c| is_pair(c) && c.resolved_at > now) {
+            return matcher;
         }
+        guard.retain(|c| !is_pair(c));
+        if guard.len() >= MAX_CACHED {
+            guard.remove(0);
+        }
+        guard.push(Cached {
+            entries: entries.to_vec(),
+            home: home.map(str::to_owned),
+            resolved_at: now,
+            matcher: Arc::clone(&matcher),
+        });
         matcher
     }
 }
@@ -205,6 +211,21 @@ mod tests {
 
     /// Lookups inside the TTL reuse the resolution; after it, a root created
     /// late starts matching and a retargeted symlink drops its old target.
+    /// Alternating lists each keep their own resolution.
+    #[test]
+    fn matcher_cache_keeps_alternating_lists_resolved() {
+        let cache = MatcherCache::new();
+        let now = Instant::now();
+        let a = vec!["/a".to_owned()];
+        let b = vec!["/b".to_owned()];
+
+        let first_a = cache.matcher(&a, None, now);
+        let first_b = cache.matcher(&b, None, now);
+
+        assert!(Arc::ptr_eq(&first_a, &cache.matcher(&a, None, now)));
+        assert!(Arc::ptr_eq(&first_b, &cache.matcher(&b, None, now)));
+    }
+
     #[cfg(unix)]
     #[test]
     fn matcher_cache_re_resolves_created_and_retargeted_roots_after_ttl() {

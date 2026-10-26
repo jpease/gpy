@@ -732,7 +732,8 @@ fn separator_bearing_responses() -> Vec<Response> {
 /// Default theme with a `$sep_close` character format so every variant can draw caps.
 fn default_theme_with_terminal_caps() -> ThemeConfig {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/themes/default.toml");
-    let mut theme = crate::config::loader::load_theme_from_path(path).expect("default theme");
+    let mut theme = crate::config::loader::load_theme_from_path(std::path::Path::new(path))
+        .expect("default theme");
     let cap = "([$sep_close](fg:white bg:default))";
     theme.segments.character.format = Some(format!("[$symbol](fg:green){cap}"));
     theme
@@ -789,7 +790,7 @@ fn show_icons_false_renders_no_private_use_glyphs() {
 /// The bundled default theme, whose pills all come from agent-side formats.
 fn bundled_default_theme() -> ThemeConfig {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/themes/default.toml");
-    crate::config::loader::load_theme_from_path(path).expect("default theme")
+    crate::config::loader::load_theme_from_path(std::path::Path::new(path)).expect("default theme")
 }
 
 /// Rendered text with the SGR sequences removed.

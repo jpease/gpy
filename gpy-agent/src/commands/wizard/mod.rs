@@ -188,7 +188,7 @@ pub fn run() -> Result<()> {
 
     if should_save {
         let path = save::save(&runtime.state)?;
-        println!("Saved configuration to {path}");
+        println!("Saved configuration to {}", path.display());
         crate::commands::utils::reload_agent_and_notify();
     }
 

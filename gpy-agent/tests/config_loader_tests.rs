@@ -11,6 +11,7 @@ use gpy_agent::config::schema::get_config_paths;
 use gpy_agent::config::validation::validate_config;
 use gpy_agent::config::{Config, types};
 use std::fs;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 /// The example config shipped in release tarballs.
@@ -258,7 +259,7 @@ theme = ''
 
 #[test]
 fn test_load_config_from_nonexistent_file() {
-    let result = load_config_from_file("/nonexistent/config.toml");
+    let result = load_config_from_file(Path::new("/nonexistent/config.toml"));
     assert!(result.is_err());
     assert!(
         result
@@ -275,7 +276,7 @@ fn test_load_config_from_file_success() {
 
     fs::write(&config_file, EXAMPLE_CONFIG).unwrap();
 
-    let result = load_config_from_file(config_file.to_str().unwrap());
+    let result = load_config_from_file(&config_file);
     assert!(result.is_ok());
 
     let config = result.unwrap();
@@ -293,12 +294,7 @@ fn test_save_config_creates_directories() {
         .join("config.toml");
 
     let config = Config::default();
-    let result = save_config(
-        nested_config_file.to_str().unwrap(),
-        &config,
-        &config,
-        &["ui.show_icons"],
-    );
+    let result = save_config(&nested_config_file, &config, &config, &["ui.show_icons"]);
     assert!(result.is_ok());
 
     assert!(nested_config_file.exists());
@@ -308,10 +304,9 @@ fn test_save_config_creates_directories() {
 fn test_get_config_paths() {
     let paths = get_config_paths();
 
-    assert_ne!(paths, Vec::<String>::new());
+    assert_ne!(paths, Vec::<PathBuf>::new());
 
-    let paths_string = paths.join(" ");
-    assert!(paths_string.contains(".config/gpy/config.toml"));
+    assert!(paths.iter().any(|p| p.ends_with(".config/gpy/config.toml")));
 }
 
 #[test]
@@ -320,7 +315,7 @@ fn test_config_path_priority_order() {
 
     // No project-local `.gpy.toml`: every candidate is absolute.
     assert!(
-        paths.iter().all(|p| std::path::Path::new(p).is_absolute()),
+        paths.iter().all(|p| p.is_absolute()),
         "every config candidate must be absolute: {paths:?}"
     );
     assert!(!paths.iter().any(|p| p.ends_with(".gpy.toml")));
@@ -392,15 +387,9 @@ fn test_config_file_permissions() {
     let config_file = temp_dir.path().join("permission_test.toml");
 
     let config = Config::default();
-    save_config(
-        config_file.to_str().unwrap(),
-        &config,
-        &config,
-        &["ui.show_icons"],
-    )
-    .unwrap();
+    save_config(&config_file, &config, &config, &["ui.show_icons"]).unwrap();
 
-    let result = load_config_from_file(config_file.to_str().unwrap());
+    let result = load_config_from_file(&config_file);
     assert!(result.is_ok());
 }
 
@@ -411,14 +400,14 @@ fn test_config_utf8_handling() {
 
     fs::write(&config_file, EXAMPLE_CONFIG).unwrap();
 
-    let result = load_config_from_file(config_file.to_str().unwrap());
+    let result = load_config_from_file(&config_file);
     assert!(result.is_ok());
 }
 #[allow(clippy::float_cmp)]
 #[test]
 fn shipped_config_toml_matches_builtin_defaults() {
     let shipped_config_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/config.toml");
-    let config = load_config_from_file(shipped_config_path).unwrap();
+    let config = load_config_from_file(Path::new(shipped_config_path)).unwrap();
 
     assert!(
         (config.language.confidence_threshold.get() - types::ConfidenceThreshold::DEFAULT).abs()
@@ -501,4 +490,36 @@ fn shipped_config_toml_sets_only_known_keys() {
             "{path} sets keys Config does not have: {unknown:?}"
         );
     }
+}
+
+/// A non-UTF-8 candidate path is kept byte-for-byte, not lossily rewritten.
+#[cfg(unix)]
+#[test]
+fn test_non_utf8_config_candidate_is_preserved() {
+    use gpy_agent::config::schema::config_candidates_for;
+    use gpy_agent::paths::Os;
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let config_file = PathBuf::from(OsStr::from_bytes(b"/tmp/conf\xff.toml"));
+    assert!(config_file.to_str().is_none());
+
+    let candidates = config_candidates_for(Some(&config_file), None, None, Os::Unix);
+    assert_eq!(candidates, std::slice::from_ref(&config_file));
+}
+
+/// Load and save go through the path itself. APFS and HFS+ reject non-UTF-8
+/// names, so only Linux-like file systems can create the file.
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn test_non_utf8_config_path_round_trips() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let temp_dir = TempDir::new().unwrap();
+    let config_file = temp_dir.path().join(OsStr::from_bytes(b"conf\xff.toml"));
+
+    let config = Config::default();
+    save_config(&config_file, &config, &config, &["ui.show_icons"]).unwrap();
+    assert!(load_config_from_file(&config_file).is_ok());
 }

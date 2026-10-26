@@ -104,6 +104,15 @@ pub fn xdg_value(value: Option<&str>, os: Os) -> Option<&str> {
     })
 }
 
+/// [`xdg_value`] for a non-UTF-8-capable path, with the same absoluteness rules.
+#[must_use]
+pub fn xdg_path(value: Option<&Path>, os: Os) -> Option<&Path> {
+    value.filter(|path| match os {
+        Os::Unix => path.as_os_str().as_encoded_bytes().first() == Some(&b'/'),
+        Os::Windows => is_absolute_windows(&path.to_string_lossy()),
+    })
+}
+
 /// Whether `value` is absolute under Windows rules (POSIX-style `/` included).
 fn is_absolute_windows(value: &str) -> bool {
     if value.starts_with('/') || value.starts_with('\\') {
@@ -121,9 +130,13 @@ fn is_absolute_windows(value: &str) -> bool {
 /// `HOME` counts as none.
 #[must_use]
 pub fn home_dir() -> Option<String> {
-    ambient_home()
-        .filter(|path| path.is_absolute())
-        .map(|path| path.to_string_lossy().into_owned())
+    home_path().map(|path| path.to_string_lossy().into_owned())
+}
+
+/// [`home_dir`] without the UTF-8 round trip.
+#[must_use]
+pub fn home_path() -> Option<PathBuf> {
+    ambient_home().filter(|path| path.is_absolute())
 }
 
 #[cfg(not(test))]
