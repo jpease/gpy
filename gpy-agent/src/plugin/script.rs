@@ -547,9 +547,12 @@ pub struct ScriptSegmentManifest {
     #[serde(default)]
     pub timeout_ms: TimeoutMs,
     /// Every name must exist as a file in the working directory or an ancestor.
+    /// On Linux the search stops at the mount that holds the working directory;
+    /// on macOS it goes up to `/`.
     #[serde(default)]
     pub require_files: Vec<ScanName>,
-    /// Every name must exist as a folder in the working directory or an ancestor.
+    /// Every name must exist as a folder in the working directory or an ancestor,
+    /// with the same stop as `require_files`.
     #[serde(default)]
     pub require_folders: Vec<ScanName>,
     /// Every extension must match a file in the working directory itself.
