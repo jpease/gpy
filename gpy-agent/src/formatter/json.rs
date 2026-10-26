@@ -12,18 +12,13 @@ impl Formatter for JsonFormatter {
     fn render(&self, response: &Response, _ctx: &RenderContext<'_>) -> Result<String> {
         let json_value = match response {
             // Delegate to `Serialize` so no field can be silently dropped.
-            Response::RepositoryStatus(status) => serde_json::to_value(status).map_err(|e| {
-                crate::Error::ipc(format!("failed to serialize repository status: {e}"))
-            })?,
+            Response::RepositoryStatus(status) => serde_json::to_value(status)?,
             Response::Language { languages } => json!({
-                "languages": serde_json::to_value(languages).map_err(|e| {
-                    crate::Error::ipc(format!("failed to serialize languages: {e}"))
-                })?,
+                "languages": serde_json::to_value(languages)?,
             }),
             Response::Ack => json!({"status": "ok"}),
             // Wire shape is `{"AgentStatus":{…}}`, the same in every format.
-            Response::AgentStatus { .. } => serde_json::to_value(response)
-                .map_err(|e| crate::Error::ipc(format!("failed to serialize agent status: {e}")))?,
+            Response::AgentStatus { .. } => serde_json::to_value(response)?,
             Response::Directory { cwd, read_only } => json!({"cwd": cwd, "read_only": read_only}),
             Response::Clock { shell } => json!({"shell": shell.as_str()}),
             Response::Duration { duration_ms } => json!({"duration_ms": duration_ms}),
@@ -39,8 +34,7 @@ impl Formatter for JsonFormatter {
             Response::Error { message } => json!({"error": message}),
         };
 
-        serde_json::to_string(&json_value)
-            .map_err(|e| crate::Error::ipc(format!("JSON serialization failed: {e}")))
+        Ok(serde_json::to_string(&json_value)?)
     }
 }
 

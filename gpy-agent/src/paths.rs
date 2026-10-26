@@ -79,12 +79,12 @@ pub fn socket_path_problem(path: &Path, capacity: usize) -> Option<String> {
 /// Linux 108) with an actionable message instead of `bind`'s bare error.
 ///
 /// # Errors
-/// Returns an IPC error when `path` is longer than the platform allows.
+/// Returns a config error when `path` is longer than the platform allows.
 pub fn check_socket_path_len(path: &Path) -> crate::Result<()> {
     #[cfg(unix)]
     {
         socket_path_problem(path, SUN_PATH_CAPACITY)
-            .map_or(Ok(()), |problem| Err(crate::Error::ipc(problem)))
+            .map_or(Ok(()), |problem| Err(crate::Error::config(problem)))
     }
     #[cfg(not(unix))]
     {

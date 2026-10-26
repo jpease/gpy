@@ -20,7 +20,7 @@ impl ClientPid {
         if Self::pid_in_range(pid) {
             Ok(Self(pid))
         } else {
-            Err(crate::Error::ipc(format!("Invalid PID: {pid}")))
+            Err(crate::Error::invalid(format!("Invalid PID: {pid}")))
         }
     }
 

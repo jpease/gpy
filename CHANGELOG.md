@@ -83,6 +83,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Serialization and UTF-8 decoding failures, debug-command socket I/O
+  failures and an over-long socket path now report as JSON, I/O and
+  configuration errors, and request-validation failures (paths, PIDs, message
+  fields, message size) as invalid-operation errors. None of them say
+  "IPC communication failed" any more, so their error prefix changes.
 - A `GPY_CONFIG_PATH`, `XDG_CONFIG_HOME` or `HOME` that is not valid UTF-8 is
   no longer rewritten with replacement characters, so the config file under it
   is found, loaded and saved.

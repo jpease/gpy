@@ -37,11 +37,11 @@ async fn send_request(stream: &mut UnixStream, msg: &serde_json::Value) -> Resul
         stream
             .write_all(json.as_bytes())
             .await
-            .map_err(|e| crate::Error::ipc(e.to_string()))?;
+            .map_err(|e| crate::Error::io_context("Failed to send request to agent", &e))?;
         stream
             .flush()
             .await
-            .map_err(|e| crate::Error::ipc(e.to_string()))?;
+            .map_err(|e| crate::Error::io_context("Failed to send request to agent", &e))?;
 
         let mut buffer = Vec::new();
         let mut chunk = [0u8; 4096];
@@ -50,7 +50,7 @@ async fn send_request(stream: &mut UnixStream, msg: &serde_json::Value) -> Resul
             let n = stream
                 .read(&mut chunk)
                 .await
-                .map_err(|e| crate::Error::ipc(e.to_string()))?;
+                .map_err(|e| crate::Error::io_context("Failed to read response from agent", &e))?;
             if n == 0 {
                 return Err(crate::Error::ipc("Connection closed by agent".to_owned()));
             }
@@ -68,7 +68,7 @@ async fn send_request(stream: &mut UnixStream, msg: &serde_json::Value) -> Resul
                 // The server sends formatted output, not a `Response`; only check it is JSON.
                 let _json: serde_json::Value = serde_json::from_slice(line).map_err(|e| {
                     let line_str = String::from_utf8_lossy(line);
-                    crate::Error::ipc(format!(
+                    crate::Error::json(format!(
                         "Failed to deserialize response: {e}. Raw: {line_str}"
                     ))
                 })?;
@@ -118,7 +118,7 @@ pub fn prompt() -> Result<()> {
                 "Connection timed out after {CONNECT_TIMEOUT_MS}ms. Is the agent hung?"
             ))
         })?
-        .map_err(|e| crate::Error::ipc(format!("Failed to connect to agent: {e}")))?;
+        .map_err(|e| crate::Error::io_context("Failed to connect to agent", &e))?;
 
         let cwd_str = std::env::current_dir()?.to_string_lossy().to_string();
         let safe_cwd = crate::security::SafePath::new(&cwd_str)?;

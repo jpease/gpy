@@ -118,6 +118,14 @@ impl Error {
         }
     }
 
+    /// Create a JSON error that has no underlying `serde_json::Error`
+    pub fn json<S: Into<String>>(message: S) -> Self {
+        Self::Json {
+            message: message.into(),
+            source: None,
+        }
+    }
+
     /// Create a Watcher error
     pub fn watcher<S: Into<String>>(message: S) -> Self {
         Self::Watcher {

@@ -383,7 +383,7 @@ mod schema_files {
             .split("match self.op.as_str() {")
             .nth(1)
             .unwrap()
-            .split("_ => Err(Error::ipc(format!(\"Unknown shell operation")
+            .split("_ => Err(Error::invalid(format!(\"Unknown shell operation")
             .next()
             .unwrap();
         let ops: BTreeSet<String> = regex::Regex::new(r#"(?m)^\s{12}"([a-z_]+)" =>"#)
