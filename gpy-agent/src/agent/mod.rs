@@ -260,8 +260,6 @@ impl Agent {
     /// # Errors
     /// Returns an error if the IPC server or file watcher cannot be initialized.
     ///
-    /// # Panics
-    /// Panics if the bundled default theme cannot be loaded.
     pub fn new() -> Result<Self> {
         let watcher_config = WatcherConfig::from_env();
         let client_registry = ClientDirectory::new().shared();

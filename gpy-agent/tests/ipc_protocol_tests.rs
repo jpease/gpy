@@ -155,7 +155,7 @@ fn test_response_serialization_error() {
 }
 
 #[test]
-fn test_fish_shell_ipc_format_git() {
+fn test_shell_ipc_format_git() {
     let json = r#"{"op":"git","cwd":"/test/path"}"#;
     let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
 
@@ -166,13 +166,13 @@ fn test_fish_shell_ipc_format_git() {
         }
         _ => assert!(
             matches!(deserialized, Message::RepositoryStatus { .. }),
-            "Wrong message type deserialized from Fish format"
+            "Wrong message type deserialized from wire format"
         ),
     }
 }
 
 #[test]
-fn test_fish_shell_ipc_format_lang() {
+fn test_shell_ipc_format_lang() {
     let json = r#"{"op":"lang","cwd":"/project"}"#;
     let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
 
@@ -183,13 +183,13 @@ fn test_fish_shell_ipc_format_lang() {
         }
         _ => assert!(
             matches!(deserialized, Message::LanguageDetect { .. }),
-            "Wrong message type deserialized from Fish format"
+            "Wrong message type deserialized from wire format"
         ),
     }
 }
 
 #[test]
-fn test_fish_shell_ipc_format_register() {
+fn test_shell_ipc_format_register() {
     let pid = std::process::id();
     let json = format!(r#"{{"op":"register","pid":{pid},"cwd":"/tmp"}}"#);
     let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
@@ -201,13 +201,13 @@ fn test_fish_shell_ipc_format_register() {
         }
         _ => assert!(
             matches!(deserialized, Message::RegisterClient { .. }),
-            "Wrong message type deserialized from Fish format"
+            "Wrong message type deserialized from wire format"
         ),
     }
 }
 
 #[test]
-fn test_fish_shell_ipc_format_workspace() {
+fn test_shell_ipc_format_workspace() {
     let pid = std::process::id();
     let json = format!(r#"{{"op":"workspace","pid":{pid},"cwd":"/repo"}}"#);
     let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
@@ -219,13 +219,13 @@ fn test_fish_shell_ipc_format_workspace() {
         }
         _ => assert!(
             matches!(deserialized, Message::WorkspaceUpdate { .. }),
-            "Wrong message type deserialized from Fish workspace format"
+            "Wrong message type deserialized from wire workspace format"
         ),
     }
 }
 
 #[test]
-fn test_fish_shell_ipc_format_ping() {
+fn test_shell_ipc_format_ping() {
     let json = r#"{"op":"ping"}"#;
     let deserialized = deserialize_message(json.as_bytes()).expect("deserialize_message failed");
 
@@ -235,7 +235,7 @@ fn test_fish_shell_ipc_format_ping() {
         }
         _ => assert!(
             matches!(deserialized, Message::Ping),
-            "Wrong message type deserialized from Fish format"
+            "Wrong message type deserialized from wire format"
         ),
     }
 }
@@ -267,7 +267,7 @@ fn test_invalid_json_deserialization() {
 }
 
 #[test]
-fn test_unknown_operation_fish_format() {
+fn test_unknown_operation_wire_format() {
     let json = r#"{"op":"unknown_operation","cwd":"/test"}"#;
     let unknown_result = deserialize_message(json.as_bytes());
     assert!(unknown_result.is_err());

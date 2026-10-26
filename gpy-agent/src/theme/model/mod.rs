@@ -333,7 +333,7 @@ impl Default for DirectoryTheme {
 pub struct DurationTheme {
     /// Starship template; always agent-rendered, so `None` renders nothing.
     pub format: Option<String>,
-    /// Icon shown before command duration (default: "󰑧")
+    /// Optional icon shown before command duration.
     pub icon: Option<types::Icon>,
     /// Background color
     pub bg_color: types::ColorSpec,
@@ -365,13 +365,13 @@ pub struct StatusTheme {
     /// Starship-style template for the exit-status pill. `None` lets the shell
     /// draw the pill locally; `Some` makes the agent render it.
     pub format: Option<String>,
-    /// Icon for successful command (exit code 0) (default: "✔")
+    /// Optional icon for successful command (exit code 0). Falls back by glyph set when `None`.
     pub ok_icon: Option<types::Icon>,
     /// Background color when command succeeded
     pub ok_bg_color: types::ColorSpec,
     /// Text color when command succeeded
     pub ok_text_color: types::ColorSpec,
-    /// Icon for failed command (non-zero exit) (default: "✖")
+    /// Optional icon for failed command (non-zero exit). Falls back by glyph set when `None`.
     pub fail_icon: Option<types::Icon>,
     /// Background color when command failed
     pub fail_bg_color: types::ColorSpec,

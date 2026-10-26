@@ -45,7 +45,6 @@ pub fn override_from_env() -> Option<FontCapability> {
 }
 
 /// Whether a font family or file name (case-insensitive) looks like a Nerd Font.
-#[must_use]
 fn name_is_nerd_font(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower.contains("nerd font") || lower.contains("nerdfont") || lower.contains("nerd-font")

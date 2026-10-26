@@ -1,10 +1,10 @@
 # GPY Agent IPC Protocol Schemas
 
-This directory contains JSON Schema files that define the IPC protocol between Fish shell and the GPY Agent.
+This directory contains JSON Schema files that define the IPC protocol between shell clients (Fish, Bash, Zsh) and the GPY Agent.
 
 ## Schema Files
 
-- **`message.json`**: Defines all message types that can be sent from Fish shell to the Agent
+- **`message.json`**: Defines all message types that can be sent from a shell client to the Agent
 - **`response.json`**: Defines the replies the Agent writes for `format: "json"` requests (flat objects, `{"status":"ok"}`, `{"error":"..."}`; only `AgentStatus` is wrapped, as `{"AgentStatus":{...}}`, and a status request gets that JSON in every format). Any other format replies with one line of rendered text
 
 ## Plugin Manifest Schemas
@@ -31,16 +31,13 @@ An unrecognized `format` silently falls back to `json`.
 
 ## Version Compatibility
 
-These schemas correspond to protocol version 1 (see `gpy-agent/src/ipc/protocol/mod.rs`).
+These schemas correspond to protocol version 2 (see `gpy-agent/src/ipc/protocol/mod.rs`).
 
 ## Usage
 
-External tools can use these schemas to:
-
 1. Validate IPC messages before sending them to the Agent
-2. Generate client libraries for other shells (Bash, Zsh)
-3. Test protocol compliance
-4. Generate documentation
+2. Test protocol compliance
+3. Generate documentation
 
 ## Examples
 

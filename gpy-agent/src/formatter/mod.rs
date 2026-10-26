@@ -315,13 +315,11 @@ mod tests {
 
     #[test]
     fn render_context_defaults_palette_to_empty() {
-        use crate::template::Palette;
         let config = Config::default();
         let theme = ThemeConfig::default();
         let ctx = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
         // Empty palette: any name lookup misses.
         assert!(ctx.palette.get("anything").is_none());
-        let _ = Palette::default(); // type is reachable
     }
 
     #[test]
