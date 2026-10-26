@@ -141,84 +141,14 @@ fn parse_commondir_pointer_table() {
 }
 
 #[test]
-fn test_builder_with_callback_succeeds() {
-    let result = MultiRepoWatcher::builder()
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .build();
-
-    assert!(result.is_ok(), "Builder should succeed with callback");
-}
-
-#[test]
-fn test_builder_uses_default_config() {
-    let result = MultiRepoWatcher::builder()
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .build();
-
-    assert!(result.is_ok(), "Builder should succeed with default config");
-}
-
-#[test]
-fn test_builder_with_custom_config() {
-    let custom_config = WatcherConfig::new(200, 300);
-
-    let result = MultiRepoWatcher::builder()
-        .config(custom_config)
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .build();
-
-    assert!(result.is_ok(), "Builder should succeed with custom config");
-}
-
-#[test]
-fn test_builder_fails_without_callback() {
+fn builder_without_callback_names_the_missing_callback() {
     let result = MultiRepoWatcher::builder().build();
 
-    assert!(result.is_err(), "Builder should fail without callback");
-
-    if let Err(err) = result {
-        let err_msg = format!("{err}");
-        assert!(
-            err_msg.contains("callback"),
-            "Error message should mention missing callback: {err_msg}"
-        );
-    }
-}
-
-#[test]
-fn test_builder_fluent_interface() {
-    let config = WatcherConfig::new(150, 200);
-
-    let result = MultiRepoWatcher::builder()
-        .config(config)
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .build();
-
-    assert!(result.is_ok(), "Fluent builder chain should succeed");
-}
-
-#[test]
-fn test_builder_default_trait() {
-    let builder = MultiRepoWatcherBuilder::default();
-
-    let result = builder
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .build();
-
-    assert!(result.is_ok(), "Default builder should work");
-}
-
-#[test]
-fn test_multi_repo_watcher_builder_method() {
-    let builder = MultiRepoWatcher::builder();
-
-    let result = builder
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .build();
-
+    let err = result.err().expect("build without a callback must fail");
+    let err_msg = format!("{err}");
     assert!(
-        result.is_ok(),
-        "MultiRepoWatcher::builder() should return working builder"
+        err_msg.contains("callback"),
+        "Error message should mention missing callback: {err_msg}"
     );
 }
 

@@ -573,6 +573,24 @@ mod tests {
     }
 
     #[test]
+    fn display_info_is_empty_when_languages_are_disabled() {
+        let detected = sample_detected_languages();
+        let theme = ThemeConfig::default();
+        let language_cfg = LanguageSettings {
+            enabled: false,
+            ..LanguageSettings::default()
+        };
+
+        let info = display_info(
+            &DisplayRequest::new(&detected, &theme, &language_cfg),
+            Versions::Probe,
+        )
+        .expect("a disabled segment never probes");
+
+        assert!(info.is_empty());
+    }
+
+    #[test]
     fn probe_skipped_when_show_versions_false() {
         assert_eq!(
             probes_for(false),

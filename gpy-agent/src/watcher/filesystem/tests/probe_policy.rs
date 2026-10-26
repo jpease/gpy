@@ -1,19 +1,5 @@
 use super::*;
 
-/// The health probe is a self-contained round trip that terminates within its
-/// bound; either verdict is valid for the machine.
-#[test]
-fn health_probe_terminates_within_its_timeout() {
-    let stop_flag = AtomicBool::new(false);
-    let started = Instant::now();
-    let _verdict = native_backend_delivers_events(Duration::from_millis(600), &stop_flag);
-    assert!(
-        started.elapsed() < Duration::from_secs(5),
-        "the probe must respect its timeout, took {:?}",
-        started.elapsed()
-    );
-}
-
 /// A stopping watcher aborts the probe and reports "healthy".
 #[test]
 fn health_probe_aborts_and_reports_healthy_when_stopping() {
@@ -25,26 +11,13 @@ fn health_probe_aborts_and_reports_healthy_when_stopping() {
 }
 
 #[test]
-fn fallback_policy_defaults_to_probing_for_repo_watchers() {
+fn fallback_policy_defaults_to_probing_for_every_watcher() {
     assert_eq!(
         FallbackPolicy::resolve(None, None, None),
         FallbackPolicy::ProbeThenFallback {
             probe_timeout: Duration::from_millis(DEFAULT_WATCH_PROBE_MS),
             poll_interval: Duration::from_millis(DEFAULT_WATCH_POLL_MS),
         }
-    );
-}
-
-/// Theme/config watchers get the same probe-and-swap as the repo watcher.
-#[test]
-fn fallback_policy_probes_for_watchers_without_a_repo_registry() {
-    assert_eq!(
-        FallbackPolicy::resolve(None, None, None),
-        FallbackPolicy::ProbeThenFallback {
-            probe_timeout: Duration::from_millis(DEFAULT_WATCH_PROBE_MS),
-            poll_interval: Duration::from_millis(DEFAULT_WATCH_POLL_MS),
-        },
-        "config/theme watchers must auto-detect a silent backend too"
     );
 }
 

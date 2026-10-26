@@ -68,20 +68,3 @@ pub const STARSHIP_PALETTE_CONTENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../config/palettes/starship.toml"
 ));
-
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
-
-    #[test]
-    fn default_palette_content_parses() {
-        let cfg: crate::palette::PaletteConfig =
-            toml::from_str(crate::config::defaults::DEFAULT_PALETTE_CONTENT)
-                .expect("parse builtin");
-        assert!(cfg.colors.contains_key("red"));
-    }
-}

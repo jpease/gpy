@@ -1104,14 +1104,12 @@ fn move_cursor_down_steps_through_filtered_list_only() {
     let indices = state.filtered_indices(Section::Segments);
     assert!(indices.len() >= 2, "test relies on 2+ builtin segments");
 
-    let start = state.segment_cursor();
     state.move_cursor_down();
 
     assert_eq!(
         state.segment_cursor(),
         *indices.get(1).expect("indices has at least 2 entries")
     );
-    let _ = start;
 }
 
 fn segments_focused_state() -> WizardState {

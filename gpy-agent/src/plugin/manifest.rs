@@ -366,32 +366,44 @@ impl PluginManifest {
 mod tests {
     use super::*;
 
+    /// Asserts `result` failed and its message contains `needle`.
+    fn assert_rejected<T: std::fmt::Debug>(result: crate::Result<T>, needle: &str) {
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains(needle), "expected `{needle}` in: {err}");
+    }
+
     #[test]
-    fn test_valid_plugin_id() {
+    fn plugin_id_is_trimmed_and_lowercased() {
         assert_eq!(PluginId::new("my-plugin").unwrap().as_str(), "my-plugin");
         assert_eq!(PluginId::new(" My-Plugin ").unwrap().as_str(), "my-plugin");
         assert_eq!(PluginId::new("123-ABC").unwrap().as_str(), "123-abc");
     }
 
     #[test]
-    fn test_invalid_plugin_id() {
-        assert!(PluginId::new("").is_err());
-        assert!(PluginId::new("  ").is_err());
-        assert!(PluginId::new("my plugin").is_err());
-        assert!(PluginId::new("my_plugin").is_err());
+    fn plugin_id_rejects_empty_and_non_alphanumeric_hyphen_input() {
+        assert_rejected(PluginId::new(""), "cannot be empty");
+        assert_rejected(PluginId::new("  "), "cannot be empty");
+        assert_rejected(
+            PluginId::new("my plugin"),
+            "alphanumeric characters and hyphens",
+        );
+        assert_rejected(
+            PluginId::new("my_plugin"),
+            "alphanumeric characters and hyphens",
+        );
     }
 
     #[test]
-    fn test_valid_segment_name() {
+    fn segment_name_is_trimmed_and_lowercased() {
         assert_eq!(SegmentName::new("my_seg").unwrap().as_str(), "my_seg");
         assert_eq!(SegmentName::new(" MY-seg ").unwrap().as_str(), "my-seg");
     }
 
     #[test]
-    fn test_invalid_segment_name() {
-        assert!(SegmentName::new("").is_err());
-        assert!(SegmentName::new("my seg").is_err());
-        assert!(SegmentName::new("my@seg").is_err());
+    fn segment_name_rejects_empty_and_invalid_characters() {
+        assert_rejected(SegmentName::new(""), "cannot be empty");
+        assert_rejected(SegmentName::new("my seg"), "underscores, and hyphens");
+        assert_rejected(SegmentName::new("my@seg"), "underscores, and hyphens");
     }
 
     #[test]
@@ -420,7 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_rejects_colliding_segment_tokens() {
+    fn parse_rejects_colliding_segment_tokens() {
         let toml = r#"
             id = "my-test-plugin"
             name = "My Test Plugin"
@@ -437,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_valid_manifest() {
+    fn parse_accepts_a_valid_manifest() {
         let toml = r#"
             id = "my-test-plugin"
             name = "My Test Plugin"
@@ -457,16 +469,16 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_missing_required_fields() {
+    fn parse_rejects_a_manifest_missing_required_fields() {
         let toml = r#"
             name = "My Test Plugin"
             version = "1.0.0"
         "#;
-        assert!(PluginManifest::parse(toml).is_err());
+        assert_rejected(PluginManifest::parse(toml), "missing field");
     }
 
     #[test]
-    fn test_parse_rejects_missing_provided_segments() {
+    fn parse_rejects_missing_provided_segments() {
         for key_line in ["", "provided_segment = [\"x\"]"] {
             let toml = format!(
                 r#"
@@ -487,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_rejects_empty_provided_segments() {
+    fn parse_rejects_empty_provided_segments() {
         let toml = r#"
             id = "my-test-plugin"
             name = "My Test Plugin"
@@ -501,7 +513,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_duplicate_segments() {
+    fn parse_rejects_duplicate_segments() {
         let toml = r#"
             id = "my-test-plugin"
             name = "My Test Plugin"
@@ -510,7 +522,10 @@ mod tests {
             provided_segments = ["test_seg1", "test_seg1"]
             entry_type = "file"
         "#;
-        assert!(PluginManifest::parse(toml).is_err());
+        assert_rejected(
+            PluginManifest::parse(toml),
+            "Duplicate segment declaration: 'test_seg1'",
+        );
     }
 
     #[test]
@@ -578,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_accepts_command_entry_type_for_diagnostics() {
+    fn parse_accepts_command_entry_type_for_diagnostics() {
         // Must parse so discovery can tell unsupported from malformed.
         let toml = r#"
             id = "cmd-plugin"
@@ -594,7 +609,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_invalid_id() {
+    fn parse_rejects_an_invalid_id() {
         let toml = r#"
             id = "my_invalid_id"
             name = "My Test Plugin"
@@ -603,11 +618,14 @@ mod tests {
             provided_segments = ["x"]
             entry_type = "file"
         "#;
-        assert!(PluginManifest::parse(toml).is_err());
+        assert_rejected(
+            PluginManifest::parse(toml),
+            "alphanumeric characters and hyphens",
+        );
     }
 
     #[test]
-    fn test_parse_rejects_unknown_api_version() {
+    fn parse_rejects_unknown_api_version() {
         let toml = r#"
             id = "my-test-plugin"
             name = "My Test Plugin"
@@ -616,11 +634,11 @@ mod tests {
             provided_segments = ["x"]
             entry_type = "file"
         "#;
-        assert!(PluginManifest::parse(toml).is_err());
+        assert_rejected(PluginManifest::parse(toml), "unknown variant `v2`");
     }
 
     #[test]
-    fn test_valid_gpy_version() {
+    fn gpy_version_accepts_release_and_prerelease() {
         assert_eq!(GpyVersion::new("0.1.0").unwrap().as_str(), "0.1.0");
         assert_eq!(
             GpyVersion::new("1.2.3-beta.1").unwrap().as_str(),
@@ -629,17 +647,17 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_gpy_version() {
-        assert!(GpyVersion::new("").is_err());
-        assert!(GpyVersion::new("1").is_err());
-        assert!(GpyVersion::new("1.2").is_err());
-        assert!(GpyVersion::new("1.2.x").is_err());
+    fn gpy_version_rejects_empty_and_malformed_cores() {
+        assert_rejected(GpyVersion::new(""), "cannot be empty");
+        assert_rejected(GpyVersion::new("1"), "MAJOR.MINOR.PATCH");
+        assert_rejected(GpyVersion::new("1.2"), "MAJOR.MINOR.PATCH");
+        assert_rejected(GpyVersion::new("1.2.x"), "only digits");
     }
 
     #[test]
     fn gpy_version_component_overflow_is_rejected() {
-        assert!(GpyVersion::new("99999999999999999999.0.0").is_err());
-        assert!(GpyVersion::new("0.0.18446744073709551616").is_err());
+        assert_rejected(GpyVersion::new("99999999999999999999.0.0"), "too large");
+        assert_rejected(GpyVersion::new("0.0.18446744073709551616"), "too large");
         assert!(GpyVersion::new("18446744073709551615.0.0").is_ok());
     }
 }

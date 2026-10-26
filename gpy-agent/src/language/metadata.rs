@@ -165,7 +165,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lookup_table() {
+    fn alias_lookup_is_case_insensitive_and_unknown_aliases_miss() {
         let cases: &[(&str, Option<&str>)] = &[
             ("rust", Some("rust")),
             ("rs", Some("rust")),
@@ -177,17 +177,11 @@ mod tests {
             ("", None),
         ];
         for (alias, expected_canonical) in cases {
-            let actual = lookup(alias).map(|lang| lang.canonical);
-            assert_eq!(actual, *expected_canonical, "alias: {alias:?}");
-        }
-    }
-
-    #[test]
-    fn get_canonical_name_table() {
-        let cases: &[(&str, Option<&str>)] =
-            &[("rust", Some("rust")), ("RS", Some("rust")), ("nope", None)];
-        for (alias, expected) in cases {
-            assert_eq!(get_canonical_name(alias), *expected, "alias: {alias:?}");
+            assert_eq!(
+                get_canonical_name(alias),
+                *expected_canonical,
+                "alias: {alias:?}"
+            );
         }
     }
 

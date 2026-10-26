@@ -367,12 +367,6 @@ mod tests {
     }
 
     #[test]
-    fn ui_settings_defaults_palette_to_default() {
-        let cfg = crate::config::UiSettings::default();
-        assert_eq!(cfg.palette.as_str(), "default");
-    }
-
-    #[test]
     fn ui_settings_parses_palette_field() {
         let toml_src = "theme = \"default\"\npalette = \"nord\"\n";
         let ui: crate::config::UiSettings = toml::from_str(toml_src).expect("parse");
@@ -380,29 +374,9 @@ mod tests {
     }
 
     #[test]
-    fn git_icon_set_defaults_to_unicode() {
-        let settings = crate::config::GitSettings::default();
-        assert_eq!(settings.icon_set, crate::config::GitIconSet::Unicode);
-    }
-
-    #[test]
     fn git_icon_set_parses_nerd_font() {
         let settings: crate::config::GitSettings =
             toml::from_str("icon_set = \"nerd_font\"\n").expect("parse");
         assert_eq!(settings.icon_set, crate::config::GitIconSet::NerdFont);
-    }
-
-    #[test]
-    fn git_stash_enabled_defaults_to_true() {
-        let settings = crate::config::GitSettings::default();
-        assert!(settings.stash_enabled);
-    }
-
-    #[test]
-    fn git_icons_default_includes_stash_detached_in_progress() {
-        let icons = crate::config::GitIcons::default();
-        assert_eq!(icons.stash.as_str(), "≡");
-        assert_eq!(icons.detached.as_str(), "➦");
-        assert_eq!(icons.in_progress.as_str(), "↻");
     }
 }

@@ -663,11 +663,8 @@ theme = "other"
     }
 
     #[test]
-    fn test_config_manager_with_defaults_fallback() {
-        let manager_res = ConfigManager::with_defaults();
-        assert!(manager_res.is_ok());
-
-        let manager = manager_res.unwrap();
+    fn with_defaults_exposes_the_default_config() {
+        let manager = ConfigManager::with_defaults().expect("default manager");
         let config = manager.get();
 
         assert_eq!(config.agent.timeout_seconds.get(), 5);

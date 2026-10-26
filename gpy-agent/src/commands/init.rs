@@ -67,9 +67,7 @@ fn resolve_show_icons(capability: FontCapability, non_interactive: bool) -> bool
 
 /// A prompt line with a git branch (U+E0A0), the Rust icon (U+F1617) and `❯`.
 #[cfg(unix)]
-fn sample_prompt_line() -> String {
-    "\u{e0a0} main   \u{f1617} rust 1.82   \u{276f}".to_owned()
-}
+const SAMPLE_PROMPT_LINE: &str = "\u{e0a0} main   \u{f1617} rust 1.82   \u{276f}";
 
 /// Ask on `/dev/tty` whether the sample renders; stdin is the installer's
 /// piped script, not the user.
@@ -95,10 +93,9 @@ fn confirm_icons(capability: FontCapability, default_yes: bool) -> std::io::Resu
     let mut writer = &tty;
     write!(
         writer,
-        "\nGPY can use icon glyphs in your prompt. Here's a sample:\n\n    {sample}\n\n\
+        "\nGPY can use icon glyphs in your prompt. Here's a sample:\n\n    {SAMPLE_PROMPT_LINE}\n\n\
          Do the icons above display correctly (not boxes or question marks)? {marker}\n\
          ({hint}): ",
-        sample = sample_prompt_line(),
     )?;
     writer.flush()?;
 
@@ -173,13 +170,5 @@ mod tests {
             !resolve_show_icons(FontCapability::Unknown, true),
             "unknown capability must default to ASCII in non-interactive mode"
         );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn sample_prompt_line_contains_nerd_glyphs() {
-        let sample = sample_prompt_line();
-        assert!(sample.contains('\u{f1617}'));
-        assert!(sample.contains('\u{e0a0}'));
     }
 }

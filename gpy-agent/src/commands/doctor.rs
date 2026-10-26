@@ -554,11 +554,16 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
     #![allow(missing_docs)]
 
-    use super::slow_pattern_reasons;
+    use super::{check_segments, slow_pattern_reasons};
 
     #[test]
-    fn doctor_palette_validation_rejects_unknown() {
-        assert!(crate::commands::palette::validate_target(Some("definitely-missing")).is_err());
+    fn check_segments_accepts_builtins_and_rejects_unknown_names() {
+        let discovery = crate::plugin::PluginDiscovery::default();
+        let builtins = vec!["git".to_owned(), "directory".to_owned()];
+        assert!(check_segments(&builtins, &discovery));
+
+        let with_typo = vec!["git".to_owned(), "gti".to_owned()];
+        assert!(!check_segments(&with_typo, &discovery));
     }
 
     #[test]

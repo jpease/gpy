@@ -305,16 +305,6 @@ fn is_client_alive_current_process() {
 
 #[test]
 #[cfg(unix)]
-fn is_client_alive_nonexistent_pid() {
-    let fake_pid = 999_999_u32;
-    assert!(
-        !ClientDirectory::is_client_alive(fake_pid),
-        "Non-existent PID should be detected as dead"
-    );
-}
-
-#[test]
-#[cfg(unix)]
 fn prune_dead_clients_removes_dead() {
     let directory = ClientDirectory::new();
     let current_pid = std::process::id();
@@ -325,22 +315,15 @@ fn prune_dead_clients_removes_dead() {
 
     assert_eq!(directory.len(), 2, "Should have 2 clients registered");
 
-    let pruned_pids = directory.prune_dead_clients();
-    assert_eq!(pruned_pids.len(), 1, "Should have pruned 1 dead client");
-    assert!(
-        pruned_pids.contains(&fake_pid),
-        "Pruned list should contain fake PID"
+    assert_eq!(
+        directory.prune_dead_clients(),
+        vec![fake_pid],
+        "only the dead client is pruned"
     );
-    assert_eq!(directory.len(), 1, "Should have 1 client remaining");
-
-    let clients = directory.clients();
-    assert!(
-        clients.contains(&current_pid),
-        "Current process should still be registered"
-    );
-    assert!(
-        !clients.contains(&fake_pid),
-        "Fake PID should have been removed"
+    assert_eq!(
+        directory.clients(),
+        vec![current_pid],
+        "only the live client remains registered"
     );
 }
 

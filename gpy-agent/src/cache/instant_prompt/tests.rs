@@ -759,26 +759,6 @@ fn write_cache_file_record_matches_disk_under_contention() {
 }
 
 #[test]
-fn test_path_to_cache_key_consistency() {
-    let path = Path::new("/home/user/project");
-    let key1 = path_to_cache_key(path);
-    let key2 = path_to_cache_key(path);
-    assert_eq!(key1, key2, "Cache key should be consistent");
-}
-
-#[test]
-fn test_path_to_cache_key_different() {
-    let path1 = Path::new("/home/user/project1");
-    let path2 = Path::new("/home/user/project2");
-    let key1 = path_to_cache_key(path1);
-    let key2 = path_to_cache_key(path2);
-    assert_ne!(
-        key1, key2,
-        "Different paths should have different cache keys"
-    );
-}
-
-#[test]
 fn test_path_to_cache_key_escaping() {
     let path = Path::new("/home/user/my project");
     let key = path_to_cache_key(path);

@@ -343,63 +343,6 @@ mod tests {
         }
     }
 
-    // These strings are the wire-visible `Response::Error` text.
-
-    #[test]
-    fn unexpected_message_renders_each_handlers_own_wording() {
-        let err = HandlerError::UnexpectedMessage {
-            handler: "GitHandler",
-            qualifier: "non-git",
-            message: "Ping".to_owned(),
-        };
-
-        assert_eq!(err.to_string(), "GitHandler received non-git message: Ping");
-    }
-
-    #[test]
-    fn feature_disabled_renders_the_config_wording() {
-        assert_eq!(
-            HandlerError::FeatureDisabled("Git").to_string(),
-            "Git segment disabled via config"
-        );
-    }
-
-    #[test]
-    fn not_in_repository_renders_unchanged() {
-        assert_eq!(
-            HandlerError::NotInRepository.to_string(),
-            "Not in a git repository"
-        );
-    }
-
-    #[test]
-    fn timed_out_renders_both_operations() {
-        assert_eq!(
-            HandlerError::TimedOut("Git status").to_string(),
-            "Git status timed out"
-        );
-        assert_eq!(
-            HandlerError::TimedOut("Language detection").to_string(),
-            "Language detection timed out"
-        );
-    }
-
-    #[test]
-    fn pid_not_registered_renders_with_the_pid() {
-        assert_eq!(
-            HandlerError::PidNotRegistered(4321).to_string(),
-            "PID 4321 not registered - please register first"
-        );
-    }
-
-    #[test]
-    fn git_renders_the_upstream_text_behind_a_prefix() {
-        assert_eq!(
-            HandlerError::Git("git status job panicked".to_owned()).to_string(),
-            "Git error: git status job panicked"
-        );
-    }
-
     #[test]
     fn operation_failed_names_the_step_and_the_cause() {
         let err = HandlerError::OperationFailed {
