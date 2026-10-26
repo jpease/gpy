@@ -71,7 +71,7 @@ const RESOLVE_TTL: Duration = Duration::from_secs(2);
 /// The matcher for one `(skip_paths, home)` pair and when it was resolved.
 struct Cached {
     entries: Vec<String>,
-    home: Option<String>,
+    home: Option<PathBuf>,
     resolved_at: Instant,
     matcher: Arc<SkipMatcher>,
 }
@@ -92,7 +92,7 @@ impl MatcherCache {
     /// the cached one is at least [`RESOLVE_TTL`] old at `now`. Resolution
     /// runs outside the lock: `canonicalize` on a slow mount must not stall
     /// every other Git gate check.
-    fn matcher(&self, entries: &[String], home: Option<&str>, now: Instant) -> Arc<SkipMatcher> {
+    fn matcher(&self, entries: &[String], home: Option<&Path>, now: Instant) -> Arc<SkipMatcher> {
         let is_pair = |c: &Cached| c.entries == entries && c.home.as_deref() == home;
         {
             let guard = self.0.lock_or_recover();
@@ -103,7 +103,7 @@ impl MatcherCache {
                 return Arc::clone(&cached.matcher);
             }
         }
-        let matcher = Arc::new(SkipMatcher::new(entries, home.map(Path::new)));
+        let matcher = Arc::new(SkipMatcher::new(entries, home));
         let mut guard = self.0.lock_or_recover();
         // A concurrent resolver may have stored a newer result meanwhile; keep it.
         if guard.iter().any(|c| is_pair(c) && c.resolved_at > now) {
@@ -115,7 +115,7 @@ impl MatcherCache {
         }
         guard.push(Cached {
             entries: entries.to_vec(),
-            home: home.map(str::to_owned),
+            home: home.map(Path::to_path_buf),
             resolved_at: now,
             matcher: Arc::clone(&matcher),
         });
@@ -141,7 +141,7 @@ impl GitSettings {
         if self.skip_paths.is_empty() {
             return false;
         }
-        let home = crate::paths::home_dir();
+        let home = crate::paths::home_path();
         CACHE
             .matcher(&self.skip_paths, home.as_deref(), Instant::now())
             .is_skipped(path)

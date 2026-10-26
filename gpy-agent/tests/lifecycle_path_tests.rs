@@ -1,6 +1,6 @@
 //! `paths::runtime_dir()` precedence: `$XDG_RUNTIME_DIR/gpy`, `$XDG_CACHE_HOME/gpy`,
 //! home `.cache/gpy`, `/tmp/gpy`.
-//! The home comes from `paths::home_dir`, which falls back to passwd when `HOME`
+//! The home comes from `paths::home_path`, which falls back to passwd when `HOME`
 //! is unset (as Fish and Zsh do), so `/tmp/gpy` is reachable only with no home.
 
 #![allow(clippy::unwrap_used)]
@@ -71,8 +71,8 @@ fn socket_path_without_home_uses_the_passwd_home() {
 
 /// Runtime root without `HOME`: passwd home's `.cache/gpy`, else `/tmp/gpy`.
 fn expected_homeless_runtime_root() -> std::path::PathBuf {
-    gpy_agent::paths::home_dir().map_or_else(
+    gpy_agent::paths::home_path().map_or_else(
         || std::path::PathBuf::from("/tmp/gpy"),
-        |home| std::path::PathBuf::from(home).join(".cache").join("gpy"),
+        |home| home.join(".cache").join("gpy"),
     )
 }

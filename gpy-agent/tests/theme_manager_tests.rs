@@ -546,6 +546,30 @@ fn test_theme_manager_respects_xdg_config_home() {
     assert_eq!(theme.segments.clock.bg_color, "magenta");
 }
 
+/// Linux paths are raw bytes: a user theme under a non-UTF-8 `XDG_CONFIG_HOME`
+/// is found where the directory really is, not under a lossy spelling of it.
+#[cfg(target_os = "linux")]
+#[test]
+#[serial]
+fn test_theme_manager_loads_from_non_utf8_xdg_config_home() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let temp_dir = TempDir::new().unwrap();
+    let xdg_path = temp_dir
+        .path()
+        .join(PathBuf::from(OsString::from_vec(b"cfg-\xff".to_vec())));
+    create_test_theme_toml(&xdg_path.join("gpy"), "odd_bytes", CUSTOM_THEME);
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", &xdg_path);
+
+    assert_eq!(
+        ThemeManager::user_themes_dir(),
+        xdg_path.join("gpy").join("themes")
+    );
+    let manager = ThemeManager::new("odd_bytes").unwrap();
+    assert_eq!(manager.get().ui.prompt_icon, "→");
+}
+
 #[test]
 #[serial]
 fn test_theme_manager_export_includes_all_segments() {

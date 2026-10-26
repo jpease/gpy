@@ -87,9 +87,9 @@ fn local_hostname() -> String {
     "localhost".to_owned()
 }
 
-/// Best-effort username from `$USER`.
+/// Best-effort username; falls back to a placeholder.
 fn local_username() -> String {
-    std::env::var("USER").unwrap_or_else(|_| "user".to_owned())
+    crate::paths::user_name().unwrap_or_else(|| "user".to_owned())
 }
 
 #[cfg(test)]

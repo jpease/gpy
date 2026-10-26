@@ -177,9 +177,7 @@ enum OneshotCommands {
 
 /// `$USER`/`$USERNAME`, or empty. The shells always pass `--username`.
 fn default_username_arg() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("USERNAME"))
-        .unwrap_or_default()
+    gpy_agent::paths::user_name().unwrap_or_default()
 }
 
 /// `$HOSTNAME`/`$COMPUTERNAME`, or empty. The shells always pass `--hostname`.

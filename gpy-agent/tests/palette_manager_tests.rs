@@ -192,6 +192,38 @@ fn load_active_palette_reports_unusable_user_palettes() {
     );
 }
 
+/// Linux paths are raw bytes: a user palette under a non-UTF-8
+/// `XDG_CONFIG_HOME` is found where the directory really is.
+#[cfg(target_os = "linux")]
+#[test]
+#[serial]
+fn user_palettes_dir_keeps_a_non_utf8_xdg_config_home() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let temp_dir = TempDir::new().unwrap();
+    let xdg = temp_dir
+        .path()
+        .join(PathBuf::from(OsString::from_vec(b"cfg-\xff".to_vec())));
+    let palettes_dir = xdg.join("gpy").join("palettes");
+    std::fs::create_dir_all(&palettes_dir).unwrap();
+    std::fs::write(
+        palettes_dir.join("odd_bytes.toml"),
+        "[colors]\nsignal = \"red\"\n",
+    )
+    .unwrap();
+    let _env = EnvGuard::set_one("XDG_CONFIG_HOME", &xdg);
+
+    assert_eq!(PaletteManager::user_palettes_dir(), palettes_dir);
+    let found = PaletteManager::discover_available_palettes();
+    assert!(
+        found
+            .iter()
+            .any(|p| p.name == "odd_bytes" && matches!(p.source, PaletteSource::User)),
+        "the user palette under the non-UTF-8 root must be discovered"
+    );
+}
+
 #[test]
 #[serial]
 fn validate_target_accepts_builtin_default() {

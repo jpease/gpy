@@ -2,8 +2,12 @@
 //!
 //! The `*_for` resolvers take environment values as parameters (no ambient
 //! reads) so the precedence can be table-tested without `unsafe` `set_var`;
-//! `runtime_dir`, `resolve_socket_path` and `home_dir` are the entry points
-//! that read the environment. The runtime root
+//! `runtime_dir`, `config_root`, `cache_root`, `resolve_socket_path`,
+//! `home_path`, `xdg_config_home`, `xdg_data_home`, `user_name` and
+//! `local_app_data` are the entry points that
+//! read the environment, and the only place the crate reads `HOME`, `USER`,
+//! `XDG_*` or `LOCALAPPDATA`. Every lookup is `Path`-based, so a non-UTF-8
+//! value resolves like any other. The runtime root
 //! stays separate from cache because `XDG_RUNTIME_DIR` is a 0700 tmpfs cleared
 //! at logout. Native Windows gets a cache branch only: IPC is Unix-socket
 //! based, so Windows is CLI-only and shell integration runs under WSL.
@@ -94,17 +98,8 @@ pub fn check_socket_path_len(path: &Path) -> crate::Result<()> {
 }
 
 /// Treat empty or non-absolute `$XDG_*` values as unset, per the XDG Base
-/// Directory spec; the shell resolvers apply the same rule. On [`Os::Unix`]
-/// only a leading `/` counts (`C:\x` from `WSLENV` is relative there).
-#[must_use]
-pub fn xdg_value(value: Option<&str>, os: Os) -> Option<&str> {
-    value.filter(|raw| match os {
-        Os::Unix => raw.starts_with('/'),
-        Os::Windows => is_absolute_windows(raw),
-    })
-}
-
-/// [`xdg_value`] for a non-UTF-8-capable path, with the same absoluteness rules.
+/// Directory spec; the shells apply the same rule. On [`Os::Unix`] only a
+/// leading `/` counts (`C:\x` from `WSLENV` is relative there).
 #[must_use]
 pub fn xdg_path(value: Option<&Path>, os: Os) -> Option<&Path> {
     value.filter(|path| match os {
@@ -128,12 +123,6 @@ fn is_absolute_windows(value: &str) -> bool {
 /// The user's home directory. Uses [`std::env::home_dir`] (passwd fallback,
 /// like Fish/Zsh) so agent and shells agree when `HOME` is unset; a relative
 /// `HOME` counts as none.
-#[must_use]
-pub fn home_dir() -> Option<String> {
-    home_path().map(|path| path.to_string_lossy().into_owned())
-}
-
-/// [`home_dir`] without the UTF-8 round trip.
 #[must_use]
 pub fn home_path() -> Option<PathBuf> {
     ambient_home().filter(|path| path.is_absolute())
@@ -173,10 +162,20 @@ pub fn root_var_os(key: &str) -> Option<std::ffi::OsString> {
     std::env::var_os(key)
 }
 
-/// [`root_var_os`] as UTF-8, matching `std::env::var(key).ok()`.
+/// `%LOCALAPPDATA%`, when set. Only [`Os::Windows`] resolvers use it: WSL may
+/// inherit a `C:\...` value that means nothing there.
 #[must_use]
-pub fn root_var(key: &str) -> Option<String> {
-    root_var_os(key).and_then(|value| value.into_string().ok())
+pub fn local_app_data() -> Option<PathBuf> {
+    root_var_os("LOCALAPPDATA").map(PathBuf::from)
+}
+
+/// The login name from `$USER`, else `$USERNAME` (Windows); non-UTF-8 bytes
+/// are replaced, as the name is only displayed.
+#[must_use]
+pub fn user_name() -> Option<String> {
+    std::env::var_os("USER")
+        .or_else(|| std::env::var_os("USERNAME"))
+        .map(|name| name.to_string_lossy().into_owned())
 }
 
 /// Per-process stand-in for HOME and the XDG roots, emptied on first use.
@@ -235,18 +234,18 @@ impl Os {
 /// `$HOME/.cache/gpy`, then `/tmp/gpy`. Matches Fish `__gpy_runtime_root`.
 #[must_use]
 pub fn runtime_root_for(
-    xdg_runtime_dir: Option<&str>,
-    xdg_cache_home: Option<&str>,
-    home: Option<&str>,
+    xdg_runtime_dir: Option<&Path>,
+    xdg_cache_home: Option<&Path>,
+    home: Option<&Path>,
 ) -> PathBuf {
-    if let Some(xdg_runtime) = xdg_value(xdg_runtime_dir, Os::Unix) {
-        return PathBuf::from(xdg_runtime).join("gpy");
+    if let Some(xdg_runtime) = xdg_path(xdg_runtime_dir, Os::Unix) {
+        return xdg_runtime.join("gpy");
     }
-    if let Some(xdg_cache) = xdg_value(xdg_cache_home, Os::Unix) {
-        return PathBuf::from(xdg_cache).join("gpy");
+    if let Some(xdg_cache) = xdg_path(xdg_cache_home, Os::Unix) {
+        return xdg_cache.join("gpy");
     }
-    if let Some(home_dir) = xdg_value(home, Os::Unix) {
-        return PathBuf::from(home_dir).join(".cache").join("gpy");
+    if let Some(home_dir) = xdg_path(home, Os::Unix) {
+        return home_dir.join(".cache").join("gpy");
     }
     PathBuf::from("/tmp/gpy")
 }
@@ -289,9 +288,9 @@ pub fn set_socket_override(path: &Path) -> crate::Result<()> {
 #[must_use]
 pub fn runtime_dir() -> PathBuf {
     runtime_root_for(
-        root_var("XDG_RUNTIME_DIR").as_deref(),
-        root_var("XDG_CACHE_HOME").as_deref(),
-        home_dir().as_deref(),
+        xdg_root("XDG_RUNTIME_DIR").as_deref(),
+        xdg_root("XDG_CACHE_HOME").as_deref(),
+        home_path().as_deref(),
     )
 }
 
@@ -337,30 +336,66 @@ pub fn socket_path_override() -> Option<PathBuf> {
 /// Returns `None` when neither applies; callers build the error.
 #[must_use]
 pub fn cache_root_for(
-    xdg_cache_home: Option<&str>,
-    home: Option<&str>,
-    local_app_data: Option<&str>,
+    xdg_cache_home: Option<&Path>,
+    home: Option<&Path>,
+    local_app_data: Option<&Path>,
     os: Os,
 ) -> Option<PathBuf> {
-    if let Some(xdg_cache) = xdg_value(xdg_cache_home, os) {
-        return Some(PathBuf::from(xdg_cache).join("gpy"));
+    if let Some(xdg_cache) = xdg_path(xdg_cache_home, os) {
+        return Some(xdg_cache.join("gpy"));
     }
     match os {
-        Os::Unix => xdg_value(home, Os::Unix)
-            .map(|home_dir| PathBuf::from(home_dir).join(".cache").join("gpy")),
-        Os::Windows => local_app_data.map(|lad| PathBuf::from(lad).join("gpy")),
+        Os::Unix => xdg_path(home, Os::Unix).map(|home_dir| home_dir.join(".cache").join("gpy")),
+        Os::Windows => local_app_data.map(|lad| lad.join("gpy")),
     }
+}
+
+/// [`cache_root_for`] for this process's environment and OS.
+#[must_use]
+pub fn cache_root() -> Option<PathBuf> {
+    cache_root_for(
+        xdg_root("XDG_CACHE_HOME").as_deref(),
+        home_path().as_deref(),
+        local_app_data().as_deref(),
+        Os::host(),
+    )
 }
 
 /// The config root: `$XDG_CONFIG_HOME/gpy` (absolute per `os`), then
 /// `$HOME/.config/gpy`, else relative `.config/gpy`.
 #[must_use]
-pub fn config_root_for(xdg_config_home: Option<&str>, home: Option<&str>, os: Os) -> PathBuf {
-    if let Some(xdg_config) = xdg_value(xdg_config_home, os) {
-        return PathBuf::from(xdg_config).join("gpy");
+pub fn config_root_for(xdg_config_home: Option<&Path>, home: Option<&Path>, os: Os) -> PathBuf {
+    if let Some(xdg_config) = xdg_path(xdg_config_home, os) {
+        return xdg_config.join("gpy");
     }
-    let home_dir = xdg_value(home, os).unwrap_or(".");
-    PathBuf::from(home_dir).join(".config").join("gpy")
+    let home_dir = xdg_path(home, os).unwrap_or_else(|| Path::new("."));
+    home_dir.join(".config").join("gpy")
+}
+
+/// [`config_root_for`] for this process's environment and OS.
+#[must_use]
+pub fn config_root() -> PathBuf {
+    config_root_for(
+        xdg_config_home().as_deref(),
+        home_path().as_deref(),
+        Os::host(),
+    )
+}
+
+/// `$XDG_CONFIG_HOME` as set, before the absoluteness rule of [`xdg_path`].
+#[must_use]
+pub fn xdg_config_home() -> Option<PathBuf> {
+    xdg_root("XDG_CONFIG_HOME")
+}
+
+/// `$XDG_DATA_HOME` as set, before the absoluteness rule of [`xdg_path`].
+#[must_use]
+pub fn xdg_data_home() -> Option<PathBuf> {
+    xdg_root("XDG_DATA_HOME")
+}
+
+fn xdg_root(key: &str) -> Option<PathBuf> {
+    root_var_os(key).map(PathBuf::from)
 }
 
 #[cfg(test)]
@@ -414,7 +449,11 @@ mod tests {
 
         for (xdg_runtime, xdg_cache, home, expected) in cases {
             assert_eq!(
-                runtime_root_for(xdg_runtime, xdg_cache, home),
+                runtime_root_for(
+                    xdg_runtime.map(Path::new),
+                    xdg_cache.map(Path::new),
+                    home.map(Path::new),
+                ),
                 PathBuf::from(expected),
                 "runtime root for (XDG_RUNTIME_DIR={xdg_runtime:?}, XDG_CACHE_HOME={xdg_cache:?}, HOME={home:?})"
             );
@@ -450,7 +489,12 @@ mod tests {
 
         for (xdg_cache, home, expected) in cases {
             assert_eq!(
-                cache_root_for(xdg_cache, home, None, Os::Unix),
+                cache_root_for(
+                    xdg_cache.map(Path::new),
+                    home.map(Path::new),
+                    None,
+                    Os::Unix
+                ),
                 expected.map(PathBuf::from),
                 "cache root for (XDG_CACHE_HOME={xdg_cache:?}, HOME={home:?}, Os::Unix)"
             );
@@ -483,7 +527,12 @@ mod tests {
 
         for (xdg_cache, local_app_data, expected) in cases {
             assert_eq!(
-                cache_root_for(xdg_cache, None, local_app_data, Os::Windows),
+                cache_root_for(
+                    xdg_cache.map(Path::new),
+                    None,
+                    local_app_data.map(Path::new),
+                    Os::Windows,
+                ),
                 expected.map(PathBuf::from),
                 "cache root for (XDG_CACHE_HOME={xdg_cache:?}, LOCALAPPDATA={local_app_data:?}, Os::Windows)"
             );
@@ -491,11 +540,11 @@ mod tests {
     }
 
     #[test]
-    fn xdg_value_unix_keeps_only_slash_rooted_values() {
+    fn xdg_path_unix_keeps_only_slash_rooted_values() {
         for accepted in ["/run/user/1000", "/"] {
             assert_eq!(
-                xdg_value(Some(accepted), Os::Unix),
-                Some(accepted),
+                xdg_path(Some(Path::new(accepted)), Os::Unix),
+                Some(Path::new(accepted)),
                 "{accepted:?} is absolute and must be kept"
             );
         }
@@ -514,17 +563,17 @@ mod tests {
             " /lead-space",
         ] {
             assert_eq!(
-                xdg_value(Some(rejected), Os::Unix),
+                xdg_path(Some(Path::new(rejected)), Os::Unix),
                 None,
                 "{rejected:?} is empty or relative on Unix and must be treated as unset"
             );
         }
 
-        assert_eq!(xdg_value(None, Os::Unix), None);
+        assert_eq!(xdg_path(None, Os::Unix), None);
     }
 
     #[test]
-    fn xdg_value_windows_keeps_windows_and_posix_absolute_values() {
+    fn xdg_path_windows_keeps_windows_and_posix_absolute_values() {
         for accepted in [
             "/run/user/1000",
             "/",
@@ -533,29 +582,53 @@ mod tests {
             r"\server\share",
         ] {
             assert_eq!(
-                xdg_value(Some(accepted), Os::Windows),
-                Some(accepted),
+                xdg_path(Some(Path::new(accepted)), Os::Windows),
+                Some(Path::new(accepted)),
                 "{accepted:?} is absolute and must be kept"
             );
         }
 
         for rejected in ["", "cache", "./cache", "~/cache", "C:relative", "1:/x"] {
             assert_eq!(
-                xdg_value(Some(rejected), Os::Windows),
+                xdg_path(Some(Path::new(rejected)), Os::Windows),
                 None,
                 "{rejected:?} is empty or relative and must be treated as unset"
             );
         }
 
-        assert_eq!(xdg_value(None, Os::Windows), None);
+        assert_eq!(xdg_path(None, Os::Windows), None);
+    }
+
+    /// A root that is not UTF-8 resolves byte for byte in every resolver.
+    #[cfg(unix)]
+    #[test]
+    fn resolvers_keep_non_utf8_roots_intact() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let odd = Path::new(OsStr::from_bytes(b"/root-\xff"));
+        assert_eq!(runtime_root_for(Some(odd), None, None), odd.join("gpy"));
+        assert_eq!(
+            cache_root_for(Some(odd), None, None, Os::Unix),
+            Some(odd.join("gpy"))
+        );
+        assert_eq!(
+            cache_root_for(None, Some(odd), None, Os::Unix),
+            Some(odd.join(".cache").join("gpy"))
+        );
+        assert_eq!(config_root_for(Some(odd), None, Os::Unix), odd.join("gpy"));
+        assert_eq!(
+            config_root_for(None, Some(odd), Os::Unix),
+            odd.join(".config").join("gpy")
+        );
     }
 
     /// Ambient wrapper; precedence is covered by the pure tables.
     #[test]
-    fn home_dir_resolves_on_this_machine() {
-        let home = home_dir().expect("a home directory must be resolvable");
+    fn home_path_resolves_on_this_machine() {
+        let home = home_path().expect("a home directory must be resolvable");
         assert!(
-            Path::new(&home).is_absolute(),
+            home.is_absolute(),
             "home directory should be absolute, got {home:?}"
         );
     }
@@ -578,7 +651,7 @@ mod tests {
 
         for (xdg_config, home, expected) in cases {
             assert_eq!(
-                config_root_for(xdg_config, home, Os::Unix),
+                config_root_for(xdg_config.map(Path::new), home.map(Path::new), Os::Unix),
                 PathBuf::from(expected),
                 "config root for (XDG_CONFIG_HOME={xdg_config:?}, HOME={home:?})"
             );
@@ -588,13 +661,14 @@ mod tests {
     /// Windows-absolute `XDG_CONFIG_HOME` is honoured only under `Os::Windows`.
     #[test]
     fn config_root_windows_xdg_override() {
-        let xdg = Some(r"C:\Users\u\cfg");
+        let xdg = Some(Path::new(r"C:\Users\u\cfg"));
+        let home = Some(Path::new("/home/u"));
         assert_eq!(
-            config_root_for(xdg, Some("/home/u"), Os::Windows),
+            config_root_for(xdg, home, Os::Windows),
             PathBuf::from(r"C:\Users\u\cfg").join("gpy"),
         );
         assert_eq!(
-            config_root_for(xdg, Some("/home/u"), Os::Unix),
+            config_root_for(xdg, home, Os::Unix),
             PathBuf::from("/home/u/.config/gpy"),
         );
     }

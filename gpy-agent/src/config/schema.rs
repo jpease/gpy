@@ -38,7 +38,7 @@ pub fn get_config_paths() -> Vec<PathBuf> {
     let custom_path = crate::paths::root_var_os("GPY_CONFIG_PATH")
         .map(|value| crate::paths::absolutize(Path::new(&value)));
     let home = crate::paths::home_path();
-    let xdg_config = crate::paths::root_var_os("XDG_CONFIG_HOME").map(PathBuf::from);
+    let xdg_config = crate::paths::xdg_config_home();
 
     config_candidates_for(
         custom_path.as_deref(),

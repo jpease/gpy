@@ -584,12 +584,7 @@ impl ThemeManager {
     /// Get the directory where user themes are stored.
     #[must_use]
     pub fn user_themes_dir() -> PathBuf {
-        crate::paths::config_root_for(
-            crate::paths::root_var("XDG_CONFIG_HOME").as_deref(),
-            crate::paths::home_dir().as_deref(),
-            crate::paths::Os::host(),
-        )
-        .join("themes")
+        crate::paths::config_root().join("themes")
     }
 
     fn user_theme_path(theme_name: &str) -> PathBuf {

@@ -96,6 +96,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `GPY_CONFIG_PATH`, `XDG_CONFIG_HOME` or `HOME` that is not valid UTF-8 is
   no longer rewritten with replacement characters, so the config file under it
   is found, loaded and saved.
+- A `GPY_CONFIG_PATH`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR` or
+  `HOME` that is not valid UTF-8 is no longer rewritten with replacement
+  characters, so the config file, themes, palettes, plugins, caches and the
+  runtime directory under it are found, loaded and saved.
 - `gpy status` and the agent's own status query now read the agent's whole
   reply line; a status report longer than 4 KiB, or one split across reads,
   no longer fails to parse.
