@@ -1,7 +1,7 @@
 //! Theme-export cache files, sourced by shells at startup and on reload so they
 //! never spawn the binary on the hot path.
 
-use super::instant_prompt::{get_gpy_cache_dir, write_atomic};
+use super::instant_prompt::files::{get_gpy_cache_dir, write_atomic};
 use crate::Result;
 use std::path::PathBuf;
 

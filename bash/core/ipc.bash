@@ -366,8 +366,8 @@ __gpy_prev_bg_token() {
     fi
 }
 
-# Suffix for base $1, is_last $2, is_first $3 into variable $4. MUST match
-# `variant_suffix` in the agent, e.g. git true false -> "git_last".
+# Suffix for base $1, is_last $2, is_first $3 into variable $4. MUST match the
+# agent's cache variant names (`CacheFileName`), e.g. git true false -> "git_last".
 __gpy_cache_variant_suffix() {
     local __gpy_cvs_suffix="$1"
     [[ "$3" == "true" ]] && __gpy_cvs_suffix+="_first"

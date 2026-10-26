@@ -5,7 +5,7 @@
 # implementations of the Unix path -> cache-key encoder and its on-disk
 # chunking, so they cannot drift apart:
 #   - Rust:  path_to_cache_key_for(Os::Unix, ..) + cache_file_parts in
-#            gpy-agent/src/cache/instant_prompt/mod.rs (test_path_to_cache_key_shared_vectors)
+#            gpy-agent/src/cache/instant_prompt/key.rs (tests.rs: test_path_to_cache_key_shared_vectors)
 #   - Bash:  __gpy_path_to_cache_key + __gpy_chunk_cache_key  (tests/bash/cache_key_vectors.test.bash)
 #   - Zsh:   __gpy_path_to_cache_key + __gpy_chunk_cache_key  (tests/zsh/cache_key_vectors.test.zsh)
 #   - Fish:  __gpy_path_to_cache_key + __gpy_chunk_cache_key  (tests/fish/cache_key_vectors.test.fish)

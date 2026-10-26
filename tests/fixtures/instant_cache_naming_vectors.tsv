@@ -4,7 +4,7 @@
 # Shared vectors for the pieces of an instant-cache file name and the
 # cache-read status code, beyond the path key (cache_key_vectors.tsv). The
 # shells must name a cache file exactly as the agent writes it
-# (`variant_suffix` / `prev_bg_token` in gpy-agent/src/cache/instant_prompt.rs).
+# (`CacheFileName` / `prev_bg_token` in gpy-agent/src/cache/instant_prompt/name.rs).
 # Read by all three shells:
 #   - Bash:  tests/bash/instant_cache_naming_vectors.test.bash
 #   - Zsh:   tests/zsh/instant_cache_naming_vectors.test.zsh

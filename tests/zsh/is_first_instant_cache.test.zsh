@@ -30,7 +30,7 @@ check() {
     fi
 }
 
-# --- Suffix helper: matches gpy-agent's variant_suffix exactly ---
+# --- Suffix helper: matches gpy-agent's cache variant names exactly ---
 __gpy_cache_variant_suffix git false false suffix
 check "not first, not last" "$suffix" "git"
 __gpy_cache_variant_suffix git true false suffix

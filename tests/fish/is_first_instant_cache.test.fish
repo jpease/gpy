@@ -31,7 +31,7 @@ function check --argument-names label result
     end
 end
 
-# --- Suffix helper: matches gpy-agent's variant_suffix exactly ---
+# --- Suffix helper: matches gpy-agent's cache variant names exactly ---
 check "not first, not last" (test (__gpy_cache_variant_suffix git "" "") = git; and echo pass; or echo fail)
 check "last only" (test (__gpy_cache_variant_suffix git true "") = git_last; and echo pass; or echo fail)
 check "first only" (test (__gpy_cache_variant_suffix git "" true) = git_first; and echo pass; or echo fail)

@@ -506,7 +506,7 @@ function __gpy_memoized_git_root --argument-names start_dir --description 'Per-r
 end
 
 # Reversible escape (`_` doubled first). Order MUST match path_to_cache_key in
-# gpy-agent/src/cache/instant_prompt/mod.rs.
+# gpy-agent/src/cache/instant_prompt/key.rs.
 function __gpy_path_to_cache_key --argument-names path --description 'Convert path to cache key'
     string replace -a -- _ __ "$path" | string replace -a -- / _s | string replace -a -- '\\' _b | string replace -a -- ':' _c | string replace -a -- ' ' _w
 end
@@ -530,7 +530,7 @@ function __gpy_prev_bg_token --argument-names prev_bg --description 'Cache-key t
     string replace -ra -- '[^a-zA-Z0-9]' _ "$prev_bg"
 end
 
-# MUST match `variant_suffix` in the agent.
+# MUST match the agent's cache variant names (`CacheFileName`).
 function __gpy_cache_variant_suffix --argument-names base is_last is_first --description 'Cache-filename suffix for an (is_last, is_first) pair'
     set -l suffix $base
     if test "$is_first" = true

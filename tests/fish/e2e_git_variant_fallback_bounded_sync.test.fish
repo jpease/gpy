@@ -19,7 +19,7 @@
 # The stock default theme intentionally does NOT vary the git segment's caps
 # by prev_bg (only `[segments.character]` does -- see the
 # `git_cache_writes_one_file_per_prev_bg_context` test in
-# gpy-agent/src/cache/instant_prompt/mod.rs, which asserts the rendered bytes are
+# gpy-agent/src/cache/instant_prompt/tests.rs, which asserts the rendered bytes are
 # IDENTICAL across prev_bg contexts for the default theme). To make the
 # chevron-color difference assertable at the byte level from Fish, this test
 # installs a custom theme whose git format reads `fg:prev_bg` for its opening
