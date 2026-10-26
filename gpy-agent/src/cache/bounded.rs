@@ -23,6 +23,9 @@ pub const VERSION_CACHE_CAPACITY: usize = 1024;
 /// Maximum entries retained in the compiled `.gitignore`-matcher cache.
 pub const IGNORE_CACHE_CAPACITY: usize = 256;
 
+/// Maximum repositories tracked by each `NativeGitBackend` config cache.
+pub const NATIVE_GIT_CONFIG_CACHE_CAPACITY: usize = 512;
+
 /// Maximum entries retained in the `InstantPromptCache::last_written` map.
 pub const INSTANT_PROMPT_LAST_WRITTEN_CAPACITY: usize = 1024;
 

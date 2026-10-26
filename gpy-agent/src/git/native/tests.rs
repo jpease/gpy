@@ -1,5 +1,6 @@
 use super::*;
 use crate::git::RebaseProgress;
+use std::time::SystemTime;
 use tempfile::TempDir;
 
 /// `git config --local --get-all core.untrackedCache` as seen from `path`.
@@ -819,7 +820,7 @@ fn parse_v2_output_handles_rename_and_clamps_counts() {
     assert!(renamed.staged);
 }
 
-/// `core.ignorecase` is read from the repository's config once and
+/// `core.ignorecase` is read from the repository's config and
 /// decides whether pathspecs fold case.
 #[test]
 fn ignores_case_reflects_the_repository_config() {
@@ -834,6 +835,52 @@ fn ignores_case_reflects_the_repository_config() {
         assert!(status.success());
         assert_eq!(NativeGitBackend::ignores_case(&path), expected);
     }
+}
+
+fn set_ignore_case(path: &Path, setting: &str) {
+    let status = Command::new("git")
+        .args(["config", "core.ignorecase", setting])
+        .current_dir(path)
+        .status()
+        .expect("run git config");
+    assert!(status.success());
+}
+
+/// A changed `core.ignorecase` is served from cache until the entry expires,
+/// then re-read.
+#[test]
+fn ignores_case_rereads_config_once_the_entry_expires() {
+    let (_dir, path) = init_test_repo();
+    set_ignore_case(&path, "true");
+    assert!(NativeGitBackend::ignores_case(&path));
+
+    set_ignore_case(&path, "false");
+    assert!(
+        NativeGitBackend::ignores_case(&path),
+        "a fresh entry is served without re-reading"
+    );
+
+    IGNORE_CASE.insert_at(
+        path.clone(),
+        true,
+        SystemTime::now() - IGNORE_CASE_TTL - Duration::from_secs(1),
+    );
+    assert!(
+        !NativeGitBackend::ignores_case(&path),
+        "an expired entry is re-read from the config"
+    );
+}
+
+#[test]
+fn config_caches_stay_within_capacity() {
+    for index in 0..NATIVE_GIT_CONFIG_CACHE_CAPACITY + 16 {
+        let repo = PathBuf::from(format!("/nonexistent/gpy-cache-bound/{index}"));
+        IGNORE_CASE.insert(repo.clone(), false);
+        UNTRACKED_CACHE_CHECKED.insert_if_absent(repo, ());
+    }
+
+    assert!(IGNORE_CASE.len() <= NATIVE_GIT_CONFIG_CACHE_CAPACITY);
+    assert!(UNTRACKED_CACHE_CHECKED.len() <= NATIVE_GIT_CONFIG_CACHE_CAPACITY);
 }
 
 /// A pathspec is passed to git as the raw `OsStr`, so a file whose

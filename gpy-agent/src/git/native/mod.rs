@@ -5,15 +5,14 @@
 use super::{CompleteStatus, RebaseProgress, RepositoryState, RepositoryStatus};
 use crate::Error;
 use crate::Result;
+use crate::cache::bounded::NATIVE_GIT_CONFIG_CACHE_CAPACITY;
+use crate::cache::ttl_map::TtlMap;
 use crate::config::types::GitTimeout;
 use crate::profiling::Timer;
-use crate::sync_ext::MutexExt;
-use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Git output parsing logic.
@@ -21,11 +20,15 @@ pub mod parser;
 
 use parser::{BranchHead, V2ParseResult};
 
-/// Repos already checked for `core.untrackedCache` this process.
-static UNTRACKED_CACHE_CHECKED: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+/// Repos whose `core.untrackedCache` was checked within the shared cache TTL.
+static UNTRACKED_CACHE_CHECKED: TtlMap<PathBuf, ()> = TtlMap::new(NATIVE_GIT_CONFIG_CACHE_CAPACITY);
 
-/// Per-repository `core.ignorecase`, read once.
-static IGNORE_CASE: Mutex<Option<HashMap<PathBuf, bool>>> = Mutex::new(None);
+/// How long a repository's `core.ignorecase` is trusted before it is re-read.
+const IGNORE_CASE_TTL: Duration = Duration::from_secs(60);
+
+/// Per-repository `core.ignorecase`, expiring after [`IGNORE_CASE_TTL`].
+static IGNORE_CASE: TtlMap<PathBuf, bool> =
+    TtlMap::with_ttl(NATIVE_GIT_CONFIG_CACHE_CAPACITY, IGNORE_CASE_TTL);
 
 /// Cap on `.git` gitdir-pointer file reads.
 const GITDIR_POINTER_READ_CAP: usize = 4_096;
@@ -99,7 +102,8 @@ impl NativeGitBackend {
     /// Whether `core.ignorecase` is true for the repository at `repo_path`,
     /// at any config scope.
     ///
-    /// Cached per repository; a failed read counts as `false` and is retried.
+    /// Cached per repository for [`IGNORE_CASE_TTL`], so a changed config is
+    /// picked up; a failed read counts as `false` and is retried.
     #[must_use]
     pub fn ignores_case(repo_path: &Path) -> bool {
         Self::ignores_case_until(repo_path, Self::default_deadline())
@@ -107,11 +111,7 @@ impl NativeGitBackend {
 
     /// [`Self::ignores_case`], with the uncached read finishing by `deadline`.
     fn ignores_case_until(repo_path: &Path, deadline: Instant) -> bool {
-        let cached = IGNORE_CASE
-            .lock_or_recover()
-            .as_ref()
-            .and_then(|known| known.get(repo_path).copied());
-        if let Some(ignore_case) = cached {
+        if let Some(ignore_case) = IGNORE_CASE.get(repo_path) {
             return ignore_case;
         }
 
@@ -132,10 +132,7 @@ impl NativeGitBackend {
             return false;
         };
         let ignore_case = value.trim() == "true";
-        IGNORE_CASE
-            .lock_or_recover()
-            .get_or_insert_with(HashMap::new)
-            .insert(repo_path.to_path_buf(), ignore_case);
+        IGNORE_CASE.insert(repo_path.to_path_buf(), ignore_case);
         ignore_case
     }
 
@@ -166,26 +163,17 @@ impl NativeGitBackend {
         Ok(())
     }
 
-    /// Enable the untracked cache once per repo per process, unless the user set it.
+    /// Enable the untracked cache unless the user set it. Runs at most once per
+    /// repository per cache window, and exactly once across concurrent callers.
     fn ensure_untracked_cache(repo_path: &Path, deadline: Instant) {
         let _t = Timer::new("native_ensure_untracked_cache");
-        let repo_path_buf = repo_path.to_path_buf();
 
-        let already_checked = UNTRACKED_CACHE_CHECKED
-            .lock_or_recover()
-            .get_or_insert_with(HashSet::new)
-            .contains(&repo_path_buf);
-
-        if already_checked {
+        if !UNTRACKED_CACHE_CHECKED.insert_if_absent(repo_path.to_path_buf(), ()) {
             return;
         }
 
         if !Self::is_untracked_cache_configured(repo_path, deadline) {
             let _ = Self::enable_untracked_cache(repo_path, deadline);
-        }
-
-        if let Some(set) = UNTRACKED_CACHE_CHECKED.lock_or_recover().as_mut() {
-            set.insert(repo_path_buf);
         }
     }
 
