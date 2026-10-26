@@ -48,7 +48,7 @@ set +T
 eval "$saved_debug_trap"
 
 shell_e2e_poll 2 shell_e2e_has_lines "$calls" 1 || true
-sleep 0.3 # window in which a throttle-violating dispatch would land
+sleep "$SHELL_E2E_ABSENCE_WINDOW" # window in which a throttle-violating dispatch would land
 expect_eq "one dispatch for eleven calls inside the window" "$(shell_e2e_count_lines "$calls")" "1"
 
 if [[ -n "${EPOCHREALTIME:-}" || "${__gpy_have_printf_epoch:-0}" == "1" ]]; then

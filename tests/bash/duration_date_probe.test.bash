@@ -66,16 +66,21 @@ __gpy_consume_shell_flags() { :; }
 # shellcheck disable=SC2329
 __gpy_keep_arm_hook_last() { :; }
 
+# A fake clock stands in for the wall clock, so the two-second command takes no real time.
+fake_now=1000
+# shellcheck disable=SC2329
+__gpy_now_seconds() { printf -v "$1" '%s' "$fake_now"; }
+
 __gpy_duration_method=date-seconds
 __gpy_cmd_duration=""
-PATH="$SANDBOX/bsd:$PATH" __gpy_preexec
-sleep 2
-PATH="$SANDBOX/bsd:$PATH" __gpy_precmd 2>"$SANDBOX/precmd.err" >/dev/null
+__gpy_preexec
+fake_now=$((fake_now + 2))
+__gpy_precmd 2>"$SANDBOX/precmd.err" >/dev/null
 check "date-seconds precmd prints no arithmetic error" "" "$(cat "$SANDBOX/precmd.err")"
-if [[ "$__gpy_cmd_duration" =~ ^[0-9]+$ ]] && ((__gpy_cmd_duration >= 1000 && __gpy_cmd_duration <= 3000)); then
+if [[ "$__gpy_cmd_duration" =~ ^[0-9]+$ ]] && ((__gpy_cmd_duration == 2000)); then
     pass "a ~2s command measures ${__gpy_cmd_duration}ms with whole-second timing"
 else
-    fail "a ~2s command measured [$__gpy_cmd_duration]ms (want 1000-3000)"
+    fail "a ~2s command measured [$__gpy_cmd_duration]ms (want 2000)"
 fi
 
 test_finish "date probe duration"

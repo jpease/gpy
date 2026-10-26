@@ -29,6 +29,12 @@ function __live_cache_changed --argument-names file
     not cmp -s $file $__gpy_test_tmp_dir/before.ansi
 end
 
+# Predicate for poll_until: edit the tracked file, then test whether $file changed.
+function __live_edit_changed_cache --argument-names file
+    echo modified >>$__live_repo/tracked.txt
+    __live_cache_changed $file
+end
+
 function test_git_live_content
     print_test_header "E2E Test: Git Segment Live Content Update"
     init_test_env
@@ -85,18 +91,15 @@ function test_git_live_content
     end
     pass "Instant cache created"
 
-    # Give the worktree watch a moment to warm up (some fs backends drop events
-    # that occur immediately after a stream starts); there is no observable
-    # "stream ready" signal to poll for.
-    sleep 2
-
     # Snapshot the clean-state content, then edit the tracked file WITHOUT git add.
     cp $cache_file $__gpy_test_tmp_dir/before.ansi
-    echo modified >>$repo/tracked.txt
 
-    # The agent should rewrite git.ansi (clean -> dirty) within the debounce window.
+    # The agent exposes no "watch ready" signal and some fs backends drop events
+    # right after a stream starts, so each poll attempt re-edits the file until
+    # git.ansi is rewritten (clean -> dirty).
+    set -g __live_repo $repo
     set -l changed 0
-    poll_until 6 __live_cache_changed $cache_file; and set changed 1
+    poll_until 8 __live_edit_changed_cache $cache_file; and set changed 1
 
     if test $changed -eq 1
         pass "Worktree edit updates git segment (clock disabled)"

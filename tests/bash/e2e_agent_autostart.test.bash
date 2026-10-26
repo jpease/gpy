@@ -85,18 +85,14 @@ fi
 
 echo dirty >>"$SHELL_E2E_REPO/tracked.txt"
 # Bash has no SIGURG trap and readline can't repaint idle; poll with newlines (each renders fresh cache).
-_dirty_scale="$(shell_e2e_timeout_scale)"
-_dirty_attempts=$(( 20 * _dirty_scale ))  # one newline every 0.5 s -> 10 s * scale
-_dirty_seen=""
-while [ "$_dirty_attempts" -gt 0 ]; do
+dirty_marker_seen() {
     shell_e2e_send '\r'
-    sleep 0.5
     case "$(shell_e2e_transcript "$off3")" in
-        *'✱1'*) _dirty_seen=1; break ;;
+        *'✱1'*) return 0 ;;
     esac
-    _dirty_attempts=$(( _dirty_attempts - 1 ))
-done
-if [ -n "$_dirty_seen" ]; then
+    return 1
+}
+if shell_e2e_poll 10 dirty_marker_seen; then
     pass "the prompt after the edit shows the unstaged marker"
 else
     fail "no unstaged marker after editing a tracked file"

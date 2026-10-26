@@ -30,6 +30,19 @@ function print_banner
     print_test_header "E2E Test: Live Update Signal Flow"
 end
 
+# Make git changes until the client's signal count exceeds the baseline. The
+# agent exposes no "watch ready" signal, so a change made before the watch is
+# armed is retried rather than waited out.
+function __gpy_change_rang --argument-names client_pid baseline
+    echo >>(pwd)/.gpy-test-$fish_pid
+    git -C (pwd) add (pwd)/.gpy-test-$fish_pid >/dev/null 2>&1
+    test (count_signals $client_pid) -gt $baseline
+end
+
+function ring_after_change --argument-names client_pid baseline
+    poll_until 8 __gpy_change_rang $client_pid $baseline
+end
+
 function test_signal_flow
     print_banner
     init_test_env
@@ -50,16 +63,13 @@ function test_signal_flow
     end
     pass "Register client (phase 1)"
 
-    # Let registration-time signals settle, then capture a baseline. We assert an
-    # INCREMENT caused specifically by the git change — a plain "≥1" check would be
-    # satisfied by the registration signal alone and could not detect a regression
-    # where change-driven signals stop firing. The absence of further signals
-    # cannot be polled for, so this is a fixed settle window.
-    sleep 2
+    # Wait for the registration signal, then capture a baseline. We assert an
+    # INCREMENT caused specifically by the git change: a plain "at least 1" check
+    # would be satisfied by the registration signal alone.
+    wait_for_signal $client1 1 5
     set -l baseline1 (count_signals $client1)
 
-    trigger_git_change (pwd) >/dev/null
-    if wait_for_signal $client1 (math $baseline1 + 1) 6
+    if ring_after_change $client1 $baseline1
         pass "Watcher rings SIGURG on change"
     else
         set -l observed (count_signals $client1)
@@ -89,12 +99,10 @@ function test_signal_flow
     end
     pass "Register client (phase 2)"
 
-    # Same settle window as phase 1 before taking the baseline.
-    sleep 2 # elapsed time is the condition: see phase 1
+    wait_for_signal $client2 1 5
     set -l baseline2 (count_signals $client2)
 
-    trigger_git_change (pwd) >/dev/null
-    if wait_for_signal $client2 (math $baseline2 + 1) 6
+    if ring_after_change $client2 $baseline2
         pass "Watcher recovers after restart"
     else
         set -l observed2 (count_signals $client2)

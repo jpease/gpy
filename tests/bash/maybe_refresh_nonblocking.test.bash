@@ -47,7 +47,7 @@ else
     fail "__gpy_maybe_refresh blocked on the refresh ($t0 -> $t1)"
 fi
 if shell_e2e_poll 5 shell_e2e_has_lines "$calls" 1; then
-    sleep 0.3 # window in which a second request would show up
+    sleep "$SHELL_E2E_ABSENCE_WINDOW" # window in which a second request would show up
     shell_e2e_has_lines "$calls" 1 && pass "a burst across the shell and subshells sent exactly one request" \
         || fail "burst sent $(shell_e2e_count_lines "$calls") requests"
 else
@@ -90,7 +90,7 @@ else
     fail "expected the stale value, got '$out'"
 fi
 if shell_e2e_poll 5 shell_e2e_has_lines "$calls" $((before + 1)); then
-    sleep 0.3 # window in which a second request would show up
+    sleep "$SHELL_E2E_ABSENCE_WINDOW" # window in which a second request would show up
     shell_e2e_has_lines "$calls" $((before + 1)) && pass "four stale renders sent exactly one request" \
         || fail "four stale renders sent $(($(shell_e2e_count_lines "$calls") - before)) requests"
 else
@@ -103,7 +103,7 @@ stub_delay=0.1
 export GPY_AGENT_ENABLED=0
 __gpy_maybe_refresh git "$root" git_last true black ""
 # Absence cannot be polled: wait several stub delays.
-sleep 0.5
+sleep "$SHELL_E2E_ABSENCE_WINDOW"
 export GPY_AGENT_ENABLED=1
 shell_e2e_has_lines "$calls" "$before" && pass "with the agent disabled no refresh is sent" \
     || fail "a refresh was sent with GPY_AGENT_ENABLED=0"

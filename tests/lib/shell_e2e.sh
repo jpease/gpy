@@ -213,6 +213,11 @@ shell_e2e_build_shell_archive() {
     return "$_sba_rc"
 }
 
+# Seconds a test waits to show that something did NOT happen; absence cannot be
+# polled for, so every such wait uses this one value (scaled by the caller if needed).
+# shellcheck disable=SC2034 # read by the sourcing tests
+SHELL_E2E_ABSENCE_WINDOW=0.5
+
 SHELL_E2E_PTY="${SHELL_E2E_PTY:-}"   # set by shell_e2e_init
 SHELL_E2E_ROOT=""
 SHELL_E2E_REPO=""

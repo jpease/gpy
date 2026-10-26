@@ -71,8 +71,8 @@ for test_file in tests/bash/basic.test.bash tests/bash/parity.test.bash \
     fi
 
     # The supervisor backgrounds `gpy-agent start`, so an agent can bind after
-    # the test has exited: give a late start a fixed window to show up.
-    sleep 1
+    # the test has exited: give a late start twice the usual absence window.
+    sleep "$(awk -v w="$SHELL_E2E_ABSENCE_WINDOW" 'BEGIN { print w * 2 }')"
     pids="$(leaked_pids)"
     if [[ -n "$pids" ]]; then
         fail "$test_file left a process holding a socket under its sandbox: $(echo "$pids" | tr '\n' ' ')"

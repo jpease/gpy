@@ -38,7 +38,7 @@ done
 trap - DEBUG
 
 shell_e2e_poll 2 shell_e2e_has_lines "$calls" 1 || true
-sleep 0.3 # window in which a throttle-violating dispatch would land
+sleep "$SHELL_E2E_ABSENCE_WINDOW" # window in which a throttle-violating dispatch would land
 expect_eq "one dispatch for eleven calls inside the window" "$(shell_e2e_count_lines "$calls")" "1"
 expect_eq "zsh $ZSH_VERSION: throttled calls run nothing in a subshell" "$(shell_e2e_count_lines "$forks")" "0"
 
