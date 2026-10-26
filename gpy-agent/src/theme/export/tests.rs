@@ -383,15 +383,18 @@ fn zsh_export_matches_golden() {
     insta::assert_snapshot!("zsh_export", golden_export(Shell::Zsh));
 }
 
-/// Variant colours live under `_variant_`: variant `open` keeps off the `open`
-/// delimiter's colour, and segment `a` + variant `b_c` off segment `a_b` + variant `c`.
+/// Variant `open` keeps off the `open` delimiter's colour (`_variant_` namespace);
+/// a section whose names collide with an earlier one's (segment `a` against
+/// `a_b`, `a_open`, `a_variant`, `a_variant_x`) is skipped, so each name is set once.
 #[test]
-fn plugin_variant_colors_do_not_collide_with_delimiters_or_other_segments() {
+fn plugin_segment_variables_are_assigned_once_when_sections_collide() {
     let theme: ThemeConfig = toml::from_str(
         r#"
 [segments.a]
 open_bg_color = "red"
 b_c_bg_color = "green"
+x_bg_color = "green"
+variant_b_bg_color = "green"
 
 [segments.a.open]
 icon = "<"
@@ -400,6 +403,14 @@ bg_color = "black"
 
 [segments.a_b]
 c_bg_color = "blue"
+[segments.a_open]
+icon = "*"
+[segments.a_variant]
+b_bg_color = "blue"
+[segments.a_variant_x]
+bg_color = "blue"
+[segments.k8s]
+ok_bg_color = "blue"
 "#,
     )
     .expect("collision fixture should parse");
@@ -414,7 +425,7 @@ c_bg_color = "blue"
     let names: Vec<&str> = script
         .lines()
         .filter_map(|line| line.split_once('=').map(|(name, _)| name))
-        .filter(|name| name.starts_with("__gpy_segment_"))
+        .filter(|name| name.starts_with("__gpy_segment_") || name.starts_with("__color_"))
         .collect();
     for name in &names {
         assert_eq!(
@@ -427,11 +438,18 @@ c_bg_color = "blue"
         "__gpy_segment_a_open_bg_color=\"black\"",
         "__gpy_segment_a_variant_open_bg_color=\"red\"",
         "__gpy_segment_a_variant_b_c_bg_color=\"green\"",
-        "__gpy_segment_a_b_variant_c_bg_color=\"blue\"",
+        "__gpy_segment_k8s_variant_ok_bg_color=\"blue\"",
     ] {
         assert!(
             script.lines().any(|line| line == expected),
             "missing `{expected}`:\n{script}"
+        );
+    }
+    for skipped in ["a_b", "a_open", "a_variant", "a_variant_x"] {
+        let id = format!("__gpy_segment_{skipped}_id=");
+        assert!(
+            !script.contains(&id),
+            "`{skipped}` must be skipped:\n{script}"
         );
     }
 }

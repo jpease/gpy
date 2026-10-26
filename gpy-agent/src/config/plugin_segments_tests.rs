@@ -201,12 +201,12 @@ fn set_rejects_invalid_values_naming_the_key() {
         (
             "plugin.k8s.style",
             "loud",
-            "plugin.k8s.style: 'loud' is not one of",
+            "plugin.k8s.style: \"loud\" is not one of",
         ),
         (
             "plugin.k8s.depth",
             "six",
-            "plugin.k8s.depth: 'six' is not an integer",
+            "plugin.k8s.depth: \"six\" is not an integer",
         ),
         ("plugin.k8s.timeout_ms", "400", "may only lower it"),
         (

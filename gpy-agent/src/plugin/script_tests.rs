@@ -252,6 +252,8 @@ fn rejected_values_are_echoed_escaped() {
         ScanName::new(hostile).unwrap_err(),
         Extension::new(hostile).unwrap_err(),
         crate::plugin::SettingKey::new(hostile).unwrap_err(),
+        VariantName::new(hostile).unwrap_err(),
+        VariantColorKey::new(&format!("{hostile}_bg_color")).unwrap_err(),
     ] {
         let message = err.to_string();
         assert!(!message.chars().any(char::is_control), "{message:?}");

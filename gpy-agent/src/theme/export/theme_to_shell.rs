@@ -193,7 +193,7 @@ pub(crate) fn theme_to_shell(
     append_git_language_color_assignments(&mut output, colors, theme);
     append_delimiter_assignments(&mut output, colors, theme, glyphs);
 
-    append_plugin_segment_assignments(&mut output, colors, theme);
+    append_plugin_segment_assignments(&mut output, colors, &theme.segments.plugin);
 
     append_plugin_segment_file_assignments(&mut output, shell, plugin_segment_files);
     append_enabled_segments(&mut output, shell, config);

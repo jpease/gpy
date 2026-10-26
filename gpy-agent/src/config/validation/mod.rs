@@ -62,6 +62,12 @@ pub enum ValidationErrorKind {
         /// The colliding names.
         collision: crate::plugin::SegmentTokenCollision,
     },
+    /// Two plugin segment theme fields would export the same shell variable
+    /// (segment `a` with an `open` cap and segment `a_open` with an icon).
+    PluginVariableCollision {
+        /// The colliding fields and the shared variable.
+        collision: crate::theme::export::PluginVariableCollision,
+    },
     /// A `git.skip_paths` entry is not an absolute path (nor `~`-prefixed).
     RelativeSkipPath {
         /// The offending path.
@@ -105,6 +111,9 @@ impl std::fmt::Display for ValidationError {
             ValidationErrorKind::SegmentTokenCollision { collision } => {
                 write!(f, "{}: {collision}", self.field_path)
             }
+            ValidationErrorKind::PluginVariableCollision { collision } => {
+                write!(f, "{}: {collision}", self.field_path)
+            }
             ValidationErrorKind::RelativeSkipPath { value } => write!(
                 f,
                 "skip_paths must contain absolute paths: {value} is not absolute"
@@ -132,6 +141,7 @@ impl std::error::Error for ValidationError {
             | ValidationErrorKind::ReadOnlyKey
             | ValidationErrorKind::InvalidSegmentName { .. }
             | ValidationErrorKind::SegmentTokenCollision { .. }
+            | ValidationErrorKind::PluginVariableCollision { .. }
             | ValidationErrorKind::RelativeSkipPath { .. }
             | ValidationErrorKind::InvalidColor { .. }
             | ValidationErrorKind::IconControlChars { .. } => None,

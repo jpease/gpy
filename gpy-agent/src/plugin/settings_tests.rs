@@ -71,7 +71,7 @@ fn declaration_errors_name_the_key() {
         ),
         (
             "[settings.s]\ntype = \"string\"\ndefault = \"x\"\nchoices = [\"a\"]\n",
-            "settings.s: default: 'x' is not one of a",
+            "settings.s: default: \"x\" is not one of a",
         ),
         (
             "[settings.s]\ntype = \"string\"\ndefault = \"a\"\nchoices = [\"a\", \"a\"]\n",
@@ -163,6 +163,36 @@ fn cli_strings_parse_by_declared_type() {
         SettingValue::String("b".to_owned())
     );
     assert!(string.parse_str("c").is_err());
+}
+
+/// `gpy config set` input is echoed `{:?}`-escaped, never raw.
+#[test]
+fn rejected_cli_strings_are_echoed_escaped() {
+    let hostile = "a\u{1b}]0;x\u{7}\u{9b}31m";
+    let declarations = [
+        SettingDecl::Bool {
+            default: false,
+            description: None,
+        },
+        SettingDecl::Int {
+            default: 0,
+            min: None,
+            max: None,
+            description: None,
+        },
+        SettingDecl::String {
+            default: "a".to_owned(),
+            choices: vec!["a".to_owned()],
+            description: None,
+        },
+    ];
+    for declaration in declarations {
+        for raw in [hostile, "it's"] {
+            let message = declaration.parse_str(raw).unwrap_err().to_string();
+            assert!(!message.chars().any(char::is_control), "{message:?}");
+            assert!(message.contains(&format!("{raw:?}")), "{message}");
+        }
+    }
 }
 
 #[test]

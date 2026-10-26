@@ -234,7 +234,7 @@ impl SettingDecl {
                     Ok(())
                 } else {
                     Err(Error::invalid(format!(
-                        "'{text}' is not one of {}",
+                        "{text:?} is not one of {}",
                         choices.join(", ")
                     )))
                 }
@@ -256,12 +256,12 @@ impl SettingDecl {
             Self::Bool { .. } => SettingValue::Bool(match raw.to_ascii_lowercase().as_str() {
                 "true" | "1" | "yes" | "on" => true,
                 "false" | "0" | "no" | "off" => false,
-                _ => return Err(Error::invalid(format!("'{raw}' is not a boolean"))),
+                _ => return Err(Error::invalid(format!("{raw:?} is not a boolean"))),
             }),
             Self::Int { .. } => SettingValue::Int(
                 raw.trim()
                     .parse()
-                    .map_err(|e| Error::invalid(format!("'{raw}' is not an integer: {e}")))?,
+                    .map_err(|e| Error::invalid(format!("{raw:?} is not an integer: {e}")))?,
             ),
             Self::String { .. } => SettingValue::String(raw.to_owned()),
         };

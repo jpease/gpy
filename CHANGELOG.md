@@ -18,11 +18,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `context_color` are rejected in favour of `<variant>_bg_color` and
   `<variant>_text_color`, exported as
   `__gpy_segment_<token>_variant_<variant>_bg_color`/`_text_color` so
-  variant `open`/`close` cannot overwrite the cap colours and segment `a`
-  with variant `b_c` stays apart from segment `a_b` with variant `c`.
+  variant `open`/`close` cannot overwrite the cap colours.
 
 ### Fixed
 
+- A theme whose plugin segment sections would set the same shell variable
+  is now rejected, naming both fields. Segment names and variants both allow
+  `_`, so segment `a` with an `open` cap and segment `a_open` with an `icon`
+  both wrote `__gpy_segment_a_open_icon`, segment `a` with variant `x` and
+  segment `a_variant_x` both wrote `__gpy_segment_a_variant_x_bg_color`, and
+  segment `a` with variant `b_c` and segment `a_b` with variant `c` both wrote
+  `__color_a_b_c_bg`; the later one silently won. The error reads
+  `"segments.a.open.icon" and "segments.a_open.icon" both export shell
+  variable "__gpy_segment_a_open_icon"`, and export skips the later section
+  of a theme that was not validated. Rejected colour variant names, theme
+  style keys and `gpy config set plugin.<segment>.<key>` values are now
+  echoed escaped, so control characters in them no longer reach the terminal.
 - Parallel `gpy config set` calls on different keys no longer lose updates.
   Each save re-read the file, edited it and renamed it into place with
   nothing serializing the three steps, so two started together could each
