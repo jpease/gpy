@@ -2,6 +2,7 @@
 //! OS notifications plus an optional polling fallback.
 
 use crate::Result;
+use crate::env_config::env_u64_positive;
 use crate::sync_ext::MutexExt;
 use crate::watcher::WatchCoordinator;
 use std::path::{Path, PathBuf};
@@ -47,12 +48,6 @@ pub fn bytes_fingerprint(bytes: &[u8]) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     hasher.write(bytes);
     hasher.finish()
-}
-
-/// Parse a raw poll-interval env value into milliseconds; `None` when unset,
-/// non-numeric, or `0` (disabled).
-fn parse_poll_interval_ms(raw: Option<&str>) -> Option<u64> {
-    raw?.parse::<u64>().ok().filter(|value| *value > 0)
 }
 
 /// Resolves the file the poll loop should check on this tick.
@@ -142,8 +137,7 @@ impl HotReloadSlot {
         debounce_duration: Duration,
         target: PollTarget,
     ) {
-        let raw = std::env::var(env_var).ok();
-        let Some(poll_interval_ms) = parse_poll_interval_ms(raw.as_deref()) else {
+        let Some(poll_interval_ms) = env_u64_positive(env_var) else {
             return;
         };
         self.spawn_poll_thread(
@@ -243,7 +237,7 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
     #![allow(missing_docs)]
 
-    use super::{HotReloadSlot, PollTarget, content_fingerprint, parse_poll_interval_ms};
+    use super::{HotReloadSlot, PollTarget, content_fingerprint};
     use crate::sync_ext::MutexExt;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
@@ -357,13 +351,5 @@ mod tests {
             elapsed < Duration::from_millis(500),
             "stop() blocked for {elapsed:?}; it must not wait out the poll interval"
         );
-    }
-
-    #[test]
-    fn parse_poll_interval_ms_rejects_unset_zero_and_invalid() {
-        assert_eq!(parse_poll_interval_ms(None), None);
-        assert_eq!(parse_poll_interval_ms(Some("0")), None);
-        assert_eq!(parse_poll_interval_ms(Some("abc")), None);
-        assert_eq!(parse_poll_interval_ms(Some("25")), Some(25_u64));
     }
 }

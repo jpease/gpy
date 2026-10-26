@@ -1,9 +1,9 @@
 //! Shared watcher state: watched roots, external git directories, config paths.
 
 use super::filesystem;
+use crate::env_config::{env_string, parse_flag};
 use crate::sync_ext::{MutexExt, RwLockExt};
 use std::collections::HashSet;
-use std::env;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -247,12 +247,9 @@ impl Default for WatchRegistry {
     }
 }
 
-/// Parse `GPY_WATCH_WORKTREE`: `None` when unset, `Some(false)` for falsey spellings.
+/// `GPY_WATCH_WORKTREE` when set to a recognized boolean spelling.
 fn env_watch_worktree_override() -> Option<bool> {
-    env::var("GPY_WATCH_WORKTREE").ok().map(|value| {
-        let normalized = value.trim().to_ascii_lowercase();
-        !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
-    })
+    env_string("GPY_WATCH_WORKTREE").map(|value| parse_flag(Some(&value), true))
 }
 
 fn normalize_config_paths(path: &Path) -> Vec<PathBuf> {

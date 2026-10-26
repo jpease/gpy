@@ -8,6 +8,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+/// Longest an entry may wait under sustained churn before it flushes anyway.
+const DEFAULT_MAX_DELAY: Duration = Duration::from_secs(1);
+
 /// Debouncer for file system events
 pub struct DebounceEngine {
     /// Pending events by (kind, repo) key
@@ -186,13 +189,13 @@ impl DebounceEngine {
     /// Get recommended debounce duration for file watching
     #[must_use]
     pub const fn default_debounce_duration() -> Duration {
-        Duration::from_millis(100)
+        Duration::from_millis(super::DEFAULT_DEBOUNCE_MS)
     }
 
     /// Get the default max-delay cap.
     #[must_use]
     pub const fn default_max_delay() -> Duration {
-        Duration::from_secs(1)
+        DEFAULT_MAX_DELAY
     }
 }
 

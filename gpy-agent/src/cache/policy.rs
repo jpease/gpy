@@ -30,7 +30,7 @@ impl CachePolicy {
     pub const fn git_status() -> Self {
         Self {
             ttl: Duration::from_secs(30),
-            cooldown: Duration::from_millis(150),
+            cooldown: Duration::from_millis(crate::watcher::DEFAULT_THROTTLE_MS),
         }
     }
 }

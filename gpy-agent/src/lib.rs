@@ -22,6 +22,8 @@ pub mod config;
 mod deadline;
 /// Two-level logging: opt-in `debug_log!` and always-visible `warn_log!`.
 pub mod debug;
+/// Environment-variable parsing shared by the tuning knobs.
+mod env_config;
 /// Centralized error and result types.
 pub mod error;
 /// Nerd Font capability detection for icon defaults.

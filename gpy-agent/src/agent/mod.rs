@@ -13,6 +13,7 @@ pub mod oneshot;
 pub mod startup;
 
 use crate::debug_log;
+use crate::env_config::{env_flag, env_u64_positive};
 use crate::git::cache::GitStatusCache;
 use crate::ipc::{
     ClientDirectory,
@@ -24,39 +25,24 @@ use crate::watcher::WatcherConfig;
 use crate::watcher::hot_reload::HOT_RELOAD_DEBOUNCE;
 use crate::{Error, Result};
 use events::SharedWatcherSlot;
-use std::env;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-fn matches_ignore_case(value: &str, truthy: &[&str]) -> bool {
-    truthy
-        .iter()
-        .any(|candidate| value.trim().eq_ignore_ascii_case(candidate))
-}
-
 /// Whether `GPY_DISABLE_WATCHER` disables the file watcher. Startup and
 /// hot-reload both check it so a reload never re-enables the watcher.
 fn watcher_disabled_by_env() -> bool {
-    env::var("GPY_DISABLE_WATCHER")
-        .is_ok_and(|value| matches_ignore_case(&value, &["1", "true", "yes", "on"]))
+    env_flag("GPY_DISABLE_WATCHER", false)
 }
 
 /// Default reconcile interval; above the git-status cache TTL so scans see fresh state.
 const RECONCILE_INTERVAL_SECS: u64 = 45;
 
-/// Parse `GPY_RECONCILE_INTERVAL_SECS`; `None` when unset, non-numeric, or `0`.
-/// Pure so tests avoid `std::env::set_var` (needs `unsafe`, which is forbidden).
-fn parse_reconcile_interval_secs(raw: Option<&str>) -> Option<u64> {
-    raw?.parse::<u64>().ok().filter(|value| *value > 0)
-}
-
 /// Resolve the reconcile interval from `GPY_RECONCILE_INTERVAL_SECS`, else
 /// [`RECONCILE_INTERVAL_SECS`]. For setups where `FSEvents` never arrive.
 fn reconcile_interval_secs() -> u64 {
-    let raw = std::env::var("GPY_RECONCILE_INTERVAL_SECS").ok();
-    parse_reconcile_interval_secs(raw.as_deref()).unwrap_or(RECONCILE_INTERVAL_SECS)
+    env_u64_positive("GPY_RECONCILE_INTERVAL_SECS").unwrap_or(RECONCILE_INTERVAL_SECS)
 }
 
 /// Runs `scan_fn` over `repos` on a blocking thread (git status is a subprocess).

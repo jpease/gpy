@@ -78,24 +78,6 @@ mod language_tests {
     }
 }
 
-mod reconcile_interval_tests {
-    #![allow(clippy::missing_panics_doc)]
-
-    use super::super::parse_reconcile_interval_secs;
-
-    #[test]
-    fn parse_reconcile_interval_secs_rejects_unset_zero_and_invalid() {
-        assert_eq!(parse_reconcile_interval_secs(None), None);
-        assert_eq!(parse_reconcile_interval_secs(Some("0")), None);
-        assert_eq!(parse_reconcile_interval_secs(Some("not-a-number")), None);
-    }
-
-    #[test]
-    fn parse_reconcile_interval_secs_accepts_positive_integer() {
-        assert_eq!(parse_reconcile_interval_secs(Some("5")), Some(5_u64));
-    }
-}
-
 /// Reconcile ticks skipped during an in-flight scan are caught up afterwards, never concurrently.
 mod reconcile_scan_tests {
     #![allow(clippy::unwrap_used)]

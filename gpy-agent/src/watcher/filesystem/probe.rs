@@ -3,6 +3,8 @@
 use super::super::WatchRegistry;
 use super::super::watch_set::{WatchMode, WatchSet};
 use super::backend::{BackendKind, WatcherBackend, build_poll_watcher, poll_watch_targets};
+use crate::deadline::Deadline;
+use crate::env_config::{env_string, parse_flag, parse_u64, parse_u64_positive};
 use crate::sync_ext::MutexExt;
 use notify::event::{EventKind, Flag};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -12,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Health-probe timeout: well above healthy latency (<250ms), far below reconcile.
 pub(super) const DEFAULT_WATCH_PROBE_MS: u64 = 2_000;
@@ -55,9 +57,9 @@ impl FallbackPolicy {
     /// Resolve from `GPY_WATCH_FORCE_POLL`, `GPY_WATCH_PROBE_MS` (`0` = native only),
     /// and `GPY_WATCH_POLL_MS`.
     pub(super) fn from_env() -> Self {
-        let force_raw = std::env::var("GPY_WATCH_FORCE_POLL").ok();
-        let probe_raw = std::env::var("GPY_WATCH_PROBE_MS").ok();
-        let poll_raw = std::env::var("GPY_WATCH_POLL_MS").ok();
+        let force_raw = env_string("GPY_WATCH_FORCE_POLL");
+        let probe_raw = env_string("GPY_WATCH_PROBE_MS");
+        let poll_raw = env_string("GPY_WATCH_POLL_MS");
         Self::resolve(
             force_raw.as_deref(),
             probe_raw.as_deref(),
@@ -71,17 +73,14 @@ impl FallbackPolicy {
         probe_raw: Option<&str>,
         poll_raw: Option<&str>,
     ) -> Self {
-        let poll_interval = Duration::from_millis(
-            parse_millis(poll_raw)
-                .filter(|value| *value > 0_u64)
-                .unwrap_or(DEFAULT_WATCH_POLL_MS),
-        );
+        let poll_interval =
+            Duration::from_millis(parse_u64_positive(poll_raw).unwrap_or(DEFAULT_WATCH_POLL_MS));
 
-        if matches!(force_raw.map(str::trim), Some("1" | "true" | "yes" | "on")) {
+        if parse_flag(force_raw, false) {
             return Self::ForcePoll { poll_interval };
         }
 
-        let probe_ms = parse_millis(probe_raw).unwrap_or(DEFAULT_WATCH_PROBE_MS);
+        let probe_ms = parse_u64(probe_raw).unwrap_or(DEFAULT_WATCH_PROBE_MS);
         if probe_ms == 0_u64 {
             return Self::NativeOnly;
         }
@@ -91,11 +90,6 @@ impl FallbackPolicy {
             poll_interval,
         }
     }
-}
-
-/// Parse a raw millisecond env value; `None` when unset or non-numeric.
-pub(super) fn parse_millis(raw: Option<&str>) -> Option<u64> {
-    raw?.trim().parse::<u64>().ok()
 }
 
 /// Spawn the one-shot background health probe.
@@ -339,11 +333,9 @@ pub(super) fn probe_sentinel_event(
     }
 
     let sentinel = probe_dir.join("sentinel");
-    let deadline = Instant::now()
-        .checked_add(timeout)
-        .unwrap_or_else(Instant::now);
+    let deadline = Deadline::after(timeout);
     let mut touch = 0_u64;
-    while Instant::now() < deadline {
+    while !deadline.expired() {
         if stop_flag.load(Ordering::Relaxed) {
             return true;
         }

@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 /// Ancestor-walk depth bound outside `$HOME` (guards pathological paths).
 pub(crate) const MAX_ANCESTOR_DEPTH: usize = 64;
 
-/// `$HOME`, if set.
+/// The user's home directory, if known.
 pub(crate) fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
+    crate::paths::home_path()
 }
 
 /// `path` and its ancestors, nearest first, ending at `home` (inclusive) or

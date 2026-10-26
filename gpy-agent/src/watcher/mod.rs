@@ -9,10 +9,11 @@
 //! repo never stalls ingestion or delivery for others. The timer thread is
 //! needed because expiry must happen even when events stop.
 //!
-//! Entries flush once quiet for the debounce window (default 100ms,
-//! `GPY_DEBOUNCE_MS`) or once older than the max-delay cap (1s), so sustained
-//! churn cannot starve flushes. The agent's separate cache cooldown (150ms)
-//! skips redundant git scans when an IPC request already refreshed the cache.
+//! Entries flush once quiet for the debounce window (default
+//! [`DEFAULT_DEBOUNCE_MS`], `GPY_DEBOUNCE_MS`) or once older than the max-delay
+//! cap ([`debouncer::DebounceEngine::default_max_delay`]), so sustained
+//! churn cannot starve flushes. The agent's separate cache cooldown
+//! ([`DEFAULT_THROTTLE_MS`]) skips redundant git scans when an IPC request already refreshed the cache.
 
 mod coordinator;
 pub mod debouncer;
@@ -25,8 +26,15 @@ mod watch_set;
 pub use coordinator::{DelayedEventScheduler, EventCallback, PendingCallback, WatchCoordinator};
 pub use registry::WatchRegistry;
 
+/// Quiet window before a burst of file events flushes, in milliseconds.
+pub const DEFAULT_DEBOUNCE_MS: u64 = 100;
+
+/// Minimum gap between SIGURG prompt refreshes per repository, in milliseconds.
+/// The git-status cache cooldown matches it.
+pub const DEFAULT_THROTTLE_MS: u64 = 150;
+
+use crate::env_config::env_u64_positive;
 use registry::is_git_significant_relative;
-use std::env;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -364,16 +372,8 @@ impl WatcherConfig {
     /// Load watcher configuration from environment variables.
     #[must_use]
     pub fn from_env() -> Self {
-        fn parse_env(name: &str, default: u64) -> u64 {
-            env::var(name)
-                .ok()
-                .and_then(|value| value.parse::<u64>().ok())
-                .filter(|value| *value > 0)
-                .unwrap_or(default)
-        }
-
-        let debounce = parse_env("GPY_DEBOUNCE_MS", 100);
-        let throttle = parse_env("GPY_SIGURG_THROTTLE_MS", 150);
+        let debounce = env_u64_positive("GPY_DEBOUNCE_MS").unwrap_or(DEFAULT_DEBOUNCE_MS);
+        let throttle = env_u64_positive("GPY_SIGURG_THROTTLE_MS").unwrap_or(DEFAULT_THROTTLE_MS);
 
         Self::new(debounce, throttle)
     }
@@ -393,7 +393,7 @@ impl WatcherConfig {
 
 impl Default for WatcherConfig {
     fn default() -> Self {
-        Self::new(100, 150)
+        Self::new(DEFAULT_DEBOUNCE_MS, DEFAULT_THROTTLE_MS)
     }
 }
 

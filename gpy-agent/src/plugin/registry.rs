@@ -116,8 +116,7 @@ pub fn user_plugins_dir() -> PathBuf {
 }
 
 fn bundled_plugins_dir() -> Option<PathBuf> {
-    std::env::var("GPY_BUNDLED_PLUGIN_DIR")
-        .ok()
+    crate::env_config::env_string("GPY_BUNDLED_PLUGIN_DIR")
         .map(|dir| crate::paths::absolutize(std::path::Path::new(&dir)))
 }
 
