@@ -269,7 +269,8 @@ pub fn set(config: &mut Config, discovery: &PluginDiscovery, key: &str, raw: &st
 }
 
 /// Every `plugin.<segment>.<key>` the installed script segments accept, with
-/// a description, sorted by key.
+/// a description, sorted by key. Manifest descriptions are stripped of
+/// control characters, because `gpy config list` prints them.
 #[must_use]
 pub fn list_keys(discovery: &PluginDiscovery) -> Vec<(String, String)> {
     let mut keys = Vec::new();
@@ -295,7 +296,9 @@ pub fn list_keys(discovery: &PluginDiscovery) -> Vec<(String, String)> {
                     format!("{prefix}{key}"),
                     format!(
                         "{} [{}, default {}] (plugin {})",
-                        decl.description().unwrap_or("Plugin setting"),
+                        crate::template::sanitize_control_chars(
+                            decl.description().unwrap_or("Plugin setting")
+                        ),
                         decl.summary(),
                         decl.default_value(),
                         plugin.manifest.id

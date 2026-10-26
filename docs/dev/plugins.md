@@ -141,15 +141,17 @@ description = "Text weight"
 | `env` | array | `[]` | Extra variables forwarded to the script and keyed in the cache. Names match `^[A-Za-z_][A-Za-z0-9_]*$` (ASCII); `GPY_*` is reserved. |
 | `ttl_secs` | integer | `5` | `0`–`31536000`. Seconds a result is reused; `0` runs the script on every due prompt. |
 | `timeout_ms` | integer | `500` | `1`–`500`: an author may only lower it. |
-| `require_files` | array | `[]` | Every name must exist as a file in the working directory or an ancestor. |
-| `require_folders` | array | `[]` | Every name must exist as a folder in the working directory or an ancestor. |
+| `require_files` | array | `[]` | Every name must exist as a file in the working directory or an ancestor. On Linux the search stops at the mount that holds the working directory; on macOS it goes up to `/`. |
+| `require_folders` | array | `[]` | Every name must exist as a folder in the working directory or an ancestor, with the same stop as `require_files`. |
 | `require_extensions` | array | `[]` | Every extension (no leading dot) must match a file in the working directory itself. |
 | `require_env` | array | `[]` | Every variable must be set and non-empty. |
 | `require_command` | string | none | A script, like `command`, that must exit 0. It runs last, only after the other conditions hold, under the same runner and deadline. |
 | `settings` | table | `{}` | Typed settings, below. |
 
 Every `require_*` condition must hold (all of them, unlike Starship's
-`detect_*`, where any one is enough). Unknown keys, duplicate list entries and
+`detect_*`, where any one is enough). The file, folder and extension
+conditions are checked in a child process with a 30 ms deadline; a timeout
+hides the segment for that prompt. Unknown keys, duplicate list entries and
 invalid names are load errors that name the file and key.
 
 ### Inputs: public shell state
@@ -203,8 +205,9 @@ Settings never go in the theme.
   colours.
 - More than 4096 bytes of output hides the segment.
 - NUL is unsupported: output after the first NUL is undefined.
-- Control characters are stripped and the text is escaped for the shell once,
-  before it is cached; GPY never stores raw output.
+- C0 controls and DEL are stripped. Output that still holds a C1 control
+  (U+0080 to U+009F) hides the segment. The text is then escaped for the
+  shell once, before it is cached; GPY never stores raw output.
 - stderr is discarded. A non-zero exit hides the segment.
 
 GPY draws the colours, caps and separators: a script segment is a pill styled
@@ -214,13 +217,15 @@ script segments.
 
 ### Environment and process rules
 
-- **Environment.** The script starts from a clean environment: `PATH`,
-  `HOME`, `USER`, `LOGNAME`, `LANG`, every set `LC_*`, `TERM`, `TZ` and
+- **Environment.** The script starts from a clean environment: `PATH`
+  (without empty, `.` or other relative entries), `HOME`, `USER`, `LOGNAME`,
+  `LANG`, every set `LC_*`, `TERM`, `TZ` and
   `TMPDIR` (each only when set), plus the declared `env` names, plus the
   `GPY_*` inputs and `GPY_OPT_*` settings the runner sets. Nothing else is
   passed: no credentials, `SSH_AUTH_SOCK` or exported shell functions unless
   declared, and a `GPY_OPT_*` exported by the user never reaches it. `/bin/sh`
-  itself adds `PWD`, `SHLVL` and `_`.
+  itself adds `PWD`, `SHLVL` and `_`. A `require_command` script gets the same
+  environment and the same process rules as `command`.
 - **Working directory**: the plugin root, or the shell's directory when `pwd`
   is declared.
 - **stdin** is `/dev/null`; the script never gets the terminal.
@@ -233,10 +238,11 @@ script segments.
   segment is hidden for that prompt. All script segments of one prompt share
   one 500 ms deadline; a segment not finished before it is skipped for that
   prompt and due again on the next.
-- **Circuit breaker.** Two consecutive timeouts or over-cap outputs disable
-  the segment for that shell, with one line on stderr. A success, the reload
-  doorbell or a new shell resets it. Deadline-skipped runs, Ctrl-C and a
-  non-zero exit do not count.
+- **Circuit breaker.** Two consecutive timeouts (of the script,
+  `require_command` or the trigger scan) or over-cap outputs disable the
+  segment for that shell, with one line on stderr. A success, a completed
+  scan, the reload doorbell or a new shell resets it. Deadline-skipped runs,
+  Ctrl-C and a non-zero exit do not count.
 
 ### Trust
 

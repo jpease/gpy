@@ -240,3 +240,24 @@ fn load_rejects_a_symlink_out_of_the_root() {
         .to_string();
     assert!(err.contains("outside the plugin root"), "{err}");
 }
+
+/// Rejected values are echoed `{:?}`-escaped: ESC and CSI (U+009B) from a
+/// manifest never reach the terminal raw.
+#[test]
+fn rejected_values_are_echoed_escaped() {
+    let hostile = "a\u{1b}]0;x\u{7}\u{9b}31m";
+    for err in [
+        EnvName::new(hostile).unwrap_err(),
+        ScriptPath::new(hostile).unwrap_err(),
+        ScanName::new(hostile).unwrap_err(),
+        Extension::new(hostile).unwrap_err(),
+        crate::plugin::SettingKey::new(hostile).unwrap_err(),
+    ] {
+        let message = err.to_string();
+        assert!(!message.chars().any(char::is_control), "{message:?}");
+        assert!(
+            message.contains(r"\u{1b}") && message.contains(r"\u{9b}"),
+            "{message}"
+        );
+    }
+}

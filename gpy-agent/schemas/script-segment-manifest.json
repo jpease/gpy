@@ -61,7 +61,7 @@
       }
     },
     "require_files": {
-      "description": "Every name must exist as a file in the working directory or an ancestor.",
+      "description": "Every name must exist as a file in the working directory or an ancestor.\nOn Linux the search stops at the mount that holds the working directory;\non macOS it goes up to `/`.",
       "type": "array",
       "default": [],
       "items": {
@@ -69,7 +69,7 @@
       }
     },
     "require_folders": {
-      "description": "Every name must exist as a folder in the working directory or an ancestor.",
+      "description": "Every name must exist as a folder in the working directory or an ancestor,\nwith the same stop as `require_files`.",
       "type": "array",
       "default": [],
       "items": {

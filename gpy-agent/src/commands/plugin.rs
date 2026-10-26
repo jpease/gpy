@@ -196,15 +196,35 @@ fn joined<T>(items: &[T], show: impl Fn(&T) -> &str) -> String {
 
 /// One block per script segment: what runs, with what, how often and when.
 fn print_script_segments(segments: &ScriptSegments) {
+    print!("{}", script_segments_report(segments));
+}
+
+/// The text [`print_script_segments`] prints. The description is the only
+/// free manifest text here (the other fields reject controls), so it is
+/// stripped of control characters before it reaches the terminal.
+fn script_segments_report(segments: &ScriptSegments) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    // Writing to a String cannot fail.
     for (name, segment) in segments {
-        println!("   segment {name}:");
+        let _ = writeln!(out, "   segment {name}:");
         if let Some(description) = &segment.description {
-            println!("     description: {description}");
+            let _ = writeln!(
+                out,
+                "     description: {}",
+                crate::template::sanitize_control_chars(description)
+            );
         }
-        println!("     command: {}", segment.command.as_str());
-        println!("     inputs: {}", joined(&segment.inputs, |i| i.as_str()));
-        println!("     env: {}", joined(&segment.env, |n| n.as_str()));
-        println!(
+        let _ = writeln!(out, "     command: {}", segment.command.as_str());
+        let _ = writeln!(
+            out,
+            "     inputs: {}",
+            joined(&segment.inputs, |i| i.as_str())
+        );
+        let _ = writeln!(out, "     env: {}", joined(&segment.env, |n| n.as_str()));
+        let _ = writeln!(
+            out,
             "     cache: {} scope, ttl_secs {}, timeout_ms {}",
             segment.cache_scope().as_str(),
             segment.ttl_secs,
@@ -226,13 +246,14 @@ fn print_script_segments(segments: &ScriptSegments) {
             ("require_env", joined(&segment.require_env, |n| n.as_str())),
         ] {
             if value != "-" {
-                println!("     {key}: {value}");
+                let _ = writeln!(out, "     {key}: {value}");
             }
         }
         if let Some(require_command) = &segment.require_command {
-            println!("     require_command: {}", require_command.as_str());
+            let _ = writeln!(out, "     require_command: {}", require_command.as_str());
         }
     }
+    out
 }
 
 fn print_discovered_plugin_validation(plugin: &crate::plugin::DiscoveredPlugin) {
@@ -562,6 +583,26 @@ min_gpy_version = "{min_version}"
         assert!(
             err.to_string().contains("requires GPY 999.0.0"),
             "unexpected error: {err}"
+        );
+    }
+
+    /// `gpy plugin validate` prints the segment description: ESC and CSI
+    /// (U+009B) from the manifest must not reach the terminal.
+    #[test]
+    fn script_segment_report_strips_controls_from_the_description() {
+        let manifest = ScriptSegmentManifest::parse(
+            "command = \"bin/demo.sh\"\ndescription = \"Shows \\u001b]0;pwned\\u0007\\u009b31mdemo\"\n",
+        )
+        .expect("segment manifest");
+        let segments = BTreeMap::from([(SegmentName::new("demo").expect("name"), manifest)]);
+        let report = script_segments_report(&segments);
+        assert!(
+            !report.chars().any(|c| c.is_control() && c != '\n'),
+            "{report:?}"
+        );
+        assert!(
+            report.contains("     description: Shows ]0;pwned31mdemo\n"),
+            "{report}"
         );
     }
 }

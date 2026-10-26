@@ -37,7 +37,7 @@ impl SettingKey {
             Ok(Self(key.to_owned()))
         } else {
             Err(Error::invalid(format!(
-                "'{key}' is not a setting key (^[a-z_][a-z0-9_]*$, at most 64 bytes)"
+                "{key:?} is not a setting key (^[a-z_][a-z0-9_]*$, at most 64 bytes)"
             )))
         }
     }

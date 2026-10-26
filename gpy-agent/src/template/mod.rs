@@ -21,6 +21,7 @@ pub(crate) mod parse;
 mod style;
 
 pub use error::{Result, TemplateError};
+pub(crate) use eval::sanitize_control_chars;
 pub use eval::{
     MapResolver, RenderContext, Span, SpanKind, VariableResolver, check_template_controls, render,
 };

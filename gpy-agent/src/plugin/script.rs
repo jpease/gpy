@@ -166,7 +166,7 @@ impl EnvName {
             Ok(Self(name.to_owned()))
         } else {
             Err(Error::invalid(format!(
-                "'{name}' is not an environment variable name (^[A-Za-z_][A-Za-z0-9_]*$)"
+                "{name:?} is not an environment variable name (^[A-Za-z_][A-Za-z0-9_]*$)"
             )))
         }
     }
@@ -198,7 +198,7 @@ impl ScriptPath {
     pub fn new(path: &str) -> Result<Self> {
         if path.is_empty() || path.chars().any(char::is_control) || path.contains('\\') {
             return Err(Error::invalid(format!(
-                "'{path}' is not a plugin-relative path (empty, control character or backslash)"
+                "{path:?} is not a plugin-relative path (empty, control character or backslash)"
             )));
         }
         let parsed = Path::new(path);
@@ -207,7 +207,7 @@ impl ScriptPath {
             .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
         {
             return Err(Error::invalid(format!(
-                "'{path}' must be relative to the plugin root, without '..'"
+                "{path:?} must be relative to the plugin root, without '..'"
             )));
         }
         Ok(Self(path.to_owned()))
@@ -271,7 +271,7 @@ impl ScanName {
             || name.chars().any(char::is_control)
         {
             return Err(Error::invalid(format!(
-                "'{name}' is not a single file or folder name"
+                "{name:?} is not a single file or folder name"
             )));
         }
         Ok(Self(name.to_owned()))
@@ -310,7 +310,7 @@ impl Extension {
             Ok(Self(extension.to_owned()))
         } else {
             Err(Error::invalid(format!(
-                "'{extension}' is not a file extension (no leading dot; letters, digits, _ + - .)"
+                "{extension:?} is not a file extension (no leading dot; letters, digits, _ + - .)"
             )))
         }
     }
@@ -547,9 +547,12 @@ pub struct ScriptSegmentManifest {
     #[serde(default)]
     pub timeout_ms: TimeoutMs,
     /// Every name must exist as a file in the working directory or an ancestor.
+    /// On Linux the search stops at the mount that holds the working directory;
+    /// on macOS it goes up to `/`.
     #[serde(default)]
     pub require_files: Vec<ScanName>,
-    /// Every name must exist as a folder in the working directory or an ancestor.
+    /// Every name must exist as a folder in the working directory or an ancestor,
+    /// with the same stop as `require_files`.
     #[serde(default)]
     pub require_folders: Vec<ScanName>,
     /// Every extension must match a file in the working directory itself.

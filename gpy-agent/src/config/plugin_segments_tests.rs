@@ -257,6 +257,34 @@ fn list_keys_covers_every_overridable_key() {
     );
 }
 
+/// `gpy config list` prints these descriptions: ESC and CSI (U+009B) from the
+/// manifest must not reach the terminal.
+#[test]
+fn list_keys_strips_controls_from_manifest_descriptions() {
+    let mut discovery = discovery();
+    let plugin = discovery.plugins.first_mut().unwrap();
+    plugin.script_segments.insert(
+        segment(),
+        ScriptSegmentManifest::parse(
+            "command = \"k8s.sh\"\n[settings.style]\ntype = \"string\"\ndefault = \"bold\"\n\
+             description = \"Style \\u001b]0;pwned\\u0007\\u009b31mtext\"\n",
+        )
+        .unwrap(),
+    );
+    let (_, description) = list_keys(&discovery)
+        .into_iter()
+        .find(|(key, _)| key == "plugin.k8s.style")
+        .unwrap();
+    assert!(
+        !description.chars().any(char::is_control),
+        "{description:?}"
+    );
+    assert!(
+        description.starts_with("Style ]0;pwned31mtext ["),
+        "{description:?}"
+    );
+}
+
 #[test]
 fn overrides_round_trip_through_a_saved_file() {
     let temp = tempfile::TempDir::new().unwrap();

@@ -565,7 +565,7 @@ were removed with them. Removed exports:
 
 - `clock`: `__color_clock_bg`, `__color_clock_fg` (clock remains shell-rendered)
 - `status`: `__color_status_ok_bg/fg`, `__color_status_fail_bg/fg` (status remains shell-rendered)
-- Plugin/custom segments: `__gpy_segment_<name>_*`, `__color_<name>_bg/fg`
+- Plugin/custom segments: `__gpy_segment_<name>_*` (variant colours under `__gpy_segment_<name>_variant_<variant>_*`), `__color_<name>_bg/fg`
 - Delimiter/powerline colours: `__segment_delimiter_color/bg`, `__prompt_open/close_color/bg`, `__prompt_base_bg/fg`
 - All icon exports (`__icon_*`)
 - All layout/threshold exports (`__duration_threshold_ms`, `__time_format`, etc.)

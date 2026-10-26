@@ -96,8 +96,10 @@ fn plugin_segment_delimiter_assignments(
     ]
 }
 
-/// Variant colours, sorted: `__gpy_segment_<token>_<variant>_{bg,text}_color`
-/// plus the flat `__color_<token>_<variant>_{bg,fg}` alias built-ins use.
+/// Variant colours, sorted: `__gpy_segment_<token>_variant_<variant>_{bg,text}_color`
+/// plus the flat `__color_<token>_<variant>_{bg,fg}` alias built-ins use. The
+/// `variant_` namespace keeps variant `open`/`close` off the delimiter variables
+/// and segment `a` + variant `b_c` apart from segment `a_b` + variant `c`.
 fn plugin_segment_variant_assignments(
     colors: ShellColors<'_>,
     segment_token: &str,
@@ -111,7 +113,7 @@ fn plugin_segment_variant_assignments(
             VariantColorPart::Text => "fg",
         };
         assignments.push(ShellAssignment::local(
-            format!("__gpy_segment_{segment_token}_{key}"),
+            format!("__gpy_segment_{segment_token}_variant_{key}"),
             resolved.as_ref(),
         ));
         assignments.push(ShellAssignment::local(
