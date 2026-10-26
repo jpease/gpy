@@ -128,7 +128,7 @@ Controls git status detection: what's computed, how it's capped, and which icons
 
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|
-| `enabled` | bool | `true` | — | Enables git status detection entirely. When `false`, the git segment never renders and no git subprocess/libgit2 calls are made. |
+| `enabled` | bool | `true` | — | Enables git status detection entirely. When `false`, the git segment never renders and no git calls are made. |
 | `show_upstream` | bool | `true` | — | Shows ahead/behind commit counts relative to the upstream branch. |
 | `timeout_seconds` | integer | `10` | `1`–`600` | Time budget for one git status: every git subprocess it runs (status, stash count, branch fallback, untracked-cache setup) shares it, and a subprocess still running when it ends is killed. The IPC handler also uses it (plus a small margin) as the ceiling it waits for a fresh status before falling back to stale/cached data. |
 | `skip_paths` | array of strings | `[]` | must be absolute (`/...`) or home-relative (`~/...`) paths | Directories whose repositories get no git detection — useful for huge monorepos or slow network mounts. A repository is skipped when its root (the directory holding `.git`) is at or under an entry, so an entry can name a repository or a directory of repositories. An entry inside a repository (below its root) does not skip that repository, not even for prompts in that subdirectory. Entries are matched component-wise after `~` expansion and symlink resolution, so `~/x`, `/tmp/x` and `/private/tmp/x` all work (`/tmp/foo` does not skip `/tmp/foobar`). The running agent re-resolves entries every few seconds, so a skipped directory or symlink created, removed or retargeted after startup takes effect without a restart. Skipped repositories get no git status, no instant-prompt cache and no background refresh (watcher events or the periodic reconcile), and `gpy-agent oneshot git` returns the disabled error. |
@@ -267,7 +267,7 @@ truncate_to_repo = false
 
 ## `[plugin.<segment>]`
 
-Overrides for one script plugin segment (`entry_type = "script"`, see [Plugin Framework](../dev/plugins.md#script-segments)). `<segment>` is the segment name as enabled in `ui.enabled_segments`. Settings live here rather than in the theme so they survive a theme switch.
+Overrides for one script plugin segment (`entry_type = "script"`, see [Plugin Framework](../dev/plugins.md#script-segments)). `<segment>` is the segment name as enabled in `ui.enabled_segments`. Settings live here rather than in the theme so they survive a theme switch. No shell executes script segments yet, so these overrides are accepted and validated but change no prompt.
 
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|

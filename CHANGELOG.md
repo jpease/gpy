@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (BREAKING)
 
-- Script plugin segments (`entry_type = "script"`): a public, documented
-  contract in `docs/dev/plugins.md` with a `segments/<id>.toml` manifest,
+- Script plugin segments (`entry_type = "script"`): the contract is defined and
+  validated, but no shell executes script segments yet. It is documented in
+  `docs/dev/plugins.md` with a `segments/<id>.toml` manifest,
   typed settings, enforced `min_gpy_version`, published JSON schemas, and
   user overrides in `config.toml` `[plugin.<segment>]` reachable by
   `gpy config get/set/list` as `plugin.<segment>.<key>`. Theme

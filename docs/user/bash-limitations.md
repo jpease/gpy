@@ -33,8 +33,8 @@ chsh -s /opt/homebrew/bin/bash
 
 **Limitation**: An idle Bash prompt does not repaint by itself.
 
-**What is measured** (`tests/bash/e2e_git_live_content.test.bash`, a real
-`bash -i` on a pseudo-terminal against a real agent): when a tracked file
+**What is measured** (a real `bash -i` on a pseudo-terminal against a real
+agent): when a tracked file
 changes while the shell sits at an idle prompt, the agent updates its cache
 and rings SIGURG, but readline has already drawn the previous prompt and has
 no `reset-prompt`, so the screen does not change until the next prompt. Press

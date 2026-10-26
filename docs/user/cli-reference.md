@@ -971,7 +971,7 @@ shell or through separate requests and are not included. Exits `1` with an
 
 ### Plugin Commands
 
-Plugin segment files (`entry_type = "file"`) are loaded by the Fish integration only. Script segments (`entry_type = "script"`) are declared for every shell; see [Plugin Framework](../dev/plugins.md).
+Plugin segment files (`entry_type = "file"`) are loaded by the Fish integration only. Script segments (`entry_type = "script"`) have a defined, validated contract, but no shell executes them yet; see [Plugin Framework](../dev/plugins.md#script-segments).
 
 #### `gpy plugin list`
 

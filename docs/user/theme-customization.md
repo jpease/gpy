@@ -31,7 +31,7 @@ gpy config wizard
 
 A full-screen TUI with three pickers — Theme, Palette, Segments — plus a live preview of the resulting prompt that updates as you move the cursor. Nothing is written to disk until you save.
 
-**Keys** (verified against `gpy-agent/src/commands/wizard/keys.rs`):
+**Keys**:
 
 | Key | Action |
 |---|---|
@@ -116,8 +116,6 @@ If you already have a color scheme from the [tinted-theming](https://github.com/
 ```bash
 gpy palette import <scheme.yaml> [--name <name>] [--force]
 ```
-
-Verified against `gpy-agent/src/commands/palette.rs` and `gpy-agent/src/import/base16/`:
 
 - `<scheme.yaml>` — a base16 or base24 scheme file. GPY's parser accepts both the modern nested layout (`system:`, `name:`, `variant:`, then a `palette:` block of `baseNN: "hex"` entries) and the legacy flat layout (`scheme:`/`name:` plus top-level `baseNN:` keys). `base00`–`base0F` cover base16; base24 adds `base10`–`base17`.
 - `--name <name>` — overrides the palette name. If omitted, GPY uses the scheme's `slug` field when present, else its `name`/`scheme` field (falling back to `imported` if the scheme declares none). The result is lowercased and runs of characters that are not letters or digits become a single `-`; non-ASCII letters are kept (`Rosé Pine` without a slug becomes `rosé-pine`).
