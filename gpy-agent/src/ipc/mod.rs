@@ -1,6 +1,8 @@
 //! JSON IPC between shell clients and the agent over Unix domain sockets.
 
 mod client_pid;
+#[cfg(test)]
+pub(crate) mod fixtures;
 pub mod handlers;
 pub mod protocol;
 pub mod registry;

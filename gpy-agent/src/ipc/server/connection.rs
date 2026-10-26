@@ -453,42 +453,30 @@ impl ConnectionHandler {
 )]
 mod tests {
     use super::*;
-    use crate::config::manager::ConfigManager;
+    use crate::ipc::fixtures::default_render_deps;
     use crate::ipc::handlers::{
         ClientHandler, GitHandler, HandlerRegistry, LanguageHandler, MiscHandler, RenderDeps,
     };
     use crate::ipc::registry::ClientDirectory;
-    use crate::palette::PaletteCache;
     use std::sync::Mutex;
 
-    /// Production-wired `HandlerRegistry` plus the caches the language handler shares.
+    /// Production-wired `HandlerRegistry`, the render deps it was built from, and
+    /// the language cache its handler shares.
     fn test_handler_registry() -> (
         Arc<HandlerRegistry>,
-        Arc<crate::cache::InstantPromptCache>,
+        RenderDeps,
         crate::language::DetectionCache,
     ) {
-        let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
+        let render = default_render_deps();
         let git_cache = Arc::new(crate::git::cache::GitStatusCache::new());
-        let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
-        let theme_manager = Arc::new(ThemeManager::builtin("default").expect("theme"));
-        let palette_cache = Arc::new(PaletteCache::from_config(&config_manager.get()));
         let language_cache = crate::language::DetectionCache::new();
-        let client_registry = Arc::new(ClientDirectory::new());
         let watcher: crate::ipc::server::handle::WatcherRef = Arc::new(Mutex::new(None));
-
-        let render = RenderDeps {
-            config_manager: Arc::clone(&config_manager),
-            theme_manager: Arc::clone(&theme_manager),
-            palette_cache: Arc::clone(&palette_cache),
-            instant_cache: Arc::clone(&instant_cache),
-            client_registry: Arc::clone(&client_registry),
-        };
 
         let git_handler = Arc::new(GitHandler::new(render.clone(), Arc::clone(&git_cache)));
         let language_handler =
             Arc::new(LanguageHandler::new(render.clone(), language_cache.clone()));
         let client_handler = Arc::new(ClientHandler::new(
-            render,
+            render.clone(),
             Arc::clone(&git_cache),
             Arc::clone(&watcher),
         ));
@@ -501,22 +489,19 @@ mod tests {
             misc_handler,
         ));
 
-        (handler_registry, instant_cache, language_cache)
+        (handler_registry, render, language_cache)
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn shutdown_survives_client_disconnect_before_acknowledgement() {
-        let (handler_registry, _instant_cache, _language_cache) = test_handler_registry();
-        let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
-        let theme_manager = Arc::new(ThemeManager::builtin("default").expect("theme"));
-        let palette_cache = Arc::new(PaletteCache::from_config(&config_manager.get()));
+        let (handler_registry, render, _language_cache) = test_handler_registry();
         let (shutdown_tx, mut shutdown_rx) = broadcast::channel(1);
         let handler = ConnectionHandler {
             security_config: GuardSettings::default(),
-            config_manager,
-            theme_manager,
-            palette_cache,
+            config_manager: render.config_manager,
+            theme_manager: render.theme_manager,
+            palette_cache: render.palette_cache,
             shutdown_tx,
             handler_registry,
         };
@@ -540,17 +525,14 @@ mod tests {
     /// A denied `cwd` is answered in the requested format, not a JSON error line.
     #[test]
     fn ansi_request_with_denied_path_keeps_ansi_format() {
-        let (registry, _instant_cache, _language_cache) = test_handler_registry();
-        let config_manager = ConfigManager::with_defaults().expect("config");
-        let theme_manager = ThemeManager::builtin("default").expect("theme");
-        let palette_cache = PaletteCache::from_config(&config_manager.get());
+        let (registry, render, _language_cache) = test_handler_registry();
         let result = ConnectionHandler::parse_and_route_blocking(
             br#"{"op":"directory","cwd":"/etc","format":"ansi"}"#,
             &registry,
             &GuardSettings::default(),
-            &config_manager,
-            &theme_manager,
-            &palette_cache,
+            &render.config_manager,
+            &render.theme_manager,
+            &render.palette_cache,
         );
         let payload = result.payload.expect("rendered");
         assert!(
@@ -567,17 +549,14 @@ mod tests {
     /// An op the agent does not know is answered in the requested format, not a JSON error line.
     #[test]
     fn ansi_request_with_unknown_op_keeps_ansi_format() {
-        let (registry, _instant_cache, _language_cache) = test_handler_registry();
-        let config_manager = ConfigManager::with_defaults().expect("config");
-        let theme_manager = ThemeManager::builtin("default").expect("theme");
-        let palette_cache = PaletteCache::from_config(&config_manager.get());
+        let (registry, render, _language_cache) = test_handler_registry();
         let result = ConnectionHandler::parse_and_route_blocking(
             br#"{"op":"teleport","format":"ansi"}"#,
             &registry,
             &GuardSettings::default(),
-            &config_manager,
-            &theme_manager,
-            &palette_cache,
+            &render.config_manager,
+            &render.theme_manager,
+            &render.palette_cache,
         );
         let payload = result.payload.expect("rendered");
         assert!(
@@ -595,11 +574,8 @@ mod tests {
     /// pre-seeded so the background detection job (which also writes) doesn't race.
     #[test]
     fn language_request_writes_each_variant_file_once() {
-        let (handler_registry, instant_cache, language_cache) = test_handler_registry();
+        let (handler_registry, render, language_cache) = test_handler_registry();
         let security_config = GuardSettings::default();
-        let config_manager = ConfigManager::with_defaults().expect("config");
-        let theme_manager = ThemeManager::builtin("default").expect("theme");
-        let palette_cache = PaletteCache::from_config(&config_manager.get());
 
         let repo = tempfile::TempDir::new().expect("temp dir");
         std::fs::write(repo.path().join("Cargo.toml"), "[package]\nname = \"t\"\n")
@@ -619,14 +595,14 @@ mod tests {
             .to_string()
             .into_bytes();
 
-        let before = instant_cache.write_call_count();
+        let before = render.instant_cache.write_call_count();
         let result = ConnectionHandler::parse_and_route_blocking(
             &line,
             &handler_registry,
             &security_config,
-            &config_manager,
-            &theme_manager,
-            &palette_cache,
+            &render.config_manager,
+            &render.theme_manager,
+            &render.palette_cache,
         );
         assert!(
             !matches!(result.response, Response::Error { .. }),
@@ -636,7 +612,7 @@ mod tests {
 
         // 4 position variants, each written once per output dialect.
         let expected = 4 * crate::formatter::PromptDialect::ALL.len();
-        let calls = instant_cache.write_call_count() - before;
+        let calls = render.instant_cache.write_call_count() - before;
         assert_eq!(
             calls,
             u64::try_from(expected).expect("small count"),

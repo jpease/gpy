@@ -101,6 +101,25 @@ fn recording_watcher(
 }
 
 /// A [`WatchFault`] that never fires.
+/// A temp dir holding a bare `.git` directory.
+fn temp_repo() -> TempDir {
+    let temp_dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(temp_dir.path().join(".git")).unwrap();
+    temp_dir
+}
+
+/// A real notify-backed watcher over `registry` (a private one when `None`) that drops every event.
+fn silent_watcher(registry: Option<Arc<WatchRegistry>>) -> MultiRepoWatcher {
+    let mut builder = MultiRepoWatcher::builder();
+    if let Some(custom) = registry {
+        builder = builder.registry(custom);
+    }
+    builder
+        .callback(Box::new(|_event: DebouncedEvent| {}))
+        .build()
+        .unwrap()
+}
+
 fn no_fault() -> WatchFault {
     Arc::new(|_path: &Path| None)
 }
@@ -207,16 +226,10 @@ fn test_multi_repo_watcher_builder_method() {
 fn register_blocks_when_ops_lock_held() {
     use std::sync::{Barrier, mpsc};
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = temp_repo();
     let repo_root = temp_dir.path();
-    std::fs::create_dir_all(repo_root.join(".git")).unwrap();
 
-    let watcher = Arc::new(
-        MultiRepoWatcher::builder()
-            .callback(Box::new(|_event: DebouncedEvent| {}))
-            .build()
-            .unwrap(),
-    );
+    let watcher = Arc::new(silent_watcher(None));
 
     let ops_guard = watcher.ops_lock.lock().unwrap();
     let (tx, rx) = mpsc::channel();
@@ -369,9 +382,8 @@ fn mkdir_then_immediate_write_is_delivered() {
 /// in-tree `.git`, never `git_dir`.
 #[test]
 fn unregister_unwatches_exactly_the_armed_paths() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = temp_repo();
     let repo_root = temp_dir.path();
-    std::fs::create_dir_all(repo_root.join(".git")).unwrap();
     let canonical_root = std::fs::canonicalize(repo_root).unwrap();
 
     let watcher = recording_watcher(test_registry(true), no_fault());
@@ -407,9 +419,8 @@ fn unregister_unwatches_exactly_the_armed_paths() {
 /// A failed worktree watch degrades to `.git`-only; the repo stays tracked.
 #[test]
 fn worktree_watch_failure_degrades_to_gitdir_only() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = temp_repo();
     let repo_root = temp_dir.path();
-    std::fs::create_dir_all(repo_root.join(".git")).unwrap();
     let canonical_root = std::fs::canonicalize(repo_root).unwrap();
 
     // Fault only `git_root`; the essential .git watch must still succeed.
@@ -455,9 +466,8 @@ fn worktree_watch_failure_degrades_to_gitdir_only() {
 /// A failed `.git` watch surfaces the error and tracks nothing.
 #[test]
 fn gitdir_watch_failure_rolls_back_without_tracking() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = temp_repo();
     let repo_root = temp_dir.path();
-    std::fs::create_dir_all(repo_root.join(".git")).unwrap();
 
     // Fault every path: recursive root watch fails, then the .git fallback.
     let watcher = recording_watcher(
@@ -481,14 +491,10 @@ fn gitdir_watch_failure_rolls_back_without_tracking() {
 /// Registering after `stop()` must error rather than track an unwatched repo.
 #[test]
 fn attach_client_errors_when_coordinator_is_gone() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = temp_repo();
     let repo_root = temp_dir.path();
-    std::fs::create_dir_all(repo_root.join(".git")).unwrap();
 
-    let watcher = MultiRepoWatcher::builder()
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .build()
-        .unwrap();
+    let watcher = silent_watcher(None);
 
     watcher.stop();
 
@@ -509,15 +515,10 @@ fn attach_client_errors_when_coordinator_is_gone() {
 #[cfg(unix)]
 #[test]
 fn recreated_gitdir_rearms_watch_on_reregister() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = temp_repo();
     let repo_root = temp_dir.path();
-    std::fs::create_dir_all(repo_root.join(".git")).unwrap();
 
-    let watcher = MultiRepoWatcher::builder()
-        .registry(test_registry(false))
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .build()
-        .unwrap();
+    let watcher = silent_watcher(Some(test_registry(false)));
 
     watcher.attach_client(1, repo_root).unwrap();
     let canonical_root = std::fs::canonicalize(repo_root).unwrap();
@@ -835,15 +836,10 @@ fn resync_is_a_noop_when_nothing_changed() {
 #[cfg(unix)]
 #[test]
 fn unchanged_gitdir_keeps_identity_on_reregister() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = temp_repo();
     let repo_root = temp_dir.path();
-    std::fs::create_dir_all(repo_root.join(".git")).unwrap();
 
-    let watcher = MultiRepoWatcher::builder()
-        .registry(test_registry(false))
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .build()
-        .unwrap();
+    let watcher = silent_watcher(Some(test_registry(false)));
 
     watcher.attach_client(1, repo_root).unwrap();
     let canonical_root = std::fs::canonicalize(repo_root).unwrap();
@@ -873,14 +869,8 @@ fn unchanged_gitdir_keeps_identity_on_reregister() {
 /// Two watchers in one process share no attribution or worktree state.
 #[test]
 fn two_watchers_do_not_share_registry_state() {
-    let first = MultiRepoWatcher::builder()
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .build()
-        .unwrap();
-    let second = MultiRepoWatcher::builder()
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .build()
-        .unwrap();
+    let first = silent_watcher(None);
+    let second = silent_watcher(None);
 
     // External-gitdir attribution.
     let git_dir = PathBuf::from("/super/.git/modules/sub");

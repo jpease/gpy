@@ -1,12 +1,11 @@
 //! Unit tests for IPC server construction and guard behavior.
 
-use super::{EndpointDeps, EndpointHandle};
+use super::EndpointHandle;
 use crate::config::manager::ConfigManager;
+use crate::ipc::fixtures::{endpoint_deps, render_deps};
 use crate::ipc::{ClientDirectory, Message, Response, Segment};
-use crate::security::GuardSettings;
-use crate::theme::ThemeManager;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::path::Path;
+use std::sync::Arc;
 use tempfile::TempDir;
 
 fn create_git_repo() -> TempDir {
@@ -89,33 +88,12 @@ fn notify_clients_respects_agent_live_updates_flag() {
 
 #[test]
 fn hot_reload_git_enabled_blocks_requests() {
-    let registry = ClientDirectory::new().shared();
-    let git_cache = Arc::new(crate::git::cache::GitStatusCache::new());
     let config_dir = TempDir::new().expect("config dir");
     let config_manager = config_manager_with(config_dir.path(), "[git]\nenabled = true\n");
-    let watcher = Arc::new(Mutex::new(None));
-    let theme_manager =
-        Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
-    let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
-    let language_cache = crate::language::DetectionCache::new();
-    let initial_config_for_git = config_manager.get();
-    let palette_cache_for_git = Arc::new(crate::palette::PaletteCache::from_config(
-        &initial_config_for_git,
+    let handle = EndpointHandle::new(endpoint_deps(
+        Path::new("/tmp/hot-reload-git.sock"),
+        render_deps(Arc::clone(&config_manager)),
     ));
-    let handle = EndpointHandle::new(EndpointDeps {
-        socket_path: PathBuf::from("/tmp/hot-reload-git.sock"),
-        #[cfg(unix)]
-        socket_dir_repair: super::DirRepair::Refuse,
-        security_config: GuardSettings::default(),
-        watcher_slot: Arc::clone(&watcher),
-        client_registry: Arc::clone(&registry),
-        git_cache: Arc::clone(&git_cache),
-        config_manager: Arc::clone(&config_manager),
-        theme_manager: Arc::clone(&theme_manager),
-        instant_cache,
-        language_cache,
-        palette_cache: palette_cache_for_git,
-    });
 
     let repo = create_git_repo();
     let path_str = repo
@@ -163,31 +141,11 @@ fn build_test_endpoint(
     crate::security::SafePath,
     TempDir,
 ) {
-    let registry = ClientDirectory::new().shared();
-    let git_cache = Arc::new(crate::git::cache::GitStatusCache::new());
     let config_manager = config_manager_with(config_dir, "[language]\nenabled = true\n");
-    let watcher = Arc::new(Mutex::new(None));
-    let theme_manager =
-        Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
-    let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
-    let language_cache = crate::language::DetectionCache::new();
-    let palette_cache = Arc::new(crate::palette::PaletteCache::from_config(
-        &config_manager.get(),
+    let handle = EndpointHandle::new(endpoint_deps(
+        Path::new(sock_name),
+        render_deps(Arc::clone(&config_manager)),
     ));
-    let handle = EndpointHandle::new(EndpointDeps {
-        socket_path: PathBuf::from(sock_name),
-        #[cfg(unix)]
-        socket_dir_repair: super::DirRepair::Refuse,
-        security_config: GuardSettings::default(),
-        watcher_slot: Arc::clone(&watcher),
-        client_registry: Arc::clone(&registry),
-        git_cache: Arc::clone(&git_cache),
-        config_manager: Arc::clone(&config_manager),
-        theme_manager: Arc::clone(&theme_manager),
-        instant_cache,
-        language_cache,
-        palette_cache,
-    });
     let project = create_language_project();
     let path_str = project.path().to_str().expect("valid UTF-8");
     let path = crate::security::SafePath::new(path_str).expect("Valid test path");

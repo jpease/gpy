@@ -299,10 +299,9 @@ mod tests {
     use crate::cache::InstantPromptCache;
     use crate::config::Config;
     use crate::config::manager::ConfigManager;
+    use crate::ipc::fixtures::render_deps;
     use crate::ipc::{ClientDirectory, Segment};
     use crate::language::DetectedLanguage;
-    use crate::palette::PaletteCache;
-    use crate::theme::ThemeManager;
     #[cfg(unix)]
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -314,19 +313,16 @@ mod tests {
         instant_cache: InstantPromptCache,
         config: Config,
     ) -> (LanguageHandler, Arc<ClientDirectory>) {
-        let registry = ClientDirectory::new().shared();
         let config_manager = Arc::new(ConfigManager::from_config(config).expect("config"));
-        let palette_cache = Arc::new(PaletteCache::from_config(&config_manager.get()));
         let render = RenderDeps {
-            config_manager: Arc::clone(&config_manager),
-            // Builtin theme keeps the test hermetic against on-disk themes.
-            theme_manager: Arc::new(ThemeManager::builtin("default").expect("theme")),
-            palette_cache,
             instant_cache: Arc::new(instant_cache),
-            client_registry: Arc::clone(&registry),
+            ..render_deps(config_manager)
         };
-        let handler = LanguageHandler::new(render, DetectionCache::new());
-        (handler, registry)
+        let registry = Arc::clone(&render.client_registry);
+        (
+            LanguageHandler::new(render, DetectionCache::new()),
+            registry,
+        )
     }
 
     /// Build a synchronous `LanguageDetect` request for `repo_root`.

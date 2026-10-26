@@ -293,13 +293,12 @@ mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::missing_panics_doc)]
     use super::*;
-    use crate::cache::{CachePolicy, InstantPromptCache};
+    use crate::cache::CachePolicy;
     use crate::config::manager::ConfigManager;
     use crate::git::status::load_repository_state;
     use crate::git::{RepositoryState, RepositoryStatus};
     use crate::ipc::ClientDirectory;
-    use crate::palette::PaletteCache;
-    use crate::theme::ThemeManager;
+    use crate::ipc::fixtures::render_deps;
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -318,18 +317,9 @@ mod tests {
         git_cache: Arc<GitStatusCache>,
         config_manager: Arc<ConfigManager>,
     ) -> (GitHandler, Arc<ClientDirectory>) {
-        let registry = ClientDirectory::new().shared();
-        let palette_cache = Arc::new(PaletteCache::from_config(&config_manager.get()));
-        let render = RenderDeps {
-            config_manager,
-            // Builtin theme keeps the test hermetic against on-disk themes.
-            theme_manager: Arc::new(ThemeManager::builtin("default").expect("theme")),
-            palette_cache,
-            instant_cache: Arc::new(InstantPromptCache::new_for_test()),
-            client_registry: Arc::clone(&registry),
-        };
-        let handler = GitHandler::new(render, git_cache);
-        (handler, registry)
+        let render = render_deps(config_manager);
+        let registry = Arc::clone(&render.client_registry);
+        (GitHandler::new(render, git_cache), registry)
     }
 
     /// Cache with a 0ms cooldown so revalidation always fires.

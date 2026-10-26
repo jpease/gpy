@@ -776,35 +776,15 @@ mod socket_ownership_tests {
     #![allow(clippy::missing_panics_doc)]
     #![allow(missing_docs)]
 
-    use super::{DirRepair, EndpointDeps, EndpointHandle};
-    use crate::config::manager::ConfigManager;
-    use crate::git::cache::GitStatusCache;
-    use crate::ipc::ClientDirectory;
-    use crate::palette::PaletteCache;
-    use crate::security::GuardSettings;
-    use crate::theme::ThemeManager;
+    use super::EndpointHandle;
+    use crate::ipc::fixtures::{default_render_deps, endpoint_deps};
     use std::os::unix::fs::MetadataExt;
     use std::os::unix::net::UnixListener;
     use std::path::Path;
-    use std::sync::{Arc, Mutex};
 
     /// Build an unbound `EndpointHandle` targeting `socket_path` (no accept loop).
     pub(super) fn build_handle(socket_path: &Path) -> EndpointHandle {
-        let config_manager = Arc::new(ConfigManager::with_defaults().expect("default config"));
-        let palette_cache = Arc::new(PaletteCache::from_config(&config_manager.get()));
-        EndpointHandle::new(EndpointDeps {
-            socket_path: socket_path.to_path_buf(),
-            socket_dir_repair: DirRepair::Refuse,
-            security_config: GuardSettings::default(),
-            watcher_slot: Arc::new(Mutex::new(None)),
-            client_registry: Arc::new(ClientDirectory::new()),
-            git_cache: Arc::new(GitStatusCache::new()),
-            config_manager,
-            theme_manager: Arc::new(ThemeManager::builtin("default").expect("default theme")),
-            instant_cache: Arc::new(crate::cache::InstantPromptCache::new_for_test()),
-            language_cache: crate::language::DetectionCache::new(),
-            palette_cache,
-        })
+        EndpointHandle::new(endpoint_deps(socket_path, default_render_deps()))
     }
 
     fn inode_of(path: &Path) -> u64 {

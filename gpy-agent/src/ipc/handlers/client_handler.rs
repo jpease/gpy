@@ -248,9 +248,7 @@ mod tests {
     use crate::cache::InstantPromptCache;
     use crate::config::manager::ConfigManager;
     use crate::config::{Config, GitSettings};
-    use crate::ipc::ClientDirectory;
-    use crate::palette::PaletteCache;
-    use crate::theme::ThemeManager;
+    use crate::ipc::fixtures::render_deps;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
@@ -278,13 +276,10 @@ mod tests {
             .expect("config"),
         );
         let render = RenderDeps {
-            palette_cache: Arc::new(PaletteCache::from_config(&config_manager.get())),
-            config_manager,
-            theme_manager: Arc::new(ThemeManager::builtin("default").expect("theme")),
             instant_cache: Arc::new(
                 InstantPromptCache::new_in_dir(cache_dir.to_path_buf()).expect("cache"),
             ),
-            client_registry: ClientDirectory::new().shared(),
+            ..render_deps(config_manager)
         };
         ClientHandler::new(
             render,
