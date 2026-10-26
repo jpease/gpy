@@ -1,9 +1,8 @@
 //! `gpy lang` command handlers.
 
-use super::utils::{
-    active_config_path, load_active_config, reload_agent_and_notify, save_config_to,
-};
+use super::utils::{active_config_path, load_active_config, reload_agent_and_notify};
 use crate::Result;
+use crate::config::loader::save_config;
 
 /// Set whether to show language versions.
 ///
@@ -15,7 +14,7 @@ pub fn set_versions(enabled: bool) -> Result<()> {
     let mut config = original.clone();
 
     config.language.show_versions = enabled;
-    save_config_to(&path, &original, &config, &[])?;
+    save_config(&path, &original, &config, &[])?;
 
     let status = if enabled { "enabled" } else { "disabled" };
     println!("Language versions {status}");

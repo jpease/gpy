@@ -140,7 +140,7 @@ fn prime_watch(repos: &[&Path], mut delivered: impl FnMut() -> bool) {
 fn non_repo_dir() -> TempDir {
     let dir = tempdir().expect("create temp dir");
     assert!(
-        MultiRepoWatcher::find_git_root(dir.path()).is_none(),
+        gpy_agent::git::find_git_dir_only(dir.path()).is_none(),
         "TMPDIR ({}) must not be inside a git repository",
         dir.path().display()
     );
@@ -161,7 +161,7 @@ fn test_find_git_root_finds_root() {
     let nested = repo.path().join("src").join("deep");
     std::fs::create_dir_all(&nested).expect("create nested dir");
 
-    let git_root = MultiRepoWatcher::find_git_root(&nested).expect("git root from nested dir");
+    let git_root = gpy_agent::git::find_git_dir_only(&nested).expect("git root from nested dir");
 
     assert_eq!(
         git_root,
@@ -174,7 +174,7 @@ fn test_find_git_root_no_repo() {
     let dir = tempdir().expect("create temp dir");
 
     assert_eq!(
-        MultiRepoWatcher::find_git_root(dir.path()),
+        gpy_agent::git::find_git_dir_only(dir.path()),
         None,
         "TMPDIR ({}) must not be inside a git repository",
         dir.path().display()
@@ -190,7 +190,7 @@ fn test_find_git_root_symlink_path() {
     let symlink_dir = repo_dir.path().join("symlink");
     symlink(repo_path, &symlink_dir).expect("create symlink");
 
-    let git_root = MultiRepoWatcher::find_git_root(&symlink_dir).expect("git root from symlink");
+    let git_root = gpy_agent::git::find_git_dir_only(&symlink_dir).expect("git root from symlink");
     let canonical_repo = std::fs::canonicalize(repo_path).expect("canonical repo path");
 
     assert_eq!(git_root, canonical_repo);
@@ -216,24 +216,24 @@ fn test_watcher_initial_state() {
 }
 
 #[test]
-fn test_register_client_non_git_directory() {
+fn test_attach_client_non_git_directory() {
     let watcher = idle_watcher();
     let dir = non_repo_dir();
 
     watcher
-        .register_client(12345, dir.path())
+        .attach_client(12345, dir.path())
         .expect("registering outside a repo should succeed");
 
     assert_eq!(watcher.watched_repo_count(), 0);
 }
 
 #[test]
-fn test_register_client_in_git_repo() {
+fn test_attach_client_in_git_repo() {
     let watcher = idle_watcher();
     let repo = temp_repo();
 
     watcher
-        .register_client(12345, repo.path())
+        .attach_client(12345, repo.path())
         .expect("register client");
 
     assert_eq!(
@@ -250,7 +250,7 @@ fn test_register_multiple_clients_same_repo() {
 
     for pid in [100, 200, 300] {
         watcher
-            .register_client(pid, repo.path())
+            .attach_client(pid, repo.path())
             .expect("register client");
     }
 
@@ -264,7 +264,7 @@ fn test_unregister_client() {
     let repo = temp_repo();
 
     watcher
-        .register_client(12345, repo.path())
+        .attach_client(12345, repo.path())
         .expect("register client");
     assert_eq!(watcher.watched_repo_count(), 1);
 
@@ -281,7 +281,7 @@ fn test_unregister_with_multiple_clients() {
 
     for pid in [100, 200, 300] {
         watcher
-            .register_client(pid, repo.path())
+            .attach_client(pid, repo.path())
             .expect("register client");
     }
     assert_eq!(watcher.watched_repo_count(), 1);
@@ -297,18 +297,18 @@ fn test_unregister_with_multiple_clients() {
 }
 
 #[test]
-fn test_update_client() {
+fn test_attach_client_moves_repo() {
     let watcher = idle_watcher();
     let repo = temp_repo();
     let elsewhere = non_repo_dir();
 
     watcher
-        .register_client(12345, repo.path())
+        .attach_client(12345, repo.path())
         .expect("register client");
     assert_eq!(watcher.watched_repo_count(), 1);
 
     watcher
-        .update_client(12345, elsewhere.path())
+        .attach_client(12345, elsewhere.path())
         .expect("update client");
 
     // Moving the only client out of the repo stops its watch.
@@ -323,7 +323,7 @@ fn test_watcher_stop() {
     let repo = temp_repo();
 
     watcher
-        .register_client(12345, repo.path())
+        .attach_client(12345, repo.path())
         .expect("register client");
     assert_eq!(watcher.watched_repo_count(), 1);
 
@@ -404,7 +404,7 @@ fn test_unregister_client_cleans_up_watcher() {
     let fake_pid = 999_999_u32;
     client_directory.register(fake_pid, Some(repo_path.to_path_buf()));
     watcher
-        .register_client(fake_pid, repo_path)
+        .attach_client(fake_pid, repo_path)
         .expect("register client");
     assert_eq!(
         watcher.watched_repo_count(),
@@ -444,7 +444,7 @@ fn test_slow_callback_in_one_repo_does_not_delay_another() {
     let fast_repo = temp_repo();
 
     let slow_root =
-        MultiRepoWatcher::find_git_root(slow_repo.path()).expect("slow repo should resolve");
+        gpy_agent::git::find_git_dir_only(slow_repo.path()).expect("slow repo should resolve");
 
     let state = Arc::new(Dispatch::default());
     let callback: Box<dyn Fn(DebouncedEvent) + Send + Sync> = {

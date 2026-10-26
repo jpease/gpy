@@ -13,9 +13,7 @@ use gpy_agent::config::{
 };
 use gpy_agent::language::display::{DisplayRequest, Versions, display_info};
 use gpy_agent::language::{
-    detector::{
-        DetectedLanguage, Detector, get_language_color_from_theme, normalize_language_name,
-    },
+    detector::{DetectedLanguage, Detector, normalize_language_name},
     version::*,
 };
 use std::fs;
@@ -375,7 +373,7 @@ fn test_normalize_language_name() {
 }
 
 #[test]
-fn test_get_language_color_from_theme() {
+fn test_language_theme_bg_color() {
     use gpy_agent::config::LanguageTheme;
     use gpy_agent::config::types::ColorSpec;
 
@@ -387,13 +385,13 @@ fn test_get_language_color_from_theme() {
     );
 
     assert_eq!(
-        get_language_color_from_theme("rust", &theme),
+        theme.get_bg_color("rust"),
         "red",
         "a per-language override wins"
     );
     for language in ["node", "python", "go", "unknown"] {
         assert_eq!(
-            get_language_color_from_theme(language, &theme),
+            theme.get_bg_color(language),
             segment_bg,
             "{language} without an override inherits the segment background"
         );

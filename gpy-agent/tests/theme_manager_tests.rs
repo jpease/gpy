@@ -1462,7 +1462,7 @@ fn theme_source_content_returns_raw_builtin_content() {
 
     assert_eq!(
         content.expect("builtin default theme content should resolve"),
-        ThemeManager::default_theme_template(),
+        gpy_agent::config::defaults::DEFAULT_THEME_CONTENT,
         "should return the exact embedded builtin content, not a re-serialized copy"
     );
 }

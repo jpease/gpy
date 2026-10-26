@@ -207,13 +207,12 @@ impl IntegrationTestServer {
 
         if response_str.contains(r#""branch":"#) && response_str.contains(r#""ahead":"#) {
             if let Ok(status_val) = serde_json::from_str::<serde_json::Value>(response_str) {
-                let state = std::str::FromStr::from_str(
-                    status_val
-                        .get("state")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default(),
-                )
-                .unwrap_or(gpy_agent::git::RepositoryState::InProgress);
+                let state = status_val
+                    .get("state")
+                    .and_then(|v| {
+                        serde_json::from_value::<gpy_agent::git::RepositoryState>(v.clone()).ok()
+                    })
+                    .unwrap_or(gpy_agent::git::RepositoryState::InProgress);
 
                 let status = gpy_agent::git::RepositoryStatus {
                     branch: status_val

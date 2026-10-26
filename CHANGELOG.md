@@ -41,6 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   language and font lookups find the home directory the way the rest of gpy
   does: through the passwd database when `HOME` is unset, never from a
   relative `HOME`.
+- Library API: removed `MultiRepoWatcher::find_git_root` (use `git::find_git_dir_only`),
+  `register_client` and `update_client` (merged as `attach_client`),
+  `RepositoryState`'s `FromStr`, `ThemeManager::list_available_themes` and
+  `default_theme_template`, `PaletteManager::default_palette_template`,
+  `validate_config_key`, `validate_icon`, `get_language_color_from_theme`,
+  and the `ThemeValidationResult`/`PaletteValidationResult` types
+  (`commands::{theme,palette}::validate_*` return `ValidationReport`).
 - Config validation errors name the exact field and the real rule.
   `gpy config set` reports a non-integer value as `Invalid whole number: <value>`
   instead of naming a Rust type (`u64 value`). A `git.skip_paths` entry such as

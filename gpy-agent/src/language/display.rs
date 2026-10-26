@@ -6,7 +6,7 @@ use crate::config::types::ColorSpec;
 use crate::config::{LanguageSettings, LanguageTheme};
 use crate::debug_log;
 use crate::ipc::LanguageInfo;
-use crate::language::detector::{DetectedLanguage, get_language_color_from_theme};
+use crate::language::detector::DetectedLanguage;
 use crate::language::venv::PythonVenv;
 use crate::language::version::{ColdVersion, ProbePolicy, ReleaseSource, get_version_detectors};
 use crate::theme::ThemeConfig;
@@ -175,8 +175,7 @@ pub fn display_info(
 
 /// `name`'s themed colour, else white.
 fn language_color(name: &str, theme_lang: &LanguageTheme) -> ColorSpec {
-    ColorSpec::new(&get_language_color_from_theme(name, theme_lang))
-        .unwrap_or_else(|_| ColorSpec::white())
+    ColorSpec::new(theme_lang.get_bg_color(name)).unwrap_or_else(|_| ColorSpec::white())
 }
 
 /// One version per language in `displayed`, in order.

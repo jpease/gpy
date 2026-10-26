@@ -2,21 +2,12 @@
 
 use super::utils::{
     active_config_path, load_active_config, print_discovered, read_config, reload_agent_and_notify,
-    save_config_to,
 };
-use super::validation::{self, Failure, FailureKind, ValidatableResource};
+use super::validation::{self, Failure, FailureKind, ValidatableResource, ValidationReport};
 use crate::config::discovery::validate_config_name;
+use crate::config::loader::save_config;
 use crate::{Error, Result, config, palette::PaletteManager};
 use std::path::Path;
-
-/// Result of validating a palette target.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PaletteValidationResult {
-    /// Target label.
-    pub target: String,
-    /// Active palette, named palette, or explicit file path.
-    pub source: String,
-}
 
 /// List available palettes.
 ///
@@ -44,7 +35,7 @@ pub fn use_palette(name: &str) -> Result<()> {
     let mut config = original.clone();
     config.ui.palette =
         config::types::PaletteName::try_from(name.to_owned()).map_err(Error::config)?;
-    save_config_to(&path, &original, &config, &[])?;
+    save_config(&path, &original, &config, &[])?;
 
     println!("Switched to '{name}' palette");
 
@@ -74,26 +65,16 @@ pub fn validate(target: Option<&str>) -> Result<()> {
 ///
 /// # Errors
 /// Returns an error if the palette fails to parse/validate.
-pub fn validate_target(
-    target: Option<&str>,
-) -> std::result::Result<PaletteValidationResult, Failure> {
-    let report = validation::validate_target::<PaletteResource>(target)?;
-    Ok(PaletteValidationResult {
-        target: report.target,
-        source: report.source.to_owned(),
-    })
+pub fn validate_target(target: Option<&str>) -> std::result::Result<ValidationReport, Failure> {
+    validation::validate_target::<PaletteResource>(target)
 }
 
 /// Validate a palette strictly by name, never treating it as a file path.
 ///
 /// # Errors
 /// Returns an error if the named palette cannot be loaded or validated.
-pub fn validate_by_name(name: &str) -> std::result::Result<PaletteValidationResult, Failure> {
-    let report = validation::validate_by_name::<PaletteResource>(name)?;
-    Ok(PaletteValidationResult {
-        target: report.target,
-        source: report.source.to_owned(),
-    })
+pub fn validate_by_name(name: &str) -> std::result::Result<ValidationReport, Failure> {
+    validation::validate_by_name::<PaletteResource>(name)
 }
 
 /// Print remediation-focused diagnostics for a palette validation error.

@@ -18,8 +18,6 @@ use std::time::Duration;
 
 #[cfg(unix)]
 use crate::ipc::socket_identity::SocketIdentity;
-#[cfg(unix)]
-use std::os::unix::net::UnixListener;
 
 /// Create the default runtime directory when the socket lives there (no
 /// `--socket`/`GPY_AGENT_SOCKET_PATH` override). Only the start path calls this.
@@ -143,19 +141,6 @@ pub fn read_agent_version() -> Option<String> {
 /// Returns an error if the version file cannot be written.
 pub fn write_agent_version() -> Result<()> {
     std::fs::write(get_version_file_path(), VERSION)?;
-    Ok(())
-}
-
-/// Check the socket path is bindable, then release it.
-///
-/// # Errors
-/// Returns an error if socket binding fails.
-#[cfg(unix)]
-pub fn test_socket_bind(socket_path: &Path) -> std::io::Result<()> {
-    // Bind is atomic, so success proves exclusive access.
-    let listener = UnixListener::bind(socket_path)?;
-    drop(listener);
-    let _ = std::fs::remove_file(socket_path);
     Ok(())
 }
 

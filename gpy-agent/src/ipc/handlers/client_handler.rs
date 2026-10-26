@@ -66,7 +66,7 @@ impl ClientHandler {
             // initial scan still fills the cache and TTL reconciles missed events.
             let current_watcher = self.watcher.lock_or_recover().clone();
             if let Some(watcher) = current_watcher
-                && let Err(e) = watcher.register_client(pid.get(), path)
+                && let Err(e) = watcher.attach_client(pid.get(), path)
             {
                 crate::debug_log!(
                     "client",
@@ -105,7 +105,7 @@ impl ClientHandler {
         let current_watcher = self.watcher.lock_or_recover().clone();
         // Best-effort: on watcher failure, scan immediately so the cache is fresh.
         if let Some(watcher) = current_watcher
-            && let Err(e) = watcher.update_client(pid.get(), path_buf)
+            && let Err(e) = watcher.attach_client(pid.get(), path_buf)
         {
             crate::debug_log!(
                 "client",
@@ -165,9 +165,8 @@ impl ClientHandler {
     /// Populate the instant-prompt cache for a newly registered client's repo.
     fn trigger_initial_scan(&self, path: &std::path::Path) {
         use crate::git::status::load_repository_state;
-        use crate::watcher::multi_repo::MultiRepoWatcher;
 
-        let Some(git_root) = MultiRepoWatcher::find_git_root(path) else {
+        let Some(git_root) = crate::git::find_git_dir_only(path) else {
             return;
         };
 

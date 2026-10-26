@@ -129,7 +129,7 @@ pub fn handle_file_event(ctx: &AgentContext, event: &DebouncedEvent, config: &Co
                 return;
             }
 
-            let Some(repo_root) = MultiRepoWatcher::find_git_root(path)
+            let Some(repo_root) = crate::git::find_git_dir_only(path)
                 .or_else(|| path.parent().map(Path::to_path_buf))
             else {
                 return;
@@ -793,7 +793,7 @@ fn sync_watcher_state(
             Ok(new_watcher) => {
                 let repos = ctx.registry.get_registered_repos();
                 for (pid, path) in repos {
-                    let _ = new_watcher.register_client(pid, &path);
+                    let _ = new_watcher.attach_client(pid, &path);
                 }
                 *watcher_guard = Some(new_watcher);
             }
@@ -955,7 +955,7 @@ pub(super) fn regenerate_instant_caches_for_theme_change(ctx: &AgentContext, con
     // Dedup: several clients may share one repo.
     let mut seen_keys = std::collections::HashSet::new();
     for (_pid, cwd) in ctx.registry.get_registered_repos() {
-        let git_root = MultiRepoWatcher::find_git_root(&cwd);
+        let git_root = crate::git::find_git_dir_only(&cwd);
         // Keyed by request path when there is no git root.
         let lang_root = git_root.clone().unwrap_or_else(|| cwd.clone());
 

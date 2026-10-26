@@ -4,7 +4,8 @@ use super::state::WizardState;
 use crate::Result;
 use crate::commands::palette;
 use crate::commands::theme;
-use crate::commands::utils::{active_config_path, load_active_config, save_config_to};
+use crate::commands::utils::{active_config_path, load_active_config};
+use crate::config::loader::save_config;
 use std::path::{Path, PathBuf};
 
 /// Apply, validate, and persist `state`'s selection onto the config at `path`.
@@ -25,7 +26,7 @@ pub fn save_to(state: &WizardState, path: &Path) -> Result<()> {
     theme::validate_by_name(state.selected_theme())?;
     palette::validate_by_name(state.selected_palette())?;
 
-    save_config_to(path, &original, &config, &[])?;
+    save_config(path, &original, &config, &[])?;
     Ok(())
 }
 

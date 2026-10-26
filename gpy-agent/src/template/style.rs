@@ -185,7 +185,7 @@ pub fn parse_color(text: &str) -> Result<Color> {
     if let Ok(index) = text.parse::<u8>() {
         return Ok(Color::Ansi256(index));
     }
-    if is_named_color(&lower) {
+    if canonical_ansi_name(&lower).is_some() {
         return Ok(Color::Named(lower));
     }
     // Unknown bare word: palette reference; keys are case-sensitive.
@@ -202,20 +202,16 @@ fn parse_hex(hex: &str) -> Result<Color> {
             name: format!("#{hex}"),
         });
     }
-    let channel = |range: std::ops::Range<usize>| -> Result<u8> {
-        let slice = hex.get(range).ok_or_else(|| TemplateError::UnknownColor {
+    let [_, red, green, blue] = u32::from_str_radix(hex, 16)
+        .ok()
+        .ok_or_else(|| TemplateError::UnknownColor {
             name: format!("#{hex}"),
-        })?;
-        u8::from_str_radix(slice, 16)
-            .ok()
-            .ok_or_else(|| TemplateError::UnknownColor {
-                name: format!("#{hex}"),
-            })
-    };
+        })?
+        .to_be_bytes();
     Ok(Color::Rgb {
-        r: channel(0..2)?,
-        g: channel(2..4)?,
-        b: channel(4..6)?,
+        r: red,
+        g: green,
+        b: blue,
     })
 }
 
@@ -277,11 +273,6 @@ pub fn config_color_name(name: &str) -> Option<&'static str> {
         "bright-white" => "brwhite",
         base => base,
     })
-}
-
-/// Return `true` if `text` is an ANSI color spelling (see [`canonical_ansi_name`]).
-pub fn is_named_color(text: &str) -> bool {
-    canonical_ansi_name(text).is_some()
 }
 
 #[cfg(test)]

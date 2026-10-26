@@ -60,23 +60,6 @@ pub fn validate_color(value: &str, field: &str, source: &str) -> Result<()> {
     Ok(())
 }
 
-/// Validate an icon string.
-///
-/// # Errors
-/// Returns a configuration error if the icon contains control characters.
-pub fn validate_icon(value: &str, field: &str, source: &str) -> Result<()> {
-    if value.chars().any(char::is_control) {
-        return Err(ValidationError {
-            field_path: field.to_owned(),
-            kind: ValidationErrorKind::IconControlChars {
-                theme: source.to_owned(),
-            },
-        }
-        .into());
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]

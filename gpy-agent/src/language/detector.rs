@@ -54,7 +54,7 @@ impl Detector {
     /// is present. Extensions are not used: a stray `.py` script already has
     /// one, so only a real marker distinguishes "a project of X".
     #[must_use]
-    pub fn detect_directory_hybrid(path: &Path) -> Vec<DetectedLanguage> {
+    pub(crate) fn detect_directory_hybrid(path: &Path) -> Vec<DetectedLanguage> {
         let content = Self::detect_directory(path);
         if content.is_empty() {
             return content;
@@ -101,13 +101,12 @@ impl Detector {
         mode: crate::config::types::DetectionMode,
         budget: usize,
     ) -> Vec<DetectedLanguage> {
-        let needs_fallback =
-            matches!(
-                mode,
-                crate::config::types::DetectionMode::Content
-                    | crate::config::types::DetectionMode::Hybrid
-            ) && (crate::watcher::multi_repo::MultiRepoWatcher::find_git_root(path_ref).is_none()
-                || exceeds_file_budget(path_ref, budget));
+        let needs_fallback = matches!(
+            mode,
+            crate::config::types::DetectionMode::Content
+                | crate::config::types::DetectionMode::Hybrid
+        ) && (crate::git::find_git_dir_only(path_ref).is_none()
+            || exceeds_file_budget(path_ref, budget));
         let bounded_mode = if needs_fallback {
             crate::config::types::DetectionMode::Markers
         } else {
@@ -119,7 +118,7 @@ impl Detector {
     /// Detect languages by marker files/extensions among immediate entries,
     /// ordered by evidence count then name. Unreadable directories yield none.
     #[must_use]
-    pub fn detect_directory_markers(path: &Path) -> Vec<DetectedLanguage> {
+    pub(crate) fn detect_directory_markers(path: &Path) -> Vec<DetectedLanguage> {
         let evidence = marker_evidence(path, true);
 
         let mut languages: Vec<DetectedLanguage> = evidence
@@ -446,15 +445,6 @@ fn exceeds_file_budget(path: &Path, budget: usize) -> bool {
 #[must_use]
 pub fn normalize_language_name(detected_name: &str) -> &str {
     crate::language::metadata::get_canonical_name(detected_name).unwrap_or(detected_name)
-}
-
-/// Get a language's background color from the theme.
-#[must_use]
-pub fn get_language_color_from_theme(
-    language: &str,
-    theme: &crate::config::LanguageTheme,
-) -> String {
-    theme.get_bg_color(language).to_owned()
 }
 
 #[cfg(test)]

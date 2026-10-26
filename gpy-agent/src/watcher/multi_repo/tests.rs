@@ -228,7 +228,7 @@ fn register_blocks_when_ops_lock_held() {
 
     std::thread::spawn(move || {
         barrier_clone.wait(); // Sync with main thread
-        let _ = watcher_clone.register_client(42, &repo_path);
+        let _ = watcher_clone.attach_client(42, &repo_path);
         let _ = tx.send(());
     });
 
@@ -239,7 +239,7 @@ fn register_blocks_when_ops_lock_held() {
 
     assert!(
         rx.try_recv().is_err(),
-        "register_client finished while ops_lock was held"
+        "attach_client finished while ops_lock was held"
     );
 
     drop(ops_guard);
@@ -247,7 +247,7 @@ fn register_blocks_when_ops_lock_held() {
     // Long timeout: this asserts eventual progress, not latency, under CI load.
     assert!(
         rx.recv_timeout(Duration::from_secs(20)).is_ok(),
-        "register_client did not complete after lock release"
+        "attach_client did not complete after lock release"
     );
 }
 
@@ -282,7 +282,7 @@ fn worktree_level_file_creation_is_delivered() {
         .expect("create watcher");
 
     watcher
-        .register_client(std::process::id(), repo_root)
+        .attach_client(std::process::id(), repo_root)
         .expect("register client");
 
     let canonical_root = std::fs::canonicalize(repo_root).expect("canonicalize repo root");
@@ -337,7 +337,7 @@ fn mkdir_then_immediate_write_is_delivered() {
         .expect("create watcher");
 
     watcher
-        .register_client(std::process::id(), repo_root)
+        .attach_client(std::process::id(), repo_root)
         .expect("register client");
 
     let canonical_root = std::fs::canonicalize(repo_root).expect("canonicalize repo root");
@@ -376,7 +376,7 @@ fn unregister_unwatches_exactly_the_armed_paths() {
 
     let watcher = recording_watcher(test_registry(true), no_fault());
 
-    watcher.register_client(99, repo_root).unwrap();
+    watcher.attach_client(99, repo_root).unwrap();
 
     // Precondition: `armed` is `[git_root]` alone for this layout.
     let armed = watcher
@@ -421,7 +421,7 @@ fn worktree_watch_failure_degrades_to_gitdir_only() {
         }),
     );
 
-    let result = watcher.register_client(7, repo_root);
+    let result = watcher.attach_client(7, repo_root);
 
     assert!(
         result.is_ok(),
@@ -465,7 +465,7 @@ fn gitdir_watch_failure_rolls_back_without_tracking() {
         Arc::new(|_path: &Path| Some(Error::watcher("injected git-dir watch failure (test)"))),
     );
 
-    let result = watcher.register_client(8, repo_root);
+    let result = watcher.attach_client(8, repo_root);
 
     assert!(
         result.is_err(),
@@ -480,7 +480,7 @@ fn gitdir_watch_failure_rolls_back_without_tracking() {
 
 /// Registering after `stop()` must error rather than track an unwatched repo.
 #[test]
-fn register_client_errors_when_coordinator_is_gone() {
+fn attach_client_errors_when_coordinator_is_gone() {
     let temp_dir = TempDir::new().unwrap();
     let repo_root = temp_dir.path();
     std::fs::create_dir_all(repo_root.join(".git")).unwrap();
@@ -492,7 +492,7 @@ fn register_client_errors_when_coordinator_is_gone() {
 
     watcher.stop();
 
-    let result = watcher.register_client(9, repo_root);
+    let result = watcher.attach_client(9, repo_root);
     assert!(
         result.is_err(),
         "registration must fail rather than silently record an unwatched repo"
@@ -519,7 +519,7 @@ fn recreated_gitdir_rearms_watch_on_reregister() {
         .build()
         .unwrap();
 
-    watcher.register_client(1, repo_root).unwrap();
+    watcher.attach_client(1, repo_root).unwrap();
     let canonical_root = std::fs::canonicalize(repo_root).unwrap();
 
     let first_id = watcher
@@ -537,7 +537,7 @@ fn recreated_gitdir_rearms_watch_on_reregister() {
     std::fs::remove_dir_all(repo_root.join(".git")).unwrap();
     std::fs::rename(&replacement, repo_root.join(".git")).unwrap();
 
-    watcher.register_client(1, repo_root).unwrap();
+    watcher.attach_client(1, repo_root).unwrap();
 
     let second_id = watcher
         .watched_repos
@@ -614,7 +614,7 @@ fn reregister_after_worktree_enabled_rearms_repo() {
     let (temp_dir, watcher) = watcher_over_temp_repo(false);
     let repo_root = temp_dir.path();
 
-    watcher.register_client(1, repo_root).unwrap();
+    watcher.attach_client(1, repo_root).unwrap();
     let canonical_root = std::fs::canonicalize(repo_root).unwrap();
     assert!(
         !tracked_worktree(&watcher, &canonical_root),
@@ -622,7 +622,7 @@ fn reregister_after_worktree_enabled_rearms_repo() {
     );
 
     watcher.set_watch_worktree(true);
-    watcher.register_client(1, repo_root).unwrap();
+    watcher.attach_client(1, repo_root).unwrap();
 
     assert!(
         tracked_worktree(&watcher, &canonical_root),
@@ -636,7 +636,7 @@ fn reregister_after_worktree_disabled_rearms_repo() {
     let (temp_dir, watcher) = watcher_over_temp_repo(true);
     let repo_root = temp_dir.path();
 
-    watcher.register_client(1, repo_root).unwrap();
+    watcher.attach_client(1, repo_root).unwrap();
     let canonical_root = std::fs::canonicalize(repo_root).unwrap();
     assert!(
         tracked_worktree(&watcher, &canonical_root),
@@ -644,7 +644,7 @@ fn reregister_after_worktree_disabled_rearms_repo() {
     );
 
     watcher.set_watch_worktree(false);
-    watcher.register_client(1, repo_root).unwrap();
+    watcher.attach_client(1, repo_root).unwrap();
 
     assert!(
         !tracked_worktree(&watcher, &canonical_root),
@@ -668,7 +668,7 @@ fn degraded_worktree_repo_does_not_rearm_on_reregister() {
         })
     });
     let repo_root = temp_dir.path();
-    watcher.register_client(1, repo_root).unwrap();
+    watcher.attach_client(1, repo_root).unwrap();
 
     let canonical_root = std::fs::canonicalize(repo_root).unwrap();
     assert!(
@@ -677,7 +677,7 @@ fn degraded_worktree_repo_does_not_rearm_on_reregister() {
     );
 
     // Injection is off now, so a spurious re-arm would flip the flag to true.
-    watcher.register_client(1, repo_root).unwrap();
+    watcher.attach_client(1, repo_root).unwrap();
 
     assert!(
         !tracked_worktree(&watcher, &canonical_root),
@@ -691,7 +691,7 @@ fn resync_installs_worktree_watch_on_active_repos() {
     let (temp_dir, watcher) = watcher_over_temp_repo(false);
     let repo_root = temp_dir.path();
 
-    watcher.register_client(1, repo_root).unwrap();
+    watcher.attach_client(1, repo_root).unwrap();
     let canonical_root = std::fs::canonicalize(repo_root).unwrap();
     assert!(!tracked_worktree(&watcher, &canonical_root));
 
@@ -710,7 +710,7 @@ fn resync_removes_worktree_watch_on_active_repos() {
     let (temp_dir, watcher) = watcher_over_temp_repo(true);
     let repo_root = temp_dir.path();
 
-    watcher.register_client(1, repo_root).unwrap();
+    watcher.attach_client(1, repo_root).unwrap();
     let canonical_root = std::fs::canonicalize(repo_root).unwrap();
     assert!(tracked_worktree(&watcher, &canonical_root));
 
@@ -735,7 +735,7 @@ fn resync_preserves_multiple_registered_clients() {
     let repo_root = temp_dir.path();
 
     for pid in [11_u32, 22_u32, 33_u32] {
-        watcher.register_client(pid, repo_root).unwrap();
+        watcher.attach_client(pid, repo_root).unwrap();
     }
     let canonical_root = std::fs::canonicalize(repo_root).unwrap();
     let before = tracked_clients(&watcher, &canonical_root);
@@ -765,7 +765,7 @@ fn resync_worktree_failure_degrades_to_gitdir_only() {
         })
     });
     let repo_root = temp_dir.path();
-    watcher.register_client(1, repo_root).unwrap();
+    watcher.attach_client(1, repo_root).unwrap();
     let canonical_root = std::fs::canonicalize(repo_root).unwrap();
 
     watcher.set_watch_worktree(true);
@@ -803,7 +803,7 @@ fn resync_is_a_noop_when_nothing_changed() {
         })
     });
     let repo_root = temp_dir.path();
-    watcher.register_client(1, repo_root).unwrap();
+    watcher.attach_client(1, repo_root).unwrap();
     let canonical_root = std::fs::canonicalize(repo_root).unwrap();
     let identity_before = watcher
         .watched_repos
@@ -845,7 +845,7 @@ fn unchanged_gitdir_keeps_identity_on_reregister() {
         .build()
         .unwrap();
 
-    watcher.register_client(1, repo_root).unwrap();
+    watcher.attach_client(1, repo_root).unwrap();
     let canonical_root = std::fs::canonicalize(repo_root).unwrap();
     let first_id = watcher
         .watched_repos
@@ -855,7 +855,7 @@ fn unchanged_gitdir_keeps_identity_on_reregister() {
         .expect("repo tracked")
         .git_dir_id;
 
-    watcher.register_client(1, repo_root).unwrap();
+    watcher.attach_client(1, repo_root).unwrap();
     let second_id = watcher
         .watched_repos
         .lock()
@@ -971,10 +971,10 @@ fn plain_watcher() -> MultiRepoWatcher<RecordingTarget> {
 
 /// A `cd` within the attached repo touches no watch or tracked state.
 #[test]
-fn update_client_within_same_repo_does_not_rearm() {
+fn attach_client_within_same_repo_does_not_rearm() {
     let (_temp, repo, _other) = two_plain_repos();
     let watcher = plain_watcher();
-    watcher.register_client(1, &repo).unwrap();
+    watcher.attach_client(1, &repo).unwrap();
     let before = watcher
         .watched_repos
         .lock()
@@ -983,7 +983,7 @@ fn update_client_within_same_repo_does_not_rearm() {
         .unwrap()
         .clone();
 
-    watcher.update_client(1, &repo.join("sub")).unwrap();
+    watcher.attach_client(1, &repo.join("sub")).unwrap();
 
     assert!(
         unwatch_log(&watcher).is_empty(),
@@ -1005,10 +1005,10 @@ fn update_client_within_same_repo_does_not_rearm() {
 
 /// Registering elsewhere detaches the pid, tearing down an emptied repo.
 #[test]
-fn register_client_detaches_pid_from_previous_repo() {
+fn attach_client_detaches_pid_from_previous_repo() {
     let (_temp, a, b) = two_plain_repos();
     let watcher = plain_watcher();
-    watcher.register_client(1, &a).unwrap();
+    watcher.attach_client(1, &a).unwrap();
     let a_armed = watcher
         .watched_repos
         .lock()
@@ -1018,7 +1018,7 @@ fn register_client_detaches_pid_from_previous_repo() {
         .armed
         .clone();
 
-    watcher.register_client(1, &b).unwrap();
+    watcher.attach_client(1, &b).unwrap();
 
     assert!(
         !watcher.watched_repos.lock().unwrap().contains_key(&a),
@@ -1030,13 +1030,13 @@ fn register_client_detaches_pid_from_previous_repo() {
 
 /// Moving one pid away leaves a repo other pids still use alone.
 #[test]
-fn update_client_to_other_repo_keeps_shared_repo() {
+fn attach_client_to_other_repo_keeps_shared_repo() {
     let (_temp, a, b) = two_plain_repos();
     let watcher = plain_watcher();
-    watcher.register_client(1, &a).unwrap();
-    watcher.register_client(2, &a).unwrap();
+    watcher.attach_client(1, &a).unwrap();
+    watcher.attach_client(2, &a).unwrap();
 
-    watcher.update_client(1, &b).unwrap();
+    watcher.attach_client(1, &b).unwrap();
 
     assert_eq!(tracked_clients(&watcher, &a), HashSet::from([2]));
     assert_eq!(tracked_clients(&watcher, &b), HashSet::from([1]));
@@ -1049,7 +1049,7 @@ fn update_client_to_other_repo_keeps_shared_repo() {
 
 /// A failed arm of the target still detaches the pid from its old repo.
 #[test]
-fn update_client_failed_arm_still_detaches_from_previous_repo() {
+fn attach_client_failed_arm_still_detaches_from_previous_repo() {
     let (_temp, a, b) = two_plain_repos();
     let fault_root = b.clone();
     let watcher = recording_watcher(
@@ -1059,9 +1059,9 @@ fn update_client_failed_arm_still_detaches_from_previous_repo() {
                 .then(|| Error::watcher("injected watch failure"))
         }),
     );
-    watcher.register_client(1, &a).unwrap();
+    watcher.attach_client(1, &a).unwrap();
 
-    assert!(watcher.update_client(1, &b).is_err());
+    assert!(watcher.attach_client(1, &b).is_err());
 
     assert!(watcher.watched_repos.lock().unwrap().is_empty());
     assert_eq!(unwatch_log(&watcher), vec![a]);
@@ -1316,7 +1316,7 @@ proptest::proptest! {
     /// attach performs no backend watch operation.
     #[test]
     fn watch_set_matches_client_model(
-        steps in proptest::collection::vec((0_u8..3_u8, 1_u32..=3_u32, 0_usize..12_usize), 1..=30),
+        steps in proptest::collection::vec((0_u8..2_u8, 1_u32..=3_u32, 0_usize..12_usize), 1..=30),
     ) {
         let fx = build_fixture();
         let watcher = plain_watcher();
@@ -1325,7 +1325,7 @@ proptest::proptest! {
         for (done, (kind, pid, cwd_index)) in steps.iter().copied().enumerate() {
             let trace = steps.get(..=done).expect("in range");
             let (cwd, target) = fx.cwds.get(cwd_index).expect("cwd index in range");
-            if kind == 2 {
+            if kind == 1 {
                 watcher.unregister_client(pid);
                 model.insert(pid, None);
             } else {
@@ -1333,11 +1333,7 @@ proptest::proptest! {
                 let snapshot_before = same_repo.then(|| {
                     rearm_snapshot(&watcher, fx.root_of(target.unwrap()))
                 });
-                if kind == 0 {
-                    watcher.register_client(pid, cwd).unwrap();
-                } else {
-                    watcher.update_client(pid, cwd).unwrap();
-                }
+                watcher.attach_client(pid, cwd).unwrap();
                 model.insert(pid, *target);
                 if let Some(snapshot) = snapshot_before {
                     let after =

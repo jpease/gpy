@@ -611,7 +611,7 @@ impl Agent {
             .registry
             .register(pid, Some(repo_path.to_path_buf()));
         if let Some(watcher) = self.watcher.lock_or_recover().as_ref() {
-            let _ = watcher.register_client(pid, repo_path);
+            let _ = watcher.attach_client(pid, repo_path);
         }
     }
 }

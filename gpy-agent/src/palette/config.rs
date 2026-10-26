@@ -136,7 +136,7 @@ mod tests {
     use crate::config::validation::colors::PALETTE_ROLE_COLORS;
     use crate::formatter::encode_ansi;
     use crate::palette::manager::BUILTIN_PALETTES;
-    use crate::template::style::{ANSI_BASE_WORDS, BRIGHT_PREFIXES, is_named_color};
+    use crate::template::style::{ANSI_BASE_WORDS, BRIGHT_PREFIXES};
     use crate::template::{Color, MapResolver, RenderContext, canonical_ansi_name, render};
 
     #[test]
@@ -233,7 +233,7 @@ idx = \"42\"
         );
     }
 
-    /// Every spelling `is_named_color` is meant to accept, built from the same
+    /// Every spelling `canonical_ansi_name` is meant to accept, built from the same
     /// base words and prefixes the matcher uses, plus the gray aliases.
     fn named_spellings() -> Vec<String> {
         let mut names: Vec<String> = vec!["gray".to_owned(), "grey".to_owned()];
@@ -255,7 +255,10 @@ idx = \"42\"
         for (palette_name, cfg) in builtin_configs() {
             let palette = cfg.to_template_palette();
             for name in named_spellings() {
-                assert!(is_named_color(&name), "'{name}' must be a named color");
+                assert!(
+                    canonical_ansi_name(&name).is_some(),
+                    "'{name}' must be a named color"
+                );
                 let ctx = RenderContext::new(&resolver).with_palette(palette.clone());
                 let spans = render(&format!("[x](fg:{name} bg:{name})"), &ctx)
                     .unwrap_or_else(|e| panic!("{palette_name}/{name}: {e}"));

@@ -798,10 +798,10 @@ fn create_watcher_skips_refresh_for_unregistered_repo_and_refreshes_registered_o
     let watcher = create_watcher(WatcherConfig::default(), &ctx).expect("create real watcher");
     // The watch registry is independent of `ctx.registry`, as in production.
     watcher
-        .register_client(std::process::id(), &repo)
+        .attach_client(std::process::id(), &repo)
         .expect("register with watcher");
     watcher
-        .register_client(std::process::id() + 1, &sentinel)
+        .attach_client(std::process::id() + 1, &sentinel)
         .expect("register sentinel with watcher");
     // Nonexistent PID: `notify_repaint_force` prunes it via ESRCH, so the
     // sentinel is rewritten until its first refresh lands.

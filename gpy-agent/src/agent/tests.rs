@@ -377,7 +377,7 @@ mod prune_reconcile_tests {
 
         fx.registry
             .register_with_started_at_for_test(pid, Some(repo.clone()), Some(1));
-        fx.watcher.register_client(pid, &repo).unwrap();
+        fx.watcher.attach_client(pid, &repo).unwrap();
         assert_eq!(fx.watcher.watched_repo_count(), 1);
 
         fx.registry.notify_repaint(None);
@@ -406,7 +406,7 @@ mod prune_reconcile_tests {
         let dead_pid = child.id();
         child.wait().expect("reap `true`");
         fx.registry.register(dead_pid, Some(repo.clone()));
-        fx.watcher.register_client(dead_pid, &repo).unwrap();
+        fx.watcher.attach_client(dead_pid, &repo).unwrap();
         assert_eq!(fx.watcher.watched_repo_count(), 1);
 
         let pruned = prune_dead_clients(&fx.registry, &fx.slot);
@@ -455,12 +455,12 @@ mod prune_reconcile_tests {
                     0 => {
                         fx.registry
                             .register_with_started_at_for_test(pid, Some(cwd.clone()), None);
-                        fx.watcher.register_client(pid, cwd).unwrap();
+                        fx.watcher.attach_client(pid, cwd).unwrap();
                         model.insert(pid, *repo_index);
                     }
                     1 => {
                         if fx.registry.update_workspace(pid, cwd) {
-                            fx.watcher.update_client(pid, cwd).unwrap();
+                            fx.watcher.attach_client(pid, cwd).unwrap();
                             model.insert(pid, *repo_index);
                         }
                     }

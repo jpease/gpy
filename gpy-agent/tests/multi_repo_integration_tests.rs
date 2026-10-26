@@ -180,15 +180,9 @@ fn test_multi_repo_concurrent_registration() {
         .build()
         .expect("create watcher");
 
-    watcher
-        .register_client(1001, &repo1)
-        .expect("register repo1");
-    watcher
-        .register_client(1002, &repo2)
-        .expect("register repo2");
-    watcher
-        .register_client(1003, &repo3)
-        .expect("register repo3");
+    watcher.attach_client(1001, &repo1).expect("register repo1");
+    watcher.attach_client(1002, &repo2).expect("register repo2");
+    watcher.attach_client(1003, &repo3).expect("register repo3");
 
     assert_eq!(watcher.watched_repo_count(), 3);
 }
@@ -218,12 +212,8 @@ fn test_multi_repo_event_isolation() {
         .build()
         .expect("create watcher");
 
-    watcher
-        .register_client(2001, &repo1)
-        .expect("register repo1");
-    watcher
-        .register_client(2002, &repo2)
-        .expect("register repo2");
+    watcher.attach_client(2001, &repo1).expect("register repo1");
+    watcher.attach_client(2002, &repo2).expect("register repo2");
 
     // Arming produces legitimate events for both repos (Linux delivers `git init`
     // directory events late). They flush ahead of a probe write in each repo, so
@@ -295,8 +285,8 @@ fn test_multi_repo_same_relative_path() {
         .build()
         .expect("create watcher");
 
-    watcher.register_client(3001, &src1).expect("register src1");
-    watcher.register_client(3002, &src2).expect("register src2");
+    watcher.attach_client(3001, &src1).expect("register src1");
+    watcher.attach_client(3002, &src2).expect("register src2");
 
     assert_eq!(watcher.watched_repo_count(), 2);
 }
@@ -314,12 +304,8 @@ fn test_multi_repo_unregistration() {
         .build()
         .expect("create watcher");
 
-    watcher
-        .register_client(4001, &repo1)
-        .expect("register repo1");
-    watcher
-        .register_client(4002, &repo2)
-        .expect("register repo2");
+    watcher.attach_client(4001, &repo1).expect("register repo1");
+    watcher.attach_client(4002, &repo2).expect("register repo2");
 
     assert_eq!(watcher.watched_repo_count(), 2);
 
@@ -383,7 +369,7 @@ fn test_multi_repo_scalability() {
     for i in 0..10 {
         let repo = create_git_repo(temp_path, &format!("scalability_repo{i}"));
         watcher
-            .register_client(7000 + i, &repo)
+            .attach_client(7000 + i, &repo)
             .expect("register repo");
         _repos.push(repo);
     }
@@ -412,7 +398,7 @@ fn test_multi_repo_rapid_registration() {
             let repo_clone = repo.clone();
             thread::spawn(move || {
                 watcher_clone
-                    .register_client(8000 + i, &repo_clone)
+                    .attach_client(8000 + i, &repo_clone)
                     .expect("register client");
             })
         })
@@ -444,10 +430,10 @@ fn test_multi_repo_nested_repos() {
         .expect("create watcher");
 
     watcher
-        .register_client(9001, &outer_repo)
+        .attach_client(9001, &outer_repo)
         .expect("register outer");
     watcher
-        .register_client(9002, &nested_repo)
+        .attach_client(9002, &nested_repo)
         .expect("register nested");
 
     assert_eq!(watcher.watched_repo_count(), 2);
@@ -474,10 +460,10 @@ fn test_multi_repo_symlink_handling() {
             .expect("create watcher");
 
         watcher
-            .register_client(10001, &real_repo)
+            .attach_client(10001, &real_repo)
             .expect("register real");
         watcher
-            .register_client(10002, &symlink_path)
+            .attach_client(10002, &symlink_path)
             .expect("register symlink");
 
         // Symlink and real path resolve to one watch.
@@ -517,10 +503,10 @@ fn test_multi_repo_concurrent_events() {
     );
 
     watcher
-        .register_client(11001, &repo1)
+        .attach_client(11001, &repo1)
         .expect("register repo1");
     watcher
-        .register_client(11002, &repo2)
+        .attach_client(11002, &repo2)
         .expect("register repo2");
 
     let handle1 = thread::spawn(move || {
@@ -580,7 +566,7 @@ fn submodule_branch_change_attributes_to_submodule_working_root() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &sub_wd)
+        .attach_client(std::process::id(), &sub_wd)
         .expect("register submodule client");
 
     let canonical_sub = fs::canonicalize(&sub_wd).expect("canonicalize submodule root");
@@ -621,7 +607,7 @@ fn linked_worktree_branch_change_attributes_to_worktree_working_root() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &wt_wd)
+        .attach_client(std::process::id(), &wt_wd)
         .expect("register worktree client");
 
     let canonical_wt = fs::canonicalize(&wt_wd).expect("canonicalize worktree root");
@@ -648,7 +634,7 @@ fn ordinary_repo_head_change_still_triggers() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &repo)
+        .attach_client(std::process::id(), &repo)
         .expect("register ordinary client");
 
     let canonical_repo = fs::canonicalize(&repo).expect("canonicalize repo root");
@@ -754,7 +740,7 @@ fn common_remote_ref_change_outside_worktree_refreshes_linked_worktree() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &linked)
+        .attach_client(std::process::id(), &linked)
         .expect("register worktree client");
 
     arm_watch(&events, &[&linked]);
@@ -785,7 +771,7 @@ fn common_config_upstream_change_outside_worktree_refreshes_linked_worktree() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &linked)
+        .attach_client(std::process::id(), &linked)
         .expect("register worktree client");
 
     arm_watch(&events, &[&linked]);
@@ -820,7 +806,7 @@ fn main_checkout_index_write_wakes_zero_linked_worktrees() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &linked)
+        .attach_client(std::process::id(), &linked)
         .expect("register worktree client");
 
     arm_watch(&events, &[&linked]);
@@ -877,10 +863,10 @@ fn per_worktree_head_write_wakes_zero_sibling_worktrees() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &first)
+        .attach_client(std::process::id(), &first)
         .expect("register first worktree");
     watcher
-        .register_client(std::process::id() + 1, &second)
+        .attach_client(std::process::id() + 1, &second)
         .expect("register second worktree");
 
     arm_watch(&events, &[&first, &second]);
@@ -931,10 +917,10 @@ fn common_dir_watch_survives_until_last_dependent_worktree_unregisters() {
     let first_pid = std::process::id();
     let second_pid = first_pid + 1;
     watcher
-        .register_client(first_pid, &first)
+        .attach_client(first_pid, &first)
         .expect("register first worktree");
     watcher
-        .register_client(second_pid, &second)
+        .attach_client(second_pid, &second)
         .expect("register second worktree");
 
     watcher.unregister_client(first_pid);
@@ -975,10 +961,10 @@ fn linked_worktree_keeps_common_coverage_after_main_checkout_unregisters() {
     let main_pid = std::process::id();
     let linked_pid = main_pid + 1;
     watcher
-        .register_client(main_pid, &fixture.main)
+        .attach_client(main_pid, &fixture.main)
         .expect("register main checkout");
     watcher
-        .register_client(linked_pid, &linked)
+        .attach_client(linked_pid, &linked)
         .expect("register worktree client");
 
     watcher.unregister_client(main_pid);
@@ -1033,10 +1019,10 @@ fn nested_repo_keeps_events_after_outer_unregisters() {
     let outer_pid = std::process::id();
     let inner_pid = outer_pid + 1;
     watcher
-        .register_client(outer_pid, &outer)
+        .attach_client(outer_pid, &outer)
         .expect("register outer");
     watcher
-        .register_client(inner_pid, &inner)
+        .attach_client(inner_pid, &inner)
         .expect("register inner");
     arm_watch(&events, &[&outer, &inner]);
     watcher.unregister_client(outer_pid);
@@ -1063,10 +1049,10 @@ fn nested_repo_outer_keeps_inner_subtree_after_inner_unregisters() {
     let outer_pid = std::process::id();
     let inner_pid = outer_pid + 1;
     watcher
-        .register_client(outer_pid, &outer)
+        .attach_client(outer_pid, &outer)
         .expect("register outer");
     watcher
-        .register_client(inner_pid, &inner)
+        .attach_client(inner_pid, &inner)
         .expect("register inner");
     arm_watch(&events, &[&outer, &inner]);
     watcher.unregister_client(inner_pid);
@@ -1100,10 +1086,10 @@ fn linked_worktree_registered_first_keeps_admin_events_after_main_unregisters() 
     let linked_pid = std::process::id();
     let main_pid = linked_pid + 1;
     watcher
-        .register_client(linked_pid, &linked)
+        .attach_client(linked_pid, &linked)
         .expect("register worktree client");
     watcher
-        .register_client(main_pid, &fixture.main)
+        .attach_client(main_pid, &fixture.main)
         .expect("register main checkout");
     let canonical_main = fs::canonicalize(&fixture.main).expect("canonicalize main checkout");
     arm_watch(&events, &[&linked, &canonical_main]);
@@ -1140,7 +1126,7 @@ fn gitdir_only_main_unregister_keeps_worktree_common_config_fanout() {
     let linked_pid = std::process::id();
     let main_pid = linked_pid + 1;
     watcher
-        .register_client(linked_pid, &linked)
+        .attach_client(linked_pid, &linked)
         .expect("register worktree client");
     arm_watch_by_config(&events, &fixture.main, &linked);
 
@@ -1155,7 +1141,7 @@ fn gitdir_only_main_unregister_keeps_worktree_common_config_fanout() {
     );
 
     watcher
-        .register_client(main_pid, &fixture.main)
+        .attach_client(main_pid, &fixture.main)
         .expect("register main checkout");
     let canonical_main = fs::canonicalize(&fixture.main).expect("canonicalize main checkout");
     arm_watch_by_config(&events, &fixture.main, &canonical_main);
@@ -1193,7 +1179,7 @@ fn worktree_commit_wakes_only_the_linked_worktree() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &linked)
+        .attach_client(std::process::id(), &linked)
         .expect("register worktree client");
 
     arm_watch(&events, &[&linked]);
@@ -1230,10 +1216,10 @@ fn registered_main_checkout_still_wakes_on_its_own_gitdir_write() {
     let (watcher, events) = recording_watcher();
     let main_pid = std::process::id();
     watcher
-        .register_client(main_pid, &fixture.main)
+        .attach_client(main_pid, &fixture.main)
         .expect("register main checkout");
     watcher
-        .register_client(main_pid + 1, &linked)
+        .attach_client(main_pid + 1, &linked)
         .expect("register worktree client");
 
     arm_watch(&events, &[&canonical_main, &linked]);
@@ -1290,7 +1276,7 @@ fn bare_superproject_common_dir_fans_out_without_waking_the_bare_repo() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &canonical_wt)
+        .attach_client(std::process::id(), &canonical_wt)
         .expect("register worktree client");
     arm_watch(&events, &[&canonical_wt]);
 
@@ -1382,7 +1368,7 @@ fn ref_only_submodule_checkout_refreshes_unregistered_parent() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &fixture.super_root)
+        .attach_client(std::process::id(), &fixture.super_root)
         .expect("register superproject client");
 
     arm_watch(&events, &[&fixture.super_root]);
@@ -1405,10 +1391,10 @@ fn submodule_branch_switch_refreshes_both_registered_parent_and_child() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &fixture.super_root)
+        .attach_client(std::process::id(), &fixture.super_root)
         .expect("register superproject client");
     watcher
-        .register_client(std::process::id() + 1, &fixture.sub_root)
+        .attach_client(std::process::id() + 1, &fixture.sub_root)
         .expect("register submodule client");
 
     arm_watch(&events, &[&fixture.super_root, &fixture.sub_root]);
@@ -1435,7 +1421,7 @@ fn submodule_branch_switch_wakes_zero_unregistered_parents() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &fixture.sub_root)
+        .attach_client(std::process::id(), &fixture.sub_root)
         .expect("register submodule client");
 
     arm_watch(&events, &[&fixture.sub_root]);
@@ -1471,10 +1457,10 @@ fn ordinary_nested_repo_metadata_change_wakes_zero_parents() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &outer)
+        .attach_client(std::process::id(), &outer)
         .expect("register outer client");
     watcher
-        .register_client(std::process::id() + 1, &inner)
+        .attach_client(std::process::id() + 1, &inner)
         .expect("register inner client");
 
     arm_watch(&events, &[&canonical_outer, &canonical_inner]);
@@ -1509,10 +1495,10 @@ fn linked_worktree_admin_write_wakes_zero_parent_repos() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &fixture.main)
+        .attach_client(std::process::id(), &fixture.main)
         .expect("register main checkout client");
     watcher
-        .register_client(std::process::id() + 1, &linked)
+        .attach_client(std::process::id() + 1, &linked)
         .expect("register worktree client");
 
     arm_watch(&events, &[&canonical_main, &linked]);
@@ -1573,7 +1559,7 @@ fn rebase_msgnum_progress_is_metadata_only_and_refreshes_repository() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &repo)
+        .attach_client(std::process::id(), &repo)
         .expect("register client");
 
     arm_watch(&events, &[&canonical_repo]);
@@ -1623,7 +1609,7 @@ fn rebase_operation_state_transitions_refresh_repository() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &repo)
+        .attach_client(std::process::id(), &repo)
         .expect("register client");
 
     arm_watch(&events, &[&canonical_repo]);
@@ -1657,7 +1643,7 @@ fn rebase_high_churn_file_wakes_zero_times() {
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &repo)
+        .attach_client(std::process::id(), &repo)
         .expect("register client");
 
     arm_watch(&events, &[&canonical_repo]);
@@ -1706,13 +1692,13 @@ fn submodule_rebase_msgnum_progress_refreshes_both_registered_parent_and_child()
 
     let (watcher, events) = recording_watcher();
     watcher
-        .register_client(std::process::id(), &fixture.super_root)
+        .attach_client(std::process::id(), &fixture.super_root)
         .expect("register superproject client");
     watcher
-        .register_client(std::process::id() + 1, &fixture.sub_root)
+        .attach_client(std::process::id() + 1, &fixture.sub_root)
         .expect("register submodule client");
     watcher
-        .register_client(std::process::id() + 2, &unrelated_root)
+        .attach_client(std::process::id() + 2, &unrelated_root)
         .expect("register unrelated client");
 
     arm_watch(
@@ -1816,10 +1802,10 @@ fn failed_recursive_watch_leaves_no_live_watches_after_unregister() {
     let (watcher, events) = recording_watcher();
     let pid = std::process::id();
     watcher
-        .register_client(pid, &repo)
+        .attach_client(pid, &repo)
         .expect("register degraded repo");
     watcher
-        .register_client(pid + 1, &sentinel)
+        .attach_client(pid + 1, &sentinel)
         .expect("register sentinel repo");
     arm_watch(&events, &[&sentinel]);
 
@@ -1862,10 +1848,10 @@ fn failed_recursive_watch_rollback_keeps_nested_repo_events() {
     let inner_pid = std::process::id();
     let outer_pid = inner_pid + 1;
     watcher
-        .register_client(inner_pid, &inner)
+        .attach_client(inner_pid, &inner)
         .expect("register inner");
     watcher
-        .register_client(outer_pid, &outer)
+        .attach_client(outer_pid, &outer)
         .expect("register degraded outer");
     arm_watch(&events, &[&inner]);
     watcher.unregister_client(outer_pid);

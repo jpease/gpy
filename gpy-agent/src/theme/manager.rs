@@ -532,15 +532,6 @@ impl ThemeManager {
         files
     }
 
-    /// List all available themes.
-    #[must_use]
-    pub fn list_available_themes() -> Vec<String> {
-        Self::discover_available_themes()
-            .into_iter()
-            .map(|theme| theme.name)
-            .collect()
-    }
-
     /// List available themes with source metadata and resolved path (if file-backed).
     #[must_use]
     pub fn discover_available_themes() -> Vec<DiscoveredTheme> {
@@ -551,12 +542,6 @@ impl ThemeManager {
         Self::insert_user_themes(&mut merged);
 
         merged.into_values().collect()
-    }
-
-    /// Get the default theme template.
-    #[must_use]
-    pub const fn default_theme_template() -> &'static str {
-        DEFAULT_THEME_CONTENT
     }
 
     /// Raw TOML source of a discovered theme, verbatim, for use as a clone base.

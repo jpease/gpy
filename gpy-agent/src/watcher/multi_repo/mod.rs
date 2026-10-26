@@ -175,21 +175,17 @@ impl MultiRepoWatcher {
     pub fn builder() -> MultiRepoWatcherBuilder {
         MultiRepoWatcherBuilder::new()
     }
-
-    /// Find the canonical git root for `path`. Does not recognize bare repos;
-    /// use [`crate::git::find_repo_root`] for that.
-    #[must_use]
-    pub fn find_git_root(path: &Path) -> Option<PathBuf> {
-        crate::git::find_git_dir_only(path)
-    }
 }
 
 impl<T: WatchTarget> MultiRepoWatcher<T> {
-    /// Register a client and begin watching the repository it resides in.
+    /// Attach `pid` to the repository containing `cwd` and begin watching it,
+    /// detaching the client from any repository it was in before. When the new
+    /// repository cannot be discovered or watched the client ends up attached
+    /// to none.
     ///
     /// # Errors
     /// Returns an error if the repository cannot be discovered or watched.
-    pub fn register_client(&self, pid: u32, cwd: &Path) -> Result<()> {
+    pub fn attach_client(&self, pid: u32, cwd: &Path) -> Result<()> {
         let _ops_guard = self.ops_lock.lock_or_recover();
         self.attach_pid_to(pid, cwd)
     }
@@ -221,7 +217,7 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
     /// # Errors
     /// Returns an error if the repository cannot be discovered or watched.
     fn attach_to_repo_containing(&self, pid: u32, cwd: &Path) -> Result<Option<PathBuf>> {
-        let Some(git_root) = MultiRepoWatcher::find_git_root(cwd) else {
+        let Some(git_root) = crate::git::find_git_dir_only(cwd) else {
             debug_log!("watcher", "No git root found for {}", cwd.display());
             return Ok(None);
         };
@@ -303,16 +299,6 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
             self.registry.unregister_external_gitdir(&repo.git_dir);
             release_common_dir_watches(self, &repo.git_root);
         }
-    }
-
-    /// Move a client to the repo containing `new_cwd`.
-    ///
-    /// # Errors
-    /// Returns an error if the new repository cannot be discovered or watched;
-    /// the client is then attached to no repository.
-    pub fn update_client(&self, pid: u32, new_cwd: &Path) -> Result<()> {
-        let _ops_guard = self.ops_lock.lock_or_recover();
-        self.attach_pid_to(pid, new_cwd)
     }
 
     /// Stop watching all repositories and clear state.

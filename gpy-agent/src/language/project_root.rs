@@ -8,7 +8,6 @@ use crate::language::ancestors::{MAX_ANCESTOR_DEPTH, bounded_ancestors, home_dir
 use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
 use crate::language::metadata::marker_file_names;
 
-use crate::watcher::multi_repo::MultiRepoWatcher;
 use std::path::{Path, PathBuf};
 
 /// The directory language detection for a request path is anchored at.
@@ -50,7 +49,7 @@ static NON_GIT_ROOT_CACHE: TtlMap<PathBuf, PathBuf> =
 /// marker ancestor below `$HOME` (bounded by [`MAX_ANCESTOR_DEPTH`]), else `path`.
 #[must_use]
 pub fn project_root(path: &Path) -> ProjectRoot {
-    MultiRepoWatcher::find_git_root(path)
+    crate::git::find_git_dir_only(path)
         .map_or_else(|| ProjectRoot::NonGit(non_git_root(path)), ProjectRoot::Git)
 }
 

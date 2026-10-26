@@ -1,10 +1,9 @@
 //! `gpy segments`, `gpy enable`, and `gpy disable` command handlers.
 
 use super::output;
-use super::utils::{
-    active_config_path, load_active_config, read_config, reload_agent_and_notify, save_config_to,
-};
+use super::utils::{active_config_path, load_active_config, read_config, reload_agent_and_notify};
 use crate::config::Config;
+use crate::config::loader::save_config;
 use crate::plugin::{BUILTIN_ORDER, BuiltinSegment, SegmentName, discover_plugins};
 use crate::shell::Shell;
 use crate::{Error, Result};
@@ -44,7 +43,7 @@ pub fn enable(segment: &str) -> Result<()> {
     let original = load_active_config(&path)?;
     let mut config = original.clone();
     apply_enable(&mut config, &canonical);
-    save_config_to(&path, &original, &config, &[])?;
+    save_config(&path, &original, &config, &[])?;
 
     println!("Enabled {canonical} segment");
     if is_file_plugin_segment(&canonical)
@@ -177,7 +176,7 @@ fn set_feature_enabled(feature: FeatureToggle, enabled: bool) -> Result<()> {
 
     apply_feature_toggle(&mut config, feature, enabled);
 
-    save_config_to(&path, &original, &config, &[])?;
+    save_config(&path, &original, &config, &[])?;
     Ok(())
 }
 
@@ -208,7 +207,7 @@ fn remove_from_enabled_segments(segment: &str) -> Result<()> {
     let original = load_active_config(&path)?;
     let mut config = original.clone();
     config.ui.enabled_segments.retain(|s| s != segment);
-    save_config_to(&path, &original, &config, &[])?;
+    save_config(&path, &original, &config, &[])?;
     Ok(())
 }
 

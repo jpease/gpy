@@ -1,9 +1,8 @@
 //! `gpy config` command handlers.
 
 use super::output;
-use super::utils::{
-    active_config_path, load_active_config, read_config, reload_agent_and_notify, save_config_to,
-};
+use super::utils::{active_config_path, load_active_config, read_config, reload_agent_and_notify};
+use crate::config::loader::save_config;
 use crate::config::plugin_segments::{self, PLUGIN_KEY_PREFIX};
 use crate::{Error, Result, config};
 use std::process::Command;
@@ -109,7 +108,7 @@ pub fn set(key: &str, value: &str) -> Result<()> {
         config::metadata::canonical_config_key(key)
     };
 
-    save_config_to(&path, &original, &config, &[explicit_key.as_str()])?;
+    save_config(&path, &original, &config, &[explicit_key.as_str()])?;
     println!("Set {key} = {value}");
 
     reload_agent_and_notify();

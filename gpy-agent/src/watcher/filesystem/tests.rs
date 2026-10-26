@@ -543,7 +543,7 @@ fn event_outside_watched_roots_falls_back_to_ancestor_walk() {
         );
     });
 
-    let expected_repo = MultiRepoWatcher::find_git_root(&file)
+    let expected_repo = crate::git::find_git_dir_only(&file)
         .or_else(|| file.parent().map(Path::to_path_buf))
         .expect("fallback always yields a parent for an absolute path");
 

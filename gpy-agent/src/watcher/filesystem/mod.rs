@@ -6,8 +6,7 @@ mod probe;
 
 use super::watch_set::WatchMode;
 use super::{
-    DelayedEventScheduler, PendingCallback, PendingEvent, WatchRegistry,
-    multi_repo::MultiRepoWatcher, should_trigger_update,
+    DelayedEventScheduler, PendingCallback, PendingEvent, WatchRegistry, should_trigger_update,
 };
 use crate::Result;
 use crate::sync_ext::MutexExt;
@@ -642,7 +641,7 @@ fn attribute_repo_detailed(path: &Path, registry: &WatchRegistry) -> Option<Repo
         return Some(RepoAttribution::WatchedRoot(root));
     }
 
-    if let Some(root) = MultiRepoWatcher::find_git_root(path) {
+    if let Some(root) = crate::git::find_git_dir_only(path) {
         return Some(RepoAttribution::AncestorGitDir(root));
     }
 

@@ -7,7 +7,8 @@
 
 use crate::Result;
 use crate::commands::output;
-use crate::commands::utils::{active_config_path, load_active_config, save_config_to};
+use crate::commands::utils::{active_config_path, load_active_config};
+use crate::config::loader::save_config;
 use crate::font::{self, FontCapability};
 use std::path::Path;
 
@@ -43,7 +44,7 @@ pub fn run(options: InitOptions) -> Result<()> {
     let original = load_active_config(&path)?;
     let mut config = original.clone();
     config.ui.show_icons = show_icons;
-    save_config_to(&path, &original, &config, &["ui.show_icons"])?;
+    save_config(&path, &original, &config, &["ui.show_icons"])?;
 
     report(&path, capability, show_icons);
     Ok(())

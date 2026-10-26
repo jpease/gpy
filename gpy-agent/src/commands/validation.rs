@@ -106,7 +106,8 @@ impl fmt::Display for Failure {
     }
 }
 
-/// Resolved and validated target, before the caller wraps it in its own type.
+/// Resolved and validated target and where it came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationReport {
     /// Target label.
     pub target: String,

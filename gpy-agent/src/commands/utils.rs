@@ -40,20 +40,6 @@ pub fn load_active_config(path: &Path) -> Result<config::Config> {
     }
 }
 
-/// Save the difference between `original` and `updated` to `path`, preserving
-/// everything else in the file.
-///
-/// # Errors
-/// Returns an error if validation or the write fails.
-pub fn save_config_to(
-    path: &Path,
-    original: &config::Config,
-    updated: &config::Config,
-    explicit_keys: &[&str],
-) -> Result<()> {
-    config::loader::save_config(path, original, updated, explicit_keys)
-}
-
 /// Load the active configuration; an existing-but-invalid config is an error.
 ///
 /// # Errors

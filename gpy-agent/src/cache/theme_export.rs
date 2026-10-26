@@ -5,6 +5,13 @@ use super::instant_prompt::files::{get_gpy_cache_dir, write_atomic};
 use crate::Result;
 use std::path::PathBuf;
 
+/// Export file per shell; the fish entry is the one `get_theme_export_cache_path` names.
+const EXPORT_FILES: [(crate::shell::Shell, &str); 3] = [
+    (crate::shell::Shell::Fish, "theme-export.fish"),
+    (crate::shell::Shell::Bash, "theme-export.bash"),
+    (crate::shell::Shell::Zsh, "theme-export.zsh"),
+];
+
 /// Return the directory the theme exports are cached in.
 ///
 /// # Errors
@@ -20,7 +27,7 @@ pub fn theme_export_dir() -> Result<PathBuf> {
 ///
 /// Returns an error if neither `XDG_CACHE_HOME` nor `HOME` is set.
 pub fn get_theme_export_cache_path() -> Result<PathBuf> {
-    theme_export_dir().map(|d| d.join("theme-export.fish"))
+    theme_export_dir().map(|d| d.join(EXPORT_FILES[0].1))
 }
 
 /// Write the theme exports atomically (temp-file + rename); returns whether any file changed.
@@ -54,11 +61,7 @@ pub fn write_theme_export_to_dir(
     std::fs::create_dir_all(cache_dir)?;
 
     let mut changed = false;
-    for (shell, file_name) in [
-        (crate::shell::Shell::Fish, "theme-export.fish"),
-        (crate::shell::Shell::Bash, "theme-export.bash"),
-        (crate::shell::Shell::Zsh, "theme-export.zsh"),
-    ] {
+    for (shell, file_name) in EXPORT_FILES {
         let content = theme_manager.export(shell, config, palette);
         // Any read failure (typically: no file yet) means "write it".
         if std::fs::read(cache_dir.join(file_name))

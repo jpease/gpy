@@ -496,12 +496,6 @@ pub fn set_config_value(config: &mut Config, key: &str, value: &str) -> Result<(
     Err(unknown_key(key))
 }
 
-/// Check if a config key is valid
-#[must_use]
-pub fn validate_config_key(key: &str) -> bool {
-    CONFIG_KEYS.iter().any(|m| m.key == key)
-}
-
 /// Parse a boolean (`true/false`, `1/0`, `yes/no`, `on/off`).
 ///
 /// # Errors

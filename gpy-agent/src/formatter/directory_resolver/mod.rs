@@ -67,11 +67,7 @@ impl DirectoryEnv {
 
     /// [`Self::probe`] with `home` in place of `$HOME`.
     fn probe_with_home(cwd: &str, settings: &DirectorySettings, home: Option<String>) -> Self {
-        let anchors = settings.truncate_to_repo
-            && matches!(
-                settings.display,
-                DirectoryDisplay::Truncated | DirectoryDisplay::Full
-            );
+        let anchors = settings.truncate_to_repo && anchors_to_repo(settings.display);
         let repo = anchors
             .then(|| enclosing_anchor_root(cwd, home.as_deref()))
             .flatten()
@@ -274,6 +270,14 @@ fn truncate_to_components(path: &str, keep: usize, symbol: &str) -> String {
     format!("{symbol}{tail}")
 }
 
+/// Whether `display` renders paths relative to the repository root.
+const fn anchors_to_repo(display: DirectoryDisplay) -> bool {
+    matches!(
+        display,
+        DirectoryDisplay::Truncated | DirectoryDisplay::Full
+    )
+}
+
 /// Render `cwd` anchored at the repo root's basename; `Truncated` caps the
 /// trailing components at `keep`. `None` when not applicable (caller falls back).
 fn repo_anchored_path(
@@ -283,10 +287,7 @@ fn repo_anchored_path(
     keep: usize,
     symbol: &str,
 ) -> Option<String> {
-    if !matches!(
-        display,
-        DirectoryDisplay::Truncated | DirectoryDisplay::Full
-    ) {
+    if !anchors_to_repo(display) {
         return None;
     }
     let root_name = repo_root.file_name()?.to_str()?;

@@ -2,10 +2,10 @@
 
 use super::utils::{
     active_config_path, load_active_config, print_discovered, read_config, reload_agent_and_notify,
-    save_config_to,
 };
-use super::validation::{self, Failure, FailureKind, ValidatableResource};
+use super::validation::{self, Failure, FailureKind, ValidatableResource, ValidationReport};
 use crate::config::discovery::validate_config_name;
+use crate::config::loader::save_config;
 use crate::config::recommended_layout::{
     PendingLayout, pending_layout, resolve_forced_detection, resolve_forced_palette,
     user_set_layout_fields,
@@ -15,15 +15,6 @@ use crate::{
     theme::{RecommendedUi, ThemeConfig, ThemeManager},
 };
 use std::path::Path;
-
-/// Result of validating a theme target.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ThemeValidationResult {
-    /// Target label.
-    pub target: String,
-    /// Active theme, named theme, or explicit file path.
-    pub source: String,
-}
 
 /// List available themes.
 ///
@@ -90,7 +81,7 @@ pub fn use_theme(name: &str, force: bool) -> Result<()> {
         )?;
     } else {
         validate_prospective_activation(&theme, config.ui.palette.as_str())?;
-        save_config_to(&path, &original, &config, &[])?;
+        save_config(&path, &original, &config, &[])?;
 
         println!("Switched to '{name}' theme");
         let detection_hint = recommended_detection.map(|_| "language detection".to_owned());
@@ -145,7 +136,7 @@ fn apply_forced_switch(
     let (palette_applied, palette_preserved) =
         resolve_forced_palette(config, recommended_palette, &user_set, outgoing_recommended);
     validate_prospective_activation(theme, config.ui.palette.as_str())?;
-    save_config_to(path, original, config, &[])?;
+    save_config(path, original, config, &[])?;
 
     println!("Switched to '{name}' theme");
     print_summary(
@@ -206,26 +197,16 @@ pub fn validate(target: Option<&str>) -> Result<()> {
 ///
 /// # Errors
 /// Returns an error if the theme fails to parse/validate.
-pub fn validate_target(
-    target: Option<&str>,
-) -> std::result::Result<ThemeValidationResult, Failure> {
-    let report = validation::validate_target::<ThemeResource>(target)?;
-    Ok(ThemeValidationResult {
-        target: report.target,
-        source: report.source.to_owned(),
-    })
+pub fn validate_target(target: Option<&str>) -> std::result::Result<ValidationReport, Failure> {
+    validation::validate_target::<ThemeResource>(target)
 }
 
 /// Validate a theme strictly by name, never treating it as a file path.
 ///
 /// # Errors
 /// Returns an error if the named theme cannot be loaded or validated.
-pub fn validate_by_name(name: &str) -> std::result::Result<ThemeValidationResult, Failure> {
-    let report = validation::validate_by_name::<ThemeResource>(name)?;
-    Ok(ThemeValidationResult {
-        target: report.target,
-        source: report.source.to_owned(),
-    })
+pub fn validate_by_name(name: &str) -> std::result::Result<ValidationReport, Failure> {
+    validation::validate_by_name::<ThemeResource>(name)
 }
 
 /// Print remediation-focused diagnostics for a theme validation failure.
@@ -249,7 +230,7 @@ pub fn new(name: &str, from: Option<&str>) -> Result<()> {
 
     let source_content = match from {
         Some(base) => ThemeManager::theme_source_content(base)?,
-        None => ThemeManager::default_theme_template().to_owned(),
+        None => crate::config::defaults::DEFAULT_THEME_CONTENT.to_owned(),
     };
 
     crate::fs_util::create_new(&new_theme_path, source_content.as_bytes()).map_err(|e| {

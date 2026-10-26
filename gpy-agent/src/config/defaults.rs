@@ -69,42 +69,6 @@ pub const STARSHIP_PALETTE_CONTENT: &str = include_str!(concat!(
     "/../config/palettes/starship.toml"
 ));
 
-/// Embedded `catppuccin-latte` palette TOML.
-pub const CATPPUCCIN_LATTE_PALETTE_CONTENT: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../config/palettes/catppuccin-latte.toml"
-));
-
-/// Embedded `catppuccin-frappe` palette TOML.
-pub const CATPPUCCIN_FRAPPE_PALETTE_CONTENT: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../config/palettes/catppuccin-frappe.toml"
-));
-
-/// Embedded `catppuccin-macchiato` palette TOML.
-pub const CATPPUCCIN_MACCHIATO_PALETTE_CONTENT: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../config/palettes/catppuccin-macchiato.toml"
-));
-
-/// Embedded `catppuccin-mocha` palette TOML.
-pub const CATPPUCCIN_MOCHA_PALETTE_CONTENT: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../config/palettes/catppuccin-mocha.toml"
-));
-
-/// Embedded `nord` palette TOML.
-pub const NORD_PALETTE_CONTENT: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../config/palettes/nord.toml"
-));
-
-/// Embedded `gruvbox-dark-medium` palette TOML.
-pub const GRUVBOX_DARK_MEDIUM_PALETTE_CONTENT: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../config/palettes/gruvbox-dark-medium.toml"
-));
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]

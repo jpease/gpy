@@ -2,12 +2,7 @@
 //!
 //! Precedence: user `<config>/gpy/palettes/<name>.toml` over builtins.
 
-use crate::config::defaults::{
-    CATPPUCCIN_FRAPPE_PALETTE_CONTENT, CATPPUCCIN_LATTE_PALETTE_CONTENT,
-    CATPPUCCIN_MACCHIATO_PALETTE_CONTENT, CATPPUCCIN_MOCHA_PALETTE_CONTENT,
-    DEFAULT_PALETTE_CONTENT, GRUVBOX_DARK_MEDIUM_PALETTE_CONTENT, NORD_PALETTE_CONTENT,
-    STARSHIP_PALETTE_CONTENT,
-};
+use crate::config::defaults::{DEFAULT_PALETTE_CONTENT, STARSHIP_PALETTE_CONTENT};
 use crate::config::discovery::{self, Discovered, Source};
 use crate::palette::PaletteConfig;
 use crate::{Error, Result};
@@ -15,16 +10,31 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Embedded TOML of the shipped palette file `name`.
+macro_rules! palette_file {
+    ($name:literal) => {
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../config/palettes/",
+            $name,
+            ".toml"
+        ))
+    };
+}
+
 /// Builtin palettes: name → embedded TOML content.
 pub(crate) const BUILTIN_PALETTES: &[(&str, &str)] = &[
     ("default", DEFAULT_PALETTE_CONTENT),
     ("starship", STARSHIP_PALETTE_CONTENT),
-    ("catppuccin-latte", CATPPUCCIN_LATTE_PALETTE_CONTENT),
-    ("catppuccin-frappe", CATPPUCCIN_FRAPPE_PALETTE_CONTENT),
-    ("catppuccin-macchiato", CATPPUCCIN_MACCHIATO_PALETTE_CONTENT),
-    ("catppuccin-mocha", CATPPUCCIN_MOCHA_PALETTE_CONTENT),
-    ("nord", NORD_PALETTE_CONTENT),
-    ("gruvbox-dark-medium", GRUVBOX_DARK_MEDIUM_PALETTE_CONTENT),
+    ("catppuccin-latte", palette_file!("catppuccin-latte")),
+    ("catppuccin-frappe", palette_file!("catppuccin-frappe")),
+    (
+        "catppuccin-macchiato",
+        palette_file!("catppuccin-macchiato"),
+    ),
+    ("catppuccin-mocha", palette_file!("catppuccin-mocha")),
+    ("nord", palette_file!("nord")),
+    ("gruvbox-dark-medium", palette_file!("gruvbox-dark-medium")),
 ];
 
 /// Source metadata for a discovered palette (`Plugin` is never used).
@@ -70,12 +80,6 @@ impl PaletteManager {
     #[must_use]
     pub fn palette_name(&self) -> &str {
         &self.palette_name
-    }
-
-    /// Return the embedded default palette TOML template.
-    #[must_use]
-    pub const fn default_palette_template() -> &'static str {
-        DEFAULT_PALETTE_CONTENT
     }
 
     /// Discover all palettes; user sources override builtins of the same name.
