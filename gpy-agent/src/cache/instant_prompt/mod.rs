@@ -26,6 +26,7 @@ use key::{NAME_MAX_BYTES, cache_file_parts, find_project_root, path_to_cache_key
 use name::{CacheFileName, CacheKind, SEGMENT_POSITIONS, parse_cache_file_name, prev_bg_token};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
 use std::time::SystemTime;
