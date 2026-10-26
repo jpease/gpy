@@ -13,6 +13,9 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
+
 # Hermetic XDG config disables the supervisor (theme export re-sets the flag).
 __gpy_debug_trap_xdg_root=$(mktemp -d "${TMPDIR:-/tmp}/gpy-dt-xdg.XXXXXX")
 source tests/lib/supervisor_off.bash "$__gpy_debug_trap_xdg_root"
@@ -28,7 +31,7 @@ source bash/gpy.bash
 # (__gpy_debug_oneshot and __gpy_prev_debug_trap are set by gpy.bash above.)
 
 if (( BASH_VERSINFO[0] < 4 )); then
-    echo "SKIP: bash $BASH_VERSION installs no gpy DEBUG trap; nothing to chain"
+    test_skip_part "bash $BASH_VERSION installs no gpy DEBUG trap; nothing to chain"
 else
     # Run gpy's one-shot PROMPT_COMMAND entry at top level, as bash would.
     # entry here, at this script's top level, the way bash would.

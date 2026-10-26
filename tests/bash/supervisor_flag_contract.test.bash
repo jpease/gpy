@@ -96,8 +96,7 @@ scenarios=(
 
 for shell in bash zsh fish; do
     if ! command -v "$shell" >/dev/null 2>&1; then
-        echo "SKIP: $shell not installed"
-        [[ -n "${CI:-}" ]] && fail "$shell not installed under CI"
+        test_skip_part "$shell not installed"
         continue
     fi
     echo "--- $shell ---"

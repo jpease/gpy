@@ -10,13 +10,14 @@
 
 ROOT=${0:a:h:h:h}
 cd "$ROOT"
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 
 source zsh/core/ipc.zsh
 
 test_result=0
 
 if ! command -v jq &>/dev/null; then
-    echo "SKIP: jq not installed, cannot validate JSON round-trip"
+    test_skip_part "jq not installed, cannot validate JSON round-trip"
 else
 
 run_case() {

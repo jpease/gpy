@@ -17,9 +17,7 @@ source "$repo_root/fish/segments/language.fish"
 
 set -l agent_bin "$repo_root/gpy-agent/target/debug/gpy-agent"
 if not test -x "$agent_bin"
-    echo "SKIP: $agent_bin not built (run `cargo build` in gpy-agent first)"
-    test -n "$CI"; and exit 1
-    exit 0
+    test_skip "$agent_bin not built (run `cargo build` in gpy-agent first)"
 end
 
 function assert_detect --argument-names label expected_status dir

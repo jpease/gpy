@@ -27,7 +27,6 @@ mkdir -p "$SANDBOX/run"
 
 # shellcheck source=tests/lib/shell_e2e.sh
 . "$ROOT/tests/lib/shell_e2e.sh"
-skip() { echo "SKIP: $*"; }
 
 # run_child <prelude> <input>: sets CHILD_OUT to the child's merged output.
 # <prelude> is child rc code run before gpy.bash is sourced; the rc then
@@ -59,7 +58,7 @@ run_scenario() {
 
 scenario_prior_debug_trap_fires() {
     if ((BASH_VERSINFO[0] < 4)); then
-        skip "bash ${BASH_VERSION} gets no gpy DEBUG trap; nothing to chain"
+        test_skip_part "bash ${BASH_VERSION} gets no gpy DEBUG trap; nothing to chain"
         return
     fi
     run_child '

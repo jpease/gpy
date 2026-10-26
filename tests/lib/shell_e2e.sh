@@ -55,12 +55,19 @@ test_finish() {
 # call exits 1, so the gate can never go green on a test that did not
 # actually execute. Never `exit 0` on a missing prerequisite directly.
 test_skip() {
+    test_skip_part "$@"
+    exit 0
+}
+
+# `test_skip_part "reason"` -- the same contract for one section of a test:
+# prints `SKIP: reason` and returns so the caller can carry on with the rest;
+# exits 1 under `CI`.
+test_skip_part() {
     printf 'SKIP: %s\n' "$*"
     if [ -n "${CI:-}" ]; then
         printf 'FAIL: a skipped test is a failure under CI\n'
         exit 1
     fi
-    exit 0
 }
 
 # `test_require_command NAME [reason]` -- skip unless NAME is on PATH.

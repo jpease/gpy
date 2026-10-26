@@ -17,10 +17,7 @@ assert_true() {
     fi
 }
 
-if ! command -v python3 >/dev/null 2>&1; then
-    echo "SKIP: python3 not available to bind AF_UNIX sockets for this test"
-    exit 0
-fi
+test_require_command python3 "python3 not available to bind AF_UNIX sockets for this test"
 
 # Hermetic TMPDIR so the GPY test root never overlaps a real socket.
 # Rooted under /tmp, not ${TMPDIR}: macOS caps AF_UNIX paths at ~104 bytes.

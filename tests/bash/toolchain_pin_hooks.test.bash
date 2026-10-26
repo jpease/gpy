@@ -56,7 +56,7 @@ check_entry "quality-check (full)" ./scripts/quality-check.sh
 if command -v just >/dev/null 2>&1; then
     check_entry "just lint" just lint
 else
-    echo "SKIP: just not installed"
+    test_skip_part "just not installed"
 fi
 
 test_finish

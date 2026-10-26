@@ -13,6 +13,9 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
+
 # Drop inherited repo-scoping git env so fixtures target their own repo under
 # git hooks; `git -C <tmp>` does not override GIT_DIR/GIT_WORK_TREE.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
@@ -260,13 +263,13 @@ supervisor_test_tmp_dir=$(mktemp -d)
 supervisor_test_sock="$supervisor_test_tmp_dir/gpy-supervisor-healthy.sock"
 
 if ! command -v python3 &>/dev/null; then
-    echo "SKIP: python3 not installed, cannot create a test Unix socket"
+    test_skip_part "python3 not installed, cannot create a test Unix socket"
 else
 # __gpy_send_json is stubbed; the socket only needs to pass the `-S` gate.
     python3 tests/lib/stub_listener.py "$supervisor_test_sock" bind-only
 
     if [[ ! -S "$supervisor_test_sock" ]]; then
-        echo "SKIP: could not create test Unix socket for supervisor round-trip test"
+        test_skip_part "could not create test Unix socket for supervisor round-trip test"
     else
         __gpy_supervisor_test_saved_socket=$GPY_AGENT_SOCKET_PATH
         __gpy_supervisor_test_saved_enabled=$GPY_AGENT_SUPERVISOR_ENABLED

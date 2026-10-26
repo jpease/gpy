@@ -6,11 +6,11 @@
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
+
 for tool in cargo jq; do
-    if ! command -v "$tool" >/dev/null 2>&1; then
-        echo "SKIP: $tool not available; SBOM generation needs it"
-        exit 0
-    fi
+    test_require_command "$tool" "$tool not available; SBOM generation needs it"
 done
 
 # An empty RUSTC_WRAPPER overrides a global `build.rustc-wrapper` (as CI does),
@@ -21,9 +21,6 @@ export RUSTC_WRAPPER=
 WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
-
-# shellcheck source=tests/lib/shell_e2e.sh
-. "$ROOT/tests/lib/shell_e2e.sh"
 
 SBOM="$WORKDIR/sbom.cdx.json"
 

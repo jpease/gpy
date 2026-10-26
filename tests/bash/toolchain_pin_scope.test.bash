@@ -90,7 +90,7 @@ if command -v rustc >/dev/null 2>&1; then
         indent "$output"
     fi
 else
-    echo "  SKIP: rustc is not installed"
+    test_skip_part "rustc is not installed"
 fi
 
 test_finish

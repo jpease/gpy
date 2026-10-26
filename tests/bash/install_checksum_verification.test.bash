@@ -13,21 +13,20 @@
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
+
 if command -v sha256sum >/dev/null 2>&1; then
     sha256_of() { sha256sum "$1" | awk '{print $1}'; }
 elif command -v shasum >/dev/null 2>&1; then
     sha256_of() { shasum -a 256 "$1" | awk '{print $1}'; }
 else
-    echo "SKIP: no SHA-256 tool available"
-    exit 0
+    test_skip "no SHA-256 tool available"
 fi
 
 WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
-
-# shellcheck source=tests/lib/shell_e2e.sh
-. "$ROOT/tests/lib/shell_e2e.sh"
 
 # Every asset the build matrix produces, so platform detection need not be reimplemented.
 ASSETS=(
@@ -49,19 +48,18 @@ case "$(uname -s | tr '[:upper:]' '[:lower:]')" in
         case "$(uname -m)" in
             x86_64) AGENT_ASSET=gpy-agent-linux-x86_64; CLI_ASSET=gpy-linux-x86_64 ;;
             aarch64 | arm64) AGENT_ASSET=gpy-agent-linux-aarch64; CLI_ASSET=gpy-linux-aarch64 ;;
-            *) echo "SKIP: unsupported architecture $(uname -m)"; exit 0 ;;
+            *) test_skip "unsupported architecture $(uname -m)" ;;
         esac
         ;;
     darwin)
         case "$(uname -m)" in
             x86_64) AGENT_ASSET=gpy-agent-macos-x86_64; CLI_ASSET=gpy-macos-x86_64 ;;
             arm64) AGENT_ASSET=gpy-agent-macos-aarch64; CLI_ASSET=gpy-macos-aarch64 ;;
-            *) echo "SKIP: unsupported architecture $(uname -m)"; exit 0 ;;
+            *) test_skip "unsupported architecture $(uname -m)" ;;
         esac
         ;;
     *)
-        echo "SKIP: install.sh does not support $(uname -s)"
-        exit 0
+        test_skip "install.sh does not support $(uname -s)"
         ;;
 esac
 
