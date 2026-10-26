@@ -36,6 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bash and Zsh now fall back to a 100 ms duration threshold, as Fish and the
+  exported theme do, instead of 2000 ms before a theme export runs.
+- Fish hostname and username segments no longer print a `test` error on every
+  prompt when the theme export has not set `show_always`.
+- Fish and Zsh refuse an implausible `id -un` result (leading `-` or `.`,
+  spaces, symbols) when resolving a blank `$HOME`, as Bash does.
+- Fish completion offers theme, palette and segment names only in the
+  argument's own position, as Bash and Zsh do.
 - A client-supplied `virtual_env` is now validated like other paths: control
   characters, paths over 4096 bytes, and `..` components are rejected.
 - `gpy theme new`, `gpy theme save`, `gpy palette import` and `gpy plugin new`

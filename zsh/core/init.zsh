@@ -27,7 +27,7 @@ fi
 # Integers: EPOCHREALTIME is a float but the agent's duration_ms is a u64.
 typeset -gi __gpy_cmd_start_time=0
 typeset -gi __gpy_cmd_duration=0
-typeset -g __duration_threshold_ms=2000  # milliseconds; overwritten by `gpy theme export`
+typeset -g __duration_threshold_ms=100  # milliseconds; overwritten by `gpy theme export`
 
 # Render memoization. __gpy_render_prompt runs inside a `$(...)` subshell, so
 # a cache-miss write would vanish; it goes to a relay file that precmd reads

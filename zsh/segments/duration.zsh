@@ -1,10 +1,10 @@
 function __gpy_segment_duration_detect() {
-    local threshold=${__duration_threshold_ms:-2000}
+    local threshold=${__duration_threshold_ms:-100}
     [[ $__gpy_cmd_duration -ge $threshold ]]
 }
 
 function __gpy_segment_duration() {
-    local threshold=${__duration_threshold_ms:-2000}
+    local threshold=${__duration_threshold_ms:-100}
     if [[ $__gpy_cmd_duration -lt $threshold ]]; then
         return
     fi

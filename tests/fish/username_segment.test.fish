@@ -14,6 +14,23 @@ set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 source "$repo_root/fish/segments/username.fish"
 
+# --- detect without a theme export: show_always unset, nothing on stderr ---
+
+set -e __username_show_always
+set -g __gpy_is_root 0
+set -g __gpy_is_sudo 0
+set -g __gpy_is_ssh 0
+set -l __stderr_file (mktemp)
+segment_username_detect 2>$__stderr_file
+check "detect: an ordinary user with show_always unset hides the segment" 1 $status
+check "detect: unset show_always writes nothing to stderr" "" (cat $__stderr_file)
+set -g __gpy_is_ssh 1
+segment_username_detect 2>$__stderr_file
+check "detect: SSH shows the segment with show_always unset" 0 $status
+check "detect: SSH with show_always unset writes nothing to stderr" "" (cat $__stderr_file)
+set -e __gpy_is_root __gpy_is_sudo __gpy_is_ssh
+rm -f $__stderr_file
+
 # --- __gpy_username_should_show (pure): args are is_root is_sudo is_ssh show_always ---
 
 if __gpy_username_should_show 1 0 0 0

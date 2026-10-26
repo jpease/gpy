@@ -50,11 +50,17 @@ function __gpy_complete_cached --description 'Cache gpy __complete <kind> per se
     end
 end
 
-complete -c gpy -n '__fish_seen_subcommand_from theme; and __fish_seen_subcommand_from use' -f -a '(__gpy_complete_cached theme)' -d Theme
-complete -c gpy -n '__fish_seen_subcommand_from theme; and __fish_seen_subcommand_from validate' -f -a '(__gpy_complete_cached theme)' -d Theme
+# True when exactly N words (command name included) precede the cursor, so a
+# value is offered only in its own slot, as Bash (COMP_CWORD) and Zsh (CURRENT) do.
+function __gpy_complete_at --argument-names position
+    test (count (commandline -opc)) -eq $position
+end
 
-complete -c gpy -n '__fish_seen_subcommand_from palette; and __fish_seen_subcommand_from use' -f -a '(__gpy_complete_cached palette)' -d Palette
-complete -c gpy -n '__fish_seen_subcommand_from palette; and __fish_seen_subcommand_from validate' -f -a '(__gpy_complete_cached palette)' -d Palette
+complete -c gpy -n '__fish_seen_subcommand_from theme; and __fish_seen_subcommand_from use; and __gpy_complete_at 3' -f -a '(__gpy_complete_cached theme)' -d Theme
+complete -c gpy -n '__fish_seen_subcommand_from theme; and __fish_seen_subcommand_from validate; and __gpy_complete_at 3' -f -a '(__gpy_complete_cached theme)' -d Theme
 
-complete -c gpy -n '__fish_seen_subcommand_from enable' -f -a '(__gpy_complete_cached segment)' -d Segment
-complete -c gpy -n '__fish_seen_subcommand_from disable' -f -a '(__gpy_complete_cached segment)' -d Segment
+complete -c gpy -n '__fish_seen_subcommand_from palette; and __fish_seen_subcommand_from use; and __gpy_complete_at 3' -f -a '(__gpy_complete_cached palette)' -d Palette
+complete -c gpy -n '__fish_seen_subcommand_from palette; and __fish_seen_subcommand_from validate; and __gpy_complete_at 3' -f -a '(__gpy_complete_cached palette)' -d Palette
+
+complete -c gpy -n '__fish_seen_subcommand_from enable; and __gpy_complete_at 2' -f -a '(__gpy_complete_cached segment)' -d Segment
+complete -c gpy -n '__fish_seen_subcommand_from disable; and __gpy_complete_at 2' -f -a '(__gpy_complete_cached segment)' -d Segment

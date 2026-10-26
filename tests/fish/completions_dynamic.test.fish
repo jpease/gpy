@@ -150,6 +150,29 @@ else
     fail "'gpy disable <TAB>' did not complete segment names: $disable_names"
 end
 
+# Position guard: a value is offered only in its own slot. (Fish may still
+# offer file names, so assert on the dynamic values only.)
+set -l past_theme (__cd_test_names (complete -C 'gpy theme use dark '))
+if not contains default $past_theme; and not contains starship $past_theme
+    pass "'gpy theme use dark <TAB>' offers no further theme names"
+else
+    fail "'gpy theme use dark <TAB>' still offered names: $past_theme"
+end
+
+set -l past_palette (__cd_test_names (complete -C 'gpy palette validate nord '))
+if not contains default $past_palette; and not contains nord $past_palette
+    pass "'gpy palette validate nord <TAB>' offers no further palette names"
+else
+    fail "'gpy palette validate nord <TAB>' still offered names: $past_palette"
+end
+
+set -l past_enable (__cd_test_names (complete -C 'gpy enable git '))
+if not contains git $past_enable; and not contains status $past_enable
+    pass "'gpy enable git <TAB>' offers no further segment names"
+else
+    fail "'gpy enable git <TAB>' still offered names: $past_enable"
+end
+
 # Cleanup + verdict
 rm -rf $tmp_dir
 

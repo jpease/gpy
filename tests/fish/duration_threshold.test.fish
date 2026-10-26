@@ -78,12 +78,29 @@ function test_default_when_var_unset
     pass "default threshold applied when variable is unset"
 end
 
+function test_default_boundary
+    echo "Test 6: the built-in default is 100 ms, the exported theme default"
+    set -e __duration_threshold_ms
+    set -g CMD_DURATION 99
+    if segment_duration_detect
+        fail "99 ms should be hidden by the 100 ms default"
+        return 1
+    end
+    set -g CMD_DURATION 100
+    if not segment_duration_detect
+        fail "100 ms should be shown by the 100 ms default"
+        return 1
+    end
+    pass "default threshold is 100 ms"
+end
+
 # Run all tests
 test_duration_hidden_below_threshold
 test_duration_visible_at_threshold
 test_duration_visible_above_threshold
 test_legacy_variable_not_consulted
 test_default_when_var_unset
+test_default_boundary
 
 echo ""
 test_finish "duration threshold"

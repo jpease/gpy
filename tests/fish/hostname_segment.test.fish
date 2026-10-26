@@ -13,6 +13,21 @@ set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 source "$repo_root/fish/segments/hostname.fish"
 
+# --- detect without a theme export: show_always unset, nothing on stderr ---
+
+set -e __hostname_show_always
+set -l __stderr_file (mktemp)
+segment_hostname_detect 2>$__stderr_file
+set -l detect_rc $status
+check "detect: no SSH and no show_always hides the segment" 1 $detect_rc
+check "detect: unset show_always writes nothing to stderr" "" (cat $__stderr_file)
+set -g __gpy_is_ssh 1
+segment_hostname_detect 2>$__stderr_file
+check "detect: SSH shows the segment with show_always unset" 0 $status
+check "detect: SSH with show_always unset writes nothing to stderr" "" (cat $__stderr_file)
+set -e __gpy_is_ssh
+rm -f $__stderr_file
+
 # --- __gpy_hostname_trim (pure) ---
 
 set -l trimmed (__gpy_hostname_trim host.example.com .)

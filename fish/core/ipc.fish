@@ -6,7 +6,7 @@ function __gpy_home --description 'Home directory with the passwd fallback'
     set -l home "$HOME"
     if test -z "$home"
         set -l user (id -un 2>/dev/null)
-        string match -qr '^[A-Za-z0-9._-]+$' -- "$user"; or return 1
+        string match -qr '^[A-Za-z0-9_][A-Za-z0-9._-]*$' -- "$user"; or return 1
         set home ~$user
     end
     string match -q '/*' -- "$home"; or return 1

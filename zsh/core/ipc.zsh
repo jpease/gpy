@@ -69,10 +69,12 @@ function __gpy_lang_venv_json_into() {
 # dynamic scoping would shadow a caller's OUT_VAR of that name.
 function __gpy_home() {
     local out_var=$1 __gpy_home_value=${HOME:-} __gpy_home_user
+    local __gpy_home_user_re='^[A-Za-z0-9_][A-Za-z0-9._-]*$'
     if [[ -z "$__gpy_home_value" ]]; then
         __gpy_home_user=${USERNAME:-}
         [[ -n "$__gpy_home_user" ]] || __gpy_home_user="$(id -un 2>/dev/null)"
-        [[ -n "$__gpy_home_user" ]] || return 1
+        # Same plausible-username rule as Bash: a leading - would make ~- expand to $OLDPWD.
+        [[ "$__gpy_home_user" =~ $__gpy_home_user_re ]] || return 1
         __gpy_home_value=~$__gpy_home_user
     fi
     [[ "$__gpy_home_value" == /* ]] || return 1
