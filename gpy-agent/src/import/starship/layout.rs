@@ -1,6 +1,6 @@
 //! Derive a GPY `enabled_segments` order from Starship's top-level `format`.
 
-use crate::config::defaults::default_enabled_segments;
+use crate::config::defaults::DEFAULT_ENABLED_SEGMENTS;
 use crate::import::starship::format::{Token, tokens};
 use crate::import::starship::modules::canonical_language;
 use crate::import::starship::warn::{WarningKind, Warnings};
@@ -42,9 +42,9 @@ pub fn derive_segments(format: &str, warnings: &mut Warnings) -> Vec<String> {
             continue;
         }
         if module == ALL {
-            for segment in default_enabled_segments() {
-                if !result.contains(&segment) {
-                    result.push(segment);
+            for segment in DEFAULT_ENABLED_SEGMENTS {
+                if !result.iter().any(|existing| existing == segment) {
+                    result.push(segment.to_owned());
                 }
             }
             continue;
@@ -88,7 +88,7 @@ mod tests {
     #![allow(missing_docs)]
 
     use super::{derive_segments, has_line_break, map_module};
-    use crate::config::defaults::default_enabled_segments;
+    use crate::config::defaults::DEFAULT_ENABLED_SEGMENTS;
     use crate::import::starship::Warnings;
     use crate::import::starship::format::retain_known_vars;
 
@@ -151,7 +151,7 @@ mod tests {
     fn all_expands_to_default_order_without_warning() {
         let mut warnings = Warnings::new();
         let segments = derive_segments("$all", &mut warnings);
-        assert_eq!(segments, default_enabled_segments());
+        assert_eq!(segments, DEFAULT_ENABLED_SEGMENTS);
         assert!(warnings.is_empty());
     }
 
@@ -160,7 +160,7 @@ mod tests {
         let mut warnings = Warnings::new();
         let segments = derive_segments("$character$all", &mut warnings);
         let mut expected = vec!["character".to_owned()];
-        expected.extend(default_enabled_segments());
+        expected.extend(DEFAULT_ENABLED_SEGMENTS.map(str::to_owned));
         assert_eq!(segments, expected);
         assert!(warnings.is_empty());
     }

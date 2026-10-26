@@ -86,12 +86,12 @@ const EMPTY_LANGUAGES_JSON: &str = "{\"languages\":[]}";
 /// Handle a parsed oneshot request in-process.
 ///
 /// # Errors
-/// Returns an error if the requested detection or rendering fails.
+/// Returns an error if no theme loads, or if the requested detection or rendering fails.
 pub fn handle_oneshot_request(request: &OneshotRequest) -> Result<String> {
     let _timer = (request.request_type == OneshotKind::GitStatus)
         .then(|| crate::profiling::Timer::new("git_total"));
     let format = request.format;
-    let (config, theme) = load_config_and_theme(request);
+    let (config, theme) = load_config_and_theme(request)?;
 
     let Some(response) = response_for(request, &config, &theme)? else {
         return Ok(empty_language_output(format));
@@ -229,12 +229,16 @@ fn empty_language_output(format: Format) -> String {
 /// Load config (falling back to defaults) and the theme the request renders with.
 ///
 /// The theme file is read only when something consumes it: non-JSON output, or
-/// the language list, whose JSON carries theme-derived colors and icons.
+/// the language list, whose JSON carries theme-derived colors and icons. A theme
+/// that fails to load falls back to the `default` theme, as in the agent.
 /// Benchmark-mode JSON git requests skip all config and theme file I/O.
-fn load_config_and_theme(request: &OneshotRequest) -> (Config, ThemeConfig) {
+///
+/// # Errors
+/// Returns an error if neither the configured nor the `default` theme loads.
+fn load_config_and_theme(request: &OneshotRequest) -> Result<(Config, ThemeConfig)> {
     let json = Format::is_json(request.format);
     if request.benchmark_mode && json && request.request_type == OneshotKind::GitStatus {
-        return (Config::default(), ThemeConfig::default());
+        return Ok((Config::default(), ThemeConfig::default()));
     }
 
     let config = load_config().unwrap_or_else(|e| {
@@ -247,20 +251,20 @@ fn load_config_and_theme(request: &OneshotRequest) -> (Config, ThemeConfig) {
         _ => !json,
     };
     let theme = if theme_consumed {
-        load_theme(config.ui.theme.as_str()).unwrap_or_else(|e| {
+        load_theme(config.ui.theme.as_str()).or_else(|e| {
             let theme_name = &config.ui.theme;
             crate::debug::warn_fallback(
                 &format!("Theme '{theme_name}' loading"),
-                "using defaults",
+                "using default",
                 &e,
             );
-            ThemeConfig::default()
-        })
+            load_theme("default")
+        })?
     } else {
         ThemeConfig::default()
     };
 
-    (config, theme)
+    Ok((config, theme))
 }
 
 /// The chain position a oneshot request asks for.

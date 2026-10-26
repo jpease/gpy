@@ -146,7 +146,7 @@ impl<'a> GitResolver<'a> {
     fn status_text(&self) -> Option<String> {
         let icons = &self.config.git.icons;
         let git_theme = &self.theme.segments.git;
-        let show_counts = git_theme.show_counts.unwrap_or(true);
+        let show_counts = git_theme.show_counts();
 
         // (count, theme override, config fallback), in Starship's order.
         let categories = [

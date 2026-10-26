@@ -11,7 +11,7 @@ use crate::ipc::ClientDirectory;
 use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
 use crate::palette::PaletteCache;
 use crate::sync_ext::MutexExt;
-use crate::theme::{ThemeConfig, ThemeManager};
+use crate::theme::{GitState, ThemeConfig, ThemeManager};
 use crate::watcher::{
     DebouncedEvent, FileEvent, GitPaths, WatcherConfig, multi_repo::MultiRepoWatcher,
 };
@@ -1017,12 +1017,7 @@ fn schedule_language_cache_regen(ctx: &AgentContext, lang_root: &Path, config: &
 fn regen_language_caches(ctx: &AgentContext, lang_root: &Path, config: &Config) -> bool {
     // One theme snapshot for both `lang_prev_bg` and the render, to avoid a torn read.
     let theme = ctx.theme_manager.get();
-    let lang_prev_bg = theme
-        .segments
-        .git
-        .clean_bg_color
-        .as_deref()
-        .unwrap_or(theme.segments.git.bg_color.as_str());
+    let lang_prev_bg = theme.segments.git.get_bg_color(GitState::Clean);
 
     refresh_language_for(
         ctx,

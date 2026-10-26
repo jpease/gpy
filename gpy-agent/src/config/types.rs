@@ -146,6 +146,14 @@ impl ColorSpec {
     }
 }
 
+impl std::str::FromStr for ColorSpec {
+    type Err = crate::Error;
+
+    fn from_str(value: &str) -> crate::Result<Self> {
+        Self::new(value)
+    }
+}
+
 impl std::ops::Deref for ColorSpec {
     type Target = str;
 
@@ -204,6 +212,14 @@ impl Icon {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl std::str::FromStr for Icon {
+    type Err = crate::Error;
+
+    fn from_str(value: &str) -> crate::Result<Self> {
+        Self::new(value)
     }
 }
 

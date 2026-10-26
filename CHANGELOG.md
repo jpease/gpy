@@ -34,6 +34,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `__gpy_segment_<token>_variant_<variant>_bg_color`/`_text_color` so
   variant `open`/`close` cannot overwrite the cap colours.
 
+### Changed
+
+- A theme now renders the same on every load path. Without its own colours,
+  a git state (`clean_*`, `dirty_*`, `ahead_behind_*`, `conflicts_*`,
+  `untracked_only_*`, `in_progress_*`) takes the segment's `bg_color` and
+  `text_color`, and a language takes `[segments.language]` `bg_color` and
+  `text_color`. Before, a theme with no `[segments.git]` or
+  `[segments.language]` table at all got built-in per-state and per-language
+  colours, and one without `[segments.directory]` got a blue directory
+  background (now black, as with an empty table). The shipped themes set
+  these tables explicitly and look the same as before.
+- `gpy-agent oneshot` falls back to the `default` theme when the configured
+  theme fails to load, as the agent does. Before, it used a bare built-in
+  theme with no segment formats and rendered the git, directory and language
+  segments empty.
+
 ### Fixed
 
 - Bash and Zsh now fall back to a 100 ms duration threshold, as Fish and the
