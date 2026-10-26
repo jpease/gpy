@@ -134,8 +134,8 @@ fn linux_font_dirs() -> Vec<PathBuf> {
         dirs.push(home.join(".local/share/fonts"));
         dirs.push(home.join(".fonts"));
     }
-    if let Some(data_home) = crate::paths::root_var_os("XDG_DATA_HOME") {
-        dirs.push(PathBuf::from(data_home).join("fonts"));
+    if let Some(data_home) = crate::paths::xdg_data_home() {
+        dirs.push(data_home.join("fonts"));
     }
     dirs.push(PathBuf::from("/usr/share/fonts"));
     dirs.push(PathBuf::from("/usr/local/share/fonts"));
@@ -169,8 +169,8 @@ fn windows_font_dirs() -> Vec<PathBuf> {
     if let Some(windir) = std::env::var_os("WINDIR") {
         dirs.push(PathBuf::from(windir).join("Fonts"));
     }
-    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        dirs.push(PathBuf::from(local).join("Microsoft/Windows/Fonts"));
+    if let Some(local) = crate::paths::local_app_data() {
+        dirs.push(local.join("Microsoft/Windows/Fonts"));
     }
     dirs
 }

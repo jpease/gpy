@@ -59,13 +59,16 @@ impl DirectoryEnv {
         &UNPROBED
     }
 
-    /// Read `$HOME` and, when `settings` anchor at the repository root,
-    /// canonicalize `cwd` and find the repository enclosing it.
+    /// Read the home directory and, when `settings` anchor at the repository
+    /// root, canonicalize `cwd` and find the repository enclosing it. A home
+    /// that is not UTF-8 cannot prefix `cwd`, which is, so it counts as none.
     fn probe(cwd: &str, settings: &DirectorySettings) -> Self {
-        Self::probe_with_home(cwd, settings, std::env::var("HOME").ok())
+        let home =
+            crate::paths::home_path().and_then(|path| path.into_os_string().into_string().ok());
+        Self::probe_with_home(cwd, settings, home)
     }
 
-    /// [`Self::probe`] with `home` in place of `$HOME`.
+    /// [`Self::probe`] with `home` in place of the ambient home.
     fn probe_with_home(cwd: &str, settings: &DirectorySettings, home: Option<String>) -> Self {
         let anchors = settings.truncate_to_repo && anchors_to_repo(settings.display);
         let repo = anchors

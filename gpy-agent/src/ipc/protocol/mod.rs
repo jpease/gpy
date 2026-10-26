@@ -68,7 +68,7 @@ fn parse_format(value: Option<&str>) -> Option<Format> {
 fn parse_request(data: &[u8]) -> Result<ShellIpcMessage> {
     validate_message_size(data)?;
     let json = std::str::from_utf8(data)
-        .map_err(|e| Error::ipc(format!("Invalid UTF-8 in message: {e}")))?;
+        .map_err(|e| Error::json(format!("Invalid UTF-8 in message: {e}")))?;
 
     serde_json::from_str(json).map_err(|e| {
         crate::debug_log!("protocol", "Failed to deserialize IPC message: {e}");
@@ -82,8 +82,7 @@ fn parse_request(data: &[u8]) -> Result<ShellIpcMessage> {
 /// Returns an error if serialization fails.
 pub fn serialize_response(resp: &Response) -> Result<Vec<u8>> {
     let mut buffer = Vec::with_capacity(512);
-    serde_json::to_writer(&mut buffer, resp)
-        .map_err(|e| Error::ipc(format!("Failed to serialize response: {e}")))?;
+    serde_json::to_writer(&mut buffer, resp)?;
 
     validate_message_size(&buffer)?;
     Ok(buffer)
@@ -96,7 +95,7 @@ pub fn serialize_response(resp: &Response) -> Result<Vec<u8>> {
 pub fn deserialize_response(data: &[u8]) -> Result<Response> {
     validate_message_size(data)?;
     let json = std::str::from_utf8(data)
-        .map_err(|e| Error::ipc(format!("Invalid UTF-8 in response: {e}")))?;
+        .map_err(|e| Error::json(format!("Invalid UTF-8 in response: {e}")))?;
     serde_json::from_str(json)
         .map_err(|e| Error::ipc(format!("Failed to deserialize response: {e}")))
 }
@@ -107,7 +106,7 @@ pub fn deserialize_response(data: &[u8]) -> Result<Response> {
 /// Returns an error if the message is too large.
 pub fn validate_message_size(data: &[u8]) -> Result<()> {
     if data.len() > crate::security::MAX_MESSAGE_SIZE {
-        return Err(Error::ipc(format!(
+        return Err(Error::invalid(format!(
             "Message too large: {} bytes (max {})",
             data.len(),
             crate::security::MAX_MESSAGE_SIZE
@@ -166,7 +165,7 @@ fn validate_length(field_name: &str, value: &str, max_length: usize) -> Result<(
     if value.len() <= max_length {
         Ok(())
     } else {
-        Err(Error::ipc(format!(
+        Err(Error::invalid(format!(
             "Field '{}' too long: {} chars (max {})",
             field_name,
             value.len(),
@@ -296,7 +295,7 @@ impl ShellIpcMessage {
             "register" => {
                 let pid = self
                     .pid
-                    .ok_or_else(|| Error::ipc("register missing pid".to_owned()))?;
+                    .ok_or_else(|| Error::invalid("register missing pid".to_owned()))?;
                 // `cwd` before `pid`, so a both-invalid input reports "Invalid cwd".
                 let register_cwd = self
                     .cwd
@@ -313,7 +312,7 @@ impl ShellIpcMessage {
             "unregister" => {
                 let pid = self
                     .pid
-                    .ok_or_else(|| Error::ipc("unregister missing pid".to_owned()))?;
+                    .ok_or_else(|| Error::invalid("unregister missing pid".to_owned()))?;
                 Ok(Message::UnregisterClient {
                     pid: client_pid(pid)?,
                 })
@@ -321,28 +320,31 @@ impl ShellIpcMessage {
             "workspace" => {
                 let pid = self
                     .pid
-                    .ok_or_else(|| Error::ipc("Workspace update missing pid".to_owned()))?;
+                    .ok_or_else(|| Error::invalid("Workspace update missing pid".to_owned()))?;
                 let workspace_cwd = self
                     .cwd
                     .as_deref()
-                    .ok_or_else(|| Error::ipc("Workspace update missing cwd".to_owned()))?;
+                    .ok_or_else(|| Error::invalid("Workspace update missing cwd".to_owned()))?;
                 Ok(Message::WorkspaceUpdate {
                     pid: client_pid(pid)?,
                     cwd: safe_path(workspace_cwd, "workspace path")?,
                 })
             }
-            _ => Err(Error::ipc(format!("Unknown shell operation: {}", self.op))),
+            _ => Err(Error::invalid(format!(
+                "Unknown shell operation: {}",
+                self.op
+            ))),
         }
     }
 }
 
 /// Canonicalize and validate a client path; `field` names it in the error.
 fn safe_path(path: &str, field: &str) -> Result<SafePath> {
-    SafePath::new(path).map_err(|e| Error::ipc(format!("Invalid {field}: {e}")))
+    SafePath::new(path).map_err(|e| Error::invalid(format!("Invalid {field}: {e}")))
 }
 
 fn client_pid(pid: u32) -> Result<super::ClientPid> {
-    super::ClientPid::new(pid).map_err(|e| Error::ipc(format!("Invalid PID: {e}")))
+    super::ClientPid::new(pid).map_err(|e| Error::invalid(format!("Invalid PID: {e}")))
 }
 
 /// A shell name, or `None` when unrecognized.
@@ -352,7 +354,7 @@ fn parse_shell(name: Option<&str>) -> Option<crate::shell::Shell> {
 
 fn validate_virtual_env(venv: String) -> Result<String> {
     crate::security::PathValidator::validate_path(&venv)
-        .map_err(|e| Error::ipc(format!("Invalid virtual_env: {e}")))?;
+        .map_err(|e| Error::invalid(format!("Invalid virtual_env: {e}")))?;
     Ok(venv)
 }
 

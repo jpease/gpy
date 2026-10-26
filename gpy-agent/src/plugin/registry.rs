@@ -107,12 +107,7 @@ pub struct PluginDiscovery {
 /// Return the user plugin installation root.
 #[must_use]
 pub fn user_plugins_dir() -> PathBuf {
-    crate::paths::config_root_for(
-        crate::paths::root_var("XDG_CONFIG_HOME").as_deref(),
-        crate::paths::home_dir().as_deref(),
-        crate::paths::Os::host(),
-    )
-    .join("plugins")
+    crate::paths::config_root().join("plugins")
 }
 
 fn bundled_plugins_dir() -> Option<PathBuf> {

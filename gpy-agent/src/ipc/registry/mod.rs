@@ -61,12 +61,7 @@ impl ShellFlag {
 /// `<runtime_root>/shells`; must match the shells' `__gpy_shell_registry_dir`.
 #[must_use]
 pub(crate) fn default_shell_dir() -> PathBuf {
-    crate::paths::runtime_root_for(
-        crate::paths::root_var("XDG_RUNTIME_DIR").as_deref(),
-        crate::paths::root_var("XDG_CACHE_HOME").as_deref(),
-        crate::paths::home_dir().as_deref(),
-    )
-    .join("shells")
+    crate::paths::runtime_dir().join("shells")
 }
 
 #[cfg(unix)]

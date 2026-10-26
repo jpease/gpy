@@ -45,7 +45,7 @@ pub struct Environment {
     /// Absolute home directory.
     pub home: Option<PathBuf>,
     /// `XDG_CONFIG_HOME`, when set.
-    pub xdg_config_home: Option<String>,
+    pub xdg_config_home: Option<PathBuf>,
     /// `ZDOTDIR`, when set and non-empty.
     pub zdotdir: Option<PathBuf>,
     /// `$SHELL`, the login shell.
@@ -64,8 +64,8 @@ impl Environment {
     pub fn from_process() -> Self {
         let non_empty = |key: &str| std::env::var_os(key).filter(|value| !value.is_empty());
         Self {
-            home: paths::home_dir().map(PathBuf::from),
-            xdg_config_home: paths::root_var("XDG_CONFIG_HOME"),
+            home: paths::home_path(),
+            xdg_config_home: paths::xdg_config_home(),
             zdotdir: non_empty("ZDOTDIR").map(PathBuf::from),
             login_shell: std::env::var("SHELL").ok(),
             gpy_shell: std::env::var("GPY_SHELL").ok(),
@@ -78,7 +78,7 @@ impl Environment {
 
     /// `$XDG_CONFIG_HOME`, or `$HOME/.config`; fails without an absolute home.
     fn config_home(&self) -> Result<PathBuf> {
-        let home = self.home.as_deref().and_then(Path::to_str);
+        let home = self.home.as_deref();
         if home.is_none() {
             return Err(Error::invalid(
                 "cannot find your home directory (HOME is unset or not an absolute path)",

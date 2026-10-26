@@ -5,7 +5,7 @@
 # XDG_* value is honoured iff it starts with `/`; Windows spellings, relative
 # paths, `~`, empty and leading-space values are ignored. Read by ALL FOUR
 # implementations so they cannot drift apart:
-#   - Rust:  paths::xdg_value(.., Os::Unix) + runtime/cache/config_root_for
+#   - Rust:  paths::xdg_path(.., Os::Unix) + runtime/cache/config_root_for
 #            in gpy-agent/src/paths.rs (xdg_absoluteness_shared_vectors)
 #   - Bash:  __gpy_runtime_root, __gpy_ipc_endpoint, __gpy_instant_cache_dir
 #            (tests/bash/xdg_absoluteness_vectors.test.bash)

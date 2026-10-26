@@ -896,17 +896,30 @@ gpy config wizard
 
 **Output (illustrative):**
 ```text
-┌ Theme ─────────────────────────────────────────────┐
-│ > default    text    starship                       │
-├ Palette ───────────────────────────────────────────┤
-│   default    starship    nord    catppuccin-mocha   │
-├ Segments ──────────────────────────────────────────┤
-│ [x] git   [x] language   [ ] duration   [x] status   │
-├ Preview ───────────────────────────────────────────┤
-│ ~/code/gpy (main) rust:1.80.0                        │
-└──────────────────────────────────────────────────────┘
+┌ Theme ───────────────────────────────────┐┌ Detail ──────────────────────────┐
+│[x] default                               ││default                           │
+│( ) starship                              ││                                  │
+└──────────────────────────────────────────┘│Currently selected.               │
+┌ Palette ─────────────────────────────────┐│Selected value: default           │
+│[x] default                               ││Matches the startup config.       │
+│( ) nord                                  ││                                  │
+│( ) catppuccin-mocha                      ││                                  │
+└──────────────────────────────────────────┘│                                  │
+┌ Segments ([Space/Enter] to toggle) ──────┐│                                  │
+│[x] directory                             ││                                  │
+│[x] git                                   ││                                  │
+│[x] language                              ││                                  │
+│( ) duration                              ││                                  │
+│[x] status                                ││                                  │
+└──────────────────────────────────────────┘└──────────────────────────────────┘
+┌ Preview ─────────────────────────────────────────────────────────────────────┐
+│~/code/gpy on main via rust 1.80.0 ✔                                          │
+│❯                                                                             │
+└──────────────────────────────────────────────────────────────────────────────┘
 [?] help  [s] save and exit  [q/Esc] quit
 ```
+
+The highlighted row is shown in reverse video; the Detail panel describes it. On narrow terminals Detail stacks below the lists. The Preview draws up to three detected languages, as the prompt does.
 
 ---
 

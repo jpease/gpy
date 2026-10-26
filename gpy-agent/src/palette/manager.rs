@@ -96,12 +96,7 @@ impl PaletteManager {
     /// Return the user palettes directory (honors `$XDG_CONFIG_HOME`).
     #[must_use]
     pub fn user_palettes_dir() -> PathBuf {
-        crate::paths::config_root_for(
-            crate::paths::root_var("XDG_CONFIG_HOME").as_deref(),
-            crate::paths::home_dir().as_deref(),
-            crate::paths::Os::host(),
-        )
-        .join("palettes")
+        crate::paths::config_root().join("palettes")
     }
 
     /// Return the canonical user path for a palette by name.

@@ -510,6 +510,24 @@ function wait_for_signal --argument-names client_pid minimum_count timeout_secon
     poll_until $timeout_seconds __gpy_client_signals_at_least $client_pid $minimum_count
 end
 
+# Number of "Watch ready" lines the agent has logged so far.
+function count_watch_ready
+    set -l n (grep -c 'Watch ready for' $__gpy_test_debug_log 2>/dev/null)
+    echo (test -n "$n"; and echo $n; or echo 0)
+end
+
+# Predicate for poll_until: more "Watch ready" lines than $baseline exist.
+function __gpy_watch_ready_above --argument-names baseline
+    test (count_watch_ready) -gt $baseline
+end
+
+# Wait until the agent logs a repo watch armed after the baseline count.
+# Arguments: baseline count (from count_watch_ready), timeout in seconds
+# Returns: 0 once a new watch is armed, 1 on timeout
+function wait_for_watch_ready --argument-names baseline timeout_seconds
+    poll_until $timeout_seconds __gpy_watch_ready_above $baseline
+end
+
 # Trigger a git change to activate file watcher
 # Arguments: $argv[1] - repository path (default: PWD)
 # Returns: 0 on success

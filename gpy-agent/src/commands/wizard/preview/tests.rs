@@ -283,6 +283,38 @@ fn render_segment_language_uses_selected_display_symbol() {
 }
 
 #[test]
+fn render_segment_language_draws_every_selected_language() {
+    let mut config = make_config(
+        &[],
+        GitLanguageFlags {
+            git: false,
+            language: true,
+        },
+    );
+    config.language.display = crate::config::types::LanguageDisplay::Text;
+    let mut theme = ThemeConfig::default();
+    theme.segments.language.format = Some("[$symbol]($style)".to_owned());
+
+    let facts = PreviewFacts {
+        languages: vec![
+            make_lang("Rust", Some("1.75.0"), "red"),
+            make_lang("Node", Some("20.0.0"), "green"),
+        ],
+        ..make_facts()
+    };
+
+    let ctx = FormatterRenderContext::new(&config, &theme, SegmentPosition::LAST);
+    let spans = render_segment("language", &config, &theme, &facts, &ctx)
+        .expect("language segment should render");
+    let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+
+    assert!(
+        text.contains("Rust") && text.contains("Node"),
+        "preview must draw both selected languages like the prompt, got {text:?}"
+    );
+}
+
+#[test]
 fn render_segment_language_drops_versionless_language_when_show_versions_on() {
     let config = make_config(
         &[],

@@ -122,9 +122,11 @@ fn overlay_preset_modules(
 ) {
     if let Some(table) = model.module_table("directory") {
         let imported = translate_directory(table, warnings);
+        let existing = std::mem::take(&mut segments.directory);
         segments.directory = DirectoryTheme {
             format: imported.format,
-            ..std::mem::take(&mut segments.directory)
+            read_only_icon: imported.read_only_icon.or(existing.read_only_icon),
+            ..existing
         };
     }
     let git_branch = model.module_table("git_branch");

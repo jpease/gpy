@@ -127,13 +127,13 @@ impl Default for GuardSettings {
 /// Returns an error if `value` contains any `char::is_control` character.
 pub(crate) fn reject_control_chars(field_name: &str, value: &str) -> Result<()> {
     if value.contains('\0') {
-        return Err(Error::ipc(format!(
+        return Err(Error::invalid(format!(
             "Field '{field_name}' contains a null byte"
         )));
     }
 
     if value.chars().any(char::is_control) {
-        return Err(Error::ipc(format!(
+        return Err(Error::invalid(format!(
             "Field '{field_name}' contains a control character"
         )));
     }
@@ -153,7 +153,7 @@ impl PathValidator {
         reject_control_chars("path", path)?;
 
         if path.len() > MAX_PATH_LENGTH {
-            return Err(Error::ipc(format!(
+            return Err(Error::invalid(format!(
                 "Path too long (max {MAX_PATH_LENGTH} characters)"
             )));
         }
@@ -198,14 +198,18 @@ impl PathValidator {
             .components()
             .any(|component| matches!(component, Component::ParentDir))
         {
-            return Err(Error::ipc("Path traversal patterns not allowed".to_owned()));
+            return Err(Error::invalid(
+                "Path traversal patterns not allowed".to_owned(),
+            ));
         }
 
         if Self::denylisted_system_prefixes()
             .iter()
             .any(|prefix| path.starts_with(prefix))
         {
-            return Err(Error::ipc("Access to system directories denied".to_owned()));
+            return Err(Error::invalid(
+                "Access to system directories denied".to_owned(),
+            ));
         }
 
         Ok(())
@@ -225,7 +229,7 @@ impl PidValidator {
     pub fn validate_pid_liveness(pid: u32) -> Result<()> {
         match Self::check_process_exists(pid) {
             Ok(true) => Ok(()),
-            Ok(false) => Err(Error::ipc(format!("Process {pid} does not exist"))),
+            Ok(false) => Err(Error::invalid(format!("Process {pid} does not exist"))),
             Err(_) => {
                 warn_log!("security", "Could not validate PID {pid}");
                 Ok(())
@@ -256,7 +260,7 @@ impl PidValidator {
         use nix::unistd::Pid;
 
         let pid_i32 = i32::try_from(pid)
-            .map_err(|_| Error::ipc(format!("PID {pid} too large for platform")))?;
+            .map_err(|_| Error::invalid(format!("PID {pid} too large for platform")))?;
 
         match kill(Pid::from_raw(pid_i32), None) {
             // EPERM: the process exists but belongs to someone else.

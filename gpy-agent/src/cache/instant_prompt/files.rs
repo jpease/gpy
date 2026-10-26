@@ -81,27 +81,11 @@ pub(in crate::cache) fn write_atomic(dir: &Path, name: &str, content: &str) -> R
 }
 
 /// GPY base cache directory (`~/.cache/gpy`, XDG, or `%LOCALAPPDATA%\gpy`).
-/// `LOCALAPPDATA` is `cfg(windows)`-only: WSL may inherit a `C:\...` value.
 /// # Errors
 /// Returns an error if neither `XDG_CACHE_HOME` nor `HOME`/`LOCALAPPDATA` is set.
 pub(in crate::cache) fn get_gpy_cache_dir() -> Result<PathBuf> {
-    #[cfg(windows)]
-    let (os, home, local_app_data): (crate::paths::Os, Option<String>, Option<String>) = (
-        crate::paths::Os::Windows,
-        None,
-        std::env::var("LOCALAPPDATA").ok(),
-    );
-    #[cfg(not(windows))]
-    let (os, home, local_app_data): (crate::paths::Os, Option<String>, Option<String>) =
-        (crate::paths::Os::Unix, crate::paths::home_dir(), None);
-
-    crate::paths::cache_root_for(
-        crate::paths::root_var("XDG_CACHE_HOME").as_deref(),
-        home.as_deref(),
-        local_app_data.as_deref(),
-        os,
-    )
-    .ok_or_else(|| Error::config("No cache directory found (XDG_CACHE_HOME or HOME not set)"))
+    crate::paths::cache_root()
+        .ok_or_else(|| Error::config("No cache directory found (XDG_CACHE_HOME or HOME not set)"))
 }
 
 /// Instant-prompt cache directory (`<base>/instant-prompts/`).

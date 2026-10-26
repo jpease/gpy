@@ -83,9 +83,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Serialization and UTF-8 decoding failures, debug-command socket I/O
+  failures and an over-long socket path now report as JSON, I/O and
+  configuration errors, and request-validation failures (paths, PIDs, message
+  fields, message size) as invalid-operation errors. None of them say
+  "IPC communication failed" any more, so their error prefix changes.
+- `gpy theme import` maps a `[directory]` `read_only` symbol to
+  `segments.directory.read_only_icon` instead of leaving the default lock.
+- The `gpy config wizard` preview draws every language the prompt would (up to
+  three) instead of only the first; the `docs/user/cli-reference.md` wizard
+  sample shows the current layout.
 - A `GPY_CONFIG_PATH`, `XDG_CONFIG_HOME` or `HOME` that is not valid UTF-8 is
   no longer rewritten with replacement characters, so the config file under it
   is found, loaded and saved.
+- A `GPY_CONFIG_PATH`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR` or
+  `HOME` that is not valid UTF-8 is no longer rewritten with replacement
+  characters, so the config file, themes, palettes, plugins, caches and the
+  runtime directory under it are found, loaded and saved.
 - `gpy status` and the agent's own status query now read the agent's whole
   reply line; a status report longer than 4 KiB, or one split across reads,
   no longer fails to parse.

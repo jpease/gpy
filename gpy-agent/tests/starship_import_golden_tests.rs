@@ -249,3 +249,32 @@ fn git_branch_only_keeps_default_status_group() {
         "git format lost the default status group: {format}"
     );
 }
+
+#[test]
+fn directory_read_only_maps_to_read_only_icon() {
+    let model = parse("format = \"$directory\"\n[directory]\nread_only = \"RO\"\n").unwrap();
+    let artifacts = build(&model, "read-only").expect("build");
+
+    assert_eq!(
+        artifacts
+            .theme
+            .segments
+            .directory
+            .read_only_icon
+            .as_ref()
+            .map(gpy_agent::config::types::Icon::as_str),
+        Some("RO")
+    );
+    assert!(
+        artifacts
+            .theme_toml()
+            .expect("theme serializes")
+            .contains("read_only_icon = \"RO\""),
+    );
+}
+
+#[test]
+fn directory_without_read_only_leaves_icon_unset() {
+    let artifacts = import("import_default.toml", "default-import");
+    assert!(artifacts.theme.segments.directory.read_only_icon.is_none());
+}
