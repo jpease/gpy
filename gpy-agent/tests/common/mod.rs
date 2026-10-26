@@ -1,7 +1,12 @@
 //! Shared test helpers for the integration-test binaries that `mod common;`.
 //!
-//! Binaries that only need one helper include that file directly with
-//! `#[path = "common/<file>.rs"] mod <file>;` instead.
+//! Binaries that only need one self-contained helper include that file
+//! directly with `#[path = "common/<file>.rs"] mod <file>;` instead.
+
+#![allow(
+    dead_code,
+    reason = "every binary that declares `mod common;` compiles the whole tree and uses part of it"
+)]
 
 pub mod child_guard;
 pub mod cli_harness;
@@ -9,29 +14,11 @@ pub mod endpoint;
 pub mod env_guard;
 pub mod fixtures;
 pub mod git;
-pub mod wait;
-
-#[allow(unused_imports)]
-pub use fixtures::{
-    MockConfig, ServerGuard, TempSocket, create_temp_socket_path, gpy_test_root,
-    wait_for_agent_ready,
-};
-
-#[allow(unused_imports)]
-pub use cli_harness::{CliCommandResult, CliTestEnv, SharedCliTestEnv};
-
-#[allow(unused_imports)]
-pub use endpoint::{endpoint_builder, endpoint_builder_with_config, wait_for_socket};
-
-#[allow(unused_imports)]
-pub use env_guard::EnvGuard;
-
-#[allow(unused_imports)]
-pub use child_guard::{AgentStopGuard, KillOnDrop};
-
-#[allow(unused_imports)]
 #[cfg(unix)]
-pub use child_guard::PtyChild;
-
-#[allow(unused_imports)]
-pub use wait::{wait_until, wait_until_async};
+pub mod integration_harness;
+#[cfg(unix)]
+pub mod pty;
+pub mod sgr;
+pub mod sigurg;
+pub mod skip;
+pub mod wait;

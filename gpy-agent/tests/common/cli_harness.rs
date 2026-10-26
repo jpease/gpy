@@ -1,6 +1,9 @@
 //! Shared CLI test harness for `gpy` and `gpy-agent` integration tests.
 
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "included by several test binaries, each using a subset"
+)]
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::missing_panics_doc)]
 

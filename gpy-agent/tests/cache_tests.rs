@@ -5,6 +5,10 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
+#[cfg(unix)]
+#[path = "common/git.rs"]
+mod git_helpers;
+
 use gpy_agent::git::cache::GitStatusCache;
 use gpy_agent::git::{RepositoryState, RepositoryStatus};
 use std::collections::HashMap;
@@ -272,17 +276,7 @@ fn test_cache_symlink_keys_share_entry() {
     };
     let repo_path = temp_dir.path();
 
-    let run = |args: &[&str]| {
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(repo_path)
-            .status()
-            .expect("git command should execute")
-    };
-
-    assert!(run(&["init"]).success());
-    assert!(run(&["config", "user.email", "gpy@example.com"]).success());
-    assert!(run(&["config", "user.name", "GPY Test"]).success());
+    git_helpers::git_init(repo_path);
 
     let repo_root = gpy_agent::git::find_repo_root(repo_path).expect("repo root");
     let symlink_path = repo_path.join("repo-link");

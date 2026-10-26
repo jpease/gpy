@@ -92,7 +92,7 @@ fn parse_sequencer_command_table() {
     }
 }
 
-/// Minimal git repo fixture (the `tests/fixtures` one isn't reachable from unit tests).
+/// Minimal git repo fixture (`tests/common/git.rs` isn't reachable from unit tests).
 ///
 /// # Panics
 ///

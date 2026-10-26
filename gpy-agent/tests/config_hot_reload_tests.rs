@@ -6,79 +6,41 @@
 #![allow(clippy::panic)]
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::missing_errors_doc)]
-#![allow(
-    unsafe_code,
-    reason = "installing and restoring a SIGURG handler needs `nix::sys::signal::sigaction`, an unsafe fn"
-)]
 
 use gpy_agent::config::manager::ConfigManager;
 #[cfg(unix)]
 use gpy_agent::ipc::ClientDirectory;
 use serial_test::serial;
 use std::fs;
-#[cfg(unix)]
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tempfile::TempDir;
 
 mod common;
-use common::wait_until_async;
+#[cfg(unix)]
+use common::sigurg::SigurgCounter;
+use common::wait::wait_until_async;
 
 /// How long a signalled reload gets to reach this process.
 #[cfg(unix)]
 const DELIVERY_DEADLINE: Duration = Duration::from_secs(5);
 
-#[cfg(unix)]
-use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
-
-#[cfg(unix)]
-static DOORBELL_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(unix)]
-fn get_doorbell_counter() -> &'static AtomicUsize {
-    &DOORBELL_COUNTER
-}
-
-#[cfg(unix)]
-extern "C" fn count_doorbell(_signal: i32) {
-    get_doorbell_counter().fetch_add(1, Ordering::Relaxed);
-}
-
-/// Resets the doorbell counter and installs the counting SIGURG handler.
-/// returning the previous disposition for [`restore_doorbell`].
-#[cfg(unix)]
-fn install_doorbell() -> SigAction {
-    get_doorbell_counter().store(0, Ordering::Relaxed);
-    let handler = SigAction::new(
-        SigHandler::Handler(count_doorbell),
-        SaFlags::empty(),
-        SigSet::empty(),
-    );
-    // SAFETY: the handler only does a relaxed `fetch_add` on a static atomic, which is
-    // async-signal-safe; every caller is a `#[serial]` test, so no other test changes
-    // the SIGURG disposition while it is installed.
-    unsafe { sigaction(Signal::SIGURG, &handler) }.expect("install SIGURG handler")
-}
-
-#[cfg(unix)]
-fn restore_doorbell(previous: SigAction) {
-    // SAFETY: reinstalls the disposition `install_doorbell` returned, from the same
-    // `#[serial]` test that installed it.
-    unsafe { sigaction(Signal::SIGURG, &previous) }.expect("restore SIGURG");
-}
-
 /// Asserts the doorbell rang and `<shell_dir>/<pid>.reload` was written.
 /// Polls because the SIGURG handler runs asynchronously.
 #[cfg(unix)]
-async fn assert_reload_delivered(shell_dir: &TempDir, initial_count: usize, what: &str) {
+async fn assert_reload_delivered(
+    doorbell: &SigurgCounter,
+    shell_dir: &TempDir,
+    initial_count: usize,
+    what: &str,
+) {
     let flag = shell_dir
         .path()
         .join(format!("{}.reload", std::process::id()));
     let delivered = wait_until_async(DELIVERY_DEADLINE, Duration::from_millis(10), || {
-        get_doorbell_counter().load(Ordering::Relaxed) > initial_count && flag.exists()
+        doorbell.count() > initial_count && flag.exists()
     })
     .await;
-    let final_count = get_doorbell_counter().load(Ordering::Relaxed);
+    let final_count = doorbell.count();
     assert!(
         final_count > initial_count,
         "SIGURG doorbell should ring when {what}. Before: {initial_count}, After: {final_count}"
@@ -95,7 +57,7 @@ async fn assert_reload_delivered(shell_dir: &TempDir, initial_count: usize, what
 #[tokio::test]
 #[serial]
 async fn test_reload_sent_when_git_disabled() {
-    let prev = install_doorbell();
+    let doorbell = SigurgCounter::install();
 
     let temp_dir = TempDir::new().expect("create temp dir");
     let config_path = temp_dir.path().join("config.toml");
@@ -126,7 +88,7 @@ enabled_segments = ["clock", "directory", "git"]
     registry.register(pid, Some(cwd));
 
     // Mirrors the agent's reload_config.
-    let initial_count = get_doorbell_counter().load(Ordering::Relaxed);
+    let initial_count = doorbell.count();
 
     fs::write(
         &config_path,
@@ -151,16 +113,20 @@ enabled_segments = ["clock", "directory", "git"]
     // Disabling git must request a reload.
     registry.notify_reload();
 
-    assert_reload_delivered(&shell_dir, initial_count, "git.enabled changes to false").await;
-
-    restore_doorbell(prev);
+    assert_reload_delivered(
+        &doorbell,
+        &shell_dir,
+        initial_count,
+        "git.enabled changes to false",
+    )
+    .await;
 }
 
 #[cfg(unix)]
 #[tokio::test]
 #[serial]
 async fn test_reload_sent_when_git_enabled() {
-    let prev = install_doorbell();
+    let doorbell = SigurgCounter::install();
 
     let temp_dir = TempDir::new().expect("create temp dir");
     let config_path = temp_dir.path().join("config.toml");
@@ -183,7 +149,7 @@ enabled_segments = ["clock", "directory"]
     let registry = ClientDirectory::with_shell_dir(shell_dir.path().to_path_buf());
     registry.register(std::process::id(), Some(std::env::current_dir().unwrap()));
 
-    let initial_count = get_doorbell_counter().load(Ordering::Relaxed);
+    let initial_count = doorbell.count();
 
     fs::write(
         &config_path,
@@ -202,9 +168,13 @@ enabled_segments = ["clock", "directory", "git"]
 
     registry.notify_reload();
 
-    assert_reload_delivered(&shell_dir, initial_count, "git.enabled changes to true").await;
-
-    restore_doorbell(prev);
+    assert_reload_delivered(
+        &doorbell,
+        &shell_dir,
+        initial_count,
+        "git.enabled changes to true",
+    )
+    .await;
 }
 
 /// With git disabled, the theme export drops "git" from `__enabled_segments`.
@@ -396,7 +366,7 @@ enabled_segments = ["clock", "directory"]
 #[tokio::test]
 #[serial]
 async fn test_reload_sent_when_disabling_multiple_features() {
-    let prev = install_doorbell();
+    let doorbell = SigurgCounter::install();
 
     let temp_dir = TempDir::new().expect("create temp dir");
     let config_path = temp_dir.path().join("config.toml");
@@ -421,7 +391,7 @@ enabled = true
     let registry = ClientDirectory::with_shell_dir(shell_dir.path().to_path_buf());
     registry.register(std::process::id(), Some(std::env::current_dir().unwrap()));
 
-    let initial_count = get_doorbell_counter().load(Ordering::Relaxed);
+    let initial_count = doorbell.count();
 
     fs::write(
         &config_path,
@@ -441,16 +411,20 @@ enabled = false
     manager.reload_now().expect("reload");
     registry.notify_reload();
 
-    assert_reload_delivered(&shell_dir, initial_count, "disabling multiple features").await;
-
-    restore_doorbell(prev);
+    assert_reload_delivered(
+        &doorbell,
+        &shell_dir,
+        initial_count,
+        "disabling multiple features",
+    )
+    .await;
 }
 
 #[cfg(unix)]
 #[tokio::test]
 #[serial]
 async fn test_reload_sent_when_language_display_changes() {
-    let prev = install_doorbell();
+    let doorbell = SigurgCounter::install();
 
     let temp_dir = TempDir::new().expect("create temp dir");
     let config_path = temp_dir.path().join("config.toml");
@@ -470,7 +444,7 @@ display = "icon"
     let registry = ClientDirectory::with_shell_dir(shell_dir.path().to_path_buf());
     registry.register(std::process::id(), Some(std::env::current_dir().unwrap()));
 
-    let initial_count = get_doorbell_counter().load(Ordering::Relaxed);
+    let initial_count = doorbell.count();
 
     fs::write(
         &config_path,
@@ -490,16 +464,20 @@ display = "text"
 
     registry.notify_reload();
 
-    assert_reload_delivered(&shell_dir, initial_count, "language.display changes").await;
-
-    restore_doorbell(prev);
+    assert_reload_delivered(
+        &doorbell,
+        &shell_dir,
+        initial_count,
+        "language.display changes",
+    )
+    .await;
 }
 
 #[cfg(unix)]
 #[tokio::test]
 #[serial]
 async fn test_reload_sent_when_language_icons_change() {
-    let prev = install_doorbell();
+    let doorbell = SigurgCounter::install();
 
     let temp_dir = TempDir::new().expect("create temp dir");
     let config_path = temp_dir.path().join("config.toml");
@@ -518,7 +496,7 @@ enabled = true
     let registry = ClientDirectory::with_shell_dir(shell_dir.path().to_path_buf());
     registry.register(std::process::id(), Some(std::env::current_dir().unwrap()));
 
-    let initial_count = get_doorbell_counter().load(Ordering::Relaxed);
+    let initial_count = doorbell.count();
 
     fs::write(
         &config_path,
@@ -547,9 +525,13 @@ python = "🐍"
 
     registry.notify_reload();
 
-    assert_reload_delivered(&shell_dir, initial_count, "language.icons changes").await;
-
-    restore_doorbell(prev);
+    assert_reload_delivered(
+        &doorbell,
+        &shell_dir,
+        initial_count,
+        "language.icons changes",
+    )
+    .await;
 }
 
 /// Re-applies `trigger` every 200 ms until `git.enabled == want` or 10 s pass.

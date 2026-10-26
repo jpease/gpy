@@ -7,23 +7,20 @@
 #![allow(clippy::missing_panics_doc)]
 #![allow(missing_docs)]
 
-use portable_pty::{Child, CommandBuilder, PtySize, native_pty_system};
-use std::io::{Read, Write};
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
+use portable_pty::CommandBuilder;
+use std::io::Write;
+use std::time::Duration;
 
-#[path = "common/cli_harness.rs"]
-mod cli_harness;
-use cli_harness::CliTestEnv;
-#[path = "common/child_guard.rs"]
-mod child_guard;
-use child_guard::PtyChild;
+mod common;
+use common::child_guard::PtyChild;
+use common::cli_harness::CliTestEnv;
+use common::pty::{
+    Captured, EXIT_DEADLINE, OUTPUT_DEADLINE, exit_within, open_pty, spawn_reader_thread,
+    wait_for_exit, wait_for_output,
+};
 
 const ENTER_ALT_SCREEN: &[u8] = b"\x1b[?1049h";
 const LEAVE_ALT_SCREEN: &[u8] = b"\x1b[?1049l";
-const EXIT_DEADLINE: Duration = Duration::from_secs(10);
-const OUTPUT_DEADLINE: Duration = Duration::from_secs(10);
 
 /// Point `cmd`'s environment at `env`'s isolated `HOME`/`XDG_*` dirs.
 fn configure_gpy_env(cmd: &mut CommandBuilder, env: &CliTestEnv) {
@@ -33,68 +30,13 @@ fn configure_gpy_env(cmd: &mut CommandBuilder, env: &CliTestEnv) {
     cmd.env("XDG_CACHE_HOME", env.xdg_cache_home());
 }
 
-/// Drain `reader` on a background thread until EOF (every copy of the pty
-/// slave fd, including the child's, has closed).
-fn spawn_reader_thread(mut reader: Box<dyn Read + Send>) -> Arc<Mutex<Vec<u8>>> {
-    let captured = Arc::new(Mutex::new(Vec::new()));
-    let captured_for_thread = Arc::clone(&captured);
-    thread::spawn(move || {
-        let mut buf = [0_u8; 4096];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => captured_for_thread
-                    .lock()
-                    .expect("captured output lock")
-                    .extend_from_slice(buf.get(..n).expect("read() never returns n > buf.len()")),
-            }
-        }
-    });
-    captured
-}
-
-/// Poll `child` until it exits or `deadline` elapses.
-fn wait_for_exit(child: &mut dyn Child, deadline: Duration) -> portable_pty::ExitStatus {
-    let start = Instant::now();
-    loop {
-        if let Some(status) = child.try_wait().expect("poll child exit status") {
-            return status;
-        }
-        assert!(
-            start.elapsed() < deadline,
-            "gpy did not exit within {deadline:?}"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
-}
-
-fn wait_for_output(captured: &Arc<Mutex<Vec<u8>>>, needle: &[u8], deadline: Duration) {
-    let start = Instant::now();
-    loop {
-        if captured
-            .lock()
-            .expect("captured output lock")
-            .windows(needle.len())
-            .any(|w| w == needle)
-        {
-            return;
-        }
-        assert!(
-            start.elapsed() < deadline,
-            "did not observe expected output within {deadline:?}: {:?}",
-            String::from_utf8_lossy(&captured.lock().expect("captured output lock"))
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
-}
-
 fn last_position(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).rposition(|w| w == needle)
 }
 
 /// The alternate screen was entered and the *last* enter is followed by a
 /// leave. There is no termios flag for it, so this is a substring check.
-fn assert_alt_screen_entered_and_left(captured: &Arc<Mutex<Vec<u8>>>) {
+fn assert_alt_screen_entered_and_left(captured: &Captured) {
     let output = captured.lock().expect("captured output lock").clone();
     let enter = last_position(&output, ENTER_ALT_SCREEN);
     let leave = last_position(&output, LEAVE_ALT_SCREEN);
@@ -110,20 +52,10 @@ fn assert_alt_screen_entered_and_left(captured: &Arc<Mutex<Vec<u8>>>) {
     );
 }
 
-/// Open a pty and snapshot its termios before spawning, avoiding a race
-/// against the child's startup.
-fn open_pty_and_snapshot_termios() -> (portable_pty::PtyPair, Box<dyn Read + Send>) {
-    let pair = native_pty_system()
-        .openpty(PtySize::default())
-        .expect("open pty");
-    let reader = pair.master.try_clone_reader().expect("clone pty reader");
-    (pair, reader)
-}
-
 #[test]
-fn ac3_clean_exit_restores_terminal() {
+fn clean_exit_restores_terminal() {
     let env = CliTestEnv::new().expect("create isolated CLI test env");
-    let (pair, reader) = open_pty_and_snapshot_termios();
+    let (pair, reader) = open_pty();
     let before = pair.master.get_termios();
 
     let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gpy"));
@@ -142,14 +74,7 @@ fn ac3_clean_exit_restores_terminal() {
     // confirmation if one appears and is a no-op otherwise.
     writer.write_all(b"q").expect("write quit key");
     writer.flush().expect("flush quit key");
-    let quit_started = Instant::now();
-    let mut exited = false;
-    while !exited && quit_started.elapsed() < Duration::from_millis(200) {
-        exited = child.try_wait().expect("poll child exit status").is_some();
-        if !exited {
-            thread::sleep(Duration::from_millis(10));
-        }
-    }
+    let exited = exit_within(&mut *child, Duration::from_millis(200)).is_some();
     if !exited {
         writer.write_all(b"y").expect("write confirm key");
         writer.flush().expect("flush confirm key");
@@ -168,7 +93,7 @@ fn ac3_clean_exit_restores_terminal() {
 
 /// The save path end to end: Down to the second theme, Enter, `s`.
 #[test]
-fn ac4_select_second_theme_and_save_writes_config() {
+fn selecting_second_theme_and_saving_writes_config() {
     let env = CliTestEnv::new().expect("create isolated CLI test env");
 
     // The cursor starts on the active theme (`default`), in `theme list` order.
@@ -192,7 +117,7 @@ fn ac4_select_second_theme_and_save_writes_config() {
     assert_eq!(themes.first().map(String::as_str), Some("default"));
     let second = themes.get(1).expect("second theme").clone();
 
-    let (pair, reader) = open_pty_and_snapshot_termios();
+    let (pair, reader) = open_pty();
     let before = pair.master.get_termios();
 
     let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gpy"));
@@ -243,9 +168,9 @@ fn ac4_select_second_theme_and_save_writes_config() {
 /// Output while the alternate screen is active is discarded on leaving it, so
 /// save feedback must come after the last leave sequence.
 #[test]
-fn ac5_save_feedback_printed_after_leaving_alt_screen() {
+fn save_feedback_printed_after_leaving_alt_screen() {
     let env = CliTestEnv::new().expect("create isolated CLI test env");
-    let (pair, reader) = open_pty_and_snapshot_termios();
+    let (pair, reader) = open_pty();
 
     let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gpy"));
     cmd.args(["config", "wizard"]);
@@ -296,7 +221,7 @@ fn wizard_survives_selecting_malformed_theme() {
     )
     .expect("write malformed theme");
 
-    let (pair, reader) = open_pty_and_snapshot_termios();
+    let (pair, reader) = open_pty();
 
     let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gpy"));
     cmd.args(["config", "wizard"]);

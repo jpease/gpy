@@ -2,9 +2,10 @@
 
 #![allow(clippy::missing_panics_doc)]
 
-mod fixtures;
+#[path = "common/git.rs"]
+mod git;
 
-use fixtures::TestRepo;
+use git::TestRepo;
 use gpy_agent::git::CompleteStatus;
 use gpy_agent::git::status::load_repository_state;
 #[cfg(unix)]
@@ -257,7 +258,7 @@ fn test_git_worktree_handling() {
     let repo = TestRepo::new().with_initial_commit();
     repo.create_branch("feature");
 
-    let worktree_path = repo.with_worktree("feature", "worktree-dir");
+    let worktree_path = repo.with_worktree("feature");
 
     let result_main = load_repository_state(repo.path(), None, 0, true);
     let CompleteStatus {

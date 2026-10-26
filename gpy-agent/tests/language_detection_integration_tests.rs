@@ -13,9 +13,13 @@ use tempfile::TempDir;
 #[cfg(unix)]
 #[path = "common/child_guard.rs"]
 mod child_guard;
+#[path = "common/git.rs"]
+mod git;
 #[cfg(unix)]
 #[path = "common/wait.rs"]
 mod wait;
+
+use git::git_init;
 
 fn setup_node_project(path: &Path) {
     fs::write(path.join("package.json"), r#"{"name": "test"}"#)
@@ -638,18 +642,6 @@ fn test_discovered_venv_interpreter_is_never_executed() {
             "no usable pyvenv.cfg version means no version (pyvenv.cfg {cfg:?}): {json}"
         );
     }
-}
-
-/// `git init` a fresh repository at `root`.
-fn git_init(root: &Path) {
-    let status = std::process::Command::new("git")
-        .args(["init", "-q"])
-        .arg(root)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .status()
-        .expect("Failed to run git init");
-    assert!(status.success(), "git init failed");
 }
 
 /// Create a FIFO at `path`; no writer ever opens it.

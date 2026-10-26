@@ -9,7 +9,7 @@ mod git_helpers;
 #[path = "common/wait.rs"]
 mod wait;
 
-use git_helpers::{git, git_init};
+use git_helpers::{git, git_bare, git_command, git_init, git_stdout};
 use gpy_agent::ipc::ClientDirectory;
 use gpy_agent::watcher::multi_repo::MultiRepoWatcher;
 use gpy_agent::watcher::{DebouncedEvent, FileEvent, WatcherConfig};
@@ -579,20 +579,7 @@ fn ordinary_repo_head_change_still_triggers() {
 
 /// Run `git rev-parse <rev>` in `dir` and return the resolved object id.
 fn rev_parse(dir: &Path, rev: &str) -> String {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", rev])
-        .current_dir(dir)
-        .output()
-        .expect("git rev-parse");
-    assert!(
-        output.status.success(),
-        "git rev-parse {rev} should succeed in {}",
-        dir.display()
-    );
-    String::from_utf8(output.stdout)
-        .expect("utf-8 object id")
-        .trim()
-        .to_owned()
+    git_stdout(dir, &["rev-parse", rev]).trim().to_owned()
 }
 
 /// Commit the staged index in `dir`.
@@ -1196,8 +1183,7 @@ fn bare_superproject_common_dir_fans_out_without_waking_the_bare_repo() {
     let root = temp.path();
 
     let bare = root.join("bare_super.git");
-    fs::create_dir_all(&bare).expect("create bare dir");
-    git(&bare, &["-c", "init.defaultBranch=main", "init", "--bare"]);
+    git_bare(&bare);
     git(&bare, &["config", "core.fsmonitor", "false"]);
 
     let seed = root.join("seed");
@@ -1514,14 +1500,9 @@ fn rebase_msgnum_progress_is_metadata_only_and_refreshes_repository() {
 
     let_watch_arm_then_drain(&events);
 
-    let rebase_start_status = std::process::Command::new("git")
-        .args(["-c", "commit.gpgsign=false", "rebase", "-i", "--root"])
+    let rebase_start_status = git_command(&repo)
+        .args(["rebase", "-i", "--root"])
         .env("GIT_SEQUENCE_EDITOR", &editor)
-        .env("GIT_AUTHOR_NAME", "Test User")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test User")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .current_dir(&repo)
         .status()
         .expect("start interactive rebase, paused at the first break");
     assert!(
@@ -1658,14 +1639,9 @@ fn submodule_rebase_msgnum_progress_refreshes_both_registered_parent_and_child()
 
     let_watch_arm_then_drain(&events);
 
-    let rebase_start_status = std::process::Command::new("git")
-        .args(["-c", "commit.gpgsign=false", "rebase", "-i", "--root"])
+    let rebase_start_status = git_command(&fixture.sub_dir)
+        .args(["rebase", "-i", "--root"])
         .env("GIT_SEQUENCE_EDITOR", &editor)
-        .env("GIT_AUTHOR_NAME", "Test User")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test User")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .current_dir(&fixture.sub_dir)
         .status()
         .expect("start interactive rebase inside the submodule, paused at the first break");
     assert!(

@@ -6,12 +6,11 @@
 #![allow(clippy::panic)]
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::missing_errors_doc)]
-#![allow(
-    unsafe_code,
-    reason = "installing and restoring a SIGURG handler needs `nix::sys::signal::sigaction`, an unsafe fn"
-)]
 
-mod test_harness;
+#[path = "common/sigurg.rs"]
+mod sigurg;
+#[path = "common/wait.rs"]
+mod wait;
 
 use gpy_agent::agent::startup::clock_signal_decision;
 #[cfg(unix)]
@@ -19,42 +18,15 @@ use gpy_agent::ipc::ClientDirectory;
 #[cfg(unix)]
 use serial_test::serial;
 #[cfg(unix)]
+use sigurg::SigurgCounter;
+#[cfg(unix)]
 use std::sync::Arc;
 use std::time::Duration;
 #[cfg(unix)]
-use test_harness::SignalCounter;
+use wait::wait_until_async;
 
 #[cfg(unix)]
-use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
-
-// OnceLock so the counters are safely reachable from signal handlers.
-#[cfg(unix)]
-use std::sync::OnceLock;
-
-#[cfg(unix)]
-static REGISTERED_COUNTER: OnceLock<SignalCounter> = OnceLock::new();
-#[cfg(unix)]
-static UNREGISTERED_COUNTER: OnceLock<SignalCounter> = OnceLock::new();
-
-#[cfg(unix)]
-fn get_registered_counter() -> &'static SignalCounter {
-    REGISTERED_COUNTER.get_or_init(SignalCounter::new)
-}
-
-#[cfg(unix)]
-fn get_unregistered_counter() -> &'static SignalCounter {
-    UNREGISTERED_COUNTER.get_or_init(SignalCounter::new)
-}
-
-#[cfg(unix)]
-extern "C" fn count_doorbell(_signal: i32) {
-    get_registered_counter().increment();
-}
-
-#[cfg(unix)]
-extern "C" fn count_unregistered(_signal: i32) {
-    get_unregistered_counter().increment();
-}
+const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// Sends only when the minute differs from the last-notified one.
 #[test]
@@ -104,18 +76,7 @@ async fn test_clock_timer_ticks() {
 #[tokio::test]
 #[serial]
 async fn test_clock_signals_sent_to_clients() {
-    let counter = get_registered_counter();
-    counter.reset();
-
-    let handler = SigAction::new(
-        SigHandler::Handler(count_doorbell),
-        SaFlags::empty(),
-        SigSet::empty(),
-    );
-    // SAFETY: the handler only bumps a `'static` `SignalCounter` (initialized above,
-    // before install), and the test is `#[serial]`, so no other test changes the
-    // SIGURG disposition while this handler is installed.
-    let previous = unsafe { sigaction(Signal::SIGURG, &handler) }.expect("install handler");
+    let doorbell = SigurgCounter::install();
 
     let registry = Arc::new(ClientDirectory::new());
     let pid = std::process::id();
@@ -125,23 +86,31 @@ async fn test_clock_signals_sent_to_clients() {
     registry.notify_repaint(None);
 
     // Up to 1s; should be near-instant.
-    let received = counter.wait_for_count(1, Duration::from_secs(1)).await;
+    let received = wait_until_async(Duration::from_secs(1), POLL_INTERVAL, || {
+        doorbell.count() >= 1
+    })
+    .await;
     assert!(received, "Should have received SIGURG within timeout");
-    assert_eq!(counter.get(), 1, "Should have received exactly one SIGURG");
+    assert_eq!(
+        doorbell.count(),
+        1,
+        "Should have received exactly one SIGURG"
+    );
 
     registry.notify_repaint(None);
-    let received_second = counter.wait_for_count(2, Duration::from_secs(1)).await;
+    let received_second = wait_until_async(Duration::from_secs(1), POLL_INTERVAL, || {
+        doorbell.count() >= 2
+    })
+    .await;
     assert!(
         received_second,
         "Should have received second SIGURG within timeout"
     );
-    assert_eq!(counter.get(), 2, "Should have received two SIGURG signals");
-
-    // SAFETY: reinstalls the disposition `sigaction` returned at install time; the
-    // test is `#[serial]`, so nothing else changed SIGURG in between.
-    unsafe {
-        sigaction(Signal::SIGURG, &previous).expect("restore handler");
-    }
+    assert_eq!(
+        doorbell.count(),
+        2,
+        "Should have received two SIGURG signals"
+    );
 }
 
 /// Unregistered clients get no signal.
@@ -149,37 +118,23 @@ async fn test_clock_signals_sent_to_clients() {
 #[tokio::test]
 #[serial]
 async fn test_unregistered_clients_dont_receive_signals() {
-    let counter = get_unregistered_counter();
-    counter.reset();
-
-    let handler = SigAction::new(
-        SigHandler::Handler(count_unregistered),
-        SaFlags::empty(),
-        SigSet::empty(),
-    );
-    // SAFETY: the handler only bumps a `'static` `SignalCounter` (initialized above,
-    // before install), and the test is `#[serial]`, so no other test changes the
-    // SIGURG disposition while this handler is installed.
-    let previous = unsafe { sigaction(Signal::SIGURG, &handler) }.expect("install handler");
+    let doorbell = SigurgCounter::install();
 
     let registry = Arc::new(ClientDirectory::new());
 
     registry.notify_repaint(None);
 
     // Expect a timeout: no signal should arrive.
-    let received = counter.wait_for_count(1, Duration::from_millis(100)).await;
+    let received = wait_until_async(Duration::from_millis(100), POLL_INTERVAL, || {
+        doorbell.count() >= 1
+    })
+    .await;
     assert!(!received, "Should not have received any signal");
     assert_eq!(
-        counter.get(),
+        doorbell.count(),
         0,
         "Unregistered clients should not receive signals"
     );
-
-    // SAFETY: reinstalls the disposition `sigaction` returned at install time; the
-    // test is `#[serial]`, so nothing else changed SIGURG in between.
-    unsafe {
-        sigaction(Signal::SIGURG, &previous).expect("restore handler");
-    }
 }
 
 /// Minute comparison in `clock_signal_decision`, without the wall clock.

@@ -9,16 +9,16 @@ runtime shuts down, and can interfere with the rest of the test.
 
 ## `ServerGuard`
 
-`ServerGuard` (`tests/common/fixtures.rs`, re-exported as
-`common::ServerGuard`) owns the task's `JoinHandle` and calls `.abort()` in
-`Drop`. `Drop` runs on normal return and while unwinding from a panic or
-failed assertion. It does not run when the process is killed (Ctrl+C,
-SIGKILL, a nextest timeout); for those, `scripts/cleanup-test-agents.sh`
-removes leftover agents and sockets under the test root.
+`ServerGuard` (`tests/common/fixtures.rs`) owns the task's `JoinHandle` and
+calls `.abort()` in `Drop`. `Drop` runs on normal return and while unwinding
+from a panic or failed assertion. It does not run when the process is killed
+(Ctrl+C, SIGKILL, a nextest timeout); for those,
+`scripts/cleanup-test-agents.sh` removes leftover agents and sockets under
+the test root.
 
 ```rust
 mod common;
-use common::ServerGuard;
+use common::fixtures::ServerGuard;
 
 let server_handle = tokio::spawn(async move { server.start().await });
 let _guard = ServerGuard::new(server_handle); // aborted when `_guard` drops
@@ -41,9 +41,6 @@ let handle = guard.into_inner();
 handle.abort();
 assert!(handle.await.expect_err("task was aborted").is_cancelled());
 ```
-
-**Check completion**: `guard.is_finished()` reports whether the task has
-already exited (for example because `start()` returned an error).
 
 ## Spawned processes
 

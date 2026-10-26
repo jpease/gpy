@@ -53,7 +53,7 @@ function test_git_live_content
     # common perf setting). That competing daemon measurably starves gpy's own
     # FSEventStream of its first event under load -- exactly the scenario this
     # test exercises (a worktree edit right after the watch is armed). The Rust
-    # test fixtures (`gpy-agent/tests/fixtures/git_repo.rs`,
+    # test fixtures (`gpy-agent/tests/common/git.rs`,
     # `gpy-agent/tests/multi_repo_integration_tests.rs`) do the same.
     git -C $repo config core.fsmonitor false
     echo hello >$repo/tracked.txt

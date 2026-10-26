@@ -1,6 +1,5 @@
 //! In-process IPC server wiring shared by the `EndpointHandle` tests.
 
-#![allow(dead_code)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::missing_panics_doc)]
 

@@ -9,14 +9,13 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[path = "common/cli_harness.rs"]
 mod cli_harness;
 #[path = "common/git.rs"]
 mod git_helpers;
 use cli_harness::CliTestEnv;
-use git_helpers::{git, git_init};
+use git_helpers::{git, git_init, git_output};
 
 /// One hostile inherited-environment row: a label and the variables to set.
 type Row = (&'static str, Vec<(&'static str, String)>);
@@ -173,11 +172,11 @@ type CacheRow = (
 
 /// `git config --local --get-all core.untrackedCache` values, one per entry.
 fn local_untracked_cache(repo: &Path) -> Vec<String> {
-    let output = Command::new("git")
-        .args(["config", "--local", "--get-all", "core.untrackedCache"])
-        .current_dir(repo)
-        .output()
-        .expect("spawn git");
+    // Exits 1 when the key is unset; the empty list is the answer then.
+    let output = git_output(
+        repo,
+        &["config", "--local", "--get-all", "core.untrackedCache"],
+    );
     String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(str::to_owned)

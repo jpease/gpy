@@ -15,14 +15,12 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
 #![allow(clippy::missing_panics_doc)]
-#![allow(
-    unsafe_code,
-    reason = "installing and restoring a SIGURG handler needs `nix::sys::signal::sigaction`, an unsafe fn"
-)]
 #![cfg(unix)]
 
 #[path = "common/env_guard.rs"]
 mod env_guard;
+#[path = "common/sigurg.rs"]
+mod sigurg;
 #[path = "common/wait.rs"]
 mod wait;
 
@@ -34,20 +32,13 @@ use gpy_agent::config::defaults::DEFAULT_THEME_CONTENT;
 use gpy_agent::config::loader::load_config_from_file;
 use gpy_agent::palette::active_palette;
 use gpy_agent::theme::ThemeManager;
-use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
 use serial_test::serial;
+use sigurg::SigurgCounter;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use wait::wait_until;
-
-static DOORBELL_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-extern "C" fn count_doorbell(_signal: i32) {
-    DOORBELL_COUNTER.fetch_add(1, Ordering::Relaxed);
-}
 
 const SHELL_EXPORTS: [&str; 3] = ["theme-export.fish", "theme-export.bash", "theme-export.zsh"];
 /// Generous headroom over the 1 s watcher debounce under load.
@@ -270,7 +261,7 @@ struct Harness {
     cache_home: PathBuf,
     _env: EnvGuard,
     prev_cwd: PathBuf,
-    prev_sigurg: SigAction,
+    doorbells: SigurgCounter,
 }
 
 impl Harness {
@@ -293,16 +284,7 @@ impl Harness {
         env.set("XDG_CONFIG_HOME", &config_home);
         env.set("XDG_CACHE_HOME", &cache_home);
         env.set("XDG_RUNTIME_DIR", &runtime);
-        DOORBELL_COUNTER.store(0, Ordering::Relaxed);
-        let handler = SigAction::new(
-            SigHandler::Handler(count_doorbell),
-            SaFlags::empty(),
-            SigSet::empty(),
-        );
-        // SAFETY: the handler only does a relaxed `fetch_add` on a static atomic, which
-        // is async-signal-safe; every harness test is `#[serial]`, so no other test
-        // changes the SIGURG disposition while it is installed.
-        let prev_sigurg = unsafe { sigaction(Signal::SIGURG, &handler) }.expect("install SIGURG");
+        let doorbells = SigurgCounter::install();
         let harness = Self {
             _temp: temp,
             home: root,
@@ -310,7 +292,7 @@ impl Harness {
             cache_home,
             _env: env,
             prev_cwd: std::env::current_dir().expect("current dir"),
-            prev_sigurg,
+            doorbells,
         };
         harness.write_theme(ACTIVE_THEME, "white");
         harness.write_theme(OTHER_THEME, "cyan");
@@ -453,10 +435,6 @@ impl Harness {
 impl Drop for Harness {
     fn drop(&mut self) {
         let _ = std::env::set_current_dir(&self.prev_cwd);
-        // SAFETY: restores the handler `Harness::new` replaced; tests are serial.
-        unsafe {
-            let _ = sigaction(Signal::SIGURG, &self.prev_sigurg);
-        }
     }
 }
 
@@ -481,7 +459,7 @@ fn run_mechanism(mechanism: &Mechanism) {
     agent.register_test_client(std::process::id(), harness.config_home.as_path());
     // Let the watchers arm before touching the disk.
     std::thread::sleep(Duration::from_millis(500));
-    DOORBELL_COUNTER.store(0, Ordering::Relaxed);
+    let rang_before = harness.doorbells.count();
 
     (mechanism.apply)(&harness);
     let applied_at = Instant::now();
@@ -522,7 +500,7 @@ fn run_mechanism(mechanism: &Mechanism) {
     if let Some(rings) = mechanism.doorbells {
         std::thread::sleep(DOORBELL_WINDOW.saturating_sub(applied_at.elapsed()));
         assert_eq!(
-            DOORBELL_COUNTER.load(Ordering::Relaxed),
+            harness.doorbells.count().saturating_sub(rang_before),
             rings,
             "[{}] reload doorbell count",
             mechanism.name

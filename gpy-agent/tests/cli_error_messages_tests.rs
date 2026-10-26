@@ -8,7 +8,8 @@
 
 mod common;
 
-use common::{CliTestEnv, KillOnDrop};
+use common::child_guard::KillOnDrop;
+use common::cli_harness::CliTestEnv;
 use std::io::Read;
 use std::process::{Command, Stdio};
 

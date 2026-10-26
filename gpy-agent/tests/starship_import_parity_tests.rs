@@ -21,6 +21,8 @@ use std::process::Command;
 
 #[path = "common/cli_harness.rs"]
 mod cli_harness;
+#[path = "common/git.rs"]
+mod git;
 #[path = "common/sgr.rs"]
 mod sgr;
 #[path = "common/skip.rs"]
@@ -286,30 +288,11 @@ fn describe(cells: &[(char, Look)]) -> String {
 /// Create a repository in `cwd` with one commit on `main` and an untracked
 /// file, so `git_status` has something to report. Every git call must succeed.
 fn setup_git_repo(cwd: &Path) {
-    let git = |args: &[&str]| {
-        let output = Command::new("git")
-            .args([
-                "-c",
-                "commit.gpgsign=false",
-                "-c",
-                "init.defaultBranch=main",
-                "-c",
-                "user.name=Test User",
-                "-c",
-                "user.email=test@example.com",
-            ])
-            .args(args)
-            .current_dir(cwd)
-            .output()
-            .expect("run git");
-        assert!(
-            output.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    };
-    git(&["init", "--quiet"]);
-    git(&["commit", "--quiet", "--allow-empty", "-m", "initial"]);
+    git::git_init(cwd);
+    git::git(
+        cwd,
+        &["commit", "--quiet", "--allow-empty", "-m", "initial"],
+    );
     fs::write(cwd.join("untracked.txt"), "untracked").expect("create untracked file");
 }
 

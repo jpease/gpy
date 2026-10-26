@@ -11,7 +11,10 @@
 
 mod common;
 
-use common::{AgentStopGuard, CliTestEnv, KillOnDrop, git, wait_until};
+use common::child_guard::{AgentStopGuard, KillOnDrop};
+use common::cli_harness::CliTestEnv;
+use common::git;
+use common::wait::wait_until;
 use gpy_agent::ipc::Response;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;

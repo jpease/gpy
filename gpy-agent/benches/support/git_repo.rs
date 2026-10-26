@@ -18,8 +18,7 @@ pub fn committed_repo(num_files: usize) -> TempDir {
     for i in 0..num_files {
         std::fs::write(path.join(format!("file_{i}.txt")), "content").expect("write fixture file");
     }
-    git::git(path, &["add", "."]);
-    git::git(path, &["commit", "-q", "-m", "init"]);
+    git::git_commit_all(path, "init");
 
     dir
 }

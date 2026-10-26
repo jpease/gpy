@@ -13,9 +13,10 @@
 
 mod common;
 
+use common::endpoint::endpoint_builder;
 #[cfg(unix)]
-use common::wait_for_socket;
-use common::{EnvGuard, endpoint_builder};
+use common::endpoint::wait_for_socket;
+use common::env_guard::EnvGuard;
 use gpy_agent::git::status::load_repository_state;
 use gpy_agent::language::version::{NodeDetector, detect_language_release, get_version_detectors};
 use std::fs;

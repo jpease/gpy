@@ -11,8 +11,9 @@
 
 mod common;
 
+use common::endpoint::{endpoint_builder_with_config, wait_for_socket};
+use common::fixtures::gpy_test_root;
 use common::git::{git, git_init};
-use common::{endpoint_builder_with_config, gpy_test_root, wait_for_socket};
 use gpy_agent::config::manager::ConfigManager;
 use gpy_agent::{Error, Result};
 use std::path::PathBuf;

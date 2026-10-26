@@ -1,6 +1,5 @@
 //! Skip contract for integration tests; shell twin is `test_skip` in
 //! `tests/lib/test_helpers.fish` and `tests/lib/shell_e2e.sh`.
-#![allow(dead_code)]
 
 /// Skip the calling test: prints `SKIP: <reason>` locally, panics under `CI`
 /// so a gate never goes green on a test that didn't run.

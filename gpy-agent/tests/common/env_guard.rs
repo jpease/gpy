@@ -2,7 +2,10 @@
 //!
 //! Restores on drop (including unwinding); callers must still be `#[serial]`.
 
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "included by several test binaries, each using a subset"
+)]
 #![allow(
     unsafe_code,
     reason = "edition 2024 makes env::set_var/remove_var unsafe; mutating the process env is this guard's purpose"

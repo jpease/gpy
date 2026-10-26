@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::{CliCommandResult, CliTestEnv};
+use common::cli_harness::{CliCommandResult, CliTestEnv};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 

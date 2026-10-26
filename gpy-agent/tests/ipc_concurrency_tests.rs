@@ -13,8 +13,8 @@
 
 mod common;
 
+use common::endpoint::{endpoint_builder_with_config, wait_for_socket};
 use common::git::{git, git_init};
-use common::{endpoint_builder_with_config, wait_for_socket};
 use gpy_agent::config::manager::ConfigManager;
 use gpy_agent::security::GuardSettings;
 use std::path::{Path, PathBuf};

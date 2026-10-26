@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::CliTestEnv;
+use common::cli_harness::CliTestEnv;
 use insta::{assert_snapshot, with_settings};
 
 /// Every public `gpy` subcommand, with the nested actions users can reach.

@@ -4,9 +4,6 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 
-mod fixtures;
-
-use fixtures::ipc_helpers::*;
 use gpy_agent::ipc::protocol::deserialize_message;
 use gpy_agent::ipc::{Message, Response};
 use gpy_agent::security::SafePath;
@@ -129,18 +126,16 @@ fn test_response_error_messages() {
         message: "Test error message".to_owned(),
     };
 
-    assert!(is_error_response(&error_response));
-    assert_eq!(
-        extract_error_message(&error_response),
-        Some("Test error message")
-    );
+    assert!(matches!(
+        &error_response,
+        Response::Error { message } if message == "Test error message"
+    ));
 }
 
 #[test]
 fn test_response_ack_validation() {
     let ack = Response::Ack;
-    assert!(is_ack_response(&ack));
-    assert!(!is_error_response(&ack));
+    assert!(matches!(ack, Response::Ack));
 }
 
 #[test]

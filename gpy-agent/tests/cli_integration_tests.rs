@@ -12,6 +12,8 @@ use tempfile::TempDir;
 #[path = "common/cli_harness.rs"]
 mod cli_harness;
 use cli_harness::{CliTestEnv, SharedCliTestEnv};
+#[path = "common/git.rs"]
+mod git_helpers;
 
 type DelimiterResult = Result<(String, String), Box<dyn std::error::Error>>;
 
@@ -118,23 +120,7 @@ fn run_gpy_agent_with_config(config_toml: &str, args: &[&str]) -> (i32, String, 
 
 fn create_test_git_repo() -> Result<TempDir, Box<dyn std::error::Error>> {
     let temp_dir = TempDir::new()?;
-    let temp_path = temp_dir.path();
-
-    Command::new("git")
-        .arg("init")
-        .current_dir(temp_path)
-        .output()?;
-
-    // Commits need an identity.
-    Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(temp_path)
-        .output()?;
-
-    Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(temp_path)
-        .output()?;
+    git_helpers::git_init(temp_dir.path());
 
     Ok(temp_dir)
 }
@@ -214,19 +200,7 @@ fn test_cli_oneshot_git_with_custom_path() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
 
-    let _ = Command::new("git")
-        .arg("init")
-        .current_dir(temp_path)
-        .output();
-
-    let _ = Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(temp_path)
-        .output();
-    let _ = Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(temp_path)
-        .output();
+    git_helpers::git_init(temp_path);
 
     let (exit_code, stdout, stderr) = run_gpy_agent(&[
         "oneshot",
@@ -245,24 +219,13 @@ fn test_cli_oneshot_git_with_custom_path() {
 #[test]
 fn test_cli_oneshot_git_ignores_inherited_git_dir() {
     let env = CliTestEnv::new().expect("failed to create CLI test env");
-    let git = |dir: &std::path::Path, args: &[&str]| {
-        let status = Command::new("git")
-            .args(["-c", "commit.gpgsign=false", "-c", "user.name=T"])
-            .args(["-c", "user.email=t@example.com"])
-            .args(args)
-            .current_dir(dir)
-            .status()
-            .expect("spawn git");
-        assert!(status.success(), "git {args:?} failed");
-    };
     let a = env.root().join("repoA");
     let b = env.root().join("repoB");
     for (repo, branch) in [(&a, "featureA"), (&b, "main")] {
         fs::create_dir_all(repo).expect("mkdir");
-        git(repo, &["init", "-q", "-b", branch]);
+        git_helpers::git(repo, &["init", "-q", "-b", branch]);
         fs::write(repo.join("f"), "x\n").expect("write");
-        git(repo, &["add", "."]);
-        git(repo, &["commit", "-q", "-m", "init"]);
+        git_helpers::git_commit_all(repo, "init");
     }
     fs::write(b.join("untracked.txt"), "z\n").expect("write");
 
@@ -670,20 +633,12 @@ fn test_cli_oneshot_git_honors_tilde_and_symlinked_skip_paths() {
     .expect("write config");
     std::os::unix::fs::symlink(&real, root.join("link")).expect("symlink");
 
-    let init = |repo: &std::path::Path| {
-        fs::create_dir_all(repo).expect("mkdir");
-        let status = Command::new("git")
-            .args(["-c", "commit.gpgsign=false", "init", "-q", "-b", "main"])
-            .arg(repo)
-            .status()
-            .expect("spawn git");
-        assert!(status.success(), "git init failed");
-    };
     let big = root.join("big");
     let linked = real.join("repo");
     let kept = root.join("kept");
     for repo in [&big, &linked, &kept] {
-        init(repo);
+        fs::create_dir_all(repo).expect("mkdir");
+        git_helpers::git_init(repo);
     }
 
     for skipped in [&big, &linked] {

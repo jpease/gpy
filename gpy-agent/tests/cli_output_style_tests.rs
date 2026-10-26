@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::CliTestEnv;
+use common::cli_harness::CliTestEnv;
 
 const DETAIL_INDENT: &str = "   ";
 

@@ -7,22 +7,21 @@
 #![allow(clippy::missing_panics_doc)]
 #![allow(missing_docs)]
 
-use portable_pty::{Child, CommandBuilder, PtySize, native_pty_system};
-use std::io::{Read, Write};
+use portable_pty::CommandBuilder;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
-#[path = "common/child_guard.rs"]
-mod child_guard;
-use child_guard::PtyChild;
+mod common;
+use common::child_guard::PtyChild;
+use common::pty::{
+    Captured, EXIT_DEADLINE, OUTPUT_DEADLINE, contains, open_pty, spawn_reader_thread,
+    wait_for_exit, wait_for_output,
+};
 
 /// An overridden detection must not wait on the terminal.
 const OVERRIDE_DEADLINE: Duration = Duration::from_secs(2);
-const EXIT_DEADLINE: Duration = Duration::from_secs(10);
-const OUTPUT_DEADLINE: Duration = Duration::from_secs(10);
 
 const PROMPT_MARKER: &[u8] = b"Do the icons above display correctly";
 
@@ -70,70 +69,9 @@ fn show_icons_value(config_path: &Path) -> Option<bool> {
     })
 }
 
-fn spawn_reader_thread(mut reader: Box<dyn Read + Send>) -> Arc<Mutex<Vec<u8>>> {
-    let captured = Arc::new(Mutex::new(Vec::new()));
-    let sink = Arc::clone(&captured);
-    thread::spawn(move || {
-        let mut buf = [0_u8; 4096];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => sink
-                    .lock()
-                    .expect("captured output lock")
-                    .extend_from_slice(buf.get(..n).expect("n <= buf.len()")),
-            }
-        }
-    });
-    captured
-}
-
-fn wait_for_exit(child: &mut dyn Child, deadline: Duration) -> portable_pty::ExitStatus {
-    let start = Instant::now();
-    loop {
-        if let Some(status) = child.try_wait().expect("poll child exit status") {
-            return status;
-        }
-        assert!(
-            start.elapsed() < deadline,
-            "gpy setup --redetect-icons did not exit within {deadline:?}"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
-}
-
-fn wait_for_output(captured: &Arc<Mutex<Vec<u8>>>, needle: &[u8], deadline: Duration) {
-    let start = Instant::now();
-    loop {
-        if captured
-            .lock()
-            .expect("captured output lock")
-            .windows(needle.len())
-            .any(|w| w == needle)
-        {
-            return;
-        }
-        assert!(
-            start.elapsed() < deadline,
-            "did not observe {:?} within {deadline:?}; captured: {:?}",
-            String::from_utf8_lossy(needle),
-            String::from_utf8_lossy(&captured.lock().expect("captured output lock"))
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
-}
-
-fn contains(captured: &Arc<Mutex<Vec<u8>>>, needle: &[u8]) -> bool {
-    captured
-        .lock()
-        .expect("captured output lock")
-        .windows(needle.len())
-        .any(|w| w == needle)
-}
-
 /// The default the prompt announced (`... so the default is Yes`); the child
 /// scans fonts under its own sandboxed `HOME`, so this is the only oracle.
-fn prompted_default(captured: &Arc<Mutex<Vec<u8>>>) -> bool {
+fn prompted_default(captured: &Captured) -> bool {
     let text =
         String::from_utf8_lossy(&captured.lock().expect("captured output lock")).into_owned();
     if text.contains("so the default is Yes") {
@@ -152,10 +90,7 @@ fn run_interactive(
     nerd_font: &str,
     answer: Option<&[u8]>,
 ) -> (bool, Duration, bool) {
-    let pair = native_pty_system()
-        .openpty(PtySize::default())
-        .expect("open pty");
-    let reader = pair.master.try_clone_reader().expect("clone pty reader");
+    let (pair, reader) = open_pty();
     let captured = spawn_reader_thread(reader);
     let mut writer = pair.master.take_writer().expect("take pty writer");
 
@@ -184,10 +119,7 @@ fn run_interactive(
 #[test]
 fn override_none_skips_the_prompt_and_writes_ascii() {
     let env = InitEnv::new();
-    let pair = native_pty_system()
-        .openpty(PtySize::default())
-        .expect("open pty");
-    let reader = pair.master.try_clone_reader().expect("clone pty reader");
+    let (pair, reader) = open_pty();
     let captured = spawn_reader_thread(reader);
     // Nothing ever answers.
     let _writer = pair.master.take_writer().expect("take pty writer");
@@ -222,10 +154,7 @@ fn override_none_skips_the_prompt_and_writes_ascii() {
 #[test]
 fn override_nerd_skips_the_prompt_and_writes_glyphs() {
     let env = InitEnv::new();
-    let pair = native_pty_system()
-        .openpty(PtySize::default())
-        .expect("open pty");
-    let reader = pair.master.try_clone_reader().expect("clone pty reader");
+    let (pair, reader) = open_pty();
     let captured = spawn_reader_thread(reader);
     let _writer = pair.master.take_writer().expect("take pty writer");
 

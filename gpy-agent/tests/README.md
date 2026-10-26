@@ -6,8 +6,11 @@ to the code in `src/`.
 
 ## Layout
 
-- `common/` — shared helpers. A binary either declares `mod common;` (all of
-  them) or includes one file with `#[path = "common/<file>.rs"] mod <file>;`.
+- `common/` — the shared helpers. A binary either declares `mod common;`
+  (all of them) or includes one self-contained file with
+  `#[path = "common/<file>.rs"] mod <file>;`. `integration_harness.rs` and
+  `pty.rs` use their siblings, so they are reachable only through
+  `mod common;`.
   - `cli_harness.rs` — `CliTestEnv`: runs the `gpy`/`gpy-agent` binaries
     against an isolated HOME/XDG tree.
   - `child_guard.rs` — drop guards that terminate spawned processes on every
@@ -21,18 +24,26 @@ to the code in `src/`.
   - `env_guard.rs` — `EnvGuard`: restores every environment variable it
     touched on drop, including when an assertion fails.
   - `fixtures.rs` — `ServerGuard` (aborts a spawned server task on drop),
-    `TempSocket`, `gpy_test_root()`, `wait_for_agent_ready` (blocking).
-  - `git.rs` — `git(dir, args)` and `git_init(dir)` for fixture repositories.
+    `TempSocket`, `gpy_test_root()`.
+  - `git.rs` — every git command the test code runs: `git`, `git_output`,
+    `git_stdout`, `git_command`, `git_init`, `git_bare`, `git_commit_all`,
+    and the `TestRepo` fixture. Each command ignores the global and system
+    git config (`GIT_CONFIG_GLOBAL` at the null device,
+    `GIT_CONFIG_NOSYSTEM=1`) and commits as a fixed identity; a failing
+    command panics with git's stderr unless the caller asked for its
+    `Output`.
   - `integration_harness.rs` — `IntegrationTestServer`: a real daemonized
-    agent plus a temp repository.
+    agent plus a temp repository, configured through `TestConfig`.
+  - `pty.rs` — `open_pty`, `spawn_reader_thread`, and deadline waits on a
+    pty child's output and exit (Unix).
   - `sgr.rs` — ANSI SGR interpreter for asserting rendered styles.
+  - `sigurg.rs` — `SigurgCounter`: installs a counting SIGURG handler and
+    restores the previous one on drop (Unix). The only place a test changes
+    a signal disposition.
   - `skip.rs` — `skip_test(reason)`.
   - `wait.rs` — `wait_until` / `wait_until_async`: poll a condition with a
     deadline.
-- `fixtures/` — `TestRepo`, `TestConfig`, IPC message builders, and the
-  base16/Starship input files the import golden tests read.
-- `test_harness.rs` — `SignalCounter` and `EventFlag` for waiting on signals
-  and events without fixed sleeps.
+- `fixtures/` — the base16/Starship input files the import golden tests read.
 - `snapshots/` — insta snapshots for the help and formatter tests.
 
 ## How the targets run
@@ -70,9 +81,10 @@ to the code in `src/`.
 ## Writing tests
 
 - Wait on a condition, not a duration: `wait_until`/`wait_until_async`,
-  `wait_for_socket`, `SignalCounter::wait_for_count`,
-  `EventFlag::wait_until_set`. A fixed sleep is only right when the test
+  `wait_for_socket`. A fixed sleep is only right when the test
   proves that something does *not* happen, and its comment should say so.
+- Build repositories with `common/git.rs`, never a bare
+  `Command::new("git")`, so the developer's git config cannot leak in.
 - Set environment variables through `EnvGuard` and mark the test
   `#[serial]`.
 - Unwrap setup with `.expect("...")`. A `let Ok(..) = .. else { return }`

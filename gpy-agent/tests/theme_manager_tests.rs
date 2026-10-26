@@ -8,13 +8,11 @@
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
-#![allow(
-    unsafe_code,
-    reason = "installing and restoring a SIGURG handler needs `nix::sys::signal::sigaction`, an unsafe fn"
-)]
 
 #[path = "common/env_guard.rs"]
 mod env_guard;
+#[path = "common/sigurg.rs"]
+mod sigurg;
 #[path = "common/wait.rs"]
 mod wait;
 
@@ -721,28 +719,10 @@ fn test_theme_hot_reload_triggers_on_file_change() {
 #[serial]
 fn test_theme_change_sends_reload() {
     use gpy_agent::ipc::ClientDirectory;
-    use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
+    use sigurg::SigurgCounter;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    static DOORBELL_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-    extern "C" fn count_doorbell(_signal: i32) {
-        DOORBELL_COUNTER.fetch_add(1, Ordering::Relaxed);
-    }
-
-    DOORBELL_COUNTER.store(0, Ordering::Relaxed);
-
-    let doorbell_handler = SigAction::new(
-        SigHandler::Handler(count_doorbell),
-        SaFlags::empty(),
-        SigSet::empty(),
-    );
-    // SAFETY: the handler only does a relaxed `fetch_add` on a static atomic, which is
-    // async-signal-safe, and the test is `#[serial]`, so no other test changes the
-    // SIGURG disposition while it is installed.
-    let previous =
-        unsafe { sigaction(Signal::SIGURG, &doorbell_handler) }.expect("install SIGURG handler");
+    let doorbell = SigurgCounter::install();
 
     let temp_dir = TempDir::new().expect("create temp dir");
     let config_home = temp_dir.path();
@@ -765,7 +745,7 @@ fn test_theme_change_sends_reload() {
     // Register this process
     client_registry.register(std::process::id(), Some(std::env::current_dir().unwrap()));
 
-    let initial_count = DOORBELL_COUNTER.load(Ordering::Relaxed);
+    let initial_count = doorbell.count();
 
     // Start watching; the reload hook rings the client registry's doorbell
     env.set("GPY_THEME_WATCH_POLL_MS", "25");
@@ -810,11 +790,11 @@ fail_text_color = "white"
     // the 100 ms interval exceeds the 50 ms debounce.
     let signaled = wait_until(Duration::from_secs(5), Duration::from_millis(100), || {
         fs::write(&theme_path, updated_theme).unwrap();
-        let signal_seen = DOORBELL_COUNTER.load(Ordering::Relaxed) > initial_count;
+        let signal_seen = doorbell.count() > initial_count;
         let theme = manager.get();
         signal_seen && theme.ui.prompt_icon == ">" && theme.segments.clock.bg_color == "red"
     });
-    let final_count = DOORBELL_COUNTER.load(Ordering::Relaxed);
+    let final_count = doorbell.count();
     assert!(signaled, "SIGURG doorbell should ring within timeout");
     assert!(
         final_count > initial_count,
@@ -833,13 +813,6 @@ fail_text_color = "white"
 
     // Stop watching
     manager.stop_watching();
-
-    // SAFETY: reinstalls the disposition saved at install time. SIGURG's default
-    // disposition is ignore, so restoring it is safe even if a late doorbell is
-    // still in flight from the watcher thread.
-    unsafe {
-        sigaction(Signal::SIGURG, &previous).expect("restore SIGURG");
-    }
 }
 
 #[test]
@@ -1052,28 +1025,10 @@ provided_segments = ["k8s-tools"]
 #[serial]
 fn test_switch_theme_preserves_reload_notifications() {
     use gpy_agent::ipc::ClientDirectory;
-    use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
+    use sigurg::SigurgCounter;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    static DOORBELL_COUNTER_AFTER_SWITCH: AtomicUsize = AtomicUsize::new(0);
-
-    extern "C" fn count_doorbell(_signal: i32) {
-        DOORBELL_COUNTER_AFTER_SWITCH.fetch_add(1, Ordering::Relaxed);
-    }
-
-    DOORBELL_COUNTER_AFTER_SWITCH.store(0, Ordering::Relaxed);
-
-    let doorbell_handler = SigAction::new(
-        SigHandler::Handler(count_doorbell),
-        SaFlags::empty(),
-        SigSet::empty(),
-    );
-    // SAFETY: the handler only does a relaxed `fetch_add` on a static atomic, which is
-    // async-signal-safe, and the test is `#[serial]`, so no other test changes the
-    // SIGURG disposition while it is installed.
-    let previous =
-        unsafe { sigaction(Signal::SIGURG, &doorbell_handler) }.expect("install SIGURG handler");
+    let doorbell = SigurgCounter::install();
 
     let temp_dir = TempDir::new().expect("create temp dir");
     let config_home = temp_dir.path().join("gpy");
@@ -1107,7 +1062,7 @@ fn test_switch_theme_preserves_reload_notifications() {
         .switch_theme("after_switch")
         .expect("switch theme should succeed");
 
-    let initial_count = DOORBELL_COUNTER_AFTER_SWITCH.load(Ordering::Relaxed);
+    let initial_count = doorbell.count();
     // The switch itself may already have requested a reload; clear its flag so
     // the assertion below observes the edit's reload.
     let _ = fs::remove_file(&reload_flag);
@@ -1119,7 +1074,7 @@ fn test_switch_theme_preserves_reload_notifications() {
     // wait before this edit has been read.
     let reloaded = wait_until(Duration::from_secs(2), Duration::from_millis(25), || {
         manager.get().ui.prompt_color.as_deref() == Some("green")
-            && DOORBELL_COUNTER_AFTER_SWITCH.load(Ordering::Relaxed) > initial_count
+            && doorbell.count() > initial_count
             && reload_flag.exists()
     });
     assert!(
@@ -1127,7 +1082,7 @@ fn test_switch_theme_preserves_reload_notifications() {
         "the edited theme should be reloaded after a switch"
     );
     assert!(
-        DOORBELL_COUNTER_AFTER_SWITCH.load(Ordering::Relaxed) > initial_count,
+        doorbell.count() > initial_count,
         "SIGURG doorbell should still ring after switch_theme"
     );
     assert!(
@@ -1137,14 +1092,6 @@ fn test_switch_theme_preserves_reload_notifications() {
 
     manager.stop_watching();
     client_registry.unregister(std::process::id());
-
-    // SAFETY: reinstalls the disposition saved at install time. SIGURG's default
-    // disposition is ignore, so restoring it is safe even if a late doorbell is
-    // still in flight.
-    unsafe {
-        sigaction(Signal::SIGURG, &previous).expect("restore SIGURG");
-    }
-
     let _ = default_path;
 }
 

@@ -2,7 +2,6 @@
 
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::unwrap_used)]
-#![allow(dead_code)]
 #![allow(clippy::uninlined_format_args)]
 #![allow(clippy::collapsible_match)]
 #![allow(clippy::collapsible_if)]
@@ -17,29 +16,71 @@
 #![allow(clippy::too_many_lines)]
 #![allow(clippy::cast_possible_truncation)]
 
-#[path = "skip.rs"]
-mod skip;
-
-use gpy_agent::ipc::ClientPid;
+use super::fixtures::TempSocket;
+use super::git::{TestRepo, git_output};
+use gpy_agent::config::Config;
 use gpy_agent::ipc::{Format, Message, Response};
 use gpy_agent::security::SafePath;
+use std::fs;
 use std::io;
-use std::path::Path;
-use std::process::{Child, Command};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::time::timeout;
 
-mod fixtures;
-use crate::fixtures::TestRepo;
-use fixtures::TempSocket;
+/// A [`Config`] the harness writes to a temp `config.toml` for the agent.
+pub struct TestConfig {
+    _dir: TempDir,
+    config_path: PathBuf,
+    config: Config,
+}
 
-#[allow(clippy::duplicate_mod)]
-#[path = "../fixtures/config_helpers.rs"]
-pub mod config_helpers;
-use config_helpers::TestConfig;
+impl TestConfig {
+    /// Default configuration.
+    pub fn new() -> Self {
+        let dir = TempDir::new().expect("Failed to create temp directory for config");
+        let config_path = dir.path().join("config.toml");
+        Self {
+            _dir: dir,
+            config_path,
+            config: Config::default(),
+        }
+    }
+
+    /// Path the configuration is written to.
+    pub fn path(&self) -> &Path {
+        &self.config_path
+    }
+
+    /// The configuration.
+    pub const fn config(&self) -> &Config {
+        &self.config
+    }
+
+    /// Write the configuration to [`path`](Self::path).
+    pub fn write(&self) -> &Self {
+        let toml_string =
+            toml::to_string(&self.config).expect("Failed to serialize config to TOML");
+        fs::write(&self.config_path, toml_string).expect("Failed to write config file");
+        self
+    }
+
+    /// Disable the git segment.
+    #[must_use]
+    pub const fn with_git_disabled(mut self) -> Self {
+        self.config.git.enabled = false;
+        self
+    }
+}
+
+impl Default for TestConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Encode a request as one `{"op":…}` JSON line; panics on variants the harness never sends.
 fn op_line(msg: &Message) -> String {
@@ -86,10 +127,9 @@ fn op_line(msg: &Message) -> String {
 
 /// Spawns a real agent process; resources are cleaned up on drop.
 pub struct IntegrationTestServer {
-    agent_process: Option<Child>,
     socket: TempSocket,
     repo: TestRepo,
-    config: TestConfig,
+    _config: TestConfig,
     _socket_dir: TempDir,
 }
 
@@ -100,14 +140,6 @@ pub enum GitChange {
     AddUntracked(String),
     /// Stage a file
     StageFile(String),
-    /// Commit staged changes
-    Commit(String),
-    /// Create a new branch
-    CreateBranch(String),
-    /// Checkout a branch
-    CheckoutBranch(String),
-    /// Modify a tracked file (unstaged)
-    ModifyFile(String, String),
 }
 
 /// Git status information
@@ -328,10 +360,9 @@ impl IntegrationTestServer {
 
         // Own the daemon now so `Drop` stops it even if readiness times out.
         let server = Self {
-            agent_process: None, // Agent is daemonized, we don't track its process
             socket,
             repo,
-            config,
+            _config: config,
             _socket_dir: socket_dir,
         };
 
@@ -360,18 +391,6 @@ impl IntegrationTestServer {
             }
             GitChange::StageFile(filename) => {
                 self.git_run(&["add", &filename])?;
-            }
-            GitChange::Commit(message) => {
-                self.git_run(&["commit", "-m", &message])?;
-            }
-            GitChange::CreateBranch(branch) => {
-                self.git_run(&["checkout", "-b", &branch])?;
-            }
-            GitChange::CheckoutBranch(branch) => {
-                self.git_run(&["checkout", &branch])?;
-            }
-            GitChange::ModifyFile(filename, content) => {
-                std::fs::write(self.repo.path().join(&filename), content)?;
             }
         }
         Ok(())
@@ -429,11 +448,6 @@ impl IntegrationTestServer {
         self.socket.path()
     }
 
-    /// Get reference to the test configuration
-    pub const fn config(&self) -> &TestConfig {
-        &self.config
-    }
-
     /// Send a ping request to the agent
     pub async fn ping(&self) -> io::Result<Response> {
         self.send_request(Message::Ping).await
@@ -446,10 +460,7 @@ impl IntegrationTestServer {
 
     /// Run a git command in the test repository
     fn git_run(&self, args: &[&str]) -> io::Result<()> {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(self.repo.path())
-            .output()?;
+        let output = git_output(self.repo.path(), args);
 
         if !output.status.success() {
             return Err(io::Error::new(
@@ -482,214 +493,5 @@ impl Drop for IntegrationTestServer {
         while self.socket.path().exists() && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(50));
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    #[serial_test::serial]
-    async fn test_harness_starts_and_stops() {
-        let result = IntegrationTestServer::new().await;
-
-        match result {
-            Ok(server) => {
-                assert!(
-                    server.socket_path().exists(),
-                    "Socket path should exist after server starts"
-                );
-                assert!(
-                    server.repo_path().exists(),
-                    "Repository path should exist after server starts"
-                );
-                assert!(
-                    server.assert_agent_alive().await.is_ok(),
-                    "Agent process should be alive after startup"
-                );
-            }
-            Err(e) => {
-                super::skip::skip_test(&format!("agent failed to start: {e}"));
-                return;
-            }
-        }
-    }
-
-    #[tokio::test]
-    #[serial_test::serial]
-    async fn test_harness_sends_ping() {
-        let result = IntegrationTestServer::new().await;
-
-        let server = match result {
-            Ok(s) => s,
-            Err(e) => {
-                super::skip::skip_test(&format!("agent failed to start: {e}"));
-                return;
-            }
-        };
-
-        let response = server.ping().await;
-        assert!(
-            response.is_ok(),
-            "Ping request should succeed, got error: {:?}",
-            response.err()
-        );
-
-        match response {
-            Ok(Response::Ack) => {}
-            Ok(other) => {
-                panic!("Expected Ack response to Ping message, got: {:?}", other);
-            }
-            Err(error) => {
-                panic!("Ping request should succeed, got error: {error}");
-            }
-        }
-    }
-
-    fn expect_test_safe_path(path: &str) -> SafePath {
-        match SafePath::new(path) {
-            Ok(safe_path) => safe_path,
-            Err(error) => panic!("Expected valid test path '{path}', got error: {error}"),
-        }
-    }
-
-    fn expect_test_client_pid(pid: u32) -> ClientPid {
-        match ClientPid::new(pid) {
-            Ok(client_pid) => client_pid,
-            Err(error) => panic!("Expected valid test pid '{pid}', got error: {error}"),
-        }
-    }
-
-    async fn expect_git_status(server: &IntegrationTestServer, context: &str) -> GitStatus {
-        match server.get_git_status().await {
-            Ok(status) => status,
-            Err(error) => panic!("{context}: {error}"),
-        }
-    }
-
-    async fn expect_registration(server: &IntegrationTestServer, message: Message, context: &str) {
-        match server.send_request(message).await {
-            Ok(Response::Ack) => {}
-            Ok(other) => {
-                panic!("{context}: expected Ack, got {other:?}");
-            }
-            Err(error) => panic!("{context}: {error}"),
-        }
-    }
-
-    #[tokio::test]
-    #[serial_test::serial]
-    async fn test_harness_git_status() {
-        let result = IntegrationTestServer::new().await;
-
-        let server = match result {
-            Ok(s) => s,
-            Err(e) => {
-                super::skip::skip_test(&format!("agent failed to start: {e}"));
-                return;
-            }
-        };
-
-        let status = expect_git_status(&server, "Git status request should succeed").await;
-        assert!(
-            !status.branch.is_empty(),
-            "Git status should include non-empty branch name, got: {:?}",
-            status.branch
-        );
-        assert_eq!(
-            status.staged, 0,
-            "New repository should have 0 staged files"
-        );
-        assert_eq!(
-            status.untracked, 0,
-            "New repository should have 0 untracked files"
-        );
-    }
-
-    /// Watcher-driven status updates reach a registered client end to end.
-    /// Serialized in `watcher_fsevents_bootstrap`: `FSEventStream` bootstraps must
-    /// not run concurrently across nextest processes.
-    #[tokio::test]
-    #[serial_test::serial]
-    #[serial_test::file_serial(watcher_fsevents_bootstrap)]
-    async fn test_harness_git_changes() {
-        let result = IntegrationTestServer::new().await;
-
-        let mut server = match result {
-            Ok(s) => s,
-            Err(e) => {
-                super::skip::skip_test(&format!("agent failed to start: {e}"));
-                return;
-            }
-        };
-
-        let pid = std::process::id();
-        let repo_path = server.repo_path().to_string_lossy().to_string();
-        let safe_path = expect_test_safe_path(&repo_path);
-
-        expect_registration(
-            &server,
-            Message::RegisterClient {
-                pid: expect_test_client_pid(pid),
-                cwd: Some(safe_path),
-                shell: None,
-                shell_version: None,
-            },
-            "Registration failed",
-        )
-        .await;
-
-        let initial = expect_git_status(&server, "Initial git status should succeed").await;
-        assert_eq!(
-            initial.untracked, 0,
-            "Initial repository should have 0 untracked files"
-        );
-
-        server
-            .trigger_git_change(GitChange::AddUntracked("test.txt".to_owned()))
-            .expect("Adding untracked file should succeed");
-
-        // Poll up to 6s for the watcher-driven update.
-        let mut status = expect_git_status(&server, "Git status after adding file").await;
-        for _ in 0_u32..30 {
-            if status.untracked == 1 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            status = expect_git_status(&server, "Polling git status for untracked file").await;
-        }
-
-        assert_eq!(
-            status.untracked, 1,
-            "After adding untracked file, should have 1 untracked file"
-        );
-
-        server
-            .trigger_git_change(GitChange::StageFile("test.txt".to_owned()))
-            .expect("Staging file should succeed");
-
-        status = expect_git_status(&server, "Git status after staging file").await;
-        for _ in 0_u32..30 {
-            if status.staged == 1 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            status = expect_git_status(&server, "Polling git status for staged file").await;
-        }
-
-        assert_eq!(
-            status.staged, 1,
-            "After staging file, should have 1 staged file"
-        );
-        assert_eq!(
-            status.untracked, 0,
-            "After staging file, should have 0 untracked files"
-        );
-
-        assert!(
-            server.assert_agent_alive().await.is_ok(),
-            "Agent should remain alive after git operations"
-        );
     }
 }

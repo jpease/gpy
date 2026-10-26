@@ -11,8 +11,8 @@
 
 mod common;
 
+use common::endpoint::{endpoint_builder, wait_for_socket};
 use common::fixtures::ServerGuard;
-use common::{endpoint_builder, wait_for_socket};
 use gpy_agent::Result;
 use std::path::Path;
 use std::time::Duration;

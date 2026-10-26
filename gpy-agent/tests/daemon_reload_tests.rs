@@ -7,21 +7,18 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
 #![allow(clippy::missing_panics_doc)]
-#![allow(
-    unsafe_code,
-    reason = "installing and restoring a SIGURG handler needs `nix::sys::signal::sigaction`, an unsafe fn"
-)]
 
 mod common;
 
-use common::{AgentStopGuard, CliTestEnv, wait_until};
+use common::child_guard::AgentStopGuard;
+use common::cli_harness::CliTestEnv;
+use common::sigurg::SigurgCounter;
+use common::wait::wait_until;
 use gpy_agent::ipc::protocol::CONFIG_RELOAD_JSON;
-use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// A running daemon on its own config tree, stopped on drop.
@@ -125,54 +122,21 @@ impl Daemon {
     }
 }
 
-static DOORBELLS: AtomicUsize = AtomicUsize::new(0);
-
-extern "C" fn count_doorbell(_signal: i32) {
-    DOORBELLS.fetch_add(1, Ordering::Relaxed);
-}
-
-/// This test process registered with the daemon as a shell, counting each
-/// `SIGURG` doorbell in its handler. A signal arriving while the handler runs
-/// stays pending and runs it again, so separate rings are never merged.
-struct DoorbellCounter {
-    previous: SigAction,
-}
-
-impl DoorbellCounter {
-    fn register(daemon: &Daemon) -> Self {
-        DOORBELLS.store(0, Ordering::Relaxed);
-        let handler = SigAction::new(
-            SigHandler::Handler(count_doorbell),
-            SaFlags::empty(),
-            SigSet::empty(),
-        );
-        // SAFETY: the handler only touches an atomic; restored on drop.
-        let previous = unsafe { sigaction(Signal::SIGURG, &handler) }.expect("install SIGURG");
-        let request = serde_json::json!({
-            "op": "register",
-            "pid": std::process::id(),
-            "cwd": daemon.cwd,
-        });
-        let response = daemon.request(&request.to_string());
-        assert!(
-            !response.contains("error"),
-            "registration failed: {response}"
-        );
-        Self { previous }
-    }
-
-    fn count() -> usize {
-        DOORBELLS.load(Ordering::Relaxed)
-    }
-}
-
-impl Drop for DoorbellCounter {
-    fn drop(&mut self) {
-        // SAFETY: restores the disposition `register` replaced.
-        unsafe {
-            let _ = sigaction(Signal::SIGURG, &self.previous);
-        }
-    }
+/// Register this test process with the daemon as a shell and count each
+/// `SIGURG` doorbell it rings.
+fn register_shell(daemon: &Daemon) -> SigurgCounter {
+    let doorbells = SigurgCounter::install();
+    let request = serde_json::json!({
+        "op": "register",
+        "pid": std::process::id(),
+        "cwd": daemon.cwd,
+    });
+    let response = daemon.request(&request.to_string());
+    assert!(
+        !response.contains("error"),
+        "registration failed: {response}"
+    );
+    doorbells
 }
 
 /// Theme `audit` colors the directory with the `signal` palette role.
@@ -363,11 +327,11 @@ fn watched_theme_edit_renders_promptly_and_rings_once() {
     )
     .expect("write config");
     let daemon = Daemon::start(env);
-    let _shell = DoorbellCounter::register(&daemon);
+    let shell = register_shell(&daemon);
     daemon.directory_matching_oneshot("before the edit");
     // Let registration settle and the watchers arm before editing.
     std::thread::sleep(Duration::from_millis(500));
-    let rang_before = DoorbellCounter::count();
+    let rang_before = shell.count();
 
     daemon.write(
         "themes/audit.toml",
@@ -386,7 +350,7 @@ fn watched_theme_edit_renders_promptly_and_rings_once() {
 
     std::thread::sleep(DOORBELL_WINDOW.saturating_sub(edited_at.elapsed()));
     assert_eq!(
-        DoorbellCounter::count().saturating_sub(rang_before),
+        shell.count().saturating_sub(rang_before),
         1,
         "reload doorbells for one theme edit"
     );

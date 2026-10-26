@@ -4,7 +4,6 @@
 //! [`interpret`] runs output containing SGR sequences and draws every visible
 //! character with the [`Look`] it ends up with. Included per test crate with
 //! `#[path = "common/sgr.rs"] mod sgr;`.
-#![allow(dead_code)]
 
 /// A color as a terminal would hold it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +47,7 @@ fn extended(codes: &mut impl Iterator<Item = u16>) -> Result<Shade, String> {
             .map(Shade::Indexed)
             .ok_or_else(|| "truncated 256-color operand".to_owned()),
         Some(2) => match (codes.next(), codes.next(), codes.next()) {
-            (Some(r), Some(g), Some(b)) => Ok(Shade::Rgb(r, g, b)),
+            (Some(red), Some(green), Some(blue)) => Ok(Shade::Rgb(red, green, blue)),
             _ => Err("truncated rgb operand".to_owned()),
         },
         other => Err(format!("unsupported extended-color selector {other:?}")),

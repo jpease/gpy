@@ -6,11 +6,13 @@
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::missing_errors_doc)]
 
+#[path = "common/git.rs"]
+mod git_helpers;
+
 use gpy_agent::git;
 use serial_test::serial;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use tempfile::TempDir;
 
 // Helper function to find repo root using the crate's shared finder
@@ -18,58 +20,11 @@ fn find_repo_root<P: AsRef<Path>>(path: P) -> Option<PathBuf> {
     git::find_repo_root(path.as_ref())
 }
 
-// Create a normal git repository for testing
-fn create_normal_repo(path: &Path) -> std::io::Result<()> {
-    // Initialize git repo
-    let output = Command::new("git")
-        .args(["init"])
-        .current_dir(path)
-        .output()?;
-
-    if !output.status.success() {
-        return Err(std::io::Error::other("Failed to initialize git repository"));
-    }
-
-    // Configure git user
-    Command::new("git")
-        .args(["config", "user.email", "test@example.com"])
-        .current_dir(path)
-        .output()?;
-
-    Command::new("git")
-        .args(["config", "user.name", "Test User"])
-        .current_dir(path)
-        .output()?;
-
-    // Create an initial commit
-    fs::write(path.join("README.md"), b"# Test Repo")?;
-    Command::new("git")
-        .args(["add", "."])
-        .current_dir(path)
-        .output()?;
-    Command::new("git")
-        .args(["commit", "-m", "Initial commit"])
-        .current_dir(path)
-        .output()?;
-
-    Ok(())
-}
-
-// Create a bare git repository for testing
-fn create_bare_repo(path: &Path) -> std::io::Result<()> {
-    let output = Command::new("git")
-        .args(["init", "--bare"])
-        .current_dir(path.parent().unwrap_or(path))
-        .arg(path)
-        .output()?;
-
-    if !output.status.success() {
-        return Err(std::io::Error::other(
-            "Failed to initialize bare git repository",
-        ));
-    }
-
-    Ok(())
+/// A repository at `path` with one commit.
+fn create_normal_repo(path: &Path) {
+    git_helpers::git_init(path);
+    fs::write(path.join("README.md"), b"# Test Repo").expect("write README.md");
+    git_helpers::git_commit_all(path, "Initial commit");
 }
 
 // Create a malicious repository with path traversal attempts
@@ -102,10 +57,7 @@ fn test_find_repo_root_normal_repo() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let temp_path = temp_dir.path();
 
-    // Skip if git not available
-    if create_normal_repo(temp_path).is_err() {
-        return;
-    }
+    create_normal_repo(temp_path);
 
     let result = find_repo_root(temp_path);
     assert!(result.is_some());
@@ -117,10 +69,7 @@ fn test_find_repo_root_bare_repo() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let bare_path = temp_dir.path().join("bare.git");
 
-    // Skip if git not available
-    if create_bare_repo(&bare_path).is_err() {
-        return;
-    }
+    git_helpers::git_bare(&bare_path);
 
     let result = find_repo_root(&bare_path);
     // Bare repos should still be discovered
@@ -133,10 +82,7 @@ fn test_find_repo_root_subdirectory() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let temp_path = temp_dir.path();
 
-    // Skip if git not available
-    if create_normal_repo(temp_path).is_err() {
-        return;
-    }
+    create_normal_repo(temp_path);
 
     // Create a subdirectory
     let subdir = temp_path.join("src").join("nested");
@@ -176,10 +122,7 @@ fn test_normalize_repo_path_removes_dots() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let temp_path = temp_dir.path();
 
-    // Skip if git not available
-    if create_normal_repo(temp_path).is_err() {
-        return;
-    }
+    create_normal_repo(temp_path);
 
     // Create a path with . and ..
     let dotted_path = temp_path.join("src").join("..").join(".");
@@ -202,10 +145,7 @@ fn test_find_repo_root_follows_symlinks_correctly() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let temp_path = temp_dir.path();
 
-    // Skip if git not available
-    if create_normal_repo(temp_path).is_err() {
-        return;
-    }
+    create_normal_repo(temp_path);
 
     // Create a symlink to the repo
     let link_path = temp_dir.path().join("link-to-repo");
@@ -237,16 +177,13 @@ fn test_find_repo_root_windows_junction() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let temp_path = temp_dir.path();
 
-    // Skip if git not available
-    if create_normal_repo(temp_path).is_err() {
-        return;
-    }
+    create_normal_repo(temp_path);
 
     // Create a junction (Windows directory symlink)
     let junction_path = temp_dir.path().join("junction-to-repo");
 
     // Use cmd.exe to create junction
-    let output = Command::new("cmd")
+    let output = std::process::Command::new("cmd")
         .args(["/C", "mklink", "/J"])
         .arg(&junction_path)
         .arg(temp_path)
@@ -294,10 +231,7 @@ fn test_find_repo_root_rejects_relative_traversal() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let temp_path = temp_dir.path();
 
-    // Skip if git not available
-    if create_normal_repo(temp_path).is_err() {
-        return;
-    }
+    create_normal_repo(temp_path);
 
     // Try to traverse outside the repo
     let traversal_path = temp_path.join("..").join("..").join("..");
