@@ -7,7 +7,6 @@
 //! independently of the template engine.
 
 #![allow(clippy::unwrap_used)]
-#![allow(clippy::missing_panics_doc)]
 
 use gpy_agent::config::Config;
 use gpy_agent::formatter::{Format, RenderContext, SegmentPosition, create_formatter};

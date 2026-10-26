@@ -1,7 +1,3 @@
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)]
-
 use super::*;
 use crate::watcher::DebouncedEvent;
 use std::collections::BTreeMap;

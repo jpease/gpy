@@ -319,7 +319,6 @@ pub use language_handler::LanguageHandler;
 pub use misc_handler::MiscHandler;
 
 #[cfg(test)]
-#[allow(clippy::missing_panics_doc)]
 mod tests {
     use super::{HandlerError, SharedJob, SingleFlight};
     use crate::sync_ext::MutexExt;

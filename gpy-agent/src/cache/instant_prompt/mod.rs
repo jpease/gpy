@@ -478,5 +478,4 @@ fn render_all_dialects(
 }
 
 #[cfg(test)]
-#[allow(clippy::missing_panics_doc)]
 mod tests;

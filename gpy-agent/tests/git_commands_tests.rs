@@ -1,7 +1,5 @@
 //! Git command execution and status detection against fixtures.
 
-#![allow(clippy::missing_panics_doc)]
-
 #[path = "common/git.rs"]
 mod git;
 

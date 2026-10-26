@@ -3,7 +3,6 @@
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
-#![allow(clippy::missing_panics_doc)] // Test functions panic on assertion failures
 
 use gpy_agent::config::types::ColorSpec;
 use gpy_agent::ipc::protocol::{

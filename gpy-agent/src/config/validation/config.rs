@@ -96,7 +96,6 @@ pub fn normalize_config(config: &mut crate::config::Config) -> Result<()> {
 }
 
 #[cfg(test)]
-#[allow(clippy::missing_panics_doc)]
 mod tests {
     use super::*;
 

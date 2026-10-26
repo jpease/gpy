@@ -5,7 +5,6 @@
 //! repo's shell trees, so the shipped layout is under test.
 
 #![cfg(unix)]
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 

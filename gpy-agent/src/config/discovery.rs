@@ -146,11 +146,6 @@ pub(crate) fn shadowed_provider(discovered: &[Discovered], name: &str) -> Option
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
 
     use super::{
         Discovered, Source, insert_builtins, insert_toml_dir, merge_candidate, toml_stems,

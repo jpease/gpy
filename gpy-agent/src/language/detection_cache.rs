@@ -92,7 +92,6 @@ impl DetectionCache {
 }
 
 #[cfg(test)]
-#[allow(clippy::missing_panics_doc)]
 mod tests {
     use super::*;
     use crate::language::DetectedLanguage;

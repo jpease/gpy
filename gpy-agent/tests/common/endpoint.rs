@@ -1,7 +1,6 @@
 //! In-process IPC server wiring shared by the `EndpointHandle` tests.
 
 #![allow(clippy::expect_used)]
-#![allow(clippy::missing_panics_doc)]
 
 use gpy_agent::cache::InstantPromptCache;
 use gpy_agent::config::manager::ConfigManager;

@@ -2,7 +2,6 @@
 
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::cast_precision_loss)]
 
 #[path = "common/git.rs"]

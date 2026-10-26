@@ -195,8 +195,6 @@ fn lookup<'map, V>(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(clippy::unwrap_used)]
     use super::*;
 
     #[test]

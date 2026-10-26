@@ -1,10 +1,4 @@
 #!/usr/bin/env fish
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
-#![allow(clippy::doc_markdown)]
-
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Scoped agent cleanup
 #

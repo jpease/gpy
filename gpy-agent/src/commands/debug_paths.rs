@@ -126,7 +126,6 @@ pub fn run(as_json: bool) {
 }
 
 #[cfg(test)]
-#[allow(clippy::missing_panics_doc)]
 mod tests {
     use super::{KEYS, resolved_paths};
 

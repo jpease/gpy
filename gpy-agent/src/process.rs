@@ -101,7 +101,6 @@ fn signal_process_group(raw_pid: u32, signal: nix::sys::signal::Signal) {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
     use std::process::Stdio;

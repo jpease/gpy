@@ -174,9 +174,6 @@ pub fn stashed_project_venv(repo_root: &Path) -> Option<PythonVenv> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
     use std::time::{Duration, SystemTime};

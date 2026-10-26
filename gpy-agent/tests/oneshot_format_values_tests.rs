@@ -1,6 +1,10 @@
 //! `--format` values offered by clap must be exactly the four rendered formats, and the oneshot help must list exactly those.
 
-#![allow(clippy::missing_panics_doc, clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "test helpers outside #[test] fns panic on failure"
+)]
 
 use clap::ValueEnum;
 use gpy_agent::formatter::Format;

@@ -236,11 +236,6 @@ impl HotReloadSlot {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
 
     use super::{HotReloadSlot, PollTarget, content_fingerprint};
     use crate::sync_ext::MutexExt;

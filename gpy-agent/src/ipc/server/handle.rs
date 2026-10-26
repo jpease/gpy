@@ -543,10 +543,11 @@ impl EndpointHandle {
 
 #[cfg(all(test, unix))]
 mod content_token_tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        reason = "cfg(all(test, unix)) is not recognized by clippy's in-tests config"
+    )]
 
     use super::content_token;
     use crate::git::{RepositoryState, RepositoryStatus};
@@ -595,10 +596,11 @@ mod content_token_tests {
 
 #[cfg(all(test, unix))]
 mod route_prev_bg_tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        reason = "cfg(all(test, unix)) is not recognized by clippy's in-tests config"
+    )]
 
     use super::*;
     use crate::formatter::Format;
@@ -771,11 +773,12 @@ mod route_prev_bg_tests {
 
 #[cfg(all(test, unix))]
 mod socket_ownership_tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        reason = "cfg(all(test, unix)) is not recognized by clippy's in-tests config"
+    )]
 
     use super::EndpointHandle;
     use crate::ipc::fixtures::{default_render_deps, endpoint_deps};
@@ -932,8 +935,10 @@ mod socket_ownership_tests {
 
 #[cfg(all(test, unix))]
 mod accept_error_tests {
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
+    #![allow(
+        clippy::expect_used,
+        reason = "cfg(all(test, unix)) is not recognized by clippy's in-tests config"
+    )]
 
     use super::{accept_error_is_fd_exhaustion, accept_error_is_transient};
     use std::io::{Error, ErrorKind};

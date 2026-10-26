@@ -4,8 +4,6 @@
     dead_code,
     reason = "included by several test binaries, each using a subset"
 )]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::missing_panics_doc)]
 
 use std::ffi::OsStr;
 use std::fs;

@@ -5,8 +5,6 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)] // Test functions don't need panic docs
-#![allow(clippy::missing_errors_doc)] // Test functions don't need error docs
 
 #[path = "common/env_guard.rs"]
 mod env_guard;

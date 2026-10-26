@@ -1,5 +1,3 @@
-#![allow(clippy::missing_panics_doc)]
-
 use super::refresh::{
     agent_refresh_required, git_refresh_required, language_refresh_required, ui_refresh_required,
 };

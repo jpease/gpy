@@ -160,7 +160,6 @@ pub(crate) fn marker_file_names() -> &'static std::collections::HashSet<&'static
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
 

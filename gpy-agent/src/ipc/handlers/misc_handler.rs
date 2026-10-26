@@ -69,8 +69,6 @@ impl RequestHandler for MiscHandler {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
     use crate::ipc::Segment;

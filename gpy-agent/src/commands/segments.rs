@@ -272,7 +272,6 @@ fn ensure_segment_known(segment: &str, enabling: bool) -> Result<()> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::missing_panics_doc)]
 mod tests {
     use super::*;
     use tempfile::TempDir;

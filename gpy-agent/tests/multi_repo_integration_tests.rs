@@ -2,7 +2,6 @@
 
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
-#![allow(clippy::missing_panics_doc)]
 
 #[path = "common/git.rs"]
 mod git_helpers;

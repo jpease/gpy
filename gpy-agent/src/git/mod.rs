@@ -320,9 +320,6 @@ impl StatusAggregate {
 }
 
 #[cfg(test)]
-#[allow(clippy::missing_panics_doc)]
-#[allow(clippy::unwrap_used)]
-#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 

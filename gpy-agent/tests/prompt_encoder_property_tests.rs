@@ -27,8 +27,6 @@
 
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::missing_errors_doc)]
 #![allow(clippy::many_single_char_names)]
 // Counterexample reports print the spans, encodings and expansions with `{:?}`.
 

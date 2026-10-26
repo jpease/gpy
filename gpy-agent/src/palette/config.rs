@@ -128,9 +128,6 @@ impl PaletteConfig {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
 
     use super::PaletteConfig;
     use crate::config::validation::colors::PALETTE_ROLE_COLORS;

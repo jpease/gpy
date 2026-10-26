@@ -335,11 +335,6 @@ pub(crate) fn pending_layout(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
 
     use super::{UserSetLayoutFields, pending_layout, user_set_layout_fields};
     use crate::config;

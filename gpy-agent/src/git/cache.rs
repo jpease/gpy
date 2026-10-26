@@ -384,7 +384,6 @@ impl Default for GitStatusCache {
 }
 
 #[cfg(test)]
-#[allow(clippy::missing_panics_doc)]
 mod tests {
     use super::GitStatusCache;
     use crate::cache::CachePolicy;

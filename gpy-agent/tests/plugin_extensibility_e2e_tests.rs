@@ -1,6 +1,10 @@
 //! End-to-end plugin tests: discovery, theme export, and Fish runtime loading.
 
-#![allow(clippy::expect_used, clippy::unwrap_used, clippy::missing_panics_doc)]
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "test helpers outside #[test] fns panic on failure"
+)]
 
 use gpy_agent::config::Config;
 use gpy_agent::shell::Shell;

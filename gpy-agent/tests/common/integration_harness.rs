@@ -1,6 +1,5 @@
 //! Spawns a real daemonized agent with a temp socket, git repo, and config.
 
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::uninlined_format_args)]
 #![allow(clippy::collapsible_match)]
@@ -9,7 +8,6 @@
 #![allow(clippy::io_other_error)]
 #![allow(clippy::cast_lossless)]
 #![allow(clippy::must_use_candidate)]
-#![allow(clippy::missing_errors_doc)]
 #![allow(clippy::let_unit_value)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]

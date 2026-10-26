@@ -1,9 +1,3 @@
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(missing_docs)]
-
 use super::shell_assignment::escape_shell_value;
 use super::theme_to_shell::{SEGMENT_BG_VARS, theme_to_shell};
 use crate::config::Config;

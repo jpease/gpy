@@ -449,9 +449,6 @@ pub fn normalize_language_name(detected_name: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
 

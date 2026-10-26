@@ -9,7 +9,6 @@
     unsafe_code,
     reason = "raising RLIMIT_NOFILE for the 250-connection test needs libc::getrlimit/setrlimit"
 )]
-#![allow(clippy::missing_panics_doc)] // Test functions panic on assertion failures
 
 mod common;
 
@@ -175,12 +174,11 @@ enum ConnectionOutcome {
 ///
 /// An ack proves a permit is held; connect success only proves the OS backlog accepted it.
 #[cfg(unix)]
-#[allow(clippy::unused_async)]
-async fn spawn_concurrent_connection_attempts(
+fn spawn_concurrent_connection_attempts(
     socket_path: &std::path::Path,
     count: usize,
-    active: Arc<std::sync::atomic::AtomicUsize>,
-    peak: Arc<std::sync::atomic::AtomicUsize>,
+    active: &Arc<std::sync::atomic::AtomicUsize>,
+    peak: &Arc<std::sync::atomic::AtomicUsize>,
 ) -> (
     Arc<tokio::sync::Barrier>,
     Vec<tokio::task::JoinHandle<ConnectionOutcome>>,
@@ -196,8 +194,8 @@ async fn spawn_concurrent_connection_attempts(
     for _ in 0_i32..i32::try_from(count).unwrap_or(i32::MAX) {
         let socket_path_clone = socket_path.to_path_buf();
         let barrier_clone = Arc::clone(&barrier);
-        let active_clone = Arc::clone(&active);
-        let peak_clone = Arc::clone(&peak);
+        let active_clone = Arc::clone(active);
+        let peak_clone = Arc::clone(peak);
         let handle = tokio::spawn(async move {
             barrier_clone.wait().await;
 
@@ -297,13 +295,8 @@ async fn test_concurrent_connection_limit() {
 
     let active = Arc::new(std::sync::atomic::AtomicUsize::new(0_usize));
     let peak = Arc::new(std::sync::atomic::AtomicUsize::new(0_usize));
-    let (barrier, handles) = spawn_concurrent_connection_attempts(
-        &socket_path,
-        250_usize,
-        Arc::clone(&active),
-        Arc::clone(&peak),
-    )
-    .await;
+    let (barrier, handles) =
+        spawn_concurrent_connection_attempts(&socket_path, 250_usize, &active, &peak);
     let _ = barrier.wait().await;
 
     // Admission fails fast; the timeout only catches a genuine hang.

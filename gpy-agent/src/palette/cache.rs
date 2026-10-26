@@ -43,10 +43,6 @@ impl PaletteCache {
 // Config-driven loading is tested in `tests/palette_manager_tests.rs` (needs empty XDG_CONFIG_HOME).
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::PaletteCache;
     use crate::config::Config;

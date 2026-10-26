@@ -1,6 +1,5 @@
 //! Parsing of shell names, the `ansi` format, and the `ansi` IPC format field.
 
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 

@@ -1,6 +1,5 @@
 //! IPC protocol edge cases.
 
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 

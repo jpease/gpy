@@ -120,7 +120,6 @@ pub fn reload_agent_and_notify() {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::*;
     use crate::config::discovery::Source;
 

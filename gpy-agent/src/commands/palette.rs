@@ -215,11 +215,6 @@ pub fn import(file: &Path, name_override: Option<&str>, force: bool) -> Result<(
 // a developer's own `palettes/default.toml` cannot shadow it.
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
 
     #[test]
     fn validate_target_rejects_unknown() {

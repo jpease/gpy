@@ -611,5 +611,4 @@ fn git_output_to_string(output: &std::process::Output) -> Result<String> {
 }
 
 #[cfg(test)]
-#[allow(clippy::missing_panics_doc)]
 mod tests;

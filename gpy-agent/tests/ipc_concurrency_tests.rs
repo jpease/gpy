@@ -8,8 +8,6 @@
 #![allow(clippy::panic)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::missing_errors_doc)]
 
 mod common;
 

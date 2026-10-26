@@ -104,12 +104,6 @@ fn slugify(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(clippy::missing_errors_doc)]
-    #![allow(missing_docs)]
     use super::to_palette_config;
     use crate::import::base16::parse_scheme;
 

@@ -1,11 +1,4 @@
 #!/usr/bin/env fish
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::create_dir)]
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
-#![allow(clippy::doc_markdown)]
-
 # SPDX-License-Identifier: GPL-3.0-or-later
 # E2E Test: Live Update Signal Flow & Agent Restart Handling
 #

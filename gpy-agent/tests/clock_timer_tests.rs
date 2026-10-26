@@ -4,8 +4,6 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::missing_errors_doc)]
 
 #[path = "common/sigurg.rs"]
 mod sigurg;

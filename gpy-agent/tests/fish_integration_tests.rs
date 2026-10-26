@@ -6,8 +6,6 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::missing_errors_doc)]
 
 use std::path::Path;
 use std::process::{Command, Stdio};

@@ -3,8 +3,6 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(missing_docs)]
 
 use std::fs;
 use std::path::PathBuf;

@@ -175,9 +175,6 @@ pub fn directory_is_read_only(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::{directory_is_read_only, read_small_file};
     #[cfg(unix)]

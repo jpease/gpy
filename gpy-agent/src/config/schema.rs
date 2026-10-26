@@ -197,7 +197,6 @@ mod config_path_tests {
 
 #[cfg(test)]
 mod resolve_active_config_tests {
-    #![allow(clippy::missing_panics_doc)]
 
     use super::resolve_active_config;
     use std::path::PathBuf;

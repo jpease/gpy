@@ -578,7 +578,6 @@ pub fn get_version_detectors() -> &'static Vec<Box<dyn ReleaseSource + Sync + Se
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
     #[cfg(unix)]

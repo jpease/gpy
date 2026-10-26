@@ -3,7 +3,6 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)] // Test functions panic on assertion failures
 
 use gpy_agent::config::{Config, loader};
 use std::fs;
@@ -27,35 +26,30 @@ fn setup_node_project(path: &Path) {
     fs::write(path.join("index.js"), "console.log('hello');").expect("Failed to write index.js");
 }
 
-#[allow(clippy::missing_panics_doc)]
 fn setup_python_project(path: &Path) {
     fs::write(path.join("requirements.txt"), "requests==2.28.0")
         .expect("Failed to write requirements.txt");
     fs::write(path.join("main.py"), "print('hello')").expect("Failed to write main.py");
 }
 
-#[allow(clippy::missing_panics_doc)]
 fn setup_rust_project(path: &Path) {
     fs::write(path.join("Cargo.toml"), r#"[package]\nname = "test""#)
         .expect("Failed to write Cargo.toml");
     fs::write(path.join("main.rs"), "fn main() {}").expect("Failed to write main.rs");
 }
 
-#[allow(clippy::missing_panics_doc)]
 fn setup_go_project(path: &Path) {
     fs::write(path.join("go.mod"), "module test").expect("Failed to write go.mod");
     fs::write(path.join("main.go"), "package main\nfunc main() {}")
         .expect("Failed to write main.go");
 }
 
-#[allow(clippy::missing_panics_doc)]
 fn setup_swift_project(path: &Path) {
     fs::write(path.join("Package.swift"), "// swift-tools-version:5.0")
         .expect("Failed to write Package.swift");
     fs::write(path.join("main.swift"), "print(\"hello\")").expect("Failed to write main.swift");
 }
 
-#[allow(clippy::missing_panics_doc)]
 fn setup_elixir_project(path: &Path) {
     fs::write(path.join("mix.exs"), "defmodule Test.MixProject do\nend")
         .expect("Failed to write mix.exs");
@@ -63,34 +57,29 @@ fn setup_elixir_project(path: &Path) {
     fs::write(path.join("lib/test.ex"), "defmodule Test do\nend").expect("Failed to write test.ex");
 }
 
-#[allow(clippy::missing_panics_doc)]
 fn setup_erlang_project(path: &Path) {
     fs::write(path.join("rebar.config"), "{erl_opts, []}.").expect("Failed to write rebar.config");
     fs::create_dir_all(path.join("src")).expect("Failed to create src directory");
     fs::write(path.join("src/test.erl"), "-module(test).").expect("Failed to write test.erl");
 }
 
-#[allow(clippy::missing_panics_doc)]
 fn setup_ruby_project(path: &Path) {
     fs::write(path.join("Gemfile"), "source 'https://rubygems.org'")
         .expect("Failed to write Gemfile");
     fs::write(path.join("app.rb"), "puts 'hello'").expect("Failed to write app.rb");
 }
 
-#[allow(clippy::missing_panics_doc)]
 fn setup_java_project(path: &Path) {
     fs::write(path.join("pom.xml"), "<project></project>").expect("Failed to write pom.xml");
     fs::write(path.join("Main.java"), "public class Main {}").expect("Failed to write Main.java");
 }
 
-#[allow(clippy::missing_panics_doc)]
 fn setup_fish_project(path: &Path) {
     fs::create_dir_all(path.join("functions")).expect("Failed to create functions directory");
     fs::write(path.join("functions/test.fish"), "function test\nend")
         .expect("Failed to write test.fish");
 }
 
-#[allow(clippy::missing_panics_doc)]
 fn create_language_test_dir(language: &str) -> TempDir {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let path = temp_dir.path();

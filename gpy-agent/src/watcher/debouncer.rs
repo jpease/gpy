@@ -201,8 +201,6 @@ impl DebounceEngine {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::missing_panics_doc)]
     use super::*;
     use crate::watcher::{FileEvent, GitPaths, PendingEvent};
     use std::path::{Path, PathBuf};

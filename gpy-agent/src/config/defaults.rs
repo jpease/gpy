@@ -68,3 +68,4 @@ pub const STARSHIP_PALETTE_CONTENT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../config/palettes/starship.toml"
 ));
+

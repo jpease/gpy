@@ -2,7 +2,6 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)]
 
 use gpy_agent::template::{MapResolver, RenderContext, Span, render};
 

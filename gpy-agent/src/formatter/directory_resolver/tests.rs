@@ -4,7 +4,6 @@
     clippy::panic,
     clippy::missing_panics_doc
 )]
-#![allow(clippy::missing_errors_doc)]
 
 use super::{DirectoryEnv, DirectoryResolver};
 use crate::config::Config;

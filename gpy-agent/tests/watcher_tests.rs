@@ -3,7 +3,6 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::doc_markdown)] // watcher API paths include socket filenames that aren't Markdown links
 
 #[path = "common/git.rs"]

@@ -111,8 +111,6 @@ pub fn drop_file_details_to_budget<K, V, R>(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::{drop_file_details_to_budget, evict_to_capacity};
     use std::collections::HashMap;

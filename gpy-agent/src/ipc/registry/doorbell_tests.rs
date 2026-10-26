@@ -1,4 +1,7 @@
-#![allow(clippy::expect_used, clippy::missing_panics_doc)]
+#![allow(
+    clippy::expect_used,
+    reason = "cfg(all(test, unix)) is not recognized by clippy's in-tests config"
+)]
 
 use super::{ClientDirectory, ShellFlag};
 use std::path::Path;

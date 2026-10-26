@@ -293,8 +293,6 @@ impl RequestHandler for LanguageHandler {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
     use super::*;
     use crate::cache::InstantPromptCache;
     use crate::config::Config;

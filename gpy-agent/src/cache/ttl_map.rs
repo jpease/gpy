@@ -157,9 +157,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
 

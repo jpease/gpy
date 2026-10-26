@@ -150,9 +150,6 @@ impl GitSettings {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
 

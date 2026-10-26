@@ -105,9 +105,11 @@ pub const fn clock_signal_decision(
 
 #[cfg(all(test, unix))]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        reason = "cfg(all(test, unix)) is not recognized by clippy's in-tests config"
+    )]
 
     use super::*;
     use nix::sys::signal::{Signal, raise};

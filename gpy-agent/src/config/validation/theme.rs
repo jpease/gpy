@@ -79,8 +79,6 @@ fn validate_plugin_segment_names<'a>(keys: impl Iterator<Item = &'a String>) -> 
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::validate_theme_config;
     use crate::theme::ThemeConfig;

@@ -313,10 +313,6 @@ pub fn parse_v2_changed_line(line: &str) -> Option<ParsedChangedFile> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
-#[allow(clippy::expect_used)]
-#[allow(clippy::panic)]
-#[allow(clippy::missing_panics_doc)]
 mod tests {
     use super::*;
 

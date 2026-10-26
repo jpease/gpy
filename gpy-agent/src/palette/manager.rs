@@ -146,7 +146,6 @@ impl PaletteManager {
 // Builtin loading/discovery is tested in `tests/palette_manager_tests.rs` (needs empty XDG_CONFIG_HOME).
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::missing_panics_doc)]
 
     use super::PaletteManager;
 

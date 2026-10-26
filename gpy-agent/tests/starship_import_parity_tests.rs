@@ -9,11 +9,8 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)]
 // Lints on the shared SGR interpreter (`common/sgr.rs`) this crate includes.
 #![allow(clippy::many_single_char_names)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(missing_docs)]
 
 use std::fs;
 use std::path::Path;

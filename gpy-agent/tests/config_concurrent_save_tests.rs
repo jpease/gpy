@@ -11,7 +11,6 @@
     reason = "test code: a failed expect is the failure"
 )]
 #![allow(clippy::panic, reason = "test code: a panic is the failure")]
-#![allow(clippy::missing_panics_doc, reason = "tests have no callers")]
 
 use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};

@@ -6,8 +6,6 @@
 #![cfg(unix)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::missing_panics_doc)]
 
 mod common;
 
@@ -60,9 +58,8 @@ async fn test_socket_permissions() -> Result<()> {
 }
 
 /// Test socket binding to different paths and error handling
-#[tokio::test]
-#[allow(clippy::unused_async)]
-async fn test_socket_binding_variations() -> Result<()> {
+#[test]
+fn test_socket_binding_variations() -> Result<()> {
     let temp_dir = tempdir()?;
 
     // Normal socket path

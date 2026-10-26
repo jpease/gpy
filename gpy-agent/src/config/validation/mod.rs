@@ -160,10 +160,6 @@ impl From<ValidationError> for Error {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
     #![allow(clippy::too_many_lines)]
 
     use super::{ValidationError, ValidationErrorKind};

@@ -4,7 +4,6 @@
 #![allow(clippy::bool_comparison)]
 #![allow(clippy::single_match_else)]
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)]
 
 use gpy_agent::config::loader::{load_config_from_file, parse_config_toml, save_config};
 use gpy_agent::config::schema::get_config_paths;

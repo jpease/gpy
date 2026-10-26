@@ -58,7 +58,6 @@ fn best_match(query_lower: &[char], candidate: &str) -> Option<MatchScore> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
 

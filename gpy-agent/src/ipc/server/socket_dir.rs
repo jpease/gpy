@@ -108,10 +108,11 @@ fn secure_dir_for_uid(dir: &Path, uid: u32, repair: DirRepair) -> Result<()> {
 
 #[cfg(all(test, unix))]
 mod socket_dir_trust_tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        reason = "cfg(all(test, unix)) is not recognized by clippy's in-tests config"
+    )]
 
     use super::{DirRepair, secure_dir_for_uid};
     use std::fs;

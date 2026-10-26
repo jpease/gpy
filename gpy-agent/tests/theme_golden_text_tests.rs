@@ -4,9 +4,6 @@
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(missing_docs)]
 
 use gpy_agent::config::Config;
 use gpy_agent::formatter::{Formatter, RenderContext, SegmentPosition};

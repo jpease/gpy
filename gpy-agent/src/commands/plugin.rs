@@ -516,7 +516,6 @@ pub fn new(id: &str, segment_name: Option<&str>) -> Result<()> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::missing_panics_doc)]
 mod tests {
     use super::*;
     use std::fs;

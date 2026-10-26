@@ -1,7 +1,5 @@
 //! End-to-end CLI tests for `gpy-agent` and `gpy`.
 
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 
@@ -143,7 +141,6 @@ edition = "2021"
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_help_command() {
     let (exit_code, stdout, _stderr) = run_gpy_agent(&["--help"]);
 
@@ -164,7 +161,6 @@ fn test_cli_help_command() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_version_command() {
     let (exit_code, stdout, _stderr) = run_gpy_agent(&["--version"]);
 
@@ -173,7 +169,6 @@ fn test_cli_version_command() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_git_current_repo() {
     let temp_repo = create_test_git_repo().expect("Failed to create test git repo");
     let temp_path = temp_repo.path();
@@ -195,7 +190,6 @@ fn test_cli_oneshot_git_current_repo() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_git_with_custom_path() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
@@ -250,7 +244,6 @@ fn test_cli_oneshot_git_ignores_inherited_git_dir() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_git_non_git_directory() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
@@ -357,7 +350,6 @@ fn test_cli_start_is_unsupported_on_native_windows() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_git_succeeds_when_agent_disabled() {
     const DISABLED_CONFIG: &str = r#"
 [agent]
@@ -402,7 +394,6 @@ enabled_segments = ["clock", "duration", "directory", "git"]
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_theme_export_respects_supervisor_settings() {
     const SUPERVISOR_CONFIG: &str = r#"
 [agent]
@@ -523,7 +514,6 @@ enabled_segments = ["directory", "git"]
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_lang_current_repo() {
     let temp_project = create_test_rust_project().expect("Failed to create test Rust project");
     let temp_path = temp_project.path();
@@ -542,7 +532,6 @@ fn test_cli_oneshot_lang_current_repo() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_lang_rust_project() {
     // The crate root has a Cargo.toml.
     let (exit_code, stdout, stderr) = run_gpy_agent(&["oneshot", "lang", "--cwd", "."]);
@@ -559,7 +548,6 @@ fn test_cli_oneshot_lang_rust_project() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_invalid_command() {
     let (exit_code, _stdout, stderr) = run_gpy_agent(&["invalid-command"]);
 
@@ -571,7 +559,6 @@ fn test_cli_invalid_command() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_missing_operation() {
     let (exit_code, _stdout, stderr) = run_gpy_agent(&["oneshot"]);
 
@@ -580,7 +567,6 @@ fn test_cli_oneshot_missing_operation() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_invalid_operation() {
     let (exit_code, _stdout, stderr) = run_gpy_agent(&["oneshot", "invalid-op"]);
 
@@ -609,7 +595,6 @@ fn test_cli_oneshot_character_accepts_negative_exit_code() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_oneshot_git_invalid_path() {
     let (exit_code, stdout, _stderr) = run_gpy_agent(&[
         "oneshot",
@@ -697,7 +682,6 @@ fn test_cli_oneshot_git_error_renders_empty_prompt_segment() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_with_complex_paths() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let temp_path = temp_dir.path();
@@ -728,7 +712,6 @@ fn test_cli_with_complex_paths() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_status_command() {
     let (exit_code, stdout, stderr) = run_gpy_agent(&["status"]);
 
@@ -744,7 +727,6 @@ fn test_cli_status_command() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_concurrent_oneshot_commands() {
     use std::thread;
 
@@ -780,7 +762,6 @@ fn test_cli_concurrent_oneshot_commands() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_cli_git_status_json_format() {
     let temp_repo = create_test_git_repo().expect("Failed to create test git repo");
     let temp_path = temp_repo.path();
@@ -808,7 +789,6 @@ fn test_cli_git_status_json_format() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_theme_export_includes_icon_prompt() {
     let (exit_code, stdout, stderr) = run_gpy_agent(&["theme", "export", "--format", "fish"]);
 
@@ -843,7 +823,6 @@ fn test_theme_export_includes_icon_prompt() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_fish_rendered_delimiter_when_not_last_git() {
     let temp_repo = create_test_git_repo().expect("Failed to create test git repo");
     let temp_path = temp_repo.path();
@@ -865,7 +844,6 @@ fn test_fish_rendered_delimiter_when_not_last_git() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_fish_rendered_delimiter_when_is_last_git() {
     let temp_repo = create_test_git_repo().expect("Failed to create test git repo");
     let temp_path = temp_repo.path();
@@ -887,7 +865,6 @@ fn test_fish_rendered_delimiter_when_is_last_git() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_fish_rendered_delimiter_when_not_last_lang() {
     let temp_project = create_test_rust_project().expect("Failed to create test Rust project");
     let temp_path = temp_project.path();
@@ -912,7 +889,6 @@ fn test_fish_rendered_delimiter_when_not_last_lang() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_fish_rendered_delimiter_when_is_last_lang() {
     let temp_project = create_test_rust_project().expect("Failed to create test Rust project");
     let temp_path = temp_project.path();
@@ -939,7 +915,6 @@ fn test_fish_rendered_delimiter_when_is_last_lang() {
 /// A quarantined/SIGKILLed binary used to export nothing, leaving Fish
 /// colors unset.
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_theme_export_produces_non_empty_output() {
     let (exit_code, stdout, stderr) = run_gpy_agent(&["theme", "export", "--format", "fish"]);
 
@@ -982,7 +957,6 @@ fn test_theme_export_produces_non_empty_output() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_theme_export_fish_syntax_valid() {
     let (exit_code, stdout, _stderr) = run_gpy_agent(&["theme", "export", "--format", "fish"]);
 
@@ -1012,7 +986,6 @@ fn test_theme_export_fish_syntax_valid() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_theme_export_respects_xdg_config_home() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let temp_path = temp_dir.path();
@@ -1308,7 +1281,6 @@ fn test_cli_oneshot_hostname_leading_space_not_doubled_by_empty_symbol() {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_theme_export_contains_enabled_segments_from_config() {
     let (exit_code, stdout, stderr) = run_gpy_agent(&["theme", "export", "--format", "fish"]);
     assert_eq!(exit_code, 0_i32, "theme export failed: {stderr}");
@@ -1353,7 +1325,6 @@ fn has_ansi_background_colors(output: &str) -> bool {
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_fish_rendered_uses_theme_colors_not_default() {
     let temp_repo = create_test_git_repo().expect("Failed to create test git repo");
     let temp_path = temp_repo.path();
@@ -1394,7 +1365,6 @@ fn test_fish_rendered_uses_theme_colors_not_default() {
 
 /// With git disabled, directory becomes last and must use `prompt_close`.
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_theme_export_delimiter_selection_after_git_disabled() {
     const CONFIG_GIT_DISABLED: &str = r#"
 [agent]
@@ -1434,7 +1404,6 @@ enabled_segments = ["clock", "directory", "git"]
 }
 
 #[test]
-#[allow(clippy::unwrap_used)]
 fn test_config_hot_reload_git_toggle_full_scenario() {
     const CONFIG_GIT_ENABLED: &str = r#"
 [git]

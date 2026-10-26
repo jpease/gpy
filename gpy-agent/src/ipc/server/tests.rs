@@ -133,7 +133,6 @@ fn git_status_message(path: crate::security::SafePath) -> Message {
     }
 }
 
-#[allow(clippy::missing_panics_doc)]
 fn build_test_endpoint(
     sock_name: &str,
     config_dir: &Path,

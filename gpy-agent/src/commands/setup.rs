@@ -725,10 +725,6 @@ fn print_next_steps(shell: Shell, rc_file: &Path, login_shell: Option<&str>) {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
 
     use super::*;
 

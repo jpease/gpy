@@ -100,7 +100,6 @@ pub fn warn_fallback(component: &str, fallback_action: &str, error: &dyn std::er
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::missing_panics_doc)]
 
     use super::{append_to, format_line};
     use std::fs;

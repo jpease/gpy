@@ -40,7 +40,6 @@ pub fn is_wsl() -> bool {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::missing_panics_doc)]
 
     use super::{detect, kernel_release_is_wsl};
 

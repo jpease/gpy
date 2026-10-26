@@ -1,5 +1,3 @@
-#![allow(clippy::missing_panics_doc)]
-
 use super::registry::{
     is_common_gitdir_significant_relative, is_git_significant_relative, split_at_git_dir_modules,
 };

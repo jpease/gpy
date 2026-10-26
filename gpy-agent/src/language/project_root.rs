@@ -120,8 +120,6 @@ fn has_marker_file(dir: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
 

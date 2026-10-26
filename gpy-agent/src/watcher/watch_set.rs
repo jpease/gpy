@@ -174,9 +174,6 @@ impl WatchSet {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
-#[allow(clippy::expect_used)]
-#[allow(clippy::missing_panics_doc)]
 mod tests {
     use super::*;
 

@@ -1,8 +1,6 @@
+
 /// Reconcile ticks skipped during an in-flight scan are caught up afterwards, never concurrently.
 mod reconcile_scan_tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::super::{PathBuf, run_reconcile_scan};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -217,9 +215,6 @@ mod reconcile_scan_tests {
 
 /// Registry and watcher agree after every prune, even when a broadcast dropped clients from the registry alone.
 mod prune_reconcile_tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::super::{Arc, Mutex, PathBuf, prune_dead_clients};
     use super::super::{ClientDirectory, SharedWatcherSlot, WatcherConfig};

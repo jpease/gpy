@@ -39,7 +39,6 @@ pub fn run(kind: CompleteKind) {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::missing_panics_doc)]
 mod tests {
     use super::*;
 

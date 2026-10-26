@@ -1,7 +1,6 @@
 //! Instant-prompt cache population through the IPC handlers: `GitHandler`
 //! writes it on every status request, and `ClientHandler` scans on register.
 
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]

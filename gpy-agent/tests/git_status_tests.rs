@@ -4,7 +4,6 @@
 
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
-#![allow(clippy::missing_panics_doc)]
 
 use gpy_agent::config::types::GitTimeout;
 use gpy_agent::git::{

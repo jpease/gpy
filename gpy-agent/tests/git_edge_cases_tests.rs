@@ -1,7 +1,5 @@
 //! Unusual git repository states.
 
-#![allow(clippy::missing_panics_doc)]
-
 #[path = "common/git.rs"]
 mod git;
 

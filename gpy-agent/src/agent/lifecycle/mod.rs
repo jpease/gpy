@@ -808,11 +808,12 @@ mod version_order_tests {
 
 #[cfg(all(test, unix))]
 mod stale_socket_tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(missing_docs)]
+    #![allow(
+        clippy::panic,
+        clippy::expect_used,
+        clippy::unwrap_used,
+        reason = "cfg(all(test, unix)) is not recognized by clippy's in-tests config"
+    )]
 
     // `check_and_cleanup_socket` retries are tested in `tests/stale_socket_tests.rs`,
     // which needs `unsafe` env mutation the lib denies.

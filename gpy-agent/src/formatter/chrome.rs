@@ -86,7 +86,6 @@ impl<'a> SegmentChrome<'a> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, reason = "a failed unwrap is the test failure")]
 
     use super::SegmentChrome;
     use crate::formatter::SegmentPosition;

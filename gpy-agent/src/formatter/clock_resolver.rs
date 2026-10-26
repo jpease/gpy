@@ -95,9 +95,6 @@ impl VariableResolver for ClockResolver<'_> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(clippy::missing_errors_doc)]
 
     use super::ClockResolver;
     use crate::config::Config;

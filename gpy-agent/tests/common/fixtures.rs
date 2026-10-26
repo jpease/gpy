@@ -3,10 +3,8 @@
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::io_other_error)]
 #![allow(clippy::if_not_else)]
-#![allow(clippy::missing_errors_doc)]
 #![allow(clippy::derivable_impls)]
 #![allow(clippy::unused_self)]
 

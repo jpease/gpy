@@ -1,10 +1,3 @@
-#![allow(clippy::unwrap_used)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::panic)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(missing_docs)]
-
 use super::*;
 use crate::shell::Shell;
 

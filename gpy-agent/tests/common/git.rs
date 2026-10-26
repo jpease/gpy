@@ -8,7 +8,6 @@
     reason = "included by several test and bench binaries, each using a subset"
 )]
 #![allow(clippy::expect_used)]
-#![allow(clippy::missing_panics_doc)]
 
 use std::fs;
 use std::path::{Path, PathBuf};

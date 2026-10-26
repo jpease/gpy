@@ -5,7 +5,6 @@
 //! These tests point the process-global `XDG_CONFIG_HOME` (and related keys)
 //! at temp directories through [`EnvGuard`], and run `#[serial]` so no two
 //! tests observe each other's environment.
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
 
@@ -38,7 +37,6 @@ fn create_test_theme_toml(dir: &Path, theme_name: &str, content: &str) -> PathBu
 }
 
 // Minimal valid theme TOML
-#[allow(clippy::needless_raw_string_hashes)] // Required: string contains '"#' which needs r##
 const MINIMAL_THEME: &str = r##"
 [ui]
 prompt_icon = "❯"
@@ -75,8 +73,7 @@ text_color = "white"
 "##;
 
 // Theme with custom colors for testing
-#[allow(clippy::needless_raw_string_hashes)] // Consistency: keeping same delimiter as MINIMAL_THEME
-const CUSTOM_THEME: &str = r##"
+const CUSTOM_THEME: &str = r#"
 [ui]
 prompt_icon = "→"
 root_prompt_icon = "⚡"
@@ -116,12 +113,11 @@ dirty_text_color = "black"
 [segments.language]
 bg_color = "magenta"
 text_color = "white"
-"##;
+"#;
 
 // Theme with an explicit hostname format/icon/trim_at for testing the
 // Option-derived hostname exports (format/icon present-but-empty when unset
 // elsewhere; non-empty here).
-#[allow(clippy::needless_raw_string_hashes)] // Consistency: keeping same delimiter as MINIMAL_THEME
 const HOSTNAME_THEME: &str = r##"
 [ui]
 prompt_icon = "❯"
@@ -136,7 +132,6 @@ trim_at = ""
 show_always = true
 "##;
 
-#[allow(clippy::needless_raw_string_hashes)] // Keep delimiter style consistent with other test themes
 const PLUGIN_SEGMENT_THEME: &str = r##"
 [ui]
 prompt_icon = "→"

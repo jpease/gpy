@@ -47,8 +47,6 @@ pub fn save(state: &WizardState) -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
     use crate::commands::wizard::state::{SegmentEdit, WizardState};

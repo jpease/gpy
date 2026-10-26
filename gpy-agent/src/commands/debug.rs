@@ -86,10 +86,6 @@ async fn send_request(stream: &mut UnixStream, msg: &serde_json::Value) -> Resul
 ///
 /// # Errors
 /// Returns an error if the agent is not running or IPC fails.
-#[expect(
-    clippy::print_stdout,
-    reason = "this is an interactive CLI debug command; its whole output is timing results printed to stdout"
-)]
 #[cfg(unix)]
 #[allow(
     clippy::use_debug,
@@ -166,10 +162,6 @@ pub fn prompt() -> Result<()> {
 ///
 /// # Errors
 /// Never returns an error on this platform.
-#[expect(
-    clippy::print_stdout,
-    reason = "this is an interactive CLI stub message printed to stdout, matching the Unix variant's output channel"
-)]
 #[cfg(not(unix))]
 pub fn prompt() -> Result<()> {
     println!("Prompt timing debugger is not available on native Windows; run under WSL.");

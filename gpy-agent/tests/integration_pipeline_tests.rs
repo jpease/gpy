@@ -4,7 +4,6 @@
 
 // The agent's IPC is Unix-socket only; native Windows is CLI-only.
 #![cfg(unix)]
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::uninlined_format_args)]

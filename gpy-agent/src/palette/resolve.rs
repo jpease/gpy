@@ -47,10 +47,6 @@ pub fn palette_by_name(name: &str) -> Palette {
 // Builtin default resolution is tested in `tests/palette_manager_tests.rs`.
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::{active_palette, load_palette, palette_by_name};
     use crate::config::Config;

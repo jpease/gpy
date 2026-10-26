@@ -62,10 +62,6 @@ pub fn validate_color(value: &str, field: &str, source: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
     use super::{canonical_color, is_valid_color};
     use crate::template::canonical_ansi_name;
     use crate::template::style::{ANSI_BASE_WORDS, BRIGHT_PREFIXES};

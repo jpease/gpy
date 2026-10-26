@@ -343,10 +343,6 @@ fn any_var_nonempty(nodes: &[Node], ctx: &RenderContext<'_>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::{
         MapResolver, RenderContext, Span, VariableResolver, check_template_controls, render,

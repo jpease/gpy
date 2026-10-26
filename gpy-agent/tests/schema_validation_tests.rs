@@ -1,6 +1,5 @@
 //! Documented JSON examples round-trip and match the protocol schemas.
 
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::unwrap_used)]
 
 use gpy_agent::ipc::Response;

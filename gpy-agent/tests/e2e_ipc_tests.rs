@@ -6,8 +6,6 @@
 #![allow(clippy::panic)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
-#![allow(clippy::missing_panics_doc)] // Test functions panic on assertion failures
-#![allow(clippy::missing_errors_doc)]
 
 mod common;
 

@@ -115,8 +115,6 @@ impl VariableResolver for LanguageResolver<'_> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::LanguageResolver;
     use crate::config::Config;

@@ -182,8 +182,6 @@ fn detect_from_platform() -> FontCapability {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    #![allow(missing_docs)]
 
     use super::*;
     use std::fs;

@@ -438,8 +438,6 @@ fn section_block(title: &str, focused: bool, accent: Option<RatatuiColor>) -> Bl
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
     use crate::config::Config;

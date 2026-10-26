@@ -2,7 +2,6 @@
 
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
-#![allow(clippy::missing_panics_doc)]
 
 use gpy_agent::config::Config;
 use gpy_agent::config::validation::colors::{canonical_color, is_valid_color};

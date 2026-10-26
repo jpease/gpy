@@ -563,7 +563,6 @@ pub fn start_background_agent() -> Result<()> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::missing_panics_doc)]
 mod tests {
     #[cfg(unix)]
     /// Seed `dir` with one tracking file per PID, as Fish does.

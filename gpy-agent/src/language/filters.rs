@@ -191,7 +191,6 @@ pub(super) fn exclusion_overrides(root: &Path) -> Override {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::missing_panics_doc)]
 
     use super::*;
 

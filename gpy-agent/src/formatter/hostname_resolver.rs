@@ -78,9 +78,6 @@ impl VariableResolver for HostnameResolver<'_> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
-    #![allow(clippy::missing_errors_doc)]
 
     use super::HostnameResolver;
     use crate::config::Config;

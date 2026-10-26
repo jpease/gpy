@@ -277,10 +277,6 @@ pub fn config_color_name(name: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-    #![allow(clippy::expect_used)]
-    #![allow(clippy::panic)]
-    #![allow(clippy::missing_panics_doc)]
 
     use super::{Attr, Color, Style, parse_style};
 

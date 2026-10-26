@@ -359,7 +359,6 @@ pub fn discover_plugins() -> PluginDiscovery {
 }
 
 #[cfg(test)]
-#[allow(clippy::missing_panics_doc, clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::fs;

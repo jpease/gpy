@@ -2,8 +2,6 @@
 //! the clean-env status, and the agent writes no config it wasn't asked to.
 //! The hostile env goes only to the `gpy-agent` child.
 
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::missing_panics_doc)]
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 
