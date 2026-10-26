@@ -1,148 +1,57 @@
-# GPY Agent
+# gpy-agent
 
-[![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPLv3+-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+`gpy-agent` is the Rust crate behind the [GPY prompt](../README.md) for Bash,
+Fish and Zsh. It builds two binaries:
 
-An agent for Git status detection and programming language identification, powering the [GPY prompt](https://github.com/jpease/gpy) for Bash, Fish, and Zsh.
+- `gpy-agent`: the daemon. It watches repositories, caches Git status and
+  language detection, and renders prompt segments for the shells over a Unix
+  domain socket.
+- `gpy`: the CLI for setup, configuration, themes, palettes and diagnostics.
 
-## This crate is an application, not a library
+Licensed under GPL-3.0-or-later; see [LICENSE](../LICENSE).
 
-`gpy-agent` is **not published to crates.io** and sets `publish = false`.
-It ships as two binaries — the `gpy-agent` daemon and the `gpy` CLI — through
-[GitHub Releases](https://github.com/jpease/gpy/releases) and the one-line
-installer. A registry install could only ever deliver those binaries, never the
-`fish/`, `bash/` and `zsh/` trees the prompt renders from, so it would leave you
-with a broken install rather than a partial one.
+## Not a library
 
-The crate root exports 21 modules because 52 of the 61 integration test targets in
-`gpy-agent/tests/` consume it externally as `gpy_agent::`. That surface is an
-implementation detail. **It carries no semver guarantee**: any module, type,
-function or signature may change or disappear in any release, including a patch
-release. The stable contracts are the IPC protocol (`schemas/message.json`,
-`schemas/response.json`, versioned per `SCHEMA_EVOLUTION.md`) and the CLI.
+The crate sets `publish = false` and is not on crates.io. A registry install
+would deliver the binaries without the `fish/`, `bash/` and `zsh/` trees the
+prompt renders from.
 
-Depend on it at your own risk, and pin a git revision if you do.
+The `gpy_agent` library target exists so the integration tests in `tests/` can
+use it. It carries no semver guarantee: any module, type or signature may
+change in any release. The stable contracts are the CLI, the config and theme
+files, and the IPC protocol in [`schemas/`](schemas/README.md), versioned as
+described in [SCHEMA_EVOLUTION.md](SCHEMA_EVOLUTION.md).
 
-## Features
+## Install
 
-- 🚀 **Performance**: Sub-millisecond IPC latency with real-time file watching
-- 🔄 **Cross-Platform**: Native support for Linux and macOS; Windows via WSL (see [Supported Platforms and Shells](../docs/INSTALL.md#supported-platforms-and-shells))
-- 📊 **Git Integration**: Git status detection (staged, unstaged, untracked, conflicts)
-- 🏷️ **Language Detection**: Automatic programming language identification for development environments
-- 💾 **Caching**: LRU cache with configurable TTL
-- 📡 **IPC**: Unix domain sockets
-- 📈 **Observability**: Structured logging, metrics collection, and health monitoring
-- 🛡️ **Fault Tolerant**: Circuit breaker pattern and graceful error handling
+See [docs/INSTALL.md](../docs/INSTALL.md) for the installer, release archives,
+building from source, and the supported platforms and shells.
 
-## Installation
+## Build and test
 
-Install GPY as a whole — binaries plus shell files — with the one-line installer:
+Run from `gpy-agent/`:
 
 ```bash
-curl -fsSL https://github.com/jpease/gpy/releases/latest/download/install-oneline.sh | sh
+cargo build --release                          # target/release/{gpy-agent,gpy}
+cargo nextest run --features test-support      # unit and integration tests
+cargo test --doc                               # doc tests (nextest skips them)
+cargo clippy --all-targets --all-features      # lint policy: [lints] in Cargo.toml
+cargo fmt --check
+cargo bench                                    # Criterion benchmarks in benches/
 ```
 
-See [docs/INSTALL.md](../docs/INSTALL.md) for release-archive, manual, and
-build-from-source instructions.
+The `justfile` at the repository root wraps these (`just test-rust`,
+`just lint`, `just coverage`, `just bench-ci`). [docs/dev/testing.md](../docs/dev/testing.md)
+lists every test tier and its gate; [tests/README.md](tests/README.md)
+describes the integration test layout.
 
-## Usage
+The programs in `examples/` run with `cargo run --example <name>`
+(`basic_usage`, `config_management`, `ipc_client`, `theme_customization`).
 
-The runnable programs in `examples/` show how the in-tree code is wired
-together. They are not an API to build against; see the unsupported-library
-note above.
+## Further reading
 
-- `cargo run --example basic_usage`: in-process `Agent::handle_oneshot` with
-  `{"type":"git_status"|"language_detect","path":...,"format":"json"}`.
-- `cargo run --example ipc_client`: newline-delimited JSON to a running daemon
-  on the socket from `paths::get_socket_path()` (`{"op":"ping"}`,
-  `{"op":"git","cwd":...,"format":"json"}`, `{"op":"lang",...}`).
-
-## Architecture
-
-The GPY agent consists of several key components:
-
-- **IPC Layer**: Handles communication between the agent and Fish shell
-- **Git Status**: Monitors Git repositories for changes
-- **Language Detection**: Identifies programming languages in projects
-- **File Watcher**: Real-time filesystem monitoring with debouncing
-- **Cache System**: LRU cache for performance optimization
-- **Configuration**: TOML-based configuration management
-- **Observability**: Structured logging and metrics collection
-
-## Configuration
-
-The agent reads `$XDG_CONFIG_HOME/gpy/config.toml` (sections `[agent]`, `[git]`,
-`[language]`, `[ui]`); every key is in
-[`docs/user/configuration-reference.md`](../docs/user/configuration-reference.md).
-The socket path is not a config key: it is `<runtime root>/gpy.sock` unless
-`GPY_AGENT_SOCKET_PATH` or `--socket` overrides it (see
-[Socket Location](../docs/user/advanced-configuration.md#socket-location)).
-
-## Performance
-
-Budgets and recorded baselines live in `../tests/performance-baselines.json`
-and are enforced by `just bench-ci`. For example: IPC round trip 1 ms target
-(0.037 ms baseline), cached prompt render 20 ms target, agent memory 15 MB
-target (50 MB max). See `../docs/dev/performance/benchmarking.md`.
-
-## Platform Support
-
-See [Supported Platforms and Shells](../docs/INSTALL.md#supported-platforms-and-shells)
-for the canonical OS/shell support matrix and per-shell IPC tool requirements.
-
-| Platform | Architecture | Status |
-|----------|--------------|--------|
-| Linux | x86_64, aarch64 | Supported |
-| macOS | x86_64, aarch64 | Supported |
-| Windows, via WSL | x86_64, aarch64 | Supported (recommended path) |
-| Windows, native | x86_64, aarch64 | CLI-only, unverified — see the canonical matrix |
-
-**Note**: the shell prompt integration depends on Unix domain sockets, which
-native Windows does not provide; WSL supplies them. All IPC uses Unix domain
-sockets.
-
-## Development
-
-### Building
-
-```bash
-cargo build --release
-```
-
-### Testing
-
-```bash
-# Run all tests (high parallelism, ~5 seconds)
-cargo nextest run --workspace
-
-# Run doc tests (cargo-nextest does not support doc tests)
-cargo test --doc
-
-# Run with single thread (slower but more reliable on resource-constrained systems)
-cargo nextest run --workspace --test-threads 1
-
-# Run with coverage
-cargo tarpaulin --workspace --all-features
-
-# Lint with the [lints] policy in Cargo.toml (from the repo root)
-just lint
-```
-
-### Benchmarks
-
-```bash
-cargo bench
-```
-
-## Contributing
-
-Please see the main [GPY repository](https://github.com/jpease/gpy) for contribution guidelines.
-
-## License
-
-This project is licensed under the **GNU General Public License v3.0 or later**.
-
-See the [LICENSE](../LICENSE) file in the repository root for full details.
-
-## Related Projects
-
-- [GPY](https://github.com/jpease/gpy) - The Fish shell prompt that uses this agent
+- [Architecture](../docs/dev/architecture.md)
+- [Configuration reference](../docs/user/configuration-reference.md)
+- [CLI reference](../docs/user/cli-reference.md)
+- [Benchmarking and performance budgets](../docs/dev/performance/benchmarking.md)
+- [Contributing](../CONTRIBUTING.md)
