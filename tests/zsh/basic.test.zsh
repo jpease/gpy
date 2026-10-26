@@ -20,7 +20,7 @@ echo "Sourcing gpy.zsh from $ROOT/zsh/gpy.zsh"
 source zsh/gpy.zsh
 
 echo "Checking constants..."
-if [[ -z "$__gpy_ui_prompt_icon" ]]; then
+if [[ -z "$__icon_prompt" ]]; then
     echo "FAIL: Constants not loaded"
     exit 1
 fi

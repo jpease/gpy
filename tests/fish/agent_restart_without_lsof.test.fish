@@ -19,6 +19,7 @@ source "$repo_root/tests/lib/test_helpers.fish"
 source "$repo_root/fish/core/constants.fish"
 source "$repo_root/fish/core/util.fish"
 source "$repo_root/fish/core/ipc.fish"
+source "$repo_root/fish/core/supervisor.fish"
 
 print_test_header "Agent restart without lsof"
 

@@ -30,14 +30,6 @@ function __gpy_escape_json_into() {
     printf -v "$1" '%s' "$__gpy_ej_s"
 }
 
-# Printing form, kept for the vector tests.
-function __gpy_escape_json() {
-    local __gpy_ej_out
-    __gpy_escape_json_into __gpy_ej_out "$1"
-    # -r: echo-style escape handling would collapse the doubled backslashes.
-    print -r -- "$__gpy_ej_out"
-}
-
 # $VIRTUAL_ENV, else $CONDA_PREFIX unless the conda env is `base`, into
 # variable $1 (empty when neither applies). Writes via `printf -v`: no fork.
 function __gpy_forwarded_venv_into() {
@@ -261,7 +253,7 @@ function __gpy_send_json() {
         if zsocket "$socket_path" 2>/dev/null; then
             zsocket_connected=1
             fd=$REPLY
-            # -r: escape interpretation would undo __gpy_escape_json.
+            # -r: escape interpretation would undo __gpy_escape_json_into.
             print -r -u $fd -- "$json"
             # `IFS=`: default IFS strips the trailing space after `❯`; -r keeps ANSI backslashes.
             IFS= read -r -u $fd -t $timeout_secs response

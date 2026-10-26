@@ -160,6 +160,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hints, help and `docs/user/cli-reference.md` key map now come from one key
   table, so they always name the keys the wizard handles. The reference now
   documents `/`, `?`, `[`/`]`, `v`, `:`, `m`, `b`, `a` and `t`.
+- Fish: the debug helper is one function, `prompt-debug` (`prompt_debug` is
+  gone), the segment-detect trace gated on `GPY_DEBUG_SEGMENTS` is removed
+  (use `GPY_DEBUG=1`), and the agent supervisor lives in `core/supervisor.fish`.
+- `theme export` no longer emits `__gpy_ui_prompt_icon`,
+  `__gpy_ui_root_prompt_icon` or their `_icon_color` variants; no shell read
+  them. `__icon_prompt`, `__icon_root_prompt`, `__prompt_color` and
+  `__root_prompt_color` are unchanged.
 
 ## [0.6.0] - 2026-10-22
 

@@ -23,13 +23,6 @@ __gpy_escape_json_into() {
     printf -v "$1" '%s' "$__gpy_ej_s"
 }
 
-# Printing form, kept for the vector tests.
-__gpy_escape_json() {
-    local __gpy_ej_out
-    __gpy_escape_json_into __gpy_ej_out "$1"
-    printf '%s\n' "$__gpy_ej_out"
-}
-
 # $VIRTUAL_ENV, else $CONDA_PREFIX unless the conda env is `base`, into
 # variable $1 (empty when neither applies). Writes via `printf -v`: no fork.
 __gpy_forwarded_venv_into() {

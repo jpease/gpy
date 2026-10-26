@@ -47,6 +47,7 @@ function start_supervisor --inherit-variable repo_root
         source $argv[1]/fish/core/constants.fish
         source $argv[1]/fish/core/util.fish
         source $argv[1]/fish/core/ipc.fish
+        source $argv[1]/fish/core/supervisor.fish
         __gpy_agent_supervisor_start' -- $repo_root
 end
 

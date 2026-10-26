@@ -156,12 +156,13 @@ end
 echo ""
 echo "Scenario D: conf.d/gpy_init.fish install-not-found branch"
 
-# A HOME whose fish config dir exists but has no gpy/ install under it, so
+# A HOME whose gpy/core holds defaults.fish but not init.fish, so
 # $gpy_install_dir/core/init.fish resolves to a missing file. GPY itself is
 # left ENABLED here — this branch is reached by a broken install, not a user
 # choice.
 set -l scenario_d_home (mktemp -d)
-mkdir -p "$scenario_d_home/.config/fish"
+mkdir -p "$scenario_d_home/.config/fish/gpy/core"
+cp "$repo_root/fish/core/defaults.fish" "$scenario_d_home/.config/fish/gpy/core/defaults.fish"
 
 set -l scenario_d_err (mktemp)
 set -l scenario_d_out (env HOME=$scenario_d_home XDG_CONFIG_HOME=$scenario_d_home/.config \
@@ -209,6 +210,7 @@ echo "Scenario E: conf.d/gpy_init.fish fallback-mode branch"
 set -l scenario_e_home (mktemp -d)
 mkdir -p "$scenario_e_home/.config/fish/gpy/core"
 echo 'return 1' >"$scenario_e_home/.config/fish/gpy/core/init.fish"
+cp "$repo_root/fish/core/defaults.fish" "$scenario_e_home/.config/fish/gpy/core/defaults.fish"
 
 set -l scenario_e_err (mktemp)
 set -l scenario_e_out (env HOME=$scenario_e_home XDG_CONFIG_HOME=$scenario_e_home/.config \

@@ -14,6 +14,7 @@ set -gx XDG_CACHE_HOME (mktemp -d)
 
 source fish/core/init.fish
 source fish/core/ipc.fish
+source fish/core/supervisor.fish
 
 # Simulate a crash-looping agent: never available, and the resolved binary is
 # a real no-op executable so `"$agent_binary" start &` succeeds immediately

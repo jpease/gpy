@@ -819,10 +819,6 @@ fn test_theme_export_includes_icon_prompt() {
         "Theme export should include __icon_prompt variable for fish_prompt.fish compatibility. Got: {stdout}"
     );
     assert!(
-        stdout.contains("set -g __gpy_ui_prompt_icon"),
-        "Theme export should include __gpy_ui_prompt_icon variable. Got: {stdout}"
-    );
-    assert!(
         stdout.contains("set -g __prompt_color"),
         "Theme export should include __prompt_color variable. Got: {stdout}"
     );
@@ -830,10 +826,6 @@ fn test_theme_export_includes_icon_prompt() {
     assert!(
         stdout.contains("set -g __icon_root_prompt"),
         "Theme export should include __icon_root_prompt variable for root user prompts. Got: {stdout}"
-    );
-    assert!(
-        stdout.contains("set -g __gpy_ui_root_prompt_icon"),
-        "Theme export should include __gpy_ui_root_prompt_icon variable. Got: {stdout}"
     );
     assert!(
         stdout.contains("set -g __root_prompt_color"),
@@ -970,7 +962,7 @@ fn test_theme_export_produces_non_empty_output() {
     let required_prefixes = [
         "set -g __color_",  // Color variables
         "set -g __icon_",   // Icon variables
-        "set -g __gpy_ui_", // UI configuration
+        "set -g __prompt_", // Prompt configuration
     ];
 
     for prefix in &required_prefixes {
@@ -1071,7 +1063,7 @@ theme = "default"
     assert!(
         stdout.contains("magenta")
             || stdout.contains("bright_magenta")
-            || stdout.contains("__gpy_ui_prompt_icon_color \"magenta\""),
+            || stdout.contains("__prompt_color \"magenta\""),
         "Theme export should contain custom prompt color. Got: {stdout}"
     );
 }

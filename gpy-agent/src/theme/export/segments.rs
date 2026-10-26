@@ -96,7 +96,7 @@ pub(super) fn append_global_assignments(
 }
 
 /// Prompt and root-prompt icons/colors plus the two-line layout flag.
-/// `__gpy_ui_*_icon_color` is skipped when unset; `__prompt_color`/`__root_prompt_color` fall back to green/red.
+/// `__prompt_color`/`__root_prompt_color` fall back to green/red.
 pub(super) fn append_prompt_assignments(
     output: &mut String,
     colors: ShellColors<'_>,
@@ -104,23 +104,12 @@ pub(super) fn append_prompt_assignments(
 ) {
     let shell = colors.shell;
 
-    let prompt_icon = &theme.ui.prompt_icon;
-    append_shell_assignments(
+    append_shell_assignment(
         output,
         shell,
-        [
-            ShellAssignment::local("__gpy_ui_prompt_icon", prompt_icon.as_str()),
-            ShellAssignment::local("__icon_prompt", prompt_icon.as_str()),
-        ],
+        ShellAssignment::local("__icon_prompt", theme.ui.prompt_icon.as_str()),
     );
 
-    if let Some(c) = &theme.ui.prompt_color {
-        append_shell_assignment(
-            output,
-            shell,
-            ShellAssignment::local("__gpy_ui_prompt_icon_color", colors.resolve(c)),
-        );
-    }
     let prompt_color = theme.ui.prompt_color.as_deref().unwrap_or("green");
     append_shell_assignment(
         output,
@@ -128,23 +117,11 @@ pub(super) fn append_prompt_assignments(
         ShellAssignment::local("__prompt_color", colors.resolve(prompt_color)),
     );
 
-    let root_icon = &theme.ui.root_prompt_icon;
-    append_shell_assignments(
+    append_shell_assignment(
         output,
         shell,
-        [
-            ShellAssignment::local("__gpy_ui_root_prompt_icon", root_icon.as_str()),
-            ShellAssignment::local("__icon_root_prompt", root_icon.as_str()),
-        ],
+        ShellAssignment::local("__icon_root_prompt", theme.ui.root_prompt_icon.as_str()),
     );
-
-    if let Some(c) = &theme.ui.root_prompt_color {
-        append_shell_assignment(
-            output,
-            shell,
-            ShellAssignment::local("__gpy_ui_root_prompt_icon_color", colors.resolve(c)),
-        );
-    }
     let root_color = theme.ui.root_prompt_color.as_deref().unwrap_or("red");
     append_shell_assignment(
         output,

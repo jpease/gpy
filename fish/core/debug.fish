@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-function __prompt_validate_installation
+function __gpy_validate_installation
     set -l errors 0
 
     echo "Validating GPY installation..."
@@ -8,7 +8,7 @@ function __prompt_validate_installation
     # Install dir is derived from this file's own location, not ~/.config.
     set -l install_dir $__gpy_core_dir/..
 
-    set -l core_files flags.fish constants.fish util.fish renderer.fish init.fish ipc.fish
+    set -l core_files flags.fish defaults.fish constants.fish util.fish renderer.fish init.fish ipc.fish
     for file in $core_files
         set -l path $install_dir/core/$file
         if test -f $path
@@ -68,7 +68,7 @@ function __prompt_validate_installation
     end
 end
 
-function __prompt_benchmark_segments
+function __gpy_benchmark_segments
     echo "Benchmarking prompt segments..."
 
     for segment in $__enabled_segments
@@ -86,12 +86,12 @@ function __prompt_benchmark_segments
     end
 end
 
-function prompt_debug --argument-names action
+function prompt-debug --description 'GPY debug helpers' --argument-names action
     switch $action
         case validate
-            __prompt_validate_installation
+            __gpy_validate_installation
         case benchmark
-            __prompt_benchmark_segments
+            __gpy_benchmark_segments
         case cache
             echo "Cache status:"
             echo "  Instant cache dir: "(__gpy_instant_cache_dir)
@@ -107,7 +107,7 @@ function prompt_debug --argument-names action
             echo "    Language cache TTL: $GPY_LANGUAGE_CACHE_TTL_SECONDS"
             echo "    Duration threshold: $__duration_threshold_ms"
         case ""
-            echo "Usage: prompt_debug [validate|benchmark|cache|vars]"
+            echo "Usage: prompt-debug [validate|benchmark|cache|vars]"
         case '*'
             echo "Unknown debug action: $action"
     end

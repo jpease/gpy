@@ -1,32 +1,10 @@
 function segment_git_detect
-    if set -q GPY_DEBUG_SEGMENTS
-        echo "[DEBUG] segment_git_detect: GPY_GIT_ENABLED=$GPY_GIT_ENABLED" >&2
-    end
-
     if set -q GPY_GIT_ENABLED; and test "$GPY_GIT_ENABLED" = 0
-        if set -q GPY_DEBUG_SEGMENTS
-            echo "[DEBUG] segment_git_detect: Git disabled by config, returning 1" >&2
-        end
         return 1
     end
 
     # Reuses the render-scoped memoized git root shared with the cache read.
-    if set -q GPY_DEBUG_SEGMENTS
-        echo "[DEBUG] segment_git_detect: Searching for .git from $PWD" >&2
-    end
-
-    set -l root (__gpy_memoized_git_root $PWD)
-    if test -n "$root"
-        if set -q GPY_DEBUG_SEGMENTS
-            echo "[DEBUG] segment_git_detect: Found .git at $root, returning 0" >&2
-        end
-        return 0
-    end
-
-    if set -q GPY_DEBUG_SEGMENTS
-        echo "[DEBUG] segment_git_detect: No .git found, returning 1" >&2
-    end
-    return 1
+    test -n "$(__gpy_memoized_git_root $PWD)"
 end
 
 # Returns 0 when the render must print nothing (agent down, cold miss), so git takes no position.

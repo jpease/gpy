@@ -13,6 +13,7 @@ set -gx XDG_CACHE_HOME (mktemp -d)
 
 source fish/core/init.fish
 source fish/core/ipc.fish
+source fish/core/supervisor.fish
 
 # Stub agent restart to fail so we exercise retry logic
 functions -e __gpy_agent_restart 2>/dev/null

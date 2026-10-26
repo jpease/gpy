@@ -46,7 +46,7 @@ end
 function scenario_noninteractive_c_is_inert
     set -l before (files_snapshot)
     run_child 'source $argv[1]
-echo "fns=[$(functions -n | string match -r "^(__gpy|gpy_|prompt-|prompt_debug)" | string join ,)]"
+echo "fns=[$(functions -n | string match -r "^(__gpy|gpy_|prompt-)" | string join ,)]"
 echo "handlers=[$(functions --handlers | string match -r "gpy" | string join ,)]"
 echo "vars=[$(set -n | string match -r "^(__gpy|__enabled_segments|__prompt).*" | string join ,)]"'
     set -l after (files_snapshot)

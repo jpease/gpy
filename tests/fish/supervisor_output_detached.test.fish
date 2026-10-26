@@ -33,6 +33,7 @@ env GPY_VERBOSE=1 GPY_AGENT_BINARY_PATH=$tmp/gpy-agent \
         source $argv[1]/fish/core/constants.fish
         source $argv[1]/fish/core/util.fish
         source $argv[1]/fish/core/ipc.fish
+        source $argv[1]/fish/core/supervisor.fish
         __gpy_agent_supervisor_start' -- $repo_root >$tmp/out 2>&1
 
 if not poll_until 3 test -s $pidfile

@@ -2,7 +2,7 @@
 # tests/zsh/ipc_send_preserves_escapes.test.zsh
 #
 # zsh's `print` (without -r) and `echo` interpret backslash escapes, so the
-# send path must not use them: the doubled backslashes from __gpy_escape_json
+# send path must not use them: the doubled backslashes from __gpy_escape_json_into
 # would collapse (`a\b` would reach the agent as `a<BS>b`, `notes\stuff` as
 # invalid JSON), and every reply, cache key and prompt string would lose its
 # `\c`/`\b` sequences.
@@ -41,7 +41,8 @@ shell_e2e_stub_listener "$sock" reply --reply "$expected_reply" --requests "$rec
 
 export GPY_AGENT_SOCKET_PATH="$sock"
 d='/x/a\b"q'
-reply="$(__gpy_send_json "{\"cwd\":\"$(__gpy_escape_json "$d")\"}")"
+__gpy_escape_json_into escaped_d "$d"
+reply="$(__gpy_send_json "{\"cwd\":\"$escaped_d\"}")"
 shell_e2e_stop_pids "$SHELL_E2E_STUB_PID"
 
 if python3 -c '

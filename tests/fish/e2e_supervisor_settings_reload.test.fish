@@ -41,6 +41,7 @@ env GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1 \
         source $argv[1]/fish/core/constants.fish
         source $argv[1]/fish/core/util.fish
         source $argv[1]/fish/core/ipc.fish
+        source $argv[1]/fish/core/supervisor.fish
         set -g loop_log $argv[2]
         set -g fake_now 100
         function __gpy_resolve_agent_binary; echo stub; end

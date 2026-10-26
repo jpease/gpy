@@ -58,6 +58,7 @@ env GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=1 \
         source $argv[1]/fish/core/constants.fish
         source $argv[1]/fish/core/util.fish
         source $argv[1]/fish/core/ipc.fish
+        source $argv[1]/fish/core/supervisor.fish
         function __gpy_agent_is_healthy; return 1; end
         function __gpy_agent_restart; echo RESTART; return 1; end
         __gpy_agent_supervisor_loop' -- $repo_root >$tmp/loop.out 2>/dev/null &
@@ -79,6 +80,7 @@ function assert_loop_stops_on_export --argument-names flag --inherit-variable re
             source $argv[1]/fish/core/constants.fish
             source $argv[1]/fish/core/util.fish
             source $argv[1]/fish/core/ipc.fish
+            source $argv[1]/fish/core/supervisor.fish
             function __gpy_agent_is_healthy; return 0; end
             __gpy_agent_supervisor_loop' -- $repo_root >/dev/null 2>&1 &
     set -l loop_pid $last_pid

@@ -4,8 +4,8 @@
 #
 # Shared JSON-escape test vector file
 # (tests/fixtures/json_escape_vectors.tsv), run by all three shells, so
-# __gpy_json_escape (Fish), __gpy_escape_json (Bash), and __gpy_escape_json
-# (Zsh) can never silently drift apart. This proves Fish's implementation
+# __gpy_json_escape (Fish), __gpy_escape_json_into (Bash), and
+# __gpy_escape_json_into (Zsh) can never silently drift apart. This proves Fish's implementation
 # (fish/core/ipc.fish), including its \n/\r/\t escaping, against the same
 # vectors bash/zsh check.
 

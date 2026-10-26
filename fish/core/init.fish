@@ -6,29 +6,7 @@ set -g __gpy_core_dir $__prompt_dir
 source $__prompt_dir/flags.fish
 
 if not __gpy_agent_enabled; and not __gpy_supervisor_enabled
-    set -q __enabled_segments; or set -g __enabled_segments clock duration directory
-    set -q __prompt_icons; or set -g __prompt_icons nerd
-    set -q __prompt_theme; or set -g __prompt_theme default
-
-    # fish_prompt.fish autoloads regardless; guarded defaults avoid unset-variable errors.
-    set -q __gpy_is_root; or begin
-        set -g __gpy_is_root 0
-        test (id -u) -eq 0; and set -g __gpy_is_root 1
-    end
-    set -q __prompt_color; or set -g __prompt_color green
-    set -q __root_prompt_color; or set -g __root_prompt_color red
-    set -q __icon_root_prompt; or set -g __icon_root_prompt "!❯!"
-    # constants.fish is not sourced here; respect ascii icon preference anyway.
-    if test "$__prompt_icons" = nerd
-        set -q __icon_prompt; or set -g __icon_prompt "❯"
-        set -q __icon_status_ok; or set -g __icon_status_ok "✔"
-        set -q __icon_status_fail; or set -g __icon_status_fail "✖"
-    else
-        set -q __icon_prompt; or set -g __icon_prompt ">"
-        set -q __icon_status_ok; or set -g __icon_status_ok ok
-        set -q __icon_status_fail; or set -g __icon_status_fail err
-    end
-
+    source $__prompt_dir/defaults.fish
     return 0
 end
 
@@ -58,6 +36,7 @@ source $__prompt_dir/constants.fish
 source $__prompt_dir/renderer.fish
 
 source $__prompt_dir/ipc.fish
+source $__prompt_dir/supervisor.fish
 
 function __gpy_load_default_config
     set -q __enabled_segments; or set -g __enabled_segments clock duration language directory git
@@ -116,12 +95,7 @@ function __gpy_load_theme
         return 0
     end
 
-    # Report a missing binary only when that is actually the cause.
-    set -l cache_path (__gpy_theme_export_cache_path)
-    if test -z "$cache_path" -o ! -f "$cache_path"
-        set -l agent_binary (__gpy_resolve_agent_binary)
-        test -z "$agent_binary"; and __gpy_log_error init "gpy-agent command not found - cannot load theme"
-    end
+    __gpy_theme_export_binary_missing; and __gpy_log_error init "gpy-agent command not found - cannot load theme"
     return 1
 end
 
@@ -132,25 +106,32 @@ function __gpy_plugin_segment_file_var --argument-names segment
     printf '__gpy_plugin_segment_file_%s\n' (string replace -a -- - _ "$segment" | string lower)
 end
 
-function __gpy_load_segments --argument-names prompt_dir
-    set -l enabled_segments $argv[2..-1]
-    for segment in $enabled_segments
-        set -l segment_file $prompt_dir/../segments/$segment.fish
-        if test -f $segment_file
-            source $segment_file
-        else
-            set -l plugin_file_var (__gpy_plugin_segment_file_var "$segment")
-            if set -q $plugin_file_var
-                set -l plugin_file $$plugin_file_var
-                if test -f $plugin_file
-                    source $plugin_file
-                else
-                    __gpy_log_warn init "Plugin segment '$segment' missing file at $plugin_file"
-                end
-            else
-                __gpy_log_warn init "Segment '$segment' not found at $segment_file"
-            end
+# Source one segment's file: built-in first, then the plugin file variable.
+function __gpy_source_segment --argument-names segment
+    set -l segment_file $__gpy_core_dir/../segments/$segment.fish
+    if test -f $segment_file
+        source $segment_file
+        return 0
+    end
+
+    set -l plugin_file_var (__gpy_plugin_segment_file_var "$segment")
+    if set -q $plugin_file_var
+        set -l plugin_file $$plugin_file_var
+        if test -f $plugin_file
+            source $plugin_file
+            return 0
         end
+        __gpy_log_warn init "Plugin segment '$segment' missing file at $plugin_file"
+        return 1
+    end
+
+    __gpy_log_warn init "Segment '$segment' not found at $segment_file"
+    return 1
+end
+
+function __gpy_load_segments
+    for segment in $argv
+        __gpy_source_segment $segment
     end
 end
 
@@ -158,22 +139,17 @@ end
 function __gpy_ensure_segments_loaded --description 'source segment files newly added to __enabled_segments'
     for segment in $__enabled_segments
         functions -q segment_{$segment}_detect; and continue
-
-        set -l segment_file $__gpy_core_dir/../segments/$segment.fish
-        if test -f $segment_file
-            source $segment_file
-        else
-            set -l plugin_file_var (__gpy_plugin_segment_file_var "$segment")
-            if set -q $plugin_file_var; and test -f $$plugin_file_var
-                source $$plugin_file_var
-            else
-                __gpy_log_warn init "Segment '$segment' not found at $segment_file"
-            end
-        end
-
+        __gpy_source_segment $segment
         functions -q segment_{$segment}_init; and segment_{$segment}_init
     end
     return 0
+end
+
+# Succeeds when a failed export is due to a missing agent binary (no cache either).
+function __gpy_theme_export_binary_missing
+    set -l cache_path (__gpy_theme_export_cache_path)
+    test -n "$cache_path" -a -f "$cache_path"; and return 1
+    test -z (__gpy_resolve_agent_binary)
 end
 
 __gpy_load_theme >/dev/null
@@ -188,7 +164,7 @@ else if set -q GPY_TEST_SEGMENTS
     set -g __enabled_segments (string split ' ' $GPY_TEST_SEGMENTS)
 end
 
-__gpy_load_segments $__prompt_dir $__enabled_segments
+__gpy_load_segments $__enabled_segments
 
 for segment in $__enabled_segments
     if functions -q segment_{$segment}_init
@@ -196,30 +172,15 @@ for segment in $__enabled_segments
     end
 end
 
-set -l advanced_files advanced_config.fish debug.fish
-for file in $advanced_files
-    set -l path $__prompt_dir/$file
-    if test -f $path
-        source $path
-    end
-end
-
-function prompt-debug --wraps prompt_debug --description 'GPY debug helpers'
-    prompt_debug $argv
-end
+source $__prompt_dir/debug.fish
 
 function __gpy_reload_theme --description 'reload GPY theme from config (internal helper)'
     set -l verbose (test (count $argv) -gt 0; and test "$argv[1]" = "1"; and echo 1; or echo 0)
 
     if not __gpy_apply_theme_export
-        # Report a missing binary only when that is actually the cause.
-        set -l cache_path (__gpy_theme_export_cache_path)
-        if test -z "$cache_path" -o ! -f "$cache_path"
-            set -l agent_binary (__gpy_resolve_agent_binary)
-            if test -z "$agent_binary"
-                test $verbose -eq 1; and echo "Error: gpy-agent command not found" >&2
-                return 1
-            end
+        if __gpy_theme_export_binary_missing
+            test $verbose -eq 1; and echo "Error: gpy-agent command not found" >&2
+            return 1
         end
         test $verbose -eq 1; and echo "Error: failed to reload theme export" >&2
         return 1
@@ -269,7 +230,6 @@ end
 
 # Cache SSH-session detection once — pure env-var checks, no fork.
 # Non-empty checks, as bash/zsh: a defined-but-empty SSH_* var is not SSH.
-# defined-but-empty SSH_* var does not count as an SSH session.
 set -g __gpy_is_ssh 0
 if test -n "$SSH_CONNECTION"; or test -n "$SSH_CLIENT"; or test -n "$SSH_TTY"
     set -g __gpy_is_ssh 1
