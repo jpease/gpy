@@ -273,7 +273,7 @@ fn ping_agent_outcome(socket_path: &PathBuf) -> Result<PingOutcome> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|e| Error::process("ping_runtime".to_owned(), e.to_string()))?;
+        .map_err(|e| Error::process("ping_runtime", e.to_string()))?;
 
     rt.block_on(async {
         let Some(stream) = ping_connect(socket_path).await else {
@@ -1023,10 +1023,7 @@ mod stale_socket_tests {
     /// # Errors
     /// Always.
     fn local_failure() -> crate::Result<PingOutcome> {
-        Err(Error::process(
-            "ping_runtime".to_owned(),
-            "simulated".to_owned(),
-        ))
+        Err(Error::process("ping_runtime", "simulated".to_owned()))
     }
 
     #[test]

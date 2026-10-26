@@ -42,7 +42,7 @@ pub(super) fn create_shutdown_signal() -> ShutdownSignal {
         let mut sigterm =
             signal::unix::signal(signal::unix::SignalKind::terminate()).map_err(|e| {
                 Error::process(
-                    "shutdown signal".to_owned(),
+                    "shutdown signal",
                     format!("Failed to setup SIGTERM handler: {e}"),
                 )
             })?;
@@ -50,8 +50,7 @@ pub(super) fn create_shutdown_signal() -> ShutdownSignal {
         tokio::select! {
             result = signal::ctrl_c() => {
                 result.map_err(|e| {
-                    Error::process(
-                        "shutdown signal".to_owned(),
+                    Error::process("shutdown signal",
                         format!("Failed to setup signal handler: {e}"),
                     )
                 })?;
@@ -70,7 +69,7 @@ pub(super) fn create_shutdown_signal() -> ShutdownSignal {
     Box::pin(async {
         signal::ctrl_c().await.map_err(|e| {
             Error::process(
-                "shutdown signal".to_owned(),
+                "shutdown signal",
                 format!("Failed to setup signal handler: {e}"),
             )
         })?;

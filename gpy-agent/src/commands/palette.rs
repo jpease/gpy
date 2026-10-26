@@ -181,9 +181,8 @@ fn warn_aliased_keys(palette: &crate::palette::PaletteConfig) {
 /// Returns an error on read/parse/write failure, or without `force` on name clashes.
 pub fn import(file: &Path, name_override: Option<&str>, force: bool) -> Result<()> {
     let input = std::fs::read_to_string(file)
-        .map_err(|e| Error::config(format!("failed to read scheme file: {e}")))?;
-    let mut palette =
-        crate::import::base16::import_scheme(&input).map_err(|e| Error::config(e.to_string()))?;
+        .map_err(|e| Error::io_context("failed to read scheme file", &e))?;
+    let mut palette = crate::import::base16::import_scheme(&input)?;
     if let Some(name) = name_override {
         name.clone_into(&mut palette.name);
     }

@@ -104,10 +104,7 @@ mod tests {
         ) -> Result<Option<CompleteStatus>> {
             match &self.response {
                 Ok(value) => Ok(value.clone()),
-                Err(Error::Git { message, .. }) => Err(Error::Git {
-                    message: message.clone(),
-                    source: None,
-                }),
+                Err(Error::Git { message }) => Err(Error::git(message.clone())),
                 Err(other) => panic!("unexpected error variant in mock fixture: {other}"),
             }
         }
@@ -184,10 +181,7 @@ mod tests {
     #[test]
     fn load_repository_state_with_propagates_backend_error() {
         let mock = MockGitBackend {
-            response: Err(Error::Git {
-                message: "mock failure".to_owned(),
-                source: None,
-            }),
+            response: Err(Error::git("mock failure")),
         };
 
         let err = load_repository_state_with(

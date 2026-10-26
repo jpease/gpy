@@ -239,19 +239,19 @@ fn launch_shell_editor(editor: &str, config_path: &std::path::Path) -> Result<()
     let status = Command::new("cmd")
         .args(["/C", &format!("{editor} {quoted_path}")])
         .status()
-        .map_err(|e| Error::process(editor.to_owned(), e.to_string()))?;
+        .map_err(|e| Error::process(editor, e.to_string()))?;
 
     #[cfg(not(windows))]
     let status = Command::new("sh")
         .args(["-c", &format!("{editor} {quoted_path}")])
         .status()
-        .map_err(|e| Error::process(editor.to_owned(), e.to_string()))?;
+        .map_err(|e| Error::process(editor, e.to_string()))?;
 
     if status.success() {
         Ok(())
     } else {
         Err(Error::process(
-            editor.to_owned(),
+            editor,
             format!("exited with status {status}"),
         ))
     }

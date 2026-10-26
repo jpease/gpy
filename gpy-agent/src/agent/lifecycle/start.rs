@@ -60,7 +60,7 @@ fn acquire_start_lock(socket_path: &std::path::Path) -> Result<Flock<std::fs::Fi
     let lock_path = start_lock_path(socket_path);
     let lock_error = |detail: String| {
         Error::process(
-            "start_lock".to_owned(),
+            "start_lock",
             format!("cannot take start lock {}: {detail}", lock_path.display()),
         )
     };
@@ -285,7 +285,7 @@ fn wait_for_agent_ready(
         }
         if std::time::Instant::now() >= deadline {
             return Err(Error::process(
-                "startup_timeout".to_owned(),
+                "startup_timeout",
                 "Agent process did not become ready before timeout".to_owned(),
             ));
         }
@@ -300,7 +300,7 @@ fn startup_failed(reason: Option<&str>) -> Error {
         || "Agent process exited before it was ready".to_owned(),
         |detail| format!("Agent process failed before it was ready: {detail}"),
     );
-    Error::process("startup_failed".to_owned(), message)
+    Error::process("startup_failed", message)
 }
 
 /// Daemon half of the startup handshake with the waiting `gpy-agent start`:
@@ -344,7 +344,7 @@ impl StartupReport {
         use nix::fcntl::{FcntlArg, OFlag, fcntl};
 
         fcntl(&pipe, FcntlArg::F_SETFL(OFlag::O_NONBLOCK))
-            .map_err(|e| Error::process("pipe".to_owned(), e.to_string()))?;
+            .map_err(|e| Error::process("pipe", e.to_string()))?;
         Ok(Self {
             pipe,
             text: Vec::new(),
@@ -435,7 +435,7 @@ fn fork_agent(socket_path: &PathBuf, start_lock: Flock<std::fs::File>) -> Result
     use std::io::Read;
 
     let (mut reader, writer) =
-        std::io::pipe().map_err(|e| Error::process("pipe".to_owned(), e.to_string()))?;
+        std::io::pipe().map_err(|e| Error::process("pipe", e.to_string()))?;
 
     match fork::fork() {
         Ok(Fork::Parent(intermediate_pid)) => {
@@ -443,12 +443,7 @@ fn fork_agent(socket_path: &PathBuf, start_lock: Flock<std::fs::File>) -> Result
             let mut pid_bytes = [0_u8; 4];
             let read = reader.read_exact(&mut pid_bytes);
             let _ = fork::waitpid(intermediate_pid);
-            read.map_err(|e| {
-                Error::process(
-                    "fork".to_owned(),
-                    format!("Agent process did not start: {e}"),
-                )
-            })?;
+            read.map_err(|e| Error::process("fork", format!("Agent process did not start: {e}")))?;
             let ready = StartupReport::new(reader).and_then(|report| {
                 wait_for_agent_ready(socket_path, i32::from_ne_bytes(pid_bytes), report)
             });
@@ -461,7 +456,7 @@ fn fork_agent(socket_path: &PathBuf, start_lock: Flock<std::fs::File>) -> Result
             fork_daemon_from_intermediate();
             run_daemon(announce_daemon(start_lock, writer)?)
         }
-        Err(e) => Err(Error::process("fork".to_owned(), e.to_string())),
+        Err(e) => Err(Error::process("fork", e.to_string())),
     }
 }
 
@@ -494,7 +489,7 @@ fn announce_daemon(
 
     report
         .write_all(&nix::unistd::getpid().as_raw().to_ne_bytes())
-        .map_err(|e| Error::process("pipe".to_owned(), e.to_string()))?;
+        .map_err(|e| Error::process("pipe", e.to_string()))?;
     Ok(StartupHandoff {
         _start_lock: start_lock,
         report,
@@ -540,12 +535,12 @@ fn enter_daemon() -> Result<tokio::runtime::Runtime> {
     // Inputs were absolutized pre-fork; don't keep the launch dir busy.
     if let Err(e) = fork::chdir() {
         crate::warn_log!("agent", "Failed to chdir to /: {e}");
-        return Err(Error::process("chdir".to_owned(), e.to_string()));
+        return Err(Error::process("chdir", e.to_string()));
     }
 
     let _ = super::write_agent_version();
 
-    tokio::runtime::Runtime::new().map_err(|e| Error::process("runtime".to_owned(), e.to_string()))
+    tokio::runtime::Runtime::new().map_err(|e| Error::process("runtime", e.to_string()))
 }
 
 /// Start the agent in background with race-free socket coordination.
@@ -598,7 +593,7 @@ pub fn start_background_agent() -> Result<()> {
     #[cfg(not(unix))]
     {
         Err(Error::process(
-            "platform".to_owned(),
+            "platform",
             "Background agent only supported on Unix-like systems".to_owned(),
         ))
     }

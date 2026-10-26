@@ -430,21 +430,15 @@ impl NativeGitBackend {
 
                 let status_v2_result = status_v2_handle.join().map_err(|panic| {
                     Error::process(
-                        "git_status_v2".to_owned(),
+                        "git_status_v2",
                         format!("status worker panicked: {panic:?}"),
                     )
                 });
                 let state_result = state_handle.join().map_err(|panic| {
-                    Error::process(
-                        "git_state".to_owned(),
-                        format!("state worker panicked: {panic:?}"),
-                    )
+                    Error::process("git_state", format!("state worker panicked: {panic:?}"))
                 });
                 let stash_result = stash_handle.join().map_err(|panic| {
-                    Error::process(
-                        "git_stash".to_owned(),
-                        format!("stash worker panicked: {panic:?}"),
-                    )
+                    Error::process("git_stash", format!("stash worker panicked: {panic:?}"))
                 });
 
                 (status_v2_result, state_result, stash_result)

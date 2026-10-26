@@ -13,13 +13,10 @@ pub fn start() -> Result<()> {
     let status = Command::new(agent_binary())
         .arg("start")
         .status()
-        .map_err(|e| Error::process("gpy-agent".to_owned(), e.to_string()))?;
+        .map_err(|e| Error::process("gpy-agent", e.to_string()))?;
 
     if !status.success() {
-        return Err(Error::process(
-            "start".to_owned(),
-            "Failed to start agent".to_owned(),
-        ));
+        return Err(Error::process("start", "Failed to start agent".to_owned()));
     }
     Ok(())
 }
@@ -32,13 +29,10 @@ pub fn stop() -> Result<()> {
     let status = Command::new(agent_binary())
         .arg("stop")
         .status()
-        .map_err(|e| Error::process("gpy-agent".to_owned(), e.to_string()))?;
+        .map_err(|e| Error::process("gpy-agent", e.to_string()))?;
 
     if !status.success() {
-        return Err(Error::process(
-            "stop".to_owned(),
-            "Failed to stop agent".to_owned(),
-        ));
+        return Err(Error::process("stop", "Failed to stop agent".to_owned()));
     }
     Ok(())
 }
@@ -68,14 +62,12 @@ fn restart_stop() -> Result<()> {
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|e| Error::process("gpy-agent".to_owned(), e.to_string()))?;
+        .map_err(|e| Error::process("gpy-agent", e.to_string()))?;
 
-    let stdout = child.stdout.take().ok_or_else(|| {
-        Error::process(
-            "gpy-agent".to_owned(),
-            "Failed to capture stop output".to_owned(),
-        )
-    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| Error::process("gpy-agent", "Failed to capture stop output".to_owned()))?;
 
     for line_result in BufReader::new(stdout).lines() {
         let Ok(line) = line_result else { continue };
@@ -92,13 +84,10 @@ fn restart_stop() -> Result<()> {
 
     let status = child
         .wait()
-        .map_err(|e| Error::process("gpy-agent".to_owned(), e.to_string()))?;
+        .map_err(|e| Error::process("gpy-agent", e.to_string()))?;
 
     if !status.success() {
-        return Err(Error::process(
-            "stop".to_owned(),
-            "Failed to stop agent".to_owned(),
-        ));
+        return Err(Error::process("stop", "Failed to stop agent".to_owned()));
     }
     Ok(())
 }
@@ -114,14 +103,12 @@ fn restart_start() -> Result<()> {
         .stdout(Stdio::inherit())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| Error::process("gpy-agent".to_owned(), e.to_string()))?;
+        .map_err(|e| Error::process("gpy-agent", e.to_string()))?;
 
-    let stderr = child.stderr.take().ok_or_else(|| {
-        Error::process(
-            "gpy-agent".to_owned(),
-            "Failed to capture start output".to_owned(),
-        )
-    })?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| Error::process("gpy-agent", "Failed to capture start output".to_owned()))?;
 
     // Forward everything except the expected progress line.
     for line_result in BufReader::new(stderr).lines() {
@@ -133,13 +120,10 @@ fn restart_start() -> Result<()> {
 
     let status = child
         .wait()
-        .map_err(|e| Error::process("gpy-agent".to_owned(), e.to_string()))?;
+        .map_err(|e| Error::process("gpy-agent", e.to_string()))?;
 
     if !status.success() {
-        return Err(Error::process(
-            "start".to_owned(),
-            "Failed to start agent".to_owned(),
-        ));
+        return Err(Error::process("start", "Failed to start agent".to_owned()));
     }
 
     if !agent_enabled() {
@@ -174,7 +158,7 @@ fn wait_for_agent_started() -> Result<()> {
     }
 
     Err(Error::process(
-        "start".to_owned(),
+        "start",
         "Agent did not become ready before timeout".to_owned(),
     ))
 }
@@ -188,11 +172,11 @@ pub fn status() -> Result<ExitCode> {
     let status = Command::new(agent_binary())
         .arg("status")
         .status()
-        .map_err(|e| Error::process("gpy-agent".to_owned(), e.to_string()))?;
+        .map_err(|e| Error::process("gpy-agent", e.to_string()))?;
 
     let raw_code = status.code().ok_or_else(|| {
         Error::process(
-            "status".to_owned(),
+            "status",
             "gpy-agent status was terminated by a signal".to_owned(),
         )
     })?;

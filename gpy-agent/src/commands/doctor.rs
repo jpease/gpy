@@ -55,7 +55,7 @@ pub fn run() -> Result<()> {
         Ok(())
     } else {
         output::fail("Issues were found. Please review the remediation hints above.");
-        Err(Error::config("Health check failed".to_owned()))
+        Err(Error::HealthCheckFailed)
     }
 }
 

@@ -122,10 +122,10 @@ fn resolve_manifest_target(path: &Path) -> Result<(PathBuf, PathBuf)> {
 fn load_manifest_from_path(path: &Path) -> Result<(PluginManifest, PathBuf, ScriptSegments)> {
     let (manifest_path, root) = resolve_manifest_target(path)?;
     let content = std::fs::read_to_string(&manifest_path).map_err(|e| {
-        Error::invalid(format!(
-            "failed to read plugin manifest {}: {e}",
-            manifest_path.display()
-        ))
+        Error::io_context(
+            format_args!("failed to read plugin manifest {}", manifest_path.display()),
+            &e,
+        )
     })?;
     let manifest = crate::plugin::PluginManifest::parse(&content)?;
     let script_segments = validate_plugin_root(&root, &manifest)?;
@@ -462,10 +462,13 @@ pub fn new(id: &str, segment_name: Option<&str>) -> Result<()> {
         if e.kind() == std::io::ErrorKind::AlreadyExists {
             already_exists()
         } else {
-            Error::invalid(format!(
-                "failed to create plugin directory {}: {e}",
-                plugin_root.display()
-            ))
+            Error::io_context(
+                format_args!(
+                    "failed to create plugin directory {}",
+                    plugin_root.display()
+                ),
+                &e,
+            )
         }
     };
     if let Some(parent) = plugin_root.parent() {
@@ -482,10 +485,10 @@ pub fn new(id: &str, segment_name: Option<&str>) -> Result<()> {
             if e.kind() == std::io::ErrorKind::AlreadyExists {
                 already_exists()
             } else {
-                Error::invalid(format!(
-                    "failed to write plugin {what} {}: {e}",
-                    path.display()
-                ))
+                Error::io_context(
+                    format_args!("failed to write plugin {what} {}", path.display()),
+                    &e,
+                )
             }
         })
     };

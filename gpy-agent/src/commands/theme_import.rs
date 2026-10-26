@@ -63,12 +63,13 @@ pub fn run(opts: &ImportOptions<'_>) -> Result<()> {
             opts.path
         )));
     }
-    let input = std::fs::read_to_string(source_path)
-        .map_err(|error| Error::config(format!("failed to read '{}': {error}", opts.path)))?;
-    let model = parse(&input).map_err(|error| Error::config(error.to_string()))?;
+    let input = std::fs::read_to_string(source_path).map_err(|error| {
+        Error::io_context(format_args!("failed to read '{}'", opts.path), &error)
+    })?;
+    let model = parse(&input)?;
     let name = derive_name(opts.path, opts.name);
     ensure_safe_name("artifact", &name)?;
-    let artifacts = build(&model, &name).map_err(|error| Error::config(error.to_string()))?;
+    let artifacts = build(&model, &name)?;
 
     if opts.output == ImportOutput::Stdout {
         print_stdout(&artifacts)?;
@@ -86,12 +87,8 @@ pub fn run(opts: &ImportOptions<'_>) -> Result<()> {
 }
 
 fn print_stdout(artifacts: &ImportArtifacts) -> Result<()> {
-    let palette_toml = artifacts
-        .palette_toml()
-        .map_err(|error| Error::config(error.to_string()))?;
-    let theme_toml = artifacts
-        .theme_toml()
-        .map_err(|error| Error::config(error.to_string()))?;
+    let palette_toml = artifacts.palette_toml()?;
+    let theme_toml = artifacts.theme_toml()?;
     println!("# ---- palette ----");
     println!("{palette_toml}");
     println!("# ---- theme ----");
@@ -125,24 +122,26 @@ fn write_files(artifacts: &ImportArtifacts, name: &str, force: bool) -> Result<(
     for path in [&palette_path, &theme_path] {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| {
-                Error::config(format!("failed to create {}: {error}", parent.display()))
+                Error::io_context(
+                    format_args!("failed to create {}", parent.display()),
+                    &error,
+                )
             })?;
         }
     }
-    let palette_toml = artifacts
-        .palette_toml()
-        .map_err(|error| Error::config(error.to_string()))?;
-    let theme_toml = artifacts
-        .theme_toml()
-        .map_err(|error| Error::config(error.to_string()))?;
+    let palette_toml = artifacts.palette_toml()?;
+    let theme_toml = artifacts.theme_toml()?;
     std::fs::write(&palette_path, &palette_toml).map_err(|error| {
-        Error::config(format!(
-            "failed to write {}: {error}",
-            palette_path.display()
-        ))
+        Error::io_context(
+            format_args!("failed to write {}", palette_path.display()),
+            &error,
+        )
     })?;
     std::fs::write(&theme_path, &theme_toml).map_err(|error| {
-        Error::config(format!("failed to write {}: {error}", theme_path.display()))
+        Error::io_context(
+            format_args!("failed to write {}", theme_path.display()),
+            &error,
+        )
     })?;
     Ok(())
 }
