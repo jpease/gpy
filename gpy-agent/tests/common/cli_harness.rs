@@ -10,7 +10,6 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::sync::OnceLock;
 use tempfile::TempDir;
 
 const DEFAULT_TEST_CONFIG_TOML: &str = r#"
@@ -84,13 +83,42 @@ impl CliCommandResult {
     }
 }
 
+/// The isolated `HOME`/`XDG_*`/`PATH` every spawned command runs under.
 #[derive(Debug)]
-pub struct CliTestEnv {
-    _temp_dir: TempDir,
+struct Isolation {
     root: PathBuf,
     config_home: PathBuf,
     runtime_dir: PathBuf,
     cache_home: PathBuf,
+}
+
+impl Isolation {
+    fn under(root: &Path) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            config_home: root.join(".config"),
+            runtime_dir: root.join(".runtime"),
+            cache_home: root.join(".cache"),
+        }
+    }
+
+    fn command(&self, program: &Path) -> Command {
+        let mut command = Command::new(program);
+        command
+            .env("HOME", &self.root)
+            .env("XDG_CONFIG_HOME", &self.config_home)
+            .env("XDG_RUNTIME_DIR", &self.runtime_dir)
+            .env("XDG_CACHE_HOME", &self.cache_home)
+            .env("PATH", path_with_cargo_bin_dir());
+        command
+    }
+}
+
+/// An isolated environment in a temp directory removed on drop.
+#[derive(Debug)]
+pub struct CliTestEnv {
+    _temp_dir: TempDir,
+    isolation: Isolation,
 }
 
 impl CliTestEnv {
@@ -100,42 +128,35 @@ impl CliTestEnv {
 
     pub fn with_config(config_toml: &str) -> io::Result<Self> {
         let temp_dir = TempDir::new()?;
-        let root = temp_dir.path().to_path_buf();
-        let config_home = root.join(".config");
-        let runtime_dir = root.join(".runtime");
-        let cache_home = root.join(".cache");
         let env = Self {
+            isolation: Isolation::under(temp_dir.path()),
             _temp_dir: temp_dir,
-            root,
-            config_home,
-            runtime_dir,
-            cache_home,
         };
         env.prepare(config_toml)?;
         Ok(env)
     }
 
     pub fn root(&self) -> &Path {
-        &self.root
+        &self.isolation.root
     }
 
     /// Isolated `XDG_CONFIG_HOME`, for children spawned outside `run_command` (e.g. pty).
     pub fn xdg_config_home(&self) -> &Path {
-        &self.config_home
+        &self.isolation.config_home
     }
 
     /// Isolated `XDG_RUNTIME_DIR`.
     pub fn xdg_runtime_dir(&self) -> &Path {
-        &self.runtime_dir
+        &self.isolation.runtime_dir
     }
 
     /// Isolated `XDG_CACHE_HOME`.
     pub fn xdg_cache_home(&self) -> &Path {
-        &self.cache_home
+        &self.isolation.cache_home
     }
 
     pub fn config_dir(&self) -> PathBuf {
-        self.config_home.join("gpy")
+        self.isolation.config_home.join("gpy")
     }
 
     pub fn config_path(&self) -> PathBuf {
@@ -217,13 +238,9 @@ impl CliTestEnv {
     ) -> io::Result<CliCommandResult> {
         use std::io::Write;
 
-        let mut child = Command::new(program)
+        let mut child = self
+            .command(program)
             .args(args)
-            .env("HOME", &self.root)
-            .env("XDG_CONFIG_HOME", &self.config_home)
-            .env("XDG_RUNTIME_DIR", &self.runtime_dir)
-            .env("XDG_CACHE_HOME", &self.cache_home)
-            .env("PATH", path_with_cargo_bin_dir())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -244,8 +261,8 @@ impl CliTestEnv {
         fs::create_dir_all(self.config_dir())?;
         fs::create_dir_all(self.themes_dir())?;
         fs::create_dir_all(self.plugins_dir())?;
-        fs::create_dir_all(&self.runtime_dir)?;
-        fs::create_dir_all(&self.cache_home)?;
+        fs::create_dir_all(&self.isolation.runtime_dir)?;
+        fs::create_dir_all(&self.isolation.cache_home)?;
         self.copy_default_theme()?;
         self.write_config(config_toml)?;
         Ok(())
@@ -307,89 +324,6 @@ impl CliTestEnv {
     }
 
     fn command(&self, program: &Path) -> Command {
-        let mut command = Command::new(program);
-        command
-            .env("HOME", &self.root)
-            .env("XDG_CONFIG_HOME", &self.config_home)
-            .env("XDG_RUNTIME_DIR", &self.runtime_dir)
-            .env("XDG_CACHE_HOME", &self.cache_home)
-            .env("PATH", path_with_cargo_bin_dir());
-        command
-    }
-}
-
-#[derive(Debug)]
-pub struct SharedCliTestEnv {
-    root: PathBuf,
-    config_home: PathBuf,
-    runtime_dir: PathBuf,
-    cache_home: PathBuf,
-}
-
-impl SharedCliTestEnv {
-    fn initialize() -> io::Result<Self> {
-        let root = std::env::temp_dir().join(format!("gpy-cli-shared-{}", std::process::id()));
-        let config_home = root.join(".config");
-        let runtime_dir = root.join(".runtime");
-        let cache_home = root.join(".cache");
-        fs::create_dir_all(config_home.join("gpy/themes"))?;
-        fs::create_dir_all(config_home.join("gpy/plugins"))?;
-        fs::create_dir_all(&runtime_dir)?;
-        fs::create_dir_all(&cache_home)?;
-
-        let temp_like = CliTestEnv {
-            _temp_dir: TempDir::new()?,
-            root: root.clone(),
-            config_home: config_home.clone(),
-            runtime_dir: runtime_dir.clone(),
-            cache_home: cache_home.clone(),
-        };
-        temp_like.copy_default_theme()?;
-        temp_like.write_config(DEFAULT_TEST_CONFIG_TOML)?;
-
-        Ok(Self {
-            root,
-            config_home,
-            runtime_dir,
-            cache_home,
-        })
-    }
-
-    pub fn instance() -> &'static Self {
-        static SHARED: OnceLock<SharedCliTestEnv> = OnceLock::new();
-        SHARED.get_or_init(|| {
-            Self::initialize().expect("shared CLI test environment should initialize")
-        })
-    }
-
-    pub fn run_gpy(&self, args: &[&str]) -> io::Result<CliCommandResult> {
-        self.run_command(Path::new(env!("CARGO_BIN_EXE_gpy")), args)
-    }
-
-    pub fn run_gpy_agent(&self, args: &[&str]) -> io::Result<CliCommandResult> {
-        self.run_command(Path::new(env!("CARGO_BIN_EXE_gpy-agent")), args)
-    }
-
-    pub fn config_path(&self) -> PathBuf {
-        self.config_home.join("gpy").join("config.toml")
-    }
-
-    pub fn themes_dir(&self) -> PathBuf {
-        self.config_home.join("gpy").join("themes")
-    }
-
-    fn run_command(&self, program: &Path, args: &[&str]) -> io::Result<CliCommandResult> {
-        let output = Command::new(program)
-            .args(args)
-            .env("HOME", &self.root)
-            .env("XDG_CONFIG_HOME", &self.config_home)
-            .env("XDG_RUNTIME_DIR", &self.runtime_dir)
-            .env("XDG_CACHE_HOME", &self.cache_home)
-            .env("PATH", path_with_cargo_bin_dir())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()?;
-
-        Ok(CliCommandResult::from_output(&output))
+        self.isolation.command(program)
     }
 }

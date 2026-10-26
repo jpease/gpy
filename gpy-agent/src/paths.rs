@@ -180,9 +180,27 @@ pub fn root_var(key: &str) -> Option<String> {
 }
 
 /// Per-process stand-in for HOME and the XDG roots, emptied on first use.
+/// Lives at `$TMPDIR/gpy-lib-test/<pid>`; creating it also removes the
+/// siblings of processes that have exited, so runs do not accumulate roots.
 #[cfg(test)]
 static TEST_ROOT: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
-    let root = std::env::temp_dir().join(format!("gpy-lib-test-{}", std::process::id()));
+    let parent = std::env::temp_dir().join("gpy-lib-test");
+    let pid = std::process::id();
+    if let Ok(entries) = std::fs::read_dir(&parent) {
+        for entry in entries.flatten() {
+            let stale = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.parse::<u32>().ok())
+                .is_some_and(|other| {
+                    other != pid && !crate::ipc::ClientDirectory::is_client_alive(other)
+                });
+            if stale {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+    let root = parent.join(pid.to_string());
     let _ = std::fs::remove_dir_all(&root);
     root
 });

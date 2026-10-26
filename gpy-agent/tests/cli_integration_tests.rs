@@ -9,7 +9,7 @@ use tempfile::TempDir;
 
 #[path = "common/cli_harness.rs"]
 mod cli_harness;
-use cli_harness::{CliTestEnv, SharedCliTestEnv};
+use cli_harness::CliTestEnv;
 #[path = "common/git.rs"]
 mod git_helpers;
 
@@ -99,7 +99,7 @@ fn assert_delimiter_usage(output: &str, is_last: bool, segment_name: &str) {
 }
 
 fn run_gpy_agent(args: &[&str]) -> (i32, String, String) {
-    match SharedCliTestEnv::instance().run_gpy_agent(args) {
+    match CliTestEnv::new().and_then(|env| env.run_gpy_agent(args)) {
         Ok(output) => (output.exit_code, output.stdout, output.stderr),
         Err(e) => (-1_i32, String::new(), format!("spawn error: {e}")),
     }
@@ -262,7 +262,7 @@ fn test_cli_oneshot_git_non_git_directory() {
 
 fn assert_config_get(key: &str, expected: &str) {
     let (exit_code, stdout, stderr) =
-        match SharedCliTestEnv::instance().run_gpy(&["config", "get", key]) {
+        match CliTestEnv::new().and_then(|env| env.run_gpy(&["config", "get", key])) {
             Ok(output) => (output.exit_code, output.stdout, output.stderr),
             Err(e) => (-1_i32, String::new(), format!("spawn error: {e}")),
         };

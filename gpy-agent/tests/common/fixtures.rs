@@ -11,27 +11,26 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Temporary Unix socket path, removed on drop.
+/// Temporary Unix socket path; its directory is removed on drop.
 pub struct TempSocket {
     path: PathBuf,
+    _dir: tempfile::TempDir,
 }
 
 impl TempSocket {
     pub fn new() -> std::io::Result<Self> {
+        let dir = tempfile::Builder::new()
+            .prefix("sock-")
+            .tempdir_in(gpy_test_root()?)?;
         Ok(Self {
-            path: create_temp_socket_path()?,
+            path: dir.path().join("gpy-test.sock"),
+            _dir: dir,
         })
     }
 
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
-    }
-}
-
-impl Drop for TempSocket {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
     }
 }
 
@@ -44,18 +43,6 @@ pub fn gpy_test_root() -> std::io::Result<PathBuf> {
     let root = std::env::temp_dir().join(format!("gpy-test-{user}"));
     fs::create_dir_all(&root)?;
     Ok(root)
-}
-
-/// Socket path inside a fresh, intentionally leaked temp dir.
-fn create_temp_socket_path() -> std::io::Result<PathBuf> {
-    let root = gpy_test_root()?;
-    let temp_dir = tempfile::Builder::new().prefix("sock-").tempdir_in(&root)?;
-    let socket_path = temp_dir.path().join("gpy-test.sock");
-
-    // Kept so the dir outlives this function.
-    let _ = temp_dir.keep();
-
-    Ok(socket_path)
 }
 
 /// Aborts the wrapped server task on drop, including during panic unwinding.

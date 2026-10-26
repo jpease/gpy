@@ -7,10 +7,10 @@
 use std::fs;
 #[path = "common/cli_harness.rs"]
 mod cli_harness;
-use cli_harness::{CliTestEnv, SharedCliTestEnv};
+use cli_harness::CliTestEnv;
 
 fn run_gpy_command(args: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
-    let result = SharedCliTestEnv::instance().run_gpy(args)?;
+    let result = CliTestEnv::new()?.run_gpy(args)?;
     result.assert_success(&format!("gpy {}", args.join(" ")));
     Ok(result.stdout)
 }
@@ -271,7 +271,8 @@ fn test_complete_segment_emits_expected_builtins() {
 
 #[test]
 fn test_complete_rejects_invalid_kind() {
-    let result = SharedCliTestEnv::instance()
+    let result = CliTestEnv::new()
+        .expect("Failed to create CLI test environment")
         .run_gpy(&["__complete", "bogus"])
         .expect("Failed to invoke gpy __complete bogus");
     assert_ne!(

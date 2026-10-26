@@ -82,9 +82,30 @@ pub struct InstantPromptCache {
     /// already in flight when a reload excluded the repo cannot republish it.
     /// Locked only while `last_written` is held.
     suppressed_git: Mutex<HashMap<String, PathBuf>>,
+    /// Temp directory backing `cache_dir` for [`Self::new_for_test`]; removed on drop.
+    #[cfg(any(test, feature = "test-support"))]
+    _temp_dir: Option<tempfile::TempDir>,
 }
 
 impl InstantPromptCache {
+    fn with_dir(cache_dir: PathBuf) -> Self {
+        Self {
+            cache_dir,
+            last_written: Mutex::new(LastWritten {
+                entries: HashMap::new(),
+                tick: 0,
+            }),
+            seen_contexts: RwLock::new(SeenContexts {
+                entries: HashMap::new(),
+                tick: 0,
+            }),
+            unwritable_keys: Mutex::new(HashSet::new()),
+            suppressed_git: Mutex::new(HashMap::new()),
+            #[cfg(any(test, feature = "test-support"))]
+            _temp_dir: None,
+        }
+    }
+
     /// Create a new instant-prompt cache manager.
     /// # Errors
     /// Returns an error naming the cache directory if it cannot be created.
@@ -105,23 +126,11 @@ impl InstantPromptCache {
                 "Pruned {entries} stale entries and {orphans} orphans from instant-prompt cache"
             );
         }
-        Ok(Self {
-            cache_dir,
-            last_written: Mutex::new(LastWritten {
-                entries: HashMap::new(),
-                tick: 0,
-            }),
-            seen_contexts: RwLock::new(SeenContexts {
-                entries: HashMap::new(),
-                tick: 0,
-            }),
-            unwritable_keys: Mutex::new(HashSet::new()),
-            suppressed_git: Mutex::new(HashMap::new()),
-        })
+        Ok(Self::with_dir(cache_dir))
     }
 
-    /// A cache in a fresh, never-cleaned temp directory (`new` needs
-    /// `HOME`/XDG).
+    /// A cache in a fresh temp directory removed when the cache drops (`new`
+    /// needs `HOME`/XDG).
     /// # Panics
     /// Panics if the directory cannot be created.
     #[cfg(any(test, feature = "test-support"))]
@@ -131,16 +140,16 @@ impl InstantPromptCache {
     )]
     #[must_use]
     pub fn new_for_test() -> Self {
-        use std::sync::atomic::{AtomicU64, Ordering};
-
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let cache_dir = std::env::temp_dir().join(format!(
-            "gpy-test-instant-cache-{}-{unique}",
-            std::process::id()
-        ));
-        Self::new_in_dir(cache_dir).expect("instant cache in a temp directory")
+        let temp_dir = tempfile::Builder::new()
+            .prefix("gpy-test-instant-cache-")
+            .tempdir()
+            .expect("temp directory for the instant cache");
+        let cache = Self::new_in_dir(temp_dir.path().to_path_buf())
+            .expect("instant cache in a temp directory");
+        Self {
+            _temp_dir: Some(temp_dir),
+            ..cache
+        }
     }
 
     /// A cache rooted at `cache_dir`, created owner-only if missing.
@@ -149,19 +158,7 @@ impl InstantPromptCache {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn new_in_dir(cache_dir: PathBuf) -> Result<Self> {
         create_private_dir(&cache_dir)?;
-        Ok(Self {
-            cache_dir,
-            last_written: Mutex::new(LastWritten {
-                entries: HashMap::new(),
-                tick: 0,
-            }),
-            seen_contexts: RwLock::new(SeenContexts {
-                entries: HashMap::new(),
-                tick: 0,
-            }),
-            unwritable_keys: Mutex::new(HashSet::new()),
-            suppressed_git: Mutex::new(HashMap::new()),
-        })
+        Ok(Self::with_dir(cache_dir))
     }
 
     /// Write every git variant, dialect and known `prev_bg` context; returns

@@ -123,6 +123,9 @@ nix = { version = "0.31", features = ["signal", "process", "fs", "user"] }
 # unsafe and macOS has no /proc.
 sysinfo = "0.39"
 
+# Backs `InstantPromptCache::new_for_test` (feature `test-support`).
+tempfile = { version = "3.27", optional = true }
+
 # No Windows dependencies: Windows builds the CLI only; IPC is Unix-socket only.
 
 [target."cfg(unix)".dev-dependencies]
@@ -134,7 +137,7 @@ portable-pty = "0.9"
 # dev-dependency below turns it on for every test, bench and example build,
 # so no command passes `--features`; `--lib`, release and `cargo doc` builds
 # never compile it.
-test-support = []
+test-support = ["dep:tempfile"]
 
 [dev-dependencies]
 gpy-agent = { path = ".", features = ["test-support"] }
