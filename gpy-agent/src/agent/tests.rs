@@ -1,4 +1,3 @@
-
 /// Reconcile ticks skipped during an in-flight scan are caught up afterwards, never concurrently.
 mod reconcile_scan_tests {
 
