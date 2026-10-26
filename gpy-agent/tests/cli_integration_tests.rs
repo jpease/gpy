@@ -563,7 +563,11 @@ fn test_cli_oneshot_missing_operation() {
     let (exit_code, _stdout, stderr) = run_gpy_agent(&["oneshot"]);
 
     assert_ne!(exit_code, 0_i32);
-    assert!(stderr.contains("Usage: gpy-agent oneshot"), "{stderr}");
+    // Windows prints `gpy-agent.exe`.
+    assert!(
+        stderr.contains("Usage: gpy-agent") && stderr.contains("oneshot <COMMAND>"),
+        "{stderr}"
+    );
 }
 
 #[test]

@@ -173,7 +173,8 @@ mod tests {
     /// `~user/…` is never expanded, so it could never match a repository.
     #[test]
     fn test_validate_skip_paths_rejects_other_users_home() {
-        let err = validate_skip_paths(&["/tmp".to_owned(), "~root/x".to_owned()])
+        let absolute = std::env::temp_dir().to_string_lossy().into_owned();
+        let err = validate_skip_paths(&[absolute, "~root/x".to_owned()])
             .unwrap_err()
             .to_string();
         assert_eq!(
