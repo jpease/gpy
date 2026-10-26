@@ -336,6 +336,8 @@ mod tests {
     use crate::language::DetectedLanguage;
     use crate::palette::PaletteCache;
     use crate::theme::ThemeManager;
+    #[cfg(unix)]
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn make_handler() -> (LanguageHandler, Arc<ClientDirectory>) {
         make_handler_with(InstantPromptCache::new_for_test(), Config::default())
@@ -524,7 +526,8 @@ mod tests {
         let mut config = Config::default();
         config.agent.timeout_seconds =
             crate::config::types::AgentTimeout::new(1).expect("1 s timeout");
-        let (handler, registry) = make_handler_with(InstantPromptCache::new_for_test(), config);
+        let (base, _registry) = make_handler_with(InstantPromptCache::new_for_test(), config);
+        let (handler, rings) = with_counting_rings(&base);
 
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let repo_dir = temp_dir.path().join("repo");
@@ -548,7 +551,7 @@ mod tests {
             }],
         );
         let request = language_detect_request_with_venv(&repo_root, Some(&forwarded));
-        let notified_before = registry.notify_invocations();
+        let notified_before = rings.load(Ordering::SeqCst);
 
         let started = std::time::Instant::now();
         let result = handler.handle(&request);
@@ -563,13 +566,13 @@ mod tests {
         );
 
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while registry.notify_invocations() == notified_before
+        while rings.load(Ordering::SeqCst) == notified_before
             && std::time::Instant::now() < deadline
         {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(
-            registry.notify_invocations() > notified_before,
+            rings.load(Ordering::SeqCst) > notified_before,
             "the probe's result must be published and rung"
         );
 
@@ -583,9 +586,11 @@ mod tests {
     }
 
     /// A synchronous request repaints other live shells only on change.
+    #[cfg(unix)]
     #[test]
     fn handle_language_detection_notifies_only_on_content_change() {
-        let (handler, registry) = make_handler();
+        let (base, _registry) = make_handler();
+        let (handler, rings) = with_counting_rings(&base);
         // Unique temp path so the first write is always a change.
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let repo_dir = temp_dir.path().join("repo");
@@ -607,17 +612,31 @@ mod tests {
 
         handler.handle(&message).expect("first request");
         assert_eq!(
-            registry.notify_invocations(),
+            rings.load(Ordering::SeqCst),
             1,
             "a synchronous request that changes the cached output should repaint live shells"
         );
 
         handler.handle(&message).expect("second request");
         assert_eq!(
-            registry.notify_invocations(),
+            rings.load(Ordering::SeqCst),
             1,
             "an unchanged refresh must not wake terminals"
         );
+    }
+
+    /// `handler` ringing a counted doorbell for one live client in every repo.
+    #[cfg(unix)]
+    fn with_counting_rings(handler: &LanguageHandler) -> (LanguageHandler, Arc<AtomicU64>) {
+        let (registry, rings) = ClientDirectory::counting_rings();
+        let render = RenderDeps {
+            client_registry: registry.shared(),
+            ..handler.render.clone()
+        };
+        (
+            LanguageHandler::new(render, handler.language_cache.clone()),
+            rings,
+        )
     }
 
     /// Seed an empty cache entry for `root`, aged past the refresh interval.
@@ -775,7 +794,7 @@ mod tests {
                 .expect("docs request")
         };
         let go_stale = || {
-            crate::language::age_non_git_root_for_test(&docs, LANGUAGE_REFRESH_INTERVAL);
+            crate::language::ProjectRoot::backdate_non_git_memo(&docs, LANGUAGE_REFRESH_INTERVAL);
             handler.language_cache.age_entry_for_test(
                 &docs,
                 LANGUAGE_REFRESH_INTERVAL.saturating_add(Duration::from_secs(1)),

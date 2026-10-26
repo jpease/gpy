@@ -52,14 +52,6 @@ impl DetectionCache {
             .map(|entry| (entry.languages.clone(), entry.last_refresh.elapsed()))
     }
 
-    /// Backdate the entry for `path` by `by`; no-op if absent.
-    #[cfg(test)]
-    pub(crate) fn age_entry_for_test(&self, path: &Path, by: Duration) {
-        if let Some(entry) = self.cache.write_or_recover().get_mut(path) {
-            entry.last_refresh = Instant::now().checked_sub(by).unwrap_or_else(Instant::now);
-        }
-    }
-
     /// Set cached detection results for a directory
     pub fn set(&self, path: &Path, results: Vec<DetectedLanguage>) {
         self.set_entry(path, results, None);
@@ -107,6 +99,15 @@ impl DetectionCache {
 mod tests {
     use super::*;
     use crate::language::DetectedLanguage;
+
+    impl DetectionCache {
+        /// Backdate the entry for `path` by `by`; no-op if absent.
+        pub(crate) fn age_entry_for_test(&self, path: &Path, by: Duration) {
+            if let Some(entry) = self.cache.write_or_recover().get_mut(path) {
+                entry.last_refresh = Instant::now().checked_sub(by).unwrap_or_else(Instant::now);
+            }
+        }
+    }
 
     fn sample_lang() -> Vec<DetectedLanguage> {
         vec![DetectedLanguage {

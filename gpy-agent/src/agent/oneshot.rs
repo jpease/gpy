@@ -168,8 +168,7 @@ fn git_response(request: &OneshotRequest, config: &Config) -> Result<Response> {
 
     let _t = crate::profiling::Timer::new("git_load_repository");
     let Some(crate::git::CompleteStatus { status, .. }) =
-        crate::git::status::load_repository_state_with(
-            &crate::git::native::NativeGitBackend,
+        crate::git::native::NativeGitBackend::get_complete_status(
             request_path,
             None,
             config.git.max_ahead_behind,

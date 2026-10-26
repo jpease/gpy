@@ -4,8 +4,6 @@ use super::{DebouncedEvent, PendingEvent, WatchRegistry, debouncer, filesystem};
 use crate::Result;
 use crate::sync_ext::MutexExt;
 use std::path::Path;
-#[cfg(test)]
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -43,10 +41,6 @@ pub struct WatchCoordinator {
     flush_kick: mpsc::Sender<()>,
     /// Registry shared with the filesystem layer.
     registry: Arc<WatchRegistry>,
-
-    /// Every unwatched path, in call order.
-    #[cfg(test)]
-    unwatch_calls: Mutex<Vec<PathBuf>>,
 }
 
 impl WatchCoordinator {
@@ -141,8 +135,6 @@ impl WatchCoordinator {
             flush_handle: Some(flush_handle),
             flush_kick,
             registry: shared_registry,
-            #[cfg(test)]
-            unwatch_calls: Mutex::new(Vec::new()),
         })
     }
 
@@ -189,10 +181,6 @@ impl WatchCoordinator {
     /// # Errors
     /// Returns an error if the directory cannot be unwatched.
     pub fn unwatch_directory<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
-        #[cfg(test)]
-        self.unwatch_calls
-            .lock_or_recover()
-            .push(path.as_ref().to_path_buf());
         if let Some(watcher) = &mut self.watcher {
             watcher.unwatch(path)?;
         }
@@ -205,29 +193,10 @@ impl WatchCoordinator {
     /// # Errors
     /// Returns an error if the directory cannot be unwatched.
     pub fn unwatch_directory_shallow<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
-        #[cfg(test)]
-        self.unwatch_calls
-            .lock_or_recover()
-            .push(path.as_ref().to_path_buf());
         if let Some(watcher) = &mut self.watcher {
             watcher.unwatch_shallow(path)?;
         }
         Ok(())
-    }
-
-    /// Every path this instance was asked to unwatch, in call order.
-    #[cfg(test)]
-    pub fn unwatch_calls(&self) -> Vec<PathBuf> {
-        self.unwatch_calls.lock_or_recover().clone()
-    }
-
-    /// Logical registrations (with owner counts) and the OS watches beneath them.
-    #[cfg(test)]
-    pub(crate) fn held_watches(&self) -> filesystem::HeldWatches {
-        self.watcher.as_ref().map_or_else(
-            Default::default,
-            filesystem::FileSystemWatcher::held_watches,
-        )
     }
 
     /// Stop all watching
@@ -254,12 +223,6 @@ impl WatchCoordinator {
             (self.callback)(event);
         }
     }
-
-    /// Feed `pending` through the production ingress path, kick included.
-    #[cfg(test)]
-    pub(crate) fn ingest_for_test(&self, pending: PendingEvent) {
-        ingest(&self.debouncer, &self.flush_kick, pending);
-    }
 }
 
 impl Drop for WatchCoordinator {
@@ -267,3 +230,6 @@ impl Drop for WatchCoordinator {
         self.stop();
     }
 }
+
+#[cfg(test)]
+mod tests;

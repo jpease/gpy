@@ -136,10 +136,8 @@ mod tests {
     use crate::config::validation::colors::PALETTE_ROLE_COLORS;
     use crate::formatter::encode_ansi;
     use crate::palette::manager::BUILTIN_PALETTES;
-    use crate::template::{
-        ANSI_BASE_WORDS, BRIGHT_PREFIXES, Color, MapResolver, RenderContext, canonical_ansi_name,
-        is_named_color, render,
-    };
+    use crate::template::style::{ANSI_BASE_WORDS, BRIGHT_PREFIXES, is_named_color};
+    use crate::template::{Color, MapResolver, RenderContext, canonical_ansi_name, render};
 
     #[test]
     fn parses_colors_table_and_ignores_unknown_keys() {

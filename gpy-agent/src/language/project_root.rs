@@ -74,18 +74,6 @@ fn memoized_non_git_root(path: &Path, home: impl FnOnce() -> Option<PathBuf>) ->
     root
 }
 
-/// Backdate `path`'s memoized root by `age` (test-only).
-#[cfg(test)]
-pub(crate) fn age_non_git_root_for_test(path: &Path, age: std::time::Duration) {
-    let dir = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    if let Some(root) = NON_GIT_ROOT_CACHE.get(&dir) {
-        let backdated = std::time::SystemTime::now()
-            .checked_sub(age)
-            .expect("test age must not predate the clock's range");
-        NON_GIT_ROOT_CACHE.insert_at(dir, root, backdated);
-    }
-}
-
 /// Nearest marker ancestor of `dir`, else `dir` itself.
 fn resolve_non_git_root(dir: &Path, home: Option<&Path>) -> PathBuf {
     nearest_marker_ancestor(dir, home).unwrap_or_else(|| dir.to_path_buf())
@@ -149,6 +137,19 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
 
     use super::*;
+
+    impl ProjectRoot {
+        /// Backdate `path`'s memoized non-git root by `age`.
+        pub(crate) fn backdate_non_git_memo(path: &Path, age: std::time::Duration) {
+            let dir = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+            if let Some(root) = NON_GIT_ROOT_CACHE.get(&dir) {
+                let backdated = std::time::SystemTime::now()
+                    .checked_sub(age)
+                    .expect("test age must not predate the clock's range");
+                NON_GIT_ROOT_CACHE.insert_at(dir, root, backdated);
+            }
+        }
+    }
 
     fn canonical_temp_dir() -> (tempfile::TempDir, PathBuf) {
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
@@ -267,7 +268,7 @@ mod tests {
         std::fs::create_dir_all(&docs).expect("docs dir");
         std::fs::write(home.join("package.json"), "{}").expect("marker in home");
         let resolve = || memoized_non_git_root(&docs, || Some(home.clone()));
-        let expire = || age_non_git_root_for_test(&docs, LANGUAGE_REFRESH_INTERVAL);
+        let expire = || ProjectRoot::backdate_non_git_memo(&docs, LANGUAGE_REFRESH_INTERVAL);
 
         assert_eq!(
             resolve(),

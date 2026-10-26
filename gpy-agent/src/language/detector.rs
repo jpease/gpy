@@ -25,9 +25,9 @@ impl Detector {
         Self::detect_directory_impl(path, true)
     }
 
-    /// Benchmark-only variant that skips the per-file size lookup.
+    /// [`Self::detect_directory`] without the per-file size lookup, for benchmarks.
+    #[cfg(feature = "test-support")]
     #[must_use]
-    #[doc(hidden)]
     pub fn detect_directory_without_metadata<P: AsRef<Path>>(path: P) -> Vec<DetectedLanguage> {
         Self::detect_directory_impl(path, false)
     }
@@ -85,18 +85,26 @@ impl Detector {
         path: P,
         mode: crate::config::types::DetectionMode,
     ) -> Vec<DetectedLanguage> {
-        Self::detect_directory_bounded_with_budget(path, mode, CONTENT_SCAN_FILE_BUDGET)
+        Self::detect_directory_bounded_within(path.as_ref(), mode, CONTENT_SCAN_FILE_BUDGET)
     }
 
-    /// [`Self::detect_directory_bounded`] with an injectable file budget.
+    /// [`Self::detect_directory_bounded`] with an explicit file budget.
+    #[cfg(feature = "test-support")]
     #[must_use]
-    #[doc(hidden)]
     pub fn detect_directory_bounded_with_budget<P: AsRef<Path>>(
         path: P,
         mode: crate::config::types::DetectionMode,
         budget: usize,
     ) -> Vec<DetectedLanguage> {
-        let path_ref = path.as_ref();
+        Self::detect_directory_bounded_within(path.as_ref(), mode, budget)
+    }
+
+    /// [`Self::detect_directory_bounded`] with a content scan capped at `budget` files.
+    fn detect_directory_bounded_within(
+        path_ref: &Path,
+        mode: crate::config::types::DetectionMode,
+        budget: usize,
+    ) -> Vec<DetectedLanguage> {
         let needs_fallback =
             matches!(
                 mode,

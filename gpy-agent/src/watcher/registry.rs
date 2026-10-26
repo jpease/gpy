@@ -32,13 +32,18 @@ impl WatchRegistry {
     /// An empty registry; worktree watching from `GPY_WATCH_WORKTREE`, else on.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_ignore(filesystem::IgnoreCaches::default())
+    }
+
+    /// [`Self::new`] over the given ignore caches.
+    pub(crate) fn with_ignore(ignore: filesystem::IgnoreCaches) -> Self {
         Self {
             roots: Mutex::new(HashSet::new()),
             external_gitdirs: RwLock::new(ExternalGitDirs::new()),
             common_gitdirs: RwLock::new(CommonGitDirs::new()),
             config_paths: RwLock::new(HashSet::new()),
             worktree_enabled: AtomicBool::new(env_watch_worktree_override().unwrap_or(true)),
-            ignore: filesystem::IgnoreCaches::default(),
+            ignore,
         }
     }
 

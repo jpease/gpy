@@ -155,94 +155,16 @@ pub fn test_socket_bind(socket_path: &PathBuf) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Test-only counters of which step decided a ping. Relaxed atomics and no
-/// I/O, since stderr writes perturb the timing being measured. Process-global,
-/// so reported but never asserted on.
-#[cfg(all(test, unix))]
-pub(crate) mod ping_probe {
-    use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
-
-    pub static ANSWERED: AtomicU32 = AtomicU32::new(0);
-    pub static CONNECT_ERROR: AtomicU32 = AtomicU32::new(0);
-    pub static CONNECT_TIMEOUT: AtomicU32 = AtomicU32::new(0);
-    pub static WRITE_ERROR: AtomicU32 = AtomicU32::new(0);
-    pub static READ_TIMEOUT: AtomicU32 = AtomicU32::new(0);
-    pub static READ_CLOSED: AtomicU32 = AtomicU32::new(0);
-    pub static UNRECOGNIZED: AtomicU32 = AtomicU32::new(0);
-    /// `raw_os_error` of the most recent failed connect, or 0 if there was none.
-    pub static LAST_CONNECT_ERRNO: AtomicI32 = AtomicI32::new(0);
-
-    pub fn bump(counter: &AtomicU32) {
-        counter.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn record_connect_errno(errno: i32) {
-        LAST_CONNECT_ERRNO.store(errno, Ordering::Relaxed);
-    }
-
-    /// A one-line reading of every counter, for a failure message.
-    pub fn summary() -> String {
-        let read = |c: &AtomicU32| c.load(Ordering::Relaxed);
-        format!(
-            "answered={} connect_error={} (last errno {}) connect_timeout={} \
-             write_error={} read_timeout={} read_closed={} unrecognized={}",
-            read(&ANSWERED),
-            read(&CONNECT_ERROR),
-            LAST_CONNECT_ERRNO.load(Ordering::Relaxed),
-            read(&CONNECT_TIMEOUT),
-            read(&WRITE_ERROR),
-            read(&READ_TIMEOUT),
-            read(&READ_CLOSED),
-            read(&UNRECOGNIZED),
-        )
-    }
-}
-
-/// Record a ping outcome when the probe is compiled in; a no-op otherwise.
-#[cfg(unix)]
-macro_rules! ping_outcome {
-    ($counter:ident) => {{
-        #[cfg(test)]
-        crate::agent::lifecycle::ping_probe::bump(&crate::agent::lifecycle::ping_probe::$counter);
-    }};
-}
-
-/// Record which way a connect failed, when the probe is compiled in.
-#[cfg(unix)]
-#[allow(
-    clippy::missing_const_for_fn,
-    reason = "const only in non-test builds; the test build records the errno through non-const probe calls"
-)]
-fn record_connect_failure(e: &std::io::Error) {
-    #[cfg(test)]
-    {
-        ping_probe::record_connect_errno(e.raw_os_error().unwrap_or(-1_i32));
-        ping_probe::bump(&ping_probe::CONNECT_ERROR);
-    }
-    #[cfg(not(test))]
-    let _ = e;
-}
-
-/// Connect within the ping's connect budget; refusal and timeout are recorded
-/// separately for the probe.
+/// Connect within the ping's connect budget; `None` when nothing accepted.
 #[cfg(unix)]
 async fn ping_connect(socket_path: &PathBuf) -> Option<tokio::net::UnixStream> {
-    match tokio::time::timeout(
+    tokio::time::timeout(
         std::time::Duration::from_millis(500),
         tokio::net::UnixStream::connect(socket_path),
     )
     .await
-    {
-        Ok(Ok(stream)) => Some(stream),
-        Ok(Err(e)) => {
-            record_connect_failure(&e);
-            None
-        }
-        Err(_) => {
-            ping_outcome!(CONNECT_TIMEOUT);
-            None
-        }
-    }
+    .ok()?
+    .ok()
 }
 
 /// Outcome of one ping attempt. `NotListening` is weak evidence (a busy
@@ -286,7 +208,6 @@ fn ping_agent_outcome(socket_path: &PathBuf) -> Result<PingOutcome> {
         let ping_msg = b"{\"op\":\"ping\"}\n";
 
         if let Err(e) = writer.write_all(ping_msg).await {
-            ping_outcome!(WRITE_ERROR);
             // Something is listening; report as indeterminate, not stopped.
             return Err(Error::ipc(format!("ping write failed: {e}")));
         }
@@ -295,7 +216,6 @@ fn ping_agent_outcome(socket_path: &PathBuf) -> Result<PingOutcome> {
         match tokio::time::timeout(Duration::from_millis(500), reader.read(&mut buffer)).await {
             Ok(Ok(n)) if n > 0 => {
                 let Some(chunk) = buffer.get(..n) else {
-                    ping_outcome!(UNRECOGNIZED);
                     return Ok(PingOutcome::AcceptedNoReply);
                 };
                 let response = String::from_utf8_lossy(chunk);
@@ -307,22 +227,13 @@ fn ping_agent_outcome(socket_path: &PathBuf) -> Result<PingOutcome> {
                 // `"Ack"`, so the decoder has to accept the formatter shape
                 // or a live agent is never seen answering.
                 if crate::ipc::decode_wire_reply(&response).is_ok_and(|reply| is_ack(&reply)) {
-                    ping_outcome!(ANSWERED);
                     Ok(PingOutcome::Answered)
                 } else {
-                    ping_outcome!(UNRECOGNIZED);
                     Ok(PingOutcome::AcceptedNoReply)
                 }
             }
-            Err(_) => {
-                ping_outcome!(READ_TIMEOUT);
-                Ok(PingOutcome::AcceptedNoReply)
-            }
-            // Clean close or read error: accepted but unanswered.
-            Ok(_) => {
-                ping_outcome!(READ_CLOSED);
-                Ok(PingOutcome::AcceptedNoReply)
-            }
+            // Timeout, clean close or read error: accepted but unanswered.
+            Err(_) | Ok(_) => Ok(PingOutcome::AcceptedNoReply),
         }
     })
 }
@@ -1251,8 +1162,7 @@ mod stale_socket_tests {
 
         assert!(
             matches!(alive, Ok(true)),
-            "an agent that replied and closed is alive; got {alive:?} (pings: {})",
-            super::ping_probe::summary()
+            "an agent that replied and closed is alive; got {alive:?}"
         );
     }
 
@@ -1282,9 +1192,7 @@ mod stale_socket_tests {
 
         assert!(
             !stopped,
-            "must report the agent as still responding, not confirmed stopped \
-             ({report}; pings: {})",
-            super::ping_probe::summary()
+            "must report the agent as still responding, not confirmed stopped ({report})"
         );
         assert!(
             elapsed >= SHUTDOWN_WAIT_MAX,

@@ -17,6 +17,12 @@ fn rust_languages() -> Vec<crate::ipc::LanguageInfo> {
 }
 
 impl InstantPromptCache {
+    /// Cache-file writes so far, unchanged rewrites included (the recency tick).
+    #[cfg(unix)]
+    pub(crate) fn write_call_count(&self) -> u64 {
+        self.last_written.lock_or_recover().tick
+    }
+
     /// Get the cache file path for a given cache key, suffix and dialect
     /// (the writer needs the directory and name separately).
     fn cache_file_path(&self, key: &str, suffix: &str, dialect: PromptDialect) -> PathBuf {

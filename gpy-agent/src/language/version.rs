@@ -650,12 +650,6 @@ pub(crate) fn set_version_cache_ttl(hours: u64) {
     crate::cache::ttl_map::set_shared_cache_ttl(hours);
 }
 
-#[cfg(test)]
-#[must_use]
-pub(crate) fn version_cache_ttl_seconds_for_tests() -> u64 {
-    crate::cache::ttl_map::shared_cache_ttl_seconds()
-}
-
 /// Whether a version detector exists for `language` (case-insensitive).
 #[must_use]
 pub fn has_version_detector(language: &str) -> bool {

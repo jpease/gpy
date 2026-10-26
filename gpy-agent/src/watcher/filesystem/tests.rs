@@ -1,7 +1,7 @@
 #![allow(clippy::missing_panics_doc)]
 
 use super::backend::poll_watch_targets;
-use super::ignore::{force_added_set, is_force_added, tracked_ignored_test_hooks};
+use super::ignore::{force_added_set, is_force_added};
 use super::probe::{
     DEFAULT_WATCH_POLL_MS, DEFAULT_WATCH_PROBE_MS, engage_poll_fallback,
     native_backend_delivers_events,
@@ -13,7 +13,7 @@ use notify::event::{
     AccessKind, AccessMode, CreateKind, DataChange, EventAttributes, EventKind, Flag, MetadataKind,
     ModifyKind, RenameMode,
 };
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -36,23 +36,22 @@ impl FileSystemWatcher {
             );
         }
     }
-}
 
-/// Install a stand-in backend for `repo_root`, replacing any previous one.
-fn set_tracked_ignored_hook_for_test(
-    repo_root: &Path,
-    hook: impl Fn(&Path) -> Vec<PathBuf> + Send + Sync + 'static,
-) {
-    tracked_ignored_test_hooks()
-        .lock_or_recover()
-        .insert(repo_root.to_path_buf(), Arc::new(hook));
-}
-
-/// Remove the stand-in backend for `repo_root`, restoring the real one.
-fn clear_tracked_ignored_hook_for_test(repo_root: &Path) {
-    tracked_ignored_test_hooks()
-        .lock_or_recover()
-        .remove(repo_root);
+    /// Registrations with owner counts, and the armed OS watches.
+    pub(crate) fn held_watches(
+        &self,
+    ) -> (
+        BTreeMap<(PathBuf, WatchMode), u32>,
+        BTreeMap<PathBuf, WatchMode>,
+    ) {
+        let guard = self.backend.lock_or_recover();
+        let owners = guard
+            .registrations
+            .iter()
+            .map(|(key, registration)| (key.clone(), registration.owners))
+            .collect();
+        (owners, guard.os.armed_paths())
+    }
 }
 
 /// Follow-up delay used by `process_event` in tests: short, but long enough to
@@ -62,12 +61,29 @@ const TEST_FOLLOWUP_DELAY: Duration = Duration::from_millis(50);
 /// A private [`WatchRegistry`]; empty `roots` makes attribution fall through to
 /// the ancestor `.git` walk.
 fn test_registry(worktree_enabled: bool, roots: HashSet<PathBuf>) -> Arc<WatchRegistry> {
-    let registry = Arc::new(WatchRegistry::new());
+    configure_registry(WatchRegistry::new(), worktree_enabled, roots)
+}
+
+/// [`test_registry`] whose force-added sets come from `ls_files` instead of git.
+fn test_registry_with_ls_files(
+    worktree_enabled: bool,
+    roots: HashSet<PathBuf>,
+    ls_files: impl Fn(&Path) -> Vec<PathBuf> + Send + Sync + 'static,
+) -> Arc<WatchRegistry> {
+    let registry = WatchRegistry::with_ignore(IgnoreCaches::new(Arc::new(ls_files)));
+    configure_registry(registry, worktree_enabled, roots)
+}
+
+fn configure_registry(
+    registry: WatchRegistry,
+    worktree_enabled: bool,
+    roots: HashSet<PathBuf>,
+) -> Arc<WatchRegistry> {
     registry.set_worktree_enabled(worktree_enabled);
     for root in roots {
         registry.insert_root(root);
     }
-    registry
+    Arc::new(registry)
 }
 
 /// Capture events emitted when running the provided callback.
@@ -913,17 +929,16 @@ fn fake_repo_with_index_leaked(tmp: tempfile::TempDir) -> PathBuf {
 /// `force_added_set` must not hold the cache mutex while `git ls-files` runs.
 #[test]
 fn force_added_refresh_never_holds_the_cache_mutex() {
-    let registry = test_registry(true, HashSet::new());
     let tmp = tempfile::TempDir::new().expect("temp dir");
     let repo = fake_repo_with_index(&tmp);
 
     let entered = new_gate();
     let release = new_gate();
-    let entered_for_hook = Arc::clone(&entered);
-    let release_for_hook = Arc::clone(&release);
-    set_tracked_ignored_hook_for_test(&repo, move |_| {
-        open_gate(&entered_for_hook);
-        wait_for_gate(&release_for_hook, GATE_BUDGET);
+    let entered_for_ls_files = Arc::clone(&entered);
+    let release_for_ls_files = Arc::clone(&release);
+    let registry = test_registry_with_ls_files(true, HashSet::new(), move |_| {
+        open_gate(&entered_for_ls_files);
+        wait_for_gate(&release_for_ls_files, GATE_BUDGET);
         Vec::new()
     });
 
@@ -940,7 +955,6 @@ fn force_added_refresh_never_holds_the_cache_mutex() {
     let cache_free_during_git = registry.ignore().force_added.try_lock().is_ok();
     open_gate(&release);
     worker.join().expect("worker thread");
-    clear_tracked_ignored_hook_for_test(&repo);
 
     assert!(
         cache_free_during_git,
@@ -952,20 +966,21 @@ fn force_added_refresh_never_holds_the_cache_mutex() {
 /// lookup through the shared force-added cache mutex.
 #[test]
 fn a_slow_repo_does_not_delay_another_repos_lookup() {
-    let registry = test_registry(true, HashSet::new());
     let slow_tmp = tempfile::TempDir::new().expect("temp dir");
     let fast_tmp = tempfile::TempDir::new().expect("temp dir");
     let slow_repo = fake_repo_with_index(&slow_tmp);
     let fast_repo = fake_repo_with_index(&fast_tmp);
 
     let entered = new_gate();
-    let entered_for_hook = Arc::clone(&entered);
-    set_tracked_ignored_hook_for_test(&slow_repo, move |_| {
-        open_gate(&entered_for_hook);
-        std::thread::sleep(SLOW_BACKEND_RUN);
+    let entered_for_ls_files = Arc::clone(&entered);
+    let slow_for_ls_files = slow_repo.clone();
+    let registry = test_registry_with_ls_files(true, HashSet::new(), move |root| {
+        if root == slow_for_ls_files {
+            open_gate(&entered_for_ls_files);
+            std::thread::sleep(SLOW_BACKEND_RUN);
+        }
         Vec::new()
     });
-    set_tracked_ignored_hook_for_test(&fast_repo, |_| Vec::new());
 
     let slow_for_worker = slow_repo.clone();
     let registry_for_worker = Arc::clone(&registry);
@@ -982,8 +997,6 @@ fn a_slow_repo_does_not_delay_another_repos_lookup() {
     let elapsed = started.elapsed();
 
     worker.join().expect("worker thread");
-    clear_tracked_ignored_hook_for_test(&slow_repo);
-    clear_tracked_ignored_hook_for_test(&fast_repo);
 
     assert!(
         elapsed < FAST_LOOKUP_BUDGET,
@@ -1005,7 +1018,22 @@ fn cold_start_for_one_repo_does_not_block_another_repos_watch() {
     std::fs::write(repo_a.join(".gitignore"), b"ignored/\n").expect("write .gitignore");
     std::fs::create_dir_all(repo_a.join("ignored")).expect("ignored dir");
 
-    let registry = test_registry(true, HashSet::from([repo_a.clone(), repo_b.clone()]));
+    let entered = new_gate();
+    let release = new_gate();
+    let entered_for_ls_files = Arc::clone(&entered);
+    let release_for_ls_files = Arc::clone(&release);
+    let gated_repo = repo_a.clone();
+    let registry = test_registry_with_ls_files(
+        true,
+        HashSet::from([repo_a.clone(), repo_b.clone()]),
+        move |root| {
+            if root == gated_repo {
+                open_gate(&entered_for_ls_files);
+                wait_for_gate(&release_for_ls_files, GATE_BUDGET);
+            }
+            Vec::new()
+        },
+    );
     let (callback, _events) = recording_callback_boxed();
     let watcher = FileSystemWatcher::with_fallback_policy(
         callback,
@@ -1017,16 +1045,6 @@ fn cold_start_for_one_repo_does_not_block_another_repos_watch() {
         },
     )
     .expect("create watcher");
-
-    let entered = new_gate();
-    let release = new_gate();
-    let entered_for_hook = Arc::clone(&entered);
-    let release_for_hook = Arc::clone(&release);
-    set_tracked_ignored_hook_for_test(&repo_a, move |_| {
-        open_gate(&entered_for_hook);
-        wait_for_gate(&release_for_hook, GATE_BUDGET);
-        Vec::new()
-    });
 
     std::thread::scope(|scope| {
         let watcher_ref = &watcher;
@@ -1054,8 +1072,6 @@ fn cold_start_for_one_repo_does_not_block_another_repos_watch() {
              mutex"
         );
     });
-
-    clear_tracked_ignored_hook_for_test(&repo_a);
 }
 
 /// Fixture parking `force_poll_fallback` between its snapshot and the swap,
@@ -1066,7 +1082,25 @@ fn swap_race_fixture() -> (FileSystemWatcher, PathBuf, PathBuf, TestGate, TestGa
     std::fs::write(repo_a.join(".gitignore"), b"ignored/\n").expect("write .gitignore");
     std::fs::create_dir_all(repo_a.join("ignored")).expect("ignored dir");
 
-    let registry = test_registry(true, HashSet::from([repo_a.clone(), repo_b.clone()]));
+    // Gates repo A's `git ls-files` only once armed, after its native watch.
+    let armed = Arc::new(AtomicBool::new(false));
+    let entered = new_gate();
+    let release = new_gate();
+    let armed_for_ls_files = Arc::clone(&armed);
+    let entered_for_ls_files = Arc::clone(&entered);
+    let release_for_ls_files = Arc::clone(&release);
+    let gated_repo = repo_a.clone();
+    let registry = test_registry_with_ls_files(
+        true,
+        HashSet::from([repo_a.clone(), repo_b.clone()]),
+        move |root| {
+            if root == gated_repo && armed_for_ls_files.load(Ordering::SeqCst) {
+                open_gate(&entered_for_ls_files);
+                wait_for_gate(&release_for_ls_files, GATE_BUDGET);
+            }
+            Vec::new()
+        },
+    );
     let (callback, _events) = recording_callback_boxed();
     let watcher = FileSystemWatcher::with_fallback_policy(
         callback,
@@ -1077,23 +1111,14 @@ fn swap_race_fixture() -> (FileSystemWatcher, PathBuf, PathBuf, TestGate, TestGa
     )
     .expect("create watcher");
     watcher.watch(&repo_a).expect("watch repo a natively");
-
-    let entered = new_gate();
-    let release = new_gate();
-    let entered_for_hook = Arc::clone(&entered);
-    let release_for_hook = Arc::clone(&release);
-    set_tracked_ignored_hook_for_test(&repo_a, move |_| {
-        open_gate(&entered_for_hook);
-        wait_for_gate(&release_for_hook, GATE_BUDGET);
-        Vec::new()
-    });
+    armed.store(true, Ordering::SeqCst);
 
     (watcher, repo_a, repo_b, entered, release)
 }
 
 #[test]
 fn watch_racing_the_native_to_poll_swap_still_ends_up_armed_correctly() {
-    let (watcher, repo_a, repo_b, entered, release) = swap_race_fixture();
+    let (watcher, _repo_a, repo_b, entered, release) = swap_race_fixture();
 
     std::thread::scope(|scope| {
         let watcher_ref = &watcher;
@@ -1119,8 +1144,6 @@ fn watch_racing_the_native_to_poll_swap_still_ends_up_armed_correctly() {
         open_gate(&release);
         swap.join().expect("swap thread");
     });
-
-    clear_tracked_ignored_hook_for_test(&repo_a);
 
     assert_eq!(
         watcher.backend_kind(),

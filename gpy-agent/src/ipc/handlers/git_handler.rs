@@ -219,8 +219,7 @@ impl GitHandler {
         let job = move || {
             let stash_enabled = job_spec.render.config_manager.get().git.stash_enabled;
             let started = Instant::now();
-            let result = crate::git::status::load_repository_state_with(
-                &crate::git::native::NativeGitBackend,
+            let result = crate::git::native::NativeGitBackend::get_complete_status(
                 &job_spec.path,
                 None,
                 job_spec.max_ahead_behind,
@@ -401,9 +400,17 @@ mod tests {
     }
 
     /// Repaint fires only when the rendered output changes.
+    #[cfg(unix)]
     #[test]
     fn publish_and_repaint_notifies_only_on_content_change() {
-        let (handler, registry) = make_handler();
+        use std::sync::atomic::Ordering;
+
+        let (handler, _registry) = make_handler();
+        let (registry, rings) = ClientDirectory::counting_rings();
+        let render = RenderDeps {
+            client_registry: registry.shared(),
+            ..handler.render.clone()
+        };
         // Unique temp path so the first write is always a change.
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let git_root = temp_dir.path().join("repo");
@@ -412,23 +419,23 @@ mod tests {
         let clean = status(0);
         let dirty = status(3);
 
-        publish_and_repaint(&handler.render, &git_root, &clean, None);
+        publish_and_repaint(&render, &git_root, &clean, None);
         assert_eq!(
-            registry.notify_invocations(),
+            rings.load(Ordering::SeqCst),
             1,
             "first write should repaint live shells"
         );
 
-        publish_and_repaint(&handler.render, &git_root, &clean, None);
+        publish_and_repaint(&render, &git_root, &clean, None);
         assert_eq!(
-            registry.notify_invocations(),
+            rings.load(Ordering::SeqCst),
             1,
             "an unchanged refresh must not wake terminals"
         );
 
-        publish_and_repaint(&handler.render, &git_root, &dirty, None);
+        publish_and_repaint(&render, &git_root, &dirty, None);
         assert_eq!(
-            registry.notify_invocations(),
+            rings.load(Ordering::SeqCst),
             2,
             "a changed status should repaint live shells"
         );

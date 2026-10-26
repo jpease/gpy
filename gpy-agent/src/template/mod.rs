@@ -18,7 +18,7 @@ pub(crate) mod ast;
 mod error;
 mod eval;
 pub(crate) mod parse;
-mod style;
+pub(crate) mod style;
 
 pub use error::{Result, TemplateError};
 pub(crate) use eval::sanitize_control_chars;
@@ -26,7 +26,5 @@ pub use eval::{
     MapResolver, RenderContext, Span, SpanKind, VariableResolver, check_template_controls, render,
 };
 pub use style::canonical_ansi_name;
-#[cfg(test)]
-pub(crate) use style::{ANSI_BASE_WORDS, BRIGHT_PREFIXES, is_named_color};
 pub use style::{Attr, Color, Palette, Style, parse_style};
 pub(crate) use style::{alias_owner, config_color_name, parse_color};

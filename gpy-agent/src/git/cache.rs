@@ -372,23 +372,6 @@ impl GitStatusCache {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-
-    /// Backdate an entry's `cached_at` by `age`.
-    #[cfg(test)]
-    pub(crate) fn age_entry_for_test(&self, key: &Path, age: std::time::Duration) {
-        if let Some(entry) = self.entries.lock_or_recover().get_mut(key) {
-            entry.cached_at = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
-        }
-    }
-
-    /// The cached per-file map for `key`.
-    #[cfg(test)]
-    pub(crate) fn files_for_test(&self, key: &Path) -> Option<HashMap<PathBuf, FileStatus>> {
-        self.entries
-            .lock_or_recover()
-            .get(key)
-            .map(|entry| entry.data.files.clone())
-    }
 }
 
 impl Default for GitStatusCache {
@@ -403,9 +386,27 @@ mod tests {
     use super::GitStatusCache;
     use crate::cache::CachePolicy;
     use crate::git::{FileStatus, RepositoryState, RepositoryStatus};
+    use crate::sync_ext::MutexExt;
     use std::collections::HashMap;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
+
+    impl GitStatusCache {
+        /// Backdate an entry's `cached_at` by `age`.
+        pub(crate) fn age_entry_for_test(&self, key: &Path, age: Duration) {
+            if let Some(entry) = self.entries.lock_or_recover().get_mut(key) {
+                entry.cached_at = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
+            }
+        }
+
+        /// The cached per-file map for `key`.
+        pub(crate) fn files_for_test(&self, key: &Path) -> Option<HashMap<PathBuf, FileStatus>> {
+            self.entries
+                .lock_or_recover()
+                .get(key)
+                .map(|entry| entry.data.files.clone())
+        }
+    }
 
     fn dummy_status() -> RepositoryStatus {
         RepositoryStatus {

@@ -1,18 +1,19 @@
-use super::ClientDirectory;
 #[cfg(unix)]
 use super::ThrottleRecord;
-#[cfg(unix)]
+use super::{ClientDirectory, ClientInfo};
 use crate::sync_ext::MutexExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 #[cfg(unix)]
-use std::path::PathBuf;
+use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(unix)]
 use std::time::Duration;
 #[cfg(unix)]
 use std::time::Instant;
 
-#[cfg(unix)]
 impl ClientDirectory {
+    #[cfg(unix)]
     fn client_cwd(&self, pid: u32) -> Option<PathBuf> {
         self.inner
             .lock_or_recover()
@@ -20,12 +21,51 @@ impl ClientDirectory {
             .and_then(|info| info.cwd.clone())
     }
 
+    #[cfg(unix)]
     fn throttle_allows(&self, repo: &Path) -> bool {
         self.should_notify_repo(repo, None)
     }
 
+    #[cfg(unix)]
     fn throttle_allows_token(&self, repo: &Path, token: u64) -> bool {
         self.should_notify_repo(repo, Some(token))
+    }
+
+    /// Registered PIDs.
+    #[must_use]
+    pub fn clients(&self) -> Vec<u32> {
+        self.inner.lock_or_recover().keys().copied().collect()
+    }
+
+    /// Register with an explicit `started_at`, to test PID-recycle handling.
+    pub(crate) fn register_with_started_at_for_test(
+        &self,
+        pid: u32,
+        cwd: Option<PathBuf>,
+        started_at: Option<u64>,
+    ) {
+        self.inner
+            .lock_or_recover()
+            .insert(pid, ClientInfo { cwd, started_at });
+    }
+
+    /// A directory whose doorbell counts rings into the returned counter
+    /// instead of signalling. Unthrottled, with this process as its one
+    /// client, subscribed to every repository.
+    #[cfg(unix)]
+    pub(crate) fn counting_rings() -> (Self, Arc<AtomicU64>) {
+        let rings = Arc::new(AtomicU64::new(0));
+        let counter = Arc::clone(&rings);
+        let directory = Self {
+            doorbell: Box::new(move |_pid| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }),
+            ..Self::new()
+        };
+        directory.set_throttle_ms(0);
+        directory.register(std::process::id(), None);
+        (directory, rings)
     }
 }
 

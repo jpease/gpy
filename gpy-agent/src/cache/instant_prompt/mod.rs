@@ -26,8 +26,6 @@ use key::{NAME_MAX_BYTES, cache_file_parts, find_project_root, path_to_cache_key
 use name::{CacheFileName, CacheKind, SEGMENT_POSITIONS, parse_cache_file_name, prev_bg_token};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-#[cfg(any(test, feature = "test-support"))]
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
 use std::time::SystemTime;
 use sweep::{clear_unrefreshable_files, prune_stale_entries, remove_git_files};
@@ -84,9 +82,6 @@ pub struct InstantPromptCache {
     /// already in flight when a reload excluded the repo cannot republish it.
     /// Locked only while `last_written` is held.
     suppressed_git: Mutex<HashMap<String, PathBuf>>,
-    /// Test-only count of [`Self::write_cache_file`] invocations.
-    #[cfg(test)]
-    write_calls: AtomicU64,
 }
 
 impl InstantPromptCache {
@@ -116,8 +111,6 @@ impl InstantPromptCache {
             }),
             unwritable_keys: Mutex::new(HashSet::new()),
             suppressed_git: Mutex::new(HashMap::new()),
-            #[cfg(test)]
-            write_calls: AtomicU64::new(0),
         })
     }
 
@@ -132,6 +125,8 @@ impl InstantPromptCache {
     )]
     #[must_use]
     pub fn new_for_test() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
         static COUNTER: AtomicU64 = AtomicU64::new(0);
 
         let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -160,15 +155,7 @@ impl InstantPromptCache {
             }),
             unwritable_keys: Mutex::new(HashSet::new()),
             suppressed_git: Mutex::new(HashMap::new()),
-            #[cfg(test)]
-            write_calls: AtomicU64::new(0),
         })
-    }
-
-    /// Number of times [`Self::write_cache_file`] has run (test-only).
-    #[cfg(all(test, unix))]
-    pub(crate) fn write_call_count(&self) -> u64 {
-        self.write_calls.load(Ordering::Relaxed)
     }
 
     /// Write every git variant, dialect and known `prev_bg` context; returns
@@ -347,9 +334,6 @@ impl InstantPromptCache {
     /// # Errors
     /// Returns an error if the cache file cannot be written.
     fn write_cache_file(&self, name: &CacheFileName<'_>, content: &str) -> Result<bool> {
-        #[cfg(test)]
-        self.write_calls.fetch_add(1, Ordering::Relaxed);
-
         let tail = name.tail();
         let map_key = format!("{}.{tail}", name.key);
         let (dir, file_name) = cache_file_parts(&self.cache_dir, name.key, &tail);

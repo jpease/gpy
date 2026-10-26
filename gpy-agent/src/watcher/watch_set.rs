@@ -104,15 +104,6 @@ impl WatchSet {
         Some(self.reconcile(path))
     }
 
-    /// The OS watches currently armed, by path.
-    #[cfg(test)]
-    pub fn armed_paths(&self) -> BTreeMap<PathBuf, WatchMode> {
-        self.entries
-            .iter()
-            .filter_map(|(path, entry)| Some((path.clone(), entry.armed?)))
-            .collect()
-    }
-
     /// Record that arming `path` failed so the next reconcile re-adds it.
     fn mark_unarmed(&mut self, path: &Path) {
         if let Some(entry) = self.entries.get_mut(path) {
@@ -188,6 +179,16 @@ impl WatchSet {
 #[allow(clippy::missing_panics_doc)]
 mod tests {
     use super::*;
+
+    impl WatchSet {
+        /// The OS watches currently armed, by path.
+        pub(crate) fn armed_paths(&self) -> BTreeMap<PathBuf, WatchMode> {
+            self.entries
+                .iter()
+                .filter_map(|(path, entry)| Some((path.clone(), entry.armed?)))
+                .collect()
+        }
+    }
 
     fn add(path: &str, mode: WatchMode) -> OsOp {
         OsOp::Add(PathBuf::from(path), mode)

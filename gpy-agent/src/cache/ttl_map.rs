@@ -156,40 +156,39 @@ where
 }
 
 #[cfg(test)]
-impl<K, V> TtlMap<K, V>
-where
-    K: Eq + Hash + Clone,
-    V: Clone,
-{
-    /// Remove every entry.
-    pub fn clear(&self) {
-        self.map().lock_or_recover().clear();
-    }
-
-    /// Current entry count, ignoring freshness.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.map().lock_or_recover().len()
-    }
-
-    /// Like [`TtlMap::insert`] but with an explicit timestamp.
-    pub fn insert_at(&self, key: K, value: V, inserted_at: SystemTime) {
-        let mut map = self.map().lock_or_recover();
-        map.insert(key, (value, inserted_at));
-        evict_to_capacity(&mut map, self.capacity, |(_value, entry_inserted_at)| {
-            *entry_inserted_at
-        });
-        drop(map);
-    }
-}
-
-#[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::missing_panics_doc)]
 
     use super::*;
+
+    impl<K, V> TtlMap<K, V>
+    where
+        K: Eq + Hash + Clone,
+        V: Clone,
+    {
+        /// Remove every entry.
+        pub(crate) fn clear(&self) {
+            self.map().lock_or_recover().clear();
+        }
+
+        /// Current entry count, ignoring freshness.
+        #[must_use]
+        pub(crate) fn len(&self) -> usize {
+            self.map().lock_or_recover().len()
+        }
+
+        /// Like [`TtlMap::insert`] but with an explicit timestamp.
+        pub(crate) fn insert_at(&self, key: K, value: V, inserted_at: SystemTime) {
+            let mut map = self.map().lock_or_recover();
+            map.insert(key, (value, inserted_at));
+            evict_to_capacity(&mut map, self.capacity, |(_value, entry_inserted_at)| {
+                *entry_inserted_at
+            });
+            drop(map);
+        }
+    }
 
     #[test]
     fn fresh_entry_within_ttl_is_fresh() {

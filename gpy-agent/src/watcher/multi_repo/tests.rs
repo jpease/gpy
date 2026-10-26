@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::watcher::DebouncedEvent;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -17,13 +18,91 @@ impl WorktreeWatch {
     }
 }
 
-impl MultiRepoWatcherBuilder {
-    /// Fail every watch for which `fault` returns `Some(err)`.
-    #[must_use]
-    fn watch_fault(mut self, fault: WatchFault) -> Self {
-        self.watch_fault = Some(fault);
-        self
+/// Fails a watch of every path for which it returns `Some(err)`.
+type WatchFault = Arc<dyn Fn(&Path) -> Option<Error> + Send + Sync>;
+
+/// Registrations with owner counts, and the armed OS watches.
+type HeldWatches = (
+    BTreeMap<(PathBuf, WatchMode), u32>,
+    BTreeMap<PathBuf, WatchMode>,
+);
+
+/// A real coordinator that logs every unwatch and fails the watches `fault` rejects.
+struct RecordingTarget {
+    inner: WatchCoordinator,
+    fault: WatchFault,
+    unwatched: Vec<PathBuf>,
+}
+
+impl WatchTarget for RecordingTarget {
+    fn watch(&mut self, path: &Path) -> Result<()> {
+        if let Some(err) = (self.fault)(path) {
+            return Err(err);
+        }
+        self.inner.watch_directory(path)
     }
+
+    fn watch_shallow(&mut self, path: &Path) -> Result<()> {
+        self.inner.watch_directory_shallow(path)
+    }
+
+    fn covers(&self, path: &Path) -> bool {
+        self.inner.covers_directory(path)
+    }
+
+    fn unwatch(&mut self, path: &Path) -> Result<()> {
+        self.unwatched.push(path.to_path_buf());
+        self.inner.unwatch_directory(path)
+    }
+
+    fn unwatch_shallow(&mut self, path: &Path) -> Result<()> {
+        self.unwatched.push(path.to_path_buf());
+        self.inner.unwatch_directory_shallow(path)
+    }
+
+    fn stop_watching(&mut self) {
+        self.inner.stop();
+    }
+}
+
+/// A watcher over `registry` whose coordinator is wrapped in a [`RecordingTarget`].
+fn recording_watcher(
+    watch_registry: Arc<WatchRegistry>,
+    fault: WatchFault,
+) -> MultiRepoWatcher<RecordingTarget> {
+    let MultiRepoWatcher {
+        watcher,
+        watched_repos,
+        registry,
+        common_watches,
+        ops_lock,
+    } = MultiRepoWatcher::builder()
+        .registry(watch_registry)
+        .callback(Box::new(|_event: DebouncedEvent| {}))
+        .build()
+        .unwrap();
+    let inner = Arc::try_unwrap(watcher)
+        .ok()
+        .expect("a fresh watcher's coordinator is unshared")
+        .into_inner()
+        .unwrap()
+        .expect("a fresh watcher has a coordinator");
+    MultiRepoWatcher {
+        watcher: Arc::new(Mutex::new(Some(RecordingTarget {
+            inner,
+            fault,
+            unwatched: Vec::new(),
+        }))),
+        watched_repos,
+        registry,
+        common_watches,
+        ops_lock,
+    }
+}
+
+/// A [`WatchFault`] that never fires.
+fn no_fault() -> WatchFault {
+    Arc::new(|_path: &Path| None)
 }
 
 #[test]
@@ -295,11 +374,7 @@ fn unregister_unwatches_exactly_the_armed_paths() {
     std::fs::create_dir_all(repo_root.join(".git")).unwrap();
     let canonical_root = std::fs::canonicalize(repo_root).unwrap();
 
-    let watcher = MultiRepoWatcher::builder()
-        .registry(test_registry(true))
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .build()
-        .unwrap();
+    let watcher = recording_watcher(test_registry(true), no_fault());
 
     watcher.register_client(99, repo_root).unwrap();
 
@@ -320,13 +395,7 @@ fn unregister_unwatches_exactly_the_armed_paths() {
 
     watcher.unregister_client(99);
 
-    let unwatched = watcher
-        .watcher
-        .lock()
-        .unwrap()
-        .as_ref()
-        .expect("coordinator still present")
-        .unwatch_calls();
+    let unwatched = unwatch_log(&watcher);
     assert_eq!(
         unwatched,
         vec![canonical_root],
@@ -345,14 +414,12 @@ fn worktree_watch_failure_degrades_to_gitdir_only() {
 
     // Fault only `git_root`; the essential .git watch must still succeed.
     let faulty_root = canonical_root.clone();
-    let watcher = MultiRepoWatcher::builder()
-        .registry(test_registry(true))
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .watch_fault(Arc::new(move |path: &Path| {
+    let watcher = recording_watcher(
+        test_registry(true),
+        Arc::new(move |path: &Path| {
             (path == faulty_root).then(|| Error::watcher("injected worktree watch failure (test)"))
-        }))
-        .build()
-        .unwrap();
+        }),
+    );
 
     let result = watcher.register_client(7, repo_root);
 
@@ -393,13 +460,10 @@ fn gitdir_watch_failure_rolls_back_without_tracking() {
     std::fs::create_dir_all(repo_root.join(".git")).unwrap();
 
     // Fault every path: recursive root watch fails, then the .git fallback.
-    let watcher = MultiRepoWatcher::builder()
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .watch_fault(Arc::new(|_path: &Path| {
-            Some(Error::watcher("injected git-dir watch failure (test)"))
-        }))
-        .build()
-        .unwrap();
+    let watcher = recording_watcher(
+        Arc::new(WatchRegistry::new()),
+        Arc::new(|_path: &Path| Some(Error::watcher("injected git-dir watch failure (test)"))),
+    );
 
     let result = watcher.register_client(8, repo_root);
 
@@ -495,7 +559,7 @@ fn recreated_gitdir_rearms_watch_on_reregister() {
 }
 
 /// Effective worktree flag for `root`; one statement so the guard drops at once.
-fn tracked_worktree(watcher: &MultiRepoWatcher, root: &Path) -> bool {
+fn tracked_worktree<T>(watcher: &MultiRepoWatcher<T>, root: &Path) -> bool {
     watcher
         .watched_repos
         .lock()
@@ -506,7 +570,7 @@ fn tracked_worktree(watcher: &MultiRepoWatcher, root: &Path) -> bool {
         .effective()
 }
 
-fn tracked_clients(watcher: &MultiRepoWatcher, root: &Path) -> HashSet<u32> {
+fn tracked_clients<T>(watcher: &MultiRepoWatcher<T>, root: &Path) -> HashSet<u32> {
     watcher
         .watched_repos
         .lock()
@@ -525,26 +589,22 @@ fn test_registry(worktree_enabled: bool) -> Arc<WatchRegistry> {
 }
 
 /// Build a watcher over a fresh temp repo with a bare `.git` directory.
-fn watcher_over_temp_repo(worktree_enabled: bool) -> (TempDir, MultiRepoWatcher) {
-    watcher_over_temp_repo_with_fault(worktree_enabled, |_canonical_root| {
-        Arc::new(|_path: &Path| None)
-    })
+fn watcher_over_temp_repo(worktree_enabled: bool) -> (TempDir, MultiRepoWatcher<RecordingTarget>) {
+    watcher_over_temp_repo_with_fault(worktree_enabled, |_canonical_root| no_fault())
 }
 
 /// Like [`watcher_over_temp_repo`], with a fault built from the canonical root.
 fn watcher_over_temp_repo_with_fault(
     worktree_enabled: bool,
     fault_for_root: impl FnOnce(&Path) -> WatchFault,
-) -> (TempDir, MultiRepoWatcher) {
+) -> (TempDir, MultiRepoWatcher<RecordingTarget>) {
     let temp_dir = TempDir::new().unwrap();
     std::fs::create_dir_all(temp_dir.path().join(".git")).unwrap();
     let canonical_root = std::fs::canonicalize(temp_dir.path()).unwrap();
-    let watcher = MultiRepoWatcher::builder()
-        .registry(test_registry(worktree_enabled))
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .watch_fault(fault_for_root(&canonical_root))
-        .build()
-        .unwrap();
+    let watcher = recording_watcher(
+        test_registry(worktree_enabled),
+        fault_for_root(&canonical_root),
+    );
     (temp_dir, watcher)
 }
 
@@ -881,15 +941,16 @@ fn two_watchers_do_not_share_registry_state() {
     first.registry().unregister_config_path(&config_path);
 }
 
-/// The backend's unwatch log for `watcher`.
-fn unwatch_log(watcher: &MultiRepoWatcher) -> Vec<PathBuf> {
+/// Every path `watcher` unwatched, in call order.
+fn unwatch_log(watcher: &MultiRepoWatcher<RecordingTarget>) -> Vec<PathBuf> {
     watcher
         .watcher
         .lock()
         .unwrap()
         .as_ref()
         .expect("coordinator present")
-        .unwatch_calls()
+        .unwatched
+        .clone()
 }
 
 /// Two plain repos (bare `.git` dirs), the first with a `sub` directory.
@@ -904,12 +965,8 @@ fn two_plain_repos() -> (TempDir, PathBuf, PathBuf) {
     (temp_dir, a, b)
 }
 
-fn plain_watcher() -> MultiRepoWatcher {
-    MultiRepoWatcher::builder()
-        .registry(test_registry(true))
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .build()
-        .unwrap()
+fn plain_watcher() -> MultiRepoWatcher<RecordingTarget> {
+    recording_watcher(test_registry(true), no_fault())
 }
 
 /// A `cd` within the attached repo touches no watch or tracked state.
@@ -995,15 +1052,13 @@ fn update_client_to_other_repo_keeps_shared_repo() {
 fn update_client_failed_arm_still_detaches_from_previous_repo() {
     let (_temp, a, b) = two_plain_repos();
     let fault_root = b.clone();
-    let watcher = MultiRepoWatcher::builder()
-        .registry(test_registry(true))
-        .callback(Box::new(|_event: DebouncedEvent| {}))
-        .watch_fault(Arc::new(move |path: &Path| {
+    let watcher = recording_watcher(
+        test_registry(true),
+        Arc::new(move |path: &Path| {
             path.starts_with(&fault_root)
                 .then(|| Error::watcher("injected watch failure"))
-        }))
-        .build()
-        .unwrap();
+        }),
+    );
     watcher.register_client(1, &a).unwrap();
 
     assert!(watcher.update_client(1, &b).is_err());
@@ -1154,19 +1209,20 @@ fn needed_watches(
     (required, optional)
 }
 
-fn held_watches_of(watcher: &MultiRepoWatcher) -> crate::watcher::filesystem::HeldWatches {
+fn held_watches_of(watcher: &MultiRepoWatcher<RecordingTarget>) -> HeldWatches {
     watcher
         .watcher
         .lock()
         .unwrap()
         .as_ref()
         .expect("coordinator present")
+        .inner
         .held_watches()
 }
 
 /// Assert tracked repos and held OS watches equal the model.
 fn assert_matches_model(
-    watcher: &MultiRepoWatcher,
+    watcher: &MultiRepoWatcher<RecordingTarget>,
     fx: &Fixture,
     model: &std::collections::BTreeMap<u32, Option<usize>>,
     trace: &[(u8, u32, usize)],
@@ -1229,16 +1285,10 @@ fn assert_matches_model(
 }
 
 /// Held watches, unwatch-log length, and one repo's `armed`/`git_dir_id`/`clients`.
-type RearmSnapshot = (
-    crate::watcher::filesystem::HeldWatches,
-    usize,
-    Vec<PathBuf>,
-    DirIdentity,
-    HashSet<u32>,
-);
+type RearmSnapshot = (HeldWatches, usize, Vec<PathBuf>, DirIdentity, HashSet<u32>);
 
 /// What a same-repository re-attach must leave untouched.
-fn rearm_snapshot(watcher: &MultiRepoWatcher, root: &Path) -> RearmSnapshot {
+fn rearm_snapshot(watcher: &MultiRepoWatcher<RecordingTarget>, root: &Path) -> RearmSnapshot {
     let repo = watcher
         .watched_repos
         .lock()

@@ -36,8 +36,6 @@ pub struct EndpointHandleBuilder {
     palette_cache: Option<Arc<PaletteCache>>,
     #[cfg(unix)]
     socket_dir_repair: DirRepair,
-    #[cfg(unix)]
-    socket_ownership_check: Option<std::time::Duration>,
 }
 
 impl EndpointHandleBuilder {
@@ -52,8 +50,6 @@ impl EndpointHandleBuilder {
             palette_cache: None,
             #[cfg(unix)]
             socket_dir_repair: DirRepair::Refuse,
-            #[cfg(unix)]
-            socket_ownership_check: None,
         }
     }
 
@@ -71,14 +67,6 @@ impl EndpointHandleBuilder {
     #[must_use]
     pub const fn socket_dir_repair(mut self, repair: DirRepair) -> Self {
         self.socket_dir_repair = repair;
-        self
-    }
-
-    /// Shorten the socket-ownership check period for tests.
-    #[cfg(all(unix, test))]
-    #[must_use]
-    pub(crate) const fn socket_ownership_check(mut self, period: std::time::Duration) -> Self {
-        self.socket_ownership_check = Some(period);
         self
     }
 
@@ -129,7 +117,7 @@ impl EndpointHandleBuilder {
 
         #[cfg_attr(
             not(unix),
-            expect(unused_mut, reason = "only unix applies the socket overrides")
+            expect(unused_mut, reason = "only unix applies the socket directory policy")
         )]
         let mut handle = EndpointHandle::with_path_and_state(
             socket_path,
@@ -148,9 +136,6 @@ impl EndpointHandleBuilder {
         #[cfg(unix)]
         {
             handle.socket_dir_repair = self.socket_dir_repair;
-            if let Some(period) = self.socket_ownership_check {
-                handle.socket_ownership_check = period;
-            }
         }
         Ok(handle)
     }

@@ -92,13 +92,35 @@ struct CachedIgnore {
 /// directories get their own matcher.
 type RepoIgnoreCache = Mutex<HashMap<PathBuf, CachedIgnore>>;
 
+/// Lists a repo's tracked files that match an ignore rule (`git ls-files -i`).
+pub(crate) type LsFiles = Arc<dyn Fn(&Path) -> Vec<PathBuf> + Send + Sync>;
+
 /// The ignore-related memoization caches owned by a [`WatchRegistry`].
-#[derive(Default)]
 pub(crate) struct IgnoreCaches {
     /// Per-directory cache of compiled `.gitignore` matchers.
     repo_ignore: RepoIgnoreCache,
     /// Per-repo cache of force-added file sets.
     pub(super) force_added: ForceAddedCache,
+    /// Source of the force-added sets.
+    ls_files: LsFiles,
+}
+
+impl IgnoreCaches {
+    /// Empty caches whose force-added sets come from `ls_files`.
+    pub(crate) fn new(ls_files: LsFiles) -> Self {
+        Self {
+            repo_ignore: Mutex::new(HashMap::new()),
+            force_added: Mutex::new(HashMap::new()),
+            ls_files,
+        }
+    }
+}
+
+impl Default for IgnoreCaches {
+    /// Force-added sets from the repository's own `git ls-files`.
+    fn default() -> Self {
+        Self::new(Arc::new(NativeGitBackend::tracked_ignored_files))
+    }
 }
 
 /// A cached force-added set and the `.git/index` fingerprint it came from.
@@ -239,9 +261,7 @@ pub(super) fn force_added_set(
 
     match refresh {
         ForceAddedRefresh::None => files,
-        ForceAddedRefresh::Blocking => {
-            refresh_force_added(repo_root, &registry.ignore().force_added)
-        }
+        ForceAddedRefresh::Blocking => refresh_force_added(repo_root, registry.ignore()),
         ForceAddedRefresh::Background => {
             let repo_root_owned = repo_root.to_path_buf();
             // Owned handle: the thread outlives this call.
@@ -249,7 +269,7 @@ pub(super) fn force_added_set(
             thread::spawn(move || {
                 drop(refresh_force_added(
                     &repo_root_owned,
-                    &registry_for_refresh.ignore().force_added,
+                    registry_for_refresh.ignore(),
                 ));
             });
             files
@@ -259,15 +279,11 @@ pub(super) fn force_added_set(
 
 /// Run `git ls-files` with no lock held, store the result, and clear `refreshing`.
 /// Fingerprinting before the run means a racing index write leaves it stale.
-fn refresh_force_added(repo_root: &Path, cache_slot: &ForceAddedCache) -> Arc<HashSet<PathBuf>> {
+fn refresh_force_added(repo_root: &Path, ignore: &IgnoreCaches) -> Arc<HashSet<PathBuf>> {
     let index_signature = fingerprint_file(&repo_root.join(".git/index"));
-    let files: Arc<HashSet<PathBuf>> = Arc::new(
-        compute_tracked_ignored_files(repo_root)
-            .into_iter()
-            .collect(),
-    );
+    let files: Arc<HashSet<PathBuf>> = Arc::new((ignore.ls_files)(repo_root).into_iter().collect());
 
-    let mut cache = cache_slot.lock_or_recover();
+    let mut cache = ignore.force_added.lock_or_recover();
     let cached = cache
         .entry(repo_root.to_path_buf())
         .or_insert_with(CachedForceAdded::placeholder);
@@ -278,33 +294,6 @@ fn refresh_force_added(repo_root: &Path, cache_slot: &ForceAddedCache) -> Arc<Ha
     evict_cache_overflow(&mut cache, repo_root);
     drop(cache);
     files
-}
-
-/// Run `git ls-files`; tests may override per repo root.
-fn compute_tracked_ignored_files(repo_root: &Path) -> Vec<PathBuf> {
-    #[cfg(test)]
-    {
-        // Release the table lock before running the hook.
-        let hook = tracked_ignored_test_hooks()
-            .lock_or_recover()
-            .get(repo_root)
-            .map(Arc::clone);
-        if let Some(hook_fn) = hook {
-            return hook_fn(repo_root);
-        }
-    }
-    NativeGitBackend::tracked_ignored_files(repo_root)
-}
-
-/// A test stand-in for `git ls-files`, registered per repo root.
-#[cfg(test)]
-type TrackedIgnoredHook = Arc<dyn Fn(&Path) -> Vec<PathBuf> + Send + Sync>;
-
-/// Per-repo table of test stand-ins consulted by [`compute_tracked_ignored_files`].
-#[cfg(test)]
-pub(super) fn tracked_ignored_test_hooks() -> &'static Mutex<HashMap<PathBuf, TrackedIgnoredHook>> {
-    static HOOKS: OnceLock<Mutex<HashMap<PathBuf, TrackedIgnoredHook>>> = OnceLock::new();
-    HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Whether `path` is a force-added tracked file despite matching an ignore rule.

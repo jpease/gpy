@@ -43,32 +43,13 @@ fn reload_config(manager: &ConfigManager, dir: &Path, toml: &str) {
 #[cfg(unix)]
 #[test]
 fn notify_clients_respects_agent_live_updates_flag() {
-    let registry = ClientDirectory::new().shared();
-    let git_cache = Arc::new(crate::git::cache::GitStatusCache::new());
+    use super::handle::notify_clients_for_response;
+    use std::sync::atomic::Ordering;
+
+    let (directory, rings) = ClientDirectory::counting_rings();
+    let registry = directory.shared();
     let config_dir = TempDir::new().expect("config dir");
     let config_manager = config_manager_with(config_dir.path(), "[agent]\nlive_updates = false\n");
-    let watcher = Arc::new(Mutex::new(None));
-    let theme_manager =
-        Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
-    let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
-    let language_cache = crate::language::DetectionCache::new();
-
-    let initial_config = config_manager.get();
-    let palette_cache = Arc::new(crate::palette::PaletteCache::from_config(&initial_config));
-    let handle = EndpointHandle::with_path_and_state(
-        PathBuf::from("/tmp/test.sock"),
-        ServerDeps {
-            client_registry: Arc::clone(&registry),
-            git_cache: Arc::clone(&git_cache),
-            config_manager: Arc::clone(&config_manager),
-            theme_manager: Arc::clone(&theme_manager),
-            instant_cache,
-            language_cache,
-            palette_cache,
-        },
-        Arc::clone(&watcher),
-        GuardSettings::default(),
-    );
 
     let response = Response::RepositoryStatus(crate::git::RepositoryStatus {
         branch: "main".to_owned(),
@@ -86,9 +67,9 @@ fn notify_clients_respects_agent_live_updates_flag() {
         rebase_progress: None,
     });
 
-    handle.notify_clients(&registry, &response, None);
+    notify_clients_for_response(&config_manager, &registry, &response, None);
     assert_eq!(
-        registry.notify_invocations(),
+        rings.load(Ordering::SeqCst),
         0,
         "live updates disabled should suppress notifications"
     );
@@ -99,9 +80,9 @@ fn notify_clients_respects_agent_live_updates_flag() {
         "[agent]\nlive_updates = true\n",
     );
 
-    handle.notify_clients(&registry, &response, None);
+    notify_clients_for_response(&config_manager, &registry, &response, None);
     assert_eq!(
-        registry.notify_invocations(),
+        rings.load(Ordering::SeqCst),
         1,
         "live updates enabled should allow notifications"
     );
@@ -277,14 +258,6 @@ fn test_endpoint_handle_builder_optional_defaults() {
         crate::paths::get_socket_path().expect("default socket path"),
         "Socket path should default to the platform path"
     );
-    assert!(
-        handle
-            .watcher
-            .lock()
-            .expect("watcher lock poisoned")
-            .is_none(),
-        "Watcher slot should default to an empty slot"
-    );
 }
 
 #[test]
@@ -302,19 +275,41 @@ fn test_endpoint_handle_builder_with_socket_path() {
     );
 }
 
+/// Registration through the built handle must reach the watcher in the
+/// caller's slot, or live updates break.
 #[test]
 #[allow(clippy::missing_panics_doc)]
 fn test_endpoint_handle_builder_with_watcher_slot() {
-    let watcher_slot = Arc::new(Mutex::new(None));
+    let repo = create_git_repo();
+    let watcher = Arc::new(
+        crate::watcher::multi_repo::MultiRepoWatcher::builder()
+            .callback(Box::new(|_event| {}))
+            .build()
+            .expect("watcher"),
+    );
+    let watcher_slot = Arc::new(Mutex::new(Some(Arc::clone(&watcher))));
 
     let handle = default_builder()
-        .watcher_slot(Arc::clone(&watcher_slot))
+        .watcher_slot(watcher_slot)
         .build()
         .expect("builder should accept a shared watcher slot");
+    let register = Message::RegisterClient {
+        pid: crate::ipc::ClientPid::new(std::process::id()).expect("pid in range"),
+        cwd: Some(
+            crate::security::SafePath::new(repo.path().to_str().expect("utf-8 path"))
+                .expect("safe path"),
+        ),
+        shell: None,
+        shell_version: None,
+    };
+    handle
+        .handler_registry
+        .route(&register)
+        .expect("registration succeeds");
 
-    // Must be the same slot, or live updates break.
-    assert!(
-        Arc::ptr_eq(&handle.watcher, &watcher_slot),
-        "Builder must use the exact shared watcher slot, not create a new one"
+    assert_eq!(
+        watcher.watched_repo_count(),
+        1,
+        "the registered client's repository must be watched by the shared watcher"
     );
 }

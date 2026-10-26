@@ -5,7 +5,7 @@ use crate::config::Config;
 use crate::debug_log;
 use crate::git::cache::GitStatusCache;
 use crate::git::native::NativeGitBackend;
-use crate::git::status::{GitBackend, load_repository_state_with};
+use crate::git::status::GitBackend;
 use crate::git::{CompleteStatus, RepositoryStatus};
 use crate::ipc::ClientDirectory;
 use crate::language::detection_cache::LANGUAGE_REFRESH_INTERVAL;
@@ -23,10 +23,6 @@ use std::time::Duration;
 
 mod refresh;
 use refresh::config_refresh_required;
-#[cfg(test)]
-use refresh::{
-    agent_refresh_required, git_refresh_required, language_refresh_required, ui_refresh_required,
-};
 
 /// Shared thread-safe storage for the file watcher, allowing it to be replaced or stopped
 pub type SharedWatcherSlot = Arc<Mutex<Option<Arc<MultiRepoWatcher>>>>;
@@ -490,8 +486,7 @@ fn try_incremental_update_with<B: GitBackend>(
         return not_attempted;
     }
 
-    match load_repository_state_with(
-        backend,
+    match backend.complete_status(
         git_root,
         Some(&relative_paths),
         config.git.max_ahead_behind,
@@ -559,8 +554,7 @@ fn refresh_repo_status_with<B: GitBackend>(
 
     // Invalidate first so the scan reflects the triggering mutation.
     ctx.cache.invalidate_canonical(git_root);
-    match load_repository_state_with(
-        backend,
+    match backend.complete_status(
         git_root,
         None,
         config.git.max_ahead_behind,
@@ -692,6 +686,13 @@ fn git_status_signature(status: &crate::git::RepositoryStatus) -> u64 {
     hasher.finish()
 }
 
+/// Whether `event` is a git change no registered client would see, so its
+/// refresh is skipped. Applied by the watcher callback, not in
+/// `handle_file_event`, whose tests use an empty registry.
+fn git_event_lacks_subscriber(ctx: &AgentContext, event: &DebouncedEvent) -> bool {
+    matches!(event.event, FileEvent::Git { .. }) && !ctx.registry.has_subscriber(&event.repo)
+}
+
 /// Create the filesystem watcher used for live updates.
 ///
 /// # Errors
@@ -706,11 +707,7 @@ pub(super) fn create_watcher(
         .registry(Arc::clone(&ctx.watch_registry))
         .config(watcher_config)
         .callback(Box::new(move |event: DebouncedEvent| {
-            // Skip git refreshes no subscribed client would receive. Gated here, not in
-            // `handle_file_event`, whose tests use an empty registry.
-            if matches!(event.event, FileEvent::Git { .. })
-                && !ctx_for_callback.registry.has_subscriber(&event.repo)
-            {
+            if git_event_lacks_subscriber(&ctx_for_callback, &event) {
                 debug_log!(
                     "agent",
                     "Skipping git refresh for {}: no registered client subscribes to it",

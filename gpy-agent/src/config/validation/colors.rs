@@ -84,7 +84,8 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::missing_panics_doc)]
     use super::{canonical_color, is_valid_color};
-    use crate::template::{ANSI_BASE_WORDS, BRIGHT_PREFIXES, canonical_ansi_name};
+    use crate::template::canonical_ansi_name;
+    use crate::template::style::{ANSI_BASE_WORDS, BRIGHT_PREFIXES};
 
     #[test]
     fn accepts_orange_and_brown_role_names() {

@@ -148,9 +148,14 @@ pub struct ClientDirectory {
     // Reused per sysinfo guidance; recreating `System` per call re-walks process tables.
     #[cfg(unix)]
     sysinfo: Mutex<sysinfo::System>,
-    #[cfg(test)]
-    notify_events: AtomicU64,
+    /// Rings one shell: [`ring_doorbell`]; tests count rings instead.
+    #[cfg(unix)]
+    doorbell: Doorbell,
 }
+
+/// Delivers [`DOORBELL`] to one PID.
+#[cfg(unix)]
+type Doorbell = Box<dyn Fn(u32) -> nix::Result<()> + Send + Sync>;
 
 impl Default for ClientDirectory {
     fn default() -> Self {
@@ -187,8 +192,8 @@ impl ClientDirectory {
             shell_dir: None,
             #[cfg(unix)]
             sysinfo: Mutex::new(sysinfo::System::new()),
-            #[cfg(test)]
-            notify_events: AtomicU64::new(0),
+            #[cfg(unix)]
+            doorbell: Box::new(ring_doorbell),
         }
     }
 
@@ -401,8 +406,6 @@ impl ClientDirectory {
         flag: Option<ShellFlag>,
         token: Option<u64>,
     ) {
-        #[cfg(test)]
-        self.notify_events.fetch_add(1, Ordering::Relaxed);
         #[cfg(not(unix))]
         {
             let _ = (target, mode, flag, token);
@@ -445,7 +448,7 @@ impl ClientDirectory {
                     continue;
                 }
 
-                if !Self::deliver(pid, flag.zip(shell_dir.as_deref())) {
+                if !self.deliver(pid, flag.zip(shell_dir.as_deref())) {
                     stale.push(pid);
                 }
             }
@@ -462,7 +465,7 @@ impl ClientDirectory {
     /// Write `flag` (if any), then ring; `false` means the PID is gone. The flag
     /// must exist before the doorbell, and dead PIDs get no orphan flag.
     #[cfg(unix)]
-    fn deliver(pid: u32, flag: Option<(ShellFlag, &Path)>) -> bool {
+    fn deliver(&self, pid: u32, flag: Option<(ShellFlag, &Path)>) -> bool {
         if let Some((flag_kind, dir)) = flag {
             if !Self::is_client_alive(pid) {
                 return false;
@@ -477,19 +480,12 @@ impl ClientDirectory {
         }
 
         // EPERM: the process exists but we lack permission -- keep it.
-        !matches!(ring_doorbell(pid), Err(nix::errno::Errno::ESRCH))
+        !matches!((self.doorbell)(pid), Err(nix::errno::Errno::ESRCH))
     }
 
     /// Override the per-repository throttle interval used when broadcasting notifications.
     pub fn set_throttle_ms(&self, ms: u64) {
         self.throttle_ms.store(ms, Ordering::Relaxed);
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    /// Total notification attempts.
-    pub fn notify_invocations(&self) -> u64 {
-        self.notify_events.load(Ordering::Relaxed)
     }
 
     /// Create a shared reference suitable for passing between subsystems.
@@ -529,26 +525,6 @@ impl ClientDirectory {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
-    }
-
-    /// Registered PIDs.
-    #[cfg(test)]
-    #[must_use]
-    pub fn clients(&self) -> Vec<u32> {
-        self.inner.lock_or_recover().keys().copied().collect()
-    }
-
-    /// Register with an explicit `started_at`, to test PID-recycle handling.
-    #[cfg(test)]
-    pub(crate) fn register_with_started_at_for_test(
-        &self,
-        pid: u32,
-        cwd: Option<PathBuf>,
-        started_at: Option<u64>,
-    ) {
-        self.inner
-            .lock_or_recover()
-            .insert(pid, ClientInfo { cwd, started_at });
     }
 
     /// Whether the whole broadcast proceeds. Mutates `last_notify` on approval,

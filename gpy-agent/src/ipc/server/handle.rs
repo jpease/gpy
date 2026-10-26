@@ -135,9 +135,9 @@ pub struct EndpointHandle {
     /// reported through it.
     #[cfg(unix)]
     startup: Option<crate::agent::lifecycle::start::StartupHandoff>,
-    /// Ownership check period ([`SOCKET_OWNERSHIP_CHECK`] outside tests).
+    /// Ownership check period ([`SOCKET_OWNERSHIP_CHECK`]; tests shorten it).
     #[cfg(unix)]
-    pub(super) socket_ownership_check: Duration,
+    socket_ownership_check: Duration,
     security_config: GuardSettings,
     rate_limiter: RateLimiter,
     client_registry: Arc<ClientDirectory>,
@@ -146,14 +146,6 @@ pub struct EndpointHandle {
     /// can write; the builder's caller knows whether GPY owns the directory.
     #[cfg(unix)]
     pub(super) socket_dir_repair: DirRepair,
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "only a test reads it back, to assert the builder keeps the shared slot"
-        )
-    )]
-    pub(crate) watcher: WatcherRef,
     theme_manager: Arc<ThemeManager>,
     palette_cache: Arc<PaletteCache>,
     connection_semaphore: Arc<Semaphore>,
@@ -242,7 +234,7 @@ impl EndpointHandle {
         let client_handler = Arc::new(ClientHandler::new(
             render,
             Arc::clone(&deps.git_cache),
-            Arc::clone(&watcher),
+            watcher,
         ));
         let misc_handler = Arc::new(MiscHandler::new());
         let handler_registry = Arc::new(HandlerRegistry::new(
@@ -268,7 +260,6 @@ impl EndpointHandle {
             config_manager: deps.config_manager,
             #[cfg(unix)]
             socket_dir_repair: DirRepair::Refuse,
-            watcher,
             theme_manager: deps.theme_manager,
             palette_cache: deps.palette_cache,
             connection_semaphore,
@@ -551,18 +542,6 @@ impl EndpointHandle {
             "Rejecting connection: too many concurrent connections"
         );
         drop(stream);
-    }
-
-    /// Notify live-update subscribers about a response (test-only; production
-    /// uses `ConnectionHandler::notify_clients`).
-    #[cfg(all(test, unix))]
-    pub(crate) fn notify_clients(
-        &self,
-        client_registry: &Arc<ClientDirectory>,
-        response: &Response,
-        notify_path: Option<&str>,
-    ) {
-        notify_clients_for_response(&self.config_manager, client_registry, response, notify_path);
     }
 
     /// Get the socket path being used.
@@ -910,9 +889,9 @@ mod socket_ownership_tests {
     ) {
         let mut handle = EndpointHandle::builder(test_deps())
             .socket_path(socket_path.to_path_buf())
-            .socket_ownership_check(std::time::Duration::from_millis(50))
             .build()
             .expect("handle build");
+        handle.socket_ownership_check = std::time::Duration::from_millis(50);
         let shutdown = handle.shutdown_sender();
         let task = tokio::spawn(async move { handle.start().await });
         for _ in 0_u32..200 {

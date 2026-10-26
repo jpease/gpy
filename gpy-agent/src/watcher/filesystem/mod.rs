@@ -58,13 +58,6 @@ struct EventThreadState {
     backend: Arc<Mutex<WatcherBackend>>,
 }
 
-/// Registration owner counts and the armed OS watches.
-#[cfg(test)]
-pub(crate) type HeldWatches = (
-    std::collections::BTreeMap<(PathBuf, WatchMode), u32>,
-    std::collections::BTreeMap<PathBuf, WatchMode>,
-);
-
 /// File system watcher using notify crate.
 pub struct FileSystemWatcher {
     backend: Arc<Mutex<WatcherBackend>>,
@@ -245,18 +238,6 @@ impl FileSystemWatcher {
     #[must_use]
     pub fn covers<P: AsRef<Path>>(&self, path: P) -> bool {
         self.backend.lock_or_recover().covers(path.as_ref())
-    }
-
-    /// Test snapshot of registrations with owner counts and armed OS watches.
-    #[cfg(test)]
-    pub(crate) fn held_watches(&self) -> HeldWatches {
-        let guard = self.backend.lock_or_recover();
-        let owners = guard
-            .registrations
-            .iter()
-            .map(|(key, registration)| (key.clone(), registration.owners))
-            .collect();
-        (owners, guard.os.armed_paths())
     }
 
     /// Release one recursive watch of `path`; watches others still need stay armed.

@@ -378,13 +378,6 @@ impl ConfigManager {
         }
     }
 
-    /// Tests call this directly since `set_var` needs `unsafe` (forbidden here).
-    #[cfg(test)]
-    fn spawn_poll_thread(&self, poll_interval: Duration, debounce_duration: Duration) {
-        self.hot_reload
-            .spawn_poll_thread(poll_interval, debounce_duration, self.poll_target());
-    }
-
     /// Poll fallback when `GPY_CONFIG_WATCH_POLL_MS` > 0, for when `FSEvents`
     /// never arrive.
     fn start_poll_fallback(&self, debounce_duration: Duration) {
@@ -516,6 +509,15 @@ impl Drop for ConfigManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl ConfigManager {
+        /// Start the poll fallback directly: enabling it through
+        /// `GPY_CONFIG_WATCH_POLL_MS` needs `set_var`, which is `unsafe`.
+        fn spawn_poll_thread(&self, poll_interval: Duration, debounce_duration: Duration) {
+            self.hot_reload
+                .spawn_poll_thread(poll_interval, debounce_duration, self.poll_target());
+        }
+    }
 
     #[test]
     fn test_config_manager_new_with_default() {

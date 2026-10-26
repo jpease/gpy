@@ -11,22 +11,6 @@ use crate::theme::ThemeConfig;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Test-only count of version-probe attempts; stays zero when versions are hidden.
-#[cfg(test)]
-static PROBE_CALL_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// Reset [`PROBE_CALL_COUNT`] to zero (test-only).
-#[cfg(test)]
-pub(crate) fn reset_probe_call_count_for_test() {
-    PROBE_CALL_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Read [`PROBE_CALL_COUNT`] (test-only).
-#[cfg(test)]
-pub(crate) fn probe_call_count_for_test() -> u64 {
-    PROBE_CALL_COUNT.load(std::sync::atomic::Ordering::Relaxed)
-}
-
 /// Select which detected languages to display (pure, no I/O).
 ///
 /// The filter mode runs last: it takes from the front, so narrowing after it
@@ -124,6 +108,7 @@ pub fn build_language_display_info_at(
         version_cwd,
         python_venv,
         Versions::Probe,
+        crate::language::version::get_version_detectors(),
     )
     .unwrap_or_default()
 }
@@ -148,6 +133,7 @@ pub fn cached_language_display_info_at(
         version_cwd,
         python_venv,
         Versions::Cached,
+        crate::language::version::get_version_detectors(),
     )
     .ok()
 }
@@ -175,6 +161,7 @@ pub fn settled_language_display_info_at(
         version_cwd,
         python_venv,
         Versions::Settled,
+        crate::language::version::get_version_detectors(),
     )
     .unwrap_or_default()
 }
@@ -190,8 +177,8 @@ enum Versions {
     Settled,
 }
 
-/// Display entries with versions from `versions`; [`ColdVersion`] only under
-/// [`Versions::Cached`].
+/// Display entries with versions from `versions`, probing through `sources`;
+/// [`ColdVersion`] only under [`Versions::Cached`].
 fn display_info(
     detected_languages: &[DetectedLanguage],
     theme: &ThemeConfig,
@@ -199,6 +186,7 @@ fn display_info(
     version_cwd: Option<&Path>,
     python_venv: Option<&PythonVenv>,
     versions: Versions,
+    sources: &[Box<dyn ReleaseSource + Sync + Send>],
 ) -> Result<Vec<LanguageInfo>, ColdVersion> {
     if !language_cfg.enabled {
         return Ok(Vec::new());
@@ -213,7 +201,7 @@ fn display_info(
         ProbePolicy::CachedOnly
     };
     let version_slots: Vec<Option<String>> = if language_cfg.show_versions {
-        let version_detectors: HashMap<_, _> = crate::language::version::get_version_detectors()
+        let version_detectors: HashMap<_, _> = sources
             .iter()
             .map(|probe| (probe.language_name().to_owned(), probe.as_ref()))
             .collect();
@@ -243,11 +231,8 @@ fn display_info(
                 let mut probe_handles = Vec::with_capacity(displayed_languages.len());
                 for detected_lang in &displayed_languages {
                     let lookup_ref = &lookup;
-                    probe_handles.push(scope.spawn(move || {
-                        #[cfg(test)]
-                        PROBE_CALL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        lookup_ref(detected_lang).ok().flatten()
-                    }));
+                    probe_handles
+                        .push(scope.spawn(move || lookup_ref(detected_lang).ok().flatten()));
                 }
 
                 probe_handles
@@ -334,13 +319,68 @@ fn language_version(
     clippy::missing_panics_doc
 )]
 mod tests {
-    use super::{
-        build_language_display_info_at, probe_call_count_for_test, reset_probe_call_count_for_test,
-        select_display_languages,
-    };
+    use super::{Versions, display_info, select_display_languages};
     use crate::config::LanguageSettings;
     use crate::language::detector::DetectedLanguage;
+    use crate::language::version::ReleaseSource;
     use crate::theme::ThemeConfig;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A `rust` release source counting how often its version command is read.
+    struct CountingSource(Arc<AtomicUsize>);
+
+    impl ReleaseSource for CountingSource {
+        fn language_name(&self) -> &'static str {
+            "rust"
+        }
+
+        fn version_command(&self) -> &[&str] {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            &["gpy-test-no-such-version-command"]
+        }
+
+        fn parse_version(&self, _output: &str) -> Option<String> {
+            None
+        }
+    }
+
+    /// Version-command reads while displaying one `rust` language with versions
+    /// shown or hidden, probing from a fresh directory so no cached version answers.
+    fn probes_for(show_versions: bool) -> usize {
+        let probes = Arc::new(AtomicUsize::new(0));
+        let sources: Vec<Box<dyn ReleaseSource + Sync + Send>> =
+            vec![Box::new(CountingSource(Arc::clone(&probes)))];
+        let detected = vec![DetectedLanguage {
+            name: "rust".to_owned(),
+            confidence: 1.0,
+            file_count: 1,
+            total_bytes: 42,
+        }];
+        let language_cfg = LanguageSettings {
+            show_versions,
+            ..LanguageSettings::default()
+        };
+        let cwd = tempfile::TempDir::new().expect("temp dir");
+
+        let info = display_info(
+            &detected,
+            &ThemeConfig::default(),
+            &language_cfg,
+            Some(cwd.path()),
+            None,
+            Versions::Probe,
+            &sources,
+        )
+        .expect("probing never reports a cold version");
+
+        assert_eq!(
+            info.len(),
+            1,
+            "the language is displayed with or without a version"
+        );
+        probes.load(Ordering::SeqCst)
+    }
 
     fn sample_detected_languages() -> Vec<DetectedLanguage> {
         vec![
@@ -564,58 +604,19 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial(probe_call_count)]
     fn probe_skipped_when_show_versions_false() {
-        reset_probe_call_count_for_test();
-        let detected = vec![DetectedLanguage {
-            name: "rust".to_owned(),
-            confidence: 1.0,
-            file_count: 1,
-            total_bytes: 42,
-        }];
-        let theme = ThemeConfig::default();
-        let language_cfg = LanguageSettings {
-            show_versions: false,
-            ..LanguageSettings::default()
-        };
-
-        let info = build_language_display_info_at(&detected, &theme, &language_cfg, None, None);
-
         assert_eq!(
-            info.len(),
-            1,
-            "the language is still displayed, just without a version probe"
-        );
-        assert_eq!(
-            probe_call_count_for_test(),
+            probes_for(false),
             0,
             "show_versions=false must attempt zero probes"
         );
     }
 
-    // Serialized: shares the global `PROBE_CALL_COUNT` with the test above.
     #[test]
-    #[serial_test::serial(probe_call_count)]
     fn probe_runs_when_show_versions_true() {
-        reset_probe_call_count_for_test();
-        let detected = vec![DetectedLanguage {
-            name: "rust".to_owned(),
-            confidence: 1.0,
-            file_count: 1,
-            total_bytes: 42,
-        }];
-        let theme = ThemeConfig::default();
-        let language_cfg = LanguageSettings {
-            show_versions: true,
-            ..LanguageSettings::default()
-        };
-
-        let info = build_language_display_info_at(&detected, &theme, &language_cfg, None, None);
-
-        assert_eq!(info.len(), 1);
         assert!(
-            probe_call_count_for_test() > 0,
-            "show_versions=true must attempt at least one probe, unlike the false case above"
+            probes_for(true) > 0,
+            "show_versions=true must attempt at least one probe"
         );
     }
 }

@@ -145,24 +145,6 @@ impl<V> SharedJob<V> {
         self.ready.notify_all();
     }
 
-    /// Wait until the job completes. Test-only; production uses `wait_timeout`.
-    #[cfg(test)]
-    pub(super) fn wait(&self) -> V
-    where
-        V: Clone,
-    {
-        let mut result = self.result.lock_or_recover();
-        loop {
-            if let Some(value) = result.as_ref() {
-                return value.clone();
-            }
-            result = self
-                .ready
-                .wait(result)
-                .unwrap_or_else(PoisonError::into_inner);
-        }
-    }
-
     /// Wait until the job completes or the timeout expires.
     ///
     /// `wait_timeout_while` re-checks the predicate so spurious condvar wakeups
@@ -351,9 +333,26 @@ pub use misc_handler::MiscHandler;
 #[allow(clippy::missing_panics_doc)]
 mod tests {
     use super::{HandlerError, SharedJob, SingleFlight};
+    use crate::sync_ext::MutexExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Barrier};
+    use std::sync::{Arc, Barrier, PoisonError};
     use std::time::{Duration, Instant};
+
+    impl<V: Clone> SharedJob<V> {
+        /// Wait until the job completes, however long it takes.
+        fn wait(&self) -> V {
+            let mut result = self.result.lock_or_recover();
+            loop {
+                if let Some(value) = result.as_ref() {
+                    return value.clone();
+                }
+                result = self
+                    .ready
+                    .wait(result)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
+        }
+    }
 
     // These strings are the wire-visible `Response::Error` text.
 
