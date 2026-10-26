@@ -16,6 +16,8 @@
 # No socket, no running agent: __gpy_ipc_send / __gpy_get_agent_version are
 # redefined to return canned data.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
@@ -23,19 +25,6 @@ cd "$repo_root"
 source fish/core/constants.fish
 source fish/core/util.fish
 source fish/core/ipc.fish
-
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label expected actual
-    if test "$actual" = "$expected"
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-    end
-end
 
 # --- 1. __gpy_json_extract_string / __gpy_json_extract_int: literal JSON ---
 
@@ -108,8 +97,4 @@ end
 
 rm -rf "$tmp_dir"
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count json-extract/protocol-stdout tests passed"
+test_finish "json-extract/protocol-stdout tests"

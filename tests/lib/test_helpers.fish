@@ -620,6 +620,54 @@ function test_backdate --argument-names file seconds
     $__gpy_test_clock_bin -e 'my $t = time() - $ARGV[1]; utime($t, $t, $ARGV[0]) or die "utime: $!"' $file $seconds
 end
 
+# Assertions. Every test reports through these, in the one format the runner
+# and the Bash/Zsh suites share (tests/lib/shell_e2e.sh):
+#   pass LABEL                   print `PASS: LABEL`
+#   fail LABEL [DETAIL...]       print `FAIL: LABEL[: DETAIL]` and count it
+#   check LABEL EXPECTED ACTUAL  pass when the strings are equal
+#   expect_eq LABEL ACTUAL EXPECTED
+#                                check with the operands swapped
+#   test_finish [SUMMARY]        exit 1 with the failure count if any
+#                                assertion failed, else print `PASS: SUMMARY`
+set -g __gpy_test_failures 0
+
+function pass
+    echo "PASS: $argv"
+end
+
+function fail
+    set -g __gpy_test_failures (math $__gpy_test_failures + 1)
+    if set -q argv[2]
+        echo "FAIL: $argv[1]: $argv[2..-1]"
+    else
+        echo "FAIL: $argv"
+    end
+end
+
+function check --argument-names label expected actual
+    if test "$actual" = "$expected"
+        pass "$label"
+    else
+        fail "$label (expected [$expected], got [$actual])"
+    end
+end
+
+function expect_eq --argument-names label actual expected
+    check "$label" "$expected" "$actual"
+end
+
+function test_finish
+    if test $__gpy_test_failures -gt 0
+        echo "FAILED: $__gpy_test_failures assertion(s)"
+        exit 1
+    end
+    if set -q argv[1]
+        echo "PASS: $argv"
+    else
+        echo "PASS: all assertions"
+    end
+end
+
 # Print test header
 function print_test_header
     echo ""
@@ -627,83 +675,6 @@ function print_test_header
     echo "$argv[1]"
     echo "========================================"
     echo ""
-end
-
-# Print test result
-function print_test_result
-    set -l test_name $argv[1]
-    set -l result $argv[2]
-
-    if test "$result" = PASS
-        echo "✅ $test_name: PASS"
-        return 0
-    else
-        echo "❌ $test_name: FAIL"
-        if set -q argv[3]
-            echo "   Reason: $argv[3]"
-        end
-        return 1
-    end
-end
-
-# Assert that a value equals expected
-function assert_equals
-    set -l actual $argv[1]
-    set -l expected $argv[2]
-    set -l message $argv[3]
-
-    if test "$actual" = "$expected"
-        return 0
-    else
-        echo "FAIL: $message" >&2
-        echo "  Expected: $expected" >&2
-        echo "  Actual:   $actual" >&2
-        return 1
-    end
-end
-
-# Assert that a value is greater than threshold
-function assert_greater_than
-    set -l actual $argv[1]
-    set -l threshold $argv[2]
-    set -l message $argv[3]
-
-    if test $actual -gt $threshold
-        return 0
-    else
-        echo "FAIL: $message" >&2
-        echo "  Expected: > $threshold" >&2
-        echo "  Actual:   $actual" >&2
-        return 1
-    end
-end
-
-# Assert that a value is less than threshold
-function assert_less_than
-    set -l actual $argv[1]
-    set -l threshold $argv[2]
-    set -l message $argv[3]
-
-    if test $actual -lt $threshold
-        return 0
-    else
-        echo "FAIL: $message" >&2
-        echo "  Expected: < $threshold" >&2
-        echo "  Actual:   $actual" >&2
-        return 1
-    end
-end
-
-# Print test footer
-function print_test_footer
-    set -l test_name $argv[1]
-    set -l test_status $argv[2]
-
-    if test "$test_status" = PASS
-        echo "✅ $test_name: All tests passed"
-    else
-        echo "❌ $test_name: Tests failed"
-    end
 end
 
 # Remove a client PID from the cleanup list

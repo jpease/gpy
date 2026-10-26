@@ -8,6 +8,8 @@
 # segment_git_render, segment_language_render) picks the correct file for
 # each position instead of always serving the not-first variant.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 source fish/core/init.fish
 source fish/segments/git.fish
 source fish/segments/language.fish
@@ -18,25 +20,12 @@ set -gx HOME $temp_home
 set -gx XDG_CONFIG_HOME $temp_home/.config
 mkdir -p $XDG_CONFIG_HOME/gpy
 
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label result
-    if test "$result" = pass
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label"
-    end
-end
-
 # --- Suffix helper: matches gpy-agent's cache variant names exactly ---
-check "not first, not last" (test (__gpy_cache_variant_suffix git "" "") = git; and echo pass; or echo fail)
-check "last only" (test (__gpy_cache_variant_suffix git true "") = git_last; and echo pass; or echo fail)
-check "first only" (test (__gpy_cache_variant_suffix git "" true) = git_first; and echo pass; or echo fail)
-check "first and last" (test (__gpy_cache_variant_suffix git true true) = git_first_last; and echo pass; or echo fail)
-check "lang base suffixes" (test (__gpy_cache_variant_suffix lang "" true) = lang_first; and echo pass; or echo fail)
+check "not first, not last" pass (test (__gpy_cache_variant_suffix git "" "") = git; and echo pass; or echo fail)
+check "last only" pass (test (__gpy_cache_variant_suffix git true "") = git_last; and echo pass; or echo fail)
+check "first only" pass (test (__gpy_cache_variant_suffix git "" true) = git_first; and echo pass; or echo fail)
+check "first and last" pass (test (__gpy_cache_variant_suffix git true true) = git_first_last; and echo pass; or echo fail)
+check "lang base suffixes" pass (test (__gpy_cache_variant_suffix lang "" true) = lang_first; and echo pass; or echo fail)
 
 # --- Segment-level: is_first must select the *_first cache file ---
 set -l tmp_dir (mktemp -d)
@@ -68,22 +57,18 @@ set -gx GPY_LANGUAGE_ENABLED 1
 set -gx GPY_LANGUAGE_CACHE_TTL_SECONDS 30
 
 # Segment render functions receive is_last/is_first as "true"/"".
-check "git: not first, not last" (test (segment_git_render) = GIT-NORMAL; and echo pass; or echo fail)
-check "git: last, not first" (test (segment_git_render true) = GIT-LAST; and echo pass; or echo fail)
-check "git: first, not last" (test (segment_git_render "" true) = GIT-FIRST; and echo pass; or echo fail)
-check "git: first and last" (test (segment_git_render true true) = GIT-FIRST-LAST; and echo pass; or echo fail)
+check "git: not first, not last" pass (test (segment_git_render) = GIT-NORMAL; and echo pass; or echo fail)
+check "git: last, not first" pass (test (segment_git_render true) = GIT-LAST; and echo pass; or echo fail)
+check "git: first, not last" pass (test (segment_git_render "" true) = GIT-FIRST; and echo pass; or echo fail)
+check "git: first and last" pass (test (segment_git_render true true) = GIT-FIRST-LAST; and echo pass; or echo fail)
 
-check "lang: not first, not last" (test (segment_language_render) = LANG-NORMAL; and echo pass; or echo fail)
-check "lang: last, not first" (test (segment_language_render true) = LANG-LAST; and echo pass; or echo fail)
-check "lang: first, not last" (test (segment_language_render "" true) = LANG-FIRST; and echo pass; or echo fail)
-check "lang: first and last" (test (segment_language_render true true) = LANG-FIRST-LAST; and echo pass; or echo fail)
+check "lang: not first, not last" pass (test (segment_language_render) = LANG-NORMAL; and echo pass; or echo fail)
+check "lang: last, not first" pass (test (segment_language_render true) = LANG-LAST; and echo pass; or echo fail)
+check "lang: first, not last" pass (test (segment_language_render "" true) = LANG-FIRST; and echo pass; or echo fail)
+check "lang: first and last" pass (test (segment_language_render true true) = LANG-FIRST-LAST; and echo pass; or echo fail)
 
 # Cleanup
 cd -
 rm -rf "$tmp_dir"
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count is_first instant-cache tests passed"
+test_finish "is_first instant-cache tests"

@@ -11,8 +11,8 @@
 
 source (dirname (status -f))/../lib/test_helpers.fish
 
-function fail
-    echo "❌ $argv"
+function die
+    fail "$argv"
     cleanup_test_files
     exit 1
 end
@@ -21,14 +21,14 @@ set -l repo_root (path resolve (status dirname)/../..)
 init_test_env; or exit 1
 mkdir -p $XDG_CONFIG_HOME/gpy $XDG_CACHE_HOME/gpy
 printf '%s\n' '[agent.supervisor]' 'enabled = true' 'check_interval_seconds = 7' 'max_restart_attempts = 1' >$XDG_CONFIG_HOME/gpy/config.toml
-start_test_agent; or fail "agent did not start"
+start_test_agent; or die "agent did not start"
 
 set -g export_cache $XDG_CACHE_HOME/gpy/theme-export.fish
 function __export_has --argument-names line
     test -r $export_cache; and string match -q -- $line <$export_cache
 end
 poll_until 5 __export_has 'set -gx GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS "7"'
-or fail "the agent never wrote the initial export"
+or die "the agent never wrote the initial export"
 
 # Every restart attempt fails and each `date +%s` advances 10 s past the 5 s
 # rate limit, so the loop cycles: <attempt limit> restarts, then the 123 s
@@ -84,16 +84,16 @@ function __log_offset
 end
 
 poll_until 5 __cycle_matches 0 7 1
-or fail "the loop never ran 7 s checks with 1 restart attempt (log: "(string join ', ' (tail -n 12 $loop_log))")"
-echo "✅ the loop starts on the exported interval (7 s) and attempt limit (1)"
+or die "the loop never ran 7 s checks with 1 restart attempt (log: "(string join ', ' (tail -n 12 $loop_log))")"
+pass "the loop starts on the exported interval (7 s) and attempt limit (1)"
 
 # $1 key, $2 value, $3/$4 the interval and restart attempts the loop must then use.
 function __apply --argument-names key value interval restarts
-    gpy config set $key $value >/dev/null 2>&1; or fail "gpy config set $key $value failed"
+    gpy config set $key $value >/dev/null 2>&1; or die "gpy config set $key $value failed"
     set -l offset (__log_offset)
     poll_until 5 __cycle_matches $offset $interval $restarts
-    or fail "after setting $key=$value the loop never used $interval s / $restarts attempts (log: "(string join ', ' (tail -n 12 $loop_log))")"
-    echo "✅ $key=$value reached the running loop"
+    or die "after setting $key=$value the loop never used $interval s / $restarts attempts (log: "(string join ', ' (tail -n 12 $loop_log))")"
+    pass "$key=$value reached the running loop"
 end
 
 __apply agent.supervisor.check_interval_seconds 9 9 1
@@ -102,9 +102,9 @@ __apply agent.supervisor.max_restart_attempts 3 9 3
 function __loop_exited
     not kill -0 $loop_pid 2>/dev/null
 end
-gpy config set agent.supervisor.enabled false >/dev/null 2>&1; or fail "gpy config set agent.supervisor.enabled false failed"
-poll_until 5 __loop_exited; or fail "the loop kept running after agent.supervisor.enabled=false"
-echo "✅ agent.supervisor.enabled=false stopped the running loop"
+gpy config set agent.supervisor.enabled false >/dev/null 2>&1; or die "gpy config set agent.supervisor.enabled false failed"
+poll_until 5 __loop_exited; or die "the loop kept running after agent.supervisor.enabled=false"
+pass "agent.supervisor.enabled=false stopped the running loop"
 
 cleanup_test_files
-echo "✅ Supervisor settings reach a running Fish supervisor without a restart"
+test_finish "Supervisor settings reach a running Fish supervisor without a restart"

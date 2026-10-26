@@ -5,17 +5,15 @@
 # the GPY test root; a decoy same-named socket outside the sandbox root must survive.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 cd "$ROOT" || exit 1
 
-FAILED=0
-
-check() {
-    local label="$1"
+assert_true() {
     if eval "$2"; then
-        echo "PASS: $label"
+        pass "$1"
     else
-        echo "FAIL: $label"
-        FAILED=1
+        fail "$1"
     fi
 }
 
@@ -52,8 +50,8 @@ s.bind(sys.argv[1])
 bind_af_unix_socket "$DECOY_SOCK"
 bind_af_unix_socket "$IN_ROOT_SOCK"
 
-check "decoy socket exists before cleanup" "[[ -S '$DECOY_SOCK' ]]"
-check "in-root socket exists before cleanup" "[[ -S '$IN_ROOT_SOCK' ]]"
+assert_true "decoy socket exists before cleanup" "[[ -S '$DECOY_SOCK' ]]"
+assert_true "in-root socket exists before cleanup" "[[ -S '$IN_ROOT_SOCK' ]]"
 
 SECONDS=0
 CLEANUP_OUT="$(TMPDIR="$SANDBOX_TMPDIR" "$ROOT/scripts/cleanup-test-agents.sh" 2>&1)"
@@ -64,22 +62,15 @@ echo "--- cleanup-test-agents.sh output ---"
 echo "$CLEANUP_OUT"
 echo "--------------------------------------"
 
-check "cleanup script exits 0" "[[ $CLEANUP_STATUS -eq 0 ]]"
-check "cleanup completes in under 5s (took ${ELAPSED_S}s)" "[[ $ELAPSED_S -lt 5 ]]"
+assert_true "cleanup script exits 0" "[[ $CLEANUP_STATUS -eq 0 ]]"
+assert_true "cleanup completes in under 5s (took ${ELAPSED_S}s)" "[[ $ELAPSED_S -lt 5 ]]"
 
-check "unrelated decoy socket survives cleanup" "[[ -S '$DECOY_SOCK' ]]"
-check "in-root socket was removed by cleanup" "[[ ! -e '$IN_ROOT_SOCK' ]]"
+assert_true "unrelated decoy socket survives cleanup" "[[ -S '$DECOY_SOCK' ]]"
+assert_true "in-root socket was removed by cleanup" "[[ ! -e '$IN_ROOT_SOCK' ]]"
 
-check "cleanup script contains no whole-/tmp find traversal" \
+assert_true "cleanup script contains no whole-/tmp find traversal" \
     "! grep -qE 'find[[:space:]]+/tmp([[:space:]]|\$)' '$ROOT/scripts/cleanup-test-agents.sh'"
-check "cleanup script contains no whole-/var/folders find traversal" \
+assert_true "cleanup script contains no whole-/var/folders find traversal" \
     "! grep -qE 'find[[:space:]]+/var/folders([[:space:]]|\$)' '$ROOT/scripts/cleanup-test-agents.sh'"
 
-if [[ $FAILED -ne 0 ]]; then
-    echo ""
-    echo "=== FAILED ==="
-    exit 1
-fi
-
-echo ""
-echo "=== All Tests Passed ==="
+test_finish "cleanup-test-agents scoping"

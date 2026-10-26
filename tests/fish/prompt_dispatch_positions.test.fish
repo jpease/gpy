@@ -16,20 +16,9 @@
 # three stub segments and asserts each one receives is_last/is_first in the
 # correct positions.
 
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label result
-    if test "$result" = pass
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label"
-    end
-end
-
 # Find repo root (mirrors other tests/fish/*.test.fish)
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
@@ -91,16 +80,16 @@ source fish/functions/fish_prompt.fish
 fish_prompt >/dev/null
 
 if test (count $__stub_calls) -eq 3
-    check "dispatch loop invoked all three stub segments" pass
+    check "dispatch loop invoked all three stub segments" pass pass
 else
-    check "dispatch loop invoked all three stub segments (got: $__stub_calls)" fail
+    check "dispatch loop invoked all three stub segments (got: $__stub_calls)" pass fail
 end
 
 # The dispatch loop's is_last/is_first convention is "true" for set and ""
 # for unset.
-check "first segment gets is_first set, is_last empty" (test "$__stub_calls[1]" = "stuba:|true"; and echo pass; or echo fail)
-check "middle segment gets both empty" (test "$__stub_calls[2]" = "stubb:|"; and echo pass; or echo fail)
-check "last segment gets is_last set, is_first empty" (test "$__stub_calls[3]" = "stubc:true|"; and echo pass; or echo fail)
+check "first segment gets is_first set, is_last empty" pass (test "$__stub_calls[1]" = "stuba:|true"; and echo pass; or echo fail)
+check "middle segment gets both empty" pass (test "$__stub_calls[2]" = "stubb:|"; and echo pass; or echo fail)
+check "last segment gets is_last set, is_first empty" pass (test "$__stub_calls[3]" = "stubc:true|"; and echo pass; or echo fail)
 
 if test "$__stub_calls[1]" != "stuba:|true"
     echo "  first segment got: $__stub_calls[1] (expected stuba:|true)"
@@ -118,8 +107,4 @@ else
     set -e XDG_CONFIG_HOME
 end
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count prompt dispatch position tests passed"
+test_finish "prompt dispatch position tests"

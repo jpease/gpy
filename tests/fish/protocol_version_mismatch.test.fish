@@ -24,7 +24,6 @@ if not command -q socat; and not command -q nc
 end
 
 set -l test_tmp_dir (mktemp -d)
-set -l test_result PASS
 
 function _protocol_mismatch_cleanup --argument-names listener_pid
     kill -9 $listener_pid 2>/dev/null
@@ -57,10 +56,9 @@ set -gx GPY_AGENT_SOCKET_PATH $sock1
 set -gx GPY_AGENT_ENABLED 1
 
 if __gpy_check_protocol_version
-    print_test_result "mismatched protocol_version is detected" FAIL "expected nonzero return"
-    set test_result FAIL
+    fail "mismatched protocol_version is detected" "expected nonzero return"
 else
-    print_test_result "mismatched protocol_version is detected" PASS
+    pass "mismatched protocol_version is detected"
 end
 
 _protocol_mismatch_cleanup $listener1_pid
@@ -91,20 +89,13 @@ end
 set -gx GPY_AGENT_SOCKET_PATH $sock2
 
 if __gpy_check_protocol_version
-    print_test_result "matching protocol_version is not flagged" PASS
+    pass "matching protocol_version is not flagged"
 else
-    print_test_result "matching protocol_version is not flagged" FAIL "expected zero return"
-    set test_result FAIL
+    fail "matching protocol_version is not flagged" "expected zero return"
 end
 
 _protocol_mismatch_cleanup $listener2_pid
 functions -e _protocol_mismatch_cleanup
 rm -rf $test_tmp_dir
 
-print_test_footer "Protocol version mismatch detection" $test_result
-
-if test "$test_result" = PASS
-    exit 0
-else
-    exit 1
-end
+test_finish "Protocol version mismatch detection"

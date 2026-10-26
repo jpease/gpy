@@ -24,9 +24,6 @@ export XDG_CACHE_HOME="$SANDBOX/cache"
 # shellcheck source=bash/gpy.bash
 source bash/gpy.bash
 
-# expect_eq LABEL GOT WANT
-expect_eq() { if [[ "$2" == "$3" ]]; then pass "$1"; else fail "$1: got $2, want $3"; fi; }
-
 repo="$SANDBOX/repo"
 mkdir -p "$repo/.git"
 cache_dir="$XDG_CACHE_HOME/gpy/instant-prompts" key=""

@@ -12,20 +12,11 @@
 # A stub gpy-agent records "<subcommand> GPY_DEBUG_LOG=<value|<unset>>" per
 # call. No real agent is started or stopped.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (dirname (status --filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
-
-set -g failed 0
-
-function __gpy_test_fail --argument-names msg
-    echo "❌ $msg"
-    set -g failed 1
-end
-
-function __gpy_test_pass --argument-names msg
-    echo "✅ $msg"
-end
 
 set -l home_dir (mktemp -d)
 mkdir -p "$home_dir/.local/bin"
@@ -67,29 +58,25 @@ set -l out (env -i HOME=$home_dir XDG_CONFIG_HOME="$home_dir/.config" XDG_CACHE_
 
 set -l last_start (string match -e 'start ' <$calls)[-1]
 if test "$last_start" = "start GPY_DEBUG_LOG=<unset>"
-    __gpy_test_pass "the last agent start carries no GPY_DEBUG_LOG"
+    pass "the last agent start carries no GPY_DEBUG_LOG"
 else
-    __gpy_test_fail "last start was '$last_start' (calls: "(string join '; ' <$calls)")"
+    fail "last start was '$last_start' (calls: "(string join '; ' <$calls)")"
 end
 
 if string match -q '*Config hot-reload: ENABLED*' -- $out
-    __gpy_test_pass "hot-reload verification line still prints"
+    pass "hot-reload verification line still prints"
 else
-    __gpy_test_fail "no 'Config hot-reload: ENABLED' in: $out"
+    fail "no 'Config hot-reload: ENABLED' in: $out"
 end
 
 set -l stale (find /tmp -maxdepth 1 -name 'gpy-verify-*' -newer "$marker" 2>/dev/null)
 if test -z "$stale"
-    __gpy_test_pass "no /tmp/gpy-verify-* file created"
+    pass "no /tmp/gpy-verify-* file created"
 else
-    __gpy_test_fail "stray probe file: $stale"
+    fail "stray probe file: $stale"
     rm -f $stale
 end
 
 rm -rf "$home_dir" "$stub_dir"
 
-if test $failed -eq 1
-    exit 1
-end
-
-echo "✅ install-dev.fish's _verify_installation leaves no GPY_DEBUG_LOG on the running agent"
+test_finish "install-dev.fish's _verify_installation leaves no GPY_DEBUG_LOG on the running agent"

@@ -11,6 +11,7 @@
 # dispatch loop, not just a direct segment call.
 
 ROOT=${0:a:h:h:h}
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 cd "$ROOT" || exit 1
 
 source "$ROOT/tests/lib/supervisor_off.zsh"
@@ -18,17 +19,6 @@ export GPY_AGENT_SOCKET_PATH="$ROOT/.gpy-test-missing-dispatch-positions.sock"
 
 source zsh/gpy.zsh
 
-FAILED=0
-
-check() {
-    local label="$1" expected="$2" actual="$3"
-    if [[ "$actual" == "$expected" ]]; then
-        echo "PASS: $label"
-    else
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-        FAILED=1
-    fi
-}
 
 # Three always-on stub segments recording the raw positional args the
 # dispatch loop calls them with: __gpy_segment_<name> "$is_last" "$prev_bg" "$is_first".
@@ -46,12 +36,4 @@ check "middle segment gets both empty" true \
 check "last segment gets is_last set, is_first empty" true \
     "$([[ "$PROMPT" == *"stubc:true|;"* ]] && echo true || echo false)"
 
-if [[ $FAILED -ne 0 ]]; then
-    echo ""
-    echo "PROMPT was: $PROMPT"
-    echo "=== FAILED ==="
-    exit 1
-fi
-
-echo ""
-echo "=== All Tests Passed ==="
+test_finish "prompt dispatch positions"

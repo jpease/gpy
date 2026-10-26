@@ -29,9 +29,6 @@ __gpy_trigger_data_refresh() { print -r -- "$1 $2" >>"$calls"; }
 __gpy_register_with_agent() { :; }
 count() { wc -l <"$1" | tr -d ' '; }
 count_is() { [ "$(count "$calls")" -eq "$1" ]; }
-# expect_eq LABEL GOT WANT
-expect_eq() { if [[ "$2" == "$3" ]]; then pass "$1"; else fail "$1: got $2, want $3"; fi; }
-
 repo="$SANDBOX/my_repo dir:x"
 # The first call passes the throttle and dispatches; ten more inside the
 # 500 ms window are throttled and are the ones measured.

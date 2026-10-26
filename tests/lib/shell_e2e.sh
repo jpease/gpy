@@ -17,9 +17,12 @@
 # single-quoted so the path expands as one word and is never re-parsed as code.)
 
 # Assertions. `fail` prints and counts into $failures; `pass` only prints.
-# `test_finish SUMMARY` ends the test: exit 1 with the failure count when any
-# assertion failed, otherwise print `PASS: SUMMARY`. printf, not echo: zsh's
-# echo would interpret backslashes in the message.
+# `check LABEL EXPECTED ACTUAL` passes when the two strings are equal;
+# `expect_eq LABEL ACTUAL EXPECTED` is the same check with the operands in the
+# order a measured value is usually at hand. `test_finish SUMMARY` ends the
+# test: exit 1 with the failure count when any assertion failed, otherwise
+# print `PASS: SUMMARY`. printf, not echo: zsh's echo would interpret
+# backslashes in the message.
 failures=0
 fail() {
     printf 'FAIL: %s\n' "$*"
@@ -27,6 +30,16 @@ fail() {
 }
 pass() {
     printf 'PASS: %s\n' "$*"
+}
+check() {
+    if [ "$3" = "$2" ]; then
+        pass "$1"
+    else
+        fail "$1 (expected [$2], got [$3])"
+    fi
+}
+expect_eq() {
+    check "$1" "$3" "$2"
 }
 test_finish() {
     if [ "$failures" -gt 0 ]; then

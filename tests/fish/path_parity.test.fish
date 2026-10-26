@@ -103,13 +103,13 @@ set -g GPY_PP_VARS XDG_RUNTIME_DIR XDG_CACHE_HOME XDG_CONFIG_HOME HOME GPY_AGENT
 
 set -g GPY_PP_BIN $repo_root/gpy-agent/target/debug/gpy
 if not test -x "$GPY_PP_BIN"
-    echo "❌ $GPY_PP_BIN not found -- build it first (cd gpy-agent && cargo build)"
+    fail "$GPY_PP_BIN not found -- build it first (cd gpy-agent && cargo build)"
     exit 1
 end
 
 for shell_bin in fish bash zsh
     if not command -q $shell_bin
-        echo "❌ $shell_bin not found; the parity harness compares all three shells"
+        fail "$shell_bin not found; the parity harness compares all three shells"
         exit 1
     end
 end
@@ -199,7 +199,7 @@ set -g GPY_PP_MESSAGES
 # substitutions share the parent's variables, so the list survives; it is
 # printed once at the end.
 function __pp_fail --description 'Record a parity failure'
-    set -g GPY_PP_MESSAGES $GPY_PP_MESSAGES "❌ $argv"
+    set -g GPY_PP_MESSAGES $GPY_PP_MESSAGES "FAIL: $argv"
     set -g GPY_PP_FAILURES (math $GPY_PP_FAILURES + 1)
 end
 
@@ -439,7 +439,7 @@ if test "$json_keys" != "$GPY_PP_KEYS"
      json: $json_keys
      kv:   $GPY_PP_KEYS"
 else
-    echo "✅ --format json emits the contract key set in order"
+    pass "--format json emits the contract key set in order"
 end
 
 # Cache key encoding, against a file the agent wrote. A repo whose path holds
@@ -521,12 +521,12 @@ set -l e2e_out (env -i PATH=(string join : $agent_dir $PATH) HOME=$e2e_root/home
     end
 ' -- $GPY_PP_ROOT $odd_repo $long_repo)
 if string match -q 'ok *' -- "$e2e_out[-1]"
-    echo "✅ the agent's cache file name matches fish's key for a repo with ? and | in its path"
+    pass "the agent's cache file name matches fish's key for a repo with ? and | in its path"
 else
     __pp_fail "cache key mismatch for a repo with ? and | in its path: $e2e_out"
 end
 if contains -- "long 1" $e2e_out
-    echo "✅ fish reads the agent's cache for a "(string length -- $long_repo)"-byte repo path"
+    pass "fish reads the agent's cache for a "(string length -- $long_repo)"-byte repo path"
 else
     __pp_fail "no instant cache readable for the "(string length -- $long_repo)"-byte repo path $long_repo: $e2e_out"
 end
@@ -542,9 +542,6 @@ echo
 echo "Cases: "(count $GPY_PP_CASES)"  comparisons: $GPY_PP_COMPARISONS  expected divergences: $GPY_PP_XFAILS"
 
 if test $GPY_PP_FAILURES -gt 0
-    echo "❌ $GPY_PP_FAILURES path parity failure(s)"
-    exit 1
+    fail "$GPY_PP_FAILURES path parity failure(s)"
 end
-
-echo "✅ Cross-shell path parity holds (all disagreements declared)"
-exit 0
+test_finish "Cross-shell path parity holds (all disagreements declared)"

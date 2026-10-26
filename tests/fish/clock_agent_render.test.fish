@@ -12,23 +12,12 @@
 # end-to-end bytes against a live agent are compared across shells in
 # tests/bash/shell_contract.test.bash.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 source "$repo_root/fish/core/renderer.fish"
 source "$repo_root/fish/segments/clock.fish"
-
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label result
-    if test "$result" = pass
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label"
-    end
-end
 
 # Deterministic 12-hour clock and a known "now".
 set -g __time_format 12
@@ -58,24 +47,24 @@ set -g __gpy_last_segment_bg magenta
 set -e __local_content
 set -l out (segment_clock_render true "")
 if test "$out" = "AGENT[ 3:07 PM]"
-    check "templated clock: the agent's response, with the spec replaced by the time" pass
+    check "templated clock: the agent's response, with the spec replaced by the time" pass pass
 else
-    check "templated clock: the agent's response, with the spec replaced by the time (got: '$out')" fail
+    check "templated clock: the agent's response, with the spec replaced by the time (got: '$out')" pass fail
 end
 if not set -q __local_content
-    check "templated clock: nothing drawn locally" pass
+    check "templated clock: nothing drawn locally" pass pass
 else
-    check "templated clock: nothing drawn locally (got: '$__local_content')" fail
+    check "templated clock: nothing drawn locally (got: '$__local_content')" pass fail
 end
 if test "$__request_args" = "true||magenta"
-    check "templated clock: is_last, is_first and prev_bg reach the agent in their own slots" pass
+    check "templated clock: is_last, is_first and prev_bg reach the agent in their own slots" pass pass
 else
-    check "templated clock: is_last, is_first and prev_bg reach the agent in their own slots (got: '$__request_args')" fail
+    check "templated clock: is_last, is_first and prev_bg reach the agent in their own slots (got: '$__request_args')" pass fail
 end
 if test "$__gpy_last_segment_bg" = blue
-    check "templated clock: tracks the clock background for the next segment's chevron" pass
+    check "templated clock: tracks the clock background for the next segment's chevron" pass pass
 else
-    check "templated clock: tracks the clock background for the next segment's chevron (got: '$__gpy_last_segment_bg')" fail
+    check "templated clock: tracks the clock background for the next segment's chevron (got: '$__gpy_last_segment_bg')" pass fail
 end
 
 # --- the spec follows the configured time format ---
@@ -84,14 +73,14 @@ set -g __clock_show_leading_zero 1
 set -g __gpy_clock_prerendered "15:07"
 set out (segment_clock_render "" true)
 if test "$out" = "AGENT[ 15:07]"
-    check "templated clock: a 24-hour spec is replaced too" pass
+    check "templated clock: a 24-hour spec is replaced too" pass pass
 else
-    check "templated clock: a 24-hour spec is replaced too (got: '$out')" fail
+    check "templated clock: a 24-hour spec is replaced too (got: '$out')" pass fail
 end
 if test "$__request_args" = "|true|blue"
-    check "templated clock: a first-but-not-last clock sends is_first" pass
+    check "templated clock: a first-but-not-last clock sends is_first" pass pass
 else
-    check "templated clock: a first-but-not-last clock sends is_first (got: '$__request_args')" fail
+    check "templated clock: a first-but-not-last clock sends is_first (got: '$__request_args')" pass fail
 end
 set -g __time_format 12
 set -g __clock_show_leading_zero 0
@@ -103,14 +92,14 @@ set -g __requests 0
 set -e __local_content
 set out (segment_clock_render true "")
 if test $__requests -eq 0
-    check "untemplated clock: no request is sent to the agent" pass
+    check "untemplated clock: no request is sent to the agent" pass pass
 else
-    check "untemplated clock: no request is sent to the agent (sent $__requests)" fail
+    check "untemplated clock: no request is sent to the agent (sent $__requests)" pass fail
 end
 if test "$__local_content" = " 3:07 PM"
-    check "untemplated clock: drawn locally with the leading pad" pass
+    check "untemplated clock: drawn locally with the leading pad" pass pass
 else
-    check "untemplated clock: drawn locally with the leading pad (got: '$__local_content')" fail
+    check "untemplated clock: drawn locally with the leading pad (got: '$__local_content')" pass fail
 end
 
 # --- templated theme, agent unreachable: falls back to the local clock ---
@@ -121,15 +110,11 @@ end
 set -e __local_content
 set out (segment_clock_render true "")
 if test "$__local_content" = " 3:07 PM"
-    check "templated clock, agent down: falls back to the local clock" pass
+    check "templated clock, agent down: falls back to the local clock" pass pass
 else
-    check "templated clock, agent down: falls back to the local clock (got: '$__local_content')" fail
+    check "templated clock, agent down: falls back to the local clock (got: '$__local_content')" pass fail
 end
 
 functions -e __gpy_request_clock gpy_section_standalone
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count clock agent render tests passed"
+test_finish "clock agent render tests"

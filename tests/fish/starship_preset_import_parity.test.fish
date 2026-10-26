@@ -133,7 +133,7 @@ set -g spi_gpy_bin $spi_repo_root/gpy-agent/target/debug/gpy
 set -g spi_agent_bin $spi_repo_root/gpy-agent/target/debug/gpy-agent
 for bin in $spi_gpy_bin $spi_agent_bin
     if not test -x $bin
-        echo "❌ binary not found at $bin"
+        fail "binary not found at $bin"
         echo "   Build it first: (cd gpy-agent && cargo build)"
         exit 1
     end
@@ -143,7 +143,7 @@ end
 # the native Starship config (via STARSHIP_CONFIG). See file header.
 set -g spi_match_cfg $spi_repo_root/tests/fish/fixtures/pure_preset.toml
 if not test -f $spi_match_cfg
-    echo "❌ Pure Preset fixture missing: $spi_match_cfg"
+    fail "Pure Preset fixture missing: $spi_match_cfg"
     exit 1
 end
 
@@ -167,17 +167,17 @@ set -gx MISE_DISABLE 1
 set -e SSH_CONNECTION SSH_CLIENT SSH_TTY
 
 if not $spi_gpy_bin theme import $spi_match_cfg --name pure-preset --force --apply-layout >/dev/null 2>&1
-    echo "❌ 'gpy theme import' failed in isolated config"
+    fail "'gpy theme import' failed in isolated config"
     rm -rf $SPI_ISO
     exit 1
 end
 if not $spi_gpy_bin theme use pure-preset --force >/dev/null 2>&1
-    echo "❌ 'gpy theme use pure-preset --force' failed in isolated config"
+    fail "'gpy theme use pure-preset --force' failed in isolated config"
     rm -rf $SPI_ISO
     exit 1
 end
 if not $spi_gpy_bin palette use pure-preset >/dev/null 2>&1
-    echo "❌ 'gpy palette use pure-preset' failed in isolated config"
+    fail "'gpy palette use pure-preset' failed in isolated config"
     rm -rf $SPI_ISO
     exit 1
 end
@@ -334,10 +334,10 @@ function __spi_compare_segment --argument-names label seg dir
 
     echo "── $label / $seg ──"
     if test "$SPI_TEXT_MATCH" = 1; and test "$SPI_COLOR_MATCH" = 1
-        echo "  ✅ identical (text + colour): '$sp_v'"
+        echo "  identical (text + colour): '$sp_v'"
         return 0
     end
-    echo "  ⚠️  differ"
+    echo "  differ"
     if test "$SPI_TEXT_MATCH" = 0
         echo "     text     starship : '$sp_v'"
         echo "     text     gpy      : '$gpy_v'"
@@ -351,10 +351,9 @@ end
 # Record a gating invariant outcome. $1 = "ok"|"fail", $2 = description.
 function __spi_gate --argument-names ok desc
     if test "$ok" = ok
-        echo "     ✔ gate: $desc"
+        pass "gate: $desc"
     else
-        echo "     ✘ GATE FAILED: $desc"
-        set -g SPI_FAILURES (math $SPI_FAILURES + 1)
+        fail "gate: $desc"
     end
 end
 
@@ -404,7 +403,6 @@ echo modified >>$fx_dirty/a.txt
 echo new >$fx_dirty/untracked.txt
 
 # --- Run ---
-set -g SPI_FAILURES 0
 
 echo "=== Gating fixtures (starship "(starship --version | head -1)") ==="
 for pair in "plain non-git dir|$fx_plain" "clean git repo|$fx_clean" "dirty git repo|$fx_dirty"
@@ -446,9 +444,4 @@ end
 rm -rf $SPI_ISO $fixtures_root
 
 echo
-if test $SPI_FAILURES -gt 0
-    echo "❌ $SPI_FAILURES gating parity check(s) failed"
-    exit 1
-end
-echo "✅ Starship preset-import parity gating checks passed"
-exit 0
+test_finish "Starship preset-import parity gating checks passed"

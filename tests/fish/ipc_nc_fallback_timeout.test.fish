@@ -76,17 +76,15 @@ _ipc_nc_fallback_cleanup $listener_pid $test_tmp_dir
 functions -e _ipc_nc_fallback_cleanup
 
 set -l elapsed_ms (math "($end_ns - $start_ns) / 1000000")
-set -l test_result PASS
 
 # Must return within ~1s. The listener self-destructs
 # at {$listener_lifetime_secs}s, so a fallback without `-w` would show up as
 # ~{$listener_lifetime_secs}000ms here rather than a real hang.
 set -l deadline_ms (math "$listener_lifetime_secs * 1000 - 500")
 if test $elapsed_ms -lt $deadline_ms
-    print_test_result "nc fallback returns instead of hanging" PASS "{$elapsed_ms}ms"
+    pass "nc fallback returns instead of hanging"
 else
-    print_test_result "nc fallback returns instead of hanging" FAIL "took {$elapsed_ms}ms, expected well under {$deadline_ms}ms"
-    set test_result FAIL
+    fail "nc fallback returns instead of hanging" "took {$elapsed_ms}ms, expected well under {$deadline_ms}ms"
 end
 
 # nc's own exit status on a `-w` idle timeout isn't reliable across
@@ -94,16 +92,9 @@ end
 # callers actually depend on (see __gpy_request_* in ipc.fish) is an empty
 # result triggering their oneshot-fallback path, not a specific nonzero status.
 if test -n "$result"
-    print_test_result "nc fallback produces empty output on silent socket" FAIL "got '$result'"
-    set test_result FAIL
+    fail "nc fallback produces empty output on silent socket" "got '$result'"
 else
-    print_test_result "nc fallback produces empty output on silent socket" PASS
+    pass "nc fallback produces empty output on silent socket"
 end
 
-print_test_footer "IPC nc fallback timeout" $test_result
-
-if test "$test_result" = PASS
-    exit 0
-else
-    exit 1
-end
+test_finish "IPC nc fallback timeout"

@@ -12,7 +12,7 @@ source $repo_root/tests/lib/test_helpers.fish
 
 set -gx PATH $repo_root/gpy-agent/target/debug $PATH
 if not command -q gpy-agent
-    echo "❌ gpy-agent not built (cd gpy-agent && cargo build)"
+    fail "gpy-agent not built (cd gpy-agent && cargo build)"
     exit 1
 end
 
@@ -32,12 +32,12 @@ function finish --argument-names code
     exit $code
 end
 
-function fail
-    echo "❌ $argv"
+function die
+    fail "$argv"
     finish 1
 end
 
-start_test_agent; or fail "test agent did not start"
+start_test_agent; or die "test agent did not start"
 
 set -gx GPY_AGENT_SUPERVISOR_ENABLED 0
 set -gx GPY_AGENT_ENABLED 1
@@ -48,12 +48,12 @@ set -l plain (mktemp -d)
 cd $plain
 emit fish_prompt
 
-set -q __gpy_registered; or fail "shell did not register on its first prompt with the supervisor disabled"
-poll_until 3 __gpy_agent_has_registered_client; or fail "agent reports no registered client"
-functions -q __gpy_start_supervisor_on_prompt; and fail "registration hook was not removed after registering"
-test -e $pidfile; and fail "supervisor.pid was created with GPY_AGENT_SUPERVISOR_ENABLED=0"
+set -q __gpy_registered; or die "shell did not register on its first prompt with the supervisor disabled"
+poll_until 3 __gpy_agent_has_registered_client; or die "agent reports no registered client"
+functions -q __gpy_start_supervisor_on_prompt; and die "registration hook was not removed after registering"
+test -e $pidfile; and die "supervisor.pid was created with GPY_AGENT_SUPERVISOR_ENABLED=0"
 
 cd /
 rm -rf $plain
-echo "✅ Shell registers with the supervisor disabled"
+pass "Shell registers with the supervisor disabled"
 finish 0

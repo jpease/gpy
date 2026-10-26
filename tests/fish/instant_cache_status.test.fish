@@ -16,24 +16,13 @@
 # clock, so freshness is deterministic. Covers both the git and lang suffix
 # branches (they differ only in which TTL default applies).
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 source "$repo_root/fish/core/constants.fish"
 source "$repo_root/fish/core/util.fish"
 source "$repo_root/fish/core/ipc.fish"
-
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label expected actual
-    if test "$actual" = "$expected"
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-    end
-end
 
 set -l tmp_dir (mktemp -d)
 set -gx XDG_CACHE_HOME "$tmp_dir/cache"
@@ -127,8 +116,4 @@ end
 
 rm -rf "$tmp_dir"
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count instant-cache status tests passed"
+test_finish "instant-cache status tests"

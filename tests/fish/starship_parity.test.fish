@@ -77,7 +77,7 @@ set -g gpy_bin $repo_root/gpy-agent/target/debug/gpy
 set -g agent_bin $repo_root/gpy-agent/target/debug/gpy-agent
 for bin in $gpy_bin $agent_bin
     if not test -x $bin
-        echo "❌ binary not found at $bin"
+        fail "binary not found at $bin"
         echo "   Build it first: (cd gpy-agent && cargo build)"
         exit 1
     end
@@ -85,7 +85,7 @@ end
 
 set -g match_cfg $repo_root/tests/fish/fixtures/starship_match.toml
 if not test -f $match_cfg
-    echo "❌ baseline starship config missing: $match_cfg"
+    fail "baseline starship config missing: $match_cfg"
     exit 1
 end
 
@@ -155,7 +155,7 @@ set -gx RUSTUP_HOME $SP_ISO/toolchain/rustup
 set -e RUSTUP_TOOLCHAIN
 
 if not $gpy_bin theme use starship --force >/dev/null 2>&1
-    echo "❌ 'gpy theme use starship --force' failed in isolated config"
+    fail "'gpy theme use starship --force' failed in isolated config"
     rm -rf $SP_ISO
     exit 1
 end
@@ -310,11 +310,11 @@ function __sp_compare --argument-names label dir
 
     echo "── $label ── ($dir)"
     if test "$SP_MOD_MATCH" = 1; and test "$SP_CHR_MATCH" = 1
-        echo "  ✅ identical (text + colour)"
+        echo "  identical (text + colour)"
         echo "     prompt : $sp_mod_v ⏎ $sp_chr_v"
         return 0
     end
-    echo "  ⚠️  differ"
+    echo "  differ"
     if test "$gpy_mod_v" != "$sp_mod_v"
         echo "     text     starship : '$sp_mod_v'"
         echo "     text     gpy      : '$gpy_mod_v'"
@@ -333,10 +333,9 @@ end
 # Record a gating invariant outcome. $1 = "ok"|"fail", $2 = description.
 function __sp_gate --argument-names ok desc
     if test "$ok" = ok
-        echo "     ✔ gate: $desc"
+        pass "gate: $desc"
     else
-        echo "     ✘ GATE FAILED: $desc"
-        set -g SP_FAILURES (math $SP_FAILURES + 1)
+        fail "gate: $desc"
     end
 end
 
@@ -380,7 +379,6 @@ echo new >$fx_dirty/untracked.txt
 # (symbol shown without a version; fish excluded), command-duration, and
 # character. The only deliberate exclusion is Starship's `package` module, which
 # GPY does not emulate and which the baseline config disables.
-set -g SP_FAILURES 0
 
 echo "=== Gating fixtures ==="
 for ssh in 0 1
@@ -414,9 +412,4 @@ end
 rm -rf $SP_ISO $fixtures_root
 
 echo
-if test $SP_FAILURES -gt 0
-    echo "❌ $SP_FAILURES gating parity check(s) failed"
-    exit 1
-end
-echo "✅ Starship parity gating checks passed"
-exit 0
+test_finish "Starship parity gating checks passed"

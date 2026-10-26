@@ -79,7 +79,6 @@ set -gx GPY_AGENT_SOCKET_PATH $sock
 set -gx XDG_CACHE_HOME $__ws_tmp/cache
 set -e XDG_RUNTIME_DIR
 set -e GPY_SUPERVISOR_CHILD
-set -l test_result PASS
 
 # Drive __gpy_sync_workspace explicitly so each cd is exactly one sync.
 functions -e __gpy_workspace_on_pwd
@@ -88,48 +87,35 @@ function __ws_count --argument-names op
     count (string match -- "$op *" < $__ws_tmp/ops.log)
 end
 
-function __ws_check --argument-names name ok detail
-    if test "$ok" = 1
-        print_test_result $name PASS
-    else
-        print_test_result $name FAIL $detail
-        set -g __ws_failed 1
-    end
-end
-
 cd $__ws_tmp/proj
 __gpy_register_with_agent
-__ws_check "initial register succeeds" (set -q __gpy_registered; and echo 1; or echo 0) "not registered"
-__ws_check "initial register sent once" (test (__ws_count register) = 1; and echo 1; or echo 0) "registers=$(__ws_count register)"
+check "initial register succeeds" 1 (set -q __gpy_registered; and echo 1; or echo 0)
+check "initial register sent once" 1 (__ws_count register)
 
 # 1. Error reply (path rejected): registration and last workspace untouched.
 cd $__ws_tmp/denied
 set -l before_ws $__gpy_last_workspace
 __gpy_sync_workspace
-__ws_check "error reply keeps __gpy_registered" (set -q __gpy_registered; and echo 1; or echo 0) "registration dropped"
-__ws_check "error reply does not re-register" (test (__ws_count register) = 1; and echo 1; or echo 0) "registers=$(__ws_count register)"
-__ws_check "error reply leaves __gpy_last_workspace untouched" (test "$__gpy_last_workspace" = "$before_ws"; and echo 1; or echo 0) "last_workspace=$__gpy_last_workspace"
+check "error reply keeps __gpy_registered" 1 (set -q __gpy_registered; and echo 1; or echo 0)
+check "error reply does not re-register" 1 (__ws_count register)
+check "error reply leaves __gpy_last_workspace untouched" "$before_ws" "$__gpy_last_workspace"
 
 # 2. Next valid cd syncs normally and records the workspace.
 cd $__ws_tmp/other
 __gpy_sync_workspace
-__ws_check "next cd sends a workspace op" (test (__ws_count workspace) = 2; and echo 1; or echo 0) "workspace ops=$(__ws_count workspace)"
-__ws_check "next cd records __gpy_last_workspace" (test "$__gpy_last_workspace" = "$__ws_tmp/other"; and echo 1; or echo 0) "last_workspace=$__gpy_last_workspace"
+check "next cd sends a workspace op" 2 (__ws_count workspace)
+check "next cd records __gpy_last_workspace" "$__ws_tmp/other" "$__gpy_last_workspace"
 
 # 2b. Fish syncs once per cd (never per prompt); cd away and back re-sends.
 cd $__ws_tmp/denied
 __gpy_sync_workspace
-__ws_check "cd back into rejected dir re-sends" (test (__ws_count workspace) = 3; and echo 1; or echo 0) "workspace ops=$(__ws_count workspace)"
+check "cd back into rejected dir re-sends" 3 (__ws_count workspace)
 
 # 3. "not registered" still clears and re-registers.
 cd $__ws_tmp/lost
 __gpy_sync_workspace
-__ws_check "'not registered' triggers re-register" (test (__ws_count register) = 2; and echo 1; or echo 0) "registers=$(__ws_count register)"
-__ws_check "re-register restores registration" (set -q __gpy_registered; and echo 1; or echo 0) "not registered after re-register"
+check "'not registered' triggers re-register" 2 (__ws_count register)
+check "re-register restores registration" 1 (set -q __gpy_registered; and echo 1; or echo 0)
 
 cd /
-if set -q __ws_failed
-    set test_result FAIL
-end
-print_test_footer "Workspace error keeps registration" $test_result
-test "$test_result" = PASS
+test_finish "Workspace error keeps registration"

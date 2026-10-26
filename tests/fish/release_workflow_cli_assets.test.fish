@@ -26,13 +26,13 @@
 # targets package-release.sh's EXPECTED_ASSETS list, which is what actually
 # enforces "every target ships a gpy binary".
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (dirname (status --filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
 
 set -l workflow .github/workflows/release.yml
-set -g failed 0
-
 # 1. Every build-matrix row must declare cli_artifact_name and cli_asset_name.
 #    The matrix has one row per target; count the agent asset_name lines to get
 #    the row count, then require an equal number of cli_ counterparts. Anchor
@@ -43,17 +43,15 @@ set -l cli_asset_count (grep -cE '^ +cli_asset_name:' $workflow)
 set -l cli_artifact_count (grep -cE '^ +cli_artifact_name:' $workflow)
 
 if test "$cli_asset_count" = "$row_count"
-    echo "✅ all $row_count matrix rows declare cli_asset_name"
+    pass "all $row_count matrix rows declare cli_asset_name"
 else
-    echo "❌ only $cli_asset_count/$row_count matrix rows declare cli_asset_name"
-    set -g failed 1
+    fail "only $cli_asset_count/$row_count matrix rows declare cli_asset_name"
 end
 
 if test "$cli_artifact_count" = "$row_count"
-    echo "✅ all $row_count matrix rows declare cli_artifact_name"
+    pass "all $row_count matrix rows declare cli_artifact_name"
 else
-    echo "❌ only $cli_artifact_count/$row_count matrix rows declare cli_artifact_name"
-    set -g failed 1
+    fail "only $cli_artifact_count/$row_count matrix rows declare cli_artifact_name"
 end
 
 # 2. Each expected CLI asset name must appear as a cli_asset_name in the matrix.
@@ -66,10 +64,9 @@ set -l expected_cli_assets \
 
 for asset in $expected_cli_assets
     if grep -qF -- "cli_asset_name: $asset" $workflow
-        echo "✅ matrix declares cli_asset_name: $asset"
+        pass "matrix declares cli_asset_name: $asset"
     else
-        echo "❌ matrix missing cli_asset_name: $asset"
-        set -g failed 1
+        fail "matrix missing cli_asset_name: $asset"
     end
 end
 
@@ -80,24 +77,18 @@ set -l packager scripts/package-release.sh
 
 for asset in $expected_cli_assets
     if grep -qxF -- "    $asset" $packager
-        echo "✅ $packager requires $asset"
+        pass "$packager requires $asset"
     else
-        echo "❌ $packager does not require $asset"
-        set -g failed 1
+        fail "$packager does not require $asset"
     end
 end
 
 # 3b. The create-release job must upload the directory packaging wrote those
 #     asset-named binaries into.
 if grep -qF -- 'dist/gpy-release/bin/*' $workflow
-    echo "✅ create-release uploads dist/gpy-release/bin/*"
+    pass "create-release uploads dist/gpy-release/bin/*"
 else
-    echo "❌ create-release does not upload dist/gpy-release/bin/*"
-    set -g failed 1
+    fail "create-release does not upload dist/gpy-release/bin/*"
 end
 
-if test $failed -eq 1
-    exit 1
-end
-
-echo "✅ release.yml builds and publishes the gpy CLI binary for every target"
+test_finish "release.yml builds and publishes the gpy CLI binary for every target"

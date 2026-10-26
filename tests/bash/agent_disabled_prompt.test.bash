@@ -6,18 +6,9 @@
 # via `gpy-agent oneshot`, but starts no agent, supervisor, or registration.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 cd "$ROOT" || exit 1
-
-FAILED=0
-check() {
-    local label="$1" expected="$2" actual="$3"
-    if [[ "$actual" == "$expected" ]]; then
-        echo "PASS: $label"
-    else
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-        FAILED=1
-    fi
-}
 
 TMP_DIR="$(mktemp -d)"
 mkdir -p "$TMP_DIR/bin" "$TMP_DIR/cache"
@@ -71,8 +62,4 @@ check "supervisor check is a no-op" "0" "$(wc -l <"$CALL_LOG" | tr -d ' ')"
 cd "$ROOT" || true
 rm -rf "$TMP_DIR"
 
-if [[ $FAILED -ne 0 ]]; then
-    echo "=== FAILED ==="
-    exit 1
-fi
-echo "=== agent-disabled prompt test passed ==="
+test_finish "agent-disabled prompt test"

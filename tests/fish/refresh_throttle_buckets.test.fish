@@ -28,15 +28,12 @@ end
 function __gpy_ipc_send_detached
     set -ga sent_payloads $argv[1]
 end
-
-set -g test_result PASS
 function expect_sends --argument-names name expected
     set -l got (count $sent_payloads)
     if test $got -eq $expected
-        print_test_result $name PASS
+        pass "$name"
     else
-        print_test_result $name FAIL "expected $expected refreshes, got $got: $sent_payloads"
-        set -g test_result FAIL
+        fail "$name" "expected $expected refreshes, got $got: $sent_payloads"
     end
 end
 
@@ -58,5 +55,4 @@ expect_sends "per-prev_bg variant buckets are per root too" 3
 
 rm -rf $tmp
 
-print_test_footer "Fish refresh-throttle buckets are per context" $test_result
-test "$test_result" = PASS
+test_finish "Fish refresh-throttle buckets are per context"

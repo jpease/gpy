@@ -27,21 +27,12 @@
 # Both keep their existing stderr warning — those are genuine one-shot install
 # diagnostics, unlike the per-render prompt noise this file exists to prevent.
 
-set -g test_failures 0
-
-function test_fail
-    set -g test_failures (math $test_failures + 1)
-    echo "❌ FAIL: $argv[1]"
-end
-
-function test_pass
-    echo "✅ PASS: $argv[1]"
-end
-
 # Echo every stderr line that is NOT one of gpy_init.fish's own `gpy[init]:`
 # install warnings. Those warnings are expected on the broken-install paths;
 # anything else (Fish's "Invalid number" / "Unknown color" diagnostics) is the
 # per-render prompt noise under test.
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 function stderr_beyond_init_warning --argument-names err_file
     for line in (cat $err_file)
         string match -qr '^gpy\[init\]:' -- $line; and continue
@@ -80,21 +71,21 @@ set -l scenario_a_out (env HOME=$scenario_a_home XDG_CONFIG_HOME=$scenario_a_hom
 set -l scenario_a_status $status
 
 if test -s $scenario_a_err
-    test_fail "conf.d/gpy_init.fish disabled path emitted stderr: "(cat $scenario_a_err | string collect)
+    fail "conf.d/gpy_init.fish disabled path emitted stderr: "(cat $scenario_a_err | string collect)
 else
-    test_pass "conf.d/gpy_init.fish disabled path produced no stderr"
+    pass "conf.d/gpy_init.fish disabled path produced no stderr"
 end
 
 if test $scenario_a_status -eq 0
-    test_pass "conf.d/gpy_init.fish disabled path exited 0"
+    pass "conf.d/gpy_init.fish disabled path exited 0"
 else
-    test_fail "conf.d/gpy_init.fish disabled path exited $scenario_a_status"
+    fail "conf.d/gpy_init.fish disabled path exited $scenario_a_status"
 end
 
 if test -n "$scenario_a_out"
-    test_pass "conf.d/gpy_init.fish disabled path rendered a non-empty prompt"
+    pass "conf.d/gpy_init.fish disabled path rendered a non-empty prompt"
 else
-    test_fail "conf.d/gpy_init.fish disabled path rendered an empty prompt"
+    fail "conf.d/gpy_init.fish disabled path rendered an empty prompt"
 end
 
 # The per-prompt marker reset must not fork `rm` with no operands.
@@ -103,9 +94,9 @@ env HOME=$scenario_a_home XDG_CONFIG_HOME=$scenario_a_home/.config \
     GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
     fish --no-config -i -c 'source fish/conf.d/gpy_init.fish; source fish/functions/fish_prompt.fish; set fish_trace 1; fish_prompt >/dev/null' </dev/null 2>$scenario_a_trace >/dev/null
 if grep -Eq -- '^-+> rm' $scenario_a_trace
-    test_fail "disabled-footprint fish_prompt forked rm: "(grep -E -- '^-+> rm' $scenario_a_trace | string collect)
+    fail "disabled-footprint fish_prompt forked rm: "(grep -E -- '^-+> rm' $scenario_a_trace | string collect)
 else
-    test_pass "disabled-footprint fish_prompt forked no rm"
+    pass "disabled-footprint fish_prompt forked no rm"
 end
 rm -f $scenario_a_trace
 rm -f $scenario_a_err
@@ -122,21 +113,21 @@ set -l scenario_b_out (env GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
 set -l scenario_b_status $status
 
 if test -s $scenario_b_err
-    test_fail "core/init.fish disabled-footprint path emitted stderr: "(cat $scenario_b_err | string collect)
+    fail "core/init.fish disabled-footprint path emitted stderr: "(cat $scenario_b_err | string collect)
 else
-    test_pass "core/init.fish disabled-footprint path produced no stderr"
+    pass "core/init.fish disabled-footprint path produced no stderr"
 end
 
 if test $scenario_b_status -eq 0
-    test_pass "core/init.fish disabled-footprint path exited 0"
+    pass "core/init.fish disabled-footprint path exited 0"
 else
-    test_fail "core/init.fish disabled-footprint path exited $scenario_b_status"
+    fail "core/init.fish disabled-footprint path exited $scenario_b_status"
 end
 
 if test -n "$scenario_b_out"
-    test_pass "core/init.fish disabled-footprint path rendered a non-empty prompt"
+    pass "core/init.fish disabled-footprint path rendered a non-empty prompt"
 else
-    test_fail "core/init.fish disabled-footprint path rendered an empty prompt"
+    fail "core/init.fish disabled-footprint path rendered an empty prompt"
 end
 
 rm -f $scenario_b_err
@@ -155,9 +146,9 @@ set -l scenario_c_vars (env GPY_AGENT_ENABLED=0 GPY_AGENT_SUPERVISOR_ENABLED=0 \
 
 for line in (string split \n -- $scenario_c_vars)
     if string match -q "*MISSING*" -- $line
-        test_fail "expected disabled-footprint default not set: $line"
+        fail "expected disabled-footprint default not set: $line"
     else if test -n "$line"
-        test_pass "disabled-footprint default set: $line"
+        pass "disabled-footprint default set: $line"
     end
 end
 
@@ -180,28 +171,28 @@ set -l scenario_d_out (env HOME=$scenario_d_home XDG_CONFIG_HOME=$scenario_d_hom
 set -l scenario_d_status $status
 
 if grep -q 'core files not found' $scenario_d_err
-    test_pass "install-not-found path preserved its install warning"
+    pass "install-not-found path preserved its install warning"
 else
-    test_fail "install-not-found path lost its install warning: "(cat $scenario_d_err | string collect)
+    fail "install-not-found path lost its install warning: "(cat $scenario_d_err | string collect)
 end
 
 set -l scenario_d_noise (stderr_beyond_init_warning $scenario_d_err | string collect)
 if test -z "$scenario_d_noise"
-    test_pass "install-not-found path emitted no prompt-render noise"
+    pass "install-not-found path emitted no prompt-render noise"
 else
-    test_fail "install-not-found path emitted prompt-render noise: $scenario_d_noise"
+    fail "install-not-found path emitted prompt-render noise: $scenario_d_noise"
 end
 
 if test $scenario_d_status -eq 0
-    test_pass "install-not-found path exited 0"
+    pass "install-not-found path exited 0"
 else
-    test_fail "install-not-found path exited $scenario_d_status"
+    fail "install-not-found path exited $scenario_d_status"
 end
 
 if test -n "$scenario_d_out"
-    test_pass "install-not-found path rendered a non-empty prompt"
+    pass "install-not-found path rendered a non-empty prompt"
 else
-    test_fail "install-not-found path rendered an empty prompt"
+    fail "install-not-found path rendered an empty prompt"
 end
 
 rm -f $scenario_d_err
@@ -227,28 +218,28 @@ set -l scenario_e_out (env HOME=$scenario_e_home XDG_CONFIG_HOME=$scenario_e_hom
 set -l scenario_e_status $status
 
 if grep -q 'using fallback mode' $scenario_e_err
-    test_pass "fallback-mode path preserved its load-failure warning"
+    pass "fallback-mode path preserved its load-failure warning"
 else
-    test_fail "fallback-mode path lost its load-failure warning: "(cat $scenario_e_err | string collect)
+    fail "fallback-mode path lost its load-failure warning: "(cat $scenario_e_err | string collect)
 end
 
 set -l scenario_e_noise (stderr_beyond_init_warning $scenario_e_err | string collect)
 if test -z "$scenario_e_noise"
-    test_pass "fallback-mode path emitted no prompt-render noise"
+    pass "fallback-mode path emitted no prompt-render noise"
 else
-    test_fail "fallback-mode path emitted prompt-render noise: $scenario_e_noise"
+    fail "fallback-mode path emitted prompt-render noise: $scenario_e_noise"
 end
 
 if test $scenario_e_status -eq 0
-    test_pass "fallback-mode path exited 0"
+    pass "fallback-mode path exited 0"
 else
-    test_fail "fallback-mode path exited $scenario_e_status"
+    fail "fallback-mode path exited $scenario_e_status"
 end
 
 if test -n "$scenario_e_out"
-    test_pass "fallback-mode path rendered a non-empty prompt"
+    pass "fallback-mode path rendered a non-empty prompt"
 else
-    test_fail "fallback-mode path rendered an empty prompt"
+    fail "fallback-mode path rendered an empty prompt"
 end
 
 rm -f $scenario_e_err
@@ -257,10 +248,4 @@ rm -rf $scenario_e_home
 # Summary
 echo ""
 echo "========================================="
-if test $test_failures -eq 0
-    echo "✅ ALL TESTS PASSED"
-    exit 0
-else
-    echo "❌ $test_failures TEST(S) FAILED"
-    exit 1
-end
+test_finish "disabled footprint prompt"

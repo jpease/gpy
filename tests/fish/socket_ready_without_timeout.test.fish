@@ -31,17 +31,7 @@ end
 
 set -g tmp (mktemp -d)
 set -g real_path $PATH
-set -g failures 0
 set -g listener_pid
-
-function check --argument-names label ok detail
-    if test "$ok" = 1
-        print_test_result "$label" PASS
-    else
-        print_test_result "$label" FAIL "$detail"
-        set -g failures (math $failures + 1)
-    end
-end
 
 function finish
     test -n "$listener_pid"; and kill -9 $listener_pid 2>/dev/null
@@ -106,14 +96,14 @@ function probe --argument-names label shim
     set -l live $status
     set -gx PATH $real_path
     stop_listener
-    check "$label: a socket that answers pings is ready" (test $live -eq 0; and echo 1; or echo 0) "status $live"
+    check "$label: a socket that answers pings is ready" 0 $live
 
     # The listener is gone but its socket file remains: a crashed agent.
     set -gx PATH $shim
     __gpy_socket_ready $tmp/agent.sock
     set -l stale $status
     set -gx PATH $real_path
-    check "$label: a stale socket file is not ready" (test $stale -ne 0; and echo 1; or echo 0) "status $stale (the file exists but nothing answers)"
+    check "$label: a stale socket file is not ready" 1 (test $stale -ne 0; and echo 1; or echo 0)
 
     start_listener 6
     set -l started (date +%s)
@@ -123,13 +113,13 @@ function probe --argument-names label shim
     set -gx PATH $real_path
     set -l elapsed (math (date +%s) - $started)
     stop_listener
-    check "$label: a socket that never answers is not ready, within the probe's bound" (test $silent -ne 0 -a $elapsed -le 3; and echo 1; or echo 0) "status $silent after ~"$elapsed"s"
+    check "$label: a socket that never answers is not ready, within the probe's bound" 1 (test $silent -ne 0 -a $elapsed -le 3; and echo 1; or echo 0)
 
     set -gx PATH $shim
     __gpy_socket_ready $tmp/absent.sock
     set -l absent $status
     set -gx PATH $real_path
-    check "$label: a missing socket file is not ready" (test $absent -ne 0; and echo 1; or echo 0) "status $absent"
+    check "$label: a missing socket file is not ready" 1 (test $absent -ne 0; and echo 1; or echo 0)
 end
 
 set -l ran 0
@@ -161,11 +151,7 @@ __gpy_socket_ready $tmp/agent.sock
 set -l no_client $status
 set -gx PATH $real_path
 stop_listener
-check "with no client on PATH an existing socket file counts as ready" (test $no_client -eq 0; and echo 1; or echo 0) "status $no_client"
+check "with no client on PATH an existing socket file counts as ready" 0 $no_client
 
 finish
-if test $failures -gt 0
-    print_test_footer "Socket readiness without timeout" FAIL
-    exit 1
-end
-print_test_footer "Socket readiness without timeout" PASS
+test_finish "Socket readiness without timeout"

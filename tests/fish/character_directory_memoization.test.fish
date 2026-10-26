@@ -19,6 +19,8 @@
 # -- a real spawn would clobber __gpy_theme_name with a real theme's name,
 # defeating the "reload without a theme name change" isolation step 5 below
 # needs.
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -gx XDG_CACHE_HOME (mktemp -d)
 mkdir -p "$XDG_CACHE_HOME/gpy"
 touch "$XDG_CACHE_HOME/gpy/theme-export.fish"
@@ -49,17 +51,6 @@ set -g __icon_status_ok STATUSOK
 set -g __icon_status_fail STATUSFAIL
 set -g __gpy_theme_name testtheme
 set -g __color_directory_bg blue
-
-set -g fail_count 0
-
-function check --argument-names label expected actual
-    if test "$expected" -eq "$actual"
-        echo "✓ $label"
-    else
-        echo "FAIL: $label (expected $expected, got $actual)"
-        set -g fail_count (math $fail_count + 1)
-    end
-end
 
 # Every step below clears both caches first so it starts from a known state:
 # a baseline render always misses (call count -> 1 for both segments), and
@@ -171,8 +162,4 @@ check "empty directory render is never cached" 2 $__gpy_dir_call_count
 cd -
 rm -rf $tmp_a $tmp_b
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed"
-    exit 1
-end
-echo "PASS: all character/directory memoization tests passed"
+test_finish "character/directory memoization tests"

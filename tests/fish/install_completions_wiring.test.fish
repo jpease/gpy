@@ -19,29 +19,26 @@
 # install against a real $HOME (which would modify the user's live Fish
 # config and restart the agent -- not something a test suite should do).
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (dirname (status --filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
-
-set -g failed 0
-
 function __icw_check --argument-names label file pattern
     if grep -qE -- "$pattern" $file
-        echo "✅ $label"
+        pass "$label"
     else
-        echo "❌ $label"
+        fail "$label"
         echo "   file:    $file"
         echo "   pattern: $pattern"
-        set -g failed 1
     end
 end
 
 # --- fish/completions/gpy-dynamic.fish must exist and be the checked-in glue ---
 if test -f fish/completions/gpy-dynamic.fish
-    echo "✅ fish/completions/gpy-dynamic.fish exists"
+    pass "fish/completions/gpy-dynamic.fish exists"
 else
-    echo "❌ fish/completions/gpy-dynamic.fish is missing"
-    set -g failed 1
+    fail "fish/completions/gpy-dynamic.fish is missing"
 end
 
 # --- install.sh ---
@@ -60,8 +57,4 @@ __icw_check "install-oneline.sh: downloads the gpy-shell-files.tar.gz archive" i
 __icw_check "install-oneline.sh: hands the staged files to gpy setup" install-oneline.sh \
     '"\$INSTALL_DIR/gpy" setup --shell "\$CURRENT_SHELL" --from "\$STAGE_DIR"'
 
-if test $failed -eq 1
-    exit 1
-end
-
-echo "✅ All installers wire up Fish completions for the gpy CLI"
+test_finish "All installers wire up Fish completions for the gpy CLI"

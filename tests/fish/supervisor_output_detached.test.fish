@@ -36,7 +36,7 @@ env GPY_VERBOSE=1 GPY_AGENT_BINARY_PATH=$tmp/gpy-agent \
         __gpy_agent_supervisor_start' -- $repo_root >$tmp/out 2>&1
 
 if not poll_until 3 test -s $pidfile
-    echo "❌ Supervisor never wrote $pidfile"
+    fail "Supervisor never wrote $pidfile"
     exit 1
 end
 
@@ -46,14 +46,14 @@ function __two_restart_attempts
     test (count (cat $calls 2>/dev/null)) -ge 2
 end
 if not poll_until 10 __two_restart_attempts
-    echo "❌ Supervisor made "(count (cat $calls 2>/dev/null))" restart attempt(s) in 10s, expected at least 2"
+    fail "Supervisor made "(count (cat $calls 2>/dev/null))" restart attempt(s) in 10s, expected at least 2"
     exit 1
 end
 
 if test -s $tmp/out
-    echo "❌ Supervisor output reached the spawning shell:"
+    fail "Supervisor output reached the spawning shell:"
     cat $tmp/out
     exit 1
 end
 
-echo "✅ Supervisor output is detached from the spawning shell"
+test_finish "Supervisor output is detached from the spawning shell"

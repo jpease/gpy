@@ -14,18 +14,7 @@
 # cache. segment_directory_render is replaced by a stub that prints the
 # is_last/is_first it was called with.
 
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label result
-    if test "$result" = pass
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label"
-    end
-end
+source (dirname (status --filename))/../lib/test_helpers.fish
 
 set -l script_dir (dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
@@ -93,7 +82,7 @@ touch $project/Cargo.toml
 cd $repo
 set -g __enabled_segments directory git
 set -l out (render_plain | string collect)
-check "git cold miss with agent down: directory is first and last" (string match -q '*DIR[true|true]*' -- $out; and echo pass; or echo fail)
+check "git cold miss with agent down: directory is first and last" pass (string match -q '*DIR[true|true]*' -- $out; and echo pass; or echo fail)
 string match -q '*DIR[true|true]*' -- $out; or echo "  got: "(string escape -- $out)
 
 # --- Language cold miss: language is omitted, directory opens the line ---
@@ -101,23 +90,23 @@ cd $project
 set -g __refresh_calls
 set -g __enabled_segments language directory
 set out (render_plain | string collect)
-check "language cold miss: directory is first and last" (string match -q '*DIR[true|true]*' -- $out; and echo pass; or echo fail)
+check "language cold miss: directory is first and last" pass (string match -q '*DIR[true|true]*' -- $out; and echo pass; or echo fail)
 string match -q '*DIR[true|true]*' -- $out; or echo "  got: "(string escape -- $out)
-check "language cold miss still requests one refresh" (test "$__refresh_calls" = lang; and echo pass; or echo fail)
+check "language cold miss still requests one refresh" pass (test "$__refresh_calls" = lang; and echo pass; or echo fail)
 test "$__refresh_calls" = lang; or echo "  refresh calls: $__refresh_calls"
 
 # --- Omitted segment in the middle: neighbours keep their positions ---
 set -g __enabled_segments directory language status
 set out (render_plain | string collect)
-check "omitted middle segment: directory stays first, not last" (string match -q 'DIR[|true]*' -- $out; and echo pass; or echo fail)
-check "omitted middle segment: status follows directory with delim_start" (string match -q 'DIR[|true]S OK*' -- $out; and echo pass; or echo fail)
+check "omitted middle segment: directory stays first, not last" pass (string match -q 'DIR[|true]*' -- $out; and echo pass; or echo fail)
+check "omitted middle segment: status follows directory with delim_start" pass (string match -q 'DIR[|true]S OK*' -- $out; and echo pass; or echo fail)
 string match -q 'DIR[|true]S OK*' -- $out; or echo "  got: "(string escape -- $out)
 
 # --- Every agent segment omitted: the shell-rendered status opens the line ---
 cd $repo
 set -g __enabled_segments language git status
 set out (render_plain | string collect)
-check "all agent segments omitted: status opens with delim_first" (string match -q 'F OK*' -- $out; and echo pass; or echo fail)
+check "all agent segments omitted: status opens with delim_first" pass (string match -q 'F OK*' -- $out; and echo pass; or echo fail)
 string match -q 'F OK*' -- $out; or echo "  got: "(string escape -- $out)
 
 # --- Warm cache: git renders and keeps the last position ---
@@ -128,17 +117,17 @@ printf GITNONE >$cache_dir/$cache_key.git.none.ansi
 printf GITWARM >$cache_dir/$cache_key.git_last.black.ansi
 set -g __enabled_segments directory git
 set out (render_plain | string collect)
-check "warm git cache: directory is first, not last" (string match -q '*DIR[|true]*' -- $out; and echo pass; or echo fail)
-check "warm git cache: git renders its exact variant" (string match -q '*DIR[|true]GITWARM*' -- $out; and echo pass; or echo fail)
+check "warm git cache: directory is first, not last" pass (string match -q '*DIR[|true]*' -- $out; and echo pass; or echo fail)
+check "warm git cache: git renders its exact variant" pass (string match -q '*DIR[|true]GITWARM*' -- $out; and echo pass; or echo fail)
 string match -q '*DIR[|true]GITWARM*' -- $out; or echo "  got: "(string escape -- $out)
 
 # --- The presence probe counts contextual-only entries (no `.none`) ---
 # A cache populated only by requests that carried a prev_bg has no `.none`
 # file; the probe must still see it rather than hiding a renderable segment.
 set -l project_key (__gpy_path_to_cache_key (path resolve -- $project))
-check "probe: no language entry before the cache is written" (__gpy_instant_cache_present lang $project; and echo fail; or echo pass)
+check "probe: no language entry before the cache is written" pass (__gpy_instant_cache_present lang $project; and echo fail; or echo pass)
 printf LANG >$cache_dir/$project_key.lang_first.magenta.ansi
-check "probe: a contextual-only language entry counts as present" (__gpy_instant_cache_present lang $project; and echo pass; or echo fail)
+check "probe: a contextual-only language entry counts as present" pass (__gpy_instant_cache_present lang $project; and echo pass; or echo fail)
 
 # A key over 200 characters is stored under chunk directories; the probe looks there.
 set -l long_project $temp_home/(string repeat -n 80 l)/(string repeat -n 80 m)/(string repeat -n 60 n)
@@ -146,8 +135,8 @@ mkdir -p $long_project
 set -l long_key (__gpy_chunk_cache_key (__gpy_path_to_cache_key (path resolve -- $long_project)))
 mkdir -p $cache_dir/(path dirname -- $long_key)
 printf LANG >$cache_dir/$long_key.lang_first.magenta.ansi
-check "probe: a key over 200 characters is chunked" (string match -q '*/*' -- $long_key; and echo pass; or echo fail)
-check "probe: a contextual-only entry under a chunked key counts as present" (__gpy_instant_cache_present lang $long_project; and echo pass; or echo fail)
+check "probe: a key over 200 characters is chunked" pass (string match -q '*/*' -- $long_key; and echo pass; or echo fail)
+check "probe: a contextual-only entry under a chunked key counts as present" pass (__gpy_instant_cache_present lang $long_project; and echo pass; or echo fail)
 
 cd "$repo_root"
 rm -rf $temp_home $repo $project
@@ -168,8 +157,4 @@ else
     set -e XDG_RUNTIME_DIR
 end
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count omitted-segment position tests passed"
+test_finish "omitted-segment position tests"

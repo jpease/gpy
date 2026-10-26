@@ -53,15 +53,15 @@ function test_cold_miss_agent_up_renders_synchronously
 
     set -l repo (create_test_repo)
     if test -z "$repo"
-        print_test_result "Create test repo" FAIL "Unable to create temporary git repo"
+        fail "Create test repo" "Unable to create temporary git repo"
         cleanup_test_files
         return 1
     end
 
     if start_test_agent
-        print_test_result "Agent Start" PASS
+        pass "Agent Start"
     else
-        print_test_result "Agent Start" FAIL "gpy-agent failed to start"
+        fail "Agent Start" "gpy-agent failed to start"
         cleanup_test_files
         return 1
     end
@@ -69,9 +69,9 @@ function test_cold_miss_agent_up_renders_synchronously
     # Confirm the instant cache is genuinely cold for this repo before the
     # render under test -- nothing has registered, queried, or watched it yet.
     if __gpy_no_git_cache_files
-        print_test_result "Instant cache is cold before render" PASS
+        pass "Instant cache is cold before render"
     else
-        print_test_result "Instant cache is cold before render" FAIL "a git cache file already exists; test setup did not start cold"
+        fail "Instant cache is cold before render" "a git cache file already exists; test setup did not start cold"
         cleanup_test_files
         return 1
     end
@@ -85,9 +85,9 @@ function test_cold_miss_agent_up_renders_synchronously
     set -l rendered (segment_git_render)
 
     if test -n "$rendered"
-        print_test_result "First render on cold cache is non-empty (bounded sync IPC)" PASS
+        pass "First render on cold cache is non-empty (bounded sync IPC)"
     else
-        print_test_result "First render on cold cache is non-empty (bounded sync IPC)" FAIL "segment_git_render returned empty on the very first render with the agent up"
+        fail "First render on cold cache is non-empty (bounded sync IPC)" "segment_git_render returned empty on the very first render with the agent up"
         cleanup_test_files
         return 1
     end
@@ -106,7 +106,7 @@ function test_cold_miss_agent_down_omits_within_budget
 
     set -l repo (create_test_repo)
     if test -z "$repo"
-        print_test_result "Create test repo" FAIL "Unable to create temporary git repo"
+        fail "Create test repo" "Unable to create temporary git repo"
         cleanup_test_files
         return 1
     end
@@ -116,9 +116,9 @@ function test_cold_miss_agent_down_omits_within_budget
     # the same gate __gpy_ipc_send uses -- skips the IPC attempt entirely
     # rather than racing a timeout.
     if poll_until 3 __gpy_socket_absent
-        print_test_result "Agent socket absent" PASS
+        pass "Agent socket absent"
     else
-        print_test_result "Agent socket absent" FAIL "a socket unexpectedly exists; cannot exercise the agent-down path"
+        fail "Agent socket absent" "a socket unexpectedly exists; cannot exercise the agent-down path"
         cleanup_test_files
         return 1
     end
@@ -128,9 +128,9 @@ function test_cold_miss_agent_down_omits_within_budget
     set -l rendered (segment_git_render)
 
     if test -z "$rendered"
-        print_test_result "Cold-miss render omits gracefully with agent down" PASS
+        pass "Cold-miss render omits gracefully with agent down"
     else
-        print_test_result "Cold-miss render omits gracefully with agent down" FAIL "expected empty output with agent down, got: $rendered"
+        fail "Cold-miss render omits gracefully with agent down" "expected empty output with agent down, got: $rendered"
         cleanup_test_files
         return 1
     end
@@ -143,8 +143,5 @@ if not test_cold_miss_agent_up_renders_synchronously
     exit 1
 end
 
-if not test_cold_miss_agent_down_omits_within_budget
-    exit 1
-end
-
-exit 0
+test_cold_miss_agent_down_omits_within_budget; or exit 1
+test_finish "git cold miss bounded sync"

@@ -49,64 +49,64 @@ function test_git_fish_parsing
         'branch=' 'ahead=' 'behind=' 'staged=' 'unstaged=' 'untracked=' 'conflicts=' 'state=' \
         -- $parsed_args
     or begin
-        echo "✗ Argparse failed to parse git data"
+        fail "Argparse failed to parse git data"
         return 1
     end
 
     # Verify we get the expected values
     if test "$_flag_branch" = main
-        echo "✓ Git branch parsed correctly: $_flag_branch"
+        pass "Git branch parsed correctly: $_flag_branch"
     else
-        echo "✗ Git branch incorrect: $_flag_branch expected main"
+        fail "Git branch incorrect: $_flag_branch expected main"
         return 1
     end
 
     if test "$_flag_ahead" = 2
-        echo "✓ Git ahead parsed correctly: $_flag_ahead"
+        pass "Git ahead parsed correctly: $_flag_ahead"
     else
-        echo "✗ Git ahead incorrect: $_flag_ahead expected 2"
+        fail "Git ahead incorrect: $_flag_ahead expected 2"
         return 1
     end
 
     if test "$_flag_behind" = 1
-        echo "✓ Git behind parsed correctly: $_flag_behind"
+        pass "Git behind parsed correctly: $_flag_behind"
     else
-        echo "✗ Git behind incorrect: $_flag_behind expected 1"
+        fail "Git behind incorrect: $_flag_behind expected 1"
         return 1
     end
 
     if test "$_flag_staged" = 3
-        echo "✓ Git staged parsed correctly: $_flag_staged"
+        pass "Git staged parsed correctly: $_flag_staged"
     else
-        echo "✗ Git staged incorrect: $_flag_staged expected 3"
+        fail "Git staged incorrect: $_flag_staged expected 3"
         return 1
     end
 
     if test "$_flag_unstaged" = 4
-        echo "✓ Git unstaged parsed correctly: $_flag_unstaged"
+        pass "Git unstaged parsed correctly: $_flag_unstaged"
     else
-        echo "✗ Git unstaged incorrect: $_flag_unstaged expected 4"
+        fail "Git unstaged incorrect: $_flag_unstaged expected 4"
         return 1
     end
 
     if test "$_flag_untracked" = 5
-        echo "✓ Git untracked parsed correctly: $_flag_untracked"
+        pass "Git untracked parsed correctly: $_flag_untracked"
     else
-        echo "✗ Git untracked incorrect: $_flag_untracked expected 5"
+        fail "Git untracked incorrect: $_flag_untracked expected 5"
         return 1
     end
 
     if test "$_flag_conflicts" = 0
-        echo "✓ Git conflicts parsed correctly: $_flag_conflicts"
+        pass "Git conflicts parsed correctly: $_flag_conflicts"
     else
-        echo "✗ Git conflicts incorrect: $_flag_conflicts expected 0"
+        fail "Git conflicts incorrect: $_flag_conflicts expected 0"
         return 1
     end
 
     if test "$_flag_state" = clean
-        echo "✓ Git state parsed correctly: $_flag_state"
+        pass "Git state parsed correctly: $_flag_state"
     else
-        echo "✗ Git state incorrect: $_flag_state expected clean"
+        fail "Git state incorrect: $_flag_state expected clean"
         return 1
     end
 end
@@ -124,32 +124,32 @@ function test_lang_fish_parsing
         'lang=+' 'version=+' 'color=+' \
         -- $parsed_args
     or begin
-        echo "✗ Argparse failed to parse language data"
+        fail "Argparse failed to parse language data"
         return 1
     end
 
     # Verify we get the expected values
     # Note: argparse with + creates arrays for multiple same flags
     if test (count $_flag_lang) -eq 2
-        echo "✓ Language parsing returned correct number of entries"
+        pass "Language parsing returned correct number of entries"
     else
-        echo "✗ Language parsing returned wrong number of entries: "(count $_flag_lang)" expected 2"
+        fail "Language parsing returned wrong number of entries: "(count $_flag_lang)" expected 2"
         return 1
     end
 
     # Check first language
     if test "$_flag_lang[1]" = rust -a "$_flag_version[1]" = "1.70.0" -a "$_flag_color[1]" = orange
-        echo "✓ First language entry correct: $_flag_lang[1] $_flag_version[1] $_flag_color[1]"
+        pass "First language entry correct: $_flag_lang[1] $_flag_version[1] $_flag_color[1]"
     else
-        echo "✗ First language entry incorrect: $_flag_lang[1] $_flag_version[1] $_flag_color[1]"
+        fail "First language entry incorrect: $_flag_lang[1] $_flag_version[1] $_flag_color[1]"
         return 1
     end
 
     # Check second language
     if test "$_flag_lang[2]" = node -a "$_flag_version[2]" = "18.16.0" -a "$_flag_color[2]" = green
-        echo "✓ Second language entry correct: $_flag_lang[2] $_flag_version[2] $_flag_color[2]"
+        pass "Second language entry correct: $_flag_lang[2] $_flag_version[2] $_flag_color[2]"
     else
-        echo "✗ Second language entry incorrect: $_flag_lang[2] $_flag_version[2] $_flag_color[2]"
+        fail "Second language entry incorrect: $_flag_lang[2] $_flag_version[2] $_flag_color[2]"
         return 1
     end
 end
@@ -160,10 +160,10 @@ function test_no_regex_dependency
 
     # The regex-based __gpy_from_json parser must not exist
     if functions -q __gpy_from_json
-        echo "✗ Old __gpy_from_json function still exists"
+        fail "Old __gpy_from_json function still exists"
         return 1
     else
-        echo "✓ Old regex-based JSON parsing function removed"
+        pass "Old regex-based JSON parsing function removed"
     end
 
     # Parsing uses argparse instead of regex
@@ -172,14 +172,14 @@ function test_no_regex_dependency
 
     argparse --ignore-unknown 'branch=' 'ahead=' 'behind=' -- $parsed_args
     or begin
-        echo "✗ Argparse parsing failed"
+        fail "Argparse parsing failed"
         return 1
     end
 
     if test "$_flag_branch" = main -a "$_flag_ahead" = 2 -a "$_flag_behind" = 1
-        echo "✓ Argparse parsing works correctly"
+        pass "Argparse parsing works correctly"
     else
-        echo "✗ Argparse parsing failed"
+        fail "Argparse parsing failed"
         return 1
     end
 end
@@ -207,9 +207,9 @@ function test_parsing_performance
     set -l duration_ms (math "$duration_ns / 1000000")
 
     if test $duration_ms -lt 10 # Should be under 10ms for 300 arguments
-        echo "✓ Parsing performance is excellent: "$duration_ms"ms for 300 arguments"
+        pass "Parsing performance is excellent: "$duration_ms"ms for 300 arguments"
     else
-        echo "⚠ Parsing took longer than expected: "$duration_ms"ms"
+        echo "NOTE: Parsing took longer than expected: "$duration_ms"ms"
     end
 end
 
@@ -222,20 +222,8 @@ function run_fish_format_tests
     and test_lang_fish_parsing
     and test_no_regex_dependency
     and test_parsing_performance
-
-    if test $status -eq 0
-        echo
-        echo "🎉 All Fish format parsing tests passed!"
-        echo "✅ Git format parsing works correctly"
-        echo "✅ Language format parsing works correctly"
-        echo "✅ Regex dependency eliminated"
-        echo "✅ Performance is excellent"
-    else
-        echo
-        echo "❌ Some tests failed"
-        return 1
-    end
 end
 
 # Run the tests
-run_fish_format_tests
+run_fish_format_tests; or exit 1
+test_finish "Fish segment format parsing"

@@ -1,6 +1,8 @@
 #!/usr/bin/env fish
 # Smoke test that theme export can be sourced and fish_prompt renders without errors
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 source (dirname (status --current-filename))/../support/setup_test_env.fish
 
 function test_theme_prompt_render
@@ -37,17 +39,18 @@ function test_theme_prompt_render
     source fish/functions/fish_prompt.fish
     set -l rendered (fish_prompt 2>/dev/null | string replace -ra '\e\[[0-9;]*m' '' | string collect)
     if not string match -q "*$__icon_prompt*" -- "$rendered"
-        echo "❌ fish_prompt did not render the theme's prompt character '$__icon_prompt': $rendered"
+        fail "fish_prompt did not render the theme's prompt character '$__icon_prompt': $rendered"
         exit 1
     end
     if string match -q '*{"*' -- "$rendered"
-        echo "❌ fish_prompt leaked JSON into the prompt: $rendered"
+        fail "fish_prompt leaked JSON into the prompt: $rendered"
         exit 1
     end
-    echo "✅ fish_prompt renders the prompt character with the exported theme"
+    pass "fish_prompt renders the prompt character with the exported theme"
 
     # Cleanup environment override
     set -e XDG_CONFIG_HOME
 end
 
 test_theme_prompt_render
+test_finish "theme prompt render"

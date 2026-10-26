@@ -16,18 +16,8 @@
 # nonetheless invoked it is caught immediately.
 
 ROOT=${0:a:h:h:h}
+emulate sh -c '. "$ROOT/tests/lib/shell_e2e.sh"'
 cd "$ROOT"
-
-FAILED=0
-check() {
-    local label=$1 expected=$2 actual=$3
-    if [[ "$actual" == "$expected" ]]; then
-        echo "PASS: $label"
-    else
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-        FAILED=1
-    fi
-}
 
 TMP_DIR=$(mktemp -d)
 STUB_BIN_DIR="$TMP_DIR/bin"
@@ -75,8 +65,4 @@ check "cache absent: falls back to gpy-agent theme export" 1 "$invoked_count"
 
 rm -rf "$TMP_DIR"
 
-if [[ $FAILED -ne 0 ]]; then
-    echo "=== FAILED ==="
-    exit 1
-fi
-echo "=== load_theme cache test passed ==="
+test_finish "load_theme cache test"

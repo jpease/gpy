@@ -28,17 +28,7 @@ end
 
 set -g tmp (mktemp -d)
 set -g listener_pid
-set -g failures 0
 set -g real_path $PATH
-
-function check --argument-names label ok detail
-    if test "$ok" = 1
-        print_test_result "$label" PASS
-    else
-        print_test_result "$label" FAIL "$detail"
-        set -g failures (math $failures + 1)
-    end
-end
 
 function finish
     test -n "$listener_pid"; and kill -9 $listener_pid 2>/dev/null
@@ -111,8 +101,8 @@ function check_transport --argument-names label use_path delay
 
     set -l connections 0
     test -f $tmp/connections; and set connections (wc -l <$tmp/connections | string trim)
-    check "$label: one logical request is one connection" (test "$connections" = 1; and echo 1; or echo 0) "expected exactly one connection, got $connections"
-    check "$label: a connected-but-late agent is status 2 with no output" (test "$rc" = 2 -a -z "$out"; and echo 1; or echo 0) "status $rc, output '$out' (want status 2, empty)"
+    check "$label: one logical request is one connection" 1 "$connections"
+    check "$label: a connected-but-late agent is status 2 with no output" 1 (test "$rc" = 2 -a -z "$out"; and echo 1; or echo 0)
 end
 
 set -l ran 0
@@ -160,20 +150,16 @@ end
 start_listener 0.6 6
 set -l out (run_request $tmp/slow.sock)
 stop_listener
-check "__gpy_request omits the segment for a late agent and forks no oneshot" (test -z "$out" -a ! -s $oneshot_log; and echo 1; or echo 0) "output '$out', oneshot log '"(cat $oneshot_log)"'"
+check "__gpy_request omits the segment for a late agent and forks no oneshot" 1 (test -z "$out" -a ! -s $oneshot_log; and echo 1; or echo 0)
 
 set out (run_request $tmp/missing.sock)
-check "__gpy_request still falls back to oneshot when the socket is missing" (test "$out" = ONESHOT_OUTPUT -a -s $oneshot_log; and echo 1; or echo 0) "output '$out', oneshot log '"(cat $oneshot_log)"'"
+check "__gpy_request still falls back to oneshot when the socket is missing" 1 (test "$out" = ONESHOT_OUTPUT -a -s $oneshot_log; and echo 1; or echo 0)
 
 # A socket file nobody listens on (a crashed agent): connection refused is
 # "unreachable", not "late", so it must also fall back.
 python3 -c 'import socket, sys; s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()' $tmp/dead.sock
 set out (run_request $tmp/dead.sock)
-check "__gpy_request still falls back to oneshot when nothing listens on the socket" (test "$out" = ONESHOT_OUTPUT -a -s $oneshot_log; and echo 1; or echo 0) "output '$out', oneshot log '"(cat $oneshot_log)"'"
+check "__gpy_request still falls back to oneshot when nothing listens on the socket" 1 (test "$out" = ONESHOT_OUTPUT -a -s $oneshot_log; and echo 1; or echo 0)
 
 finish
-if test $failures -gt 0
-    print_test_footer "IPC slow-reply policy" FAIL
-    exit 1
-end
-print_test_footer "IPC slow-reply policy" PASS
+test_finish "IPC slow-reply policy"

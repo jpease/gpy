@@ -5,18 +5,9 @@
 # Test GPY initialization in a fresh/clean environment
 # Simulates a first-time installation with no existing config
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -g test_name fresh_install
-set -g test_failures 0
-
-function test_fail
-    set -g test_failures (math $test_failures + 1)
-    echo "❌ FAIL: $argv[1]"
-end
-
-function test_pass
-    echo "✅ PASS: $argv[1]"
-end
-
 echo "========================================="
 echo "GPY Fresh Install Test"
 echo "========================================="
@@ -68,67 +59,67 @@ source fish/core/init.fish 2>$init_errlog
 # program.
 source fish/functions/fish_prompt.fish
 if string match -q "*error*" -- (cat $init_errlog)
-    test_fail "Init failed with no existing config"
+    fail "Init failed with no existing config"
 else
-    test_pass "Init succeeds with no existing config"
+    pass "Init succeeds with no existing config"
 end
 rm -f $init_errlog
 
 echo ""
 echo "Test 2: Verify default segments are enabled"
 if set -q __enabled_segments
-    test_pass "Default segments defined: $__enabled_segments"
+    pass "Default segments defined: $__enabled_segments"
 
     # Check that we have at least the core segments
     set -l has_clock (contains clock $__enabled_segments; echo $status)
     set -l has_directory (contains directory $__enabled_segments; echo $status)
 
     if test $has_clock -eq 0
-        test_pass "Clock segment enabled by default"
+        pass "Clock segment enabled by default"
     else
-        test_fail "Clock segment missing from defaults"
+        fail "Clock segment missing from defaults"
     end
 
     if test $has_directory -eq 0
-        test_pass "Directory segment enabled by default"
+        pass "Directory segment enabled by default"
     else
-        test_fail "Directory segment missing from defaults"
+        fail "Directory segment missing from defaults"
     end
 else
-    test_fail "No default segments defined"
+    fail "No default segments defined"
 end
 
 echo ""
 echo "Test 3: Verify fish_prompt works with defaults"
 set -l prompt_output (fish_prompt 2>/dev/null | string replace -ra '\e\[[0-9;]*m' '' | string collect)
 if test -n "$prompt_output"
-    test_pass "fish_prompt works with defaults"
+    pass "fish_prompt works with defaults"
     echo "  Prompt length: "(string length "$prompt_output")" characters"
 else
-    test_fail "fish_prompt failed with defaults"
+    fail "fish_prompt failed with defaults"
 end
 # Content, not presence: a fresh install's first prompt must carry
 # the prompt character and must not leak JSON.
 if string match -q "*$__icon_prompt*" -- "$prompt_output"; and not string match -q '*{"*' -- "$prompt_output"
-    test_pass "first prompt renders the prompt character '$__icon_prompt' with no JSON"
+    pass "first prompt renders the prompt character '$__icon_prompt' with no JSON"
 else
-    test_fail "first prompt is wrong: $prompt_output"
+    fail "first prompt is wrong: $prompt_output"
 end
 
 echo ""
 echo "Test 4: Verify default theme variables exist"
 if set -q __prompt_theme
-    test_pass "Default theme set: $__prompt_theme"
+    pass "Default theme set: $__prompt_theme"
 else
-    test_fail "No default theme set"
+    fail "No default theme set"
 end
 
 echo ""
 echo "Test 5: Verify icons are initialized"
 if set -q __icon_prompt
-    test_pass "Icons initialized"
+    pass "Icons initialized"
 else
-    test_fail "Icons not initialized"
+    fail "Icons not initialized"
 end
 
 echo ""
@@ -136,9 +127,9 @@ echo "Test 6: Test in non-git directory"
 cd $temp_home
 set -l prompt_in_home (fish_prompt 2>/dev/null)
 if test -n "$prompt_in_home"
-    test_pass "Prompt works in non-git directory"
+    pass "Prompt works in non-git directory"
 else
-    test_fail "Prompt failed in non-git directory"
+    fail "Prompt failed in non-git directory"
 end
 
 echo ""
@@ -151,9 +142,9 @@ git config user.name "Test User"
 
 set -l prompt_in_repo (fish_prompt 2>/dev/null)
 if test -n "$prompt_in_repo"
-    test_pass "Prompt works in git repository"
+    pass "Prompt works in git repository"
 else
-    test_fail "Prompt failed in git repository"
+    fail "Prompt failed in git repository"
 end
 
 echo ""
@@ -167,17 +158,17 @@ if test -d $XDG_CONFIG_HOME/gpy
         echo "  Files created: $config_files"
     end
 end
-test_pass "Config check completed"
+pass "Config check completed"
 
 echo ""
 echo "Test 9: Verify environment variables"
 # Check that GPY set configuration variables (this is expected)
 set -l gpy_vars (set -n | grep -i gpy | grep -v GPY_AGENT_ENABLED | grep -v GPY_AGENT_SUPERVISOR_ENABLED | grep -v __gpy)
 if test (count $gpy_vars) -gt 0
-    test_pass "GPY configuration variables set: "(count $gpy_vars)" vars"
+    pass "GPY configuration variables set: "(count $gpy_vars)" vars"
     echo "  Example vars: GPY_IPC_TIMEOUT_MS, GPY_LANGUAGE_CACHE_TTL_SECONDS"
 else
-    test_fail "No GPY configuration variables set (expected some)"
+    fail "No GPY configuration variables set (expected some)"
 end
 
 echo ""
@@ -188,9 +179,9 @@ for segment in clock directory duration
     set -l render_func "segment_$segment"_render
 
     if functions -q $detect_func; and functions -q $render_func
-        test_pass "Segment $segment is self-contained"
+        pass "Segment $segment is self-contained"
     else
-        test_fail "Segment $segment missing functions"
+        fail "Segment $segment missing functions"
     end
 end
 
@@ -211,11 +202,4 @@ end
 # Summary
 echo ""
 echo "========================================="
-if test $test_failures -eq 0
-    echo "✅ ALL TESTS PASSED"
-    echo "GPY works correctly in fresh install scenarios"
-    exit 0
-else
-    echo "❌ $test_failures TEST(S) FAILED"
-    exit 1
-end
+test_finish "fresh install"

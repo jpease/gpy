@@ -30,8 +30,8 @@ shown() {
     print -rP -- "$1" | python3 -c 'import re,sys; sys.stdout.write(re.sub(r"\x1b\[[0-9;]*m", "", sys.stdin.read()))'
 }
 
-# check LABEL SOURCE LITERAL: SOURCE must display LITERAL verbatim.
-check() {
+# assert_shows LABEL SOURCE LITERAL: SOURCE must display LITERAL verbatim.
+assert_shows() {
     local label=$1 source=$2 literal=$3 display
     display=$(shown "$source")
     if [[ "$display" == *"$literal"* ]]; then
@@ -50,7 +50,7 @@ for name in "${names[@]}"; do
     mkdir -p "$dir"
     cd "$dir" || exit 1
     PROMPT=$(__gpy_render_prompt 0)
-    check "IPC directory render" "$PROMPT" "$name"
+    assert_shows "IPC directory render" "$PROMPT" "$name"
 done
 
 # --- Oneshot fallback render: directory segment ---
@@ -58,7 +58,7 @@ dir="$SHELL_E2E_ROOT/w/\$(echo GPY_EXPANDED)"
 cd "$dir" || exit 1
 __gpy_oneshot_used=0
 oneshot_out=$(__gpy_fallback_oneshot directory "$PWD" zsh-prompt true "")
-check "oneshot directory render" "$oneshot_out" '$(echo GPY_EXPANDED)'
+assert_shows "oneshot directory render" "$oneshot_out" '$(echo GPY_EXPANDED)'
 
 # --- Git branch: fresh IPC render, then instant-cache hit ---
 branch='feat/$HOME-100%_x'
@@ -75,7 +75,7 @@ ipc_git_shows_branch() {
     [[ "$(shown "$ipc_git")" == *"$branch"* ]]
 }
 shell_e2e_poll 5 ipc_git_shows_branch
-check "IPC git render" "$ipc_git" "$branch"
+assert_shows "IPC git render" "$ipc_git" "$branch"
 
 __gpy_cache_variant_suffix git true true suffix
 resolved_root=${SHELL_E2E_REPO:A}
@@ -84,10 +84,10 @@ cache_file="$cache_dir/$resolved_key.$suffix.none.zsh"
 if shell_e2e_poll 3 test -f "$cache_file"; then
     cached=""
     __gpy_read_instant_cache "$suffix" "$SHELL_E2E_REPO" "" cached
-    check "instant-cache git hit" "$cached" "$branch"
+    assert_shows "instant-cache git hit" "$cached" "$branch"
     __enabled_segments=(git)
     PROMPT=$(__gpy_render_prompt 0)
-    check "cached git render" "$PROMPT" "$branch"
+    assert_shows "cached git render" "$PROMPT" "$branch"
 else
     fail "the agent did not write the zsh-dialect git cache file $cache_file"
 fi

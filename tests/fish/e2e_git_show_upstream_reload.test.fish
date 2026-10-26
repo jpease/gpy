@@ -85,17 +85,17 @@ function test_git_show_upstream_reload
     # Verify we have upstream configured
     set -l upstream (git rev-parse --abbrev-ref '@{upstream}' 2>/dev/null)
     if test "$upstream" != origin/main
-        print_test_result "Upstream setup" FAIL "Expected origin/main, got: $upstream"
+        fail "Upstream setup" "Expected origin/main, got: $upstream"
         cleanup_test_files
         return 1
     end
-    print_test_result "Upstream setup" PASS
+    pass "Upstream setup"
 
     # Start agent
     if start_test_agent
-        print_test_result "Agent Start" PASS
+        pass "Agent Start"
     else
-        print_test_result "Agent Start" FAIL "gpy-agent failed to start"
+        fail "Agent Start" "gpy-agent failed to start"
         cleanup_test_files
         return 1
     end
@@ -107,7 +107,7 @@ function test_git_show_upstream_reload
     set -l output1 (gpy-agent oneshot git --cwd "$work_repo" --format json 2>/dev/null)
 
     if test -z "$output1"
-        print_test_result "Oneshot git with show_upstream=true" FAIL "No JSON output"
+        fail "Oneshot git with show_upstream=true" "No JSON output"
         cleanup_test_files
         return 1
     end
@@ -117,9 +117,9 @@ function test_git_show_upstream_reload
 
     # We made 2 local commits, so ahead should be 2
     if test "$ahead1" = 2
-        print_test_result "Oneshot shows ahead=2 with show_upstream=true" PASS
+        pass "Oneshot shows ahead=2 with show_upstream=true"
     else
-        print_test_result "Oneshot shows ahead=2 with show_upstream=true" FAIL "Expected ahead=2, got: $ahead1"
+        fail "Oneshot shows ahead=2 with show_upstream=true" "Expected ahead=2, got: $ahead1"
         echo "Full JSON: $output1"
         cleanup_test_files
         return 1
@@ -129,9 +129,9 @@ function test_git_show_upstream_reload
     set -l theme1 (gpy-agent theme export --format fish 2>/dev/null)
 
     if echo "$theme1" | grep -q "set -gx GPY_GIT_SHOW_UPSTREAM \"1\""
-        print_test_result "Theme export shows GPY_GIT_SHOW_UPSTREAM=1" PASS
+        pass "Theme export shows GPY_GIT_SHOW_UPSTREAM=1"
     else
-        print_test_result "Theme export shows GPY_GIT_SHOW_UPSTREAM=1" FAIL "Variable not found or wrong value"
+        fail "Theme export shows GPY_GIT_SHOW_UPSTREAM=1" "Variable not found or wrong value"
         cleanup_test_files
         return 1
     end
@@ -146,7 +146,7 @@ function test_git_show_upstream_reload
     set -l output2 (gpy-agent oneshot git --cwd "$work_repo" --format json 2>/dev/null)
 
     if test -z "$output2"
-        print_test_result "Oneshot git with show_upstream=false" FAIL "No JSON output after config change"
+        fail "Oneshot git with show_upstream=false" "No JSON output after config change"
         cleanup_test_files
         return 1
     end
@@ -156,9 +156,9 @@ function test_git_show_upstream_reload
     set -l behind2 (parse_json_field "$output2" "behind")
 
     if test "$ahead2" = 0 -a "$behind2" = 0
-        print_test_result "Oneshot shows ahead=0,behind=0 with show_upstream=false" PASS
+        pass "Oneshot shows ahead=0,behind=0 with show_upstream=false"
     else
-        print_test_result "Oneshot shows ahead=0,behind=0 with show_upstream=false" FAIL "Expected 0,0 got: $ahead2,$behind2"
+        fail "Oneshot shows ahead=0,behind=0 with show_upstream=false" "Expected 0,0 got: $ahead2,$behind2"
         echo "Full JSON: $output2"
         cleanup_test_files
         return 1
@@ -168,9 +168,9 @@ function test_git_show_upstream_reload
     set -l theme2 (gpy-agent theme export --format fish 2>/dev/null)
 
     if echo "$theme2" | grep -q "set -gx GPY_GIT_SHOW_UPSTREAM \"0\""
-        print_test_result "Theme export shows GPY_GIT_SHOW_UPSTREAM=0" PASS
+        pass "Theme export shows GPY_GIT_SHOW_UPSTREAM=0"
     else
-        print_test_result "Theme export shows GPY_GIT_SHOW_UPSTREAM=0" FAIL "Variable not found or wrong value"
+        fail "Theme export shows GPY_GIT_SHOW_UPSTREAM=0" "Variable not found or wrong value"
         cleanup_test_files
         return 1
     end
@@ -186,9 +186,9 @@ function test_git_show_upstream_reload
     set -l ahead3 (parse_json_field "$output3" "ahead")
 
     if test "$ahead3" = 2
-        print_test_result "Oneshot shows ahead=2 after re-enabling upstream" PASS
+        pass "Oneshot shows ahead=2 after re-enabling upstream"
     else
-        print_test_result "Oneshot shows ahead=2 after re-enabling upstream" FAIL "Expected ahead=2, got: $ahead3"
+        fail "Oneshot shows ahead=2 after re-enabling upstream" "Expected ahead=2, got: $ahead3"
         cleanup_test_files
         return 1
     end
@@ -197,13 +197,9 @@ function test_git_show_upstream_reload
     stop_test_agent
     cleanup_test_files
 
-    print_test_footer "Git Show Upstream Reload" PASS
     return 0
 end
 
 # Run the test
-if not test_git_show_upstream_reload
-    exit 1
-end
-
-exit 0
+test_git_show_upstream_reload; or exit 1
+test_finish "git show upstream reload"

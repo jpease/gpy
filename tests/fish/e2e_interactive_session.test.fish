@@ -41,20 +41,8 @@ source (dirname (status -f))/../lib/test_helpers.fish
 # can silently drop the private-use character from this file.
 set -g BRANCH_GLYPH (printf '\xee\x82\xa0')
 
-set -g __sess_pass 0
-set -g __sess_fail 0
 set -g __pty $__gpy_root/tests/lib/pty_session.py
 set -g __sessions
-
-function check --argument-names label ok detail
-    if test "$ok" = 1
-        set -g __sess_pass (math $__sess_pass + 1)
-        print_test_result "$label" PASS
-    else
-        set -g __sess_fail (math $__sess_fail + 1)
-        print_test_result "$label" FAIL "$detail"
-    end
-end
 
 # Every terminal escape (SGR, cursor movement, mode toggles, OSC titles) and
 # the default theme's powerline chevrons (U+E0B0..U+E0BF), so comparisons
@@ -179,46 +167,45 @@ function scenario_idle_repaint --argument-names repo
     set -l a (session_start a $repo)
     set -l off (session_wait $a "❯" 10 0)
     if test -z "$off"
-        check "first prompt rendered" 0 "no prompt character within 10 s"
+        fail "first prompt rendered" "no prompt character within 10 s"
         return 1
     end
-    check "first prompt rendered" 1
+    pass "first prompt rendered"
     set -l first (transcript_after $a 0)
     if string match -q "*$BRANCH_GLYPH main*" -- "$first"; and string match -q "* repo *" -- "$first"
-        check "first prompt shows the branch (with its glyph) and the directory" 1
+        pass "first prompt shows the branch (with its glyph) and the directory"
     else
-        check "first prompt shows the branch (with its glyph) and the directory" 0 "$first"
+        fail "first prompt shows the branch (with its glyph) and the directory" "$first"
     end
 
     if not poll_until 5 __clients_are 1
-        check "session registered with the agent" 0 (registered_clients)
+        fail "session registered with the agent" (registered_clients)
         return 1
     end
-    check "session registered with the agent" 1
-
+    pass "session registered with the agent"
     # No keystroke from here on: the edit comes from this test process.
     echo dirty >>$repo/tracked.txt
     set -l off2 (session_wait $a "✱1" 5 $off)
     if test -n "$off2"
-        check "prompt repainted with the dirty marker, no keystroke sent" 1
+        pass "prompt repainted with the dirty marker, no keystroke sent"
     else
-        check "prompt repainted with the dirty marker, no keystroke sent" 0 "no ✱1 render within 5 s"
+        fail "prompt repainted with the dirty marker, no keystroke sent" "no ✱1 render within 5 s"
         return 1
     end
 
     session_send $a 'touch untracked.txt\r'
     set -l off3 (session_wait $a "?1" 5 $off2)
     if test -n "$off3"
-        check "next prompt after touch shows the untracked marker" 1
+        pass "next prompt after touch shows the untracked marker"
     else
-        check "next prompt after touch shows the untracked marker" 0 "no ?1 render within 5 s"
+        fail "next prompt after touch shows the untracked marker" "no ?1 render within 5 s"
     end
 
     session_send $a 'exit\r'
     if poll_until 5 __clients_are 0
-        check "exit unregisters the client" 1
+        pass "exit unregisters the client"
     else
-        check "exit unregisters the client" 0 "still (registered_clients) clients"
+        fail "exit unregisters the client" "still (registered_clients) clients"
     end
     session_stop_all
     return 0
@@ -232,15 +219,14 @@ function scenario_two_shells --argument-names repo
     set -l off_a (session_wait $a "❯" 10 0)
     set -l off_b (session_wait $b "❯" 10 0)
     if test -z "$off_a" -o -z "$off_b"
-        check "both sessions rendered a prompt" 0
+        fail "both sessions rendered a prompt"
         return 1
     end
-    check "both sessions rendered a prompt" 1
-
+    pass "both sessions rendered a prompt"
     if poll_until 5 __clients_are 2
-        check "agent reports two registered clients" 1
+        pass "agent reports two registered clients"
     else
-        check "agent reports two registered clients" 0 (registered_clients)
+        fail "agent reports two registered clients" (registered_clients)
     end
 
     # The tree is dirty from scenario 1; commit it from shell A only. A's
@@ -251,17 +237,17 @@ function scenario_two_shells --argument-names repo
         string match -qr 'main\s*$' -- (latest_segment_line $a)
     end
     if not poll_until 10 __a_clean
-        check "shell A renders a clean prompt after its commit" 0 (latest_segment_line $a)
+        fail "shell A renders a clean prompt after its commit" (latest_segment_line $a)
         return 1
     end
-    check "shell A renders a clean prompt after its commit" 1
+    pass "shell A renders a clean prompt after its commit"
     function __b_clean --inherit-variable b
         string match -qr 'main\s*$' -- (latest_segment_line $b)
     end
     if poll_until 5 __b_clean
-        check "shell B repainted clean after A's commit, no keystroke sent" 1
+        pass "shell B repainted clean after A's commit, no keystroke sent"
     else
-        check "shell B repainted clean after A's commit, no keystroke sent" 0 (latest_segment_line $b)
+        fail "shell B repainted clean after A's commit, no keystroke sent" (latest_segment_line $b)
     end
 
     # Both shells' latest segment line (the one naming the branch) is the
@@ -269,9 +255,9 @@ function scenario_two_shells --argument-names repo
     set -l line_a (latest_segment_line $a)
     set -l line_b (latest_segment_line $b)
     if test -n "$line_a"; and test "$line_a" = "$line_b"
-        check "both shells render the same prompt" 1
+        pass "both shells render the same prompt"
     else
-        check "both shells render the same prompt" 0 "A: '$line_a' B: '$line_b'"
+        fail "both shells render the same prompt" "A: '$line_a' B: '$line_b'"
         echo "--- A tail:"
         transcript_after $a 0 | tail -8
         echo "--- B tail:"
@@ -298,13 +284,13 @@ function scenario_config_reload --argument-names repo
     set -l a (session_start a $repo)
     set -l off (session_wait $a "❯" 10 0)
     if test -z "$off"
-        check "first prompt rendered (text theme)" 0
+        fail "first prompt rendered (text theme)"
         return 1
     end
     if transcript_has_chevrons $a 0
-        check "text theme renders without powerline chevrons" 0 (latest_segment_line $a)
+        fail "text theme renders without powerline chevrons" (latest_segment_line $a)
     else
-        check "text theme renders without powerline chevrons" 1
+        pass "text theme renders without powerline chevrons"
     end
     poll_until 5 __clients_are 1
 
@@ -316,9 +302,9 @@ function scenario_config_reload --argument-names repo
         transcript_has_chevrons $a $off
     end
     if poll_until 10 __default_theme_line
-        check "repaint after the theme switch uses the default theme, no keypress" 1
+        pass "repaint after the theme switch uses the default theme, no keypress"
     else
-        check "repaint after the theme switch uses the default theme, no keypress" 0 (latest_segment_line $a)
+        fail "repaint after the theme switch uses the default theme, no keypress" (latest_segment_line $a)
         return 1
     end
     set -l off2 (session_size $a)
@@ -329,9 +315,9 @@ function scenario_config_reload --argument-names repo
         string match -qr '0\.[0-9]+s' -- (latest_segment_line $a)
     end
     if poll_until 10 __duration_shown
-        check "duration segment appears after a slow command" 1
+        pass "duration segment appears after a slow command"
     else
-        check "duration segment appears after a slow command" 0 (latest_segment_line $a)
+        fail "duration segment appears after a slow command" (latest_segment_line $a)
     end
     set off3 (session_size $a)
 
@@ -345,7 +331,7 @@ function scenario_config_reload --argument-names repo
         test -n "$line"; and not string match -qr '[0-9]s$' -- "$line"
     end
     if not poll_until 10 __idle_prompt
-        check "an idle prompt without the duration segment follows a fast command" 0 (latest_segment_line $a)
+        fail "an idle prompt without the duration segment follows a fast command" (latest_segment_line $a)
         return 1
     end
     write_config 'show_icons = false' 'theme = "default"' 'enabled_segments = ["directory", "git", "duration"]'
@@ -354,9 +340,9 @@ function scenario_config_reload --argument-names repo
         string match -q "*main*" -- "$line"; and not string match -q "*$BRANCH_GLYPH*" -- "$line"
     end
     if poll_until 10 __no_branch_glyph
-        check "show_icons = false drops the branch glyph on the next repaint" 1
+        pass "show_icons = false drops the branch glyph on the next repaint"
     else
-        check "show_icons = false drops the branch glyph on the next repaint" 0 (latest_segment_line $a)
+        fail "show_icons = false drops the branch glyph on the next repaint" (latest_segment_line $a)
     end
 
     session_send $a 'exit\r'
@@ -379,15 +365,14 @@ function scenario_exec_survives_notifications --argument-names repo
     set -l a (session_start a $repo)
     set -l off (session_wait $a "❯" 10 0)
     if test -z "$off"
-        check "first prompt rendered before exec" 0 "no prompt character within 10 s"
+        fail "first prompt rendered before exec" "no prompt character within 10 s"
         return 1
     end
     if not poll_until 5 __clients_are 1
-        check "session registered before exec" 0 (registered_clients)
+        fail "session registered before exec" (registered_clients)
         return 1
     end
-    check "session registered before exec" 1
-
+    pass "session registered before exec"
     # The session environment already carries the gate path (session_start).
     set -l gate $__gpy_test_tmp_dir/exec-gate
     rm -f $gate
@@ -397,7 +382,7 @@ function scenario_exec_survives_notifications --argument-names repo
     set -l off_exec (session_size $a)
     session_send $a "exec fish --no-config -i -C 'echo gate\"\"spinning; while not test -e \$GPY_E2E_GATE; sleep 0.1; end; source \$GPY_E2E_ROOT/fish/core/init.fish; source \$GPY_E2E_ROOT/fish/functions/fish_prompt.fish'\r"
     if not session_wait $a gatespinning 10 $off_exec >/dev/null
-        check "exec'd shell is waiting on the gate" 0 "no gatespinning output within 10 s"
+        fail "exec'd shell is waiting on the gate" "no gatespinning output within 10 s"
         return 1
     end
 
@@ -414,9 +399,9 @@ function scenario_exec_survives_notifications --argument-names repo
     session_send $a 'echo gpy""alive\r'
     set -l answered (session_wait $a gpyalive 10 $off2)
     if test -n "$answered"
-        check "exec'd shell survived notifications during startup and answers" 1
+        pass "exec'd shell survived notifications during startup and answers"
     else
-        check "exec'd shell survived notifications during startup and answers" 0 "no gpyalive output within 10 s"
+        fail "exec'd shell survived notifications during startup and answers" "no gpyalive output within 10 s"
         git -C $repo checkout -q -- tracked.txt
         return 1
     end
@@ -451,7 +436,7 @@ function __s5_record --argument-names step regex stamp a off_a b off_b
         set -l f (string split ' ' -- $pair)
         set -l t (python3 $__pty first-match-time $f[2] $regex $f[3])
         if test -z "$t"
-            check "$step latency recorded for $f[1]" 0 "no timestamp for the $step repaint"
+            fail "$step latency recorded for $f[1]" "no timestamp for the $step repaint"
             continue
         end
         set -l ms (math --scale=0 "floor(($t - $stamp) / 1000000)")
@@ -476,15 +461,15 @@ function scenario_cross_dir_idle_repaint --argument-names repo
     set -l ready_a (session_wait $a "❯" 10 0)
     set -l ready_b (session_wait $b "❯" 10 0)
     if test -z "$ready_a" -o -z "$ready_b"
-        check "both sessions rendered a prompt" 0
+        fail "both sessions rendered a prompt"
         session_stop_all
         return 1
     end
-    check "both sessions rendered a prompt" 1
+    pass "both sessions rendered a prompt"
     if poll_until 5 __clients_are 2
-        check "agent reports two registered clients" 1
+        pass "agent reports two registered clients"
     else
-        check "agent reports two registered clients" 0 (registered_clients)
+        fail "agent reports two registered clients" (registered_clients)
     end
 
     # No keystroke from here on: every change comes from this test process.
@@ -493,10 +478,10 @@ function scenario_cross_dir_idle_repaint --argument-names repo
     set -l off_b (session_size $b)
     echo x >>$repo/tracked.txt
     if poll_until 15 __s5_both_show $a $off_a $b $off_b "✱1"
-        check "both idle sessions show the dirty marker" 1
+        pass "both idle sessions show the dirty marker"
         __s5_record dirty "✱1" $stamp $a $off_a $b $off_b
     else
-        check "both idle sessions show the dirty marker" 0 "no ✱1 render in both within 15 s"
+        fail "both idle sessions show the dirty marker" "no ✱1 render in both within 15 s"
     end
 
     set stamp (python3 $__pty now)
@@ -504,10 +489,10 @@ function scenario_cross_dir_idle_repaint --argument-names repo
     set off_b (session_size $b)
     touch $repo/new_untracked
     if poll_until 15 __s5_both_show $a $off_a $b $off_b "?1"
-        check "both idle sessions show the untracked marker" 1
+        pass "both idle sessions show the untracked marker"
         __s5_record untracked '(?<!\[)\?1' $stamp $a $off_a $b $off_b
     else
-        check "both idle sessions show the untracked marker" 0 "no ?1 render in both within 15 s"
+        fail "both idle sessions show the untracked marker" "no ?1 render in both within 15 s"
     end
 
     # Correctness only: an absence has no positive match to time.
@@ -520,9 +505,9 @@ function scenario_cross_dir_idle_repaint --argument-names repo
         and not string match -q -- "*✱1*" "$lb"
     end
     if poll_until 15 __s5_clean
-        check "after the commit neither session shows the dirty marker" 1
+        pass "after the commit neither session shows the dirty marker"
     else
-        check "after the commit neither session shows the dirty marker" 0 "A: '$(latest_segment_line $a)' B: '$(latest_segment_line $b)'"
+        fail "after the commit neither session shows the dirty marker" "A: '$(latest_segment_line $a)' B: '$(latest_segment_line $b)'"
     end
 
     set stamp (python3 $__pty now)
@@ -530,17 +515,17 @@ function scenario_cross_dir_idle_repaint --argument-names repo
     set off_b (session_size $b)
     git -C $repo checkout -q -b n2-latency
     if poll_until 15 __s5_both_show $a $off_a $b $off_b n2-latency
-        check "both idle sessions show the new branch" 1
+        pass "both idle sessions show the new branch"
         __s5_record branch n2-latency $stamp $a $off_a $b $off_b
     else
-        check "both idle sessions show the new branch" 0 "no n2-latency render in both within 15 s"
+        fail "both idle sessions show the new branch" "no n2-latency render in both within 15 s"
     end
     set -l seg_a (__s5_latest_render $a $off_a n2-latency | string match -r 'n2-latency.*' | string trim)
     set -l seg_b (__s5_latest_render $b $off_b n2-latency | string match -r 'n2-latency.*' | string trim)
     if test -n "$seg_a"; and test "$seg_a" = "$seg_b"
-        check "both sessions show the same git segment" 1
+        pass "both sessions show the same git segment"
     else
-        check "both sessions show the same git segment" 0 "A: '$seg_a' B: '$seg_b'"
+        fail "both sessions show the same git segment" "A: '$seg_a' B: '$seg_b'"
     end
 
     # The watcher path: config.toml rewritten directly, no `config reload`.
@@ -552,10 +537,10 @@ function scenario_cross_dir_idle_repaint --argument-names repo
         transcript_has_chevrons $a $off_a; and transcript_has_chevrons $b $off_b
     end
     if poll_until 15 __s5_chevrons
-        check "both idle sessions repainted with powerline glyphs" 1
+        pass "both idle sessions repainted with powerline glyphs"
         __s5_record theme '\xee\x82[\xb0-\xbf]' $stamp $a $off_a $b $off_b
     else
-        check "both idle sessions repainted with powerline glyphs" 0 "no chevron in both within 15 s"
+        fail "both idle sessions repainted with powerline glyphs" "no chevron in both within 15 s"
     end
 
     git -C $repo checkout -q main
@@ -590,11 +575,11 @@ write_config 'show_icons = true' 'theme = "default"' 'enabled_segments = ["direc
 set -l repo (setup_repo)
 
 if not start_test_agent
-    print_test_result "Agent Start" FAIL "gpy-agent failed to start"
+    fail "Agent Start" "gpy-agent failed to start"
     cleanup_test_files
     exit 1
 end
-print_test_result "Agent Start" PASS
+pass "Agent Start"
 
 scenario_idle_repaint $repo
 scenario_two_shells $repo
@@ -606,6 +591,4 @@ session_stop_all
 stop_supervisor_loop
 cleanup_test_files
 
-echo ""
-echo "Passed: $__sess_pass  Failed: $__sess_fail"
-test $__sess_fail -eq 0
+test_finish "E2E interactive session"

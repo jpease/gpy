@@ -28,17 +28,7 @@ end
 
 set -g tmp (mktemp -d)
 set -g real_path $PATH
-set -g failures 0
 set -g listener_pid
-
-function check --argument-names label ok detail
-    if test "$ok" = 1
-        print_test_result "$label" PASS
-    else
-        print_test_result "$label" FAIL "$detail"
-        set -g failures (math $failures + 1)
-    end
-end
 
 function finish
     test -n "$listener_pid"; and kill -9 $listener_pid 2>/dev/null
@@ -106,10 +96,10 @@ start_lingering_agent
 set -l out (run_restart)
 # Give a (wrong) kill a moment to land before asserting the listener survived.
 sleep 0.2
-check "no lsof/fuser: the lingering agent is not killed" (alive; and echo 1; or echo 0) "the listener died"
-check "no lsof/fuser: its socket file is not deleted" (test -S $tmp/agent.sock; and echo 1; or echo 0) "the socket file was removed under a live agent"
-check "no lsof/fuser: the warning names the missing tool" (string match -q '*lsof*' -- (string collect $out); and echo 1; or echo 0) "output: $out"
-check "no lsof/fuser: gpy-agent start still runs" (grep -qx start $start_log; and echo 1; or echo 0) "start log: "(cat $start_log)
+check "no lsof/fuser: the lingering agent is not killed" 1 (alive; and echo 1; or echo 0)
+check "no lsof/fuser: its socket file is not deleted" 1 (test -S $tmp/agent.sock; and echo 1; or echo 0)
+check "no lsof/fuser: the warning names the missing tool" 1 (string match -q '*lsof*' -- (string collect $out); and echo 1; or echo 0)
+check "no lsof/fuser: gpy-agent start still runs" 1 (grep -qx start $start_log; and echo 1; or echo 0)
 kill -9 $listener_pid 2>/dev/null
 
 # --- lsof present: the holder is killed and the socket cleaned up -------------
@@ -119,9 +109,9 @@ printf '%s\n' '#!/bin/sh' "echo $listener_pid" >$tmp/withlsof/lsof
 chmod +x $tmp/withlsof/lsof
 run_restart $tmp/withlsof >/dev/null
 poll_until 3 holder_cleaned_up
-check "lsof: the lingering agent is killed" (alive; and echo 0; or echo 1) "the listener survived"
-check "lsof: its stale socket file is cleaned up" (test -S $tmp/agent.sock; and echo 0; or echo 1) "the socket file remains"
-check "lsof: gpy-agent start runs" (grep -qx start $start_log; and echo 1; or echo 0) "start log: "(cat $start_log)
+check "lsof: the lingering agent is killed" 1 (alive; and echo 0; or echo 1)
+check "lsof: its stale socket file is cleaned up" 1 (test -S $tmp/agent.sock; and echo 0; or echo 1)
+check "lsof: gpy-agent start runs" 1 (grep -qx start $start_log; and echo 1; or echo 0)
 
 # --- only fuser present (the minimal-image case) ------------------------------
 start_lingering_agent
@@ -131,12 +121,8 @@ printf '%s\n' '#!/bin/sh' "echo \"\$1:\" >&2" "echo \" $listener_pid\"" >$tmp/wi
 chmod +x $tmp/withfuser/fuser
 run_restart $tmp/withfuser >/dev/null
 poll_until 3 holder_cleaned_up
-check "fuser fallback: the lingering agent is killed" (alive; and echo 0; or echo 1) "the listener survived"
-check "fuser fallback: its stale socket file is cleaned up" (test -S $tmp/agent.sock; and echo 0; or echo 1) "the socket file remains"
+check "fuser fallback: the lingering agent is killed" 1 (alive; and echo 0; or echo 1)
+check "fuser fallback: its stale socket file is cleaned up" 1 (test -S $tmp/agent.sock; and echo 0; or echo 1)
 
 finish
-if test $failures -gt 0
-    print_test_footer "Agent restart without lsof" FAIL
-    exit 1
-end
-print_test_footer "Agent restart without lsof" PASS
+test_finish "Agent restart without lsof"

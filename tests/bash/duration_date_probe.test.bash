@@ -6,6 +6,8 @@
 # a literal `N`), so the method is chosen by probing `date` once via a PATH shim.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 cd "$ROOT" || exit 1
 
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/gpy-duration-probe.XXXXXX")"
@@ -16,17 +18,6 @@ export GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock"
 
 # shellcheck source=bash/gpy.bash
 source bash/gpy.bash
-
-FAILED=0
-check() {
-    local label="$1" expected="$2" actual="$3"
-    if [[ "$actual" == "$expected" ]]; then
-        echo "PASS: $label"
-    else
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-        FAILED=1
-    fi
-}
 
 real_date="$(command -v date)"
 mkdir -p "$SANDBOX/bsd" "$SANDBOX/gnu"
@@ -82,10 +73,9 @@ sleep 2
 PATH="$SANDBOX/bsd:$PATH" __gpy_precmd 2>"$SANDBOX/precmd.err" >/dev/null
 check "date-seconds precmd prints no arithmetic error" "" "$(cat "$SANDBOX/precmd.err")"
 if [[ "$__gpy_cmd_duration" =~ ^[0-9]+$ ]] && ((__gpy_cmd_duration >= 1000 && __gpy_cmd_duration <= 3000)); then
-    echo "PASS: a ~2s command measures ${__gpy_cmd_duration}ms with whole-second timing"
+    pass "a ~2s command measures ${__gpy_cmd_duration}ms with whole-second timing"
 else
-    echo "FAIL: a ~2s command measured [$__gpy_cmd_duration]ms (want 1000-3000)"
-    FAILED=1
+    fail "a ~2s command measured [$__gpy_cmd_duration]ms (want 1000-3000)"
 fi
 
-exit "$FAILED"
+test_finish "date probe duration"

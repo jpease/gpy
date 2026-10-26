@@ -7,18 +7,9 @@
 # loop sets __gpy_oneshot_used=1 for later forks. The stub counts calls in a file.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 cd "$ROOT" || exit 1
-
-FAILED=0
-check() {
-    local label="$1" expected="$2" actual="$3"
-    if [[ "$actual" == "$expected" ]]; then
-        echo "PASS: $label"
-    else
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-        FAILED=1
-    fi
-}
 
 TMP_DIR="$(mktemp -d)"
 STUB_BIN_DIR="$TMP_DIR/bin"
@@ -71,8 +62,4 @@ check "no leftover predictable-name marker files" 0 "$leftover_count"
 cd "$ROOT" || true
 rm -rf "$TMP_DIR"
 
-if [[ $FAILED -ne 0 ]]; then
-    echo "=== FAILED ==="
-    exit 1
-fi
-echo "=== oneshot budget test passed ==="
+test_finish "oneshot budget test"

@@ -4,6 +4,8 @@
 
 # Functional tests for segment detection logic
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 echo "Testing GPY segment functions..."
 
 source fish/core/init.fish
@@ -37,9 +39,9 @@ git config user.name "Test User"
 git config commit.gpgsign false
 
 if segment_git_detect
-    echo "✅ Git segment correctly detects git repository"
+    pass "Git segment correctly detects git repository"
 else
-    echo "❌ Git segment failed to detect git repository"
+    fail "Git segment failed to detect git repository"
     cd -
     rm -rf $temp_repo
     exit 1
@@ -71,9 +73,9 @@ git -c core.hooksPath="$worktree_hooks" -C "$worktree_repo" worktree add -q "$wo
 cd "$worktree_checkout"
 
 if segment_git_detect
-    echo "✅ Git segment correctly detects linked worktree"
+    pass "Git segment correctly detects linked worktree"
 else
-    echo "❌ Git segment failed to detect linked worktree"
+    fail "Git segment failed to detect linked worktree"
     cd -
     rm -rf "$worktree_base"
     exit 1
@@ -88,12 +90,12 @@ set -l temp_dir (mktemp -d)
 cd $temp_dir
 
 if segment_git_detect
-    echo "❌ Git segment should not detect non-git directory"
+    fail "Git segment should not detect non-git directory"
     cd -
     rm -rf $temp_dir
     exit 1
 else
-    echo "✅ Git segment correctly returns false for non-git directory"
+    pass "Git segment correctly returns false for non-git directory"
 end
 
 cd -
@@ -106,9 +108,9 @@ cd $temp_proj
 echo '{"name":"test"}' >package.json
 
 if segment_language_detect
-    echo "✅ Language segment correctly detects project with package.json"
+    pass "Language segment correctly detects project with package.json"
 else
-    echo "❌ Language segment failed to detect package.json"
+    fail "Language segment failed to detect package.json"
     cd -
     rm -rf $temp_proj
     exit 1
@@ -124,9 +126,9 @@ cd $temp_cargo
 echo '[package]' >Cargo.toml
 
 if segment_language_detect
-    echo "✅ Language segment correctly detects project with Cargo.toml"
+    pass "Language segment correctly detects project with Cargo.toml"
 else
-    echo "❌ Language segment failed to detect Cargo.toml"
+    fail "Language segment failed to detect Cargo.toml"
     cd -
     rm -rf $temp_cargo
     exit 1
@@ -144,12 +146,12 @@ set -l temp_empty (mktemp -d)
 cd $temp_empty
 
 if segment_language_detect
-    echo "❌ Language segment should not detect empty directory"
+    fail "Language segment should not detect empty directory"
     cd -
     rm -rf $temp_empty
     exit 1
 else
-    echo "✅ Language segment correctly returns false for empty directory"
+    pass "Language segment correctly returns false for empty directory"
 end
 
 cd -
@@ -158,18 +160,18 @@ rm -rf $temp_empty
 # Test 7: Directory segment always detects
 echo "Test 7: Directory segment detection"
 if segment_directory_detect
-    echo "✅ Directory segment always returns true"
+    pass "Directory segment always returns true"
 else
-    echo "❌ Directory segment unexpectedly returned false"
+    fail "Directory segment unexpectedly returned false"
     exit 1
 end
 
 # Test 8: Clock segment always detects
 echo "Test 8: Clock segment detection"
 if segment_clock_detect
-    echo "✅ Clock segment always returns true"
+    pass "Clock segment always returns true"
 else
-    echo "❌ Clock segment unexpectedly returned false"
+    fail "Clock segment unexpectedly returned false"
     exit 1
 end
 
@@ -179,9 +181,9 @@ if functions -q segment_git_render
     and functions -q segment_language_render
     and functions -q segment_directory_render
     and functions -q segment_clock_render
-    echo "✅ All segment render functions are defined"
+    pass "All segment render functions are defined"
 else
-    echo "❌ Some segment render functions missing"
+    fail "Some segment render functions missing"
     exit 1
 end
 
@@ -198,4 +200,4 @@ else
     set -e XDG_CONFIG_HOME
 end
 
-echo "🎉 All segment tests passed!"
+test_finish "segment tests"

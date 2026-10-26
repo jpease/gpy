@@ -31,7 +31,6 @@ if not command -q socat; and not command -q nc
 end
 
 set -l test_tmp_dir (mktemp -d)
-set -l test_result PASS
 
 function _ipc_partial_cleanup --argument-names listener_pid
     kill -9 $listener_pid 2>/dev/null
@@ -68,10 +67,9 @@ set -l result (__gpy_ipc_send '{"op":"ping"}' 300)
 _ipc_partial_cleanup $listener1_pid
 
 if test -n "$result"
-    print_test_result "partial write is discarded, not returned" FAIL "got '$result'"
-    set test_result FAIL
+    fail "partial write is discarded, not returned" "got '$result'"
 else
-    print_test_result "partial write is discarded, not returned" PASS
+    pass "partial write is discarded, not returned"
 end
 
 # --- Case 2: a complete, newline-terminated response still round-trips ---
@@ -104,16 +102,9 @@ functions -e _ipc_partial_cleanup
 rm -rf $test_tmp_dir
 
 if test "$complete_result" = '{"status":"ok"}'
-    print_test_result "complete response still round-trips" PASS
+    pass "complete response still round-trips"
 else
-    print_test_result "complete response still round-trips" FAIL "got '$complete_result'"
-    set test_result FAIL
+    fail "complete response still round-trips" "got '$complete_result'"
 end
 
-print_test_footer "IPC partial-response validation" $test_result
-
-if test "$test_result" = PASS
-    exit 0
-else
-    exit 1
-end
+test_finish "IPC partial-response validation"

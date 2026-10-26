@@ -69,39 +69,37 @@ function test_agent_autostart
     # gpy-agent`, which cannot distinguish this test's own agent from an
     # unrelated live daemon elsewhere on the machine).
     if not __gpy_agent_stopped
-        print_test_result "Agent Stop" FAIL "Agent still running after stop"
+        fail "Agent Stop" "Agent still running after stop"
         return 1
     end
-    echo "✓ Agent stopped"
 
     echo ""
     echo "Starting agent manually (simulating auto-start)..."
     if not start_test_agent
-        print_test_result "Agent Start" FAIL "Failed to start agent"
+        fail "Agent Start" "Failed to start agent"
         return 1
     end
-    echo "✓ Agent started"
-    print_test_result "Agent Start" PASS
+    pass "Agent Start"
 
     # Verify agent is responsive
     echo ""
     echo "Verifying agent is responsive..."
     if not wait_for_agent 5
-        print_test_result "Agent Responsive" FAIL "Agent started but not responding"
+        fail "Agent Responsive" "Agent started but not responding"
         return 1
     end
 
-    print_test_result "Agent Responsive" PASS
+    pass "Agent Responsive"
 
     # Verify agent status
     echo ""
     echo "Testing agent ping..."
     set -l ping_result (gpy-agent status 2>&1)
     if not string match -q "*Running and Responding*" -- $ping_result
-        print_test_result "Agent Ping" FAIL "Ping failed: $ping_result"
+        fail "Agent Ping" "Ping failed: $ping_result"
         return 1
     end
-    print_test_result "Agent Ping" PASS
+    pass "Agent Ping"
 
     # CI runners never run install-dev.fish, so ~/.config/fish/gpy does not
     # exist there (it only does on a contributor machine that has installed
@@ -123,9 +121,9 @@ function test_agent_autostart
     ' -- $repo_root 2>&1)
 
     if string match -q "*REGISTERED*" -- $register_result
-        print_test_result "Shell Registration" PASS
+        pass "Shell Registration"
     else
-        print_test_result "Shell Registration" FAIL "Shell failed to register: $register_result"
+        fail "Shell Registration" "Shell failed to register: $register_result"
         return 1
     end
 
@@ -139,25 +137,18 @@ function test_agent_autostart
     set -l init_result $init_output[-1]
 
     if test "$init_result" = 0
-        print_test_result "GPY Initialization" PASS
+        pass "GPY Initialization"
     else
         set -l init_diagnostics (string join "; " -- $init_output[1..-2])
-        print_test_result "GPY Initialization" FAIL "Init returned status: $init_result; output: $init_diagnostics"
+        fail "GPY Initialization" "Init returned status: $init_result; output: $init_diagnostics"
         return 1
     end
 
-    echo ""
-    echo "========================================="
-    echo "✅ E2E Agent Start & Registration Test: PASS"
-    echo "========================================="
     return 0
 end
 
 # Run the test
 setup
-set -l test_result 0
 test_agent_autostart
-set test_result $status
 teardown
-
-exit $test_result
+test_finish "E2E agent start and registration"

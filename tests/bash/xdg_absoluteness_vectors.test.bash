@@ -9,13 +9,14 @@
 # Each resolver runs in its own subshell on purpose, so the env never leaks.
 # shellcheck disable=SC2030,SC2031
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=tests/lib/shell_e2e.sh
+. "$ROOT/tests/lib/shell_e2e.sh"
 cd "$ROOT" || exit 1
 
 source bash/core/ipc.bash
 
 FIXTURE="tests/fixtures/xdg_absoluteness_vectors.tsv"
 FAKE_HOME="/home/user"
-FAILED=0
 CASE_COUNT=0
 
 if [[ ! -r "$FIXTURE" ]]; then
@@ -31,16 +32,6 @@ unescape_value() {
     printf '%s' "$s"
 }
 
-check() {
-    local label="$1" expected="$2" actual="$3"
-    if [[ "$actual" == "$expected" ]]; then
-        echo "PASS: $label"
-    else
-        echo "FAIL: $label: expected [$expected], got [$actual]"
-        FAILED=1
-    fi
-}
-
 while IFS=$'\t' read -r value_col abs_col _rest; do
     [[ -z "$value_col" && -z "$abs_col" ]] && continue
     [[ "$value_col" == \#* ]] && continue
@@ -52,8 +43,7 @@ while IFS=$'\t' read -r value_col abs_col _rest; do
         yes) expected_root="$value/gpy" ;;
         no) expected_root="$FAKE_HOME/.cache/gpy" ;;
         *)
-            echo "FAIL: case $CASE_COUNT ($value_col): bad absolute column [$abs_col]"
-            FAILED=1
+            fail "case $CASE_COUNT ($value_col): bad absolute column [$abs_col]"
             continue
             ;;
     esac
@@ -72,12 +62,7 @@ while IFS=$'\t' read -r value_col abs_col _rest; do
 done < "$FIXTURE"
 
 if [[ "$CASE_COUNT" -eq 0 ]]; then
-    echo "FAIL: no test vectors read from $FIXTURE"
-    exit 1
+    fail "no test vectors read from $FIXTURE"
 fi
 
-if [[ $FAILED -ne 0 ]]; then
-    echo "=== FAILED ==="
-    exit 1
-fi
-echo "=== All $CASE_COUNT XDG absoluteness vector tests passed ==="
+test_finish "$CASE_COUNT XDG absoluteness vector tests"

@@ -78,15 +78,15 @@ function test_variant_fallback_bounded_sync
 
     set -l repo (create_test_repo)
     if test -z "$repo"
-        print_test_result "Create test repo" FAIL "Unable to create temporary git repo"
+        fail "Create test repo" "Unable to create temporary git repo"
         cleanup_test_files
         return 1
     end
 
     if start_test_agent
-        print_test_result "Agent Start" PASS
+        pass "Agent Start"
     else
-        print_test_result "Agent Start" FAIL "gpy-agent failed to start"
+        fail "Agent Start" "gpy-agent failed to start"
         cleanup_test_files
         return 1
     end
@@ -96,23 +96,23 @@ function test_variant_fallback_bounded_sync
     # prev_bg, so only `.none` files get produced by this step).
     set -l client (register_test_client 20 $repo)
     if test -z "$client"
-        print_test_result "Register client" FAIL "Failed to spawn test client"
+        fail "Register client" "Failed to spawn test client"
         cleanup_test_files
         return 1
     end
 
     if poll_until 8 __gpy_git_none_cache_present
-        print_test_result "Instant cache created (.none variant)" PASS
+        pass "Instant cache created (.none variant)"
     else
-        print_test_result "Instant cache created (.none variant)" FAIL "no .none git cache written after registration"
+        fail "Instant cache created (.none variant)" "no .none git cache written after registration"
         cleanup_test_files
         return 1
     end
 
     if __gpy_git_token_cache_absent
-        print_test_result "No token-specific cache file for chosen prev_bg yet" PASS
+        pass "No token-specific cache file for chosen prev_bg yet"
     else
-        print_test_result "No token-specific cache file for chosen prev_bg yet" FAIL "a git.$__gpy_test_prev_bg.ansi file already exists; test setup did not start with a genuine variant gap"
+        fail "No token-specific cache file for chosen prev_bg yet" "a git.$__gpy_test_prev_bg.ansi file already exists; test setup did not start with a genuine variant gap"
         cleanup_test_files
         return 1
     end
@@ -124,11 +124,11 @@ function test_variant_fallback_bounded_sync
     set -l rendered (segment_git_render)
 
     if test -z "$rendered"
-        print_test_result "Variant-fallback render is non-empty" FAIL "segment_git_render produced no output"
+        fail "Variant-fallback render is non-empty" "segment_git_render produced no output"
         cleanup_test_files
         return 1
     end
-    print_test_result "Variant-fallback render is non-empty" PASS
+    pass "Variant-fallback render is non-empty"
 
     # The correct chevron for prev_bg=222 encodes as the SGR fragment
     # `38;5;222` (Color::Ansi256(222) fg). The `.none` fallback's chevron
@@ -137,9 +137,9 @@ function test_variant_fallback_bounded_sync
     # prev_bg, so the response bakes in the correct chevron color; serving the
     # raw `.none` bytes would fail this assertion.
     if string match -q '*38;5;222*' -- $rendered
-        print_test_result "First render at new prev_bg context shows correct chevron color" PASS
+        pass "First render at new prev_bg context shows correct chevron color"
     else
-        print_test_result "First render at new prev_bg context shows correct chevron color" FAIL "rendered output did not contain the prev_bg=222 chevron color (38;5;222); served the wrong-context .none fallback instead"
+        fail "First render at new prev_bg context shows correct chevron color" "rendered output did not contain the prev_bg=222 chevron color (38;5;222); served the wrong-context .none fallback instead"
         cleanup_test_files
         return 1
     end
@@ -148,8 +148,5 @@ function test_variant_fallback_bounded_sync
     return 0
 end
 
-if not test_variant_fallback_bounded_sync
-    exit 1
-end
-
-exit 0
+test_variant_fallback_bounded_sync; or exit 1
+test_finish "git variant fallback bounded sync"

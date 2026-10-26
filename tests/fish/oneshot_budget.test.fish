@@ -20,18 +20,7 @@
 # one of those attempts per render may fork, and the next render gets a fresh
 # budget -- fish_prompt's reset.
 
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label expected actual
-    if test "$actual" = "$expected"
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-    end
-end
+source (dirname (status --filename))/../lib/test_helpers.fish
 
 set -l script_dir (dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
@@ -119,8 +108,4 @@ set -gx HOME $saved_home
 test -n "$saved_xdg_config"; and set -gx XDG_CONFIG_HOME $saved_xdg_config; or set -e XDG_CONFIG_HOME
 test -n "$saved_tmpdir"; and set -gx TMPDIR $saved_tmpdir; or set -e TMPDIR
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "=== oneshot budget test passed ==="
+test_finish "oneshot budget"

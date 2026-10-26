@@ -2,23 +2,12 @@
 # Test: __gpy_ensure_segments_loaded lazily sources segment files newly added
 # to __enabled_segments (e.g. by an agent config/theme reload) without a new shell.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 source "$repo_root/fish/core/constants.fish"
 source "$repo_root/fish/core/util.fish"
-
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label result
-    if test "$result" = pass
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label"
-    end
-end
 
 # --- Setup: init GPY with a reduced segment list so 'duration' is never
 # sourced at shell init, mirroring a theme that didn't include it. Erase any
@@ -50,9 +39,9 @@ source "$repo_root/fish/functions/fish_prompt.fish"
 set -e GPY_MINIMAL_SEGMENTS
 
 if functions -q segment_duration_detect
-    check "duration segment is NOT loaded before reload" fail
+    check "duration segment is NOT loaded before reload" pass fail
 else
-    check "duration segment is NOT loaded before reload" pass
+    check "duration segment is NOT loaded before reload" pass pass
 end
 
 # --- Simulate a reload that enables 'duration' (segment new to this shell) ---
@@ -61,9 +50,9 @@ set -g __enabled_segments duration
 __gpy_ensure_segments_loaded
 
 if functions -q segment_duration_detect
-    check "duration segment IS loaded after __gpy_ensure_segments_loaded" pass
+    check "duration segment IS loaded after __gpy_ensure_segments_loaded" pass pass
 else
-    check "duration segment IS loaded after __gpy_ensure_segments_loaded" fail
+    check "duration segment IS loaded after __gpy_ensure_segments_loaded" pass fail
 end
 
 # --- fish_prompt renders the newly-loaded segment ---
@@ -75,9 +64,9 @@ end
 
 set -l prompt_output (fish_prompt | string collect)
 if string match -q '*GPY_TEST_DURATION_MARKER*' -- "$prompt_output"
-    check "fish_prompt output includes newly-loaded duration segment" pass
+    check "fish_prompt output includes newly-loaded duration segment" pass pass
 else
-    check "fish_prompt output includes newly-loaded duration segment" fail
+    check "fish_prompt output includes newly-loaded duration segment" pass fail
 end
 
 set -e CMD_DURATION
@@ -89,21 +78,17 @@ function segment_duration_init
 end
 __gpy_ensure_segments_loaded
 if test "$__gpy_test_duration_init_calls" -eq 0
-    check "already-loaded segment is not re-initialized" pass
+    check "already-loaded segment is not re-initialized" pass pass
 else
-    check "already-loaded segment is not re-initialized" fail
+    check "already-loaded segment is not re-initialized" pass fail
 end
 
 # --- Negative case: an unknown segment must not error ---
 set -g __enabled_segments duration does-not-exist-segment
 if __gpy_ensure_segments_loaded
-    check "unknown segment does not error out" pass
+    check "unknown segment does not error out" pass pass
 else
-    check "unknown segment does not error out" fail
+    check "unknown segment does not error out" pass fail
 end
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count segment lazy-reload tests passed"
+test_finish "segment lazy-reload tests"

@@ -7,25 +7,14 @@
 # tests/fixtures/data_request_vectors.tsv (also read by the Bash and Zsh
 # tests). See the fixture's header for the format.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (path dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
 
 source fish/core/constants.fish
 source fish/core/ipc.fish
-
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label expected actual
-    if test "$actual" = "$expected"
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-    end
-end
 
 # Undo the fixture's mini escape scheme: `\e` is the empty string; otherwise
 # backslash first, then \r/\t/\n. Real newlines are only ever emitted by
@@ -74,8 +63,4 @@ if test $vector_count -eq 0
     exit 1
 end
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count data-request vector tests passed"
+test_finish "data-request vector tests"

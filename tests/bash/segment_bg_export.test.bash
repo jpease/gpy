@@ -9,17 +9,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT/tests/lib/shell_e2e.sh"
 cd "$ROOT" || exit 1
 
-FAILED=0
-check() {
-    local label="$1" expected="$2" actual="$3"
-    if [[ "$actual" == "$expected" ]]; then
-        echo "PASS: $label"
-    else
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-        FAILED=1
-    fi
-}
-
 AGENT_BIN="$ROOT/gpy-agent/target/debug/gpy-agent"
 if [[ ! -x "$AGENT_BIN" ]]; then
     test_skip "$AGENT_BIN not built (run \`cargo build\` in gpy-agent first)"
@@ -50,8 +39,4 @@ check "unknown segment returns empty" "" "$(__gpy_segment_bg not-a-real-segment)
 hit_count="$(grep -rl 'case "\$segment" in' bash 2>/dev/null | wc -l | tr -d ' ')"
 check "no 'case \"\$segment\" in' table left under bash/" 0 "$hit_count"
 
-if [[ $FAILED -ne 0 ]]; then
-    echo "=== FAILED ==="
-    exit 1
-fi
-echo "=== segment_bg export test passed ==="
+test_finish "segment_bg export test"

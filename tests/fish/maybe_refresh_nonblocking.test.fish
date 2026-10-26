@@ -32,17 +32,6 @@ end
 if not command -q nc
     test_skip "nc not installed, cannot exercise the IPC client"
 end
-
-set -g test_result PASS
-function check --argument-names name ok detail
-    if test "$ok" = PASS
-        print_test_result $name PASS $detail
-    else
-        print_test_result $name FAIL $detail
-        set -g test_result FAIL
-    end
-end
-
 set -l real_date (command -v date)
 set -l tmp (mktemp -d)
 set -l tmp (path resolve $tmp)
@@ -121,15 +110,15 @@ for op in git lang
     set -l elapsed_ms (math --scale=0 "($end_ns - $start_ns) / 1000000")
 
     if test $elapsed_ms -lt 300
-        check "maybe_refresh $op returns immediately" PASS "$elapsed_ms"ms
+        pass "maybe_refresh $op returns immediately"
     else
-        check "maybe_refresh $op returns immediately" FAIL "took $elapsed_ms"ms", expected < 300ms against a 3s listener"
+        fail "maybe_refresh $op returns immediately" "took $elapsed_ms"ms", expected < 300ms against a 3s listener"
     end
 
     if poll_until 2 test -s $tmp/server.log; and string match -q "*\"op\":\"$op\"*" -- (cat $tmp/server.log)
-        check "listener receives the $op refresh payload" PASS
+        pass "listener receives the $op refresh payload"
     else
-        check "listener receives the $op refresh payload" FAIL "server.log: ["(cat $tmp/server.log 2>/dev/null)"]"
+        fail "listener receives the $op refresh payload" "server.log: ["(cat $tmp/server.log 2>/dev/null)"]"
     end
 end
 
@@ -150,14 +139,14 @@ set -e __gpy_last_segment_bg
 set -l lang_out (segment_language_render "" true)
 
 if test -e $tmp/calls.log
-    check "cold-miss language render forks no gpy-agent" FAIL "calls: ["(cat $tmp/calls.log)"]"
+    fail "cold-miss language render forks no gpy-agent" "calls: ["(cat $tmp/calls.log)"]"
 else
-    check "cold-miss language render forks no gpy-agent" PASS
+    pass "cold-miss language render forks no gpy-agent"
 end
 if set -q __gpy_oneshot_used
-    check "cold-miss language render leaves the oneshot budget unclaimed" FAIL
+    fail "cold-miss language render leaves the oneshot budget unclaimed"
 else
-    check "cold-miss language render leaves the oneshot budget unclaimed" PASS
+    pass "cold-miss language render leaves the oneshot budget unclaimed"
 end
 
 # --- Case 3: agent down, the directory segment still renders ---
@@ -174,13 +163,12 @@ end
 set -l prompt_out (fish_prompt 2>/dev/null | string collect)
 
 if string match -q '*DIR*' -- "$prompt_out"
-    check "directory segment renders with the agent down" PASS
+    pass "directory segment renders with the agent down"
 else
-    check "directory segment renders with the agent down" FAIL "prompt: ["(string escape -- "$prompt_out")"]"
+    fail "directory segment renders with the agent down" "prompt: ["(string escape -- "$prompt_out")"]"
 end
 
 cd $repo_root
 rm -rf $tmp
 
-print_test_footer "Fish background refresh is non-blocking" $test_result
-test "$test_result" = PASS
+test_finish "Fish background refresh is non-blocking"

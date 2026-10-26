@@ -11,35 +11,32 @@
 # independently network-testable, plus a real (network-free)
 # truncated-execution test proving the truncation guarantee concretely.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (dirname (status --filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
 
 set -l installer install-oneline.sh
-set -g failed 0
-
 # --- Static structural checks ---
 
 if grep -q '^main() {' $installer
-    echo "✅ $installer: main() {} is defined"
+    pass "$installer: main() {} is defined"
 else
-    echo "❌ $installer: main() {} is not defined"
-    set -g failed 1
+    fail "$installer: main() {} is not defined"
 end
 
 set -l last_nonblank (grep -v '^[[:space:]]*$' $installer | tail -n 1)
 if test "$last_nonblank" = 'main "$@"'
-    echo "✅ $installer: main \"\$@\" is the last non-blank line"
+    pass "$installer: main \"\$@\" is the last non-blank line"
 else
-    echo "❌ $installer: last non-blank line is '$last_nonblank', expected 'main \"\$@\"'"
-    set -g failed 1
+    fail "$installer: last non-blank line is '$last_nonblank', expected 'main \"\$@\"'"
 end
 
 if grep -q 'trap.*EXIT' $installer
-    echo "✅ $installer: a trap referencing EXIT is present"
+    pass "$installer: a trap referencing EXIT is present"
 else
-    echo "❌ $installer: no trap referencing EXIT found (temp dir won't be cleaned up on a mid-download die)"
-    set -g failed 1
+    fail "$installer: no trap referencing EXIT found (temp dir won't be cleaned up on a mid-download die)"
 end
 
 # --- Truncated-execution check ---
@@ -68,10 +65,9 @@ end
 set -l mid_body_line (math "$total_lines - 40")
 set -l out1 (__truncate_and_run $installer $tmp_dir mid_body $mid_body_line)
 if string match -q '*Detecting system configuration*' -- $out1
-    echo "❌ Truncation (mid function body, line $mid_body_line/$total_lines): script executed main() body despite truncation"
-    set -g failed 1
+    fail "Truncation (mid function body, line $mid_body_line/$total_lines): script executed main() body despite truncation"
 else
-    echo "✅ Truncation (mid function body, line $mid_body_line/$total_lines): main() body did not execute"
+    pass "Truncation (mid function body, line $mid_body_line/$total_lines): main() body did not execute"
 end
 
 # Truncation point 2: cut off right before the trailing `main "$@"` line, so
@@ -79,16 +75,11 @@ end
 set -l before_call_line (math "$total_lines - 1")
 set -l out2 (__truncate_and_run $installer $tmp_dir before_call $before_call_line)
 if string match -q '*Detecting system configuration*' -- $out2
-    echo "❌ Truncation (right before 'main \"\$@\"', line $before_call_line/$total_lines): script ran main() despite the call being cut off"
-    set -g failed 1
+    fail "Truncation (right before 'main \"\$@\"', line $before_call_line/$total_lines): script ran main() despite the call being cut off"
 else
-    echo "✅ Truncation (right before 'main \"\$@\"', line $before_call_line/$total_lines): main() was never invoked"
+    pass "Truncation (right before 'main \"\$@\"', line $before_call_line/$total_lines): main() was never invoked"
 end
 
 rm -rf $tmp_dir
 
-if test $failed -eq 1
-    exit 1
-end
-
-echo "✅ install-oneline.sh main() wrapper checks pass"
+test_finish "install-oneline.sh main() wrapper checks pass"

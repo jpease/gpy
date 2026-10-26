@@ -61,29 +61,29 @@ function test_git_live_content
     git -C $repo commit -qm init >/dev/null
 
     if not start_test_agent
-        print_test_result "Agent Start" FAIL "gpy-agent failed to start"
+        fail "Agent Start" "gpy-agent failed to start"
         cleanup_test_files
         return 1
     end
-    print_test_result "Agent Start" PASS
+    pass "Agent Start"
 
     set -l client (register_test_client 15 $repo)
     if test -z "$client"
-        print_test_result "Register client" FAIL "Failed to spawn test client"
+        fail "Register client" "Failed to spawn test client"
         cleanup_test_files
         return 1
     end
-    print_test_result "Register client" PASS
+    pass "Register client"
 
     # Locate the git instant-cache file the agent wrote for this repo.
     poll_until 3 __live_cache_file_found
     set -l cache_file $__live_cache_file
     if test -z "$cache_file"
-        print_test_result "Instant cache created" FAIL "no git cache written after registration"
+        fail "Instant cache created" "no git cache written after registration"
         cleanup_test_files
         return 1
     end
-    print_test_result "Instant cache created" PASS
+    pass "Instant cache created"
 
     # Give the worktree watch a moment to warm up (some fs backends drop events
     # that occur immediately after a stream starts); there is no observable
@@ -99,9 +99,9 @@ function test_git_live_content
     poll_until 6 __live_cache_changed $cache_file; and set changed 1
 
     if test $changed -eq 1
-        print_test_result "Worktree edit updates git segment (clock disabled)" PASS
+        pass "Worktree edit updates git segment (clock disabled)"
     else
-        print_test_result "Worktree edit updates git segment (clock disabled)" FAIL "git.ansi content did not change after a tracked-file edit"
+        fail "Worktree edit updates git segment (clock disabled)" "git.ansi content did not change after a tracked-file edit"
         cleanup_test_files
         return 1
     end
@@ -110,8 +110,5 @@ function test_git_live_content
     return 0
 end
 
-if not test_git_live_content
-    exit 1
-end
-
-exit 0
+test_git_live_content; or exit 1
+test_finish "git live content"

@@ -41,33 +41,33 @@ function test_existing_client_reregisters
 
     set -l repo (create_test_repo)
     if test -z "$repo"
-        print_test_result "Create test repo" FAIL "Unable to create temporary git repo"
+        fail "Create test repo" "Unable to create temporary git repo"
         cleanup_test_files
         return 1
     end
 
     if start_test_agent
-        print_test_result "Agent Start (initial)" PASS
+        pass "Agent Start (initial)"
     else
-        print_test_result "Agent Start (initial)" FAIL "gpy-agent failed to start"
+        fail "Agent Start (initial)" "gpy-agent failed to start"
         cleanup_test_files
         return 1
     end
 
     set -l client (register_test_client 18 $repo)
     if test -z "$client"
-        print_test_result "Register persistent client" FAIL "Failed to spawn test client"
+        fail "Register persistent client" "Failed to spawn test client"
         cleanup_test_files
         return 1
     end
-    print_test_result "Register persistent client" PASS
+    pass "Register persistent client"
 
     trigger_git_change $repo >/dev/null
     if wait_for_signal $client 1 6
-        print_test_result "Initial watcher signal" PASS
+        pass "Initial watcher signal"
     else
         set -l observed (count_signals $client)
-        print_test_result "Initial watcher signal" FAIL "Expected ≥1 signal, saw $observed"
+        fail "Initial watcher signal" "Expected ≥1 signal, saw $observed"
         cleanup_test_files
         return 1
     end
@@ -76,9 +76,9 @@ function test_existing_client_reregisters
 
     stop_test_agent >/dev/null
     if start_test_agent
-        print_test_result "Agent Restart" PASS
+        pass "Agent Restart"
     else
-        print_test_result "Agent Restart" FAIL "Unable to restart gpy-agent"
+        fail "Agent Restart" "Unable to restart gpy-agent"
         cleanup_test_files
         return 1
     end
@@ -93,10 +93,10 @@ function test_existing_client_reregisters
     set -l baseline_after_restart (count_signals $client)
     trigger_git_change $repo >/dev/null
     if wait_for_signal $client (math $baseline_after_restart + 1) 6
-        print_test_result "Existing client recovers" PASS
+        pass "Existing client recovers"
     else
         set -l observed_after_restart (count_signals $client)
-        print_test_result "Existing client recovers" FAIL "Expected > $baseline_after_restart signals after restart, saw $observed_after_restart"
+        fail "Existing client recovers" "Expected > $baseline_after_restart signals after restart, saw $observed_after_restart"
         cleanup_test_files
         return 1
     end
@@ -114,7 +114,7 @@ function test_autostart_exhausted_client_recovers_via_git_segment
 
     set -l repo (create_test_repo)
     if test -z "$repo"
-        print_test_result "Create test repo" FAIL "Unable to create temporary git repo"
+        fail "Create test repo" "Unable to create temporary git repo"
         cleanup_test_files
         return 1
     end
@@ -220,7 +220,7 @@ function test_autostart_exhausted_client_recovers_via_git_segment
     set -a __gpy_test_client_pids $client_pid
 
     if not poll_until 10 test -f $exhausted_marker
-        print_test_result "Autostart exhausts against unavailable agent" FAIL "client did not reach exhaustion within timeout"
+        fail "Autostart exhausts against unavailable agent" "client did not reach exhaustion within timeout"
         kill -9 $client_pid 2>/dev/null
         cleanup_test_files
         return 1
@@ -228,17 +228,17 @@ function test_autostart_exhausted_client_recovers_via_git_segment
 
     set -l exhausted_outcome (cat $exhausted_marker | string trim)
     if test "$exhausted_outcome" != OK
-        print_test_result "Autostart exhausts against unavailable agent" FAIL "outcome=$exhausted_outcome"
+        fail "Autostart exhausts against unavailable agent" "outcome=$exhausted_outcome"
         kill -9 $client_pid 2>/dev/null
         cleanup_test_files
         return 1
     end
-    print_test_result "Autostart exhausts against unavailable agent" PASS
+    pass "Autostart exhausts against unavailable agent"
 
     if start_test_agent
-        print_test_result "Agent Start (delayed, after exhaustion)" PASS
+        pass "Agent Start (delayed, after exhaustion)"
     else
-        print_test_result "Agent Start (delayed, after exhaustion)" FAIL "gpy-agent failed to start"
+        fail "Agent Start (delayed, after exhaustion)" "gpy-agent failed to start"
         kill -9 $client_pid 2>/dev/null
         cleanup_test_files
         return 1
@@ -247,7 +247,7 @@ function test_autostart_exhausted_client_recovers_via_git_segment
     touch $go_marker
 
     if not poll_until 10 test -f $result_file
-        print_test_result "Exhausted client re-registers within one render" FAIL "no result reported within timeout"
+        fail "Exhausted client re-registers within one render" "no result reported within timeout"
         kill -9 $client_pid 2>/dev/null
         cleanup_test_files
         return 1
@@ -258,9 +258,9 @@ function test_autostart_exhausted_client_recovers_via_git_segment
     remove_client_from_cleanup $client_pid
 
     if test "$outcome" = PASS
-        print_test_result "Exhausted client re-registers within one render" PASS
+        pass "Exhausted client re-registers within one render"
     else
-        print_test_result "Exhausted client re-registers within one render" FAIL "outcome=$outcome"
+        fail "Exhausted client re-registers within one render" "outcome=$outcome"
         cleanup_test_files
         return 1
     end
@@ -275,15 +275,15 @@ function test_failed_restart_registration_retries_on_next_nudge
 
     set -l repo (create_test_repo)
     if test -z "$repo"
-        print_test_result "Create test repo" FAIL "Unable to create temporary git repo"
+        fail "Create test repo" "Unable to create temporary git repo"
         cleanup_test_files
         return 1
     end
 
     if start_test_agent
-        print_test_result "Agent Start" PASS
+        pass "Agent Start"
     else
-        print_test_result "Agent Start" FAIL "gpy-agent failed to start"
+        fail "Agent Start" "gpy-agent failed to start"
         cleanup_test_files
         return 1
     end
@@ -345,16 +345,16 @@ function test_failed_restart_registration_retries_on_next_nudge
     ' -- $repo $__gpy_root $result_file >/dev/null 2>&1
 
     if not test -f $result_file
-        print_test_result "Failed nudge retries on the next nudge" FAIL "client reported no result"
+        fail "Failed nudge retries on the next nudge" "client reported no result"
         cleanup_test_files
         return 1
     end
 
     set -l outcome (cat $result_file | string trim)
     if test "$outcome" = PASS
-        print_test_result "Failed nudge retries on the next nudge" PASS
+        pass "Failed nudge retries on the next nudge"
     else
-        print_test_result "Failed nudge retries on the next nudge" FAIL "outcome=$outcome"
+        fail "Failed nudge retries on the next nudge" "outcome=$outcome"
         cleanup_test_files
         return 1
     end
@@ -381,7 +381,7 @@ function test_restart_drops_memoized_directory_render
 
     set -l repo (create_test_repo)
     if test -z "$repo"
-        print_test_result "Create test repo" FAIL "Unable to create temporary git repo"
+        fail "Create test repo" "Unable to create temporary git repo"
         cleanup_test_files
         return 1
     end
@@ -389,9 +389,9 @@ function test_restart_drops_memoized_directory_render
     mkdir -p $XDG_CONFIG_HOME/gpy
     __write_truncated_directory_config OLD/
     if start_test_agent
-        print_test_result "Agent Start" PASS
+        pass "Agent Start"
     else
-        print_test_result "Agent Start" FAIL "gpy-agent failed to start"
+        fail "Agent Start" "gpy-agent failed to start"
         cleanup_test_files
         return 1
     end
@@ -399,7 +399,7 @@ function test_restart_drops_memoized_directory_render
     # without it, re-registration reloads the theme and clears every memo
     # whether or not it drops them itself.
     if not poll_until 5 test -f $XDG_CACHE_HOME/gpy/theme-export.fish
-        print_test_result "Theme export cache written" FAIL "no $XDG_CACHE_HOME/gpy/theme-export.fish"
+        fail "Theme export cache written" "no $XDG_CACHE_HOME/gpy/theme-export.fish"
         cleanup_test_files
         return 1
     end
@@ -451,14 +451,14 @@ function test_restart_drops_memoized_directory_render
     set -a __gpy_test_client_pids $client_pid
 
     if not poll_until 10 test -s $before_file
-        print_test_result "Memoized the first directory render" FAIL "no render within 10 s"
+        fail "Memoized the first directory render" "no render within 10 s"
         kill -9 $client_pid 2>/dev/null
         cleanup_test_files
         return 1
     end
-    print_test_result "Memoized the first directory render" PASS
+    pass "Memoized the first directory render"
     if not test -e $before_file.sourced
-        print_test_result "Client sourced the theme export cache" FAIL "the fixture would reload the theme on re-registration"
+        fail "Client sourced the theme export cache" "the fixture would reload the theme on re-registration"
         kill -9 $client_pid 2>/dev/null
         cleanup_test_files
         return 1
@@ -469,7 +469,7 @@ function test_restart_drops_memoized_directory_render
     stop_test_agent >/dev/null
     __write_truncated_directory_config TRUNC/
     if not start_test_agent
-        print_test_result "Agent Restart" FAIL "Unable to restart gpy-agent"
+        fail "Agent Restart" "Unable to restart gpy-agent"
         kill -9 $client_pid 2>/dev/null
         cleanup_test_files
         return 1
@@ -478,7 +478,7 @@ function test_restart_drops_memoized_directory_render
     # The restart nudge has landed: the flag is waiting, or the client's
     # SIGURG handler already consumed it and re-registered.
     if not poll_until 5 __restart_nudge_landed $registry_file.reregister $client_pid $registrations_before
-        print_test_result "Restart nudge" FAIL "no .reregister flag or re-registration for $client_pid"
+        fail "Restart nudge" "no .reregister flag or re-registration for $client_pid"
         kill -9 $client_pid 2>/dev/null
         cleanup_test_files
         return 1
@@ -492,13 +492,13 @@ function test_restart_drops_memoized_directory_render
     set -l before (cat $before_file 2>/dev/null)
     set -l after (cat $after_file 2>/dev/null)
     if not string match -q '*OLD/*' -- "$before"
-        print_test_result "Re-registration drops the directory memo" FAIL "the first render does not show the first config: '$before'"
+        fail "Re-registration drops the directory memo" "the first render does not show the first config: '$before'"
         cleanup_test_files
         return 1
     else if string match -q '*TRUNC/*' -- "$after"
-        print_test_result "Re-registration drops the directory memo" PASS
+        pass "Re-registration drops the directory memo"
     else
-        print_test_result "Re-registration drops the directory memo" FAIL "render after restart: '$after' (before: '$before')"
+        fail "Re-registration drops the directory memo" "render after restart: '$after' (before: '$before')"
         cleanup_test_files
         return 1
     end
@@ -519,8 +519,5 @@ if not test_failed_restart_registration_retries_on_next_nudge
     exit 1
 end
 
-if not test_restart_drops_memoized_directory_render
-    exit 1
-end
-
-exit 0
+test_restart_drops_memoized_directory_render; or exit 1
+test_finish "existing client reregisters after restart"

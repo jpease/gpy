@@ -55,12 +55,12 @@ function test_new_shell_after_offline_edit
     __setup_offline_edit_env
 
     if not __warm_default_cache
-        print_test_result "Cache warmed with default theme" FAIL "agent did not write the default export"
+        fail "Cache warmed with default theme" "agent did not write the default export"
         cleanup_test_files
         return 1
     end
     stop_test_agent
-    print_test_result "Cache warmed with default theme" PASS
+    pass "Cache warmed with default theme"
 
     # The shell compares the cache's mtime (1 s resolution) with the one it
     # sourced; the offline edit must land in a later second than the stale
@@ -113,9 +113,9 @@ function test_new_shell_after_offline_edit
 
     set -l outcome (cat $result_file 2>/dev/null | string trim)
     if test "$outcome" = PASS
-        print_test_result "New shell shows the new theme after autostart" PASS
+        pass "New shell shows the new theme after autostart"
     else
-        print_test_result "New shell shows the new theme after autostart" FAIL "outcome=$outcome"
+        fail "New shell shows the new theme after autostart" "outcome=$outcome"
         cleanup_test_files
         return 1
     end
@@ -131,11 +131,11 @@ function __run_existing_shell_scenario --argument-names label agent_only
     __setup_offline_edit_env
 
     if not __warm_default_cache
-        print_test_result "Cache warmed with default theme" FAIL "agent did not write the default export"
+        fail "Cache warmed with default theme" "agent did not write the default export"
         cleanup_test_files
         return 1
     end
-    print_test_result "Cache warmed with default theme" PASS
+    pass "Cache warmed with default theme"
 
     set -l ready_file $__gpy_test_tmp_dir/existing_ready
     set -l state_file $__gpy_test_tmp_dir/existing_state
@@ -186,25 +186,25 @@ function __run_existing_shell_scenario --argument-names label agent_only
     poll_until 10 test -f $ready_file
     set -l ready (cat $ready_file 2>/dev/null | string trim)
     if test "$ready" != OK
-        print_test_result "Existing shell registered on default theme" FAIL "outcome=$ready"
+        fail "Existing shell registered on default theme" "outcome=$ready"
         cleanup_test_files
         return 1
     end
-    print_test_result "Existing shell registered on default theme" PASS
+    pass "Existing shell registered on default theme"
 
     stop_test_agent
     __write_config_theme text
     if not start_test_agent
-        print_test_result "Agent restart" FAIL "gpy-agent failed to start"
+        fail "Agent restart" "gpy-agent failed to start"
         cleanup_test_files
         return 1
     end
 
     if poll_until 10 test -f $result_file
-        print_test_result $label PASS
+        pass "$label"
     else
         set -l observed (cat $state_file 2>/dev/null | string trim)
-        print_test_result $label FAIL "theme stayed '$observed'"
+        fail "$label" "theme stayed '$observed'"
         cleanup_test_files
         return 1
     end
@@ -223,8 +223,7 @@ function test_existing_shell_reload_doorbell_after_offline_edit
     __run_existing_shell_scenario "Shell reloads via the agent's .reload doorbell alone" 1
 end
 
-set -l failed 0
-test_new_shell_after_offline_edit; or set failed 1
-test_existing_shell_after_offline_edit; or set failed 1
-test_existing_shell_reload_doorbell_after_offline_edit; or set failed 1
-exit $failed
+test_new_shell_after_offline_edit
+test_existing_shell_after_offline_edit
+test_existing_shell_reload_doorbell_after_offline_edit
+test_finish "theme refresh after offline edit"

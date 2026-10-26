@@ -16,25 +16,14 @@
 #      intercepting __gpy_ipc_send and asserting the request string for
 #      several flag combinations.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l script_dir (dirname (status --current-filename))
 set -l repo_root (cd "$script_dir/../.." && pwd)
 cd "$repo_root"
 
 source fish/core/constants.fish
 source fish/core/ipc.fish
-
-set -g pass_count 0
-set -g fail_count 0
-
-function check --argument-names label expected actual
-    if test "$actual" = "$expected"
-        set -g pass_count (math $pass_count + 1)
-        echo "PASS: $label"
-    else
-        set -g fail_count (math $fail_count + 1)
-        echo "FAIL: $label (expected [$expected], got [$actual])"
-    end
-end
 
 # --- 1. __gpy_json_flags_tail: every row of the shared vector file
 # tests/fixtures/json_flags_tail_vectors.tsv (also read by the Bash and Zsh
@@ -133,8 +122,4 @@ check "build_data_payload: last, first, prev_bg" \
     '{"op":"git","cwd":"/tmp/proj","format":"ansi","is_last":true,"is_first":true,"prev_bg":"blue"}' \
     (__gpy_build_data_payload git /tmp/proj ansi true blue true)
 
-if test $fail_count -gt 0
-    echo "RESULT: $fail_count failed, $pass_count passed"
-    exit 1
-end
-echo "PASS: all $pass_count json_flags_tail tests passed"
+test_finish "json_flags_tail tests"

@@ -2,6 +2,8 @@
 # Duration segment gating uses the agent-exported `__duration_threshold_ms`
 # variable, never the retired `__gpy_duration_threshold`.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l repo_root (path dirname (path dirname (path dirname (status --current-filename))))
 cd $repo_root
 
@@ -16,10 +18,10 @@ function test_duration_hidden_below_threshold
     set -g CMD_DURATION 100
 
     if segment_duration_detect
-        echo "❌ segment should be hidden (100ms < 500ms threshold)"
+        fail "segment should be hidden (100ms < 500ms threshold)"
         return 1
     end
-    echo "✅ segment hidden when below threshold"
+    pass "segment hidden when below threshold"
 end
 
 function test_duration_visible_at_threshold
@@ -28,10 +30,10 @@ function test_duration_visible_at_threshold
     set -g CMD_DURATION 500
 
     if not segment_duration_detect
-        echo "❌ segment should be visible (500ms >= 500ms threshold)"
+        fail "segment should be visible (500ms >= 500ms threshold)"
         return 1
     end
-    echo "✅ segment visible at threshold"
+    pass "segment visible at threshold"
 end
 
 function test_duration_visible_above_threshold
@@ -40,10 +42,10 @@ function test_duration_visible_above_threshold
     set -g CMD_DURATION 1500
 
     if not segment_duration_detect
-        echo "❌ segment should be visible (1500ms > 200ms threshold)"
+        fail "segment should be visible (1500ms > 200ms threshold)"
         return 1
     end
-    echo "✅ segment visible above threshold"
+    pass "segment visible above threshold"
 end
 
 function test_legacy_variable_not_consulted
@@ -55,10 +57,10 @@ function test_legacy_variable_not_consulted
     set -g CMD_DURATION 500
 
     if not segment_duration_detect
-        echo "❌ segment should be visible — legacy var must not gate display"
+        fail "segment should be visible — legacy var must not gate display"
         return 1
     end
-    echo "✅ legacy variable is not consulted"
+    pass "legacy variable is not consulted"
 
     set -e __gpy_duration_threshold
 end
@@ -70,26 +72,18 @@ function test_default_when_var_unset
     set -g CMD_DURATION 200
 
     if not segment_duration_detect
-        echo "❌ segment should be visible with default threshold (200ms > 100ms default)"
+        fail "segment should be visible with default threshold (200ms > 100ms default)"
         return 1
     end
-    echo "✅ default threshold applied when variable is unset"
+    pass "default threshold applied when variable is unset"
 end
 
 # Run all tests
-set -l failures 0
-
-test_duration_hidden_below_threshold; or set failures (math $failures + 1)
-test_duration_visible_at_threshold; or set failures (math $failures + 1)
-test_duration_visible_above_threshold; or set failures (math $failures + 1)
-test_legacy_variable_not_consulted; or set failures (math $failures + 1)
-test_default_when_var_unset; or set failures (math $failures + 1)
+test_duration_hidden_below_threshold
+test_duration_visible_at_threshold
+test_duration_visible_above_threshold
+test_legacy_variable_not_consulted
+test_default_when_var_unset
 
 echo ""
-if test $failures -eq 0
-    echo "All duration threshold tests passed ✅"
-    exit 0
-else
-    echo "$failures test(s) failed ❌"
-    exit 1
-end
+test_finish "duration threshold"

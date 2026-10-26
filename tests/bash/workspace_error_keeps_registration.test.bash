@@ -73,13 +73,6 @@ listener_pid=$!
 disown "$listener_pid" 2>/dev/null
 shell_e2e_poll 3 test -S "$sock" || test_skip "could not create test Unix socket listener"
 
-check() {
-    if [[ "$2" == "$3" ]]; then
-        pass "$1"
-    else
-        fail "$1: want [$2], got [$3]"
-    fi
-}
 count_ops() { grep -c "^$1 " "$oplog"; }
 
 export GPY_AGENT_SOCKET_PATH="$sock"

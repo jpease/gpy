@@ -22,9 +22,8 @@
 # the decoy is untouched throughout.
 #
 # Each helper file gets its own subprocess rather than being sourced
-# together into one, because both files define same-named helper functions
-# (e.g. assert_equals) with different signatures -- sourcing both into one
-# process would let the second definition silently shadow the first.
+# together into one, so neither file's globals or event handlers can mask a
+# leak in the other.
 #
 # A name-based kill fails this test: the decoy is a real `gpy-agent` process
 # by name, so it would be killed regardless of which socket it holds.
@@ -34,30 +33,6 @@ source $__gpy_root/tests/lib/test_helpers.fish
 set -g __decoy_dir /tmp/gpy-484-decoy-$fish_pid
 set -g __decoy_socket $__decoy_dir/decoy.sock
 set -g __decoy_pid
-
-function print_test_header
-    echo ""
-    echo "========================================"
-    echo "$argv[1]"
-    echo "========================================"
-    echo ""
-end
-
-function print_test_result
-    set -l test_name $argv[1]
-    set -l result $argv[2]
-
-    if test "$result" = PASS
-        echo "✅ $test_name: PASS"
-        return 0
-    else
-        echo "❌ $test_name: FAIL"
-        if set -q argv[3]
-            echo "   Reason: $argv[3]"
-        end
-        return 1
-    end
-end
 
 # Start a real gpy-agent bound to its own isolated socket, standing in for a
 # contributor's live dogfooding daemon. Sets __decoy_pid on success.
@@ -119,16 +94,16 @@ function assert_decoy_survived
     set -l label $argv[1]
 
     if not decoy_alive
-        print_test_result $label FAIL "decoy PID $__decoy_pid is gone from the process table"
+        fail "$label" "decoy PID $__decoy_pid is gone from the process table"
         return 1
     end
 
     if not decoy_responding
-        print_test_result $label FAIL "decoy PID $__decoy_pid is alive but not responding on $__decoy_socket"
+        fail "$label" "decoy PID $__decoy_pid is alive but not responding on $__decoy_socket"
         return 1
     end
 
-    print_test_result $label PASS
+    pass "$label"
     return 0
 end
 
@@ -145,7 +120,7 @@ function test_test_helpers_scoped_kill
     set -l helper_status $status
 
     if test $helper_status -ne 0
-        print_test_result "test_helpers.fish cleanup ran cleanly" FAIL "subprocess exited $helper_status: $out"
+        fail "test_helpers.fish cleanup ran cleanly" "subprocess exited $helper_status: $out"
         return 1
     end
 
@@ -163,7 +138,7 @@ function test_setup_test_env_scoped_kill
     set -l helper_status $status
 
     if test $helper_status -ne 0
-        print_test_result "setup_test_env.fish cleanup ran cleanly" FAIL "subprocess exited $helper_status: $out"
+        fail "setup_test_env.fish cleanup ran cleanly" "subprocess exited $helper_status: $out"
         return 1
     end
 
@@ -179,26 +154,15 @@ if not start_decoy_agent
 end
 echo "Decoy gpy-agent started: PID $__decoy_pid, socket $__decoy_socket"
 
-set -l overall_result 0
-
 test_test_helpers_scoped_kill
-or set overall_result 1
 
 if not decoy_alive
     echo "Decoy died after the first subtest; restarting it for the second subtest..."
-    start_decoy_agent; or set overall_result 1
+    start_decoy_agent
 end
 
 test_setup_test_env_scoped_kill
-or set overall_result 1
 
 stop_decoy_agent
 
-echo ""
-if test $overall_result -eq 0
-    echo "✅ Scoped-kill regression test: PASS"
-else
-    echo "❌ Scoped-kill regression test: FAIL"
-end
-
-exit $overall_result
+test_finish "Scoped-kill regression test"

@@ -5,6 +5,8 @@
 # driven by whether the agent actually renders the character, not by a static
 # `__gpy_character_format` toggle.
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 source (dirname (status --current-filename))/../support/setup_test_env.fish
 
 function test_status_indicator_gated_by_agent_render
@@ -27,10 +29,10 @@ function test_status_indicator_gated_by_agent_render
     end
     set -l fallback (fish_prompt 2>/dev/null | string collect)
     if not string match -q "*STATUSOK*" -- $fallback
-        echo "FAIL: status indicator missing when agent returns no character (regression)"
+        fail "status indicator missing when agent returns no character (regression)"
         exit 1
     end
-    echo "✓ status indicator shown when agent returns no character (no regression)"
+    pass "status indicator shown when agent returns no character (no regression)"
 
     # Agent-rendered path: the agent returns a character → the status indicator is
     # dropped (the exit-colored `❯` conveys success/failure instead).
@@ -39,16 +41,17 @@ function test_status_indicator_gated_by_agent_render
     end
     set -l rendered (fish_prompt 2>/dev/null | string collect)
     if string match -q "*STATUSOK*" -- $rendered
-        echo "FAIL: status indicator still shown when character is agent-rendered"
+        fail "status indicator still shown when character is agent-rendered"
         exit 1
     end
     if not string match -q "*AGENTCHAR*" -- $rendered
-        echo "FAIL: agent-rendered character symbol missing from prompt"
+        fail "agent-rendered character symbol missing from prompt"
         exit 1
     end
-    echo "✓ status indicator suppressed when character is agent-rendered"
+    pass "status indicator suppressed when character is agent-rendered"
 
     functions -e __gpy_request_character
 end
 
 test_status_indicator_gated_by_agent_render
+test_finish "character status suppression"

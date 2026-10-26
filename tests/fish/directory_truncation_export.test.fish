@@ -7,9 +7,11 @@
 # Prerequisites: gpy-agent binary built (cargo build --release or --debug)
 # Run with: fish tests/fish/directory_truncation_export.test.fish
 
+source (dirname (status --filename))/../lib/test_helpers.fish
+
 set -l agent_bin gpy-agent/target/debug/gpy-agent
 if not test -x $agent_bin
-    echo "❌ gpy-agent binary not found at $agent_bin"
+    fail "gpy-agent binary not found at $agent_bin"
     echo "   Build it first: (cd gpy-agent && cargo build)"
     exit 1
 end
@@ -27,7 +29,7 @@ set -lx HOME $temp_root
 
 set -l export_output ($agent_bin theme export --format fish | string collect)
 if test $status -ne 0
-    echo "❌ Failed to run gpy-agent theme export"
+    fail "Failed to run gpy-agent theme export"
     echo $export_output
     exit 1
 end
@@ -36,13 +38,13 @@ source fish/core/init.fish
 eval $export_output
 
 if test "$GPY_UI_DIRECTORY_MAX_LENGTH" != 6
-    echo "❌ Expected GPY_UI_DIRECTORY_MAX_LENGTH to be 6 after theme export, got '$GPY_UI_DIRECTORY_MAX_LENGTH'"
+    fail "Expected GPY_UI_DIRECTORY_MAX_LENGTH to be 6 after theme export, got '$GPY_UI_DIRECTORY_MAX_LENGTH'"
     exit 1
 end
 
 if test "$GPY_UI_DIRECTORY_DISPLAY" != full
-    echo "❌ Expected GPY_UI_DIRECTORY_DISPLAY to be full after theme export, got '$GPY_UI_DIRECTORY_DISPLAY'"
+    fail "Expected GPY_UI_DIRECTORY_DISPLAY to be full after theme export, got '$GPY_UI_DIRECTORY_DISPLAY'"
     exit 1
 end
 
-echo "✅ Theme export carries the directory truncation settings"
+test_finish "Theme export carries the directory truncation settings"
