@@ -15,7 +15,7 @@ fn ctx() -> (Config, ThemeConfig) {
 
 #[test]
 fn git_without_format_emits_empty() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, theme) = ctx();
     assert!(theme.segments.git.format.is_none());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
@@ -41,7 +41,7 @@ fn git_without_format_emits_empty() {
 
 #[test]
 fn git_malformed_format_emits_empty() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.git.format = Some("on [$branch(green)".to_owned()); // unbalanced
     let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
@@ -67,7 +67,7 @@ fn git_malformed_format_emits_empty() {
 
 #[test]
 fn format_some_renders_via_engine() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.git.format = Some("on [$branch](bold green)".to_owned());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
@@ -94,7 +94,7 @@ fn format_some_renders_via_engine() {
 
 #[test]
 fn style_indirection_renders_via_engine() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.git.format = Some("[$branch]($style)".to_owned());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
@@ -134,7 +134,7 @@ fn rust_response() -> Response {
 
 #[test]
 fn language_without_format_emits_empty() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, theme) = ctx();
     assert!(theme.segments.language.format.is_none());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
@@ -144,7 +144,7 @@ fn language_without_format_emits_empty() {
 
 #[test]
 fn language_malformed_format_emits_empty() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.language.format = Some("[$symbol(green)".to_owned()); // unbalanced
     let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
@@ -154,7 +154,7 @@ fn language_malformed_format_emits_empty() {
 
 #[test]
 fn language_format_some_renders_via_engine() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.language.format = Some("[$symbol $version](bold green)".to_owned());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
@@ -173,7 +173,7 @@ fn language_format_some_renders_via_engine() {
 
 #[test]
 fn language_format_caps_at_three() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.language.format = Some("[$version ](green)".to_owned());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::LAST);
@@ -201,7 +201,7 @@ fn language_format_caps_at_three() {
 /// Only the first pill inherits `is_first`, only the last `is_last`.
 #[test]
 fn language_pills_chain_positions_within_segment() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.language.format = Some(
         "([$sep_open](fg:$bg bg:default))[ $symbol]($style)([ $version]($style))([$sep_gap]($style))([$sep_close](fg:$bg bg:default))"
@@ -236,7 +236,7 @@ fn language_pills_chain_positions_within_segment() {
 
 #[test]
 fn directory_format_none_emits_empty() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, theme) = ctx();
     assert!(theme.segments.directory.format.is_none());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -256,10 +256,31 @@ fn error_response_renders_empty() {
         message: "x".into(),
     };
     for dialect in PromptDialect::ALL {
-        let got = FishAnsiFormatter::new(dialect)
+        let got = PromptFormatter::new(dialect)
             .render(&response, &rc)
             .expect("render");
         assert_eq!(got, "", "{dialect:?}: error must render empty");
+    }
+}
+
+#[test]
+fn non_segment_responses_render_empty() {
+    let (config, theme) = ctx();
+    let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
+    let status = Response::AgentStatus {
+        version: "0".into(),
+        protocol_version: 1,
+        watched_repos: 0,
+        registered_clients: 0,
+        cache_entries: 0,
+    };
+    for dialect in PromptDialect::ALL {
+        for response in [&Response::Ack, &status] {
+            let got = PromptFormatter::new(dialect)
+                .render(response, &rc)
+                .expect("render");
+            assert_eq!(got, "", "{dialect:?}: {response:?} must render empty");
+        }
     }
 }
 
@@ -271,14 +292,14 @@ fn clock_prompt_token_is_left_for_the_shell_to_expand() {
     theme.segments.clock.format = Some(r"[\$ $time](fg:white)".to_owned());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
 
-    let bash = FishAnsiFormatter::new(PromptDialect::BashPrompt)
+    let bash = PromptFormatter::new(PromptDialect::BashPrompt)
         .render(&Response::Clock { shell: Shell::Bash }, &rc)
         .expect("render bash");
     // Each span re-emits its SGR; the token is visible text outside the markers.
     assert!(bash.contains("\\\\$ \\["), "{bash:?}");
     assert!(bash.contains("\\]\\D{%-I:%M %p}\\["), "{bash:?}");
 
-    let zsh = FishAnsiFormatter::new(PromptDialect::ZshPrompt)
+    let zsh = PromptFormatter::new(PromptDialect::ZshPrompt)
         .render(&Response::Clock { shell: Shell::Zsh }, &rc)
         .expect("render zsh");
     assert!(zsh.contains("\\$ %{"), "{zsh:?}");
@@ -295,7 +316,7 @@ fn directory_text_is_escaped_per_dialect() {
         read_only: false,
     };
     let render = |dialect| {
-        FishAnsiFormatter::new(dialect)
+        PromptFormatter::new(dialect)
             .render(&response, &rc)
             .expect("render")
     };
@@ -318,7 +339,7 @@ fn directory_text_is_escaped_per_dialect() {
 
 #[test]
 fn directory_format_some_renders_via_engine() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.directory.format = Some("[$path](bold green)".to_owned());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -340,7 +361,7 @@ fn directory_format_some_renders_via_engine() {
 
 #[test]
 fn directory_malformed_format_emits_empty() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.directory.format = Some("[$path(green)".to_owned()); // unbalanced '['
     let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -354,7 +375,7 @@ fn directory_malformed_format_emits_empty() {
 
 #[test]
 fn duration_format_none_emits_empty() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, theme) = ctx();
     assert!(theme.segments.duration.format.is_none());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -367,7 +388,7 @@ fn duration_format_none_emits_empty() {
 
 #[test]
 fn duration_format_some_renders_via_engine() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.duration.format = Some("[$duration]($style)".to_owned());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -385,7 +406,7 @@ fn duration_format_some_renders_via_engine() {
 
 #[test]
 fn duration_malformed_format_emits_empty() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.duration.format = Some("[$duration(green)".to_owned()); // unbalanced '['
     let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -398,7 +419,7 @@ fn duration_malformed_format_emits_empty() {
 
 #[test]
 fn character_format_none_emits_empty() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, theme) = ctx();
     assert!(theme.segments.character.format.is_none());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -409,7 +430,7 @@ fn character_format_none_emits_empty() {
 
 #[test]
 fn character_format_success_renders_symbol_with_ansi() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.character.format = Some("[$symbol]($style)".to_owned());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -429,7 +450,7 @@ fn character_format_success_renders_symbol_with_ansi() {
 
 #[test]
 fn character_format_error_renders_red() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.character.format = Some("[$symbol]($style)".to_owned());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -444,7 +465,7 @@ fn character_format_error_renders_red() {
 
 #[test]
 fn character_malformed_format_emits_empty() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.character.format = Some("[$symbol(green)".to_owned()); // unbalanced '['
     let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -455,7 +476,7 @@ fn character_malformed_format_emits_empty() {
 
 #[test]
 fn hostname_format_none_emits_empty() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, theme) = ctx();
     assert!(theme.segments.hostname.format.is_none());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -469,7 +490,7 @@ fn hostname_format_none_emits_empty() {
 
 #[test]
 fn hostname_format_some_renders_trimmed_name_with_ansi() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.hostname.format = Some("on [$symbol$hostname](bold green) ".to_owned());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -494,7 +515,7 @@ fn hostname_format_some_renders_trimmed_name_with_ansi() {
 
 #[test]
 fn hostname_icon_renders_only_over_ssh() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.hostname.format = Some("[$symbol$hostname](bold green) ".to_owned());
     theme.segments.hostname.icon = Some(crate::config::types::Icon::new("🌐 ").expect("icon"));
@@ -512,7 +533,7 @@ fn hostname_icon_renders_only_over_ssh() {
 
 #[test]
 fn hostname_malformed_format_emits_empty() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.hostname.format = Some("[$hostname(green)".to_owned()); // unbalanced '['
     let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
@@ -527,7 +548,7 @@ fn hostname_malformed_format_emits_empty() {
 /// Root renders `format`; everyone else `user_format`, or `format` when that is unset.
 #[test]
 fn username_format_follows_root_with_user_format_fallback() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.username.format = Some("[$username](bold red)".to_owned());
     let render = |themed: &ThemeConfig, is_root| {
@@ -549,7 +570,7 @@ fn git_format_resolves_through_attached_palette() {
     use crate::template::{Color, Palette};
     use std::collections::HashMap;
 
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let (config, mut theme) = ctx();
     theme.segments.git.format = Some("[$branch](fg:accent)".to_owned());
     let mut map = HashMap::new();
@@ -800,7 +821,7 @@ fn default_theme_text(
 ) -> String {
     let config = Config::default();
     let rc = RenderContext::new(&config, theme, position);
-    let ansi = FishAnsiFormatter::default()
+    let ansi = PromptFormatter::default()
         .render(response, &rc)
         .expect("render");
     plain_text(&ansi)
@@ -883,7 +904,7 @@ fn status_pill_colors_follow_the_exit_outcome() {
     let config = Config::default();
     let render = |success| {
         let rc = RenderContext::new(&config, &theme, SegmentPosition::ONLY);
-        FishAnsiFormatter::default()
+        PromptFormatter::default()
             .render(&Response::ExitStatus { success }, &rc)
             .expect("render")
     };
@@ -903,7 +924,7 @@ fn status_pill_unset_icon_falls_back_by_show_icons() {
         config.ui.show_icons = show_icons;
         let rc = RenderContext::new(&config, &theme, SegmentPosition::FIRST);
         plain_text(
-            &FishAnsiFormatter::default()
+            &PromptFormatter::default()
                 .render(&Response::ExitStatus { success }, &rc)
                 .expect("render"),
         )
@@ -920,7 +941,7 @@ fn status_without_format_emits_empty() {
     let (config, theme) = ctx();
     assert!(theme.segments.status.format.is_none());
     let rc = RenderContext::new(&config, &theme, SegmentPosition::MIDDLE);
-    let got = FishAnsiFormatter::default()
+    let got = PromptFormatter::default()
         .render(&Response::ExitStatus { success: true }, &rc)
         .expect("render");
     assert_eq!(got, "");

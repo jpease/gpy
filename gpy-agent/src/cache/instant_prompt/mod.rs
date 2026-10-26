@@ -9,7 +9,7 @@ use crate::cache::bounded::{INSTANT_PROMPT_LAST_WRITTEN_CAPACITY, evict_to_capac
 use crate::config::Config;
 use crate::debug_log;
 use crate::formatter::{
-    FishAnsiFormatter, Formatter, IsFirst, IsLast, PromptDialect, RenderContext, SegmentPosition,
+    Formatter, IsFirst, IsLast, PromptDialect, PromptFormatter, RenderContext, SegmentPosition,
 };
 use crate::git::RepositoryStatus;
 use crate::ipc::{LanguageInfo, Response};
@@ -603,7 +603,7 @@ fn render_all_dialects(response: &Response, ctx: &RenderContext<'_>) -> Result<D
         .map(|&dialect| {
             Ok((
                 dialect,
-                FishAnsiFormatter::new(dialect).render(response, ctx)?,
+                PromptFormatter::new(dialect).render(response, ctx)?,
             ))
         })
         .collect()

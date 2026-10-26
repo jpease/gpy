@@ -9,7 +9,7 @@
 #![allow(missing_docs)]
 
 use gpy_agent::config::Config;
-use gpy_agent::formatter::{FishAnsiFormatter, Formatter, RenderContext, SegmentPosition};
+use gpy_agent::formatter::{Formatter, PromptFormatter, RenderContext, SegmentPosition};
 use gpy_agent::git::{RepositoryState, RepositoryStatus};
 use gpy_agent::ipc::Response;
 use gpy_agent::template::Color;
@@ -36,7 +36,7 @@ fn git_clean() -> RepositoryStatus {
 /// `prev_bg = blue` with `fg:prev_bg` renders `\x1b[34m`.
 #[test]
 fn prev_bg_blue_produces_ansi_blue_fg_in_render() {
-    let formatter = FishAnsiFormatter::default();
+    let formatter = PromptFormatter::default();
     let config = Config::default();
     let mut theme = ThemeConfig::default();
     // The powerline-chevron use case.

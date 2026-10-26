@@ -3,7 +3,6 @@
 //! zero-width markers. Unresolved palette/prev colors are no-ops, never panics.
 
 use crate::template::{Attr, Color, Span, SpanKind, Style, canonical_ansi_name};
-use std::fmt::Write as _;
 
 /// Output dialect. Bash/zsh expand `PS1`/`PROMPT` as code on every draw, so
 /// their dialects escape text; [`Self::Ansi`] (fish) emits it verbatim.
@@ -114,17 +113,23 @@ fn sets_color(color: Option<&Color>, bg: bool) -> bool {
 
 /// Write one raw SGR sequence, `ESC [ codes m`.
 fn push_sgr(out: &mut String, codes: &str) {
-    let _ = write!(out, "\x1b[{codes}m");
+    out.push_str("\x1b[");
+    out.push_str(codes);
+    out.push('m');
 }
 
 /// Write one SGR sequence inside bash's non-printing markers `\[ \]`.
 fn push_bash_sgr(out: &mut String, codes: &str) {
-    let _ = write!(out, "\\[\x1b[{codes}m\\]");
+    out.push_str("\\[\x1b[");
+    out.push_str(codes);
+    out.push_str("m\\]");
 }
 
 /// Write one SGR sequence inside zsh's non-printing markers `%{ %}`.
 fn push_zsh_sgr(out: &mut String, codes: &str) {
-    let _ = write!(out, "%{{\x1b[{codes}m%}}");
+    out.push_str("%{\x1b[");
+    out.push_str(codes);
+    out.push_str("m%}");
 }
 
 /// Write text escaped for bash `PS1` with `promptvars`: prompt decoding then

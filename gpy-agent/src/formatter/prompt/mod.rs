@@ -13,16 +13,17 @@ use crate::formatter::separator::Glyphs;
 use crate::formatter::status_resolver::StatusResolver;
 use crate::formatter::username_resolver::UsernameResolver;
 use crate::formatter::{Formatter, PromptDialect, RenderContext};
-use crate::ipc::{LanguageInfo, Response, protocol};
+use crate::ipc::{LanguageInfo, Response};
+use crate::template::VariableResolver;
 use crate::theme::ThemeConfig;
 
 /// Format responses as ANSI-rendered prompt segments in one [`PromptDialect`].
 #[derive(Debug, Clone, Copy, Default)]
-pub struct FishAnsiFormatter {
+pub struct PromptFormatter {
     dialect: PromptDialect,
 }
 
-impl FishAnsiFormatter {
+impl PromptFormatter {
     /// A formatter that encodes segment text for `dialect`.
     #[must_use]
     pub const fn new(dialect: PromptDialect) -> Self {
@@ -30,145 +31,113 @@ impl FishAnsiFormatter {
     }
 }
 
-impl Formatter for FishAnsiFormatter {
+impl Formatter for PromptFormatter {
     fn render(&self, response: &Response, ctx: &RenderContext<'_>) -> Result<String> {
         let dialect = self.dialect;
-        match response {
-            Response::RepositoryStatus(repo) => Ok(render_segment(
+        let segments = &ctx.theme.segments;
+        let glyphs = || Glyphs::from(&ctx.config.ui);
+        let rendered = match response {
+            Response::RepositoryStatus(repo) => render_resolved(
                 "git segment",
-                ctx.theme.segments.git.format.as_deref(),
-                |f| {
+                segments.git.format.as_deref(),
+                ctx,
+                dialect,
+                || {
                     let state = crate::theme::GitState::from_status(repo);
-                    let resolver =
-                        GitResolver::new(repo, ctx.config, ctx.theme, state, ctx.position);
-                    render_via_template(&resolver, ctx, dialect, f)
+                    GitResolver::new(repo, ctx.config, ctx.theme, state, ctx.position)
                 },
-            )),
-            Response::Language { languages } => Ok(render_segment(
+            ),
+            Response::Language { languages } => render_segment(
                 "language segment",
-                ctx.theme.segments.language.format.as_deref(),
+                segments.language.format.as_deref(),
                 |f| render_languages_via_template(languages, ctx, dialect, f),
-            )),
-            Response::Directory { cwd, read_only } => Ok(render_segment(
+            ),
+            Response::Directory { cwd, read_only } => render_resolved(
                 "directory segment",
-                ctx.theme.segments.directory.format.as_deref(),
-                |f| {
-                    let resolver = DirectoryResolver::new(
-                        cwd,
-                        *read_only,
-                        ctx.config,
-                        ctx.theme,
-                        ctx.position,
-                    );
-                    render_via_template(&resolver, ctx, dialect, f)
-                },
-            )),
-            Response::Clock { shell } => Ok(render_segment(
+                segments.directory.format.as_deref(),
+                ctx,
+                dialect,
+                || DirectoryResolver::new(cwd, *read_only, ctx.config, ctx.theme, ctx.position),
+            ),
+            Response::Clock { shell } => render_resolved(
                 "clock segment",
-                ctx.theme.segments.clock.format.as_deref(),
-                |f| {
-                    let resolver = ClockResolver::new(*shell, ctx.theme, ctx.position)
-                        .with_glyphs(Glyphs::from(&ctx.config.ui));
-                    render_via_template(&resolver, ctx, dialect, f)
-                },
-            )),
-            Response::Duration { duration_ms } => Ok(render_segment(
+                segments.clock.format.as_deref(),
+                ctx,
+                dialect,
+                || ClockResolver::new(*shell, ctx.theme, ctx.position).with_glyphs(glyphs()),
+            ),
+            Response::Duration { duration_ms } => render_resolved(
                 "duration segment",
-                ctx.theme.segments.duration.format.as_deref(),
-                |f| {
-                    let resolver = DurationResolver::new(*duration_ms, ctx.theme, ctx.position)
-                        .with_glyphs(Glyphs::from(&ctx.config.ui));
-                    render_via_template(&resolver, ctx, dialect, f)
+                segments.duration.format.as_deref(),
+                ctx,
+                dialect,
+                || {
+                    DurationResolver::new(*duration_ms, ctx.theme, ctx.position)
+                        .with_glyphs(glyphs())
                 },
-            )),
-            Response::Character { success } => Ok(render_character(*success, ctx, dialect)),
-            Response::ExitStatus { success } => Ok(render_exit_status(*success, ctx, dialect)),
-            Response::Hostname { hostname, is_ssh } => {
-                Ok(render_hostname(hostname, *is_ssh, ctx, dialect))
-            }
-            Response::Username { username, is_root } => {
-                Ok(render_username(username, *is_root, ctx, dialect))
-            }
+            ),
+            Response::Character { success } => render_resolved(
+                "character segment",
+                segments.character.format.as_deref(),
+                ctx,
+                dialect,
+                || CharacterResolver::new(*success, ctx.theme, ctx.position).with_glyphs(glyphs()),
+            ),
+            Response::ExitStatus { success } => render_resolved(
+                "status segment",
+                segments.status.format.as_deref(),
+                ctx,
+                dialect,
+                || StatusResolver::new(*success, ctx.theme, ctx.position).with_glyphs(glyphs()),
+            ),
+            Response::Hostname { hostname, is_ssh } => render_resolved(
+                "hostname segment",
+                segments.hostname.format.as_deref(),
+                ctx,
+                dialect,
+                || {
+                    HostnameResolver::new(hostname.clone(), *is_ssh, ctx.theme, ctx.position)
+                        .with_glyphs(glyphs())
+                },
+            ),
+            Response::Username { username, is_root } => render_resolved(
+                "username segment",
+                segments.username.format_for(*is_root),
+                ctx,
+                dialect,
+                || {
+                    UsernameResolver::new(username.clone(), *is_root, ctx.theme, ctx.position)
+                        .with_glyphs(glyphs())
+                },
+            ),
             // The reply is printed verbatim into the prompt, so protocol JSON must never reach it.
             Response::Error { message } => {
                 crate::debug_log!("formatter", "omitting segment after error: {message}");
-                Ok(String::new())
+                String::new()
             }
-            _ => protocol::serialize_response(response)
-                .map_err(|e| crate::Error::ipc(format!("Serialization error: {e}")))
-                .and_then(|bytes| {
-                    String::from_utf8(bytes).map_err(|e| {
-                        crate::Error::ipc(format!("UTF-8 error serializing response: {e}"))
-                    })
-                }),
-        }
+            Response::Ack | Response::AgentStatus { .. } => String::new(),
+        };
+        Ok(rendered)
     }
 }
 
-/// Character, status, hostname and username: segments whose data the client supplies.
-fn render_character(success: bool, ctx: &RenderContext<'_>, dialect: PromptDialect) -> String {
-    render_segment(
-        "character segment",
-        ctx.theme.segments.character.format.as_deref(),
-        |f| {
-            let resolver = CharacterResolver::new(success, ctx.theme, ctx.position)
-                .with_glyphs(Glyphs::from(&ctx.config.ui));
-            render_via_template(&resolver, ctx, dialect, f)
-        },
-    )
-}
-
-fn render_exit_status(success: bool, ctx: &RenderContext<'_>, dialect: PromptDialect) -> String {
-    render_segment(
-        "status segment",
-        ctx.theme.segments.status.format.as_deref(),
-        |f| {
-            let resolver = StatusResolver::new(success, ctx.theme, ctx.position)
-                .with_glyphs(Glyphs::from(&ctx.config.ui));
-            render_via_template(&resolver, ctx, dialect, f)
-        },
-    )
-}
-
-fn render_hostname(
-    hostname: &str,
-    is_ssh: bool,
+/// Render the segment whose variables `resolver` supplies; the resolver is only
+/// built when `format` is set.
+fn render_resolved<R: VariableResolver>(
+    component: &str,
+    format: Option<&str>,
     ctx: &RenderContext<'_>,
     dialect: PromptDialect,
+    resolver: impl FnOnce() -> R,
 ) -> String {
-    render_segment(
-        "hostname segment",
-        ctx.theme.segments.hostname.format.as_deref(),
-        |f| {
-            let resolver =
-                HostnameResolver::new(hostname.to_owned(), is_ssh, ctx.theme, ctx.position)
-                    .with_glyphs(Glyphs::from(&ctx.config.ui));
-            render_via_template(&resolver, ctx, dialect, f)
-        },
-    )
-}
-
-fn render_username(
-    username: &str,
-    is_root: bool,
-    ctx: &RenderContext<'_>,
-    dialect: PromptDialect,
-) -> String {
-    render_segment(
-        "username segment",
-        ctx.theme.segments.username.format_for(is_root),
-        |f| {
-            let resolver =
-                UsernameResolver::new(username.to_owned(), is_root, ctx.theme, ctx.position)
-                    .with_glyphs(Glyphs::from(&ctx.config.ui));
-            render_via_template(&resolver, ctx, dialect, f)
-        },
-    )
+    render_segment(component, format, |f| {
+        render_via_template(&resolver(), ctx, dialect, f)
+    })
 }
 
 /// Render `resolver` with `format`, inheriting `ctx`'s prev colors and palette, and encode.
 fn render_via_template(
-    resolver: &dyn crate::template::VariableResolver,
+    resolver: &dyn VariableResolver,
     ctx: &RenderContext<'_>,
     dialect: PromptDialect,
     format: &str,

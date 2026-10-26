@@ -516,7 +516,7 @@ fn clock_cap_span(
     })
 }
 
-/// Mirrors `fish_ansi`'s `render_via_template` context plumbing.
+/// Mirrors `prompt`'s `render_via_template` context plumbing.
 fn template_ctx<'a>(
     resolver: &'a dyn VariableResolver,
     ctx: &FormatterRenderContext<'a>,

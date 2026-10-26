@@ -7,7 +7,6 @@ use crate::formatter::{SegmentPosition, truncate_branch};
 use crate::git::RepositoryStatus;
 use crate::template::VariableResolver;
 use crate::theme::{GitState, GitTextElement, ThemeConfig};
-use std::fmt::Write as _;
 
 /// Nerd Font alternates, used for `icon_set = "nerd_font"` when the `[git.icons]` value
 /// is still the Unicode default; an explicit override always wins.
@@ -91,11 +90,20 @@ impl<'a> GitResolver<'a> {
                 UNICODE_IN_PROGRESS,
                 NERD_FONT_IN_PROGRESS,
             );
-            let _ = write!(text, "{icon} ");
+            text.push_str(icon);
+            text.push(' ');
         }
-        let _ = write!(text, "{}", self.status.state.as_str().to_uppercase());
+        text.push_str(&self.status.state.as_str().to_uppercase());
         if let Some(progress) = self.status.rebase_progress {
-            let _ = write!(text, " {}/{}", progress.step, progress.total);
+            text.push_str(
+                &[
+                    " ",
+                    &progress.step.to_string(),
+                    "/",
+                    &progress.total.to_string(),
+                ]
+                .concat(),
+            );
         }
         Some(text)
     }
@@ -119,7 +127,7 @@ impl<'a> GitResolver<'a> {
                 )
             });
         let mut text = icon.to_owned();
-        let _ = write!(text, "{}", self.status.stash_count);
+        text.push_str(&self.status.stash_count.to_string());
         Some(text)
     }
 
@@ -159,8 +167,7 @@ impl<'a> GitResolver<'a> {
             if count > 0 {
                 text.push_str(theme_icon.unwrap_or(config_icon));
                 if show_counts {
-                    // Writing to a String cannot fail.
-                    let _ = write!(text, "{count}");
+                    text.push_str(&count.to_string());
                 }
             }
         }
@@ -177,7 +184,9 @@ impl<'a> GitResolver<'a> {
         ] {
             if count > 0 {
                 let suffix = if capped { "+" } else { "" };
-                let _ = write!(text, "{icon}{count}{suffix}");
+                text.push_str(icon);
+                text.push_str(&count.to_string());
+                text.push_str(suffix);
             }
         }
         (!text.is_empty()).then_some(text)
@@ -202,10 +211,6 @@ impl<'a> GitResolver<'a> {
 }
 
 impl VariableResolver for GitResolver<'_> {
-    #[expect(
-        clippy::match_same_arms,
-        reason = "explicit arm kept for the Starship importer"
-    )]
     fn resolve(&self, name: &str) -> Option<String> {
         let glyphs = Glyphs::from(&self.config.ui);
         match name {
@@ -237,8 +242,6 @@ impl VariableResolver for GitResolver<'_> {
                 .unwrap_or(true)
                 .then(|| self.stash())
                 .flatten(),
-            // Not yet tracked by RepositoryStatus.
-            "remote_branch" => None,
             "style" => Some(self.style()),
             "bg" => Some(self.theme.segments.git.get_bg_color(self.state).to_owned()),
             "sep_gap" | "sep_open" | "sep_close" => {
@@ -353,19 +356,6 @@ mod tests {
         );
         assert_eq!(resolver.resolve("status"), None);
         assert_eq!(resolver.resolve("ahead_behind"), None);
-    }
-
-    #[test]
-    fn remote_branch_absent_in_pr1() {
-        let (config, theme, st) = (Config::default(), ThemeConfig::default(), status());
-        let resolver = GitResolver::new(
-            &st,
-            &config,
-            &theme,
-            GitState::Clean,
-            SegmentPosition::new(IsLast::No, IsFirst::No),
-        );
-        assert_eq!(resolver.resolve("remote_branch"), None);
     }
 
     #[test]

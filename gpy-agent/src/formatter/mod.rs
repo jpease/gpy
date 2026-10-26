@@ -4,21 +4,19 @@ pub(crate) mod character_resolver;
 pub(crate) mod clock_resolver;
 pub(crate) mod directory_resolver;
 pub(crate) mod duration_resolver;
-mod fish_ansi;
 pub(crate) mod git_resolver;
 pub(crate) mod hostname_resolver;
 mod json;
 pub(crate) mod language_resolver;
+mod prompt;
 pub(crate) mod separator;
 pub(crate) mod status_resolver;
 mod style_encoder;
 pub(crate) mod username_resolver;
 
-// The ANSI format is shell-agnostic, so it is a re-export of `FishAnsiFormatter`.
-pub use fish_ansi::FishAnsiFormatter as AnsiFormatter;
-pub use fish_ansi::FishAnsiFormatter;
-pub(crate) use fish_ansi::{get_language_display, select_languages};
 pub use json::JsonFormatter;
+pub use prompt::PromptFormatter;
+pub(crate) use prompt::{get_language_display, select_languages};
 pub use style_encoder::{PromptDialect, encode_ansi, encode_bash_prompt, encode_zsh_prompt};
 
 use crate::Result;
@@ -235,9 +233,9 @@ pub trait Formatter {
 pub fn create_formatter(format: Format) -> Box<dyn Formatter> {
     match format {
         Format::Json => Box::new(JsonFormatter),
-        Format::Ansi => Box::new(AnsiFormatter::new(PromptDialect::Ansi)),
-        Format::BashPrompt => Box::new(AnsiFormatter::new(PromptDialect::BashPrompt)),
-        Format::ZshPrompt => Box::new(AnsiFormatter::new(PromptDialect::ZshPrompt)),
+        Format::Ansi => Box::new(PromptFormatter::new(PromptDialect::Ansi)),
+        Format::BashPrompt => Box::new(PromptFormatter::new(PromptDialect::BashPrompt)),
+        Format::ZshPrompt => Box::new(PromptFormatter::new(PromptDialect::ZshPrompt)),
     }
 }
 
