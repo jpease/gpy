@@ -1152,15 +1152,13 @@ fn test_switch_theme_preserves_reload_notifications() {
 /// which must reuse the `WatchRegistry` the manager was started with rather
 /// than build a private one: the agent-wide registry is shared by the repo
 /// and config coordinators, and an empty private one would silently drop it.
-///
-/// Requires the `test-support` feature for `watch_registry_for_test`, the
-/// only way to observe which registry currently backs the watcher.
+/// `watch_registry_for_test` is the only way to observe which registry
+/// currently backs the watcher.
 ///
 /// # Panics
 ///
 /// Panics if `switch_theme` re-arms the watcher on a different
 /// `WatchRegistry` than the one it was started with.
-#[cfg(feature = "test-support")]
 #[test]
 #[serial]
 fn switch_theme_reuses_the_registry_it_was_started_with() {

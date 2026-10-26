@@ -40,7 +40,17 @@ impl ConfigManager {
     /// # Errors
     /// Returns an error if no config path can be determined.
     pub fn with_defaults() -> Result<Self> {
-        Self::from_candidates_with_defaults(Self::ambient_candidates())
+        Self::from_config(Config::default())
+    }
+
+    /// Start on `config` (no file read) but reload from the standard candidates.
+    ///
+    /// # Errors
+    /// Returns an error if no config path can be determined.
+    pub fn from_config(config: Config) -> Result<Self> {
+        let candidates = Self::ambient_candidates();
+        Self::ensure_candidates(&candidates)?;
+        Ok(Self::from_parts(candidates, config))
     }
 
     /// Create a new `ConfigManager` for a specific config file path.
@@ -105,23 +115,6 @@ impl ConfigManager {
     /// Set the callback run before each reload commits.
     pub fn set_reload_callback(&self, callback: ConfigReloadCallback) {
         *self.on_reload.lock_or_recover() = Some(callback);
-    }
-
-    #[cfg(test)]
-    /// Invoke the reload callback with synthetic configs.
-    ///
-    /// # Panics
-    /// Panics when the callback returns an error.
-    pub fn trigger_reload_for_tests(&self, old_config: &Config, new_config: &Config) {
-        if let Some(callback) = self.on_reload.lock_or_recover().as_ref() {
-            callback(old_config, new_config).expect("reload callback should succeed");
-        }
-    }
-
-    #[cfg(test)]
-    /// Overwrite the in-memory config.
-    pub fn overwrite_for_tests(&self, new_config: Config) {
-        *self.config.write_or_recover() = Arc::new(new_config);
     }
 
     /// Current config (cheap `Arc` clone); recovers from a poisoned lock.

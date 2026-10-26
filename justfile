@@ -67,7 +67,7 @@ lint:
 
 # Line coverage for gpy-agent (lcov.info + summary); needs cargo-llvm-cov
 coverage:
-    cd {{agent_dir}} && RUSTC_WRAPPER="" cargo llvm-cov nextest --features test-support --lcov --output-path lcov.info
+    cd {{agent_dir}} && RUSTC_WRAPPER="" cargo llvm-cov nextest --lcov --output-path lcov.info
     cd {{agent_dir}} && RUSTC_WRAPPER="" cargo llvm-cov report --summary-only
 
 # Format the codebase (Rust)
@@ -83,7 +83,7 @@ test: test-rust test-fish
 
 # Run Rust unit and integration tests
 test-rust:
-    cd {{agent_dir}} && cargo nextest run --features test-support
+    cd {{agent_dir}} && cargo nextest run
 
 # Run Fish integration tests
 test-fish:

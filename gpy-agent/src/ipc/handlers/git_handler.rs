@@ -492,8 +492,7 @@ mod tests {
 
         let mut config = crate::config::Config::default();
         config.git.skip_paths = vec![link.to_string_lossy().into_owned()];
-        let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
-        config_manager.overwrite_for_tests(config);
+        let config_manager = Arc::new(ConfigManager::from_config(config).expect("config"));
         let (handler, _registry) =
             make_handler_with_config(Arc::new(GitStatusCache::new()), config_manager);
 

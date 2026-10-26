@@ -37,12 +37,22 @@ to the code in `src/`.
 
 ## How the targets run
 
-- **Runner**: `cargo nextest run --features test-support` from `gpy-agent/`
-  (`just check-rust` wraps it). Plain `cargo test` works but runs each
-  binary in one process; nextest's per-test processes are what the
+- **Runner**: `cargo nextest run` from `gpy-agent/` (`just test-rust`; the
+  gate runs it through `just check-rust`). Plain `cargo test` works but runs
+  each binary in one process; nextest's per-test processes are what the
   isolation below assumes. Doc tests still need `cargo test --doc`.
-- **`test-support` feature**: compiles in the test-only library surface
-  (`ThemeManager::watch_registry_for_test`); `just lint` and the pre-push gate pass it.
+- **Test-only library surface**: integration tests and benches link the
+  library as an outside crate, so the hooks they need on public types are
+  `pub` items behind `#[cfg(feature = "test-support")]` (or
+  `#[cfg(any(test, feature = "test-support"))]` when unit tests share them),
+  and nowhere else. `gpy-agent` lists itself as a dev-dependency with that
+  feature, so every test, bench and example build compiles the hooks with no
+  flag, while `--lib`, release and `cargo doc` builds never do. The hooks:
+  `Agent::register_test_client`, `Agent::active_palette_for_testing`,
+  `ClientDirectory::with_shell_dir`, `InstantPromptCache::new_for_test` and
+  `ThemeManager::watch_registry_for_test`. A test that needs a specific
+  config builds its manager with `ConfigManager::from_config`, or writes the
+  file and calls `reload_now` to change it mid-test.
 - **Serialisation**: tests that touch process-global state (environment
   variables, the config watcher's file, one real agent per socket) are
   marked `#[serial_test::serial]` or `#[serial_test::file_serial]`. The
@@ -74,11 +84,11 @@ to the code in `src/`.
 All commands from `gpy-agent/`:
 
 ```bash
-cargo nextest run --features test-support                          # everything (what the gate runs)
-cargo nextest run --features test-support --test clock_timer_tests # one binary
-cargo nextest run --features test-support -- test_clock_signals    # tests matching a name
-cargo nextest run --features test-support --no-capture             # see stdout/stderr live
-cargo test --doc                                                   # doc tests (nextest does not run them)
+cargo nextest run                                # everything (what the gate runs)
+cargo nextest run --test clock_timer_tests       # one binary
+cargo nextest run -- test_clock_signals          # tests matching a name
+cargo nextest run --no-capture                   # see stdout/stderr live
+cargo test --doc                                 # doc tests (nextest does not run them)
 ```
 
 ## Coverage
@@ -89,7 +99,7 @@ The current figure is recorded in [docs/dev/testing.md](../../docs/dev/testing.m
 For a browsable report:
 
 ```bash
-cargo llvm-cov nextest --features test-support --html --open
+cargo llvm-cov nextest --html --open
 ```
 
 ## Platforms

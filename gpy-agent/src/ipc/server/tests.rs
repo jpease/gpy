@@ -2,13 +2,12 @@
 
 use super::handle::ServerDeps;
 use super::{EndpointDeps, EndpointHandle, EndpointHandleBuilder};
-use crate::config::Config;
 use crate::config::manager::ConfigManager;
 use crate::formatter::Format;
 use crate::ipc::{ClientDirectory, Message, Response};
 use crate::security::GuardSettings;
 use crate::theme::ThemeManager;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
@@ -29,13 +28,26 @@ fn create_language_project() -> TempDir {
     dir
 }
 
+/// A manager over `config.toml` in `dir`, which holds `toml`.
+fn config_manager_with(dir: &Path, toml: &str) -> Arc<ConfigManager> {
+    let path = dir.join("config.toml");
+    std::fs::write(&path, toml).expect("write config");
+    Arc::new(ConfigManager::from_path(&path).expect("config"))
+}
+
+/// Rewrite `config.toml` in `dir` and reload it into `manager`.
+fn reload_config(manager: &ConfigManager, dir: &Path, toml: &str) {
+    std::fs::write(dir.join("config.toml"), toml).expect("write config");
+    manager.reload_now().expect("reload config");
+}
+
 #[cfg(unix)]
 #[test]
 fn notify_clients_respects_agent_live_updates_flag() {
     let registry = ClientDirectory::new().shared();
     let git_cache = Arc::new(crate::git::cache::GitStatusCache::new());
-    let config_manager =
-        Arc::new(crate::config::manager::ConfigManager::with_defaults().expect("config"));
+    let config_dir = TempDir::new().expect("config dir");
+    let config_manager = config_manager_with(config_dir.path(), "[agent]\nlive_updates = false\n");
     let watcher = Arc::new(Mutex::new(None));
     let theme_manager =
         Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
@@ -58,10 +70,6 @@ fn notify_clients_respects_agent_live_updates_flag() {
         Arc::clone(&watcher),
         GuardSettings::default(),
     );
-
-    let mut disabled_config = Config::default();
-    disabled_config.agent.live_updates = false;
-    config_manager.overwrite_for_tests(disabled_config);
 
     let response = Response::RepositoryStatus(crate::git::RepositoryStatus {
         branch: "main".to_owned(),
@@ -86,9 +94,11 @@ fn notify_clients_respects_agent_live_updates_flag() {
         "live updates disabled should suppress notifications"
     );
 
-    let mut enabled_config = Config::default();
-    enabled_config.agent.live_updates = true;
-    config_manager.overwrite_for_tests(enabled_config);
+    reload_config(
+        &config_manager,
+        config_dir.path(),
+        "[agent]\nlive_updates = true\n",
+    );
 
     handle.notify_clients(&registry, &response, None);
     assert_eq!(
@@ -102,18 +112,13 @@ fn notify_clients_respects_agent_live_updates_flag() {
 fn hot_reload_git_enabled_blocks_requests() {
     let registry = ClientDirectory::new().shared();
     let git_cache = Arc::new(crate::git::cache::GitStatusCache::new());
-    let config_manager =
-        Arc::new(crate::config::manager::ConfigManager::with_defaults().expect("config"));
+    let config_dir = TempDir::new().expect("config dir");
+    let config_manager = config_manager_with(config_dir.path(), "[git]\nenabled = true\n");
     let watcher = Arc::new(Mutex::new(None));
     let theme_manager =
         Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
     let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
     let language_cache = crate::language::DetectionCache::new();
-
-    let mut cfg = Config::default();
-    cfg.git.enabled = true;
-    config_manager.overwrite_for_tests(cfg.clone());
-
     let initial_config_for_git = config_manager.get();
     let palette_cache_for_git = Arc::new(crate::palette::PaletteCache::from_config(
         &initial_config_for_git,
@@ -149,10 +154,11 @@ fn hot_reload_git_enabled_blocks_requests() {
     // A freshly `git init`ed repo has nothing pending.
     assert_eq!(status.state, crate::git::RepositoryState::Clean);
 
-    let mut disabled = cfg.clone();
-    disabled.git.enabled = false;
-    config_manager.overwrite_for_tests(disabled.clone());
-    config_manager.trigger_reload_for_tests(&cfg, &disabled);
+    reload_config(
+        &config_manager,
+        config_dir.path(),
+        "[git]\nenabled = false\n",
+    );
 
     assert!(matches!(
         handle.handler_registry.route(&git_status_message(path)),
@@ -174,6 +180,7 @@ fn git_status_message(path: crate::security::SafePath) -> Message {
 #[allow(clippy::missing_panics_doc)]
 fn build_test_endpoint(
     sock_name: &str,
+    config_dir: &Path,
 ) -> (
     Arc<ConfigManager>,
     EndpointHandle,
@@ -182,16 +189,12 @@ fn build_test_endpoint(
 ) {
     let registry = ClientDirectory::new().shared();
     let git_cache = Arc::new(crate::git::cache::GitStatusCache::new());
-    let config_manager =
-        Arc::new(crate::config::manager::ConfigManager::with_defaults().expect("config"));
+    let config_manager = config_manager_with(config_dir, "[language]\nenabled = true\n");
     let watcher = Arc::new(Mutex::new(None));
     let theme_manager =
         Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
     let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
     let language_cache = crate::language::DetectionCache::new();
-    let mut cfg = Config::default();
-    cfg.language.enabled = true;
-    config_manager.overwrite_for_tests(cfg);
     let palette_cache = Arc::new(crate::palette::PaletteCache::from_config(
         &config_manager.get(),
     ));
@@ -217,9 +220,9 @@ fn build_test_endpoint(
 
 #[test]
 fn hot_reload_language_enabled_updates_responses() {
-    let (config_manager, handle, path, _project) = build_test_endpoint("/tmp/hot-reload-lang.sock");
-    let mut cfg = Config::default();
-    cfg.language.enabled = true;
+    let config_dir = TempDir::new().expect("config dir");
+    let (config_manager, handle, path, _project) =
+        build_test_endpoint("/tmp/hot-reload-lang.sock", config_dir.path());
 
     let lang_msg = Message::LanguageDetect {
         path: path.clone(),
@@ -234,10 +237,11 @@ fn hot_reload_language_enabled_updates_responses() {
         Ok(Response::Language { languages }) if !languages.is_empty()
     ));
 
-    let mut disabled = cfg.clone();
-    disabled.language.enabled = false;
-    config_manager.overwrite_for_tests(disabled.clone());
-    config_manager.trigger_reload_for_tests(&cfg, &disabled);
+    reload_config(
+        &config_manager,
+        config_dir.path(),
+        "[language]\nenabled = false\n",
+    );
 
     let message = Message::LanguageDetect {
         path,

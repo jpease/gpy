@@ -192,7 +192,8 @@ impl ClientDirectory {
         }
     }
 
-    /// Create a registry writing flag files into `shell_dir` (tests).
+    /// Create a registry writing flag files into `shell_dir`.
+    #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn with_shell_dir(shell_dir: PathBuf) -> Self {
         Self {

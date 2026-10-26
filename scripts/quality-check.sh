@@ -279,14 +279,15 @@ run_shell_checks() {
     run_shell_tests
 }
 
-# Run from gpy-agent/. $1: extra nextest flags. test-support compiles the
-# test-only library surface so clippy lints it too; lint levels live in Cargo.toml.
+# Run from gpy-agent/. $1: extra nextest flags. Lint levels live in Cargo.toml.
+# Test and bench builds compile the `test-support` surface on their own, so
+# the second clippy pass lints the library and binaries without it.
 run_rust_lint_and_tests() {
     local nextest_flags="${1:-}" nextest_log retries
     run_check "Rust format check" "cargo fmt -- --check" || true
-    run_check "Clippy" "cargo clippy --all-targets --features test-support" || true
+    run_check "Clippy" "cargo clippy --all-targets && cargo clippy --lib --bins" || true
     nextest_log="$(mktemp)"
-    run_check "Rust tests" "cargo nextest run --features test-support${nextest_flags:+ $nextest_flags} 2>&1 | tee \"$nextest_log\"" || true
+    run_check "Rust tests" "cargo nextest run${nextest_flags:+ $nextest_flags} 2>&1 | tee \"$nextest_log\"" || true
     # Retries come only from named overrides in .config/nextest.toml; its
     # final-status-level = "flaky" prints a FLAKY line per retried test.
     retries=$(grep -cE '^ *FLAKY [0-9]+/[0-9]+ ' "$nextest_log" || true)

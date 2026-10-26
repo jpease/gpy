@@ -308,7 +308,8 @@ mod prune_reconcile_tests {
     #![allow(clippy::missing_panics_doc)]
 
     use super::super::{Arc, Mutex, PathBuf, prune_dead_clients};
-    use super::super::{ClientDirectory, MultiRepoWatcher, SharedWatcherSlot, WatcherConfig};
+    use super::super::{ClientDirectory, SharedWatcherSlot, WatcherConfig};
+    use crate::watcher::multi_repo::MultiRepoWatcher;
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::Path;
     use std::process::Command;
@@ -399,6 +400,30 @@ mod prune_reconcile_tests {
         assert_eq!(fx.watcher.client_pids(), Vec::<u32>::new());
         assert_eq!(fx.watcher.watched_repo_count(), 0);
         assert_eq!(fx.watcher.watched_roots(), Vec::<std::path::PathBuf>::new());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prune_unregisters_a_dead_client_from_the_watcher() {
+        let fx = fixture();
+        let repo = fx.repos.first().expect("repo").clone();
+        // Exited and reaped: its pid no longer names a live process.
+        let mut child = Command::new("true").spawn().expect("spawn `true`");
+        let dead_pid = child.id();
+        child.wait().expect("reap `true`");
+        fx.registry.register(dead_pid, Some(repo.clone()));
+        fx.watcher.register_client(dead_pid, &repo).unwrap();
+        assert_eq!(fx.watcher.watched_repo_count(), 1);
+
+        let pruned = prune_dead_clients(&fx.registry, &fx.slot);
+
+        assert_eq!(pruned, vec![dead_pid]);
+        assert!(!fx.registry.is_registered(dead_pid));
+        assert_eq!(
+            fx.watcher.watched_repo_count(),
+            0,
+            "pruning must also unregister the dead client from the watcher"
+        );
     }
 
     proptest::proptest! {

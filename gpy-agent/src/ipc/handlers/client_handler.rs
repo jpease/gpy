@@ -313,14 +313,16 @@ mod tests {
     }
 
     fn handler_with(skip_paths: Vec<String>, cache_dir: &Path) -> ClientHandler {
-        let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
-        config_manager.overwrite_for_tests(Config {
-            git: GitSettings {
-                skip_paths,
-                ..GitSettings::default()
-            },
-            ..Config::default()
-        });
+        let config_manager = Arc::new(
+            ConfigManager::from_config(Config {
+                git: GitSettings {
+                    skip_paths,
+                    ..GitSettings::default()
+                },
+                ..Config::default()
+            })
+            .expect("config"),
+        );
         let render = RenderDeps {
             palette_cache: Arc::new(PaletteCache::from_config(&config_manager.get())),
             config_manager,

@@ -943,6 +943,7 @@ dependencies = [
  "fork",
  "futures",
  "gengo-language",
+ "gpy-agent",
  "ignore",
  "insta",
  "libc",

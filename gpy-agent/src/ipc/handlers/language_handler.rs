@@ -332,6 +332,7 @@ mod tests {
     #![allow(clippy::missing_panics_doc)]
     use super::*;
     use crate::cache::InstantPromptCache;
+    use crate::config::Config;
     use crate::config::manager::ConfigManager;
     use crate::formatter::Format;
     use crate::ipc::ClientDirectory;
@@ -340,14 +341,15 @@ mod tests {
     use crate::theme::ThemeManager;
 
     fn make_handler() -> (LanguageHandler, Arc<ClientDirectory>) {
-        make_handler_with_cache(InstantPromptCache::new_for_test())
+        make_handler_with(InstantPromptCache::new_for_test(), Config::default())
     }
 
-    fn make_handler_with_cache(
+    fn make_handler_with(
         instant_cache: InstantPromptCache,
+        config: Config,
     ) -> (LanguageHandler, Arc<ClientDirectory>) {
         let registry = ClientDirectory::new().shared();
-        let config_manager = Arc::new(ConfigManager::with_defaults().expect("config"));
+        let config_manager = Arc::new(ConfigManager::from_config(config).expect("config"));
         let palette_cache = Arc::new(PaletteCache::from_config(&config_manager.get()));
         let render = RenderDeps {
             config_manager: Arc::clone(&config_manager),
@@ -528,11 +530,10 @@ mod tests {
     fn slow_version_probe_is_published_after_the_request_gives_up() {
         use std::os::unix::fs::PermissionsExt;
 
-        let (handler, registry) = make_handler();
-        let mut config = (*handler.render.config_manager.get()).clone();
+        let mut config = Config::default();
         config.agent.timeout_seconds =
             crate::config::types::AgentTimeout::new(1).expect("1 s timeout");
-        handler.render.config_manager.overwrite_for_tests(config);
+        let (handler, registry) = make_handler_with(InstantPromptCache::new_for_test(), config);
 
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let repo_dir = temp_dir.path().join("repo");
@@ -717,8 +718,9 @@ mod tests {
     #[test]
     fn non_git_subdirectory_detects_at_marker_ancestor() {
         let cache_dir = tempfile::TempDir::new().expect("cache dir");
-        let (handler, _registry) = make_handler_with_cache(
+        let (handler, _registry) = make_handler_with(
             InstantPromptCache::new_in_dir(cache_dir.path().to_path_buf()).expect("cache"),
+            Config::default(),
         );
         let temp_dir = tempfile::TempDir::new().expect("temp dir");
         let root = std::fs::canonicalize(temp_dir.path()).expect("canonicalize");

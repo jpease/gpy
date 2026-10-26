@@ -20,8 +20,8 @@ use crate::ipc::{
 };
 use crate::sync_ext::MutexExt;
 use crate::theme::ThemeManager;
+use crate::watcher::WatcherConfig;
 use crate::watcher::hot_reload::HOT_RELOAD_DEBOUNCE;
-use crate::watcher::{WatcherConfig, multi_repo::MultiRepoWatcher};
 use crate::{Error, Result};
 use events::SharedWatcherSlot;
 use std::env;
@@ -261,15 +261,6 @@ pub struct Agent {
 }
 
 impl Agent {
-    fn with_watcher<F>(&self, f: F)
-    where
-        F: FnOnce(&MultiRepoWatcher),
-    {
-        if let Some(watcher) = self.watcher.lock_or_recover().as_ref() {
-            f(watcher);
-        }
-    }
-
     /// Create a new agent instance.
     ///
     /// # Errors
@@ -482,11 +473,6 @@ impl Agent {
         configured.build()
     }
 
-    /// Prune dead clients from the registry and clean up the watcher.
-    pub fn prune_dead_clients_and_cleanup(&self) {
-        let _pruned_pids = prune_dead_clients(&self.ctx.registry, &self.watcher);
-    }
-
     /// Start the agent in background mode.
     ///
     /// # Errors
@@ -647,99 +633,22 @@ impl Agent {
         oneshot::handle_oneshot(request)
     }
 
-    /// Create an Agent for integration testing with the watcher enabled.
-    ///
-    /// # Errors
-    /// Returns an error if watcher creation fails.
-    #[doc(hidden)]
-    pub fn new_for_testing_with_watcher(_repo_path: &std::path::Path) -> Result<Self> {
-        use crate::git::cache::GitStatusCache;
-        use crate::watcher::{DebouncedEvent, WatcherConfig, multi_repo::MultiRepoWatcher};
-        use std::sync::Mutex;
-
-        // Embedded theme, default config, temp cache: never the developer's ~/.config.
-        let theme_manager = Arc::new(ThemeManager::builtin("default")?);
-        let config_manager = Arc::new(crate::config::manager::ConfigManager::with_defaults()?);
-        let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
-
-        let config = WatcherConfig::default();
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let events_clone = Arc::clone(&events);
-        let callback: Box<dyn Fn(DebouncedEvent) + Send + Sync> = Box::new(move |event| {
-            events_clone.lock_or_recover().push(event);
-        });
-        let watcher = Arc::new(
-            MultiRepoWatcher::builder()
-                .config(config)
-                .callback(callback)
-                .build()?,
-        );
-        let watcher_slot = Arc::new(Mutex::new(Some(Arc::clone(&watcher))));
-
-        let client_registry = Arc::new(ClientDirectory::new());
-        let git_cache = Arc::new(GitStatusCache::new());
-        let server = EndpointHandle::new_test_handle(
-            Arc::clone(&client_registry),
-            &git_cache,
-            Arc::clone(&watcher_slot),
-        );
-
-        let initial_config_for_testing = config_manager.get();
-        let ctx = events::AgentContext {
-            registry: Arc::clone(&client_registry),
-            cache: Arc::clone(&git_cache),
-            config_manager: Arc::clone(&config_manager),
-            theme_manager: Arc::clone(&theme_manager),
-            instant_cache,
-            language_cache: crate::language::DetectionCache::new(),
-            palette_cache: Arc::new(crate::palette::PaletteCache::from_config(
-                &initial_config_for_testing,
-            )),
-            dispatch_guard: Arc::new(events::RepoRefreshCoordinator::default()),
-            watch_registry: Arc::clone(watcher.registry()),
-            theme_export_dir: std::env::temp_dir()
-                .join(format!("gpy-test-theme-export-{}", std::process::id())),
-            announce_gate: Arc::new(Mutex::new(())),
-        };
-
-        Ok(Self {
-            server,
-            watcher: watcher_slot,
-            ctx,
-        })
-    }
-
-    /// The palette the agent currently renders with, for integration testing.
-    #[doc(hidden)]
+    /// The palette the agent currently renders with.
+    #[cfg(feature = "test-support")]
     #[must_use]
     pub fn active_palette_for_testing(&self) -> crate::template::Palette {
         self.ctx.palette_cache.get()
     }
 
-    /// Register a test client for integration testing
-    #[doc(hidden)]
+    /// Register client `pid` in `repo_path` with the registry and the watcher.
+    #[cfg(feature = "test-support")]
     pub fn register_test_client(&self, pid: u32, repo_path: &std::path::Path) {
         self.ctx
             .registry
             .register(pid, Some(repo_path.to_path_buf()));
-        self.with_watcher(|watcher| {
+        if let Some(watcher) = self.watcher.lock_or_recover().as_ref() {
             let _ = watcher.register_client(pid, repo_path);
-        });
-    }
-
-    /// Get client count for integration testing
-    #[doc(hidden)]
-    pub fn client_count(&self) -> usize {
-        self.ctx.registry.len()
-    }
-
-    /// Get watcher repo count for integration testing
-    #[doc(hidden)]
-    pub fn watcher_repo_count(&self) -> usize {
-        self.watcher
-            .lock_or_recover()
-            .as_ref()
-            .map_or(0, |w| w.watched_repo_count())
+        }
     }
 }
 

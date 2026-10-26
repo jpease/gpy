@@ -120,11 +120,11 @@ impl InstantPromptCache {
         })
     }
 
-    /// A cache in a fresh, never-cleaned temp directory, for tests (`new` needs
-    /// `HOME`/XDG). Ungated so integration tests and `new_test_handle` can use it.
+    /// A cache in a fresh, never-cleaned temp directory (`new` needs
+    /// `HOME`/XDG).
     /// # Panics
     /// Panics if the directory cannot be created.
-    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-support"))]
     #[expect(
         clippy::expect_used,
         reason = "test-only helper; an unusable temp dir is fatal"
@@ -141,10 +141,10 @@ impl InstantPromptCache {
         Self::new_in_dir(cache_dir).expect("instant cache in a temp directory")
     }
 
-    /// Ungated because it backs [`Self::new_for_test`].
+    /// A cache rooted at `cache_dir`, created owner-only if missing.
     /// # Errors
     /// Returns an error if the cache directory cannot be created.
-    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn new_in_dir(cache_dir: PathBuf) -> Result<Self> {
         create_private_dir(&cache_dir)?;
         Ok(Self {

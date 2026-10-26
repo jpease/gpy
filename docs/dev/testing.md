@@ -10,8 +10,8 @@ summary ends with `Skipped: N (names)`.
 
 | Tier | What it proves | How | Run it | In the gate? |
 |---|---|---|---|---|
-| Rust unit + integration | The agent and CLI logic, IPC, watcher, config, theme export | nextest over the library and the `gpy-agent/tests/*.rs` targets | `(cd gpy-agent && cargo nextest run --features test-support)` | gate |
-| CLI lifecycle and surface | `gpy start/stop/restart/status` and `gpy doctor` against a live and a stopped agent; error messages; palette; `--help` snapshots; `init` and the wizard on a pty | Real binaries in an isolated HOME/XDG sandbox (`CliTestEnv`), a real agent, `portable-pty` for the interactive flows, insta snapshots for `--help` | `(cd gpy-agent && cargo nextest run --features test-support --test agent_lifecycle_cli_tests --test cli_error_messages_tests --test palette_cli_e2e_tests --test cli_help_snapshot_tests --test init_pty_tests --test wizard_pty_tests)` | gate |
+| Rust unit + integration | The agent and CLI logic, IPC, watcher, config, theme export | nextest over the library and the `gpy-agent/tests/*.rs` targets | `(cd gpy-agent && cargo nextest run)` | gate |
+| CLI lifecycle and surface | `gpy start/stop/restart/status` and `gpy doctor` against a live and a stopped agent; error messages; palette; `--help` snapshots; `init` and the wizard on a pty | Real binaries in an isolated HOME/XDG sandbox (`CliTestEnv`), a real agent, `portable-pty` for the interactive flows, insta snapshots for `--help` | `(cd gpy-agent && cargo nextest run --test agent_lifecycle_cli_tests --test cli_error_messages_tests --test palette_cli_e2e_tests --test cli_help_snapshot_tests --test init_pty_tests --test wizard_pty_tests)` | gate |
 | Fish prompt content | The rendered `fish_prompt` carries the exact git (branch, ahead, dirty, untracked, stash, detached, rebase), language and directory tokens, plus the frame | A real repository, a real agent, escapes stripped, content asserted (never mere presence) | `fish tests/fish/e2e_prompt_content.test.fish` | gate |
 | Fish interactive sessions | An idle prompt repaints with no keystroke after a file change; two shells share one agent; a `config.toml` edit reaches a Fish client via the reload flag and SIGURG | A real `fish -i` on a pseudo-terminal driven by `tests/lib/pty_session.py` | `fish tests/fish/e2e_interactive_session.test.fish` | gate |
 | Bash/Zsh live daemon | Autostart to first prompt; live git content (Zsh repaints idle, Bash at the next prompt, by measurement); re-registration after an agent restart; stale git recovery with the agent down; config reload via the reload flag and SIGURG; nc fallback bounded; path parity with `gpy debug paths` | `tests/lib/shell_e2e.sh`: a sandbox, a real agent, a real `bash -i` / `zsh -i` on a pty | `bash tests/bash/e2e_*.test.bash` and `zsh tests/zsh/e2e_*.test.zsh` (one file at a time) | gate |
@@ -27,7 +27,8 @@ The Fish, Bash and Zsh suite READMEs (`tests/fish/README.md`,
 `tests/bash/README.md`, `tests/zsh/README.md`) explain how to run and write
 each suite; shared shell E2E helpers (`fail`, `pass`, `test_finish`) live in
 `tests/lib/shell_e2e.sh`;
-`gpy-agent/tests/README.md` covers the Rust harnesses.
+`gpy-agent/tests/README.md` covers the Rust harnesses and the `test-support`
+surface the integration targets use.
 
 ## Rules every tier follows
 

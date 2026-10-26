@@ -575,48 +575,6 @@ impl EndpointHandle {
     pub fn shutdown_sender(&self) -> broadcast::Sender<()> {
         self.shutdown_tx.clone()
     }
-
-    /// Create an unbound `EndpointHandle` for tests.
-    #[doc(hidden)]
-    #[expect(
-        clippy::expect_used,
-        reason = "helper for tests, panic is acceptable on setup failure"
-    )]
-    pub fn new_test_handle(
-        client_registry: Arc<ClientDirectory>,
-        git_cache: &Arc<crate::git::cache::GitStatusCache>,
-        watcher: WatcherRef,
-    ) -> Self {
-        // Built-in defaults, never the developer's ~/.config/gpy.
-        let theme_manager =
-            Arc::new(ThemeManager::builtin("default").expect("default theme should always load"));
-        let config_manager = Arc::new(
-            crate::config::manager::ConfigManager::with_defaults()
-                .expect("default config should always load"),
-        );
-
-        let instant_cache = Arc::new(crate::cache::InstantPromptCache::new_for_test());
-
-        let language_cache = crate::language::DetectionCache::new();
-
-        let initial_config = config_manager.get();
-        let palette_cache = Arc::new(PaletteCache::from_config(&initial_config));
-
-        Self::with_path_and_state(
-            PathBuf::from("/tmp/test.sock"),
-            ServerDeps {
-                client_registry,
-                git_cache: Arc::clone(git_cache),
-                config_manager,
-                theme_manager,
-                instant_cache,
-                language_cache,
-                palette_cache,
-            },
-            watcher,
-            GuardSettings::default(),
-        )
-    }
 }
 
 /// Native Windows stub: the IPC server is Unix-socket based; use WSL.
@@ -693,13 +651,11 @@ mod route_prev_bg_tests {
     use super::*;
     use crate::formatter::Format;
     use crate::ipc::Message;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     fn make_handler_registry() -> Arc<HandlerRegistry> {
-        let client_registry = Arc::new(crate::ipc::ClientDirectory::new());
-        let git_cache = Arc::new(crate::git::cache::GitStatusCache::new());
-        let watcher: WatcherRef = Arc::new(Mutex::new(None));
-        let handle = EndpointHandle::new_test_handle(client_registry, &git_cache, watcher);
+        let handle =
+            super::socket_ownership_tests::build_handle(std::path::Path::new("/tmp/test.sock"));
         Arc::clone(&handle.handler_registry)
     }
 
