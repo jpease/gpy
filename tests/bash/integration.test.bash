@@ -282,7 +282,7 @@ s.bind(sys.argv[1])
         export GPY_AGENT_ENABLED=1
         export GPY_AGENT_SUPERVISOR_ENABLED=1
 # Wide enough that three back-to-back calls land within one window.
-        export GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS=60
+        export GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=60
 
 # The stub runs in a command-substitution subshell; count via a file.
         __gpy_supervisor_call_count_file="$supervisor_test_tmp_dir/send_json_calls"
@@ -370,7 +370,7 @@ s.bind(sys.argv[1])
 # two prompts 15 s apart with a 60 s interval probe once.
         __gpy_supervisor_probe_count=0
         __gpy_supervisor_is_running() { __gpy_supervisor_probe_count=$((__gpy_supervisor_probe_count + 1)); return 1; }
-        unset GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS
+        unset GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS
         export GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=60
         __gpy_supervisor_last_check_time=0
         __gpy_supervisor_check_attempts=0
@@ -385,7 +385,7 @@ s.bind(sys.argv[1])
         echo "PASS: GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS sets the health-check interval"
 
         # max_restart_attempts=1: a persistently dead agent gets one restart.
-        export GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS=0
+        export GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=0
         export GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS=1
         __gpy_supervisor_last_check_time=0
         __gpy_supervisor_check_attempts=0
@@ -411,7 +411,7 @@ s.bind(sys.argv[1])
         }
         unset -f __gpy_supervisor_call_count
         unset __gpy_supervisor_call_count_file
-        unset GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS
+        unset GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS
         __gpy_protocol_version_checked=0
         __gpy_supervisor_last_check_time=0
         __gpy_supervisor_check_attempts=0

@@ -67,14 +67,11 @@ __gpy_supervisor_last_check_time=0
 __gpy_supervisor_check_attempts=0
 
 __gpy_supervisor_check() {
-    __gpy_agent_enabled || return
-    if [[ -z "${GPY_AGENT_SUPERVISOR_ENABLED:-}" || "${GPY_AGENT_SUPERVISOR_ENABLED:-}" != "1" ]]; then
-        return
-    fi
+    __gpy_agent_enabled && __gpy_supervisor_enabled || return
 
     # Rate-limit before any IPC so a healthy agent costs no round-trips.
     # Read at call time so a config reload applies.
-    local rate_limit="${GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS:-${GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS:-30}}"
+    local rate_limit="${GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS:-30}"
     [[ "$rate_limit" =~ ^[0-9]+$ ]] || rate_limit=30
 
     # Builtin epoch on bash 4.2+: no fork for the checks the limiter rejects.
@@ -93,7 +90,7 @@ __gpy_supervisor_check() {
         return
     fi
 
-    local max_attempts="${GPY_SUPERVISOR_CHECK_MAX_ATTEMPTS:-${GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS:-5}}"
+    local max_attempts="${GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS:-5}"
     [[ "$max_attempts" =~ ^[0-9]+$ ]] || max_attempts=5
     if [[ $__gpy_supervisor_check_attempts -ge $max_attempts ]]; then
         return

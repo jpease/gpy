@@ -53,7 +53,7 @@ run_shell() {
         "GPY_AGENT_SOCKET_PATH=$TMP_DIR/dead.sock"
         "XDG_CACHE_HOME=$TMP_DIR/cache"
         "GPY_AGENT_START_DELAY_MS=0"
-        "GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS=0"
+        "GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=0"
     )
     case "$shell" in
         bash)

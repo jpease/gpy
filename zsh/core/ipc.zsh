@@ -5,9 +5,16 @@ zmodload zsh/datetime 2>/dev/null
 # zstat only: plain zsh/stat would shadow the external `stat`.
 zmodload -F zsh/stat b:zstat 2>/dev/null
 
+# A flag is off only when set to `0` or `false`; unset, empty and any other
+# value leave it on. Fish and Bash apply the same rule.
 # Gates every start/register/talk path; rendering still works via oneshot.
 function __gpy_agent_enabled() {
-    [[ "${GPY_AGENT_ENABLED:-1}" == "1" ]]
+    [[ "${GPY_AGENT_ENABLED:-}" != (0|false) ]]
+}
+
+# Governs restarts only; agent start and registration use __gpy_agent_enabled.
+function __gpy_supervisor_enabled() {
+    [[ "${GPY_AGENT_SUPERVISOR_ENABLED:-}" != (0|false) ]]
 }
 
 # Escape $2 for a JSON string into variable $1 without a fork. Backslashes

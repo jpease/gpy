@@ -102,6 +102,10 @@ Controls the background agent process that serves prompt data over IPC.
 
 Controls automatic restart of a crashed or unresponsive agent process. In every shell (Bash, Zsh, Fish) this flag governs restarts only: with `enabled = false` the shell still starts the agent once when it starts (as long as `[agent] enabled` is `true`), but a crashed agent stays down afterwards. Only `[agent] enabled = false` (`GPY_AGENT_ENABLED=0`) stops shells from starting, registering with, or supervising an agent.
 
+`GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` follow one rule in Bash, Zsh and Fish: a flag is off only when set to `0` or `false`. Unset, empty, `1` and any other value leave it on. `config.toml` exports `0` or `1`.
+
+Fish runs its restart loop as a separate background process and also reads two environment variables that Bash and Zsh have no counterpart for (their health check runs inline on the prompt, governed by `check_interval_seconds` and `max_restart_attempts`): `GPY_SUPERVISOR_RESTART_RATE_LIMIT_SECONDS` (default `60`, minimum gap between restarts) and `GPY_SUPERVISOR_LONG_BACKOFF_SECONDS` (default `300`, wait after the attempt cap is reached). Non-integer values fall back to the default.
+
 | Key | Type | Default | Range | Effect |
 |---|---|---|---|---|
 | `enabled` | bool | `true` | — | Enables the supervisor. When `false`, a crashed agent stays down until manually restarted (`gpy restart`). |

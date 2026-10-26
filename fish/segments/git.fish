@@ -31,7 +31,7 @@ end
 
 # Returns 0 when the render must print nothing (agent down, cold miss), so git takes no position.
 function segment_git_omit
-    test "$GPY_AGENT_ENABLED" = 0; and return 1
+    not __gpy_agent_enabled; and return 1
     not __gpy_instant_cache_present git $PWD; and not test -S (__gpy_ipc_endpoint)
 end
 
@@ -53,7 +53,7 @@ function segment_git_render --argument-names is_last is_first
 
     if test "$cache_status" -eq 1
         # Agent-free mode renders through oneshot.
-        if test "$GPY_AGENT_ENABLED" = 0
+        if not __gpy_agent_enabled
             set -l fresh (__gpy_oneshot_fallback git "$root" ansi "$is_last" "$is_first" | string collect)
             if test -n "$fresh"
                 printf '%s' "$fresh"

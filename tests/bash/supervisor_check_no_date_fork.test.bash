@@ -23,7 +23,7 @@ export GPY_AGENT_SOCKET_PATH="$SANDBOX/missing.sock"
 source bash/gpy.bash
 
 export GPY_AGENT_ENABLED=1 GPY_AGENT_SUPERVISOR_ENABLED=1
-export GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS=30
+export GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS=30
 
 DATE_LOG="$SANDBOX/date.log"
 PROBE_LOG="$SANDBOX/probe.log"
@@ -54,7 +54,7 @@ run_checks() {
         PATH="$SANDBOX/bin:$PATH" __gpy_supervisor_check
     done
     throttled_dates="$(count "$DATE_LOG")"
-    __gpy_supervisor_last_check_time=$(($("$real_date" +%s) - GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS))
+    __gpy_supervisor_last_check_time=$(($("$real_date" +%s) - GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS))
     PATH="$SANDBOX/bin:$PATH" __gpy_supervisor_check
     printf '%s %s' "$throttled_dates" "$(count "$PROBE_LOG")"
 }

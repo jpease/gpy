@@ -1,3 +1,5 @@
+source (path dirname (status filename))/flags.fish
+
 # Home directory with the agent's passwd fallback: an empty $HOME counts as
 # unset, else a blanked HOME resolves /.cache/gpy while the agent uses passwd.
 function __gpy_home --description 'Home directory with the passwd fallback'
@@ -714,8 +716,7 @@ end
 
 # Prints the agent version; sets __gpy_agent_version/_protocol_version.
 function __gpy_get_agent_version --description 'Get the version and protocol version from the agent'
-    set -q GPY_AGENT_ENABLED; or set -g GPY_AGENT_ENABLED 1
-    if test "$GPY_AGENT_ENABLED" -ne 1
+    if not __gpy_agent_enabled
         return 1
     end
 
@@ -780,7 +781,7 @@ function __gpy_is_supervisor_pid --argument-names pid
 end
 
 function __gpy_agent_supervisor_start --description 'Start agent supervisor for automatic restart'
-    if test "$GPY_AGENT_SUPERVISOR_ENABLED" = 0; or test "$GPY_AGENT_ENABLED" = 0
+    if not __gpy_supervisor_enabled; or not __gpy_agent_enabled
         return 0
     end
 
@@ -857,7 +858,7 @@ function __gpy_refresh_registration_after_restart --description 'Forget this she
         return 1
     end
 
-    if test "$GPY_AGENT_ENABLED" = 0
+    if not __gpy_agent_enabled
         return 1
     end
 
@@ -898,7 +899,7 @@ function __gpy_register_with_agent --description 'Register this Fish process wit
         return 0
     end
 
-    if test "$GPY_AGENT_ENABLED" = 0
+    if not __gpy_agent_enabled
         if set -q GPY_TEST_MODE
             __gpy_log_debug ipc "Registration skipped: GPY_AGENT_ENABLED=0"
         end
@@ -1007,7 +1008,7 @@ function __gpy_agent_supervisor_loop --description 'Background loop for agent su
         # Re-read each pass so a config reload applies within one interval:
         # disabling stops the loop, new timing governs the next sleep.
         __gpy_supervisor_refresh_settings
-        if test "$GPY_AGENT_SUPERVISOR_ENABLED" = 0; or test "$GPY_AGENT_ENABLED" = 0
+        if not __gpy_supervisor_enabled; or not __gpy_agent_enabled
             break
         end
         # Re-validate: an empty value would make sleep busy-loop.
@@ -1135,13 +1136,15 @@ function __gpy_agent_restart --description 'Restart the agent process'
 end
 
 # Defer supervisor start to the first prompt to avoid blocking source.
-if not set -q GPY_SUPERVISOR_CHILD; and not test "$GPY_AGENT_ENABLED" = 0 -a "$GPY_AGENT_SUPERVISOR_ENABLED" = 0
+if not set -q GPY_SUPERVISOR_CHILD; and begin
+        __gpy_agent_enabled; or __gpy_supervisor_enabled
+    end
     function __gpy_start_supervisor_on_prompt --on-event fish_prompt
-        if test "$GPY_AGENT_ENABLED" = 1
+        if __gpy_agent_enabled
             # Only the restart loop depends on the supervisor flag.
             if not set -q __gpy_supervisor_initialized
                 set -g __gpy_supervisor_initialized 1
-                test "$GPY_AGENT_SUPERVISOR_ENABLED" = 0; or __gpy_agent_supervisor_start
+                not __gpy_supervisor_enabled; or __gpy_agent_supervisor_start
             end
 
             # An agent speaking another protocol must be treated as not running.

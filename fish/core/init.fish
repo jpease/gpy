@@ -3,7 +3,9 @@
 set -l __prompt_dir (dirname (status --current-filename))
 set -g __gpy_core_dir $__prompt_dir
 
-if test "$GPY_AGENT_ENABLED" = 0 -a "$GPY_AGENT_SUPERVISOR_ENABLED" = 0
+source $__prompt_dir/flags.fish
+
+if not __gpy_agent_enabled; and not __gpy_supervisor_enabled
     set -q __enabled_segments; or set -g __enabled_segments clock duration directory
     set -q __prompt_icons; or set -g __prompt_icons nerd
     set -q __prompt_theme; or set -g __prompt_theme default

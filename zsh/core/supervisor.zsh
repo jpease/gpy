@@ -27,13 +27,13 @@ function __gpy_start_agent() {
 }
 
 # Mid-session health check from precmd, rate limited by check interval and
-# capped at max restart attempts. Legacy GPY_SUPERVISOR_CHECK_* override.
+# capped at max restart attempts.
 __gpy_supervisor_last_check_time=0
 __gpy_supervisor_check_attempts=0
 function __gpy_supervisor_check() {
-    [[ "${GPY_AGENT_SUPERVISOR_ENABLED:-1}" == 1 && "${GPY_AGENT_ENABLED:-1}" == 1 ]] || return 0
+    __gpy_agent_enabled && __gpy_supervisor_enabled || return 0
 
-    local rate_limit="${GPY_SUPERVISOR_CHECK_RATE_LIMIT_SECONDS:-${GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS:-30}}"
+    local rate_limit="${GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS:-30}"
     [[ "$rate_limit" == <-> ]] || rate_limit=30
     local now=$EPOCHSECONDS
     (( now - __gpy_supervisor_last_check_time >= rate_limit )) || return 0
@@ -44,7 +44,7 @@ function __gpy_supervisor_check() {
         return 0
     fi
 
-    local max_attempts="${GPY_SUPERVISOR_CHECK_MAX_ATTEMPTS:-${GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS:-5}}"
+    local max_attempts="${GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS:-5}"
     [[ "$max_attempts" == <-> ]] || max_attempts=5
     (( __gpy_supervisor_check_attempts < max_attempts )) || return 0
     (( __gpy_supervisor_check_attempts++ ))

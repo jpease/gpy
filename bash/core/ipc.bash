@@ -1,6 +1,13 @@
+# A flag is off only when set to `0` or `false`; unset, empty and any other
+# value leave it on. Fish and Zsh apply the same rule.
 # False in agent-free mode. Rendering never checks it, so oneshot still works.
 __gpy_agent_enabled() {
-    [[ -z "${GPY_AGENT_ENABLED:-}" || "${GPY_AGENT_ENABLED:-}" == "1" ]]
+    [[ "${GPY_AGENT_ENABLED:-}" != 0 && "${GPY_AGENT_ENABLED:-}" != false ]]
+}
+
+# Governs restarts only; agent start and registration use __gpy_agent_enabled.
+__gpy_supervisor_enabled() {
+    [[ "${GPY_AGENT_SUPERVISOR_ENABLED:-}" != 0 && "${GPY_AGENT_SUPERVISOR_ENABLED:-}" != false ]]
 }
 
 # Escape $2 for a JSON string into variable $1 without a fork. Backslashes

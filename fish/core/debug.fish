@@ -8,7 +8,7 @@ function __prompt_validate_installation
     # Install dir is derived from this file's own location, not ~/.config.
     set -l install_dir $__gpy_core_dir/..
 
-    set -l core_files constants.fish util.fish renderer.fish init.fish ipc.fish
+    set -l core_files flags.fish constants.fish util.fish renderer.fish init.fish ipc.fish
     for file in $core_files
         set -l path $install_dir/core/$file
         if test -f $path

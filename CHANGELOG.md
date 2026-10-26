@@ -12,6 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Script plugin segments (`entry_type = "script"`): the contract is defined and
   validated, but no shell executes script segments yet. It is documented in
   `docs/dev/plugins.md` with a `segments/<id>.toml` manifest,
+- `GPY_AGENT_ENABLED` and `GPY_AGENT_SUPERVISOR_ENABLED` now follow one rule
+  in Bash, Zsh and Fish: a flag is off only when set to `0` or `false`.
+  `false` now disables the agent in Fish (it stayed on before), and values
+  other than `0`/`1` (for example `2`) now leave the flag on in Bash and Zsh.
+  An unset `GPY_AGENT_SUPERVISOR_ENABLED` now enables restarts in Bash.
+  The undocumented Bash/Zsh supervisor overrides for the check rate limit
+  and maximum attempts are removed; use
+  `GPY_AGENT_SUPERVISOR_CHECK_INTERVAL_SECONDS` and
+  `GPY_AGENT_SUPERVISOR_MAX_RESTART_ATTEMPTS`. The Fish-only
+  `GPY_SUPERVISOR_RESTART_RATE_LIMIT_SECONDS` and
+  `GPY_SUPERVISOR_LONG_BACKOFF_SECONDS` are now documented.
+- Script plugin segments (`entry_type = "script"`): a public, documented
+  contract in `docs/dev/plugins.md` with a `segments/<id>.toml` manifest,
   typed settings, enforced `min_gpy_version`, published JSON schemas, and
   user overrides in `config.toml` `[plugin.<segment>]` reachable by
   `gpy config get/set/list` as `plugin.<segment>.<key>`. Theme
