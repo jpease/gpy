@@ -1,6 +1,6 @@
 //! Permissive deserialization of a `starship.toml` document.
 
-use crate::import::starship::{ImportError, Result};
+use crate::import::starship::error::{ImportError, Result};
 use std::collections::HashMap;
 
 /// A permissively-parsed Starship configuration.

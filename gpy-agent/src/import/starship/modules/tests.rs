@@ -4,7 +4,7 @@
 #![allow(clippy::missing_panics_doc)]
 #![allow(missing_docs)]
 
-use super::{Token, inline_style_vars, retain_known_vars, tokens, translate_directory};
+use super::translate_directory;
 use crate::config::LanguageTheme;
 use crate::config::types::{ColorSpec, DirectoryTruncationLength, DirectoryTruncationSymbol};
 use crate::import::starship::Warnings;
@@ -14,111 +14,6 @@ const NO_PALETTE: Option<&std::collections::HashMap<String, String>> = None;
 
 fn table(toml_src: &str) -> toml::value::Table {
     toml::from_str(toml_src).unwrap()
-}
-
-#[test]
-fn tokens_bare_var() {
-    assert_eq!(
-        tokens("$x"),
-        vec![Token::Var {
-            name: "x",
-            raw: "$x"
-        }]
-    );
-}
-
-#[test]
-fn tokens_braced_var() {
-    assert_eq!(
-        tokens("${x}"),
-        vec![Token::Var {
-            name: "x",
-            raw: "${x}"
-        }]
-    );
-}
-
-#[test]
-fn tokens_escaped_dollar_stays_literal() {
-    // The `$` after a backslash is literal, not a variable.
-    assert_eq!(tokens(r"\$"), vec![Token::Literal(r"\$")]);
-    assert_eq!(
-        tokens(r"a\$b"),
-        vec![Token::Literal(r"a\$b")],
-        "escape doesn't split the surrounding literal run"
-    );
-}
-
-#[test]
-fn tokens_braced_var_followed_by_literal_braces() {
-    // Literal braces after a braced var are not part of it.
-    assert_eq!(
-        tokens("${a}{b}"),
-        vec![
-            Token::Var {
-                name: "a",
-                raw: "${a}"
-            },
-            Token::Literal("{b}"),
-        ]
-    );
-}
-
-#[test]
-fn tokens_unclosed_brace_falls_back_to_literal_dollar() {
-    // Unclosed `${`: the rest, including `$`, is literal.
-    assert_eq!(tokens("${unclosed"), vec![Token::Literal("${unclosed")]);
-}
-
-#[test]
-fn tokens_trailing_bare_dollar_falls_back_to_literal() {
-    assert_eq!(
-        tokens("abc$"),
-        vec![Token::Literal("abc$")],
-        "trailing bare $ merges into the literal run"
-    );
-}
-
-#[test]
-fn tokens_dollar_followed_by_punctuation_is_malformed() {
-    assert_eq!(tokens("$!"), vec![Token::Literal("$!")]);
-}
-
-#[test]
-fn tokens_handles_multibyte_literal_text() {
-    assert_eq!(
-        tokens("[❯]($style)"),
-        vec![
-            Token::Literal("[❯]("),
-            Token::Var {
-                name: "style",
-                raw: "$style"
-            },
-            Token::Literal(")"),
-        ]
-    );
-}
-
-#[test]
-fn inlines_style_and_read_only_style() {
-    let module = table("style = \"bold cyan\"\nread_only_style = \"bold red\"\n");
-    let out = inline_style_vars("[$path]($style)[$read_only]($read_only_style) ", &module);
-    assert_eq!(out, "[$path](bold cyan)[$read_only](bold red) ");
-}
-
-#[test]
-fn retains_known_and_drops_unknown_vars() {
-    let mut warnings = Warnings::new();
-    let out = retain_known_vars(
-        "[$path]($before_repo_root_style) $read_only",
-        &["path", "read_only"],
-        "directory",
-        &mut warnings,
-    );
-    assert!(out.contains("$path"));
-    assert!(out.contains("$read_only"));
-    assert!(!out.contains("before_repo_root_style"));
-    assert_eq!(warnings.len(), 1_usize);
 }
 
 #[test]
@@ -462,85 +357,6 @@ fn translate_git_fills_missing_half_with_starship_defaults() {
 }
 
 #[test]
-fn style_color_skips_attributes_and_strips_prefixes() {
-    use super::{StyleColor, style_color};
-    let resolved = |fg: Option<&str>, bg: Option<&str>| StyleColor::Resolved {
-        fg: fg.map(str::to_owned),
-        bg: bg.map(str::to_owned),
-    };
-    assert_eq!(
-        style_color("bold green", NO_PALETTE),
-        resolved(Some("green"), None)
-    );
-    assert_eq!(
-        style_color("fg:green", NO_PALETTE),
-        resolved(Some("green"), None)
-    );
-    assert_eq!(
-        style_color("Bold FG:Green", NO_PALETTE),
-        resolved(Some("green"), None)
-    );
-    assert_eq!(
-        style_color("fg:#ff0000", NO_PALETTE),
-        resolved(Some("#ff0000"), None)
-    );
-    assert_eq!(
-        style_color("bold fg:202", NO_PALETTE),
-        resolved(Some("202"), None)
-    );
-    assert_eq!(
-        style_color("bg:blue fg:white", NO_PALETTE),
-        resolved(Some("white"), Some("blue"))
-    );
-    assert_eq!(
-        style_color("bg:#212736", NO_PALETTE),
-        resolved(None, Some("#212736"))
-    );
-    assert_eq!(style_color("bold", NO_PALETTE), resolved(None, None));
-    assert_eq!(style_color("none", NO_PALETTE), resolved(None, None));
-}
-
-#[test]
-fn style_color_resolves_palette_aliases_and_rejects_unknown_names() {
-    use super::{StyleColor, style_color};
-    let palette: std::collections::HashMap<String, String> = [
-        ("peach".to_owned(), "#fab387".to_owned()),
-        ("green".to_owned(), "#00ff00".to_owned()),
-    ]
-    .into();
-    assert_eq!(
-        style_color("bold peach", Some(&palette)),
-        StyleColor::Resolved {
-            fg: Some("#fab387".to_owned()),
-            bg: None
-        }
-    );
-    assert_eq!(
-        style_color("bg:peach", Some(&palette)),
-        StyleColor::Resolved {
-            fg: None,
-            bg: Some("#fab387".to_owned())
-        }
-    );
-    // Shadowing a builtin color name is the palette vocabulary's concern, not an alias.
-    assert_eq!(
-        style_color("green", Some(&palette)),
-        StyleColor::Resolved {
-            fg: Some("green".to_owned()),
-            bg: None
-        }
-    );
-    assert_eq!(
-        style_color("peach", NO_PALETTE),
-        StyleColor::Invalid("peach".to_owned())
-    );
-    assert_eq!(
-        style_color("fg:#12345", NO_PALETTE),
-        StyleColor::Invalid("#12345".to_owned())
-    );
-}
-
-#[test]
 fn canonical_language_maps_aliases() {
     use super::canonical_language;
     assert_eq!(canonical_language("nodejs"), Some("node"));
@@ -579,25 +395,6 @@ fn translate_languages_collects_colors_and_warns_on_symbol() {
         Some("red")
     );
     assert!(warnings.iter().any(|w| w.message.contains("symbol")));
-}
-
-#[test]
-fn attr_tokens_returns_attributes_only() {
-    use super::attr_tokens;
-    assert_eq!(attr_tokens("red dimmed"), vec!["dimmed"]);
-    assert_eq!(attr_tokens("bold italic red"), vec!["bold", "italic"]);
-    assert_eq!(attr_tokens("red"), Vec::<&str>::new());
-    assert_eq!(attr_tokens("bold"), vec!["bold"]);
-}
-
-#[test]
-fn attr_tokens_are_case_insensitive() {
-    use super::attr_tokens;
-    assert_eq!(attr_tokens("Bold green"), vec!["bold"]);
-    assert_eq!(
-        attr_tokens("ITALIC Underline red"),
-        vec!["italic", "underline"]
-    );
 }
 
 #[test]
@@ -912,6 +709,27 @@ fn translate_username_renames_user_and_inlines_root_and_user_styles() {
     assert_eq!(theme.format.as_deref(), Some("[$username](bold red) in "));
     assert_eq!(theme.user_format.as_deref(), Some("[$username](green) in "));
     assert!(warnings.is_empty());
+}
+
+#[test]
+fn translate_username_renames_only_the_whole_user_variable() {
+    use super::translate_username;
+    let module = table("format = '[$username $userfoo \\$user]($style)'\n");
+    let mut warnings = Warnings::new();
+    let theme = translate_username(&module, &mut warnings);
+    assert_eq!(
+        theme.format.as_deref(),
+        Some(r"[$username  \$user](bold red)")
+    );
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|w| w.message.contains("$userfoo"))
+            .count(),
+        1,
+        "$userfoo is unknown, not a renamed $user"
+    );
+    assert_eq!(warnings.len(), 1);
 }
 
 #[test]

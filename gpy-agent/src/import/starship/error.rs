@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-/// Errors produced while parsing a `starship.toml` into the importer model.
+/// Errors produced while parsing a `starship.toml` or serializing its translation.
 ///
 /// I/O errors live in `crate::commands::theme_import`.
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -11,6 +11,14 @@ pub enum ImportError {
     #[error("failed to parse starship.toml: {message}")]
     Parse {
         /// Human-readable parser message (from the `toml` crate).
+        message: String,
+    },
+    /// A translated artifact could not be serialized to TOML.
+    #[error("failed to serialize the imported {artifact}: {message}")]
+    Serialize {
+        /// Which artifact failed: `theme` or `palette`.
+        artifact: &'static str,
+        /// Human-readable serializer message (from the `toml` crate).
         message: String,
     },
     /// The embedded builtin `starship` preset failed to parse.

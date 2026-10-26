@@ -1,8 +1,9 @@
 //! Derive a GPY `enabled_segments` order from Starship's top-level `format`.
 
 use crate::config::defaults::default_enabled_segments;
+use crate::import::starship::format::{Token, tokens};
 use crate::import::starship::modules::canonical_language;
-use crate::import::starship::{WarningKind, Warnings};
+use crate::import::starship::warn::{WarningKind, Warnings};
 
 /// Starship's newline module; maps to `ui.two_line`, not a segment.
 const LINE_BREAK: &str = "line_break";
@@ -13,9 +14,7 @@ const ALL: &str = "all";
 /// Whether `format` references `$line_break` or `$all` (escaped refs don't count).
 #[must_use]
 pub fn has_line_break(format: &str) -> bool {
-    module_refs(format)
-        .iter()
-        .any(|module| module == LINE_BREAK || module == ALL)
+    module_refs(format).any(|module| module == LINE_BREAK || module == ALL)
 }
 
 /// Map a Starship module reference to its GPY segment name.
@@ -37,7 +36,7 @@ pub fn map_module(name: &str) -> Option<&'static str> {
 #[must_use]
 pub fn derive_segments(format: &str, warnings: &mut Warnings) -> Vec<String> {
     let mut result: Vec<String> = Vec::new();
-    let mut warned: Vec<String> = Vec::new();
+    let mut warned: Vec<&str> = Vec::new();
     for module in module_refs(format) {
         if module == LINE_BREAK {
             continue;
@@ -50,11 +49,10 @@ pub fn derive_segments(format: &str, warnings: &mut Warnings) -> Vec<String> {
             }
             continue;
         }
-        match map_module(&module) {
+        match map_module(module) {
             Some(segment) => {
-                let owned = segment.to_owned();
-                if !result.contains(&owned) {
-                    result.push(owned);
+                if !result.iter().any(|existing| existing == segment) {
+                    result.push(segment.to_owned());
                 }
             }
             None => {
@@ -71,42 +69,14 @@ pub fn derive_segments(format: &str, warnings: &mut Warnings) -> Vec<String> {
     result
 }
 
-/// Extract `$name`/`${name}` references from a format string, in order.
-fn module_refs(format: &str) -> Vec<String> {
-    let chars: Vec<char> = format.chars().collect();
-    let mut refs: Vec<String> = Vec::new();
-    let mut index = 0_usize;
-    while let Some(&ch) = chars.get(index) {
-        if ch == '\\' {
-            index = index.saturating_add(2_usize);
-            continue;
-        }
-        if ch == '$' {
-            index = index.saturating_add(1_usize);
-            let mut name = String::new();
-            let braced = chars.get(index) == Some(&'{');
-            if braced {
-                index = index.saturating_add(1_usize);
-            }
-            while let Some(&inner) = chars.get(index) {
-                if braced && inner == '}' {
-                    index = index.saturating_add(1_usize);
-                    break;
-                }
-                if !(braced || inner.is_alphanumeric() || inner == '_') {
-                    break;
-                }
-                name.push(inner);
-                index = index.saturating_add(1_usize);
-            }
-            if !name.is_empty() {
-                refs.push(name);
-            }
-            continue;
-        }
-        index = index.saturating_add(1_usize);
-    }
-    refs
+/// The variable names a format string references, in order.
+///
+/// An empty `${}` names no module, so it is skipped.
+fn module_refs(format: &str) -> impl Iterator<Item = &str> {
+    tokens(format).into_iter().filter_map(|token| match token {
+        Token::Var { name, .. } if !name.is_empty() => Some(name),
+        Token::Var { .. } | Token::Literal(_) => None,
+    })
 }
 
 #[cfg(test)]
@@ -120,6 +90,7 @@ mod tests {
     use super::{derive_segments, has_line_break, map_module};
     use crate::config::defaults::default_enabled_segments;
     use crate::import::starship::Warnings;
+    use crate::import::starship::format::retain_known_vars;
 
     #[test]
     fn maps_module_groups() {
@@ -201,5 +172,29 @@ mod tests {
         assert!(has_line_break("$all"));
         assert!(!has_line_break("$directory$character"));
         assert!(!has_line_break("$directory\\$line_break$character"));
+    }
+    #[test]
+    fn unclosed_brace_is_literal_in_layout_and_module_formats() {
+        let mut warnings = Warnings::new();
+        assert_eq!(
+            derive_segments("${rust$directory", &mut warnings),
+            vec!["directory"]
+        );
+        assert!(!has_line_break("${line_break"));
+        assert_eq!(
+            retain_known_vars("${rust$directory", &["directory"], "test", &mut warnings),
+            "${rust$directory"
+        );
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn empty_braced_reference_names_no_module() {
+        let mut warnings = Warnings::new();
+        assert_eq!(
+            derive_segments("${}$directory", &mut warnings),
+            vec!["directory"]
+        );
+        assert!(warnings.is_empty());
     }
 }
