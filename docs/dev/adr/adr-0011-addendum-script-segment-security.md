@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-10). This is the security design for the G script segments of [ADR-0011](adr-0011-plugin-shell-coverage.md). It supersedes ADR-0011 Decision item 5 ("Trust model and hardening") where the two differ, and details item 9 ("Approval boundaries"). It turns that direction into rules the adapter work item implements and tests. The maintainer must approve the [approval boundaries](#approval-boundaries) and the [open decisions](#open-decisions) before any implementing PR, and each such PR still needs its own approval.
+Proposed (2026-10). This is the security design for the G script segments of [ADR-0011](adr-0011-plugin-shell-coverage.md). It supersedes ADR-0011 Decision item 5 ("Trust model and hardening") where the two differ, and details item 9 ("Approval boundaries"). These rules define what the adapter work item implements and tests. The maintainer must approve the [approval boundaries](#approval-boundaries) and the [open decisions](#open-decisions) before any implementing PR; each implementing PR still requires its own approval.
 
 ## Context
 

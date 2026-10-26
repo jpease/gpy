@@ -9,7 +9,7 @@ import? 'private.just'
 default:
     @just --list
 
-# Run comprehensive quality checks
+# Run the full quality checks
 check:
     ./{{scripts_dir}}/quality-check.sh
 

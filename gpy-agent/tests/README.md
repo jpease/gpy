@@ -116,8 +116,8 @@ cargo llvm-cov nextest --html --open
 
 ## Platforms
 
-- **macOS** — primary development platform; the maintainer's pre-push gate
-  runs the full suite, including the shell end-to-end tiers.
+- **macOS** — primary development platform; runs the full suite,
+  including the shell end-to-end tiers.
 - **Linux** — the ubuntu legs of `pr-gate.yml`, which runs on every pull
   request to `main` (and on manual dispatch).
 - **Windows** — `windows-gate.yml` (build, lib tests, CLI integration

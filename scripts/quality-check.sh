@@ -343,7 +343,7 @@ main() {
     else
         warn "skipping unused dependency check (cargo-machete not installed)"
     fi
-    # The release build is the slowest leg; --rust-only (pre-push, CI) always
+    # The release build is the slowest leg; --rust-only (and CI) always
     # runs it, the local full gate only under CI or GPY_GATE_RELEASE=1.
     if [[ -n "${CI:-}" || -n "${GPY_GATE_RELEASE:-}" ]]; then
         run_check "Release build" "cargo build --release" || true

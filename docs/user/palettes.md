@@ -112,7 +112,7 @@ such keys, and `gpy theme import` warns when a Starship palette has them.
 
 ## The dedicated `starship` palette
 
-`starship` is a first-class builtin palette that reproduces vanilla Starship's
+`starship` is a dedicated builtin palette that reproduces vanilla Starship's
 colors. It is automatically paired with the `starship` theme: running
 `gpy theme use starship --force` activates the theme *and* sets `ui.palette =
 "starship"`. Without `--force` the theme switches but your current palette is

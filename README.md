@@ -29,7 +29,7 @@ otherwise draws without it.
 
 Time for one git-status prompt segment (median, ms; lower is better).
 
-| Repository (tracked files) | GPY 0.4.0 | Starship 1.26.0 |
+| Repository (tracked files) | GPY (v0.4.0) | Starship (1.26.0) |
 |---|---:|---:|
 | tiny-express (225) | 10.2 | 10.7 |
 | small-redis (1,680) | 11.4 | 11.6 |
@@ -107,27 +107,8 @@ Tab completion for `gpy` is installed for all three shells.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). `./scripts/quality-check.sh` runs the full gate.
-
-### Running an unreleased build
-
-`just dev` (or `scripts/gpy-dev.sh`) opens a fish shell running a build from
-a checkout, with its own config, caches and agent under `~/.local/share/gpy-dev`.
-Your installed gpy is untouched; `exit` goes back to it. The prompt is marked
-`[gpy-dev <version> <ref>]`.
-
-```bash
-./scripts/gpy-dev.sh                    # this checkout, debug build
-./scripts/gpy-dev.sh --release          # optimized build
-./scripts/gpy-dev.sh --ref v0.7.0-rc1   # branch, tag or sha, via a worktree
-./scripts/gpy-dev.sh --pr 123           # a pull request
-./scripts/gpy-dev.sh --bin ./dist       # prebuilt gpy and gpy-agent, no build
-./scripts/gpy-dev.sh --reset            # wipe the sandbox first
-./scripts/gpy-dev.sh --sync-config      # re-copy your real config.toml
-```
-
-The sandbox config is a copy of `~/.config/gpy/config.toml`, so a pre-release
-can't modify yours. Don't use `./install-dev.fish` next to a packaged gpy; it
-refuses unless given `--allow-shadow`.
+To run an unreleased build in an isolated shell without touching an installed release,
+see [`scripts/README.md`](scripts/README.md) (`just dev` / `scripts/gpy-dev.sh`).
 
 ## License
 

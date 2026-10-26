@@ -193,7 +193,7 @@ concatenates them into the prompt.
 
 **Limitations**:
 - No native JSON parsing (uses `socat` or `nc -U`)
-- `PROMPT_COMMAND` less elegant than Fish/Zsh hooks
+- `PROMPT_COMMAND` runs synchronously on each prompt without Fish/Zsh repaint hooks
 - Signal handling more complex (no clean repaint primitive)
 - Code avoids associative arrays, so it runs on Bash 3.2 (macOS default)
 - Duration needs `EPOCHREALTIME` (Bash 5.0+); Bash 3.2 disables that segment

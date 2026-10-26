@@ -38,7 +38,7 @@ Registry descriptions and the `///` comments on the same fields mostly differ in
 
 ## Decision
 
-Proposed: option A. Keep `CONFIG_KEYS` and its guards.
+Accepted: option A. Keep `CONFIG_KEYS` and its guards.
 
 - The registry costs 1 file and 9 of the 19 lines of a new boolean key, and forgetting it fails a test that names the key.
 - Option C is rejected for what it changes, not for its size. It changes the CLI error text, prints widened floats, rejects mixed-case enum input that works today, and needs the registry guards rewritten. Each of these could be special-cased, but every special case is per-type metadata, which is what the registry already holds.

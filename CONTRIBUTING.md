@@ -38,11 +38,6 @@ That avoids spending time on a change that would not get merged.
   [Supported Platforms and Shells](docs/INSTALL.md#supported-platforms-and-shells)
   for the full OS/shell support matrix — that page is canonical, this file
   does not restate version numbers
-
-None of this requires any AI or agent tooling. If you use an AI coding
-assistant, that is your own workflow choice; it is not part of the project's
-contribution requirements and nothing here depends on it.
-
 ## Workflow
 
 1. Fork the repository and clone your fork.
@@ -62,18 +57,11 @@ cd gpy
 
 `./install-dev.fish` installs into `~/.local/bin` and `~/.config`, so it refuses
 to run when a packaged gpy (for example Homebrew's) is already on `PATH`; pass
-`--allow-shadow` to override. To try a build without touching an installed
-release, run it in an isolated shell instead:
+`--allow-shadow` to override.
 
-```bash
-./scripts/gpy-dev.sh                 # this checkout
-./scripts/gpy-dev.sh --pr 123        # a pull request
-./scripts/gpy-dev.sh --ref v0.7.0-rc1
-./scripts/gpy-dev.sh --bin ./dist    # prebuilt gpy + gpy-agent, no build
-```
-
-`exit` returns to the installed release. See
-[`scripts/README.md`](scripts/README.md) for the flags.
+To try a build without touching an installed release, run it in an isolated shell
+instead with `just dev` (or `./scripts/gpy-dev.sh`); `exit` returns to the
+installed release. See [`scripts/README.md`](scripts/README.md) for the flags.
 
 ## Quality Gates
 
@@ -83,11 +71,10 @@ Run before pushing — this is what CI also runs:
 ./scripts/quality-check.sh
 ```
 
-It covers: Fish syntax and formatting, Rust formatting, strict Clippy, Rust
-unit/integration tests, doc tests, `cargo audit` and `cargo deny`, an
-unused-dependency check, shellcheck over every shell script in the repository,
-and (in CI, optional locally) a release build.
-
+See [`scripts/README.md`](scripts/README.md) for the check list, required tools,
+and faster flags (`--fast`, `--rust-only`, `--shell-only`, `--fish-only`).
+`just check` (or `just check-fast`, `just check-rust`, `just check-shell`,
+`just check-fish`) wraps these.
 Shell scripts must be shellcheck-clean or carry an inline
 `# shellcheck disable=` with a reason on the line beneath it. A bare disable
 will be asked about in review.
@@ -127,69 +114,8 @@ listed file, split it, and lower or remove its entry with
 `python3 scripts/check_file_size.py --update` in the same commit; the check
 fails until a shrunk file's entry is lowered.
 
-Faster subsets for local iteration:
-
-```bash
-./scripts/quality-check.sh --fast        # skip slow audits and the release build
-./scripts/quality-check.sh --rust-only   # Rust toolchain checks only
-./scripts/quality-check.sh --shell-only  # Fish/Bash/Zsh integration suites only
-./scripts/quality-check.sh --shell-only bash  # one part: checks, fish, bash or zsh (comma-separated)
-./scripts/quality-check.sh --fish-only   # Fish syntax + formatting only
-```
-
-Equivalent `just` recipes:
-
-```bash
-just check          # same as ./scripts/quality-check.sh
-just check-fast
-just check-rust
-just check-shell
-just check-fish
-just build           # cargo build
-just test-rust       # cargo nextest run
-just test-fish       # ./scripts/test_fish.sh
-just lint            # cargo clippy --all-targets --all-features
-just format          # cargo fmt
-just fmt-check       # cargo fmt --check
-```
-
-### Running individual suites
-
-```bash
-# Rust tests (unit + integration)
-(cd gpy-agent && cargo nextest run)
-(cd gpy-agent && cargo nextest run --test <suite_name>)
-(cd gpy-agent && cargo nextest run --lib)   # unit tests only
-(cd gpy-agent && cargo test --doc)          # doc tests
-
-# Fish integration tests (auto-discovers tests/fish/*.test.fish)
-./scripts/test_fish.sh
-fish tests/fish/<name>.test.fish            # a single suite
-
-# Bash and Zsh integration tests (auto-discovered by quality-check.sh)
-bash tests/bash/<name>.test.bash
-zsh tests/zsh/<name>.test.zsh
-
-# Fish syntax check
-fish -n install-dev.fish fish/**/*.fish tests/fish/*.test.fish
-
-# Fish formatting check
-fish_indent --check install-dev.fish fish/**/*.fish
-
-# Rust lint (uses the [lints] policy in Cargo.toml)
-(cd gpy-agent && cargo clippy --all-targets --all-features)
-
-# Rust formatting
-(cd gpy-agent && cargo fmt --all)           # auto-fix
-(cd gpy-agent && cargo fmt --all --check)   # check only
-```
-
-`*.bak` files are gitignored: leave a scratch copy of a test next to the
-original if you like, but nothing will pick it up, and a stale `.rs.bak`
-under `gpy-agent/tests/` is invisible to nextest (it discovers `*.rs` only).
-Every test tier and the command that runs it is in
-[docs/dev/testing.md](docs/dev/testing.md).
-
+For faster iterations and individual test suites, see [`scripts/README.md`](scripts/README.md)
+and [Testing Tiers](docs/dev/testing.md).
 ### Git hooks (optional, recommended)
 
 ```bash
