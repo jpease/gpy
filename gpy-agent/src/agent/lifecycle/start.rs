@@ -1,11 +1,13 @@
 //! Unix startup path for the agent daemon: check enablement, clean up stale
 //! sockets, fork, wait for readiness, and nudge registered shells after restart.
 
+#[cfg(unix)]
+use crate::deadline::Deadline;
 use crate::{Error, Result};
 #[cfg(unix)]
 use crate::{agent::Agent, debug_log};
 #[cfg(unix)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::time::{Duration, SystemTime};
 
@@ -24,6 +26,10 @@ use nix::sys::signal::kill;
 #[cfg(unix)]
 use nix::unistd::Pid;
 
+/// The progress line `gpy-agent start` prints on stderr before forking.
+/// `gpy restart` filters this exact line from its own normalized output.
+pub const START_PROGRESS_LINE: &str = "Starting GPY Agent in background...";
+
 /// Whether the agent is disabled via configuration (`agent.enabled = false`).
 #[cfg(unix)]
 fn agent_disabled() -> bool {
@@ -41,7 +47,7 @@ const START_LOCK_POLL: Duration = Duration::from_millis(50);
 /// Per-socket start lock path, `<socket>.lock`. Never unlinked: removing a
 /// lock file races like removing the socket.
 #[cfg(unix)]
-fn start_lock_path(socket_path: &std::path::Path) -> PathBuf {
+fn start_lock_path(socket_path: &Path) -> PathBuf {
     let mut lock = socket_path.as_os_str().to_owned();
     lock.push(".lock");
     PathBuf::from(lock)
@@ -71,16 +77,14 @@ fn acquire_start_lock(socket_path: &std::path::Path) -> Result<Flock<std::fs::Fi
         .mode(0o600)
         .open(&lock_path)
         .map_err(|e| lock_error(e.to_string()))?;
-    let deadline = std::time::Instant::now()
-        .checked_add(START_LOCK_WAIT_MAX)
-        .unwrap_or_else(std::time::Instant::now);
+    let deadline = Deadline::after(START_LOCK_WAIT_MAX);
     loop {
         match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
             Ok(lock) => return Ok(lock),
             Err((unlocked, Errno::EWOULDBLOCK | Errno::EINTR)) => file = unlocked,
             Err((_, errno)) => return Err(lock_error(errno.to_string())),
         }
-        if std::time::Instant::now() >= deadline {
+        if deadline.expired() {
             return Err(lock_error(format!(
                 "another gpy-agent start held it for more than {}s",
                 START_LOCK_WAIT_MAX.as_secs()
@@ -263,13 +267,11 @@ const READY_WAIT_POLL: Duration = Duration::from_millis(10);
 /// the daemon fails or does not answer within [`READY_WAIT_MAX`].
 #[cfg(unix)]
 fn wait_for_agent_ready(
-    socket_path: &PathBuf,
+    socket_path: &Path,
     agent_pid: i32,
     mut report: StartupReport,
 ) -> Result<()> {
-    let deadline = std::time::Instant::now()
-        .checked_add(READY_WAIT_MAX)
-        .unwrap_or_else(std::time::Instant::now);
+    let deadline = Deadline::after(READY_WAIT_MAX);
     loop {
         report.poll();
         if let Some(reason) = report.failure() {
@@ -283,7 +285,7 @@ fn wait_for_agent_ready(
             report.poll();
             return Err(startup_failed(report.failure().as_deref()));
         }
-        if std::time::Instant::now() >= deadline {
+        if deadline.expired() {
             return Err(Error::process(
                 "startup_timeout",
                 "Agent process did not become ready before timeout".to_owned(),
@@ -431,7 +433,7 @@ fn announce_start_in(shell_dir: &std::path::Path, write_export: impl FnOnce() ->
 /// Returns an error if the pipe or fork fails, the daemon never reports its
 /// PID, or it fails or is not ready in time. In the daemon, the agent's result.
 #[cfg(unix)]
-fn fork_agent(socket_path: &PathBuf, start_lock: Flock<std::fs::File>) -> Result<()> {
+fn fork_agent(socket_path: &Path, start_lock: Flock<std::fs::File>) -> Result<()> {
     use std::io::Read;
 
     let (mut reader, writer) =
@@ -586,7 +588,7 @@ pub fn start_background_agent() -> Result<()> {
             return Ok(());
         }
 
-        eprintln!("Starting GPY Agent in background...");
+        eprintln!("{START_PROGRESS_LINE}");
         fork_agent(&socket_path, start_lock)
     }
 

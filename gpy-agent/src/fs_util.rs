@@ -1,5 +1,6 @@
 //! Small filesystem helpers.
 
+use crate::deadline::Deadline;
 use std::io::Read as _;
 use std::path::Path;
 
@@ -136,9 +137,7 @@ pub fn lock_beside(path: &Path, wait: std::time::Duration) -> std::io::Result<Pa
         options.mode(0o600);
     }
     let file = options.open(&lock_path)?;
-    let deadline = std::time::Instant::now()
-        .checked_add(wait)
-        .unwrap_or_else(std::time::Instant::now);
+    let deadline = Deadline::after(wait);
     loop {
         match file.try_lock() {
             Ok(()) => return Ok(PathLock { lock: file }),
@@ -146,7 +145,7 @@ pub fn lock_beside(path: &Path, wait: std::time::Duration) -> std::io::Result<Pa
             Err(TryLockError::Error(e)) if e.kind() == std::io::ErrorKind::Interrupted => {}
             Err(TryLockError::Error(e)) => return Err(e),
         }
-        if std::time::Instant::now() >= deadline {
+        if deadline.expired() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 format!("{} is held by another process", lock_path.to_string_lossy()),

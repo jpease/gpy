@@ -1,24 +1,63 @@
 //! `gpy start|stop|restart|status`, delegated to the `gpy-agent` binary.
 
 use super::utils::agent_binary;
+use crate::agent::lifecycle::start::START_PROGRESS_LINE;
+use crate::deadline::Deadline;
 use crate::{Error, Result};
 use std::io::{BufRead, BufReader};
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
+use std::time::Duration;
+
+/// Pause between the stop and the start of a restart, so the old agent's
+/// socket is gone before the new one binds.
+const RESTART_SETTLE: Duration = Duration::from_millis(500);
+
+/// How long a restart waits for the new agent to answer.
+const AGENT_READY_WAIT: Duration = Duration::from_secs(5);
+
+/// Poll interval while waiting for the new agent to answer.
+const AGENT_READY_POLL: Duration = Duration::from_millis(100);
+
+/// `gpy-agent <subcommand>`, not yet run.
+fn agent_command(subcommand: &str) -> Command {
+    let mut command = Command::new(agent_binary());
+    command.arg(subcommand);
+    command
+}
+
+/// The error for a `gpy-agent <subcommand>` that could not be run or read.
+fn agent_error(subcommand: &str, failure: impl std::fmt::Display) -> Error {
+    Error::process(format!("gpy-agent {subcommand}"), failure.to_string())
+}
+
+/// Run `gpy-agent <subcommand>` with inherited stdio and wait for it.
+///
+/// # Errors
+/// Returns an error if `gpy-agent` cannot run.
+fn run_agent(subcommand: &str) -> Result<ExitStatus> {
+    agent_command(subcommand)
+        .status()
+        .map_err(|e| agent_error(subcommand, format_args!("could not run: {e}")))
+}
+
+/// `Ok` when `gpy-agent <subcommand>` exited with `status` zero.
+///
+/// # Errors
+/// Returns an error naming the subcommand and its exit status otherwise.
+fn ensure_success(subcommand: &str, status: ExitStatus) -> Result<()> {
+    if status.success() {
+        Ok(())
+    } else {
+        Err(agent_error(subcommand, format_args!("failed ({status})")))
+    }
+}
 
 /// Start the GPY agent daemon.
 ///
 /// # Errors
 /// Returns an error if `gpy-agent start` cannot run or fails.
 pub fn start() -> Result<()> {
-    let status = Command::new(agent_binary())
-        .arg("start")
-        .status()
-        .map_err(|e| Error::process("gpy-agent", e.to_string()))?;
-
-    if !status.success() {
-        return Err(Error::process("start", "Failed to start agent".to_owned()));
-    }
-    Ok(())
+    ensure_success("start", run_agent("start")?)
 }
 
 /// Stop the GPY agent daemon.
@@ -26,15 +65,7 @@ pub fn start() -> Result<()> {
 /// # Errors
 /// Returns an error if `gpy-agent stop` cannot run or fails.
 pub fn stop() -> Result<()> {
-    let status = Command::new(agent_binary())
-        .arg("stop")
-        .status()
-        .map_err(|e| Error::process("gpy-agent", e.to_string()))?;
-
-    if !status.success() {
-        return Err(Error::process("stop", "Failed to stop agent".to_owned()));
-    }
-    Ok(())
+    ensure_success("stop", run_agent("stop")?)
 }
 
 /// Restart the GPY agent daemon, reporting each step as it completes.
@@ -48,47 +79,31 @@ pub fn restart() -> Result<()> {
     if restart_stop().is_err() {
         println!("Stop failed; attempting to start anyway");
     }
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    std::thread::sleep(RESTART_SETTLE);
     restart_start()
 }
 
-/// Run `gpy-agent stop`, translating its progress lines into restart steps.
+/// Run `gpy-agent stop` and report the restart's stop steps. Whether an agent
+/// was running comes from pinging it, not from `stop`'s output; `stop`'s own
+/// errors still reach stderr.
 ///
 /// # Errors
-/// Returns an error if `gpy-agent stop` cannot run or fails.
+/// Returns an error if the agent cannot be pinged, or `gpy-agent stop` cannot
+/// run or fails.
 fn restart_stop() -> Result<()> {
-    let mut child = Command::new(agent_binary())
-        .arg("stop")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .map_err(|e| Error::process("gpy-agent", e.to_string()))?;
+    let was_running =
+        crate::agent::lifecycle::ping_agent_blocking(&crate::paths::get_socket_path()?)?;
 
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| Error::process("gpy-agent", "Failed to capture stop output".to_owned()))?;
+    let status = agent_command("stop")
+        .stdout(Stdio::null())
+        .status()
+        .map_err(|e| agent_error("stop", format_args!("could not run: {e}")))?;
+    ensure_success("stop", status)?;
 
-    for line_result in BufReader::new(stdout).lines() {
-        let Ok(line) = line_result else { continue };
-        match line.as_str() {
-            "Shutdown command sent successfully" => println!("Shutdown command sent"),
-            "Agent stopped successfully"
-            | "Agent is not running (socket not found)"
-            | "Agent is not running (stale socket removed)" => {
-                println!("GPY stopped");
-            }
-            other => println!("{other}"),
-        }
+    if was_running {
+        println!("Shutdown command sent");
     }
-
-    let status = child
-        .wait()
-        .map_err(|e| Error::process("gpy-agent", e.to_string()))?;
-
-    if !status.success() {
-        return Err(Error::process("stop", "Failed to stop agent".to_owned()));
-    }
+    println!("GPY stopped");
     Ok(())
 }
 
@@ -98,33 +113,18 @@ fn restart_stop() -> Result<()> {
 /// # Errors
 /// Returns an error if `gpy-agent start` fails or the agent never answers.
 fn restart_start() -> Result<()> {
-    let mut child = Command::new(agent_binary())
-        .arg("start")
+    let mut child = agent_command("start")
         .stdout(Stdio::inherit())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| Error::process("gpy-agent", e.to_string()))?;
+        .map_err(|e| agent_error("start", format_args!("could not run: {e}")))?;
 
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| Error::process("gpy-agent", "Failed to capture start output".to_owned()))?;
-
-    // Forward everything except the expected progress line.
-    for line_result in BufReader::new(stderr).lines() {
-        let Ok(line) = line_result else { continue };
-        if line != "Starting GPY Agent in background..." {
-            eprintln!("{line}");
-        }
-    }
-
+    let forwarded = forward_start_stderr(&mut child);
     let status = child
         .wait()
-        .map_err(|e| Error::process("gpy-agent", e.to_string()))?;
-
-    if !status.success() {
-        return Err(Error::process("start", "Failed to start agent".to_owned()));
-    }
+        .map_err(|e| agent_error("start", format_args!("could not wait: {e}")))?;
+    forwarded?;
+    ensure_success("start", status)?;
 
     if !agent_enabled() {
         return Ok(());
@@ -135,32 +135,53 @@ fn restart_start() -> Result<()> {
     Ok(())
 }
 
+/// Forward the start's stderr, minus the expected progress line.
+///
+/// # Errors
+/// Returns an error if the child's stderr was not captured or cannot be read.
+fn forward_start_stderr(child: &mut Child) -> Result<()> {
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| agent_error("start", "could not capture its output"))?;
+    for read in BufReader::new(stderr).lines() {
+        let line =
+            read.map_err(|e| agent_error("start", format_args!("could not read its output: {e}")))?;
+        if line != START_PROGRESS_LINE {
+            eprintln!("{line}");
+        }
+    }
+    Ok(())
+}
+
 /// `agent.enabled`; `true` when the config cannot be loaded, so a failed
 /// start still surfaces through the readiness wait.
 fn agent_enabled() -> bool {
     crate::config::loader::load_config().map_or(true, |config| config.agent.enabled)
 }
 
-/// Poll the agent socket for up to 5 s until it responds.
+/// Poll the agent socket until it responds, for up to [`AGENT_READY_WAIT`].
 ///
 /// # Errors
 /// Returns an error if pinging fails or the agent does not answer in time.
 fn wait_for_agent_started() -> Result<()> {
-    use crate::agent::lifecycle::ping_agent_blocking;
-    use crate::paths::get_socket_path;
-
-    let socket_path = get_socket_path()?;
-    for _ in 0_i32..50_i32 {
-        if ping_agent_blocking(&socket_path)? {
+    let socket_path = crate::paths::get_socket_path()?;
+    let deadline = Deadline::after(AGENT_READY_WAIT);
+    loop {
+        if crate::agent::lifecycle::ping_agent_blocking(&socket_path)? {
             return Ok(());
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        if deadline.expired() {
+            return Err(agent_error(
+                "start",
+                format_args!(
+                    "agent did not answer within {}s",
+                    AGENT_READY_WAIT.as_secs()
+                ),
+            ));
+        }
+        std::thread::sleep(AGENT_READY_POLL);
     }
-
-    Err(Error::process(
-        "start",
-        "Agent did not become ready before timeout".to_owned(),
-    ))
 }
 
 /// Run `gpy-agent status` and pass its exit code through unchanged (1 means
@@ -169,17 +190,9 @@ fn wait_for_agent_started() -> Result<()> {
 /// # Errors
 /// Returns an error if `gpy-agent` cannot run or was killed by a signal.
 pub fn status() -> Result<ExitCode> {
-    let status = Command::new(agent_binary())
-        .arg("status")
-        .status()
-        .map_err(|e| Error::process("gpy-agent", e.to_string()))?;
-
-    let raw_code = status.code().ok_or_else(|| {
-        Error::process(
-            "status",
-            "gpy-agent status was terminated by a signal".to_owned(),
-        )
-    })?;
+    let raw_code = run_agent("status")?
+        .code()
+        .ok_or_else(|| agent_error("status", "was terminated by a signal"))?;
     let code = u8::try_from(raw_code).unwrap_or(crate::error::CLI_FAILURE_EXIT_CODE);
     Ok(ExitCode::from(code))
 }

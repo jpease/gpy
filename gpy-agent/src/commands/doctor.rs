@@ -532,19 +532,15 @@ fn check_binaries() -> bool {
     }
 }
 
-/// The `gpy-agent status` report line that proves the agent answered.
-const AGENT_RESPONDING_LINE: &str = "Status: Running and Responding";
-
-/// Whether a live agent answered `gpy-agent status`: a zero exit status and
-/// the report line. A status command that cannot run is reported.
+/// Whether a live agent answered a ping on its socket. A ping that cannot be
+/// attempted is reported.
 fn check_agent_running() -> bool {
-    match Command::new(agent_binary()).arg("status").output() {
-        Ok(output) => {
-            output.status.success()
-                && String::from_utf8_lossy(&output.stdout).contains(AGENT_RESPONDING_LINE)
-        }
+    let ping = crate::paths::get_socket_path()
+        .and_then(|socket_path| crate::agent::lifecycle::ping_agent_blocking(&socket_path));
+    match ping {
+        Ok(answered) => answered,
         Err(err) => {
-            output::detail(format_args!("Diagnostic: could not run gpy-agent: {err}"));
+            output::detail(format_args!("Diagnostic: could not ping the agent: {err}"));
             false
         }
     }

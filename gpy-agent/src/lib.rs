@@ -18,6 +18,8 @@ pub mod cache;
 pub mod commands;
 /// Configuration loading and schema definition.
 pub mod config;
+/// Bounded-wait deadlines for polling loops.
+mod deadline;
 /// Two-level logging: opt-in `debug_log!` and always-visible `warn_log!`.
 pub mod debug;
 /// Centralized error and result types.
