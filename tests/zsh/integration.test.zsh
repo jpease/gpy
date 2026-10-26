@@ -100,8 +100,10 @@ unfunction __gpy_request_clock
 echo "PASS: clock renders locally when the theme sets no clock format"
 
 echo "=== Testing Duration Segment ==="
-# Test with duration above threshold - agent-rendered: mock the IPC call
-# so the test validates delegation without requiring a live agent.
+# Pin the threshold so the test is independent of theme configuration.
+__duration_threshold_ms=2000
+# Above threshold - agent-rendered: mock the IPC call so the test validates
+# delegation without requiring a live agent.
 function __gpy_request_duration() {
     printf '\033[33m 3.5s \033[0m'
 }
@@ -117,7 +119,7 @@ echo "PASS: Duration shown for 3.5s"
 __gpy_cmd_duration=500
 output=$(__gpy_segment_duration)
 if [[ -n "$output" ]]; then
-    echo "FAIL: Duration shown for 0.5s (should be hidden)"
+    echo "FAIL: Duration shown for 0.5s (should be hidden with 2000ms threshold)"
     exit 1
 fi
 echo "PASS: Duration hidden for 0.5s"
