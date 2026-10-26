@@ -25,9 +25,7 @@ use crate::ipc::socket_identity::SocketIdentity;
 /// # Errors
 /// Returns an error naming the runtime directory if it cannot be created.
 pub fn ensure_runtime_dir() -> Result<()> {
-    if crate::paths::SOCKET_OVERRIDE.get().is_some()
-        || crate::paths::socket_path_override().is_some()
-    {
+    if crate::paths::socket_is_overridden() {
         return Ok(());
     }
     let path = crate::paths::runtime_dir();
@@ -43,9 +41,7 @@ pub fn ensure_runtime_dir() -> Result<()> {
 #[cfg(unix)]
 #[must_use]
 pub fn socket_dir_repair() -> crate::ipc::server::DirRepair {
-    if crate::paths::SOCKET_OVERRIDE.get().is_some()
-        || crate::paths::socket_path_override().is_some()
-    {
+    if crate::paths::socket_is_overridden() {
         crate::ipc::server::DirRepair::Refuse
     } else {
         crate::ipc::server::DirRepair::Tighten
@@ -54,12 +50,9 @@ pub fn socket_dir_repair() -> crate::ipc::server::DirRepair {
 
 /// Version marker path: `<runtime>/agent.version` for the default socket,
 /// `<socket>.version` for an overridden one so agents never share a marker.
+#[must_use]
 pub fn get_version_file_path() -> PathBuf {
-    let socket_override = crate::paths::SOCKET_OVERRIDE
-        .get()
-        .cloned()
-        .or_else(crate::paths::socket_path_override);
-    socket_override.map_or_else(
+    crate::paths::socket_override().map_or_else(
         || version_file_for(None, &crate::paths::runtime_dir()),
         |socket| version_file_for(Some(&socket), Path::new("")),
     )

@@ -103,6 +103,17 @@ pub(crate) fn process_start_time_secs(sys: &mut sysinfo::System, pid: u32) -> Op
 
 const DEFAULT_THROTTLE_MS: u64 = 150;
 
+/// Whether a registered PID still belongs to the process that registered it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PidIdentity {
+    /// Start time unrecorded or equal to the recorded one.
+    Matches,
+    /// Recorded, but the current lookup failed. Keep the client; skip signaling.
+    Unverified,
+    /// Both start times known and different: the PID was reused. Prune.
+    Recycled,
+}
+
 /// [`ClientInfo`] fields needed after releasing the registry lock.
 struct ClientSnapshot {
     pid: u32,
@@ -233,46 +244,24 @@ impl ClientDirectory {
         None
     }
 
-    /// Whether the recorded identity still matches. An unrecorded start time
-    /// matches anything; a recorded one requires a successful, equal lookup.
-    #[cfg(unix)]
-    fn identity_matches(recorded: Option<u64>, current: Option<u64>) -> bool {
-        recorded.is_none_or(|recorded_started_at| current == Some(recorded_started_at))
-    }
-
-    /// Whether the PID is *confirmed* to belong to another process. A failed
-    /// lookup is not confirmation: keep the client, just skip signaling.
-    #[cfg(unix)]
-    const fn is_confirmed_recycle(recorded: Option<u64>, current: Option<u64>) -> bool {
-        matches!((recorded, current), (Some(r), Some(c)) if r != c)
-    }
-
-    /// Whether `pid` is confirmed recycled since registration.
-    #[cfg(unix)]
-    fn is_recycled(&self, pid: u32, recorded: Option<u64>) -> bool {
-        recorded.is_some() && Self::is_confirmed_recycle(recorded, self.process_start_time(pid))
-    }
-
-    #[cfg(not(unix))]
-    fn is_recycled(&self, _pid: u32, _recorded: Option<u64>) -> bool {
-        false
-    }
-
-    /// Whether to skip signaling `pid` this round; confirmed recycles are also
-    /// pushed to `stale` for pruning, while unconfirmed identities are kept.
-    #[cfg(unix)]
-    fn skip_signal_for_identity(
-        &self,
-        recorded: Option<u64>,
-        pid: u32,
-        stale: &mut Vec<u32>,
-    ) -> bool {
-        let current = self.process_start_time(pid);
-        if Self::is_confirmed_recycle(recorded, current) {
-            stale.push(pid);
-            return true;
+    /// Compare the start time recorded at registration with the PID's current one.
+    /// An unrecorded start time matches anything.
+    const fn classify_identity(recorded: Option<u64>, current: Option<u64>) -> PidIdentity {
+        match (recorded, current) {
+            (None, _) => PidIdentity::Matches,
+            (Some(_), None) => PidIdentity::Unverified,
+            (Some(then), Some(now)) if then == now => PidIdentity::Matches,
+            (Some(_), Some(_)) => PidIdentity::Recycled,
         }
-        !Self::identity_matches(recorded, current)
+    }
+
+    /// Whether `pid` still belongs to the process that registered it. One
+    /// start-time lookup per call.
+    fn pid_identity(&self, pid: u32, recorded: Option<u64>) -> PidIdentity {
+        if recorded.is_none() {
+            return PidIdentity::Matches;
+        }
+        Self::classify_identity(recorded, self.process_start_time(pid))
     }
 
     /// Whether `pid` is currently in the registry.
@@ -336,7 +325,8 @@ impl ClientDirectory {
         let mut dead_pids = Vec::new();
 
         for client in self.client_snapshots() {
-            if !Self::is_client_alive(client.pid) || self.is_recycled(client.pid, client.started_at)
+            if !Self::is_client_alive(client.pid)
+                || self.pid_identity(client.pid, client.started_at) == PidIdentity::Recycled
             {
                 dead_pids.push(client.pid);
             }
@@ -444,8 +434,13 @@ impl ClientDirectory {
                     continue;
                 }
 
-                if self.skip_signal_for_identity(started_at, pid, &mut stale) {
-                    continue;
+                match self.pid_identity(pid, started_at) {
+                    PidIdentity::Matches => {}
+                    PidIdentity::Recycled => {
+                        stale.push(pid);
+                        continue;
+                    }
+                    PidIdentity::Unverified => continue,
                 }
 
                 if !self.deliver(pid, flag.zip(shell_dir.as_deref())) {

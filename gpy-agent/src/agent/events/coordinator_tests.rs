@@ -3,7 +3,7 @@
 #![allow(clippy::panic)]
 #![allow(clippy::missing_panics_doc)]
 
-use super::{MAX_COALESCED_FOLLOW_UPS, RepoRefreshCoordinator, run_coalesced};
+use super::coalesce::{MAX_COALESCED_FOLLOW_UPS, RepoRefreshCoordinator, run_coalesced};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -16,16 +16,50 @@ fn try_start_grants_first_caller_and_records_pending() {
     let coordinator = RepoRefreshCoordinator::default();
     let repo = PathBuf::from("/repo/state");
 
-    assert!(coordinator.try_start(&repo), "first caller runs");
+    let mut slot = coordinator.try_start(&repo).expect("first caller runs");
     assert!(
-        !coordinator.try_start(&repo),
+        coordinator.try_start(&repo).is_none(),
         "second concurrent caller for the same repo is refused"
     );
     // Pending follow-up: one more pass, then done.
-    assert!(coordinator.finish(&repo), "pending follow-up owed");
-    assert!(!coordinator.finish(&repo), "no further work; entry removed");
-    assert!(coordinator.try_start(&repo));
-    coordinator.abandon(&repo);
+    assert!(slot.needs_follow_up(), "pending follow-up owed");
+    assert!(!slot.needs_follow_up(), "no further work; entry removed");
+    assert!(coordinator.try_start(&repo).is_some());
+}
+
+/// Dropping the slot, as unwinding from a panicking scan does, frees the repo.
+#[test]
+fn dropping_the_slot_frees_the_repo() {
+    let coordinator = RepoRefreshCoordinator::default();
+    let repo = PathBuf::from("/repo/dropped");
+
+    let slot = coordinator.try_start(&repo).expect("first caller runs");
+    assert!(coordinator.try_start(&repo).is_none());
+    drop(slot);
+    assert!(
+        coordinator.try_start(&repo).is_some(),
+        "an abandoned slot must not leave the repo in flight"
+    );
+}
+
+/// A panicking scan releases the slot while unwinding.
+#[test]
+fn run_coalesced_releases_the_slot_when_the_scan_panics() {
+    let coordinator = Arc::new(RepoRefreshCoordinator::default());
+    let repo = PathBuf::from("/repo/panics");
+
+    let scan = {
+        let thread_coordinator = Arc::clone(&coordinator);
+        let thread_repo = repo.clone();
+        thread::spawn(move || {
+            run_coalesced(&thread_coordinator, &thread_repo, |_is_follow_up| {
+                panic!("scan failed")
+            });
+        })
+    };
+
+    assert!(scan.join().is_err());
+    assert!(coordinator.try_start(&repo).is_some());
 }
 
 /// In-flight refresh for repo A never refuses repo B.
@@ -35,13 +69,12 @@ fn different_repos_never_serialize_in_state_machine() {
     let repo_a = PathBuf::from("/repo/a");
     let repo_b = PathBuf::from("/repo/b");
 
-    assert!(coordinator.try_start(&repo_a));
-    assert!(
-        coordinator.try_start(&repo_b),
-        "a different repo must never be serialized behind an in-flight repo"
-    );
-    assert!(!coordinator.finish(&repo_a));
-    assert!(!coordinator.finish(&repo_b));
+    let mut slot_a = coordinator.try_start(&repo_a).expect("repo a runs");
+    let mut slot_b = coordinator
+        .try_start(&repo_b)
+        .expect("a different repo must never be serialized behind an in-flight repo");
+    assert!(!slot_a.needs_follow_up());
+    assert!(!slot_b.needs_follow_up());
 }
 
 /// Concurrent mid-scan events coalesce into exactly one follow-up.
@@ -55,8 +88,8 @@ fn run_coalesced_coalesces_concurrent_events_into_single_follow_up() {
         runs += 1;
         if runs == 1 {
             // Two concurrent events during the initial pass.
-            assert!(!coordinator.try_start(&repo));
-            assert!(!coordinator.try_start(&repo));
+            assert!(coordinator.try_start(&repo).is_none());
+            assert!(coordinator.try_start(&repo).is_none());
         }
     });
 
@@ -64,8 +97,7 @@ fn run_coalesced_coalesces_concurrent_events_into_single_follow_up() {
         runs, 2,
         "one initial pass plus exactly one coalesced follow-up"
     );
-    assert!(coordinator.try_start(&repo));
-    coordinator.abandon(&repo);
+    assert!(coordinator.try_start(&repo).is_some());
 }
 
 /// An older, slower scan never leaves its stale result in the cache.
@@ -109,7 +141,7 @@ fn run_coalesced_stale_scan_cannot_overwrite_fresher() {
     // Concurrent same-repo event: must be coalesced, not run in parallel.
     disk.store(2, Ordering::Release);
     assert!(
-        !coordinator.try_start(&repo),
+        coordinator.try_start(&repo).is_none(),
         "a concurrent same-repo refresh must be coalesced, not run in parallel"
     );
 
@@ -170,7 +202,7 @@ fn run_coalesced_follow_up_cap_prevents_unbounded_loop() {
     run_coalesced(&coordinator, &repo, |_is_follow_up| {
         runs += 1;
         // Every scan re-arms pending.
-        coordinator.try_start(&repo);
+        assert!(coordinator.try_start(&repo).is_none());
     });
 
     assert_eq!(
@@ -181,10 +213,9 @@ fn run_coalesced_follow_up_cap_prevents_unbounded_loop() {
          abandoning"
     );
     assert!(
-        coordinator.try_start(&repo),
+        coordinator.try_start(&repo).is_some(),
         "repo must be runnable again after the cap-triggered abandon"
     );
-    coordinator.abandon(&repo);
 }
 
 /// A burst that trips the cap and then settles still captures the final state.
@@ -207,7 +238,7 @@ fn run_coalesced_cap_scan_captures_settled_state_after_burst() {
         if calls <= churn_passes {
             // Change lands after this scan read disk; churn stops after `churn_passes`.
             disk.store(calls, Ordering::SeqCst);
-            coordinator.try_start(&repo);
+            assert!(coordinator.try_start(&repo).is_none());
         }
     });
 

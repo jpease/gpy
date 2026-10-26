@@ -1,6 +1,6 @@
 #[cfg(unix)]
 use super::ThrottleRecord;
-use super::{ClientDirectory, ClientInfo};
+use super::{ClientDirectory, ClientInfo, PidIdentity};
 use crate::sync_ext::MutexExt;
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
@@ -372,30 +372,42 @@ fn prune_dead_clients_empty_registry() {
     assert_eq!(directory.len(), 0, "Should still have 0 clients");
 }
 
-#[cfg(unix)]
 #[test]
 /// A failed lookup at registration must not permanently disable notifications.
-fn identity_matches_true_when_recorded_is_none() {
-    assert!(ClientDirectory::identity_matches(None, Some(123)));
-    assert!(ClientDirectory::identity_matches(None, None));
+fn classify_identity_matches_when_recorded_is_none() {
+    assert_eq!(
+        ClientDirectory::classify_identity(None, Some(123)),
+        PidIdentity::Matches
+    );
+    assert_eq!(
+        ClientDirectory::classify_identity(None, None),
+        PidIdentity::Matches
+    );
 }
 
-#[cfg(unix)]
 #[test]
-fn identity_matches_true_when_start_times_match() {
-    assert!(ClientDirectory::identity_matches(Some(100), Some(100)));
+fn classify_identity_matches_when_start_times_match() {
+    assert_eq!(
+        ClientDirectory::classify_identity(Some(100), Some(100)),
+        PidIdentity::Matches
+    );
 }
 
-#[cfg(unix)]
 #[test]
-fn identity_matches_false_when_start_times_differ() {
-    assert!(!ClientDirectory::identity_matches(Some(100), Some(200)));
+fn classify_identity_recycled_only_when_both_known_and_differ() {
+    assert_eq!(
+        ClientDirectory::classify_identity(Some(5), Some(9)),
+        PidIdentity::Recycled
+    );
 }
 
-#[cfg(unix)]
 #[test]
-fn identity_matches_false_when_current_lookup_fails() {
-    assert!(!ClientDirectory::identity_matches(Some(100), None));
+/// A transient current-lookup failure on a still-registered PID is not a recycle.
+fn classify_identity_unverified_when_current_lookup_fails() {
+    assert_eq!(
+        ClientDirectory::classify_identity(Some(100), None),
+        PidIdentity::Unverified
+    );
 }
 
 #[test]
@@ -457,18 +469,6 @@ fn prune_dead_clients_keeps_live_pid_without_recorded_start_time() {
 
     assert_eq!(directory.prune_dead_clients(), Vec::<u32>::new());
     assert_eq!(directory.len(), 1);
-}
-
-#[cfg(unix)]
-#[test]
-/// A failed current lookup (`None`) is not a confirmed recycle; real sysinfo can't be forced to fail.
-fn is_confirmed_recycle_only_when_both_known_and_differ() {
-    assert!(!ClientDirectory::is_confirmed_recycle(None, None));
-    assert!(!ClientDirectory::is_confirmed_recycle(None, Some(5)));
-    // The crux: transient current-lookup failure on a still-registered PID.
-    assert!(!ClientDirectory::is_confirmed_recycle(Some(5), None));
-    assert!(!ClientDirectory::is_confirmed_recycle(Some(5), Some(5)));
-    assert!(ClientDirectory::is_confirmed_recycle(Some(5), Some(9)));
 }
 
 #[test]

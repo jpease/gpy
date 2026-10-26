@@ -195,26 +195,11 @@ enum ConfigCommands {
     Reload,
 }
 
-/// Log panics through `warn_log!` (the daemon's stderr is `/dev/null`), and
-/// exit 0 when a CLI pipeline closes stdout early: `unsafe` is forbidden, so
-/// `SIGPIPE` cannot be reset to its default.
-#[allow(
-    clippy::exit,
-    reason = "a panic hook cannot return an exit code; a broken stdout pipe must end the process with status 0"
-)]
+/// Log panics through `warn_log!`: the daemon's stderr is `/dev/null`.
 fn install_panic_handler() {
-    std::panic::set_hook(Box::new(|panic_info| {
-        let message = panic_info
-            .payload()
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| panic_info.payload().downcast_ref::<&str>().copied())
-            .unwrap_or_default();
-        if message.contains("failed printing to stdout") && message.contains("Broken pipe") {
-            std::process::exit(0);
-        }
+    gpy_agent::error::install_broken_pipe_hook(|panic_info| {
         gpy_agent::warn_log!("agent", "PANIC: {:?}", panic_info);
-    }));
+    });
 }
 
 /// Record `--socket`, made absolute against the current directory so a
@@ -366,14 +351,7 @@ fn main() -> ExitCode {
     install_panic_handler();
     let cli = Cli::parse();
 
-    match run(cli) {
-        Ok(code) => code,
-        Err(err) if gpy_agent::error::is_broken_pipe(&err) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("Error: {}", gpy_agent::error::user_message(&err));
-            ExitCode::from(gpy_agent::error::CLI_FAILURE_EXIT_CODE)
-        }
-    }
+    gpy_agent::error::report(run(cli))
 }
 
 /// Dispatch the parsed command. Only `status` has a non-zero success-path

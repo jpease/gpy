@@ -192,6 +192,46 @@ pub fn is_broken_pipe(err: &Error) -> bool {
     matches!(err, Error::Io(io_err) if io_err.kind() == std::io::ErrorKind::BrokenPipe)
 }
 
+/// Turn a command's result into its process exit code: a broken stdout pipe is
+/// success, any other error prints one `Error: ...` line and exits
+/// [`CLI_FAILURE_EXIT_CODE`].
+#[must_use]
+pub fn report(result: Result<std::process::ExitCode>) -> std::process::ExitCode {
+    match result {
+        Ok(code) => code,
+        Err(err) if is_broken_pipe(&err) => std::process::ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("Error: {}", user_message(&err));
+            std::process::ExitCode::from(CLI_FAILURE_EXIT_CODE)
+        }
+    }
+}
+
+/// Install a panic hook that exits 0 when a CLI pipeline closes stdout early
+/// (`gpy segments | head -1`) and hands every other panic to `report`.
+/// `unsafe` is forbidden, so `SIGPIPE` cannot be reset to its default.
+#[allow(
+    clippy::exit,
+    reason = "a panic hook cannot return an exit code; a broken stdout pipe must end the process with status 0"
+)]
+pub fn install_broken_pipe_hook<F>(report: F)
+where
+    F: Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync + 'static,
+{
+    std::panic::set_hook(Box::new(move |info| {
+        let message = info
+            .payload()
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| info.payload().downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        if message.contains("failed printing to stdout") && message.contains("Broken pipe") {
+            std::process::exit(0);
+        }
+        report(info);
+    }));
+}
+
 impl From<serde_json::Error> for Error {
     fn from(err: serde_json::Error) -> Self {
         Self::Json {

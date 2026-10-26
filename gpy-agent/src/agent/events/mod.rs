@@ -22,7 +22,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+mod coalesce;
 mod refresh;
+pub use coalesce::RepoRefreshCoordinator;
+use coalesce::run_coalesced;
 use refresh::config_refresh_required;
 
 /// Shared thread-safe storage for the file watcher, allowing it to be replaced or stopped
@@ -55,55 +58,6 @@ pub struct AgentContext {
     /// write, so one theme change is seen as new, and rung for, by one path.
     pub announce_gate: Arc<Mutex<()>>,
 }
-
-/// Serializes [`refresh_and_notify_if_changed`] per repository so a stale scan
-/// cannot overwrite a fresher one; different repositories stay concurrent.
-/// The inner lock covers only map bookkeeping, never the git scan.
-#[derive(Default)]
-pub struct RepoRefreshCoordinator {
-    /// Present key = refresh in flight; value = follow-up pending.
-    /// Entries are removed when the owner finishes, so the map stays bounded.
-    state: Mutex<std::collections::HashMap<PathBuf, bool>>,
-}
-
-impl RepoRefreshCoordinator {
-    /// Returns `true` if the caller now owns the repo's refresh; otherwise records
-    /// a pending follow-up for the current owner.
-    fn try_start(&self, repo: &Path) -> bool {
-        let mut guard = self.state.lock_or_recover();
-        match guard.entry(repo.to_path_buf()) {
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                *entry.get_mut() = true;
-                false
-            }
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(false);
-                true
-            }
-        }
-    }
-
-    /// Returns `true` if exactly one more pass is needed; otherwise drops the entry.
-    fn finish(&self, repo: &Path) -> bool {
-        let mut guard = self.state.lock_or_recover();
-        if let Some(pending) = guard.get_mut(repo)
-            && *pending
-        {
-            *pending = false;
-            return true;
-        }
-        guard.remove(repo);
-        false
-    }
-
-    /// Release the slot ignoring any pending follow-up; used only by the follow-up cap.
-    fn abandon(&self, repo: &Path) {
-        self.state.lock_or_recover().remove(repo);
-    }
-}
-
-/// Cap on catch-up passes per coalesced refresh; the reconcile backstop handles the rest.
-const MAX_COALESCED_FOLLOW_UPS: u32 = 32;
 
 /// Handle a debounced file system event.
 pub fn handle_file_event(ctx: &AgentContext, event: &DebouncedEvent, config: &Config) {
@@ -141,7 +95,7 @@ pub fn handle_file_event(ctx: &AgentContext, event: &DebouncedEvent, config: &Co
             // so it must not hold the event thread.
             let refresh_ctx = ctx.clone();
             let refresh_config = config.clone();
-            spawn_language_job(move || {
+            crate::ipc::handlers::spawn_detached(move || {
                 let theme = refresh_ctx.theme_manager.get();
                 refresh_language_for(
                     &refresh_ctx,
@@ -393,35 +347,6 @@ pub(super) fn refresh_and_notify_coalesced(
     });
 }
 
-/// Run `scan(false)`, then `scan(true)` until no follow-up is pending, bounded by
-/// [`MAX_COALESCED_FOLLOW_UPS`]. Nothing else re-drives this, so drain until quiet.
-fn run_coalesced<F: FnMut(bool)>(coordinator: &RepoRefreshCoordinator, repo: &Path, mut scan: F) {
-    if !coordinator.try_start(repo) {
-        // Another thread owns this repo and will service our pending change.
-        return;
-    }
-
-    scan(false);
-
-    let mut follow_ups = 0_u32;
-    while coordinator.finish(repo) {
-        if follow_ups >= MAX_COALESCED_FOLLOW_UPS {
-            debug_log!(
-                "agent",
-                "Coalesced refresh hit follow-up cap ({}) for {}; deferring remaining churn to reconcile",
-                MAX_COALESCED_FOLLOW_UPS,
-                repo.display()
-            );
-            // Cap hit with a real pending change: service it once, defer further churn.
-            scan(true);
-            coordinator.abandon(repo);
-            break;
-        }
-        follow_ups = follow_ups.saturating_add(1);
-        scan(true);
-    }
-}
-
 /// Whether a status transition warrants notifying clients.
 ///
 /// Content-based: states that render identically (e.g. ahead/behind already
@@ -659,17 +584,7 @@ fn schedule_language_refresh_from_git_status(
         );
     };
 
-    spawn_language_job(job);
-}
-
-/// Run a language refresh on the blocking pool when a runtime is current, else
-/// on its own thread: it may probe versions, which must not hold the caller.
-fn spawn_language_job(job: impl FnOnce() + Send + 'static) {
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        handle.spawn_blocking(job);
-    } else {
-        std::thread::spawn(job);
-    }
+    crate::ipc::handlers::spawn_detached(job);
 }
 
 fn git_status_signature(status: &crate::git::RepositoryStatus) -> u64 {
@@ -1004,7 +919,7 @@ fn schedule_language_cache_regen(ctx: &AgentContext, lang_root: &Path, config: &
         regen_language_caches(&regen_ctx, &root, &regen_config);
     };
 
-    spawn_language_job(job);
+    crate::ipc::handlers::spawn_detached(job);
 }
 
 /// Synchronous body of [`schedule_language_cache_regen`]; returns `true` when a

@@ -46,7 +46,8 @@ fn reconcile_interval_secs() -> u64 {
 }
 
 /// Runs `scan_fn` over `repos` on a blocking thread (git status is a subprocess).
-/// A panic in `scan_fn` is logged, not propagated.
+/// Where panics unwind (debug and test builds; release aborts), a panic in
+/// `scan_fn` is logged, not propagated.
 async fn run_reconcile_pass<F>(repos: Vec<PathBuf>, scan_fn: F)
 where
     F: Fn(Vec<PathBuf>) + Send + 'static,

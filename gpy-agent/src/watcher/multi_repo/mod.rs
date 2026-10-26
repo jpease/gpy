@@ -16,7 +16,6 @@ use crate::debug_log;
 use crate::sync_ext::MutexExt;
 use crate::{Error, Result};
 use common_dir::{acquire_common_dir_watches, release_common_dir_watches};
-use gitdir::resolve_gitdir;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -222,7 +221,14 @@ impl<T: WatchTarget> MultiRepoWatcher<T> {
             return Ok(None);
         };
 
-        let git_dir = resolve_gitdir(&git_root)?;
+        let git_dir = crate::git::resolve_gitdir(&git_root)
+            .map(|dir| fs::canonicalize(&dir).unwrap_or(dir))
+            .ok_or_else(|| {
+                Error::watcher(format!(
+                    "Could not resolve git directory at {}",
+                    git_root.display()
+                ))
+            })?;
         let watch_worktree = self.registry.worktree_enabled();
 
         debug_log!("watcher", "Found git root: {}", git_root.display());

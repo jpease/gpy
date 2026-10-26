@@ -15,6 +15,12 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Repository-root lookups, cheapest first:
+/// - [`find_git_dir_only`]: one stat per level, `.git` entries only; the
+///   watcher's `MultiRepoWatcher::find_git_root` is this function.
+/// - [`find_repo_root`]: that walk, then a fallback that also finds bare
+///   repos and resolves relative paths; for request handling and the CLI.
+///
 /// Walk up from `path` to the canonical directory containing a `.git` entry
 /// (directory or pointer file). One stat per level; ignores bare repos and
 /// does not absolutize relative paths (see [`find_repo_root`]).
@@ -97,6 +103,25 @@ pub(crate) fn gitdir_pointer_target(contents: &str) -> Option<&str> {
     } else {
         Some(target)
     }
+}
+
+/// Read cap for single-line pointer files (`.git` and `commondir`).
+pub(crate) const POINTER_READ_CAP: usize = 4_096;
+
+/// The git directory of `repo_root`: `<root>/.git`, or the target of its
+/// `gitdir:` pointer file (worktrees, submodules). Not canonicalized; `None`
+/// when there is no `.git` or the pointer is unreadable or malformed.
+#[must_use]
+pub(crate) fn resolve_gitdir(repo_root: &Path) -> Option<PathBuf> {
+    let git_entry = repo_root.join(".git");
+    if git_entry.is_dir() {
+        return Some(git_entry);
+    }
+    if git_entry.is_file() {
+        let contents = crate::fs_util::read_small_file(&git_entry, POINTER_READ_CAP).ok()?;
+        return parse_gitdir_link(&contents, repo_root);
+    }
+    None
 }
 
 /// Resolve `gitdir:` pointer contents against `base`, without canonicalizing.

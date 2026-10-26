@@ -2,7 +2,6 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
-#![expect(clippy::print_stderr, reason = "CLI diagnostics")]
 
 use clap::{CommandFactory, Parser, Subcommand};
 use gpy_agent::{Result, VERSION, commands};
@@ -440,39 +439,11 @@ fn strip_hidden_for_completions(cmd: &clap::Command) -> clap::Command {
 /// Report failures as one `Error: ...` line and exit 1; clap usage errors
 /// exit 2 before this runs.
 fn main() -> ExitCode {
-    install_broken_pipe_hook();
+    let default_hook = std::panic::take_hook();
+    gpy_agent::error::install_broken_pipe_hook(move |info| default_hook(info));
     let cli = Cli::parse();
 
-    match run(cli.command) {
-        Ok(code) => code,
-        Err(err) if gpy_agent::error::is_broken_pipe(&err) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("Error: {}", gpy_agent::error::user_message(&err));
-            ExitCode::from(gpy_agent::error::CLI_FAILURE_EXIT_CODE)
-        }
-    }
-}
-
-/// Exit 0 quietly when stdout's reader goes away (`gpy segments | head -1`).
-/// `unsafe` is forbidden, so `SIGPIPE` cannot be reset to its default.
-#[allow(
-    clippy::exit,
-    reason = "a panic hook cannot return an exit code; a broken stdout pipe must end the process with status 0"
-)]
-fn install_broken_pipe_hook() {
-    let default_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let message = info
-            .payload()
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| info.payload().downcast_ref::<&str>().copied())
-            .unwrap_or_default();
-        if message.contains("failed printing to stdout") && message.contains("Broken pipe") {
-            std::process::exit(0);
-        }
-        default_hook(info);
-    }));
+    gpy_agent::error::report(run(cli.command))
 }
 
 /// Dispatch the parsed command. Only `status` has a non-zero success-path

@@ -7,7 +7,7 @@ use crate::{Error, Result};
 #[cfg(unix)]
 use crate::{agent::Agent, debug_log};
 #[cfg(unix)]
-use std::path::{Path, PathBuf};
+use std::path::Path;
 #[cfg(unix)]
 use std::time::{Duration, SystemTime};
 
@@ -17,10 +17,6 @@ use crate::ipc::registry::{
 };
 #[cfg(unix)]
 use fork::Fork;
-#[cfg(unix)]
-use nix::errno::Errno;
-#[cfg(unix)]
-use nix::fcntl::{Flock, FlockArg};
 #[cfg(unix)]
 use nix::sys::signal::kill;
 #[cfg(unix)]
@@ -40,58 +36,21 @@ fn agent_disabled() -> bool {
 #[cfg(unix)]
 const START_LOCK_WAIT_MAX: Duration = Duration::from_secs(10);
 
-/// Poll interval while another start holds the lock.
-#[cfg(unix)]
-const START_LOCK_POLL: Duration = Duration::from_millis(50);
-
-/// Per-socket start lock path, `<socket>.lock`. Never unlinked: removing a
-/// lock file races like removing the socket.
-#[cfg(unix)]
-fn start_lock_path(socket_path: &Path) -> PathBuf {
-    let mut lock = socket_path.as_os_str().to_owned();
-    lock.push(".lock");
-    PathBuf::from(lock)
-}
-
-/// Take the exclusive per-socket start lock, held across check → evict → fork
-/// → bind. The forked daemon inherits the flock and drops it once bound; the
-/// wait is bounded so a hung daemon cannot block later starts forever.
+/// Take the exclusive per-socket start lock (`<socket>.lock`), held across
+/// check → evict → fork → bind. The forked daemon inherits the lock and drops
+/// it once bound; the wait is bounded so a hung daemon cannot block later
+/// starts forever.
 ///
 /// # Errors
 /// Returns an error if the lock cannot be opened or taken within [`START_LOCK_WAIT_MAX`].
 #[cfg(unix)]
-fn acquire_start_lock(socket_path: &std::path::Path) -> Result<Flock<std::fs::File>> {
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let lock_path = start_lock_path(socket_path);
-    let lock_error = |detail: String| {
+fn acquire_start_lock(socket_path: &Path) -> Result<crate::fs_util::PathLock> {
+    crate::fs_util::lock_beside(socket_path, START_LOCK_WAIT_MAX).map_err(|e| {
         Error::process(
             "start_lock",
-            format!("cannot take start lock {}: {detail}", lock_path.display()),
+            format!("cannot take start lock for {}: {e}", socket_path.display()),
         )
-    };
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .mode(0o600)
-        .open(&lock_path)
-        .map_err(|e| lock_error(e.to_string()))?;
-    let deadline = Deadline::after(START_LOCK_WAIT_MAX);
-    loop {
-        match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
-            Ok(lock) => return Ok(lock),
-            Err((unlocked, Errno::EWOULDBLOCK | Errno::EINTR)) => file = unlocked,
-            Err((_, errno)) => return Err(lock_error(errno.to_string())),
-        }
-        if deadline.expired() {
-            return Err(lock_error(format!(
-                "another gpy-agent start held it for more than {}s",
-                START_LOCK_WAIT_MAX.as_secs()
-            )));
-        }
-        std::thread::sleep(START_LOCK_POLL);
-    }
+    })
 }
 
 /// Max re-nudges per tracked shell PID per agent lifetime, so a shell that can
@@ -311,7 +270,7 @@ fn startup_failed(reason: Option<&str>) -> Error {
 /// before then goes down the pipe for `start` to print.
 #[cfg(unix)]
 pub(crate) struct StartupHandoff {
-    _start_lock: Flock<std::fs::File>,
+    _start_lock: crate::fs_util::PathLock,
     report: std::io::PipeWriter,
 }
 
@@ -433,7 +392,7 @@ fn announce_start_in(shell_dir: &std::path::Path, write_export: impl FnOnce() ->
 /// Returns an error if the pipe or fork fails, the daemon never reports its
 /// PID, or it fails or is not ready in time. In the daemon, the agent's result.
 #[cfg(unix)]
-fn fork_agent(socket_path: &Path, start_lock: Flock<std::fs::File>) -> Result<()> {
+fn fork_agent(socket_path: &Path, start_lock: crate::fs_util::PathLock) -> Result<()> {
     use std::io::Read;
 
     let (mut reader, writer) =
@@ -484,7 +443,7 @@ fn fork_daemon_from_intermediate() {
 /// Returns an error if the PID cannot be written.
 #[cfg(unix)]
 fn announce_daemon(
-    start_lock: Flock<std::fs::File>,
+    start_lock: crate::fs_util::PathLock,
     mut report: std::io::PipeWriter,
 ) -> Result<StartupHandoff> {
     use std::io::Write;

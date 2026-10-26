@@ -30,9 +30,6 @@ const IGNORE_CASE_TTL: Duration = Duration::from_secs(60);
 static IGNORE_CASE: TtlMap<PathBuf, bool> =
     TtlMap::with_ttl(NATIVE_GIT_CONFIG_CACHE_CAPACITY, IGNORE_CASE_TTL);
 
-/// Cap on `.git` gitdir-pointer file reads.
-const GITDIR_POINTER_READ_CAP: usize = 4_096;
-
 const MSGNUM_READ_CAP: usize = 4_096;
 
 /// Cap on `rebase-merge/git-rebase-todo` reads; long interactive rebases exceed a few KB.
@@ -199,27 +196,9 @@ impl NativeGitBackend {
             .collect()
     }
 
-    /// Resolve the git directory, following `.git` pointer files.
-    fn resolve_git_dir_opt(repo_root: &Path) -> Option<PathBuf> {
-        let git_item = repo_root.join(".git");
-
-        if git_item.is_dir() {
-            return Some(git_item);
-        }
-
-        // No canonicalization: callers only check existence.
-        if git_item.is_file()
-            && let Ok(content) = crate::fs_util::read_small_file(&git_item, GITDIR_POINTER_READ_CAP)
-        {
-            return crate::git::parse_gitdir_link(&content, repo_root);
-        }
-        None
-    }
-
-    /// Like [`Self::resolve_git_dir_opt`], falling back to `<repo>/.git`.
+    /// The git directory of `repo_root`, falling back to `<repo>/.git`.
     fn resolve_git_dir(repo_root: &Path) -> PathBuf {
-        let git_item = repo_root.join(".git");
-        Self::resolve_git_dir_opt(repo_root).unwrap_or(git_item)
+        crate::git::resolve_gitdir(repo_root).unwrap_or_else(|| repo_root.join(".git"))
     }
 
     /// Resolve a [`BranchHead`] to `(branch, detached)`; detached yields the short hash.

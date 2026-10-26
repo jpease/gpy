@@ -261,16 +261,20 @@ pub fn get_socket_path() -> crate::Result<PathBuf> {
 /// The configured socket path before the length check, for diagnostics.
 #[must_use]
 pub fn resolve_socket_path() -> PathBuf {
-    if let Some(override_path) = SOCKET_OVERRIDE.get() {
-        return override_path.clone();
-    }
+    socket_override().unwrap_or_else(|| runtime_dir().join("gpy.sock"))
+}
 
-    // Empty means unset, matching Bash and Zsh.
-    if let Some(custom_path) = socket_path_override() {
-        return custom_path;
-    }
+/// The socket path set by `--socket` or `GPY_AGENT_SOCKET_PATH`, if any.
+#[must_use]
+pub fn socket_override() -> Option<PathBuf> {
+    SOCKET_OVERRIDE.get().cloned().or_else(socket_path_override)
+}
 
-    runtime_dir().join("gpy.sock")
+/// Whether the socket path comes from `--socket` or `GPY_AGENT_SOCKET_PATH`
+/// rather than the default runtime directory.
+#[must_use]
+pub fn socket_is_overridden() -> bool {
+    SOCKET_OVERRIDE.get().is_some() || socket_path_override().is_some()
 }
 
 /// The `GPY_AGENT_SOCKET_PATH` override; empty counts as unset everywhere.
