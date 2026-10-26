@@ -10,10 +10,10 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-/// Debounce for the config and theme watchers. ADR-0005 chose 5 s to fold an
-/// editor's multi-write save into one reload, but the debouncer's 1 s max-delay
-/// cap flushes sooner anyway, and a reload of unchanged content is a no-op;
-/// a longer window only slows the flush deadline that delivers edits.
+/// Debounce for the config and theme watchers. The debouncer's 1 s max-delay
+/// cap flushes an editor's multi-write save at about this deadline anyway, and
+/// a reload of unchanged content is a no-op, so a longer window would only
+/// delay delivery of edits.
 pub const HOT_RELOAD_DEBOUNCE: Duration = Duration::from_secs(1);
 
 /// The longest the poll thread sleeps before re-checking its stop flag.

@@ -37,7 +37,7 @@ fn parse_commondir_pointer_table() {
         ("   \n", None),
     ];
     for (input, expected) in cases {
-        let actual = MultiRepoWatcher::parse_commondir_pointer(git_dir, input);
+        let actual = super::gitdir::parse_commondir_pointer(git_dir, input);
         assert_eq!(actual, expected.map(PathBuf::from), "input: {input:?}");
     }
 }

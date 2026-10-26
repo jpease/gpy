@@ -7,11 +7,16 @@
 //! Worktree watching defaults on; `git.watch_worktree` sets it and
 //! `GPY_WATCH_WORKTREE` (`0`/`false`/`no`/`off` disables) overrides the config.
 
+mod common_dir;
+mod gitdir;
+
 use super::watch_set::WatchMode;
 use super::{EventCallback, WatchCoordinator, WatchRegistry, WatcherConfig};
 use crate::debug_log;
 use crate::sync_ext::MutexExt;
 use crate::{Error, Result};
+use common_dir::{acquire_common_dir_watches, release_common_dir_watches};
+use gitdir::resolve_gitdir;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -82,10 +87,6 @@ fn dir_identity(_path: &Path) -> DirIdentity {
     None
 }
 
-/// Single-line pointer file read caps.
-const GITDIR_POINTER_READ_CAP: usize = 4_096;
-const COMMONDIR_POINTER_READ_CAP: usize = 4_096;
-
 /// Test-only per-path watch failure injection (e.g. watch-budget exhaustion).
 #[cfg(test)]
 type WatchFault = Arc<dyn Fn(&Path) -> Option<Error> + Send + Sync>;
@@ -151,7 +152,7 @@ impl MultiRepoWatcher {
             return Ok(None);
         };
 
-        let git_dir = Self::resolve_gitdir(&git_root)?;
+        let git_dir = resolve_gitdir(&git_root)?;
         let watch_worktree = self.registry.worktree_enabled();
 
         debug_log!("watcher", "Found git root: {}", git_root.display());
@@ -226,7 +227,7 @@ impl MultiRepoWatcher {
 
         for repo in repos_to_remove {
             self.registry.unregister_external_gitdir(&repo.git_dir);
-            self.release_common_dir_watches(&repo.git_root);
+            release_common_dir_watches(self, &repo.git_root);
         }
     }
 
@@ -357,7 +358,7 @@ impl MultiRepoWatcher {
         }
 
         // A relocated gitdir can move the common dir; re-acquire against the new one.
-        self.release_common_dir_watches(git_root);
+        release_common_dir_watches(self, git_root);
 
         let repo_watches = self.start_repo_watches(git_root, git_dir, watch_worktree)?;
 
@@ -459,7 +460,7 @@ impl MultiRepoWatcher {
 
         // Linked worktrees only. Best-effort; refcounted in `common_watches`,
         // not in this repo's `armed`.
-        self.acquire_common_dir_watches(w, git_root, git_dir);
+        acquire_common_dir_watches(self, w, git_root, git_dir);
 
         let worktree = if watch_worktree {
             if let Err(e) = self.arm_watch(w, git_root) {
@@ -480,167 +481,6 @@ impl MultiRepoWatcher {
         };
 
         Ok(RepoWatches { armed, worktree })
-    }
-
-    /// Common git directory of a linked worktree; `None` for ordinary repos and
-    /// submodules (no `commondir` pointer).
-    fn resolve_common_dir(git_dir: &Path) -> Option<PathBuf> {
-        let common =
-            crate::fs_util::read_small_file(&git_dir.join("commondir"), COMMONDIR_POINTER_READ_CAP)
-                .ok()
-                .and_then(|contents| Self::join_commondir_pointer(git_dir, &contents))
-                .or_else(|| Self::common_dir_from_worktrees_layout(git_dir))?;
-        (common != git_dir).then_some(common)
-    }
-
-    /// Parse `commondir` contents, joining relative paths onto `git_dir`.
-    #[must_use]
-    fn parse_commondir_pointer(git_dir: &Path, contents: &str) -> Option<PathBuf> {
-        let target = Path::new(contents.trim());
-        if target.as_os_str().is_empty() {
-            return None;
-        }
-        Some(crate::git::resolve_relative_to(git_dir, target))
-    }
-
-    /// Resolve a `commondir` pointer (typically `../..`) to a canonical path.
-    fn join_commondir_pointer(git_dir: &Path, contents: &str) -> Option<PathBuf> {
-        let resolved = Self::parse_commondir_pointer(git_dir, contents)?;
-        fs::canonicalize(&resolved).ok()
-    }
-
-    /// Fallback when `commondir` is unreadable: git's (unpromised) layout is
-    /// `<common>/worktrees/<name>`.
-    fn common_dir_from_worktrees_layout(git_dir: &Path) -> Option<PathBuf> {
-        let parent = git_dir.parent()?;
-        if parent.file_name()? != "worktrees" {
-            return None;
-        }
-        fs::canonicalize(parent.parent()?).ok()
-    }
-
-    /// Add `git_root` as a dependent of its common dir; the first arms watches.
-    fn acquire_common_dir_watches(
-        &self,
-        w: &mut WatchCoordinator,
-        git_root: &Path,
-        git_dir: &Path,
-    ) {
-        let Some(common_dir) = Self::resolve_common_dir(git_dir) else {
-            return;
-        };
-
-        {
-            let mut guard = self.common_watches.lock_or_recover();
-            let entry = guard.entry(common_dir.clone()).or_default();
-            let first_dependent = entry.dependents.is_empty();
-            entry.dependents.insert(git_root.to_path_buf());
-            if first_dependent {
-                entry.armed = Self::arm_common_dir(w, &common_dir);
-            }
-            drop(guard);
-        }
-
-        self.registry.register_common_gitdir(&common_dir, git_root);
-    }
-
-    /// Watch `<common>` shallow (`packed-refs`, `config`; a directory watch
-    /// survives git's lock-then-rename) and `<common>/refs` recursive (covers a
-    /// future `remotes/`). Never recursive over `<common>`: the poll backend
-    /// would stat-walk `objects/**`. Already-covered paths are skipped.
-    fn arm_common_dir(w: &mut WatchCoordinator, common_dir: &Path) -> ArmedWatches {
-        let mut armed = Vec::new();
-
-        if w.covers_directory(common_dir) {
-            debug_log!(
-                "watcher",
-                "Common gitdir {} already covered by an existing watch",
-                common_dir.display()
-            );
-        } else if let Err(e) = w.watch_directory_shallow(common_dir) {
-            debug_log!(
-                "watcher",
-                "Shallow watch of common gitdir {} failed ({}); shared metadata changes may be missed",
-                common_dir.display(),
-                e
-            );
-        } else {
-            armed.push((common_dir.to_path_buf(), WatchMode::Shallow));
-        }
-
-        let refs_dir = common_dir.join("refs");
-        if refs_dir.is_dir() && !w.covers_directory(&refs_dir) {
-            if let Err(e) = w.watch_directory(&refs_dir) {
-                debug_log!(
-                    "watcher",
-                    "Watch of common refs {} failed ({}); shared ref changes may be missed",
-                    refs_dir.display(),
-                    e
-                );
-            } else {
-                armed.push((refs_dir, WatchMode::Recursive));
-            }
-        }
-
-        armed
-    }
-
-    /// Drop `git_root` from every common dir; unwatch when the last dependent
-    /// leaves, and re-arm survivors whose covering ancestor watch just went.
-    fn release_common_dir_watches(&self, git_root: &Path) {
-        let mut to_unwatch: ArmedWatches = Vec::new();
-        let mut to_rearm: Vec<PathBuf> = Vec::new();
-
-        // Release `common_watches` before taking the watcher lock: acquire
-        // takes them in the opposite order.
-        {
-            let mut guard = self.common_watches.lock_or_recover();
-            guard.retain(|common_dir, entry| {
-                if entry.dependents.remove(git_root) {
-                    self.registry.unregister_common_gitdir(common_dir, git_root);
-                }
-                if entry.dependents.is_empty() {
-                    to_unwatch.append(&mut entry.armed);
-                    return false;
-                }
-                true
-            });
-            // Entries that armed nothing relied on an ancestor watch (usually
-            // the main checkout's), which may have just been dropped.
-            to_rearm.extend(
-                guard
-                    .iter()
-                    .filter(|(_, entry)| entry.armed.is_empty())
-                    .map(|(common_dir, _)| common_dir.clone()),
-            );
-        }
-
-        if to_unwatch.is_empty() && to_rearm.is_empty() {
-            return;
-        }
-
-        let mut rearmed: Vec<(PathBuf, ArmedWatches)> = Vec::new();
-        if let Some(w) = self.watcher.lock_or_recover().as_mut() {
-            for (path, mode) in &to_unwatch {
-                Self::unwatch_logged(w, path, *mode);
-            }
-            for common_dir in to_rearm {
-                let armed = Self::arm_common_dir(w, &common_dir);
-                if !armed.is_empty() {
-                    rearmed.push((common_dir, armed));
-                }
-            }
-        }
-
-        if rearmed.is_empty() {
-            return;
-        }
-        let mut guard = self.common_watches.lock_or_recover();
-        for (common_dir, armed) in rearmed {
-            if let Some(entry) = guard.get_mut(&common_dir) {
-                entry.armed = armed;
-            }
-        }
     }
 
     /// Watch `git_dir` alone after a worktree-root watch failed.
@@ -718,42 +558,6 @@ impl MultiRepoWatcher {
     #[must_use]
     pub fn find_git_root(path: &Path) -> Option<PathBuf> {
         crate::git::find_git_dir_only(path)
-    }
-
-    /// Resolve the actual git directory for the supplied repository.
-    ///
-    /// # Errors
-    /// Returns an error when the `.git` entry cannot be read or parsed.
-    fn resolve_gitdir(git_root: &Path) -> Result<PathBuf> {
-        let git_entry = git_root.join(".git");
-
-        if git_entry.is_dir() {
-            return Ok(fs::canonicalize(&git_entry).unwrap_or(git_entry));
-        }
-
-        if git_entry.is_file() {
-            let contents = crate::fs_util::read_small_file(&git_entry, GITDIR_POINTER_READ_CAP)
-                .map_err(|e| {
-                    Error::watcher(format!(
-                        "Failed to read gitdir pointer at {}: {e}",
-                        git_entry.display()
-                    ))
-                })?;
-
-            let resolved = crate::git::parse_gitdir_link(&contents, git_root).ok_or_else(|| {
-                Error::watcher(format!(
-                    "Invalid gitdir pointer contents at {}",
-                    git_entry.display()
-                ))
-            })?;
-
-            return Ok(fs::canonicalize(&resolved).unwrap_or(resolved));
-        }
-
-        Err(Error::watcher(format!(
-            "Could not locate git metadata at {}",
-            git_entry.display()
-        )))
     }
 
     /// The [`WatchRegistry`] shared with the coordinator.

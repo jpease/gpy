@@ -1,6 +1,7 @@
 #![allow(clippy::missing_panics_doc)]
 
 use super::backend::poll_watch_targets;
+use super::ignore::{force_added_set, is_force_added, tracked_ignored_test_hooks};
 use super::probe::{
     DEFAULT_WATCH_POLL_MS, DEFAULT_WATCH_PROBE_MS, engage_poll_fallback,
     native_backend_delivers_events,

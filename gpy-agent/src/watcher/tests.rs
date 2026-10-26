@@ -1,9 +1,9 @@
 #![allow(clippy::missing_panics_doc)]
 
-use super::{
-    FileEvent, PendingEvent, WatchRegistry, filter_ignored, is_common_gitdir_significant_relative,
-    is_git_significant_relative, split_at_git_dir_modules,
+use super::registry::{
+    is_common_gitdir_significant_relative, is_git_significant_relative, split_at_git_dir_modules,
 };
+use super::{FileEvent, PendingEvent, WatchRegistry, filter_ignored};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
