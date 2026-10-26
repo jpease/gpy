@@ -27,7 +27,7 @@ repos:
         pass_filenames: true
     -   id: clippy
         name: clippy
-        description: cargo clippy over all targets and features (policy in gpy-agent/Cargo.toml [lints])
+        description: the gate's clippy commands (policy in gpy-agent/Cargo.toml [lints])
         entry: just lint
         language: system
         files: '(\.rs$|(^|/)Cargo\.(toml|lock)$|(^|/)\.clippy\.toml$)'

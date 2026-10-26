@@ -195,7 +195,7 @@ The `prompt_render` budget is met by the following architectural mechanisms, not
    computation asynchronously. The updated value is stored for the next prompt.
 
 3. **IPC hot path** — For prompts that hit the live in-memory cache, roundtrip IPC latency stays within the
-   `ipc_latency` budget (1 ms target, 1.5 ms max; `ipc_ping` baseline 0.037 ms).
+   `ipc_latency` budget (1 ms target, 1.5 ms max; 0.037 ms measured on a dev machine, 2026-05-15).
 
 If any of these mechanisms are bypassed (e.g. cold agent start, cache miss with no stale entry,
 or `--no-cache` flag), the user-visible latency is bounded by fresh git/language computation time,

@@ -72,7 +72,8 @@ Run before pushing — this is what CI also runs:
 ```
 
 See [`scripts/README.md`](scripts/README.md) for the check list, required tools,
-and faster flags (`--fast`, `--rust-only`, `--shell-only`, `--fish-only`).
+and faster flags (`--fast`, `--rust-only`, `--clippy`, `--shell-only`,
+`--fish-only`).
 `just check` (or `just check-fast`, `just check-rust`, `just check-shell`,
 `just check-fish`) wraps these.
 Shell scripts must be shellcheck-clean or carry an inline
@@ -81,7 +82,7 @@ will be asked about in review.
 
 macOS never compiles the Linux- or Windows-only `cfg` branches. Before pushing
 a change that touches `cfg`-gated code, run `just check-platforms` (needs
-Docker): it runs Linux `cargo clippy --all-targets --all-features` and Windows
+Docker): it runs Linux `cargo clippy` (the same two passes as `just lint`) and Windows
 (mingw) `cargo check` for `--lib`, `--locked` and `--profile test --tests` on
 `HEAD` in a container. Pass `--worktree` to include uncommitted changes.
 
@@ -95,9 +96,12 @@ groups: panics and stray output (`unwrap_used`, `expect_used`, `panic`,
 (`as_conversions`, `arithmetic_side_effects`, `indexing_slicing`), and
 readability (`shadow_*`, `str_to_string`, `missing_const_for_fn`, ...).
 `gpy-agent/.clippy.toml` relaxes the panic and print lints in test code and
-forbids `std::panic::catch_unwind`. Run it with `just lint`; while fixing many
-hits at once, `cargo clippy --all-targets --all-features -- --cap-lints warn`
-reports every target instead of stopping at the first failing one.
+forbids `std::panic::catch_unwind`. Run it with `just lint`, which is what the
+gate and CI run: `cargo clippy --all-targets` (tests and benches, with the
+`test-support` surface their self dev-dependency enables), then
+`cargo clippy --lib --bins` (the code as it ships, without it). While fixing many
+hits at once, add `-- --cap-lints warn` to either to report every target instead
+of stopping at the first failing one.
 
 A new `#[allow(...)]` must say why, with `reason = "..."` naming the specific
 cause at that site (`#[allow(clippy::cast_possible_truncation, reason = "value

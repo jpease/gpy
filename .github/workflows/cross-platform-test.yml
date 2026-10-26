@@ -1,6 +1,7 @@
-name: Cross-Platform Smoke
+name: Cross-Platform Test
 
-# Post-merge and weekly smoke on Linux, macOS and Windows: catches runner-image
+# Post-merge and weekly run of the PR gate's Rust and shell legs on Linux and
+# macOS, plus the Windows leg, without the build cache: catches runner-image
 # and toolchain drift that no PR exercised.
 on:
   push:
@@ -15,16 +16,17 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: ""
 
 concurrency:
-  group: cross-platform-smoke-${{ github.ref }}
+  group: cross-platform-test-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  smoke:
-    name: Smoke (${{ matrix.os }})
+  rust:
+    name: Rust gate (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -42,28 +44,59 @@ jobs:
         with:
           rust-src-dir: gpy-agent
           cache: false
+          components: clippy, rustfmt
 
       - name: Verify the pinned toolchain is active
         shell: bash
         run: ./scripts/check-active-toolchain.sh
 
-      # Lib tests run generated theme code through Fish, Bash and Zsh.
+      - name: Install Rust tooling (nextest, audit, deny, machete)
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-nextest,cargo-audit,cargo-deny,cargo-machete,just
+
       - name: Install shells and shell-suite prerequisites
-        if: runner.os != 'Windows'
         uses: ./.github/actions/install-shells
 
-      - name: Build agent
-        working-directory: gpy-agent
-        run: cargo build --locked --verbose
+      - name: Rust toolchain gate
+        run: just check-rust
 
-      - name: Rust smoke tests
-        working-directory: gpy-agent
-        run: cargo test --locked --lib --verbose
+  shell:
+    name: Shell gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # The PR gate shards this gate in two; here it runs whole.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
 
-      - name: Fish syntax smoke
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          rust-src-dir: gpy-agent
+          cache: false
+
+      - name: Verify the pinned toolchain is active
         shell: bash
-        run: find fish install-dev.fish -name '*.fish' -print0 | xargs -0 -n1 fish -n
+        run: ./scripts/check-active-toolchain.sh
 
-  windows:
-    name: Windows lib and CLI tests
+      - name: Install just, shellcheck and cargo-audit
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: just,shellcheck,cargo-audit
+
+      - name: Install shells and shell-suite prerequisites
+        uses: ./.github/actions/install-shells
+
+      - name: Shell integration gate
+        run: just check-shell
+
+  windows-gate:
     uses: ./.github/workflows/windows-gate.yml

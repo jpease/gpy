@@ -35,7 +35,7 @@ Run from `gpy-agent/`:
 cargo build --release                          # target/release/{gpy-agent,gpy}
 cargo nextest run --features test-support      # unit and integration tests
 cargo test --doc                               # doc tests (nextest skips them)
-cargo clippy --all-targets --all-features      # lint policy: [lints] in Cargo.toml
+just lint                                      # clippy, as the gate runs it; policy: [lints] in Cargo.toml
 cargo fmt --check
 cargo bench                                    # Criterion benchmarks in benches/
 ```

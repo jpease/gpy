@@ -60,10 +60,9 @@ audit:
     fi
     exit 0
 
-# Run clippy over every target and feature (policy: gpy-agent/Cargo.toml [lints])
+# Run clippy exactly as the gate does (policy: gpy-agent/Cargo.toml [lints])
 lint:
-    ./{{scripts_dir}}/check-active-toolchain.sh
-    cd {{agent_dir}} && cargo clippy --all-targets --all-features
+    ./{{scripts_dir}}/quality-check.sh --clippy
 
 # Line coverage for gpy-agent (lcov.info + summary); needs cargo-llvm-cov
 coverage:
