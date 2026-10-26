@@ -3,9 +3,8 @@
 
 source (dirname (status --filename))/../lib/test_helpers.fish
 
-source (dirname (status --current-filename))/../support/setup_test_env.fish
-
 function test_theme_prompt_render
+    init_test_env; or exit 1
     set -l tmp_dir (mktemp -d)
     set -l config_root $tmp_dir/config
     set -l theme_dir $config_root/gpy/themes
@@ -21,8 +20,7 @@ function test_theme_prompt_render
     # Run theme export and source it
     set -l theme_export $tmp_dir/theme-export.fish
     set -lx XDG_CONFIG_HOME $config_root
-    set -l agent (get_agent_binary_path)
-    $agent theme export --format fish >$theme_export
+    gpy-agent theme export --format fish >$theme_export
 
     source $theme_export
 

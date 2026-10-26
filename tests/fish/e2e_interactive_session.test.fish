@@ -25,9 +25,7 @@
 #   5. idle-to-idle repaint across subdirectories: two idle sessions, one in
 #      the repo root and one in a subdirectory, both repaint on outside
 #      changes (edit, untracked file, commit, new branch, and a config.toml
-#      rewrite picked up by the watcher with no `config reload`). With
-#      GPY_E2E_LATENCY_LOG set, each timed step appends
-#      `e2e_interactive_session_s5 <step> <s5a|s5b> <ms>` to it.
+#      rewrite picked up by the watcher with no `config reload`).
 #
 # All waits are bounded polls on the transcript; the transcript tail is
 # printed on failure. Skips (via test_skip) when python3 is missing: exit 0
@@ -441,9 +439,6 @@ function __s5_record --argument-names step regex stamp a off_a b off_b
         end
         set -l ms (math --scale=0 "floor(($t - $stamp) / 1000000)")
         echo "latency $step $f[1]: $ms ms"
-        if set -q GPY_E2E_LATENCY_LOG; and test -n "$GPY_E2E_LATENCY_LOG"
-            echo "e2e_interactive_session_s5 $step $f[1] $ms" >>$GPY_E2E_LATENCY_LOG
-        end
     end
 end
 

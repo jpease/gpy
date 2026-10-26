@@ -13,7 +13,7 @@
 
 source (dirname (status --filename))/../lib/test_helpers.fish
 
-source (dirname (status --current-filename))/../support/setup_test_env.fish
+init_test_env; or exit 1
 
 source fish/core/init.fish
 source fish/functions/fish_prompt.fish

@@ -563,23 +563,6 @@ function cleanup_test_files
     cleanup_git_test_files
 end
 
-# Wait for next minute boundary (:00 seconds)
-# Returns: Number of seconds until next boundary
-function wait_for_minute_boundary
-    set -l current_second (date +%S)
-    set -l seconds_to_wait (math "60 - $current_second + 2")
-
-    echo "Waiting $seconds_to_wait seconds for next :00 boundary..." >&2
-    sleep $seconds_to_wait
-
-    return 0
-end
-
-# Get current second of minute
-function get_current_second
-    date +%S | string replace -r '^0' ''
-end
-
 # Create a temporary git repository for testing
 # Returns: Path to the temporary repo
 function create_test_repo

@@ -7,7 +7,6 @@
 
 source (dirname (status --filename))/../lib/test_helpers.fish
 
-set -g test_name init_integration
 echo "========================================="
 echo "GPY Init Integration Test"
 echo "========================================="

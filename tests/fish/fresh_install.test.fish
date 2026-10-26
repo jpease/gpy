@@ -7,7 +7,6 @@
 
 source (dirname (status --filename))/../lib/test_helpers.fish
 
-set -g test_name fresh_install
 echo "========================================="
 echo "GPY Fresh Install Test"
 echo "========================================="

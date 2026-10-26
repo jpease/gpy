@@ -8,22 +8,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Scoped agent cleanup
 #
-# tests/lib/test_helpers.fish and tests/support/setup_test_env.fish must
-# clean up test agents by the socket they hold, never with
-# `pkill -9 -x gpy-agent` / `pkill -x gpy-agent`: matching on process name
-# alone cannot distinguish a test's own agent from any other gpy-agent
-# running on the machine -- including a contributor's live dogfooding daemon.
+# tests/lib/test_helpers.fish must clean up test agents by the socket they
+# hold, never with `pkill -9 -x gpy-agent` / `pkill -x gpy-agent`: matching on
+# process name alone cannot distinguish a test's own agent from any other
+# gpy-agent running on the machine -- including a contributor's live
+# dogfooding daemon.
 #
 # This test simulates that daemon with a decoy gpy-agent bound to its own,
 # distinct socket path (never under test_helpers.fish's
-# /tmp/gpy-e2e-test-*/gpy.sock naming convention, and never
-# setup_test_env.fish's fixed /tmp/gpy-test-$USER/gpy-test.sock), then drives
-# each helper file's cleanup path from its own fish subprocess and asserts
-# the decoy is untouched throughout.
-#
-# Each helper file gets its own subprocess rather than being sourced
-# together into one, so neither file's globals or event handlers can mask a
-# leak in the other.
+# /tmp/gpy-e2e-test-*/gpy.sock naming convention), then drives the helper's
+# cleanup path from its own fish subprocess and asserts the decoy is
+# untouched throughout.
 #
 # A name-based kill fails this test: the decoy is a real `gpy-agent` process
 # by name, so it would be killed regardless of which socket it holds.
@@ -127,24 +122,6 @@ function test_test_helpers_scoped_kill
     assert_decoy_survived "decoy survives test_helpers.fish init_test_env + stop_test_agent"
 end
 
-function test_setup_test_env_scoped_kill
-    echo "Driving tests/support/setup_test_env.fish's ensure_agent_stopped from a subprocess..."
-
-    set -l out (fish -c '
-        source $argv[1]/tests/support/setup_test_env.fish >/dev/null 2>&1
-        ensure_agent_stopped
-        exit 0
-    ' -- $__gpy_root 2>&1)
-    set -l helper_status $status
-
-    if test $helper_status -ne 0
-        fail "setup_test_env.fish cleanup ran cleanly" "subprocess exited $helper_status: $out"
-        return 1
-    end
-
-    assert_decoy_survived "decoy survives setup_test_env.fish ensure_agent_stopped"
-end
-
 print_test_header "Scoped-kill regression test"
 
 if not start_decoy_agent
@@ -155,13 +132,6 @@ end
 echo "Decoy gpy-agent started: PID $__decoy_pid, socket $__decoy_socket"
 
 test_test_helpers_scoped_kill
-
-if not decoy_alive
-    echo "Decoy died after the first subtest; restarting it for the second subtest..."
-    start_decoy_agent
-end
-
-test_setup_test_env_scoped_kill
 
 stop_decoy_agent
 

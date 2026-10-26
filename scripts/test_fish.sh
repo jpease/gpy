@@ -33,26 +33,9 @@ fi
 # Put the fresh build first on PATH so tests never pick up an installed gpy-agent.
 AGENT_DIR="$(cd "$(dirname "$AGENT_BIN")" && pwd)"
 
-# No blanket retries: a test is retried only when named here as
-# `<file>.test.fish:<reason>`. Retries are listed in the final tally.
-KNOWN_FLAKY_E2E_TESTS=""
-
-attempts_for() {
-    local base="$1"
-    local entry
-    for entry in $KNOWN_FLAKY_E2E_TESTS; do
-        if [ "${entry%%:*}" = "$base" ]; then
-            echo 3
-            return
-        fi
-    done
-    echo 1
-}
-
 # Collect all failures rather than stopping at the first.
 failed_tests=()
 skipped_tests=()
-retried_tests=()
 run_log="$(mktemp "${TMPDIR:-/tmp}/gpy-fish-test.XXXXXX")"
 trap 'rm -f "$run_log"' EXIT
 
@@ -74,40 +57,22 @@ for test_file in tests/fish/*.test.fish; do
         base="$(basename "$test_file")"
         echo "=== Running $base ==="
 
-        attempts="$(attempts_for "$base")"
-
-        attempt=1
-        passed=0
-        while [ "$attempt" -le "$attempts" ]; do
-            # --no-config keeps the developer's config.fish from changing
-            # exported vars and PATH under the tests. Paths travel as $argv
-            # (single quotes deliberate) so spaces/quotes in the checkout path
-            # are safe. Backgrounded + `wait` so a signal is handled while the
-            # test still runs; output is captured to tally `SKIP:` lines.
-            # shellcheck disable=SC2016
-            { fish --no-config -c 'set -gx PATH $argv[1] $PATH; source $argv[2]' -- "$AGENT_DIR" "$test_file" 2>&1 | tee "$run_log"; } &
-            test_pid=$!
-            if wait "$test_pid"; then
-                passed=1
-                if grep -q '^SKIP:' "$run_log"; then
-                    skipped_tests+=("$base")
-                fi
-                if [ "$attempt" -gt 1 ]; then
-                    retried_tests+=("$base (attempt $attempt/$attempts)")
-                fi
-                break
+        # --no-config keeps the developer's config.fish from changing exported
+        # vars and PATH under the tests. Paths travel as $argv (single quotes
+        # deliberate) so spaces/quotes in the checkout path are safe.
+        # Backgrounded + `wait` so a signal is handled while the test still
+        # runs; output is captured to tally `SKIP:` lines.
+        # shellcheck disable=SC2016
+        { fish --no-config -c 'set -gx PATH $argv[1] $PATH; source $argv[2]' -- "$AGENT_DIR" "$test_file" 2>&1 | tee "$run_log"; } &
+        test_pid=$!
+        if wait "$test_pid"; then
+            if grep -q '^SKIP:' "$run_log"; then
+                skipped_tests+=("$base")
             fi
-            if [ "$attempt" -lt "$attempts" ]; then
-                echo "Warning: $base failed on attempt $attempt/$attempts (named in the retry policy) — retrying..."
-            fi
-            attempt=$((attempt + 1))
-        done
-
-        if [ "$passed" -eq 1 ]; then
             echo
         else
             failed_tests+=("$base")
-            echo "Error: $base FAILED after $attempts attempt(s)"
+            echo "Error: $base FAILED"
             echo
         fi
     fi
@@ -122,11 +87,6 @@ if [ ${#skipped_tests[@]} -ne 0 ]; then
     echo "Skipped: ${#skipped_tests[@]} ($(join_names "${skipped_tests[@]}"))"
 else
     echo "Skipped: 0"
-fi
-if [ ${#retried_tests[@]} -ne 0 ]; then
-    echo "Retried: $(join_names "${retried_tests[@]}")"
-else
-    echo "Retried: none"
 fi
 
 if [ ${#failed_tests[@]} -ne 0 ]; then
