@@ -99,7 +99,13 @@ fn resolve(wire: WireMessage) -> Result<Message> {
             is_last,
             is_first,
             prev_bg,
-            virtual_env,
+            virtual_env: virtual_env
+                .map(|venv| {
+                    crate::security::PathValidator::validate_path(&venv)
+                        .map_err(|e| Error::ipc(format!("Invalid virtual_env: {e}")))?;
+                    Ok::<_, Error>(venv)
+                })
+                .transpose()?,
         }),
         WireMessage::DirectoryRequest {
             path,

@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A client-supplied `virtual_env` is now validated like other paths: control
+  characters, paths over 4096 bytes, and `..` components are rejected.
 - A theme whose plugin segment sections would set the same shell variable
   is now rejected, naming both fields. Segment names and variants both allow
   `_`, so segment `a` with an `open` cap and segment `a_open` with an `icon`

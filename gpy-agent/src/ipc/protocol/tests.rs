@@ -576,3 +576,37 @@ fn test_requested_format_is_none_for_unparseable_requests() {
         assert_eq!(format, None);
     }
 }
+
+fn language_json_with_venv(venv: &str) -> String {
+    serde_json::json!({"op":"lang","cwd":".","virtual_env":venv}).to_string()
+}
+
+#[test]
+fn test_virtual_env_rejects_control_characters() {
+    for venv in ["/tmp/venv\0x", "/tmp/venv\nx"] {
+        let json = language_json_with_venv(venv);
+        assert!(deserialize_message(json.as_bytes()).is_err(), "{venv:?}");
+    }
+}
+
+#[test]
+fn test_virtual_env_rejects_overlong_path() {
+    let json = language_json_with_venv(&format!("/{}", "a".repeat(5000)));
+    assert!(deserialize_message(json.as_bytes()).is_err());
+}
+
+#[test]
+fn test_virtual_env_rejects_parent_dir() {
+    let json = language_json_with_venv("/tmp/../etc/venv");
+    assert!(deserialize_message(json.as_bytes()).is_err());
+}
+
+#[test]
+fn test_virtual_env_accepts_plain_path() {
+    let json = language_json_with_venv("/tmp/some-venv");
+    let msg = deserialize_message(json.as_bytes()).expect("valid virtual_env");
+    assert!(matches!(
+        msg,
+        Message::LanguageDetect { virtual_env: Some(ref v), .. } if v == "/tmp/some-venv"
+    ));
+}
