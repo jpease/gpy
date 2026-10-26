@@ -139,9 +139,10 @@ world-writable `/tmp`. A local attacker can then neither guess the path nor
 pre-create a file whose contents would be read back into `$PROMPT`, which would
 be a terminal-escape and prompt-injection vector. If `mktemp` is unavailable the
 memoization disables itself and every prompt does a full IPC round trip
-(`zsh/core/init.zsh`). The planned script segments add no files: their design
-keeps the cache in shell variables only, with no `/tmp` path and no PID-keyed
-state.
+(`zsh/core/init.zsh`). The planned script segments, which are not shipped, are
+designed to add no files: the cache stays in shell variables, with no `/tmp`
+path and no PID-keyed state (see the
+[script segment security addendum](docs/dev/adr/adr-0011-addendum-script-segment-security.md)).
 
 **Downloaded release artifacts are trusted only after verification.** What the
 installers enforce, and how to check a download by hand, is in
