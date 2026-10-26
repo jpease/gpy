@@ -275,7 +275,7 @@ Overrides for one script plugin segment (`entry_type = "script"`, see [Plugin Fr
 | `timeout_ms` | integer | the manifest's `timeout_ms` (at most 500) | `1` up to the manifest's value | Lowers the script's time limit. A value above the manifest's is rejected. |
 | any setting the manifest declares | bool, integer or string, as declared | the declared default | the declared `min`/`max` or `choices` | Passed to the script as `GPY_OPT_<key>`. |
 
-Each table is typed when the config loads. Whether a key is declared, and whether its value is allowed, depends on the installed plugin, so `gpy config set` checks it against the segment manifest and every error names the key (`plugin.k8s.style: 'loud' is not one of bold, dim`). Run `gpy config list plugin.` to see the keys your installed script segments accept.
+Each table is typed when the config loads. Whether a key is declared, and whether its value is allowed, depends on the installed plugin, so `gpy config set` checks it against the segment manifest and every error names the key (`plugin.k8s.style: "loud" is not one of bold, dim`). Run `gpy config list plugin.` to see the keys your installed script segments accept.
 
 ```toml
 [plugin.k8s]

@@ -156,6 +156,22 @@ USER="u"
 check "an icon with shell metacharacters shows literally" true \
     "$(contains "$(shown "$(__gpy_segment_username true "" true)")" '< $(echo ICON)` u)')"
 
+# __gpy_prompt_escape works on 64-byte slices in the C locale: the exact bytes
+# for multibyte text, invalid UTF-8, `&` (Bash 5.2's patsub_replacement) and
+# text long enough to cross many slice boundaries.
+esc() { local out; __gpy_prompt_escape "$1" out; printf '%s' "$out"; }
+check "escape: text without metacharacters is unchanged" 'café 中文 →%&' "$(esc 'café 中文 →%&')"
+check "escape: backslash, dollar and backtick" 'a\\\\b\\$c\\`d&e' "$(esc 'a\b$c`d&e')"
+check "escape: & stays literal next to a match" '\\$&\\\\&\\`' "$(esc '$&\&`')"
+check "escape: invalid UTF-8 bytes pass through" $'\xff''\\$'$'\xc2''\\\\'$'\x80' "$(esc $'\xff$\xc2\\\x80')"
+long='' long_expected=''
+for ((i = 0; i < 63; i++)); do long+='a' long_expected+='a'; done
+for ((i = 0; i < 671; i++)); do long+='é$\`&' long_expected+='é\\$\\\\\\`&'; done
+check "escape: 4089 bytes across slice boundaries" "$long_expected" "$(esc "$long")"
+long='' long_expected=''
+for ((i = 0; i < 4096; i++)); do long+='$' long_expected+='\\$'; done
+check "escape: 4096 dollars" "$long_expected" "$(esc "$long")"
+
 if [[ $FAILED -ne 0 ]]; then
     echo "=== FAILED ==="
     exit 1

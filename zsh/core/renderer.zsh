@@ -42,25 +42,23 @@ function __gpy_sgr_param() {
     printf -v "$3" '%s' "$__code"
 }
 
-# Same escaping rules as the agent's zsh-prompt encoder.
+# Same escaping rules as the agent's zsh-prompt encoder. A whole-string
+# `${x//p/r}` costs the string length per match, so the text is split into
+# bytes (C locale; the four characters are ASCII and never inside a multibyte
+# character) and each element is substituted, which stays linear.
 function __gpy_prompt_escape() {
-    local __text=$1 __out="" __ch
-    local -i __i
-    if [[ $__text != *[\\\$\`%]* ]]; then
-        printf -v "$2" '%s' "$__text"
+    if [[ $1 != *[\\\$\`%]* ]]; then
+        printf -v "$2" '%s' "$1"
         return 0
     fi
-    for ((__i = 1; __i <= ${#__text}; __i++)); do
-        __ch=${__text[__i]}
-        case $__ch in
-            '\') __out+='\\' ;;
-            '$') __out+='\$' ;;
-            '`') __out+='\`' ;;
-            '%') __out+='%%' ;;
-            *) __out+=$__ch ;;
-        esac
-    done
-    printf -v "$2" '%s' "$__out"
+    local LC_ALL=C
+    local -a __bytes
+    __bytes=("${(@s::)1}")
+    __bytes=("${(@)__bytes[@]//\\/\\\\}")
+    __bytes=("${(@)__bytes[@]//\$/\\\$}")
+    __bytes=("${(@)__bytes[@]//\`/\\\`}")
+    __bytes=("${(@)__bytes[@]//\%/%%}")
+    printf -v "$2" '%s' "${(j::)__bytes[@]}"
 }
 
 function __gpy_sgr_pair() {

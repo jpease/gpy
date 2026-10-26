@@ -215,6 +215,21 @@ by `[segments.<segment>]` (`icon`, `bg_color`, `text_color`, `open`, `close`
 and the variant colours). The theme's `format` templates are not available to
 script segments.
 
+Theme export writes these styles as shell variables named from the segment
+token (`<tok>`) and the variant: `__gpy_segment_<tok>_{id,bg_color,text_color,icon}`,
+`__gpy_segment_<tok>_{open,close}_{icon,icon_color,bg_color}`,
+`__gpy_segment_<tok>_variant_<variant>_{bg,text}_color`, and the flat aliases
+`__color_<tok>_{bg,fg}`, `__color_<tok>_<variant>_{bg,fg}` and `__icon_<tok>`.
+Segment names and variants both allow `_`, so two sections can name the same
+variable: segment `a` with an `open` cap and segment `a_open` with an `icon`
+(`__gpy_segment_a_open_icon`), segment `a` with variant `x` and segment
+`a_variant_x` (`__gpy_segment_a_variant_x_bg_color`), or segment `a` with
+variant `b_c` and segment `a_b` with variant `c` (`__color_a_b_c_bg`). Theme
+validation rejects such a theme and names both fields, for example
+`"segments.a.open.icon" and "segments.a_open.icon" both export shell variable
+"__gpy_segment_a_open_icon"`. Export skips a section whose variables collide
+with an earlier one's in sorted order, so no variable is assigned twice.
+
 ### Environment and process rules
 
 - **Environment.** The script starts from a clean environment: `PATH`

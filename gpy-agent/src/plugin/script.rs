@@ -434,7 +434,7 @@ impl VariantName {
             Ok(Self(name.to_owned()))
         } else {
             Err(Error::invalid(format!(
-                "'{name}' is not a colour variant name (^[a-z0-9_]{{1,32}}$)"
+                "{name:?} is not a colour variant name (^[a-z0-9_]{{1,32}}$)"
             )))
         }
     }
@@ -487,7 +487,7 @@ impl VariantColorKey {
             });
         parsed.ok_or_else(|| {
             Error::invalid(format!(
-                "unknown plugin segment style key '{key}': use icon, open, close, bg_color, \
+                "unknown plugin segment style key {key:?}: use icon, open, close, bg_color, \
                  text_color or <variant>_bg_color / <variant>_text_color \
                  (behaviour settings belong in config.toml [plugin.<segment>])"
             ))

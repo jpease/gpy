@@ -6,6 +6,7 @@ mod shell_assignment;
 mod shell_colors;
 mod theme_to_shell;
 
+pub use plugin_segments::{PluginVariableCollision, first_plugin_variable_collision};
 #[cfg(test)]
 use shell_assignment::escape_shell_value;
 #[cfg(test)]
