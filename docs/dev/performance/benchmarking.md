@@ -85,9 +85,10 @@ RUSTC_WRAPPER= just bench-ci
 RUSTC_WRAPPER= just bench-rust
 ```
 
-3) Plugin discovery overhead budgets (0/10/50 plugins)
+3) Plugin discovery overhead (0/10/50 plugins; part of step 2, alone when
+   checking the [plugin budgets](plugin-budgets.md))
 ```bash
-(cd gpy-agent && RUSTC_WRAPPER= cargo test --test plugin_performance_tests)
+(cd gpy-agent && RUSTC_WRAPPER= cargo bench --bench plugin_bench)
 ```
 
 Optional:

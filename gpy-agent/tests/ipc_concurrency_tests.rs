@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::{TempDir, tempdir};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::time::timeout;
 
@@ -217,18 +217,27 @@ async fn test_semaphore_saturation_fails_fast_without_reply() {
     )
     .await;
 
-    // Hold the only permit: a byte with no newline keeps the read loop waiting.
-    let mut holder = timeout(Duration::from_secs(5), UnixStream::connect(&socket_path))
-        .await
-        .expect("connect")
-        .expect("connect");
+    // Hold the only permit: a connection keeps it across requests, so once a
+    // ping is answered the holder's handler owns the permit and waits for more.
+    let mut holder = BufReader::new(
+        timeout(Duration::from_secs(5), UnixStream::connect(&socket_path))
+            .await
+            .expect("connect")
+            .expect("connect"),
+    );
     holder
-        .write_all(b"x")
+        .write_all(b"{\"op\":\"ping\"}\n")
         .await
-        .expect("write partial (unterminated) line");
-
-    // No client-visible signal for permit acquisition, so pause for the holder to win.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+        .expect("send holder ping");
+    let mut reply = String::new();
+    timeout(Duration::from_secs(5), holder.read_line(&mut reply))
+        .await
+        .expect("holder ping must be answered")
+        .expect("read holder reply");
+    assert!(
+        reply.contains(r#""status":"ok""#),
+        "holder ping should succeed, got: {reply}"
+    );
 
     // Must fail fast, well under the 5s request timeout. The server closes before
     // reading, so the write is best-effort and EOF or reset are both valid.

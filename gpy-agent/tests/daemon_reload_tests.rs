@@ -312,7 +312,8 @@ fn config_reload_applies_an_in_place_theme_edit() {
 /// up to 1 s more for the flush deadline, plus slack for a loaded machine. Still
 /// below the 5 s theme debounce this replaced.
 const THEME_EDIT_LATENCY: Duration = Duration::from_secs(4);
-/// Long enough after an edit for every watcher to have flushed it.
+/// Absence window: long enough after an edit for every watcher to have flushed
+/// it, so a second doorbell would have rung by then.
 const DOORBELL_WINDOW: Duration = Duration::from_secs(6);
 
 /// With no explicit reload, an in-place save of the active theme reaches a
@@ -329,8 +330,8 @@ fn watched_theme_edit_renders_promptly_and_rings_once() {
     let daemon = Daemon::start(env);
     let shell = register_shell(&daemon);
     daemon.directory_matching_oneshot("before the edit");
-    // Let registration settle and the watchers arm before editing.
-    std::thread::sleep(Duration::from_millis(500));
+    // The daemon arms its watchers before it binds the socket `Daemon::start`
+    // waited on, and registration is answered once recorded.
     let rang_before = shell.count();
 
     daemon.write(

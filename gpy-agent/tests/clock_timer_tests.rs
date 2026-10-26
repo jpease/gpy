@@ -48,26 +48,23 @@ fn test_minute_boundary_detection() {
     assert!(seconds_send, "show_seconds=true always sends");
 }
 
-/// A 1-second interval ticks at ~1s against the wall clock.
+/// A 1-second interval never ticks early: two ticks after the immediate first
+/// one take at least 2 s. No upper bound, since a late tick only measures load.
 #[tokio::test]
 async fn test_clock_timer_ticks() {
+    let start = tokio::time::Instant::now();
     let mut clock_timer = tokio::time::interval(Duration::from_secs(1));
     clock_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     // First tick is immediate.
     clock_timer.tick().await;
-
-    let start = tokio::time::Instant::now();
-
     clock_timer.tick().await;
     clock_timer.tick().await;
 
     let elapsed = start.elapsed();
-
-    // ~2 seconds, with tolerance.
     assert!(
-        elapsed >= Duration::from_millis(1950) && elapsed < Duration::from_millis(2500),
-        "Timer should tick approximately every second (elapsed: {elapsed:?})"
+        elapsed >= Duration::from_secs(2),
+        "Timer must not tick before each 1 s period elapses (elapsed: {elapsed:?})"
     );
 }
 

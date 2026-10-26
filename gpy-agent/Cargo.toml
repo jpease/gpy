@@ -191,6 +191,10 @@ harness = false
 name = "agent_startup_bench"
 harness = false
 
+[[bench]]
+name = "plugin_bench"
+harness = false
+
 # Local `--release` builds and `cargo bench` (the bench profile inherits this).
 # Shipped binaries use `release-dist`, which inherits only `panic` from here.
 [profile.release]

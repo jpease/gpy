@@ -123,21 +123,26 @@ mod tests {
         );
     }
 
+    /// Poll `signal` once, which installs its handlers, and confirm it pends.
+    async fn arm(signal: &mut ShutdownSignal) {
+        assert!(
+            tokio::time::timeout(Duration::ZERO, signal).await.is_err(),
+            "no shutdown signal has been raised yet"
+        );
+    }
+
     /// Safe to self-raise: `create_shutdown_signal` installs its own handler first.
     #[tokio::test]
     #[serial(sigterm_self_signal)]
     async fn create_shutdown_signal_resolves_on_sigterm() {
-        let handle = tokio::spawn(create_shutdown_signal());
-
-        // Let the task install the SIGTERM handler before raising.
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let mut signal = create_shutdown_signal();
+        arm(&mut signal).await;
 
         raise(Signal::SIGTERM).expect("raise SIGTERM");
 
-        let result = tokio::time::timeout(Duration::from_secs(2), handle)
+        let result = tokio::time::timeout(Duration::from_secs(2), signal)
             .await
-            .expect("shutdown signal task should complete after SIGTERM")
-            .expect("shutdown signal task should not panic");
+            .expect("shutdown signal should resolve after SIGTERM");
         assert!(
             result.is_ok(),
             "shutdown signal future should resolve Ok on SIGTERM"
@@ -148,16 +153,14 @@ mod tests {
     #[tokio::test]
     #[serial(sigterm_self_signal)]
     async fn create_shutdown_signal_resolves_on_sigint() {
-        let handle = tokio::spawn(create_shutdown_signal());
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let mut signal = create_shutdown_signal();
+        arm(&mut signal).await;
 
         raise(Signal::SIGINT).expect("raise SIGINT");
 
-        let result = tokio::time::timeout(Duration::from_secs(2), handle)
+        let result = tokio::time::timeout(Duration::from_secs(2), signal)
             .await
-            .expect("shutdown signal task should complete after SIGINT")
-            .expect("shutdown signal task should not panic");
+            .expect("shutdown signal should resolve after SIGINT");
         assert!(
             result.is_ok(),
             "shutdown signal future should resolve Ok on SIGINT"

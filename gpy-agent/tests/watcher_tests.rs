@@ -14,7 +14,11 @@ mod wait;
 use git_helpers::git_init;
 use gpy_agent::watcher::multi_repo::MultiRepoWatcher;
 use gpy_agent::watcher::{DebouncedEvent, FileEvent, WatchCoordinator, WatcherConfig};
-use std::sync::{Arc, Mutex};
+use std::collections::HashSet;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use tempfile::{TempDir, tempdir};
 use wait::wait_until;
@@ -27,6 +31,107 @@ fn temp_repo() -> TempDir {
     let repo = tempdir().expect("create temp dir");
     git_init(repo.path());
     repo
+}
+
+/// File [`prime_watch`] writes to prove a watch is live.
+const PROBE_FILE: &str = "watch-probe.txt";
+/// How long [`prime_watch`] waits on one probe write before writing it again.
+const PROBE_REWRITE: Duration = Duration::from_secs(1);
+/// Deadline for one write to reach a callback through a live watch.
+const DELIVERY_DEADLINE: Duration = Duration::from_secs(10);
+/// Longest a [`Gate`] holds a callback, so a regression fails instead of hanging.
+const GATE_HOLD: Duration = Duration::from_secs(30);
+
+/// A latch a callback blocks on until the test opens it.
+#[derive(Default)]
+struct Gate {
+    open: Mutex<bool>,
+    opened: Condvar,
+}
+
+impl Gate {
+    /// Block until [`Gate::open`] or [`GATE_HOLD`] elapses.
+    fn wait(&self) {
+        let guard = self.open.lock().expect("lock");
+        drop(
+            self.opened
+                .wait_timeout_while(guard, GATE_HOLD, |is_open| !*is_open)
+                .expect("lock"),
+        );
+    }
+
+    fn open(&self) {
+        *self.open.lock().expect("lock") = true;
+        self.opened.notify_all();
+    }
+}
+
+/// What a gated callback shares with its test.
+#[derive(Default)]
+struct Dispatch {
+    /// Set once [`prime_watch`] proved the watch live; earlier events are ignored.
+    armed: AtomicBool,
+    /// Repositories whose probe write was delivered.
+    probed: Mutex<HashSet<PathBuf>>,
+    /// A gated callback started.
+    started: AtomicBool,
+    /// A gated callback returned.
+    finished: AtomicBool,
+    /// An event the test does not gate was delivered.
+    other_delivered: AtomicBool,
+    gate: Gate,
+}
+
+impl Dispatch {
+    /// Record a probe and report whether `event` is a real one to act on.
+    fn admit(&self, event: &DebouncedEvent) -> bool {
+        if is_probe(event) {
+            self.probed.lock().expect("lock").insert(event.repo.clone());
+            return false;
+        }
+        self.armed.load(Ordering::SeqCst)
+    }
+
+    fn probed_repos(&self) -> usize {
+        self.probed.lock().expect("lock").len()
+    }
+
+    /// Run as a slow callback: block on the gate between `started` and `finished`.
+    fn run_gated(&self) {
+        self.started.store(true, Ordering::SeqCst);
+        self.gate.wait();
+        self.finished.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Whether `event` covers only [`prime_watch`]'s probe file.
+fn is_probe(event: &DebouncedEvent) -> bool {
+    matches!(&event.event, FileEvent::Git { paths } if paths.as_slice().is_some_and(|changed| {
+        changed
+            .iter()
+            .all(|path| path.file_name() == Some(OsStr::new(PROBE_FILE)))
+    }))
+}
+
+/// Write a probe file in each of `repos` until `delivered` reports the watch
+/// live. OS watches expose no "armed" signal and a write that lands before the
+/// subscription is live is never reported, so a delivered write is the proof;
+/// the probe repeats every [`PROBE_REWRITE`] rather than sleeping a guess.
+fn prime_watch(repos: &[&Path], mut delivered: impl FnMut() -> bool) {
+    let mut written_at: Option<Instant> = None;
+    let live = wait_until(Duration::from_secs(10), Duration::from_millis(10), || {
+        if delivered() {
+            return true;
+        }
+        if written_at.is_none_or(|at| at.elapsed() >= PROBE_REWRITE) {
+            for repo in repos {
+                std::fs::write(repo.join(PROBE_FILE), b"probe").expect("write probe file");
+            }
+            written_at = Some(Instant::now());
+        }
+        false
+    });
+    assert!(live, "the watch never delivered a probe write");
 }
 
 /// A temp directory outside any git repository. Requires `TMPDIR` itself to
@@ -341,21 +446,20 @@ fn test_slow_callback_in_one_repo_does_not_delay_another() {
     let slow_root =
         MultiRepoWatcher::find_git_root(slow_repo.path()).expect("slow repo should resolve");
 
-    let fast_completed_at: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
-    let fast_completed_at_cb = Arc::clone(&fast_completed_at);
-
-    // The slow callback sleeps far longer than the generous delivery budget
-    // below (2s, calibrated against `theme_manager_tests.rs`'s equivalent
-    // "first FS event observed" wait) so there's still a clear, load-tolerant
-    // gap between "fast delivery is prompt" and "fast got stuck behind slow".
-    let slow_callback_duration = Duration::from_secs(5);
-    let callback: Box<dyn Fn(DebouncedEvent) + Send + Sync> = Box::new(move |event| {
-        if event.repo == slow_root {
-            std::thread::sleep(slow_callback_duration);
-        } else {
-            *fast_completed_at_cb.lock().expect("lock") = Some(Instant::now());
-        }
-    });
+    let state = Arc::new(Dispatch::default());
+    let callback: Box<dyn Fn(DebouncedEvent) + Send + Sync> = {
+        let state_cb = Arc::clone(&state);
+        Box::new(move |event| {
+            if !state_cb.admit(&event) {
+                return;
+            }
+            if event.repo == slow_root {
+                state_cb.run_gated();
+            } else {
+                state_cb.other_delivered.store(true, Ordering::SeqCst);
+            }
+        })
+    };
 
     let mut coordinator = WatchCoordinator::new(Duration::from_millis(20), callback, None)
         .expect("create coordinator");
@@ -365,39 +469,36 @@ fn test_slow_callback_in_one_repo_does_not_delay_another() {
     coordinator
         .watch_directory(fast_repo.path())
         .expect("watch fast repo");
+    prime_watch(&[slow_repo.path(), fast_repo.path()], || {
+        state.probed_repos() == 2
+    });
+    state.armed.store(true, Ordering::SeqCst);
 
-    // Give the watcher a moment to establish its OS-level subscriptions.
-    std::thread::sleep(Duration::from_millis(100));
-
-    let start = Instant::now();
     std::fs::write(slow_repo.path().join(".git/HEAD"), "ref: refs/heads/main\n")
         .expect("write slow HEAD");
+    assert!(
+        wait_until(DELIVERY_DEADLINE, Duration::from_millis(10), || {
+            state.started.load(Ordering::SeqCst)
+        }),
+        "the slow repo's callback should have started"
+    );
     std::fs::write(fast_repo.path().join(".git/HEAD"), "ref: refs/heads/main\n")
         .expect("write fast HEAD");
-
-    // 2s matches the wait_until budget `theme_manager_tests.rs` uses for the
-    // same underlying wait (a single notify-crate FS event reaching a
-    // callback under full-suite load) -- OS file-watch delivery latency, not
-    // anything specific to slow-callback isolation, dominates this budget.
-    let delivery_budget = Duration::from_secs(2);
-    let delivered = wait_until(delivery_budget, Duration::from_millis(10), || {
-        fast_completed_at.lock().expect("lock").is_some()
+    let delivered = wait_until(DELIVERY_DEADLINE, Duration::from_millis(10), || {
+        state.other_delivered.load(Ordering::SeqCst)
     });
+    let slow_still_running = !state.finished.load(Ordering::SeqCst);
 
+    state.gate.open();
     coordinator.stop();
 
     assert!(
         delivered,
         "fast repo's event should be delivered without waiting on the slow repo's callback"
     );
-    let elapsed = fast_completed_at
-        .lock()
-        .expect("lock")
-        .expect("fast callback should have recorded a timestamp")
-        - start;
     assert!(
-        elapsed < delivery_budget,
-        "fast repo delivery took {elapsed:?}, expected well under the slow repo's {slow_callback_duration:?} callback"
+        slow_still_running,
+        "the fast repo's event must arrive while the slow repo's callback is still running"
     );
 }
 
@@ -409,53 +510,44 @@ fn test_slow_callback_in_one_repo_does_not_delay_another() {
 #[serial_test::file_serial(watcher_fsevents_bootstrap)]
 fn test_stop_does_not_block_on_in_flight_slow_callback() {
     // WatchCoordinator::stop() joins the flush thread, which does not run
-    // callbacks itself, so stop() returns promptly even while a slow callback
-    // is still running in the background.
+    // callbacks itself, so stop() returns while a callback is still running.
     let repo = temp_repo();
 
-    let dispatch_started: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
-    let dispatch_started_cb = Arc::clone(&dispatch_started);
-
-    let in_flight_callback_duration = Duration::from_secs(3);
-    let callback: Box<dyn Fn(DebouncedEvent) + Send + Sync> = Box::new(move |_event| {
-        *dispatch_started_cb.lock().expect("lock") = Some(Instant::now());
-        std::thread::sleep(in_flight_callback_duration);
-    });
+    let state = Arc::new(Dispatch::default());
+    let callback: Box<dyn Fn(DebouncedEvent) + Send + Sync> = {
+        let state_cb = Arc::clone(&state);
+        Box::new(move |event| {
+            if state_cb.admit(&event) {
+                state_cb.run_gated();
+            }
+        })
+    };
 
     let mut coordinator = WatchCoordinator::new(Duration::from_millis(20), callback, None)
         .expect("create coordinator");
     coordinator
         .watch_directory(repo.path())
         .expect("watch repo");
+    prime_watch(&[repo.path()], || state.probed_repos() == 1);
+    state.armed.store(true, Ordering::SeqCst);
 
-    // Give the watcher a moment to establish its OS-level subscriptions;
-    // there is no observable signal for that.
-    std::thread::sleep(Duration::from_millis(100));
     std::fs::write(repo.path().join(".git/HEAD"), "ref: refs/heads/main\n").expect("write HEAD");
-
-    // 2s matches the wait_until budget `theme_manager_tests.rs` uses for the
-    // same underlying wait (a single notify-crate FS event reaching a
-    // callback under full-suite load) -- OS file-watch delivery latency
-    // dominates this budget, independent of the coordinator's own dispatch
-    // path.
-    let dispatched = wait_until(Duration::from_secs(2), Duration::from_millis(10), || {
-        dispatch_started.lock().expect("lock").is_some()
-    });
-    assert!(dispatched, "callback should have started dispatching");
-
-    let stop_started = Instant::now();
-    coordinator.stop();
-    let stop_elapsed = stop_started.elapsed();
-
-    // stop() only needs to join the flush thread (which `stop()` wakes
-    // immediately) -- it must not block behind the in-flight 3s
-    // callback. 1.5s leaves comfortable headroom over that near-instant join
-    // for scheduler contention while still being clearly less than the
-    // callback's full duration, so a regression that makes stop() wait on
-    // the callback would still be caught.
     assert!(
-        stop_elapsed < Duration::from_millis(1500),
-        "stop() took {stop_elapsed:?}, expected it not to block on the in-flight {in_flight_callback_duration:?} callback"
+        wait_until(DELIVERY_DEADLINE, Duration::from_millis(10), || {
+            state.started.load(Ordering::SeqCst)
+        }),
+        "callback should have started dispatching"
+    );
+
+    // A stop() that waited on the callback could only return once the gate
+    // timed out and the callback finished.
+    coordinator.stop();
+    let finished_before_stop_returned = state.finished.load(Ordering::SeqCst);
+    state.gate.open();
+
+    assert!(
+        !finished_before_stop_returned,
+        "stop() must return while the in-flight callback is still running"
     );
 }
 
@@ -467,8 +559,6 @@ fn test_no_callback_fires_after_stop_for_a_pending_directory_followup() {
     // A directory-create follow-up lives inside the coordinator's debouncer
     // from the moment it is scheduled, so stop() clears it along with
     // everything else pending; nothing may reach the callback after stop().
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
     let repo = temp_repo();
 
     let stopped = Arc::new(AtomicBool::new(false));
@@ -495,32 +585,24 @@ fn test_no_callback_fires_after_stop_for_a_pending_directory_followup() {
     coordinator
         .watch_directory(repo.path())
         .expect("watch repo");
-    // Let OS-level subscriptions establish before the warmup write below.
-    std::thread::sleep(Duration::from_millis(150));
-
     // Prove the watch is live and delivering worktree events through this
     // coordinator before relying on it below -- otherwise a mkdir whose event
     // never arrived would make the assertions vacuous.
-    std::fs::write(repo.path().join("warmup.txt"), b"warm").expect("write warmup file");
-    assert!(
-        wait_until(Duration::from_secs(5), Duration::from_millis(10), || {
-            delivered.load(Ordering::SeqCst) > 0
-        }),
-        "the watch should deliver an ordinary worktree write before the real scenario runs"
-    );
+    prime_watch(&[repo.path()], || delivered.load(Ordering::SeqCst) > 0);
 
     // The scenario: create a directory (scheduling a follow-up due one
     // debounce window out), then stop well inside that window.
     std::fs::create_dir_all(repo.path().join("newdir")).expect("mkdir");
     // Let the mkdir event be ingested (scheduling the follow-up) while
-    // staying well inside the 400ms window before stopping.
+    // staying well inside the 400ms window before stopping. Nothing reports
+    // ingestion; stopping too early only makes the test vacuous, not flaky.
     std::thread::sleep(Duration::from_millis(120));
     coordinator.stop();
     stopped.store(true, Ordering::SeqCst);
 
-    // Wait past the follow-up's due time and several flush periods, giving any
-    // leftover mechanism every chance to misfire.
-    std::thread::sleep(Duration::from_millis(900));
+    // Absence window: past the follow-up's due time and several flush
+    // periods, giving any leftover mechanism every chance to misfire.
+    std::thread::sleep(debounce * 2 + Duration::from_millis(100));
     assert_eq!(
         fired_after_stop.load(Ordering::SeqCst),
         0,

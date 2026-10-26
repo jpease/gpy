@@ -780,12 +780,19 @@ fn client_registered_for_a_different_repo_does_not_count_as_a_subscriber() {
 /// Drives the real `create_watcher` gate, observed via `ctx.cache`.
 /// `file_serial`: concurrent `FSEvents` bootstraps are flaky.
 fn create_watcher_skips_refresh_for_unregistered_repo_and_refreshes_registered_one() {
+    /// Absence window: long enough for a gated refresh that was coming to land.
+    const REFRESH_ABSENCE_WINDOW: Duration = Duration::from_secs(3);
+
     let (_tmp, repo) = create_temp_repo();
-    std::process::Command::new("git")
-        .args(["config", "core.fsmonitor", "false"])
-        .current_dir(&repo)
-        .output()
-        .expect("disable fsmonitor");
+    // A repo with a shell registered, whose refresh proves the watch live.
+    let (_sentinel_tmp, sentinel) = create_temp_repo();
+    for dir in [&repo, &sentinel] {
+        std::process::Command::new("git")
+            .args(["config", "core.fsmonitor", "false"])
+            .current_dir(dir)
+            .output()
+            .expect("disable fsmonitor");
+    }
 
     let ctx = make_agent_context();
     let watcher = create_watcher(WatcherConfig::default(), &ctx).expect("create real watcher");
@@ -793,13 +800,30 @@ fn create_watcher_skips_refresh_for_unregistered_repo_and_refreshes_registered_o
     watcher
         .register_client(std::process::id(), &repo)
         .expect("register with watcher");
-
-    thread::sleep(Duration::from_millis(100));
+    watcher
+        .register_client(std::process::id() + 1, &sentinel)
+        .expect("register sentinel with watcher");
+    // Nonexistent PID: `notify_repaint_force` prunes it via ESRCH, so the
+    // sentinel is rewritten until its first refresh lands.
+    let sentinel_pid = 999_998_u32;
+    let sentinel_deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let mut probed_at: Option<std::time::Instant> = None;
+    while ctx.cache.get(&sentinel).is_none() && std::time::Instant::now() < sentinel_deadline {
+        if probed_at.is_none_or(|at| at.elapsed() >= Duration::from_secs(1)) {
+            ctx.registry.register(sentinel_pid, Some(sentinel.clone()));
+            fs::write(sentinel.join("probe.txt"), "probe\n").expect("write sentinel probe");
+            probed_at = Some(std::time::Instant::now());
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(
+        ctx.cache.get(&sentinel).is_some(),
+        "the watch never delivered the sentinel repo's write"
+    );
 
     fs::write(repo.join("a.txt"), "one\n").expect("write a.txt");
 
-    // Negative assertion: the full settle budget is spent on success.
-    let settle_deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let settle_deadline = std::time::Instant::now() + REFRESH_ABSENCE_WINDOW;
     while std::time::Instant::now() < settle_deadline {
         assert!(
             ctx.cache.get(&repo).is_none(),

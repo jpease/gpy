@@ -929,7 +929,7 @@ mod socket_ownership_tests {
         let socket_path = tmp.path().join("gpy.sock");
         let (task, shutdown) = spawn_started_handle(&socket_path).await;
 
-        // Let several ownership checks elapse before asserting the loop survived.
+        // Absence window: several 50 ms ownership checks run, and none may end the loop.
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         assert!(
             !task.is_finished(),

@@ -123,22 +123,16 @@ fn test_symlink_loop_handling() {
 }
 
 #[test]
-fn test_large_repository_performance() {
+fn test_large_repository_counts_every_untracked_file() {
     let repo = TestRepo::new().with_initial_commit();
 
     for i in 0_u32..1000 {
         repo.create_file(&format!("file{i}.txt"), "content");
     }
 
-    let start = std::time::Instant::now();
     let result = load_repository_state(repo.path(), None, 0, true);
-    let duration = start.elapsed();
 
     assert!(result.is_ok(), "Should handle large repository");
-    assert!(
-        duration.as_millis() < 5000,
-        "Should complete within 5 seconds even for 1000 files, took {duration:?}"
-    );
 
     let CompleteStatus { status, .. } = result.unwrap().expect("Should find repository");
     assert_eq!(

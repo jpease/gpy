@@ -81,8 +81,17 @@ to the code in `src/`.
 ## Writing tests
 
 - Wait on a condition, not a duration: `wait_until`/`wait_until_async`,
-  `wait_for_socket`. A fixed sleep is only right when the test
-  proves that something does *not* happen, and its comment should say so.
+  `wait_for_socket`. When nothing signals readiness (an OS file watch
+  arming), write a sentinel the code under test reports, repeating it until
+  it arrives, as `prime_watch` in `watcher_tests.rs` and `arm_watch` in
+  `multi_repo_integration_tests.rs` do.
+- A fixed sleep is only right when the test proves that something does
+  *not* happen. Name the duration (`ABSENCE_WINDOW`, `SEVERAL_TICKS`) or
+  say so in a comment.
+- Do not assert how long something took. A duration is a benchmark
+  (`gpy-agent/benches/`); a test asserts ordering instead (the callback was
+  still running when `stop()` returned), or a bound only when the bound is
+  itself the product contract.
 - Build repositories with `common/git.rs`, never a bare
   `Command::new("git")`, so the developer's git config cannot leak in.
 - Set environment variables through `EnvGuard` and mark the test

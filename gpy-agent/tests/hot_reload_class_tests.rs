@@ -43,11 +43,15 @@ use wait::wait_until;
 const SHELL_EXPORTS: [&str; 3] = ["theme-export.fish", "theme-export.bash", "theme-export.zsh"];
 /// Generous headroom over the 1 s watcher debounce under load.
 const SETTLE_DEADLINE: Duration = Duration::from_secs(25);
-/// Extra time after settling to catch a late stale overwrite.
+/// Absence window after settling: a late stale overwrite would land by then.
 const QUIET_PERIOD: Duration = Duration::from_millis(2500);
-/// Doorbells are counted this long after the change, so a late ring from
+/// Absence window for doorbells, counted from the change: a late ring from
 /// either 1 s watcher, whose flush deadline drains a change within 2 s, lands.
 const DOORBELL_WINDOW: Duration = Duration::from_secs(5);
+/// The poll fallback's period in the prompt-switch test. A switch that waited
+/// on the poll thread would take about this long; a prompt one takes
+/// milliseconds, so half of it separates them on any machine.
+const SLOW_POLL_INTERVAL: Duration = Duration::from_secs(30);
 
 const ACTIVE_THEME: &str = "active";
 const OTHER_THEME: &str = "other";
@@ -455,10 +459,9 @@ fn run_mechanism(mechanism: &Mechanism) {
         fs::write(harness.cache_home.join("gpy").join(file), content).expect("warm export");
     }
 
+    // `Agent::new` arms every watcher before it returns.
     let agent = Agent::new().expect("agent starts");
     agent.register_test_client(std::process::id(), harness.config_home.as_path());
-    // Let the watchers arm before touching the disk.
-    std::thread::sleep(Duration::from_millis(500));
     let rang_before = harness.doorbells.count();
 
     (mechanism.apply)(&harness);
@@ -558,9 +561,11 @@ fn hot_reload_switch_theme_by_name_with_poll_fallback_is_prompt() {
 
     let manager = ThemeManager::new(ACTIVE_THEME).expect("theme manager");
     manager
-        .start_watching(Duration::from_secs(5))
+        .start_watching(SLOW_POLL_INTERVAL)
         .expect("start watching");
-    // Let the poll thread enter its between-ticks sleep.
+    // No signal marks the poll thread asleep between ticks. This pause only
+    // makes a regression observable: a switch landing before the first sleep
+    // is prompt whether or not the stop path is.
     std::thread::sleep(Duration::from_millis(500));
 
     let started = Instant::now();
@@ -573,8 +578,9 @@ fn hot_reload_switch_theme_by_name_with_poll_fallback_is_prompt() {
 
     switched.expect("switch theme");
     assert!(
-        elapsed < Duration::from_millis(1000),
-        "switch_theme took {elapsed:?} with the poll fallback; it must not wait out the 5 s poll interval"
+        elapsed < SLOW_POLL_INTERVAL / 2,
+        "switch_theme took {elapsed:?} with the poll fallback; it must not wait out the \
+         {SLOW_POLL_INTERVAL:?} poll interval"
     );
 }
 

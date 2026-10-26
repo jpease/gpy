@@ -365,7 +365,8 @@ mod tests {
         let handler = handler_with(vec![link.to_string_lossy().into_owned()], &cache_dir);
         register(&handler, &repo);
 
-        // No job to wait on; allow a real scan's latency to elapse.
+        // Absence window: a skipped repo starts no job to wait on, so allow a
+        // real scan's latency (1.5 s) to elapse before checking nothing was written.
         std::thread::sleep(Duration::from_millis(1500));
         assert_eq!(git_cache_files(&cache_dir), Vec::<String>::new());
     }

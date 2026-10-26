@@ -713,6 +713,8 @@ mod tests {
                 .is_none(),
             "a git root must not start a detection job from a stale hit"
         );
+        // Absence window: a detection job started by the request above would
+        // have replaced the empty entry by now.
         std::thread::sleep(Duration::from_millis(300));
         assert!(
             handler

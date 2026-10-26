@@ -24,7 +24,8 @@ use std::time::Duration;
 
 /// Reconcile tick period for these daemons, in seconds.
 const RECONCILE_INTERVAL_SECS: u64 = 1;
-/// Long enough for several reconcile ticks to run.
+/// Absence window: long enough for several reconcile ticks to run. A fixed
+/// wait, because the tests sleeping it prove reconcile never publishes.
 const SEVERAL_TICKS: Duration = Duration::from_secs(3 * RECONCILE_INTERVAL_SECS);
 const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_millis(25);

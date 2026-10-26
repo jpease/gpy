@@ -6,12 +6,14 @@
 
 #[path = "common/sigurg.rs"]
 mod sigurg;
+#[path = "common/wait.rs"]
+mod wait;
 
 #[cfg(unix)]
 mod unix {
     use super::sigurg::SigurgCounter;
+    use super::wait::wait_until;
     use gpy_agent::ipc::ClientDirectory;
-    use std::thread;
     use std::time::Duration;
 
     #[test]
@@ -26,13 +28,12 @@ mod unix {
 
         registry.notify_repaint(Some(&cwd));
 
-        let mut waited = 0_u32;
-        while doorbell.count() == 0 && waited < 10 {
-            thread::sleep(Duration::from_millis(10));
-            waited += 1;
-        }
-
-        assert!(doorbell.count() > 0, "SIGURG doorbell handler should run");
+        assert!(
+            wait_until(Duration::from_secs(5), Duration::from_millis(10), || {
+                doorbell.count() > 0
+            }),
+            "SIGURG doorbell handler should run"
+        );
         assert!(
             !shell_dir.path().join(format!("{pid}.reload")).exists(),
             "repaint must not write a reload flag"
