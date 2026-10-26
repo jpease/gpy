@@ -772,3 +772,24 @@ fn translate_time_maps_strftime_best_effort() {
     assert_eq!(clock_24.time_format.as_deref(), Some("24"));
     assert_eq!(clock_24.show_seconds, Some(true));
 }
+
+#[test]
+fn directory_read_only_maps_to_read_only_icon() {
+    let mut warnings = Warnings::new();
+    let theme = translate_directory(&table("read_only = \"RO\"\n"), &mut warnings);
+    assert_eq!(
+        theme
+            .read_only_icon
+            .as_ref()
+            .map(crate::config::types::Icon::as_str),
+        Some("RO")
+    );
+}
+
+#[test]
+fn directory_read_only_with_control_characters_warns_and_skips() {
+    let mut warnings = Warnings::new();
+    let theme = translate_directory(&table("read_only = \"a\\nb\"\n"), &mut warnings);
+    assert!(theme.read_only_icon.is_none());
+    assert_eq!(warnings.iter().count(), 1);
+}

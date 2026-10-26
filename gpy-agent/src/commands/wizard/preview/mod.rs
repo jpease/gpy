@@ -286,6 +286,40 @@ fn render_directory_span(
     crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
 }
 
+/// Render every language the real prompt draws (`select_languages`, up to
+/// `MAX_LANGUAGE_PILLS`); only the first pill is `is_first`, only the last `is_last`.
+fn render_language_spans(
+    config: &Config,
+    theme: &ThemeConfig,
+    facts: &PreviewFacts,
+    ctx: &FormatterRenderContext<'_>,
+) -> Option<Vec<TemplateSpan>> {
+    let format = theme.segments.language.format.as_deref()?;
+    let selected = select_languages(config, theme, &facts.languages);
+    if selected.is_empty() {
+        return None;
+    }
+    let last_index = selected.len().saturating_sub(1);
+    let mut spans = Vec::new();
+    for (index, lang) in selected.into_iter().enumerate() {
+        let position = SegmentPosition::new(
+            if index == last_index {
+                ctx.position.is_last
+            } else {
+                IsLast::No
+            },
+            if index == 0 {
+                ctx.position.is_first
+            } else {
+                IsFirst::No
+            },
+        );
+        let resolver = LanguageResolver::new(lang, config, theme, position);
+        spans.extend(crate::template::render(format, &template_ctx(&resolver, ctx)).ok()?);
+    }
+    Some(spans)
+}
+
 /// Render one segment via the template engine; `None` when it has no format,
 /// no data, or fails to render (as the real prompt treats errors).
 fn render_segment(
@@ -301,14 +335,7 @@ fn render_segment(
     };
     match builtin {
         BuiltinSegment::Git => render_git_span(config, theme, facts, ctx),
-        BuiltinSegment::Language => {
-            let format = theme.segments.language.format.as_deref()?;
-            // Real prompt renders up to `MAX_LANGUAGE_PILLS`; preview shows the first
-            // selected one, via `select_languages` so `show_versions` behaves the same.
-            let lang = *select_languages(config, theme, &facts.languages).first()?;
-            let resolver = LanguageResolver::new(lang, config, theme, ctx.position);
-            crate::template::render(format, &template_ctx(&resolver, ctx)).ok()
-        }
+        BuiltinSegment::Language => render_language_spans(config, theme, facts, ctx),
         BuiltinSegment::Directory => render_directory_span(config, theme, ctx),
         BuiltinSegment::Duration => {
             let format = theme.segments.duration.format.as_deref()?;

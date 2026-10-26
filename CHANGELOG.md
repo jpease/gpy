@@ -88,6 +88,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configuration errors, and request-validation failures (paths, PIDs, message
   fields, message size) as invalid-operation errors. None of them say
   "IPC communication failed" any more, so their error prefix changes.
+- `gpy theme import` maps a `[directory]` `read_only` symbol to
+  `segments.directory.read_only_icon` instead of leaving the default lock.
+- The `gpy config wizard` preview draws every language the prompt would (up to
+  three) instead of only the first; the `docs/user/cli-reference.md` wizard
+  sample shows the current layout.
 - A `GPY_CONFIG_PATH`, `XDG_CONFIG_HOME` or `HOME` that is not valid UTF-8 is
   no longer rewritten with replacement characters, so the config file under it
   is found, loaded and saved.

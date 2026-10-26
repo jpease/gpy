@@ -95,10 +95,20 @@ pub fn translate_directory(table: &toml::value::Table, warnings: &mut Warnings) 
         "directory",
         warnings,
     );
-    DirectoryTheme {
+    let mut theme = DirectoryTheme {
         format: Some(mapped),
         ..Default::default()
+    };
+    if let Some(raw_icon) = table.get("read_only").and_then(toml::Value::as_str) {
+        match Icon::new(raw_icon) {
+            Ok(icon) => theme.read_only_icon = Some(icon),
+            Err(_) => warnings.push(
+                WarningKind::UnrepresentableOption,
+                format!("directory: read_only '{raw_icon}' is invalid; skipped"),
+            ),
+        }
     }
+    theme
 }
 
 /// Translate `directory` truncation settings into the advisory
