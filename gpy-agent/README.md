@@ -46,7 +46,7 @@ lists every test tier and its gate; [tests/README.md](tests/README.md)
 describes the integration test layout.
 
 The programs in `examples/` run with `cargo run --example <name>`
-(`basic_usage`, `config_management`, `ipc_client`, `theme_customization`).
+(`basic_usage`, `ipc_client`).
 
 ## Further reading
 

@@ -278,20 +278,20 @@ async fn test_agent_creation() -> Result<()> {
 async fn test_rapid_oneshot_execution() -> Result<()> {
     let _env = set_test_env();
 
-    let handles = (0_i32..5_i32).map(|i| async move {
-        let request = if i % 2_i32 == 0_i32 {
-            r#"{"type":"git_status","path":".","format":"json"}"#
-        } else {
-            r#"{"type":"language_detect","path":".","format":"json"}"#
-        };
-        Agent::handle_oneshot(request)
-    });
+    let mut set = tokio::task::JoinSet::new();
+    for i in 0_i32..5_i32 {
+        set.spawn(async move {
+            let request = if i % 2_i32 == 0_i32 {
+                r#"{"type":"git_status","path":".","format":"json"}"#
+            } else {
+                r#"{"type":"language_detect","path":".","format":"json"}"#
+            };
+            (i, Agent::handle_oneshot(request))
+        });
+    }
 
-    for (i, result) in futures::future::join_all(handles)
-        .await
-        .into_iter()
-        .enumerate()
-    {
+    while let Some(res) = set.join_next().await {
+        let (i, result) = res.expect("join handle");
         let response = result?;
         assert!(
             !response.is_empty(),

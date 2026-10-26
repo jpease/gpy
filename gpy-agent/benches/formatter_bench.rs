@@ -2,8 +2,12 @@
 //!
 //! Run with: cargo bench --bench `formatter_bench`
 
-#![allow(clippy::expect_used)]
-#![allow(clippy::missing_panics_doc)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::missing_panics_doc,
+    reason = "benchmarks panic on fixture and setup failures"
+)]
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use gpy_agent::config::Config;

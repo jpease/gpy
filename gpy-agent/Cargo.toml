@@ -139,7 +139,6 @@ test-support = []
 [dev-dependencies]
 gpy-agent = { path = ".", features = ["test-support"] }
 tempfile = "3.27"
-futures = "0.3"
 serial_test = { version = "4.0", features = ["file_locks"] }
 regex = "1.13"
 
