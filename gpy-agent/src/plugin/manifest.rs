@@ -1,5 +1,6 @@
 //! Plugin manifest (`plugin.toml`) schema and validated plugin identifiers.
 
+use super::newtype::{deserialize_via_new, display_inner};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -39,21 +40,9 @@ impl PluginId {
     }
 }
 
-impl<'de> Deserialize<'de> for PluginId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Self::new(&s).map_err(serde::de::Error::custom)
-    }
-}
+deserialize_via_new!(PluginId, keep_prefix);
 
-impl fmt::Display for PluginId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+display_inner!(PluginId);
 
 /// A validated, normalized segment name
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -151,21 +140,9 @@ pub fn first_token_collision<'a>(
     None
 }
 
-impl<'de> Deserialize<'de> for SegmentName {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Self::new(&s).map_err(serde::de::Error::custom)
-    }
-}
+deserialize_via_new!(SegmentName, keep_prefix);
 
-impl fmt::Display for SegmentName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+display_inner!(SegmentName);
 
 /// Entry type for a plugin
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -292,15 +269,7 @@ impl GpyVersion {
     }
 }
 
-impl<'de> Deserialize<'de> for GpyVersion {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Self::new(&s).map_err(serde::de::Error::custom)
-    }
-}
+deserialize_via_new!(GpyVersion, keep_prefix);
 
 impl fmt::Display for GpyVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

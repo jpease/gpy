@@ -4,7 +4,7 @@
 //! user may override the value in `config.toml` (`[plugin.<segment>]`). Every
 //! value reaches the script as the string `GPY_OPT_<key>`.
 
-use super::script::detail;
+use super::newtype::{deserialize_via_new, detail, display_inner};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -55,19 +55,25 @@ impl SettingKey {
     }
 }
 
-impl<'de> Deserialize<'de> for SettingKey {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let raw = String::deserialize(deserializer)?;
-        Self::new(&raw).map_err(|e| serde::de::Error::custom(detail(e)))
-    }
+deserialize_via_new!(SettingKey);
+
+display_inner!(SettingKey);
+
+/// The type of a setting, shared by declarations and values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingType {
+    Bool,
+    Int,
+    String,
 }
 
-impl fmt::Display for SettingKey {
+impl fmt::Display for SettingType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(match self {
+            Self::Bool => "bool",
+            Self::Int => "int",
+            Self::String => "string",
+        })
     }
 }
 
@@ -84,11 +90,11 @@ pub enum SettingValue {
 }
 
 impl SettingValue {
-    const fn type_name(&self) -> &'static str {
+    const fn kind(&self) -> SettingType {
         match self {
-            Self::Bool(_) => "bool",
-            Self::Int(_) => "int",
-            Self::String(_) => "string",
+            Self::Bool(_) => SettingType::Bool,
+            Self::Int(_) => SettingType::Int,
+            Self::String(_) => SettingType::String,
         }
     }
 }
@@ -255,8 +261,8 @@ impl SettingDecl {
             }
             (declared, _) => Err(Error::invalid(format!(
                 "expected {}, got {} {value}",
-                declared.type_name(),
-                value.type_name()
+                declared.kind(),
+                value.kind()
             ))),
         }
     }
@@ -285,11 +291,11 @@ impl SettingDecl {
         Ok(value)
     }
 
-    const fn type_name(&self) -> &'static str {
+    const fn kind(&self) -> SettingType {
         match self {
-            Self::Bool { .. } => "bool",
-            Self::Int { .. } => "int",
-            Self::String { .. } => "string",
+            Self::Bool { .. } => SettingType::Bool,
+            Self::Int { .. } => SettingType::Int,
+            Self::String { .. } => SettingType::String,
         }
     }
 }

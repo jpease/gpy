@@ -134,7 +134,7 @@ fn load_manifest_from_path(path: &Path) -> Result<(PluginManifest, PathBuf, Scri
 
 /// One-line scope note printed by `gpy plugin new`, `validate` and `list`.
 ///
-/// Applies only to v1 `.fish` plugins (`entry_type = "file"`); `script` plugins run in every shell.
+/// Applies only to v1 `.fish` plugins (`entry_type = "file"`); `script` plugins are not run by any shell yet.
 pub(crate) const FISH_ONLY_NOTE: &str =
     "Plugin segments from v1 `.fish` files load in Fish only; Bash and Zsh prompts skip them.";
 
@@ -269,12 +269,12 @@ fn script_segments_report(segments: &ScriptSegments) -> String {
     out
 }
 
-fn print_discovered_plugin_validation(plugin: &crate::plugin::DiscoveredPlugin) {
+fn print_discovered_plugin_validation(plugin: &crate::plugin::DiscoveredPlugin, root: &Path) {
     output::ok(format_args!(
         "Valid discovered plugin: {} {} [{}]",
         plugin.manifest.id, plugin.manifest.version, plugin.source
     ));
-    output::detail(format_args!("root: {}", plugin.root.display()));
+    output::detail(format_args!("root: {}", root.display()));
     output::detail(format_args!(
         "segments: {}",
         segment_list(&plugin.manifest.provided_segments)
@@ -356,7 +356,9 @@ pub fn list() {
                 "entry: {}",
                 plugin.manifest.entry_type.as_str()
             ));
-            output::detail(format_args!("root: {}", plugin.root.display()));
+            if let Some(root) = &plugin.root {
+                output::detail(format_args!("root: {}", root.display()));
+            }
             output::detail(format_args!(
                 "segments: {}",
                 segment_list(&plugin.manifest.provided_segments)
@@ -396,13 +398,12 @@ pub fn validate(path_or_id: &str) -> Result<()> {
         .iter()
         .find(|plugin| plugin.manifest.id.as_str() == path_or_id)
     {
-        if matches!(plugin.source, PluginSource::FirstParty) {
-            // First-party metadata has no filesystem root; never show `<first-party>` as one.
+        if let Some(root) = &plugin.root {
+            validate_plugin_root(root, &plugin.manifest)?;
+            print_discovered_plugin_validation(plugin, root);
+        } else {
             validate_first_party_metadata(&plugin.manifest)?;
             print_first_party_validation(plugin);
-        } else {
-            validate_plugin_root(&plugin.root, &plugin.manifest)?;
-            print_discovered_plugin_validation(plugin);
         }
         return Ok(());
     }
@@ -541,7 +542,8 @@ entry_type = "command"
 
     #[test]
     fn validate_first_party_gpy_core_succeeds() {
-        validate("gpy-core").expect("first-party gpy-core should validate");
+        validate(crate::plugin::registry::FIRST_PARTY_ID)
+            .expect("first-party plugin should validate");
     }
 
     fn write_script_plugin(root: &Path, min_version: &str) {

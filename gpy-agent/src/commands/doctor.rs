@@ -348,10 +348,12 @@ fn plugin_segment_file(
     segment: &str,
     plugin: &crate::plugin::DiscoveredPlugin,
 ) -> std::result::Result<std::path::PathBuf, String> {
+    let root = plugin
+        .root
+        .as_deref()
+        .ok_or_else(|| "built-in segments have no file".to_owned())?;
     match plugin.manifest.entry_type {
-        crate::plugin::EntryType::File => {
-            Ok(plugin.root.join("segments").join(format!("{segment}.fish")))
-        }
+        crate::plugin::EntryType::File => Ok(root.join("segments").join(format!("{segment}.fish"))),
         crate::plugin::EntryType::Script => {
             let manifest = plugin
                 .script_segments
@@ -360,7 +362,7 @@ fn plugin_segment_file(
                 .ok_or_else(|| format!("no segment manifest for '{segment}'"))?;
             manifest
                 .command
-                .resolve(&plugin.root)
+                .resolve(root)
                 .map_err(|err| err.to_string())
         }
         crate::plugin::EntryType::Command => {

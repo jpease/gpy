@@ -7,6 +7,7 @@ use super::manifest::{
 use super::script::ScriptSegmentManifest;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 /// Cap on `plugin.toml` reads: a manifest with declared fields, config-sized.
 const PLUGIN_MANIFEST_READ_CAP: usize = 65_536;
@@ -47,8 +48,8 @@ impl PluginSource {
 pub struct DiscoveredPlugin {
     /// Parsed plugin manifest.
     pub manifest: PluginManifest,
-    /// Filesystem root directory containing `plugin.toml`.
-    pub root: PathBuf,
+    /// Filesystem root directory containing `plugin.toml`; `None` for first-party metadata.
+    pub root: Option<PathBuf>,
     /// Plugin source location.
     pub source: PluginSource,
     /// Validated segment manifests of a `script` plugin, one per provided
@@ -57,6 +58,11 @@ pub struct DiscoveredPlugin {
 }
 
 impl DiscoveredPlugin {
+    /// The root, or an empty path for first-party metadata.
+    fn root_or_default(&self) -> PathBuf {
+        self.root.clone().unwrap_or_default()
+    }
+
     /// Load every provided segment's manifest of a `script` plugin.
     ///
     /// # Errors
@@ -124,40 +130,36 @@ fn plugin_roots() -> Vec<(PluginSource, PathBuf)> {
     roots
 }
 
-fn first_party_plugins() -> Vec<DiscoveredPlugin> {
-    let Ok(plugin_id) = PluginId::new("gpy-core") else {
-        return Vec::new();
-    };
-    let provided_segments: Vec<SegmentName> = super::BUILTIN_ORDER
-        .iter()
-        .filter_map(|builtin| SegmentName::new(builtin.as_str()).ok())
-        .collect();
-    if provided_segments.is_empty() {
-        return Vec::new();
-    }
+/// Plugin id of the built-in segment metadata.
+pub const FIRST_PARTY_ID: &str = "gpy-core";
 
-    let Ok(version) = GpyVersion::new(env!("CARGO_PKG_VERSION")) else {
-        return Vec::new();
-    };
-
+/// Metadata for the built-in segments. Every value is statically known; the
+/// `first_party_manifest_*` tests pin that construction succeeds.
+static FIRST_PARTY: LazyLock<DiscoveredPlugin> = LazyLock::new(|| {
+    #[expect(
+        clippy::expect_used,
+        reason = "inputs are compile-time constants validated by tests"
+    )]
     let manifest = PluginManifest {
-        id: plugin_id,
+        id: PluginId::new(FIRST_PARTY_ID).expect("first-party id is valid"),
         name: "GPY Core Segments".to_owned(),
-        version,
+        version: GpyVersion::new(env!("CARGO_PKG_VERSION")).expect("crate version is valid"),
         api_version: PluginApiVersion::V1,
         description: Some("First-party metadata for built-in GPY prompt segments".to_owned()),
-        provided_segments,
+        provided_segments: super::BUILTIN_ORDER
+            .iter()
+            .map(|builtin| SegmentName::new(builtin.as_str()).expect("builtin name is valid"))
+            .collect(),
         entry_type: EntryType::File,
         compatibility_constraints: None,
     };
-
-    vec![DiscoveredPlugin {
+    DiscoveredPlugin {
         manifest,
-        root: PathBuf::from("<first-party>"),
+        root: None,
         source: PluginSource::FirstParty,
         script_segments: BTreeMap::new(),
-    }]
-}
+    }
+});
 
 /// Read and parse `plugin.toml` from a plugin directory.
 ///
@@ -232,7 +234,7 @@ fn register_discovered_plugin(
     let plugin_id = manifest.id.as_str().to_owned();
     let candidate = DiscoveredPlugin {
         manifest,
-        root: plugin_dir,
+        root: Some(plugin_dir),
         source,
         script_segments,
     };
@@ -250,22 +252,22 @@ fn register_discovered_plugin(
     } else if candidate_precedence == existing_precedence {
         // Same source: the lexically smaller root was visited first; keep it.
         diagnostics.push(PluginDiagnostic {
-            plugin_dir: candidate.root.clone(),
+            plugin_dir: candidate.root_or_default(),
             source,
             message: format!(
                 "Duplicate plugin id '{plugin_id}': keeping '{}', ignoring '{}'",
-                existing.root.display(),
-                candidate.root.display()
+                existing.root_or_default().display(),
+                candidate.root_or_default().display()
             ),
         });
     }
 }
 
 fn discover_plugins_in_roots(roots: &[(PluginSource, PathBuf)]) -> PluginDiscovery {
-    let mut winners: HashMap<String, DiscoveredPlugin> = first_party_plugins()
-        .into_iter()
-        .map(|plugin| (plugin.manifest.id.as_str().to_owned(), plugin))
-        .collect();
+    let mut winners: HashMap<String, DiscoveredPlugin> = HashMap::from([(
+        FIRST_PARTY_ID.to_owned(),
+        LazyLock::force(&FIRST_PARTY).clone(),
+    )]);
     let mut diagnostics = Vec::new();
 
     for (source, root) in roots {
@@ -339,7 +341,7 @@ fn reject_token_collisions(
             plugin.manifest.id, collision.first
         );
         diagnostics.push(PluginDiagnostic {
-            plugin_dir: plugin.root,
+            plugin_dir: plugin.root.unwrap_or_default(),
             source: plugin.source,
             message,
         });
@@ -413,9 +415,9 @@ entry_type = "command"
             .find(|plugin| plugin.manifest.id.as_str() == "demo")
             .expect("demo discovered");
         assert!(
-            demo.root.ends_with("a-dup"),
-            "lexically smaller root must win, got {}",
-            demo.root.display()
+            demo.root
+                .as_deref()
+                .is_some_and(|dir| dir.ends_with("a-dup")),
         );
         assert!(
             discovery.diagnostics.iter().any(|diagnostic| {
@@ -653,7 +655,7 @@ entry_type = "command"
         let first_party = discovery
             .plugins
             .iter()
-            .find(|plugin| plugin.manifest.id.as_str() == "gpy-core")
+            .find(|plugin| plugin.manifest.id.as_str() == FIRST_PARTY_ID)
             .expect("first-party metadata plugin should be present");
 
         let provided: Vec<String> = first_party
@@ -679,9 +681,10 @@ entry_type = "command"
 
     #[test]
     fn first_party_manifest_provides_exactly_the_builtin_segments() {
-        let provided: Vec<String> = first_party_plugins()
+        let provided: Vec<String> = FIRST_PARTY
+            .manifest
+            .provided_segments
             .iter()
-            .flat_map(|plugin| plugin.manifest.provided_segments.iter())
             .map(ToString::to_string)
             .collect();
         let builtin: Vec<String> = crate::plugin::BUILTIN_ORDER

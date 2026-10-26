@@ -62,7 +62,7 @@ fn segment_detail(segment: &str) -> SegmentDetail {
                 "Shown only as root, under sudo or over SSH unless `segments.username.show_always` is set; the preview uses the root style.",
             ),
         },
-        Err(()) => SegmentDetail {
+        Err(_) => SegmentDetail {
             config_field: "ui.enabled_segments",
             preview_contribution: "Provided by a plugin.",
             caveat: Some(
@@ -160,7 +160,7 @@ fn segment_lines(state: &WizardState, theme: &ThemeConfig) -> Vec<Line<'static>>
             | crate::plugin::BuiltinSegment::Username
             | crate::plugin::BuiltinSegment::Hostname,
         )
-        | Err(()) => {}
+        | Err(_) => {}
     }
     lines
 }

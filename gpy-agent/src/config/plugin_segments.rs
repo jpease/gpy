@@ -7,7 +7,7 @@
 //! `gpy config get/set/list` address the entries as `plugin.<segment>.<key>`.
 
 use crate::config::Config;
-use crate::plugin::script::detail;
+use crate::plugin::newtype::detail;
 use crate::plugin::{
     EntryType, PluginDiscovery, RESERVED_SETTING_KEYS, ScriptSegmentManifest, SegmentName,
     SettingKey, SettingValue, TimeoutMs, TtlSecs,

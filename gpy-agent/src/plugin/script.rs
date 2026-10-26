@@ -6,6 +6,7 @@
 //! declares and validates.
 
 use super::manifest::SegmentName;
+use super::newtype::{deserialize_via_new, detail, display_inner};
 use super::settings::{SettingDecl, SettingKey};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -35,36 +36,6 @@ pub fn is_env_name(name: &str) -> bool {
         .next()
         .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-/// The message of an [`Error::Invalid`] without its `Invalid operation:`
-/// prefix, so nested contexts read as one sentence.
-pub(crate) fn detail(error: Error) -> String {
-    match error {
-        Error::Invalid { message } => message,
-        other => other.to_string(),
-    }
-}
-
-/// Implement `Deserialize` through a validating `new(&str) -> Result<Self>`.
-macro_rules! deserialize_via_new {
-    ($ty:ty) => {
-        impl<'de> Deserialize<'de> for $ty {
-            fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-            where
-                D: serde::Deserializer<'de>,
-            {
-                let raw = String::deserialize(deserializer)?;
-                Self::new(&raw).map_err(|e| serde::de::Error::custom(detail(e)))
-            }
-        }
-
-        impl fmt::Display for $ty {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(&self.0)
-            }
-        }
-    };
 }
 
 /// A public shell value a script can declare in `inputs`.
@@ -179,6 +150,7 @@ impl EnvName {
 }
 
 deserialize_via_new!(EnvName);
+display_inner!(EnvName);
 
 /// A plugin-relative path to a POSIX `sh` script (`command`, `require_command`).
 ///
@@ -251,6 +223,7 @@ impl ScriptPath {
 }
 
 deserialize_via_new!(ScriptPath);
+display_inner!(ScriptPath);
 
 /// One file or folder name searched for by `require_files`/`require_folders`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -285,6 +258,7 @@ impl ScanName {
 }
 
 deserialize_via_new!(ScanName);
+display_inner!(ScanName);
 
 /// A file extension for `require_extensions`, without the leading dot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -323,6 +297,7 @@ impl Extension {
 }
 
 deserialize_via_new!(Extension);
+display_inner!(Extension);
 
 /// Bounded `u32` newtype with a default, deserialized via `try_from`.
 macro_rules! bounded_u32 {
@@ -447,6 +422,7 @@ impl VariantName {
 }
 
 deserialize_via_new!(VariantName);
+display_inner!(VariantName);
 
 /// Which colour of a variant a theme key sets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -514,15 +490,7 @@ impl Serialize for VariantColorKey {
     }
 }
 
-impl<'de> Deserialize<'de> for VariantColorKey {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let raw = String::deserialize(deserializer)?;
-        Self::new(&raw).map_err(|e| serde::de::Error::custom(detail(e)))
-    }
-}
+deserialize_via_new!(VariantColorKey);
 
 /// A script segment manifest, `segments/<id>.toml` in a script plugin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

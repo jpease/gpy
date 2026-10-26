@@ -518,12 +518,12 @@ impl ThemeManager {
             {
                 continue;
             }
+            let Some(root) = &plugin.root else {
+                continue;
+            };
             for provided_segment in plugin.manifest.provided_segments {
                 let segment_name = provided_segment.to_string();
-                let segment_file = plugin
-                    .root
-                    .join("segments")
-                    .join(format!("{segment_name}.fish"));
+                let segment_file = root.join("segments").join(format!("{segment_name}.fish"));
                 files
                     .entry(segment_name)
                     .or_insert_with(|| segment_file.to_string_lossy().into_owned());
@@ -677,7 +677,9 @@ impl ThemeManager {
             let source = ThemeSource::Plugin {
                 plugin_id: plugin.manifest.id.as_str().to_owned(),
             };
-            discovery::insert_toml_dir(merged, &plugin.root.join("themes"), &source);
+            if let Some(root) = &plugin.root {
+                discovery::insert_toml_dir(merged, &root.join("themes"), &source);
+            }
         }
     }
 

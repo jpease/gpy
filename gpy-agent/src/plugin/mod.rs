@@ -4,6 +4,8 @@
 mod builtin;
 /// Plugin manifest data models and parser
 pub mod manifest;
+/// Shared plumbing for validated string newtypes
+pub(crate) mod newtype;
 /// Plugin discovery and registry model
 pub mod registry;
 /// Script segment manifests (`entry_type = "script"`)

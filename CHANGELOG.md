@@ -128,6 +128,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `gpy plugin list` no longer prints a placeholder `root:` line for the
+  built-in `gpy-core` plugin, which has no directory.
 - `./install-dev.fish` now exits when a gpy outside `$HOME` (for example
   Homebrew's) is on `PATH`, since it would shadow that install and replace
   the Fish files `gpy setup` manages. Pass `--allow-shadow` to install anyway.

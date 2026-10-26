@@ -46,7 +46,7 @@ fn discovery() -> PluginDiscovery {
     PluginDiscovery {
         plugins: vec![DiscoveredPlugin {
             manifest,
-            root: std::path::PathBuf::from("/plugins/k8s-tools"),
+            root: Some(std::path::PathBuf::from("/plugins/k8s-tools")),
             source: PluginSource::User,
             script_segments: BTreeMap::from([(
                 segment(),
