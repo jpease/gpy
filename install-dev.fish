@@ -27,7 +27,7 @@ for arg in $argv
         case --help -h
             set show_help 1
         case '*'
-            echo "Error: Unknown option: $arg"
+            echo "error: Unknown option: $arg"
             echo "   Run with --help for usage"
             exit 1
     end
@@ -74,7 +74,7 @@ function _refuse_to_shadow_package_install
         set -l found_dir (path resolve (path dirname $found))
         test "$found_dir" = "$install_dir"; and continue
         test (string sub -l (string length -- "$home_dir/") -- "$found_dir/") = "$home_dir/"; and continue
-        echo "Error: gpy is already installed at $found (not by this script)."
+        echo "error: gpy is already installed at $found (not by this script)."
         echo "   This script would shadow it from $install_dir and replace the Fish files"
         echo "   that 'gpy setup' manages. To test unreleased code without touching it, use a"
         echo "   sandboxed HOME/XDG_* (see demo/setup.fish) or run the checkout's build directly."
@@ -88,11 +88,20 @@ _refuse_to_shadow_package_install; or exit 1
 
 function _check_repo_root
     if not test -d gpy-agent
-        echo "Error: gpy-agent directory not found"
+        echo "error: gpy-agent directory not found"
         echo "   Run this script from the GPY repository root"
         return 1
     end
     return 0
+end
+
+# Resolved as gpy-agent/src/paths.rs does.
+function _config_home
+    if test -n "$XDG_CONFIG_HOME"
+        echo "$XDG_CONFIG_HOME"
+    else
+        echo "$HOME/.config"
+    end
 end
 
 # Honors CARGO_TARGET_DIR, which cargo writes to instead of gpy-agent/target.
@@ -108,11 +117,11 @@ function _build_agent
     echo "Building agent (release mode)..."
     cd gpy-agent
     if cargo build --release
-        echo "Agent built successfully"
+        echo "ok: agent built"
         cd ..
         return 0
     else
-        echo "Error: Agent build failed"
+        echo "error: Agent build failed"
         cd ..
         return 1
     end
@@ -149,20 +158,13 @@ function _stop_running_agent
                 end
             end
         else
-            echo "Warning: lsof not found; cannot safely stop the lingering agent (refusing to kill by process name)"
+            echo "warn: lsof not found; cannot safely stop the lingering agent (refusing to kill by process name)"
         end
     end
 
     if test -n "$socket_path"
         rm -f "$socket_path" 2>/dev/null
     end
-    if set -q XDG_RUNTIME_DIR; and test -n "$XDG_RUNTIME_DIR"
-        rm -f "$XDG_RUNTIME_DIR/gpy/gpy.sock" 2>/dev/null
-    end
-    if set -q XDG_CACHE_HOME; and test -n "$XDG_CACHE_HOME"
-        rm -f "$XDG_CACHE_HOME/gpy/gpy.sock" 2>/dev/null
-    end
-    rm -f "$HOME/.cache/gpy/gpy.sock" 2>/dev/null
 
     echo "Agent stopped and cleaned up"
     return 0
@@ -222,7 +224,7 @@ function _remove_conflicting_binaries --argument-names install_dir
             # Only delete our own binary; clap `--version` starts with its name.
             set -l found_version ("$found" --version 2>/dev/null)
             if not string match -q "$name *" -- $found_version
-                echo "Warning: Found $name earlier on PATH but it doesn't look like ours, leaving it: $found"
+                echo "warn: Found $name earlier on PATH but it doesn't look like ours, leaving it: $found"
                 continue
             end
 
@@ -230,7 +232,7 @@ function _remove_conflicting_binaries --argument-names install_dir
             # it is under $HOME. Prefix compare: HOME may contain glob characters.
             set -l home_prefix "$home_dir/"
             if test -z "$home_dir"; or test (string sub -l (string length -- $home_prefix) -- "$found_dir/") != "$home_prefix"
-                echo "Warning: $found shadows the install but is outside \$HOME, leaving it. If it is a stale copy, remove it: rm '$found'"
+                echo "warn: $found shadows the install but is outside \$HOME, leaving it. If it is a stale copy, remove it: rm '$found'"
                 continue
             end
 
@@ -242,49 +244,35 @@ end
 function _install_agent_binary
     echo "Installing binaries..."
 
-    set -l agent_binary (_release_dir)/gpy-agent
-    set -l cli_binary (_release_dir)/gpy
-
-    if not test -f $agent_binary
-        echo "Error: Agent binary not found at $agent_binary"
-        echo "   Build the agent first or use --fish-only"
-        return 1
-    end
-
-    if not test -f $cli_binary
-        echo "Error: CLI binary not found at $cli_binary"
-        echo "   Build failed or incomplete"
-        return 1
-    end
-
     set -l install_dir "$HOME/.local/bin"
+    set -l names gpy-agent gpy
+
+    for name in $names
+        if not test -f (_release_dir)/$name
+            echo "error: $name binary not found at "(_release_dir)/$name
+            echo "   Build first, or use --fish-only"
+            return 1
+        end
+    end
+
     mkdir -p $install_dir
 
     _stop_running_agent
 
-    if command -q install
-        install -m 755 $agent_binary $install_dir/gpy-agent
-    else
-        cp $agent_binary $install_dir/gpy-agent
+    for name in $names
+        set -l built (_release_dir)/$name
+        if command -q install
+            install -m 755 $built $install_dir/$name
+        else
+            cp $built $install_dir/$name
+            chmod +x $install_dir/$name
+        end
         # Scoped so other extended attributes survive.
         if command -q xattr
-            xattr -d com.apple.quarantine $install_dir/gpy-agent 2>/dev/null
+            xattr -d com.apple.quarantine $install_dir/$name 2>/dev/null
         end
-        chmod +x $install_dir/gpy-agent
+        echo "ok: installed $install_dir/$name"
     end
-
-    if command -q install
-        install -m 755 $cli_binary $install_dir/gpy
-    else
-        cp $cli_binary $install_dir/gpy
-        if command -q xattr
-            xattr -d com.apple.quarantine $install_dir/gpy 2>/dev/null
-        end
-        chmod +x $install_dir/gpy
-    end
-
-    echo "Installed to $install_dir/gpy"
-    echo "Installed to $install_dir/gpy-agent"
 
     _remove_conflicting_binaries $install_dir
 
@@ -294,26 +282,16 @@ end
 function _install_fish_files
     echo "Installing Fish files..."
 
-    set -l fish_config_dir
-    if set -q XDG_CONFIG_HOME; and test -n "$XDG_CONFIG_HOME"
-        set fish_config_dir "$XDG_CONFIG_HOME/fish"
-    else
-        set fish_config_dir "$HOME/.config/fish"
-    end
-
-    set -l gpy_config_dir
-    if set -q XDG_CONFIG_HOME; and test -n "$XDG_CONFIG_HOME"
-        set gpy_config_dir "$XDG_CONFIG_HOME/gpy"
-    else
-        set gpy_config_dir "$HOME/.config/gpy"
-    end
+    set -l config_home (_config_home)
+    set -l fish_config_dir "$config_home/fish"
+    set -l gpy_config_dir "$config_home/gpy"
     set -l gpy_fish_dir "$fish_config_dir/gpy"
 
     mkdir -p $gpy_config_dir
     set -l config_file config/config.toml
 
     if not test -f $config_file
-        echo "Error: Source file not found: $config_file"
+        echo "error: Source file not found: $config_file"
         return 1
     end
 
@@ -331,7 +309,7 @@ function _install_fish_files
         rm -rf "$fish_config_dir/gpy"
     end
     if not "$HOME/.local/bin/gpy" setup --shell fish --from . --non-interactive
-        echo "Error: gpy setup failed"
+        echo "error: gpy setup failed"
         return 1
     end
 
@@ -349,24 +327,18 @@ function _verify_installation
         if test -n "$agent_version"
             echo "Agent: $agent_version"
         else
-            echo "Warning: Agent installed but version check failed"
+            echo "warn: Agent installed but version check failed"
         end
     else
-        echo "Warning: Agent not in PATH (add ~/.local/bin to PATH)"
+        echo "warn: Agent not in PATH (add ~/.local/bin to PATH)"
     end
 
-    set -l fish_config_dir
-    if set -q XDG_CONFIG_HOME; and test -n "$XDG_CONFIG_HOME"
-        set fish_config_dir "$XDG_CONFIG_HOME/fish"
-    else
-        set fish_config_dir "$HOME/.config/fish"
-    end
-    set -l gpy_fish_dir "$fish_config_dir/gpy"
+    set -l gpy_fish_dir (_config_home)/fish/gpy
 
     if test -d "$gpy_fish_dir/core"
         echo "Fish files installed"
     else
-        echo "Error: Fish files not found"
+        echo "error: Fish files not found"
         return 1
     end
 
@@ -393,12 +365,12 @@ function _verify_installation
             if test $hot_reload_enabled -eq 1
                 echo "Config hot-reload: ENABLED (1-second debounce)"
             else
-                echo "Warning: Config hot-reload: UNKNOWN STATUS"
+                echo "warn: Config hot-reload: UNKNOWN STATUS"
                 echo "   Debug log: $debug_log (removed after the probe)"
             end
 
         else
-            echo "Warning: Could not verify hot-reload (debug log not created)"
+            echo "warn: Could not verify hot-reload (debug log not created)"
             echo "   Agent may not have started - check: gpy-agent status"
         end
 
@@ -430,7 +402,7 @@ else
 
     if test $fish_only -eq 0
         if not test -f (_release_dir)/gpy-agent
-            echo "Error: Agent binary not found"
+            echo "error: Agent binary not found"
             echo "   Build the agent first or use --fish-only"
             exit 1
         end
@@ -442,7 +414,7 @@ else
 end
 
 if not test -x "$HOME/.local/bin/gpy"
-    echo "Error: gpy is not installed; run ./install-dev.fish without --fish-only first"
+    echo "error: gpy is not installed; run ./install-dev.fish without --fish-only first"
     exit 1
 end
 
@@ -457,7 +429,7 @@ end
 _verify_installation
 
 echo ""
-echo "Installation complete!"
+echo "ok: installation complete"
 echo ""
 
 echo "Next steps:"

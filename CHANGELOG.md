@@ -143,6 +143,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names the same way. `gpy doctor` no longer says "this is fine", and the
   rc-file block that `gpy setup` writes is headed `GPY shell integration`
   (uninstall matches the marker lines, not the heading).
+- The installers and `scripts/uninstall.sh` share one message style: plain
+  `ok:`, `warn:` and `error:` prefixes, no glyphs or colour. `install.sh` now
+  stages and tests a new binary before replacing the old one, as
+  `install-oneline.sh` does, and its failure message names the step that
+  failed instead of always blaming `~/.local/bin` permissions.
+  `install-oneline.sh` also requires `fish/core/flags.fish` in the shell
+  archive. `./install-dev.fish` stops the agent through `gpy-agent` and no
+  longer deletes sockets from fixed paths.
 - `gpy theme validate` and `gpy palette validate` choose their remediation
   hints from the kind of failure, so rewording an error no longer drops its
   hint. A palette file with a bad TOML value now reports
