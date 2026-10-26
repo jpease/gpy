@@ -216,25 +216,27 @@ fn eval_nodes(
     }
 
     // Only empty group nodes (`Styled`/`Conditional`) count as neighbors.
-    let is_empty_group_at = |index: usize| -> bool {
-        matches!(
-            nodes.get(index),
-            Some(Node::Styled { .. } | Node::Conditional(_))
-        ) && per_node.get(index).is_some_and(Vec::is_empty)
+    let is_empty_group = |node: &Node, buf: &[Span]| {
+        matches!(node, Node::Styled { .. } | Node::Conditional(_)) && buf.is_empty()
     };
 
-    for (index, (node, buf)) in nodes.iter().zip(per_node.iter()).enumerate() {
+    let mut previous_empty_group = false;
+    let mut pending = nodes.iter().zip(per_node).peekable();
+    while let Some((node, buf)) = pending.next() {
         let is_whitespace_literal = matches!(
             node,
             Node::Literal(text) if !text.is_empty() && text.chars().all(char::is_whitespace)
         );
         let sandwiched = is_whitespace_literal
-            && index.checked_sub(1).is_some_and(is_empty_group_at)
-            && is_empty_group_at(index.saturating_add(1_usize));
+            && previous_empty_group
+            && pending
+                .peek()
+                .is_some_and(|(next, next_buf)| is_empty_group(next, next_buf));
+        previous_empty_group = is_empty_group(node, &buf);
         if sandwiched {
             continue;
         }
-        out.extend(buf.iter().cloned());
+        out.extend(buf);
     }
     Ok(())
 }

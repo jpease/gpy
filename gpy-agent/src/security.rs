@@ -3,6 +3,7 @@
 #[cfg(unix)]
 use crate::warn_log;
 use crate::{Error, Result};
+use std::collections::VecDeque;
 use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -259,7 +260,7 @@ impl PidValidator {
 
 /// Global sliding-window connection rate limiter (one shared counter).
 pub struct RateLimiter {
-    connections: Vec<Instant>,
+    connections: VecDeque<Instant>,
     max_per_second: u32,
 }
 
@@ -268,7 +269,7 @@ impl RateLimiter {
     #[must_use]
     pub const fn new(max_per_second: u32) -> Self {
         Self {
-            connections: Vec::new(),
+            connections: VecDeque::new(),
             max_per_second,
         }
     }
@@ -284,11 +285,15 @@ impl RateLimiter {
         let one_second_ago = now.checked_sub(Duration::from_secs(1));
 
         // `None` only near the monotonic epoch, when nothing has aged out yet.
-        self.connections
-            .retain(|&time| one_second_ago.is_none_or(|cutoff| time > cutoff));
+        // Entries are pushed in non-decreasing time order, so expired ones sit at the front.
+        if let Some(cutoff) = one_second_ago {
+            while self.connections.front().is_some_and(|&time| time <= cutoff) {
+                self.connections.pop_front();
+            }
+        }
 
         if self.connections.len() < usize::try_from(self.max_per_second).unwrap_or(usize::MAX) {
-            self.connections.push(now);
+            self.connections.push_back(now);
             true
         } else {
             false

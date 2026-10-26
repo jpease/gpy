@@ -10,7 +10,7 @@ use crate::language::detector::DetectedLanguage;
 use crate::language::venv::PythonVenv;
 use crate::language::version::{ColdVersion, ProbePolicy, ReleaseSource, get_version_detectors};
 use crate::theme::ThemeConfig;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 
 /// Select which detected languages to display (pure, no I/O).
@@ -184,19 +184,19 @@ fn resolve_versions(
     displayed: &[&DetectedLanguage],
     versions: Versions,
 ) -> Result<Vec<Option<String>>, ColdVersion> {
-    let sources: HashMap<&str, &(dyn ReleaseSource + Sync + Send)> = request
-        .sources
-        .iter()
-        .map(|source| (source.language_name(), source.as_ref()))
-        .collect();
     let policy = match versions {
         Versions::Probe => ProbePolicy::Spawn,
         Versions::Cached | Versions::Settled => ProbePolicy::CachedOnly,
     };
     let lookup = |detected_lang: &DetectedLanguage| {
+        let source = request
+            .sources
+            .iter()
+            .find(|source| source.language_name() == detected_lang.name)
+            .map(|source| &**source);
         language_version(
             detected_lang,
-            sources.get(detected_lang.name.as_str()).copied(),
+            source,
             request.version_cwd,
             request.python_venv,
             policy,

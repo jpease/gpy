@@ -137,9 +137,7 @@ impl LanguageTheme {
     #[must_use]
     pub fn get_bg_color(&self, language: &str) -> &str {
         let canonical = crate::language::metadata::get_canonical_name(language).unwrap_or(language);
-        let key = format!("{canonical}_bg_color");
-        self.overrides
-            .get(&key)
+        lookup(&self.overrides, canonical, "_bg_color")
             .map_or_else(|| self.bg_color.as_str(), |c| c.as_str())
     }
 
@@ -147,9 +145,7 @@ impl LanguageTheme {
     #[must_use]
     pub fn get_text_color(&self, language: &str) -> &str {
         let canonical = crate::language::metadata::get_canonical_name(language).unwrap_or(language);
-        let key = format!("{canonical}_text_color");
-        self.overrides
-            .get(&key)
+        lookup(&self.overrides, canonical, "_text_color")
             .map_or_else(|| self.text_color.as_str(), |c| c.as_str())
     }
 
@@ -159,8 +155,7 @@ impl LanguageTheme {
     #[must_use]
     pub fn get_symbol(&self, language: &str) -> Option<&str> {
         let canonical = crate::language::metadata::get_canonical_name(language).unwrap_or(language);
-        let key = format!("{canonical}_symbol");
-        self.symbols.get(&key).map(String::as_str)
+        lookup(&self.symbols, canonical, "_symbol").map(String::as_str)
     }
 
     /// Get a theme-declared style-attribute string for a language.
@@ -169,9 +164,33 @@ impl LanguageTheme {
     #[must_use]
     pub fn get_style(&self, language: &str) -> &str {
         let canonical = crate::language::metadata::get_canonical_name(language).unwrap_or(language);
-        let key = format!("{canonical}_style");
-        self.styles.get(&key).map_or("bold", String::as_str)
+        lookup(&self.styles, canonical, "_style").map_or("bold", String::as_str)
     }
+}
+
+/// Longest `<canonical><suffix>` key assembled on the stack; longer keys take the heap path.
+const STACK_KEY_BYTES: usize = 64;
+
+/// Look up `<canonical><suffix>` in a flat per-language map without allocating
+/// for ordinary language names.
+fn lookup<'map, V>(
+    map: &'map HashMap<String, V>,
+    canonical: &str,
+    suffix: &str,
+) -> Option<&'map V> {
+    let split = canonical.len();
+    let total = split.saturating_add(suffix.len());
+    let mut buf = [0_u8; STACK_KEY_BYTES];
+    let stack_key = buf.get_mut(..total).and_then(|key| {
+        let (head, tail) = key.split_at_mut_checked(split)?;
+        head.copy_from_slice(canonical.as_bytes());
+        tail.copy_from_slice(suffix.as_bytes());
+        std::str::from_utf8(key).ok()
+    });
+    stack_key.map_or_else(
+        || map.get(&format!("{canonical}{suffix}")),
+        |key| map.get(key),
+    )
 }
 
 #[cfg(test)]

@@ -7,9 +7,12 @@ use std::hash::Hash;
 /// Maximum number of repositories tracked by the git status cache.
 pub const GIT_STATUS_CACHE_CAPACITY: usize = 512;
 
+/// Estimated bytes of change detail held per file in a git-status entry.
+pub const FILE_DETAIL_BYTES_PER_FILE: usize = 80;
+
 /// Byte budget for per-file change detail across all git-status entries; the
-/// oldest entries lose file maps first. At 80 B per file (`CacheEntry::file_detail_bytes`),
-/// that is about 0.8 MB per repo with 10,000 dirty files.
+/// oldest entries lose file maps first. At [`FILE_DETAIL_BYTES_PER_FILE`] per
+/// file, that is about 0.8 MB per repo with 10,000 dirty files.
 pub const GIT_STATUS_CACHE_MAX_FILE_DETAIL_BYTES: usize = 10 * 1024 * 1024;
 
 /// Maximum number of directories tracked by the language detection cache.
@@ -44,6 +47,17 @@ pub fn evict_to_capacity<K, V, R>(
     }
 
     let excess = map.len().saturating_sub(capacity);
+
+    if excess == 1 {
+        let oldest = map
+            .iter()
+            .min_by_key(|(_, value)| recency(value))
+            .map(|(key, _)| key.clone());
+        if let Some(key) = oldest {
+            map.remove(&key);
+        }
+        return;
+    }
 
     let mut keyed: Vec<(R, K)> = map
         .iter()
