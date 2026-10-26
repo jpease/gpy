@@ -377,54 +377,27 @@ fn test_normalize_language_name() {
 #[test]
 fn test_get_language_color_from_theme() {
     use gpy_agent::config::LanguageTheme;
+    use gpy_agent::config::types::ColorSpec;
 
-    let theme = LanguageTheme::default();
+    let mut theme = LanguageTheme::default();
+    let segment_bg = theme.bg_color.as_str().to_owned();
+    theme.overrides.insert(
+        "rust_bg_color".to_owned(),
+        ColorSpec::new("red").expect("valid color"),
+    );
 
-    assert_eq!(
-        get_language_color_from_theme("node", &theme),
-        "green",
-        "Node should use green color from default theme"
-    );
-    assert_eq!(
-        get_language_color_from_theme("python", &theme),
-        "blue",
-        "Python should use blue color from default theme"
-    );
     assert_eq!(
         get_language_color_from_theme("rust", &theme),
         "red",
-        "Rust should use red color from default theme"
+        "a per-language override wins"
     );
-    assert_eq!(
-        get_language_color_from_theme("go", &theme),
-        "cyan",
-        "Go should use cyan color from default theme"
-    );
-    assert_eq!(
-        get_language_color_from_theme("ruby", &theme),
-        "red",
-        "Ruby should use red color from default theme"
-    );
-    assert_eq!(
-        get_language_color_from_theme("java", &theme),
-        "blue",
-        "Java should use blue color from default theme"
-    );
-    assert_eq!(
-        get_language_color_from_theme("swift", &theme),
-        "red",
-        "Swift should use red color from default theme"
-    );
-    assert_eq!(
-        get_language_color_from_theme("elixir", &theme),
-        "magenta",
-        "Elixir should use magenta color from default theme"
-    );
-    assert_eq!(
-        get_language_color_from_theme("unknown", &theme),
-        "black",
-        "Unknown languages should fall back to segment background color"
-    );
+    for language in ["node", "python", "go", "unknown"] {
+        assert_eq!(
+            get_language_color_from_theme(language, &theme),
+            segment_bg,
+            "{language} without an override inherits the segment background"
+        );
+    }
 }
 
 #[test]
