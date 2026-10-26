@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fail if any tracked file (git grep) leaks a real user's home directory, a
-# private project codename, or a hardcoded socket path under someone's home.
+# private project codename, a reference to the private issue tracker, or a
+# hardcoded socket path under someone's home.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -67,11 +68,22 @@ scan_socket_paths() {
     return 0
 }
 
+# References to the private tracker or to its per-issue scratch names.
+scan_private_refs() {
+    local hits
+    hits="$(git grep -n -I -E 'gpy-archive|gpy[0-9]{3}[.A-Za-z]' -- . 2>/dev/null |
+        grep -Ev "^($SELF_PATHS):" || true)"
+
+    [[ -n "$hits" ]] && report "Reference to the private issue tracker:" "$hits"
+    return 0
+}
+
 echo "Privacy pattern scan"
 
 scan_user_paths
 scan_private_identifiers
 scan_socket_paths
+scan_private_refs
 
 if [[ $failures -eq 0 ]]; then
     echo "✓ No workstation or private-project references in tracked files"

@@ -78,7 +78,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         # Two shards of `quality-check.sh --shell-only` per OS, balanced on
-        # measured wall time (jpease/gpy-archive#977): the Bash suite alone,
+        # measured wall time: the Bash suite alone,
         # and everything else. Together they must cover every part
         # (tests/bash/ci_gate_shape).
         parts: [bash, "checks,fish,zsh"]

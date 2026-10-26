@@ -89,7 +89,7 @@ exports_match_config() {
 
 # Make a running agent apply sandbox $1's config.toml before the next render.
 # Its own reload is debounced, and a render that raced it drew the previous
-# segment list from the shell export (jpease/gpy-archive#948). Talks to the
+# segment list from the shell export. Talks to the
 # agent's own socket, so the observed IPC log never sees it.
 sync_agent_config() {
     local sandbox="$1"

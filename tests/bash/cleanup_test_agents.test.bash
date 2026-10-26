@@ -26,15 +26,13 @@ fi
 
 # Hermetic TMPDIR so the GPY test root never overlaps a real socket.
 # Rooted under /tmp, not ${TMPDIR}: macOS caps AF_UNIX paths at ~104 bytes.
-# so the sandbox path stays short: AF_UNIX socket paths are capped at ~104
-# bytes on macOS, and the ambient TMPDIR on macOS is already a long
-SANDBOX_TMPDIR="$(mktemp -d /tmp/gpy619.XXXXXX)"
+SANDBOX_TMPDIR="$(mktemp -d /tmp/gpy-cleanup.XXXXXX)"
 TEST_USER="${USER:-$(id -un)}"
 GPY_ROOT="${SANDBOX_TMPDIR%/}/gpy-test-$TEST_USER"
 mkdir -p "$GPY_ROOT"
 
 # Decoy socket OUTSIDE the sandboxed root (also /tmp for path length).
-DECOY_DIR="$(mktemp -d /tmp/gpy619decoy.XXXXXX)"
+DECOY_DIR="$(mktemp -d /tmp/gpy-cleanup-decoy.XXXXXX)"
 DECOY_SOCK="$DECOY_DIR/gpy-test-decoy.sock"
 IN_ROOT_SOCK="$GPY_ROOT/gpy-test.sock"
 

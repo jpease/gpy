@@ -52,7 +52,7 @@ __icw_check "install.sh: hands the package's shell trees to gpy setup" install.s
     '~/\.local/bin/gpy setup --from'
 
 # --- install-oneline.sh ---
-# The one-line installer no longer writes completions itself: it stages the
+# The one-line installer stages the
 # glue and runs `gpy setup`, which generates the structural completions and
 # appends the glue (covered by gpy-agent/tests/setup_command_tests.rs).
 __icw_check "install-oneline.sh: downloads the gpy-shell-files.tar.gz archive" install-oneline.sh \

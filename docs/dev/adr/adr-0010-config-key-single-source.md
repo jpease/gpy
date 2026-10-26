@@ -43,7 +43,7 @@ Proposed: option A. Keep `CONFIG_KEYS` and its guards.
 - The registry costs 1 file and 9 of the 19 lines of a new boolean key, and forgetting it fails a test that names the key.
 - Option C is rejected for what it changes, not for its size. It changes the CLI error text, prints widened floats, rejects mixed-case enum input that works today, and needs the registry guards rewritten. Each of these could be special-cased, but every special case is per-type metadata, which is what the registry already holds.
 - Options B and D were rejected on reasoning and not spiked. The add-key run bounds what they could save: at most the registry edit, 1 of 5 files and 9 of 19 lines. The field, its `Default`, the exhaustive destructure and the struct literals would still be forced by the compiler, because those name fields directly. At 42 keys that saving does not justify a macro DSL (B) or a new proc-macro crate (D).
-- B, C and D each cross the project's autonomy boundaries, which require maintainer approval before altering configuration schema structure, adding cross-module dependencies, or adding a dependency:
+- B, C and D each need maintainer approval, because they alter configuration schema structure, adding cross-module dependencies, or adding a dependency:
   - B moves the settings structs into macro syntax.
   - C makes `get`/`set` depend on the serialized TOML shape and the loader's deserialization path.
   - D adds a crate, and `schemars` would add 6.

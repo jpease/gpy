@@ -34,7 +34,7 @@ fi
 AGENT_DIR="$(cd "$(dirname "$AGENT_BIN")" && pwd)"
 
 # No blanket retries: a test is retried only when named here as
-# `<file>.test.fish:#<open issue>`. Retries are listed in the final tally.
+# `<file>.test.fish:<reason>`. Retries are listed in the final tally.
 KNOWN_FLAKY_E2E_TESTS=""
 
 attempts_for() {

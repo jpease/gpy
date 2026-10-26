@@ -57,6 +57,9 @@ expect_flagged "linux workstation path" 'Run from /home/mallory/src/gpy.'
 expect_flagged "private identifier" 'Observed in the acme-client repository.'
 expect_flagged "private codename" 'Reproduced against ProjectZeta only.'
 
+expect_flagged "private tracker reference" 'Measured in jpease/gpy-archive#977.'
+expect_flagged "private scratch prefix" 'mktemp -d /tmp/gpy619.XXXXXX'
+
 # Without the identifiers file the check is skipped rather than failing.
 GPY_PRIVATE_IDENTIFIERS_FILE="$WORKDIR/missing" expect_clean "no identifiers file" 'Observed in the acme-client repository.'
 expect_flagged "hardcoded socket" 'socat - UNIX-CONNECT:/Users/mallory/.cache/gpy/gpy.sock'
